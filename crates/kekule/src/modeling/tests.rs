@@ -1,5 +1,5 @@
 use super::*;
-use crate::bio::{Hierarchy, SmcraAtomSiteId, SmcraAtomSiteMetadata};
+use crate::bio::SmcraAtomSiteMetadata;
 use crate::core::{Atom, AtomId, BondId, BondOrder, Element, Molecule};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::modeling::potential::{
@@ -7,9 +7,7 @@ use crate::modeling::potential::{
     PotentialGeometryError,
 };
 use crate::structure::{Ensemble, Model, ModelBuildError, ModelView, PositionError, Positions};
-use crate::topology::{
-    InstanceAtomId, InstanceAtomSiteId, InstanceBondId, MoleculeInstanceId, TopologyBuildError,
-};
+use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId, TopologyBuildError};
 use crate::units::{
     Quantity, ANGSTROM, MODEL_ENERGY_UNIT, MODEL_FORCE_CONSTANT_UNIT, MODEL_GRADIENT_UNIT,
     NANOMETER,
@@ -43,22 +41,13 @@ fn two_atom_small(distance: f64) -> (Molecule, Positions, AtomId, AtomId, BondId
     )
 }
 
-fn one_atom_macro() -> (Molecule, Positions, AtomId, SmcraAtomSiteId) {
+fn one_atom_macro() -> (Molecule, Positions, AtomId) {
     let mut graph = crate::core::MoleculeEditor::new();
     let atom = graph
         .add_atom(Atom::new(Element::from_symbol("N").unwrap()))
         .expect("atom identifier capacity");
     let positions = Positions::new(Quantity::new([Point3::new(2.0, 0.0, 0.0)], ANGSTROM)).unwrap();
-    let mut hierarchy = Hierarchy::new();
-    let chain = hierarchy.add_chain("A", None).unwrap();
-    let residue = hierarchy
-        .add_residue(chain, "GLY", Some(1), None, None)
-        .unwrap();
-    let site = hierarchy
-        .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
-        .unwrap();
-    *graph.hierarchy_mut() = hierarchy;
-    (graph.finish().unwrap(), positions, atom, site)
+    (graph.finish().unwrap(), positions, atom)
 }
 
 #[test]
@@ -133,11 +122,30 @@ fn topology_allocation_is_shared_only_by_model_clones() {
 #[test]
 fn mixed_instances_and_hierarchy_use_qualified_ids() {
     let (small, small_positions, _, _, _) = two_atom_small(1.0);
-    let (macromolecule, macro_positions, atom, site) = one_atom_macro();
+    let (macromolecule, macro_positions, atom) = one_atom_macro();
     let mut builder = Model::builder();
     let small_id = builder.add_molecule(&small, &small_positions).unwrap();
     let macro_id = builder
         .add_molecule(&macromolecule, &macro_positions)
+        .unwrap();
+    let chain = builder
+        .topology_builder_mut()
+        .hierarchy_mut()
+        .add_chain("A", None)
+        .unwrap();
+    let residue = builder
+        .topology_builder_mut()
+        .hierarchy_mut()
+        .add_residue(chain, "GLY", Some(1), None, None)
+        .unwrap();
+    let site = builder
+        .topology_builder_mut()
+        .hierarchy_mut()
+        .add_atom_site(
+            residue,
+            InstanceAtomId::new(macro_id, atom),
+            SmcraAtomSiteMetadata::default(),
+        )
         .unwrap();
     let model = builder.build().unwrap();
     assert_ne!(small_id, macro_id);
@@ -149,11 +157,9 @@ fn mixed_instances_and_hierarchy_use_qualified_ids() {
             .unwrap()
             .molecule()
     ));
-    let hierarchy = model.topology().hierarchy(macro_id).unwrap().unwrap();
+    let hierarchy = model.topology();
     assert_eq!(
-        hierarchy
-            .atom_for_site(InstanceAtomSiteId::new(macro_id, site))
-            .unwrap(),
+        hierarchy.atom_for_site(site).unwrap(),
         InstanceAtomId::new(macro_id, atom)
     );
 }

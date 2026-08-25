@@ -156,10 +156,13 @@ impl fmt::Display for MmcifConnectionResolutionReason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifAtomProvenance {
     pub(crate) atom: InstanceAtomId,
+    pub(crate) type_symbol: String,
     pub(crate) source_line: usize,
     pub(crate) atom_site_id: Option<String>,
     pub(crate) atom_name: String,
+    pub(crate) auth_atom_name: Option<String>,
     pub(crate) component_id: String,
+    pub(crate) auth_component_id: Option<String>,
     pub(crate) asym_id: String,
     pub(crate) auth_asym_id: Option<String>,
     pub(crate) entity_id: Option<String>,
@@ -187,8 +190,16 @@ impl MmcifAtomProvenance {
         &self.atom_name
     }
 
+    pub fn auth_atom_name(&self) -> Option<&str> {
+        self.auth_atom_name.as_deref()
+    }
+
     pub fn component_id(&self) -> &str {
         &self.component_id
+    }
+
+    pub fn auth_component_id(&self) -> Option<&str> {
+        self.auth_component_id.as_deref()
     }
 
     /// Returns `_atom_site.label_asym_id`, falling back to

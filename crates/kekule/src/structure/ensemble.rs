@@ -3,9 +3,12 @@ use std::sync::Arc;
 
 use crate::core::{Molecule, PropMap};
 use crate::geometry::PeriodicCell;
-use crate::topology::{Topology, TopologyBuildError, TopologyBuilder};
+use crate::topology::transform::TopologySubsetError;
+use crate::topology::{AtomSelection, Topology, TopologyBuildError, TopologyBuilder};
 
-use super::{AtomData, BondData, Model, ModelView, PositionError, Positions};
+use super::{
+    AtomData, AtomDataError, BondData, BondDataError, Model, ModelView, PositionError, Positions,
+};
 
 /// One finite non-temporal ensemble member.
 #[derive(Debug, Clone, PartialEq)]
@@ -184,6 +187,35 @@ impl Ensemble {
         Arc::clone(&self.topology)
     }
 
+    /// Constructs one topology subset and applies its dense mapping to every member.
+    pub fn slice(&self, selection: &AtomSelection) -> Result<Self, EnsembleSliceError> {
+        let subset = self.topology.subset(selection)?;
+        let atom_indices = subset
+            .correspondence()
+            .source_atom_indices()
+            .iter()
+            .map(|index| index.index())
+            .collect::<Vec<_>>();
+        let bond_indices = subset
+            .correspondence()
+            .source_bond_indices()
+            .iter()
+            .map(|index| index.index())
+            .collect::<Vec<_>>();
+        let mut target = Self::new(subset.shared_topology());
+        for member in &self.members {
+            target.push(EnsembleMember {
+                positions: member.positions.select_indices(&atom_indices)?,
+                cell: member.cell,
+                atom_data: member.atom_data.select_indices(&atom_indices)?,
+                bond_data: member.bond_data.select_indices(&bond_indices)?,
+                weight: member.weight,
+                props: member.props.clone(),
+            })?;
+        }
+        Ok(target)
+    }
+
     pub fn members(&self) -> impl ExactSizeIterator<Item = &EnsembleMember> {
         self.members.iter()
     }
@@ -318,5 +350,50 @@ impl From<TopologyBuildError> for EnsembleError {
 impl From<PositionError> for EnsembleError {
     fn from(error: PositionError) -> Self {
         Self::Position(error)
+    }
+}
+
+/// Failure to subset an ensemble topology or transfer member state.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum EnsembleSliceError {
+    Topology(TopologySubsetError),
+    Position(PositionError),
+    AtomData(AtomDataError),
+    BondData(BondDataError),
+    Ensemble(EnsembleError),
+}
+
+impl fmt::Display for EnsembleSliceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "cannot slice ensemble: {self:?}")
+    }
+}
+
+impl std::error::Error for EnsembleSliceError {}
+
+impl From<TopologySubsetError> for EnsembleSliceError {
+    fn from(error: TopologySubsetError) -> Self {
+        Self::Topology(error)
+    }
+}
+impl From<PositionError> for EnsembleSliceError {
+    fn from(error: PositionError) -> Self {
+        Self::Position(error)
+    }
+}
+impl From<AtomDataError> for EnsembleSliceError {
+    fn from(error: AtomDataError) -> Self {
+        Self::AtomData(error)
+    }
+}
+impl From<BondDataError> for EnsembleSliceError {
+    fn from(error: BondDataError) -> Self {
+        Self::BondData(error)
+    }
+}
+impl From<EnsembleError> for EnsembleSliceError {
+    fn from(error: EnsembleError) -> Self {
+        Self::Ensemble(error)
     }
 }

@@ -9,7 +9,8 @@ use kekule::structure::{
     AtomData, AtomDataError, BondData, BondDataError, ModelError, ModelView, PositionError,
     Positions,
 };
-use kekule::topology::{InstanceAtomId, Topology};
+use kekule::topology::transform::TopologySubsetError;
+use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::units::{
     Quantity, Unit, UnitError, MODEL_FORCE_UNIT, MODEL_TIME_UNIT, MODEL_VELOCITY_UNIT,
 };
@@ -56,6 +57,22 @@ impl DenseVectors {
 
     fn values(&self) -> Quantity<&[Vector3]> {
         Quantity::new(self.values.as_slice(), self.unit)
+    }
+
+    fn select_indices(&self, indices: &[usize]) -> Result<Self, FrameError> {
+        let values = indices
+            .iter()
+            .map(|index| {
+                self.values
+                    .get(*index)
+                    .copied()
+                    .ok_or(FrameError::InvalidIndex { index: *index })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            values,
+            unit: self.unit,
+        })
     }
 
     fn set_all<T>(&mut self, values: Quantity<T>) -> Result<(), FrameError>
@@ -123,6 +140,11 @@ macro_rules! vector_array {
 
             pub fn values(&self) -> Quantity<&[Vector3]> {
                 self.0.values()
+            }
+
+            /// Copies a dense projection in the requested index order.
+            pub fn select_indices(&self, indices: &[usize]) -> Result<Self, FrameError> {
+                Ok(Self(self.0.select_indices(indices)?))
             }
 
             pub fn set_all<T>(&mut self, values: Quantity<T>) -> Result<(), FrameError>
@@ -801,6 +823,46 @@ impl Trajectory {
         Arc::clone(&self.topology)
     }
 
+    /// Constructs one topology subset and applies its dense mapping to every frame.
+    pub fn slice(&self, selection: &AtomSelection) -> Result<Self, TrajectorySliceError> {
+        let subset = self.topology.subset(selection)?;
+        let atom_indices = subset
+            .correspondence()
+            .source_atom_indices()
+            .iter()
+            .map(|index| index.index())
+            .collect::<Vec<_>>();
+        let bond_indices = subset
+            .correspondence()
+            .source_bond_indices()
+            .iter()
+            .map(|index| index.index())
+            .collect::<Vec<_>>();
+        let mut target = Self::new(subset.shared_topology());
+        for frame in &self.frames {
+            target.push(TrajectoryFrame {
+                positions: frame.positions.select_indices(&atom_indices)?,
+                cell: frame.cell,
+                atom_data: frame.atom_data.select_indices(&atom_indices)?,
+                bond_data: frame.bond_data.select_indices(&bond_indices)?,
+                velocities: frame
+                    .velocities
+                    .as_ref()
+                    .map(|values| values.select_indices(&atom_indices))
+                    .transpose()?,
+                forces: frame
+                    .forces
+                    .as_ref()
+                    .map(|values| values.select_indices(&atom_indices))
+                    .transpose()?,
+                time: frame.time,
+                step: frame.step,
+                props: frame.props.clone(),
+            })?;
+        }
+        Ok(target)
+    }
+
     pub fn len(&self) -> usize {
         self.frames.len()
     }
@@ -1115,6 +1177,7 @@ fn validate_atom_count(expected: usize, actual: usize) -> Result<(), FrameError>
 #[non_exhaustive]
 pub enum FrameError {
     TopologyMismatch,
+    InvalidIndex { index: usize },
     AtomCountMismatch { expected: usize, actual: usize },
     BondCountMismatch { expected: usize, actual: usize },
     NonFiniteVector { index: usize },
@@ -1131,6 +1194,7 @@ impl fmt::Display for FrameError {
             Self::TopologyMismatch => {
                 formatter.write_str("trajectory frame belongs to a different topology")
             }
+            Self::InvalidIndex { index } => write!(formatter, "invalid dense frame index {index}"),
             Self::AtomCountMismatch { expected, actual } => write!(
                 formatter,
                 "trajectory array requires {expected} atoms, but received {actual}"
@@ -1473,6 +1537,57 @@ pub enum TrajectoryError {
     Codec(Box<TrajectoryCodecErrorContext>),
 }
 
+/// Failure to subset a trajectory topology or transfer frame state.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum TrajectorySliceError {
+    Topology(TopologySubsetError),
+    Position(PositionError),
+    AtomData(AtomDataError),
+    BondData(BondDataError),
+    Frame(Box<FrameError>),
+    Trajectory(TrajectoryError),
+}
+
+impl fmt::Display for TrajectorySliceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "cannot slice trajectory: {self:?}")
+    }
+}
+
+impl std::error::Error for TrajectorySliceError {}
+
+impl From<TopologySubsetError> for TrajectorySliceError {
+    fn from(error: TopologySubsetError) -> Self {
+        Self::Topology(error)
+    }
+}
+impl From<PositionError> for TrajectorySliceError {
+    fn from(error: PositionError) -> Self {
+        Self::Position(error)
+    }
+}
+impl From<AtomDataError> for TrajectorySliceError {
+    fn from(error: AtomDataError) -> Self {
+        Self::AtomData(error)
+    }
+}
+impl From<BondDataError> for TrajectorySliceError {
+    fn from(error: BondDataError) -> Self {
+        Self::BondData(error)
+    }
+}
+impl From<FrameError> for TrajectorySliceError {
+    fn from(error: FrameError) -> Self {
+        Self::Frame(Box::new(error))
+    }
+}
+impl From<TrajectoryError> for TrajectorySliceError {
+    fn from(error: TrajectoryError) -> Self {
+        Self::Trajectory(error)
+    }
+}
+
 impl fmt::Display for TrajectoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1589,7 +1704,7 @@ mod tests {
     use super::*;
     use kekule::core::{Atom, BondOrder, Element, MoleculeEditor, PropValue};
     use kekule::geometry::Point3;
-    use kekule::topology::TopologyBuilder;
+    use kekule::topology::{AtomSelection, TopologyBuilder};
     use kekule::units::{
         ANGSTROM, DIMENSIONLESS, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND,
     };
@@ -1740,6 +1855,63 @@ mod tests {
             Err(TrajectoryError::Frame(error))
                 if matches!(*error, FrameError::AtomCountMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn trajectory_slice_transfers_every_per_atom_frame_field() {
+        let topology = make_topology(true);
+        let atoms = topology.atom_ids();
+        let selection = AtomSelection::from_atoms(&topology, [atoms[1]]).unwrap();
+        let mut frame = TrajectoryFrame::new(
+            positions(&[Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)]),
+            topology.bond_count(),
+        );
+        frame
+            .atom_data_mut()
+            .set_occupancies([Some(0.25), Some(0.75)])
+            .unwrap();
+        frame
+            .bond_data_mut()
+            .set_property("score", Quantity::new([Some(9.0)], DIMENSIONLESS))
+            .unwrap();
+        frame
+            .set_velocities(Some(
+                Velocities::new(Quantity::new(
+                    [Vector3::new(3.0, 0.0, 0.0), Vector3::new(4.0, 0.0, 0.0)],
+                    MODEL_VELOCITY_UNIT,
+                ))
+                .unwrap(),
+            ))
+            .unwrap();
+        frame
+            .set_forces(Some(
+                Forces::new(Quantity::new(
+                    [Vector3::new(5.0, 0.0, 0.0), Vector3::new(6.0, 0.0, 0.0)],
+                    MODEL_FORCE_UNIT,
+                ))
+                .unwrap(),
+            ))
+            .unwrap();
+        frame
+            .set_time(Some(Quantity::new(2.0, PICOSECOND)))
+            .unwrap();
+        frame.set_step(Some(8));
+        let trajectory = Trajectory::from_frames(Arc::clone(&topology), [frame]).unwrap();
+
+        let sliced = trajectory.slice(&selection).unwrap();
+        assert_eq!(sliced.topology().atom_count(), 1);
+        assert_eq!(sliced.topology().bond_count(), 0);
+        let frame = sliced.frame(0).unwrap();
+        assert_eq!(
+            frame.positions().values().value(),
+            &[Point3::new(2.0, 0.0, 0.0)]
+        );
+        assert_eq!(frame.atom_data().occupancies(), Some(&[Some(0.75)][..]));
+        assert!(frame.bond_data().property("score").unwrap().is_none());
+        assert_eq!(frame.velocities().unwrap().values().value()[0].x, 4.0);
+        assert_eq!(frame.forces().unwrap().values().value()[0].x, 6.0);
+        assert_eq!(frame.time(), Some(Quantity::new(2.0, PICOSECOND)));
+        assert_eq!(frame.step(), Some(8));
     }
 
     #[test]

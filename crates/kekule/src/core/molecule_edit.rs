@@ -1,8 +1,7 @@
 use std::fmt;
 
 use super::{
-    Atom, AtomId, Bond, BondId, BondOrder, Graph, Hierarchy, HierarchyError, Molecule, Perception,
-    Result, SmcraAtomSite, SmcraAtomSiteId, SmcraAtomSiteMetadata, SmcraResidueId, StereoElement,
+    Atom, AtomId, Bond, BondId, BondOrder, Graph, Molecule, Perception, Result, StereoElement,
     StereoElementId, StereoGroup, StereoGroupId,
 };
 
@@ -40,7 +39,6 @@ pub enum MoleculePublicationError {
     DisconnectedGraph(MoleculeConnectivityError),
     InvalidGraph(GraphValidationError),
     InvalidStereo(StereoPublicationError),
-    InvalidHierarchy(HierarchyValidationError),
     FormalChargeOutOfRange { atom: AtomId, charge: usize },
 }
 
@@ -51,7 +49,6 @@ impl fmt::Display for MoleculePublicationError {
             Self::DisconnectedGraph(error) => write!(formatter, "{error}"),
             Self::InvalidGraph(error) => write!(formatter, "invalid molecular graph: {error}"),
             Self::InvalidStereo(error) => write!(formatter, "invalid represented stereo: {error}"),
-            Self::InvalidHierarchy(error) => write!(formatter, "invalid hierarchy: {error}"),
             Self::FormalChargeOutOfRange { atom, charge } => write!(
                 formatter,
                 "publishing atom {atom} requires formal charge +{charge}, which is outside the supported range"
@@ -63,7 +60,6 @@ impl fmt::Display for MoleculePublicationError {
 impl std::error::Error for MoleculePublicationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::InvalidHierarchy(error) => Some(error),
             Self::DisconnectedGraph(error) => Some(error),
             Self::InvalidGraph(error) => Some(error),
             Self::InvalidStereo(error) => Some(error),
@@ -126,81 +122,6 @@ impl fmt::Display for StereoPublicationError {
 
 impl std::error::Error for StereoPublicationError {}
 
-/// A hierarchy reference that cannot be published against the edited graph.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum HierarchyValidationError {
-    InvalidResidueChain {
-        residue: SmcraResidueId,
-    },
-    InvalidResidueAtomSite {
-        residue: SmcraResidueId,
-        site: SmcraAtomSiteId,
-    },
-    InvalidAtomSiteResidue {
-        site: SmcraAtomSiteId,
-    },
-    InconsistentResidueAtomSite {
-        residue: SmcraResidueId,
-        site: SmcraAtomSiteId,
-    },
-    InvalidAtomSiteAtom {
-        site: SmcraAtomSiteId,
-        atom: AtomId,
-    },
-    InconsistentAtomLookup {
-        site: SmcraAtomSiteId,
-        atom: AtomId,
-    },
-}
-
-impl fmt::Display for HierarchyValidationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidResidueChain { residue } => {
-                write!(
-                    formatter,
-                    "residue {} references an invalid chain",
-                    residue.raw()
-                )
-            }
-            Self::InvalidResidueAtomSite { residue, site } => write!(
-                formatter,
-                "residue {} references invalid atom-site {}",
-                residue.raw(),
-                site.raw()
-            ),
-            Self::InvalidAtomSiteResidue { site } => {
-                write!(
-                    formatter,
-                    "atom-site {} references an invalid residue",
-                    site.raw()
-                )
-            }
-            Self::InconsistentResidueAtomSite { residue, site } => write!(
-                formatter,
-                "residue {} and atom-site {} do not reference each other exactly once",
-                residue.raw(),
-                site.raw()
-            ),
-            Self::InvalidAtomSiteAtom { site, atom } => {
-                write!(
-                    formatter,
-                    "atom-site {} references invalid atom {atom}",
-                    site.raw()
-                )
-            }
-            Self::InconsistentAtomLookup { site, atom } => write!(
-                formatter,
-                "atom-site {} is inconsistent with the hierarchy lookup for {atom}",
-                site.raw()
-            ),
-        }
-    }
-}
-
-impl std::error::Error for HierarchyValidationError {}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CanonicalRepresentationError {
     pub(crate) atom: AtomId,
@@ -260,7 +181,6 @@ impl Default for MoleculeEditor {
         Self {
             working: Molecule {
                 graph: Graph::default(),
-                hierarchy: Hierarchy::default(),
                 perception: Perception::default(),
             },
         }
@@ -280,14 +200,6 @@ impl MoleculeEditor {
 
     pub fn graph(&self) -> &Graph {
         &self.working.graph
-    }
-
-    pub fn hierarchy(&self) -> &Hierarchy {
-        &self.working.hierarchy
-    }
-
-    pub fn hierarchy_mut(&mut self) -> &mut Hierarchy {
-        &mut self.working.hierarchy
     }
 
     pub(crate) fn working(&self) -> &Molecule {
@@ -311,22 +223,7 @@ impl MoleculeEditor {
         self.working.add_atom(atom)
     }
 
-    /// Deletes an atom and its hierarchy atom-site, if present.
-    ///
-    /// Parent residues and chains are retained even when they become empty.
     pub fn delete_atom(&mut self, atom: AtomId) -> Result<Atom> {
-        self.working.atom(atom)?;
-        if let Some(site) = self
-            .working
-            .hierarchy
-            .atom_site_for_atom(atom)
-            .map(SmcraAtomSite::id)
-        {
-            self.working
-                .hierarchy
-                .remove_atom_site(site)
-                .expect("published editor hierarchy must be internally consistent");
-        }
         self.working.delete_atom(atom)
     }
 
@@ -336,28 +233,6 @@ impl MoleculeEditor {
 
     pub fn delete_bond(&mut self, bond: BondId) -> Result<Bond> {
         self.working.delete_bond(bond)
-    }
-
-    pub fn add_atom_site(
-        &mut self,
-        residue: SmcraResidueId,
-        atom: AtomId,
-        metadata: SmcraAtomSiteMetadata,
-    ) -> std::result::Result<SmcraAtomSiteId, HierarchyError> {
-        self.working
-            .atom(atom)
-            .map_err(|_| HierarchyError::InvalidAtomId(atom))?;
-        self.working
-            .hierarchy
-            .add_atom_site(residue, atom, metadata)
-    }
-
-    /// Removes one hierarchy atom-site while preserving all hierarchy IDs.
-    pub fn remove_atom_site(
-        &mut self,
-        site: SmcraAtomSiteId,
-    ) -> std::result::Result<SmcraAtomSite, HierarchyError> {
-        self.working.hierarchy.remove_atom_site(site)
     }
 
     pub fn add_stereo_element(&mut self, element: StereoElement) -> Result<StereoElementId> {
@@ -404,7 +279,6 @@ fn publish_molecule(
         .validate_connected()
         .map_err(MoleculePublicationError::DisconnectedGraph)?;
     validate_stereo(&molecule).map_err(MoleculePublicationError::InvalidStereo)?;
-    validate_hierarchy(&molecule).map_err(MoleculePublicationError::InvalidHierarchy)?;
     canonicalize_represented_chemistry(&mut molecule).map_err(|error| {
         MoleculePublicationError::FormalChargeOutOfRange {
             atom: error.atom,
@@ -510,82 +384,6 @@ fn validate_stereo(molecule: &Molecule) -> std::result::Result<(), StereoPublica
                     element: element_id,
                 });
             }
-        }
-    }
-    Ok(())
-}
-
-fn validate_hierarchy(molecule: &Molecule) -> std::result::Result<(), HierarchyValidationError> {
-    let hierarchy = &molecule.hierarchy;
-    for (residue_id, residue) in hierarchy.residues() {
-        if hierarchy.chain(residue.chain()).is_err() {
-            return Err(HierarchyValidationError::InvalidResidueChain {
-                residue: residue_id,
-            });
-        }
-        for site in residue.atom_sites() {
-            let Ok(atom_site) = hierarchy.atom_site(*site) else {
-                return Err(HierarchyValidationError::InvalidResidueAtomSite {
-                    residue: residue_id,
-                    site: *site,
-                });
-            };
-            if atom_site.residue() != residue_id
-                || residue
-                    .atom_sites()
-                    .iter()
-                    .filter(|candidate| **candidate == *site)
-                    .count()
-                    != 1
-            {
-                return Err(HierarchyValidationError::InconsistentResidueAtomSite {
-                    residue: residue_id,
-                    site: *site,
-                });
-            }
-        }
-    }
-    for (site_id, site) in hierarchy.atom_sites() {
-        let Ok(residue) = hierarchy.residue(site.residue()) else {
-            return Err(HierarchyValidationError::InvalidAtomSiteResidue { site: site_id });
-        };
-        if residue
-            .atom_sites()
-            .iter()
-            .filter(|candidate| **candidate == site_id)
-            .count()
-            != 1
-        {
-            return Err(HierarchyValidationError::InconsistentResidueAtomSite {
-                residue: site.residue(),
-                site: site_id,
-            });
-        }
-        if molecule.atom(site.atom()).is_err() {
-            return Err(HierarchyValidationError::InvalidAtomSiteAtom {
-                site: site_id,
-                atom: site.atom(),
-            });
-        }
-        if hierarchy
-            .atom_site_for_atom(site.atom())
-            .is_none_or(|mapped| mapped.id() != site_id)
-        {
-            return Err(HierarchyValidationError::InconsistentAtomLookup {
-                site: site_id,
-                atom: site.atom(),
-            });
-        }
-    }
-    for (atom, site_id) in hierarchy.atom_lookup_entries() {
-        if !hierarchy
-            .atom_site(site_id)
-            .is_ok_and(|site| site.atom() == atom)
-        {
-            return Err(HierarchyValidationError::InconsistentAtomLookup {
-                site: site_id,
-                atom,
-            });
         }
     }
     Ok(())

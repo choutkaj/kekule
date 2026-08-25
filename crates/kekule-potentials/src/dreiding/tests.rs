@@ -1,4 +1,4 @@
-use kekule::bio::{Hierarchy, SmcraAtomSiteMetadata};
+use kekule::bio::SmcraAtomSiteMetadata;
 use kekule::core::{Atom, AtomId, BondOrder, Element, HydrogenDeclaration, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::modeling::potential::{Potential, PotentialError};
@@ -284,20 +284,30 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
 #[test]
 fn hierarchy_bearing_molecules_are_supported() {
     let (small, positions) = water(0.0);
-    let mut hierarchy = Hierarchy::new();
-    let chain = hierarchy.add_chain("A", None).unwrap();
-    let residue = hierarchy
+    let mut builder = Model::builder();
+    let instance = builder.add_molecule(&small, &positions).unwrap();
+    let chain = builder
+        .topology_builder_mut()
+        .hierarchy_mut()
+        .add_chain("A", None)
+        .unwrap();
+    let residue = builder
+        .topology_builder_mut()
+        .hierarchy_mut()
         .add_residue(chain, "HOH", None, None, None)
         .unwrap();
     for atom in small.atom_ids() {
-        hierarchy
-            .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
+        builder
+            .topology_builder_mut()
+            .hierarchy_mut()
+            .add_atom_site(
+                residue,
+                InstanceAtomId::new(instance, atom),
+                SmcraAtomSiteMetadata::default(),
+            )
             .unwrap();
     }
-    let mut editor = small.edit();
-    *editor.hierarchy_mut() = hierarchy;
-    let macromolecule = editor.finish().unwrap();
-    let model = Model::from_molecule(&macromolecule, &positions).unwrap();
+    let model = builder.build().unwrap();
     let mut potential = DreidingPotential::prepare(
         &model.shared_topology(),
         model.view(),
