@@ -3,11 +3,12 @@ use std::sync::Arc;
 
 use crate::core::{Atom, Bond, Molecule};
 use crate::geometry::{PeriodicCell, Point3};
+use crate::topology::transform::TopologySubsetError;
 use crate::topology::{
-    InstanceAtomId, InstanceAtomSite, InstanceAtomSiteId, InstanceBondId, InstanceChain,
-    InstanceChainId, InstanceHierarchy, InstanceResidue, InstanceResidueId, MoleculeDefinitionId,
-    MoleculeInstance, MoleculeInstanceId, Topology, TopologyAtomIndex, TopologyBuildError,
-    TopologyBuilder, TopologyError,
+    AtomSelection, Hierarchy, InstanceAtomId, InstanceAtomSite, InstanceBondId, InstanceChain,
+    InstanceResidue, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, SmcraAtomSiteId,
+    SmcraChainId, SmcraResidueId, Topology, TopologyAtomIndex, TopologyBuildError, TopologyBuilder,
+    TopologyError,
 };
 use crate::units::Quantity;
 
@@ -102,6 +103,41 @@ impl Model {
         Arc::clone(&self.topology)
     }
 
+    /// Constructs an induced structural slice and transfers all dense model state.
+    pub fn slice(&self, selection: &AtomSelection) -> Result<Self, ModelSliceError> {
+        let subset = self.topology.subset(selection)?;
+        let correspondence = subset.correspondence();
+        let atom_indices = correspondence
+            .source_atom_indices()
+            .iter()
+            .map(|index| index.index())
+            .collect::<Vec<_>>();
+        let bond_indices = correspondence
+            .source_bond_indices()
+            .iter()
+            .map(|index| index.index())
+            .collect::<Vec<_>>();
+        let positions = self
+            .positions
+            .select_indices(&atom_indices)
+            .map_err(ModelError::from)?;
+        let atom_data = self
+            .atom_data
+            .select_indices(&atom_indices)
+            .map_err(ModelError::from)?;
+        let bond_data = self
+            .bond_data
+            .select_indices(&bond_indices)
+            .map_err(ModelError::from)?;
+        Ok(Self::with_data(
+            subset.shared_topology(),
+            positions,
+            self.cell,
+            atom_data,
+            bond_data,
+        )?)
+    }
+
     pub fn atom(&self, atom: InstanceAtomId) -> Result<&Atom, TopologyError> {
         self.topology.atom(atom)
     }
@@ -124,11 +160,8 @@ impl Model {
         self.topology.instances()
     }
 
-    pub fn hierarchy(
-        &self,
-        instance: MoleculeInstanceId,
-    ) -> Result<Option<InstanceHierarchy<'_>>, TopologyError> {
-        self.topology.hierarchy(instance)
+    pub fn hierarchy(&self) -> &Hierarchy {
+        self.topology.hierarchy()
     }
 
     pub fn chains(&self) -> impl Iterator<Item = InstanceChain<'_>> {
@@ -143,27 +176,24 @@ impl Model {
         self.topology.atom_sites()
     }
 
-    pub fn chain(&self, chain: InstanceChainId) -> Result<InstanceChain<'_>, TopologyError> {
+    pub fn chain(&self, chain: SmcraChainId) -> Result<InstanceChain<'_>, TopologyError> {
         self.topology.chain(chain)
     }
 
-    pub fn residue(
-        &self,
-        residue: InstanceResidueId,
-    ) -> Result<InstanceResidue<'_>, TopologyError> {
+    pub fn residue(&self, residue: SmcraResidueId) -> Result<InstanceResidue<'_>, TopologyError> {
         self.topology.residue(residue)
     }
 
     pub fn atom_site(
         &self,
-        atom_site: InstanceAtomSiteId,
+        atom_site: SmcraAtomSiteId,
     ) -> Result<InstanceAtomSite<'_>, TopologyError> {
         self.topology.atom_site(atom_site)
     }
 
     pub fn atom_for_site(
         &self,
-        atom_site: InstanceAtomSiteId,
+        atom_site: SmcraAtomSiteId,
     ) -> Result<InstanceAtomId, TopologyError> {
         self.topology.atom_for_site(atom_site)
     }
@@ -191,14 +221,14 @@ impl Model {
 
     pub fn residue_for_site(
         &self,
-        atom_site: InstanceAtomSiteId,
+        atom_site: SmcraAtomSiteId,
     ) -> Result<InstanceResidue<'_>, TopologyError> {
         self.topology.residue_for_site(atom_site)
     }
 
     pub fn chain_for_residue(
         &self,
-        residue: InstanceResidueId,
+        residue: SmcraResidueId,
     ) -> Result<InstanceChain<'_>, TopologyError> {
         self.topology.chain_for_residue(residue)
     }
@@ -488,11 +518,8 @@ impl<'a> ModelView<'a> {
         self.topology.instances()
     }
 
-    pub fn hierarchy(
-        self,
-        instance: MoleculeInstanceId,
-    ) -> Result<Option<InstanceHierarchy<'a>>, TopologyError> {
-        self.topology.hierarchy(instance)
+    pub fn hierarchy(self) -> &'a Hierarchy {
+        self.topology.hierarchy()
     }
 
     pub fn chains(self) -> impl Iterator<Item = InstanceChain<'a>> + 'a {
@@ -507,24 +534,24 @@ impl<'a> ModelView<'a> {
         self.topology.atom_sites()
     }
 
-    pub fn chain(self, chain: InstanceChainId) -> Result<InstanceChain<'a>, TopologyError> {
+    pub fn chain(self, chain: SmcraChainId) -> Result<InstanceChain<'a>, TopologyError> {
         self.topology.chain(chain)
     }
 
-    pub fn residue(self, residue: InstanceResidueId) -> Result<InstanceResidue<'a>, TopologyError> {
+    pub fn residue(self, residue: SmcraResidueId) -> Result<InstanceResidue<'a>, TopologyError> {
         self.topology.residue(residue)
     }
 
     pub fn atom_site(
         self,
-        atom_site: InstanceAtomSiteId,
+        atom_site: SmcraAtomSiteId,
     ) -> Result<InstanceAtomSite<'a>, TopologyError> {
         self.topology.atom_site(atom_site)
     }
 
     pub fn atom_for_site(
         self,
-        atom_site: InstanceAtomSiteId,
+        atom_site: SmcraAtomSiteId,
     ) -> Result<InstanceAtomId, TopologyError> {
         self.topology.atom_for_site(atom_site)
     }
@@ -552,14 +579,14 @@ impl<'a> ModelView<'a> {
 
     pub fn residue_for_site(
         self,
-        atom_site: InstanceAtomSiteId,
+        atom_site: SmcraAtomSiteId,
     ) -> Result<InstanceResidue<'a>, TopologyError> {
         self.topology.residue_for_site(atom_site)
     }
 
     pub fn chain_for_residue(
         self,
-        residue: InstanceResidueId,
+        residue: SmcraResidueId,
     ) -> Result<InstanceChain<'a>, TopologyError> {
         self.topology.chain_for_residue(residue)
     }
@@ -652,6 +679,37 @@ impl fmt::Display for ModelError {
 
 impl std::error::Error for ModelError {}
 
+/// Failure to subset topology or transfer one model's dense state.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum ModelSliceError {
+    Topology(TopologySubsetError),
+    Model(Box<ModelError>),
+}
+
+impl fmt::Display for ModelSliceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Topology(error) => write!(formatter, "cannot subset model topology: {error}"),
+            Self::Model(error) => write!(formatter, "cannot transfer model state: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ModelSliceError {}
+
+impl From<TopologySubsetError> for ModelSliceError {
+    fn from(error: TopologySubsetError) -> Self {
+        Self::Topology(error)
+    }
+}
+
+impl From<ModelError> for ModelSliceError {
+    fn from(error: ModelError) -> Self {
+        Self::Model(Box::new(error))
+    }
+}
+
 impl From<PositionError> for ModelError {
     fn from(error: PositionError) -> Self {
         Self::Position(error)
@@ -686,6 +744,11 @@ impl ModelBuilder {
 
     pub fn topology_builder(&self) -> &TopologyBuilder {
         &self.topology
+    }
+
+    /// Returns mutable coordinate-free staging state, including hierarchy.
+    pub fn topology_builder_mut(&mut self) -> &mut TopologyBuilder {
+        &mut self.topology
     }
 
     pub fn add_molecule_definition(
@@ -755,6 +818,7 @@ pub enum ModelBuildError {
     InstancePositionCountMismatch { expected: usize, actual: usize },
     CapacityOverflow,
     Topology(TopologyBuildError),
+    Hierarchy(crate::topology::HierarchyError),
 }
 
 impl fmt::Display for ModelBuildError {
@@ -768,6 +832,7 @@ impl fmt::Display for ModelBuildError {
                 formatter.write_str("model construction exceeds coordinate capacity")
             }
             Self::Topology(error) => write!(formatter, "cannot build topology: {error}"),
+            Self::Hierarchy(error) => write!(formatter, "cannot build hierarchy: {error}"),
         }
     }
 }
@@ -777,5 +842,11 @@ impl std::error::Error for ModelBuildError {}
 impl From<TopologyBuildError> for ModelBuildError {
     fn from(error: TopologyBuildError) -> Self {
         Self::Topology(error)
+    }
+}
+
+impl From<crate::topology::HierarchyError> for ModelBuildError {
+    fn from(error: crate::topology::HierarchyError) -> Self {
+        Self::Hierarchy(error)
     }
 }

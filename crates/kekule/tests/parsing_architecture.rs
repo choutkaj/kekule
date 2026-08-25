@@ -81,6 +81,21 @@ fn molfile_document_model_retains_published_component_geometry() {
     assert!(model_molecules(&model)
         .iter()
         .all(|molecule| molecule.perception() == &Perception::default()));
+    let hierarchy = model.topology().hierarchy();
+    let (_, chain) = hierarchy.chains().next().expect("synthetic chain");
+    assert_eq!(chain.label_id(), "A");
+    assert_eq!(chain.author_id(), None);
+    assert_eq!(chain.residues().len(), 2);
+    for (index, residue_id) in chain.residues().iter().enumerate() {
+        let residue = hierarchy.residue(*residue_id).unwrap();
+        assert_eq!(residue.name(), "UNL");
+        assert_eq!(residue.label_seq_id(), Some((index + 1) as i32));
+        assert_eq!(
+            residue.author_seq_id(),
+            Some((index + 1).to_string().as_str())
+        );
+        assert_eq!(residue.atom_sites().len(), 1);
+    }
 }
 
 #[test]

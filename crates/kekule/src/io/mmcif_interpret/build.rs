@@ -104,10 +104,13 @@ pub(super) struct BuiltMoleculeProvenance {
 #[derive(Clone)]
 struct BuiltAtomProvenance {
     atom: AtomId,
+    type_symbol: String,
     source_line: usize,
     atom_site_id: Option<String>,
     atom_name: String,
+    auth_atom_name: Option<String>,
     component_id: String,
+    auth_component_id: Option<String>,
     asym_id: String,
     auth_asym_id: Option<String>,
     entity_id: Option<String>,
@@ -142,10 +145,13 @@ impl BuiltMoleculeProvenance {
                     atom_data.push((qualified, atom.occupancy, atom.b_factor));
                     MmcifAtomProvenance {
                         atom: qualified,
+                        type_symbol: atom.type_symbol,
                         source_line: atom.source_line,
                         atom_site_id: atom.atom_site_id,
                         atom_name: atom.atom_name,
+                        auth_atom_name: atom.auth_atom_name,
                         component_id: atom.component_id,
+                        auth_component_id: atom.auth_component_id,
                         asym_id: atom.asym_id,
                         auth_asym_id: atom.auth_asym_id,
                         entity_id: atom.entity_id,
@@ -223,8 +229,6 @@ impl BuiltMolecule {
                 .working_mut()
                 .props_mut()
                 .clone_from(self.editor.working().props());
-            *editor.hierarchy_mut() = extract_hierarchy(self.editor.hierarchy(), &atom_map)?;
-
             let mut coordinates =
                 StagedCoordinates::with_atom_capacity(component.len(), self.coordinates.unit())
                     .map_err(graph_error)?;
@@ -261,7 +265,6 @@ pub(super) fn build_molecule(
     connections: &[DeclaredConnection],
     report: &mut MmcifInterpretationReport,
 ) -> Result<BuiltMolecule, MmcifInterpretError> {
-    let is_macro = group.kinds.iter().any(MmcifEntityKind::is_macro);
     let mut editor = crate::core::MoleculeEditor::new();
     let mut atoms = BTreeMap::new();
     let mut representative = Vec::<(String, AtomRow)>::new();
@@ -374,10 +377,13 @@ pub(super) fn build_molecule(
         .iter()
         .map(|(key, row)| BuiltAtomProvenance {
             atom: atoms[key],
+            type_symbol: row.element.symbol().to_owned(),
             source_line: row.line,
             atom_site_id: row.atom_site_id.clone(),
             atom_name: row.atom_name.clone(),
+            auth_atom_name: row.auth_atom_name.clone(),
             component_id: row.comp_id.clone(),
+            auth_component_id: row.auth_comp_id.clone(),
             asym_id: row.asym_id.clone(),
             auth_asym_id: row.auth_asym_id.clone(),
             entity_id: row.entity_id.clone(),
@@ -397,9 +403,6 @@ pub(super) fn build_molecule(
         entity_kinds,
         atoms: atom_provenance,
     };
-    if is_macro {
-        *editor.hierarchy_mut() = build_hierarchy(editor.working(), &representative, &atoms)?;
-    }
     Ok(BuiltMolecule {
         editor,
         coordinates,
@@ -527,130 +530,84 @@ fn point_distance_squared(left: Point3, right: Point3) -> f64 {
     dx * dx + dy * dy + dz * dz
 }
 
-fn build_hierarchy(
-    graph: &Molecule,
-    representative: &[(String, AtomRow)],
-    atoms: &BTreeMap<String, AtomId>,
+/// Builds one topology-global hierarchy from source atom identity after every
+/// connected molecule component has received its final instance-qualified IDs.
+pub(super) fn build_topology_hierarchy(
+    instances: &[MmcifInstanceProvenance],
+    polymer_asym_order: &BTreeMap<String, usize>,
 ) -> Result<Hierarchy, MmcifInterpretError> {
     let mut hierarchy = Hierarchy::new();
     let mut chains = BTreeMap::new();
     let mut residues = BTreeMap::new();
-    for (key, row) in representative {
-        let chain = if let Some(chain) = chains.get(&row.asym_id) {
+    let mut atoms = instances
+        .iter()
+        .flat_map(|instance| instance.atoms.iter())
+        .collect::<Vec<_>>();
+    atoms.sort_by_key(|atom| atom.source_line);
+    let mut ordered_polymer_chains = polymer_asym_order.iter().collect::<Vec<_>>();
+    ordered_polymer_chains.sort_by_key(|(_, order)| **order);
+    for (asym_id, _) in ordered_polymer_chains {
+        let Some(atom) = atoms.iter().find(|atom| &atom.asym_id == asym_id) else {
+            continue;
+        };
+        let chain = hierarchy
+            .add_chain(asym_id.clone(), atom.auth_asym_id.clone())
+            .map_err(hierarchy_error)?;
+        chains.insert(asym_id.clone(), chain);
+    }
+    for atom in atoms {
+        let chain = if let Some(chain) = chains.get(&atom.asym_id) {
             *chain
         } else {
             let chain = hierarchy
-                .add_chain(row.asym_id.clone(), row.auth_asym_id.clone())
+                .add_chain(atom.asym_id.clone(), atom.auth_asym_id.clone())
                 .map_err(hierarchy_error)?;
-            chains.insert(row.asym_id.clone(), chain);
+            chains.insert(atom.asym_id.clone(), chain);
             chain
         };
-        let residue_key = (row.asym_id.clone(), row.residue_key.clone());
+        let residue_key = (
+            atom.asym_id.clone(),
+            atom.label_sequence_id,
+            atom.author_sequence_id.clone(),
+            atom.insertion_code.clone(),
+            atom.component_id.clone(),
+            atom.occurrence,
+        );
         let residue = if let Some(residue) = residues.get(&residue_key) {
             *residue
         } else {
             let residue = hierarchy
                 .add_residue(
                     chain,
-                    row.comp_id.clone(),
-                    row.label_seq_id,
-                    row.auth_seq_id.clone(),
-                    row.insertion_code.clone(),
-                )
-                .map_err(hierarchy_error)?;
-            let record = &mut hierarchy.residues[residue.index()];
-            record.label_comp_id = Some(row.comp_id.clone());
-            record.author_comp_id = row.auth_comp_id.clone();
-            residues.insert(residue_key, residue);
-            residue
-        };
-        let atom = atoms[key];
-        graph.atom(atom).map_err(graph_error)?;
-        hierarchy
-            .add_atom_site(
-                residue,
-                atom,
-                SmcraAtomSiteMetadata {
-                    type_symbol: Some(row.element.symbol().to_owned()),
-                    label_asym_id: Some(row.asym_id.clone()),
-                    auth_asym_id: row.auth_asym_id.clone(),
-                    label_atom_id: Some(row.atom_name.clone()),
-                    auth_atom_id: row.auth_atom_name.clone(),
-                },
-            )
-            .map_err(hierarchy_error)?;
-    }
-    Ok(hierarchy)
-}
-
-fn extract_hierarchy(
-    source: &Hierarchy,
-    atom_map: &BTreeMap<AtomId, AtomId>,
-) -> Result<Hierarchy, MmcifInterpretError> {
-    let mut hierarchy = Hierarchy::new();
-    hierarchy.props_mut().clone_from(source.props());
-    for (_, source_chain) in source.chains() {
-        let residues = source_chain
-            .residues()
-            .iter()
-            .filter_map(|id| source.residue(*id).ok())
-            .filter(|residue| {
-                residue.atom_sites().iter().any(|id| {
-                    source
-                        .atom_site(*id)
-                        .ok()
-                        .is_some_and(|site| atom_map.contains_key(&site.atom()))
-                })
-            })
-            .collect::<Vec<_>>();
-        if residues.is_empty() {
-            continue;
-        }
-        let chain = hierarchy
-            .add_chain(
-                source_chain.label_id().to_owned(),
-                source_chain.author_id().map(str::to_owned),
-            )
-            .map_err(hierarchy_error)?;
-        hierarchy
-            .chain_props_mut(chain)
-            .map_err(hierarchy_error)?
-            .clone_from(source_chain.props());
-        for source_residue in residues {
-            let residue = hierarchy
-                .add_residue(
-                    chain,
-                    source_residue.name().to_owned(),
-                    source_residue.label_seq_id(),
-                    source_residue.author_seq_id().map(str::to_owned),
-                    source_residue.insertion_code().map(str::to_owned),
+                    atom.component_id.clone(),
+                    atom.label_sequence_id,
+                    atom.author_sequence_id.clone(),
+                    atom.insertion_code.clone(),
                 )
                 .map_err(hierarchy_error)?;
             hierarchy
                 .set_residue_component_ids(
                     residue,
-                    source_residue.label_comp_id().map(str::to_owned),
-                    source_residue.author_comp_id().map(str::to_owned),
+                    Some(atom.component_id.clone()),
+                    atom.auth_component_id.clone(),
                 )
                 .map_err(hierarchy_error)?;
-            hierarchy
-                .residue_props_mut(residue)
-                .map_err(hierarchy_error)?
-                .clone_from(source_residue.props());
-            for source_site_id in source_residue.atom_sites() {
-                let source_site = source.atom_site(*source_site_id).map_err(hierarchy_error)?;
-                let Some(&target_atom) = atom_map.get(&source_site.atom()) else {
-                    continue;
-                };
-                let site = hierarchy
-                    .add_atom_site(residue, target_atom, source_site.metadata().clone())
-                    .map_err(hierarchy_error)?;
-                hierarchy
-                    .atom_site_props_mut(site)
-                    .map_err(hierarchy_error)?
-                    .clone_from(source_site.props());
-            }
-        }
+            residues.insert(residue_key, residue);
+            residue
+        };
+        hierarchy
+            .add_atom_site(
+                residue,
+                atom.atom,
+                SmcraAtomSiteMetadata {
+                    type_symbol: Some(atom.type_symbol.clone()),
+                    label_asym_id: Some(atom.asym_id.clone()),
+                    auth_asym_id: atom.auth_asym_id.clone(),
+                    label_atom_id: Some(atom.atom_name.clone()),
+                    auth_atom_id: atom.auth_atom_name.clone(),
+                },
+            )
+            .map_err(hierarchy_error)?;
     }
     Ok(hierarchy)
 }

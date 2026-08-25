@@ -364,22 +364,16 @@ fn prepare_model(
     classifications: &BTreeMap<MoleculeInstanceId, EntityKind>,
 ) -> Result<PreparedModel, MmcifWriteError> {
     let mut reserved_asym_ids = BTreeSet::new();
-    for (id, molecule) in model.topology().instances() {
-        let definition = model
-            .topology()
-            .definition_for_instance(id)
-            .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
-        if let Some(hierarchy) = definition.hierarchy() {
-            for (_, chain) in hierarchy.chains() {
-                if chain.label_id().is_empty() {
-                    return Err(invalid_hierarchy(molecule, "chain label ID is empty"));
-                }
-                if !reserved_asym_ids.insert(chain.label_id().to_owned()) {
-                    return Err(MmcifWriteError::DuplicateAsymId(
-                        chain.label_id().to_owned(),
-                    ));
-                }
-            }
+    for (_, chain) in model.topology().hierarchy().chains() {
+        if chain.label_id().is_empty() {
+            return Err(MmcifWriteError::InvalidModel(
+                "topology hierarchy chain label ID is empty".to_owned(),
+            ));
+        }
+        if !reserved_asym_ids.insert(chain.label_id().to_owned()) {
+            return Err(MmcifWriteError::DuplicateAsymId(
+                chain.label_id().to_owned(),
+            ));
         }
     }
 
@@ -387,9 +381,10 @@ fn prepare_model(
     for (id, _) in model.topology().instances() {
         if model
             .topology()
-            .definition_for_instance(id)
+            .molecule(id)
             .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
-            .hierarchy()
+            .atom_sites()
+            .next()
             .is_some()
         {
             continue;
@@ -421,12 +416,19 @@ fn prepare_model(
             id: entity_id.clone(),
             kind,
         });
-        if let Some(hierarchy) = definition.hierarchy() {
+        if model
+            .topology()
+            .molecule(id)
+            .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
+            .atom_sites()
+            .next()
+            .is_some()
+        {
             collect_macro_rows(
                 model,
                 molecule,
                 definition,
-                hierarchy,
+                model.topology().hierarchy(),
                 &entity_id,
                 kind,
                 &mut asyms,
@@ -596,16 +598,23 @@ fn collect_macro_rows(
     asym_seen: &mut BTreeSet<String>,
     rows: &mut Vec<AtomRow>,
 ) -> Result<(), MmcifWriteError> {
-    let mut sites = BTreeMap::<AtomId, &SmcraAtomSite>::new();
+    let mut sites = BTreeMap::<InstanceAtomId, &SmcraAtomSite>::new();
     for (_, site) in hierarchy.atom_sites() {
-        if sites.insert(site.atom, site).is_some() {
-            return Err(MmcifWriteError::DuplicateAtomSite(
-                molecule.qualify_atom(site.atom),
-            ));
+        if site.atom.molecule() == molecule.id() && sites.insert(site.atom, site).is_some() {
+            return Err(MmcifWriteError::DuplicateAtomSite(site.atom));
         }
     }
     for (_, chain) in hierarchy.chains() {
-        if asym_seen.insert(chain.label_id.clone()) {
+        let touches_instance = chain.residues().iter().any(|residue| {
+            hierarchy.residue(*residue).is_ok_and(|residue| {
+                residue.atom_sites().iter().any(|site| {
+                    hierarchy
+                        .atom_site(*site)
+                        .is_ok_and(|site| site.atom().molecule() == molecule.id())
+                })
+            })
+        });
+        if touches_instance && asym_seen.insert(chain.label_id.clone()) {
             asyms.push(AsymRow {
                 id: chain.label_id.clone(),
                 entity_id: entity_id.to_owned(),
@@ -616,21 +625,12 @@ fn collect_macro_rows(
     for (atom_id, atom) in definition.molecule().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
         let site = sites
-            .get(&atom_id)
+            .get(&qualified)
             .copied()
             .ok_or(MmcifWriteError::MissingAtomSite(qualified))?;
         let residue = hierarchy
             .residue(site.residue)
             .map_err(|error| invalid_hierarchy(molecule, error.to_string()))?;
-        if residue.label_seq_id.is_none() && residue.author_seq_id.is_none() {
-            return Err(invalid_hierarchy(
-                molecule,
-                format!(
-                    "residue {} has neither a label nor author sequence identifier",
-                    site.residue.raw()
-                ),
-            ));
-        }
         let chain = hierarchy
             .chain(residue.chain)
             .map_err(|error| invalid_hierarchy(molecule, error.to_string()))?;

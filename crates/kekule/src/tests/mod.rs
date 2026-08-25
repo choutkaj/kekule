@@ -364,7 +364,6 @@ pub(super) struct RepresentedMoleculeSnapshot {
     atoms: Vec<Option<RepresentedAtomSnapshot>>,
     bonds: Vec<Option<RepresentedBondSnapshot>>,
     adjacency: Vec<Vec<BondId>>,
-    hierarchy: Hierarchy,
     stereo_elements: Vec<Option<RepresentedStereoElementSnapshot>>,
     stereo_groups: Vec<Option<StereoGroup>>,
     props: PropMap,
@@ -402,7 +401,6 @@ pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedM
             })
             .collect(),
         adjacency: molecule.graph.adjacency.clone(),
-        hierarchy: molecule.hierarchy().clone(),
         stereo_elements: molecule
             .graph
             .stereo_elements
