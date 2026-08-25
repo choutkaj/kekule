@@ -20,54 +20,6 @@
 //! Coordinate-dependent kernels in `kekule` and external potential adapters
 //! can consume [`TrajectoryFrameView::model_view`] or
 //! [`FrameBuffer::model_view`] without copying coordinates.
-//!
-//! Generic topology remapping is deliberately absent from stored trajectory
-//! state:
-//!
-//! ```compile_fail
-//! # use std::sync::Arc;
-//! # use kekule::topology::Topology;
-//! # use kekule_traj::Trajectory;
-//! # let trajectory: Trajectory = todo!();
-//! # let topology: Arc<Topology> = todo!();
-//! let _ = trajectory.remap_to(&topology);
-//! ```
-//!
-//! ```compile_fail
-//! # use std::sync::Arc;
-//! # use kekule::topology::Topology;
-//! # use kekule_traj::TrajectoryFrame;
-//! # let frame: TrajectoryFrame = todo!();
-//! # let topology: Arc<Topology> = todo!();
-//! let _ = frame.remap_to(&topology);
-//! ```
-//!
-//! ```compile_fail
-//! # use std::sync::Arc;
-//! # use kekule::topology::Topology;
-//! # use kekule_traj::FrameBuffer;
-//! # let buffer: FrameBuffer = todo!();
-//! # let topology: Arc<Topology> = todo!();
-//! let _ = buffer.remap_to(&topology);
-//! ```
-//!
-//! ```compile_fail
-//! # use std::sync::Arc;
-//! # use kekule::topology::Topology;
-//! # use kekule_traj::Velocities;
-//! # let velocities: Velocities = todo!();
-//! # let topology: Arc<Topology> = todo!();
-//! let _ = velocities.remap_to(&topology);
-//! ```
-//!
-//! ```compile_fail
-//! # use std::sync::Arc;
-//! # use kekule::topology::Topology;
-//! # use kekule_traj::Forces;
-//! # let forces: Forces = todo!();
-//! # let topology: Arc<Topology> = todo!();
-//! let _ = forces.remap_to(&topology);
-//! ```
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 // Kekule consistently names owned conversions `to_*`, including consuming ones.

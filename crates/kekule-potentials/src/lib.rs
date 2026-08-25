@@ -13,13 +13,6 @@
 //! ```
 //! use kekule_potentials::dreiding::{DreidingPotential, DreidingPrepareOptions};
 //! ```
-//!
-//! Implementation types are intentionally absent from the companion crate
-//! root:
-//!
-//! ```compile_fail
-//! use kekule_potentials::DreidingPotential;
-//! ```
 
 #[cfg(feature = "dreiding")]
 pub mod dreiding;

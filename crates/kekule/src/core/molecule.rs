@@ -128,10 +128,6 @@ impl Molecule {
         self.graph.atoms.iter().flatten().count()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.atom_count() == 0
-    }
-
     pub fn bond_count(&self) -> usize {
         self.graph.bonds.iter().flatten().count()
     }
