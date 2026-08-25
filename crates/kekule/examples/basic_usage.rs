@@ -1,10 +1,10 @@
 use std::error::Error;
 
-use kekule::{core::Molecule, stereo};
+use kekule::{smiles, stereo};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Interpret a chiral amino acid canonically, then perceive chemistry.
-    let mut molecules = Molecule::from_smiles("C[C@@H](C(=O)O)N")?;
+    let mut molecules = smiles::to_molecules("C[C@@H](C(=O)O)N")?;
     let mut molecule = molecules.pop().expect("SMILES contains one component");
     molecule.perceive()?;
 
@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Write canonical connectivity and a stereo-preserving SMILES form.
-    println!("canonical SMILES: {}", molecule.to_canonical_smiles()?);
-    println!("isomeric SMILES: {}", molecule.to_isomeric_smiles()?);
+    println!("canonical SMILES: {}", smiles::write_canonical(&molecule)?);
+    println!("isomeric SMILES: {}", smiles::write_isomeric(&molecule)?);
     Ok(())
 }

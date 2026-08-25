@@ -2,6 +2,7 @@ use kekule::core::{
     Atom, AtomId, BondOrder, Element, Molecule, MoleculeEditor, MoleculePublicationError,
     Perception,
 };
+use kekule::smiles;
 use kekule::topology::{InstanceAtomId, TopologyBuilder};
 
 fn carbon() -> Atom {
@@ -9,7 +10,7 @@ fn carbon() -> Atom {
 }
 
 fn one_smiles(input: &str) -> Molecule {
-    let mut molecules = Molecule::from_smiles(input).expect("SMILES interprets");
+    let mut molecules = smiles::to_molecules(input).expect("SMILES interprets");
     assert_eq!(molecules.len(), 1);
     molecules.pop().expect("component count was checked")
 }
