@@ -12,7 +12,8 @@ bioinformatics, molecular structure handling, and molecular modelling.
 The foundational chemical object is `Molecule`: one non-empty connected,
 geometry-independent molecular entity. The foundational system object is
 `Topology`: one coordinate-free molecular system composed from one or more
-molecule instances. Geometry belongs above topology.
+molecule instances and their system-level hierarchy. Geometry belongs above
+topology.
 
 ## Canonical object model
 
@@ -23,7 +24,7 @@ source text / bytes
          -> optional format-specific Record values for record-oriented formats
     -> interpretation / canonical publication
          -> connected canonical Molecule components
-              -> Vec<Molecule> when geometry is not requested or retained
+              -> Vec<Molecule> when geometry/system context is not requested
               -> Topology + Positions -> Model when one record carries geometry
               -> higher geometry objects such as Ensemble when the format
                  semantically contains several realizations of one topology
@@ -34,9 +35,12 @@ The intended ownership hierarchy is therefore:
 ```text
 Molecule
   one connected geometry-independent molecular entity
+  Graph + Perception
 
 Topology
   one geometry-independent system made from one or more Molecule instances
+  topology-wide atom/bond identity and dense ordering
+  one optional system-level Hierarchy
 
 Model
   one geometry-dependent realization of a Topology
@@ -78,7 +82,6 @@ The intended core shape is:
 ```rust
 pub struct Molecule {
     graph: Graph,
-    hierarchy: Hierarchy,
     perception: Perception,
 }
 ```
@@ -91,19 +94,22 @@ Graph
   required
   defines the connected molecular entity
 
-Hierarchy
-  authoritative coordinate-independent organization
-  may be empty
-  residues, chains, polymer annotation, and mappings to graph atoms
-
 Perception
   derived chemical interpretation
   reconstructible from represented chemistry plus an explicit perception model
   does not define molecular identity
 ```
 
-`Molecule` contains no coordinates, conformers, velocities, periodic cell, or
-other geometry-dependent state.
+Residue, chain, polymer, asymmetry, and atom-site organization do not belong to
+`Molecule`. They belong to the system-level `Hierarchy` owned by `Topology`.
+
+This boundary is intentional. Covalent connectedness and biological/source
+hierarchy are independent partitions of atoms: one hierarchy chain may span
+several disconnected `Molecule` instances, and one connected `Molecule` may span
+several hierarchy chains.
+
+`Molecule` contains no coordinates, conformers, velocities, periodic cell,
+residue/chain hierarchy, or other system/geometry-dependent state.
 
 ### Connectedness invariant
 
@@ -184,67 +190,102 @@ represented bond orders. Aromatic atom/bond membership belongs to `Perception`.
 
 ## `Hierarchy`
 
-`Hierarchy` stores coordinate-independent organization attached to the same
-connected molecular entity.
+`Hierarchy` is authoritative coordinate-independent organization of atoms at
+`Topology` scope.
 
-It may be empty. A molecule does not become a different Rust type merely
-because hierarchy is present.
+It may be empty. Its presence does not create a different molecular or topology
+type.
 
 Typical hierarchy state includes:
 
 ```text
-residues
 chains
+residues
 polymer organization
 residue/chain identifiers
 component names
 atom-site annotations
-mappings from hierarchical entities to AtomId
+mappings from hierarchy atom sites to InstanceAtomId
 ```
 
-Hierarchy is orthogonal to chemistry:
+Hierarchy is orthogonal to molecular connectedness:
 
 ```text
-Graph answers:
-  which atoms exist and how are they chemically bonded?
+Molecule / Graph answers:
+  which atoms form one connected molecular entity, and how are they bonded?
 
-Hierarchy answers:
-  how are those atoms organized into residues, chains, and polymers?
+Topology / Hierarchy answers:
+  how are system atoms organized into residues, chains, polymers, asymmetry
+  groups, and related source-level structural organization?
 ```
 
-Hierarchy does not own independent atoms or bonds and must reference only live
-graph atoms.
+Hierarchy does not own independent atoms or bonds. Every hierarchy atom site
+must resolve to one live `InstanceAtomId` in the containing `Topology`.
 
-A small molecule parsed from a biological format may carry hierarchy. A protein
-or nucleic acid uses the same `Molecule` type and simply has non-empty
-hierarchy.
+Hierarchy node identities are topology-global. A chain, residue, or atom-site ID
+belongs to one `Topology`; it is not a molecule-local ID requiring an additional
+`MoleculeInstanceId` qualifier.
 
-The presence or absence of hierarchy is not a classifier and must not control
-which fundamental molecular type exists.
+Conceptually:
 
-### Disconnected biological source entities
+```text
+Hierarchy
+  ChainId
+    ResidueId
+      AtomSiteId -> InstanceAtomId
+```
 
-Biological/source identity may span disconnected graph components, for example
-a chain with unresolved missing residues or a noncovalent multi-chain complex.
-Kekule must not fabricate bonds to preserve that source grouping.
+The exact public type names are not normative, but the ownership and identity
+rules are.
 
-Each connected component becomes a separate `Molecule`, carrying the subset of
-hierarchy that belongs to that component.
+### Hierarchy may cross molecule boundaries
 
-The current core architecture does not introduce a system-level biological
-grouping or provenance framework. Such information may remain in format-layer
-records or other external sidecars when needed.
+Hierarchy and connected molecular identity must not be forced to have the same
+boundaries.
+
+Examples:
+
+```text
+one source chain with an unresolved break
+  -> two connected Molecule instances
+  -> one Chain containing residues/atom sites from both instances
+
+covalently disulfide-linked source chains
+  -> one connected Molecule instance
+  -> two Chains inside one Topology hierarchy
+
+many disconnected waters sharing one source asymmetry identifier
+  -> many Molecule instances
+  -> hierarchy organization may group their residues under one source chain/asym
+```
+
+Kekule must never fabricate bonds merely to preserve hierarchy grouping, and it
+must never duplicate hierarchy nodes merely because a chain crosses a molecule
+boundary.
+
+### Molecule-centric hierarchy views
+
+`Molecule` itself does not own hierarchy. At system scope, an instance-first
+view may nevertheless expose convenient filtered hierarchy navigation:
+
+```text
+topology.molecule(instance).chains()
+topology.molecule(instance).residues()
+topology.molecule(instance).atom_sites()
+```
+
+Such APIs are borrowed/filtering views over the one topology-owned hierarchy.
+They do not create or own per-molecule hierarchy copies.
 
 ### Domain-specific APIs
 
 Protein-, nucleic-acid-, or polymer-specific algorithms do not require owning
 wrapper types.
 
-They may operate directly on `Molecule`/`Hierarchy`, or APIs may expose
-lightweight borrowed validated views such as `ProteinView<'_>` or
-`NucleicAcidView<'_>`.
+They may operate on `Topology`/`Hierarchy`, `Model`, or lightweight borrowed
+validated views such as `ProteinView<'_>` or `NucleicAcidView<'_>`.
 
-Such views are interpretations of one `Molecule`; they do not own another
+Such views interpret existing topology/hierarchy state; they do not own another
 molecular object.
 
 ## `Perception`
@@ -306,7 +347,7 @@ chemically perceived:
 ```
 
 This distinction may be reflected internally if useful, but the public
-`Molecule` architecture remains `graph + hierarchy + perception`.
+`Molecule` architecture remains `Graph + Perception`.
 
 ### Perception installation and invalidation
 
@@ -362,8 +403,10 @@ exactly one connected component
 valid atom/bond references
 valid adjacency
 valid stereo references
-valid hierarchy references and hierarchy/graph consistency
 ```
+
+Hierarchy validation is not a `MoleculeEditor` responsibility. Hierarchy is
+validated when a `Topology` is published.
 
 Chemical perception need not be valid during editing. On successful
 publication, stale perception must be discarded, recomputed, or explicitly
@@ -453,6 +496,10 @@ At the parsing/interpretation boundary, an owned conversion that returns
 `to_molecule()` API is appropriate only where the input type or operation
 actually guarantees exactly one connected molecule.
 
+Because `Molecule` no longer owns hierarchy, `to_molecules()` must not synthesize
+residue or chain organization merely to imitate a structure file. Hierarchy is
+constructed only when a system-level `Topology` is being assembled.
+
 ### Multi-record formats
 
 Multi-record formats must preserve record boundaries rather than flattening all
@@ -491,10 +538,12 @@ A coordinate-bearing record may support two distinct canonical outputs:
 record.to_molecules()
   -> canonical connected Molecule values
   -> source geometry is not retained in the returned domain object
+  -> no synthetic hierarchy is attached to the Molecules
 
 record.to_model()
   -> the same canonical connected Molecule values
   -> assembled as molecule instances in one Topology
+  -> hierarchy assembled or synthesized at Topology scope
   -> source geometry transferred into Positions in matching canonical order
   -> one Model
 ```
@@ -515,14 +564,82 @@ source record
     -> partition connected components
     -> canonical publication / atom remapping
     -> canonical Molecule + matching optional component geometry
+    -> optional Topology assembly + hierarchy construction
 ```
 
-`to_molecules()` discards the published geometry. `to_model()` assembles the
-published `(Molecule, geometry)` components into `Topology + Positions`.
+`to_molecules()` discards the published geometry and does not create hierarchy.
+`to_model()` assembles the published `(Molecule, geometry)` components into
+`Topology + Positions` and may construct hierarchy appropriate to the format.
+
 Coordinates may still be consulted during canonical publication when a format's
 stereochemical interpretation legitimately requires geometry; "geometry is
 ignored" means it is not retained in the resulting `Molecule`, not that the
 interpreter is forbidden from consulting it.
+
+### Synthetic MOL/SDF hierarchy
+
+Molfile and SDF do not normally provide PDB/mmCIF-style chain/residue hierarchy,
+but a geometry-bearing `Model` benefits from uniform hierarchy-aware selection
+and slicing.
+
+When `MolfileDocument::to_model()` or `SdfRecord::to_model()` assembles a
+`Topology`, it should synthesize minimal hierarchy at topology scope:
+
+```text
+one deterministic synthetic chain
+  one residue per connected source component
+    residue name: UNL
+    atom sites -> the component's InstanceAtomId values
+```
+
+`UNL` is the conventional unknown-ligand residue name. The exact synthetic chain
+identifier and residue numbering policy may be implementation-defined, but must
+be deterministic and documented.
+
+If later format-specific evidence supports a more specific residue/component
+identity, it may replace the synthetic default. The initial architecture should
+not attempt speculative ligand/ion/water classification beyond information
+actually present in the source.
+
+This synthetic hierarchy belongs only to the assembled `Topology`; the
+underlying `Molecule` definitions remain hierarchy-free.
+
+### mmCIF hierarchy interpretation
+
+mmCIF hierarchy must be reconstructed as one topology-level hierarchy, not as
+independent copies attached to connected molecules.
+
+The interpretation order is conceptually:
+
+```text
+_atom_site and related mmCIF categories
+    -> parse source atom/residue/chain/asymmetry identity
+    -> select coordinate model and alternate locations
+    -> construct asserted/inferred molecular connectivity
+    -> partition into connected components
+    -> publish canonical Molecule values
+    -> install Molecule instances into one Topology
+    -> establish source atom -> InstanceAtomId correspondence
+    -> construct one Hierarchy over those InstanceAtomId values
+    -> attach Positions / AtomData and publish Model or Ensemble
+```
+
+The hierarchy must preserve distinct mmCIF label and author identity where both
+are present, including at least the relevant chain/asymmetry, residue/component,
+sequence, insertion-code, and atom-site identifiers.
+
+Hierarchy construction must not be restricted to polymer entities. Polymer,
+branched, non-polymer, ligand/ion, and water atom-site records may all carry
+hierarchical/source organization and should participate when representable.
+
+Entity classification such as polymer/non-polymer/water must be derived from
+mmCIF entity/source semantics, not inferred from whether hierarchy happens to be
+present.
+
+If one source chain/asymmetry spans several disconnected graph components, the
+result must remain one hierarchy chain referencing atoms from several molecule
+instances. If several source chains are covalently connected, they remain
+several hierarchy chains referencing one molecule instance.
 
 ### Format-specific conversion capabilities
 
@@ -573,14 +690,16 @@ expose richer reports and mappings.
 ### Interpretation and perception
 
 Parsing recognizes source syntax. Interpretation translates source assertions
-into canonical Kekule graph/hierarchy state.
+into canonical Kekule graph state and, where a system object is constructed,
+canonical topology hierarchy.
 
 Interpretation may perform deterministic representation rewrites required to
 publish a canonical molecule, such as localization of aromatic source bonding
 and conversion of source stereo notation into canonical stereo elements.
 
 Interpretation does not run arbitrary chemical standardization, choose a
-tautomer/protonation state, or invent bonds merely to force connectedness.
+tautomer/protonation state, or invent bonds merely to force connectedness or
+preserve hierarchy.
 
 If interpretation yields multiple disconnected components, each component is
 published independently as a valid `Molecule`.
@@ -603,8 +722,8 @@ molecular system.
 
 Its fundamental responsibility is to answer:
 
-> Which molecular entities exist in this system, and how are all of their
-> identities laid out at system scope?
+> Which molecular entities exist in this system, how are all of their identities
+> laid out at system scope, and how are their atoms organized hierarchically?
 
 A topology contains one or more explicit `Molecule` instances. Because every
 `Molecule` is connected and topology introduces no bonds between different
@@ -620,6 +739,7 @@ Topology
   topology-wide atom/bond identity
   canonical dense atom/bond ordering
   identity <-> dense-index mappings
+  Hierarchy
 ```
 
 Topology contains no positions, velocities, forces, periodic cell, conformers,
@@ -648,7 +768,7 @@ instance identity
 underlying Molecule
 qualified atoms
 qualified bonds
-qualified hierarchy
+filtered hierarchy nodes touching this instance
 ```
 
 The exact type name is not normative, but instance-first navigation is.
@@ -695,11 +815,11 @@ The minimal core does not attach a generic `MoleculeInstanceMetadata` object to
 each instance. Contextual roles, annotations, or source metadata can be added
 later only when concrete use cases justify their semantics.
 
-### Instance-qualified identity
+### Instance-qualified molecular identity
 
 `AtomId` and `BondId` are local to one `Molecule` definition. Once a molecule
-appears in a topology, system-level identity must qualify the local ID by its
-molecule instance.
+appears in a topology, system-level molecular identity must qualify the local ID
+by its molecule instance.
 
 Conceptually:
 
@@ -708,11 +828,13 @@ InstanceAtomId = (MoleculeInstanceId, AtomId)
 InstanceBondId = (MoleculeInstanceId, BondId)
 ```
 
-The same rule applies to hierarchy-local identities when exposed at topology
-scope.
-
 This prevents identity collisions when one definition is instantiated multiple
 times.
+
+Hierarchy identities are different: chains, residues, and atom sites are owned
+by the topology itself and therefore already have topology scope. They must not
+be represented as `(MoleculeInstanceId, local hierarchy ID)` merely because an
+atom site eventually points into a molecule instance.
 
 ### Dense topology ordering
 
@@ -740,6 +862,25 @@ TopologyAtomIndex / TopologyBondIndex
 Dense ordering tells `Model`, `Ensemble`, and `Trajectory` how to interpret their
 numerical arrays. The arrays themselves do not own topology identity.
 
+### Hierarchy ownership and invariants
+
+`Topology` is the sole authoritative owner of `Hierarchy`.
+
+A published topology must guarantee at least:
+
+```text
+every hierarchy chain/residue/site ID is valid within that Topology
+every residue references a live chain
+every atom site references a live residue
+every atom site resolves to one live InstanceAtomId
+atom-site lookup mappings are internally consistent
+hierarchy nodes may reference atoms from any molecule instance in the Topology
+```
+
+There must not be a second authoritative hierarchy stored inside molecule
+definitions or instances. Molecule-centric hierarchy APIs are projections of the
+topology hierarchy.
+
 ### No topology-level covalent bonds
 
 Topology must not introduce asserted covalent/topological bonds between
@@ -763,10 +904,51 @@ Topology should therefore expose molecule-instance membership directly rather
 than retain an API such as `connected_components(instance)` whose result is
 architecturally predetermined.
 
+### Hierarchy-aware selections and subsets
+
+Hierarchy is a primary system-navigation mechanism. `Topology` should support
+selections over chains, residues, atom sites, and their identifiers/labels, with
+results represented as topology-bound atom selections.
+
+A hierarchy selection and a structural subset are distinct operations:
+
+```text
+selection
+  identifies atoms in the existing Topology
+
+subset/slice
+  constructs a new Topology containing the selected atoms
+```
+
+A structural subset may cut through existing molecule instances. For each
+source `Molecule`, the induced selected graph is partitioned into connected
+components, and every non-empty component is published as a new valid
+`Molecule` instance in the target topology. The target hierarchy is filtered and
+remapped onto the resulting target `InstanceAtomId` values; empty residues and
+chains are omitted.
+
+The subset operation should return a narrow, operation-specific source-to-target
+correspondence sufficient to transfer dense state such as positions, atom data,
+velocities, and forces. This is not a resurrection of a generic foundational
+`TopologyMapping` abstraction.
+
+With that primitive, higher-level objects may expose ergonomic operations such
+as:
+
+```text
+model.slice(selection)
+ensemble.slice(selection)
+trajectory.slice(selection)
+```
+
+`Model` transfers one realization; `Ensemble` and `Trajectory` construct the
+subset topology once and apply the same dense-index correspondence to every
+member/frame.
+
 ### Construction and invariants
 
-A topology builder may stage definitions and instances and publish an immutable
-`Topology` only after validation.
+A topology builder may stage definitions, instances, and hierarchy and publish
+an immutable `Topology` only after validation.
 
 A published topology must satisfy at least:
 
@@ -778,6 +960,7 @@ every referenced Molecule satisfies Molecule invariants
 instance-qualified atom/bond identities are valid
 dense atom/bond ordering is complete and deterministic
 identity/index mappings are mutually consistent
+hierarchy references and lookups are valid and complete for every stored site
 ```
 
 Convenience construction may add one fresh definition and one instance in a
@@ -799,8 +982,8 @@ geometry-bearing state.
 The core architecture does not provide a generic topology-remapping framework.
 If a workflow changes topology, geometry or other dense state for the new system
 must be constructed explicitly according to that workflow's own semantics.
-Topology correspondence, when needed by a specialized algorithm, is a separate
-algorithmic result rather than a foundational ownership mechanism.
+Operation-specific correspondence, such as the mapping returned by a subset
+operation, is allowed when required by that operation.
 
 ### Scope of the current Topology design
 
@@ -810,14 +993,17 @@ It does not introduce:
 
 ```text
 generic molecule-instance metadata
-system-level biological grouping
-system-level provenance hierarchy
+generic provenance framework
 geometry-dependent interactions
 inter-molecule topology bonds
 generic topology remapping
 ```
 
-These concerns should not be added speculatively. They may be introduced later
+System-level chain/residue/atom-site hierarchy is not speculative metadata; it
+is part of the core Topology architecture because hierarchy can span molecule
+boundaries and is required for structural navigation and slicing.
+
+Other concerns should not be added speculatively. They may be introduced later
 only as separate concepts when concrete requirements establish their semantics.
 
 ## Geometry boundary
@@ -838,7 +1024,7 @@ The intended separation is:
 
 ```text
 Topology
-  defines semantic identities and dense atom/bond ordering
+  defines semantic identities, Hierarchy, and dense atom/bond ordering
 
 Positions / AtomData / BondData / Velocities / Forces
   store dense numerical state
@@ -849,7 +1035,7 @@ Positions / AtomData / BondData / Velocities / Forces
 Model / Ensemble / Trajectory
   own the Topology context exactly once
   validate dense state against that Topology
-  provide semantic atom/bond access when topology context is required
+  provide semantic atom/bond/hierarchy access when topology context is required
 ```
 
 This means operations such as resolving an `InstanceAtomId` to a coordinate are
@@ -895,8 +1081,9 @@ Model
   model-level BondData
 ```
 
-A `Model` does not duplicate molecular chemistry. It interprets dense realization
-state against its topology's authoritative dense layout.
+A `Model` does not duplicate molecular chemistry or hierarchy. It interprets
+dense realization state against its topology's authoritative identities, dense
+layout, and hierarchy.
 
 Construction validates at least:
 
@@ -909,9 +1096,9 @@ BondData logical length == Topology bond count
 After construction, public mutation APIs must preserve those dimensional
 invariants.
 
-Semantic operations such as `position(InstanceAtomId)` belong on `Model` or a
-model-level borrowed view because only that layer owns both the topology and the
-numerical state.
+Semantic operations such as `position(InstanceAtomId)` and hierarchy-aware
+selection/slicing belong on `Model` or a model-level borrowed view because only
+that layer owns both the topology and the numerical state.
 
 ## `Ensemble`
 
@@ -933,7 +1120,7 @@ in the `Ensemble` topology's authoritative order.
 
 Insertion/construction validates every member's dimensions against the ensemble
 topology. Differences between members are geometric or member-level data, not
-molecular identity.
+molecular or hierarchy identity.
 
 An ensemble weight is contextual to membership in that ensemble and therefore
 belongs to the member relation rather than to `Topology`.
@@ -965,39 +1152,39 @@ reusable buffers for allocation efficiency, but those buffers follow the same
 ownership rule: topology context is owned once by the buffer/container rather
 than repeated inside every numerical array.
 
-A trajectory represents one fixed-topology epoch. Topology-changing chemistry is
-not represented by silently mutating one shared topology or by generically
-remapping frames. A workflow with changing topology should use separate topology
-epochs/objects and explicitly construct the geometry belonging to each epoch.
+A trajectory represents one fixed-topology epoch. Topology-changing chemistry or
+hierarchy is not represented by silently mutating one shared topology. A workflow
+with changing topology should use separate topology epochs/objects and explicitly
+construct the geometry belonging to each epoch.
 
 ## Molecular identity and equality
 
-Authoritative molecular identity is defined by represented state, not by derived
-cache population.
+Authoritative molecular identity is defined by represented molecular state, not
+by derived cache population or system hierarchy.
 
 `Perception` must therefore not make two otherwise identical represented
 molecules unequal merely because one has different cache presence.
 
-Whether hierarchy participates in a particular equality/hash/canonicalization
-operation must be explicit in that operation's semantics. Chemical graph
-identity and full represented-object identity need not be forced into one
-ambiguous notion of equality.
+A `Molecule` is independent of the residue/chain context in which one of its
+instances appears. The same molecular definition may be instantiated in several
+hierarchical contexts without becoming a different `Molecule`.
 
 Topology layout equality is distinct from graph isomorphism or chemical
-identity. Two independently constructed topologies may represent chemically
-equivalent systems while still having different instance IDs or dense layouts.
+identity. Full topology layout equality may include molecule definitions,
+instances, hierarchy, semantic IDs, and dense ordering. Two independently
+constructed topologies may represent chemically equivalent systems while still
+having different hierarchy IDs or dense layouts.
 
 ## Persistence and reconstruction
 
-Persistence consumers may store graph, hierarchy, and perception separately.
+Persistence consumers may store molecular graph/perception and topology
+hierarchy separately according to their ownership boundaries.
 
 Molecule reconstruction order is:
 
 ```text
 Graph
   -> validate represented graph
-Hierarchy
-  -> validate against Graph
 Perception
   -> checked install last
 Molecule
@@ -1009,9 +1196,10 @@ or rejected before publication.
 Loading must never weaken the connectedness invariant.
 
 Topology persistence must reconstruct definitions, instances, qualified
-identities, and authoritative dense ordering consistently. Geometry is restored
-separately and validated by the owning `Model`, `Ensemble`, or `Trajectory`
-against that topology layout.
+atom/bond identities, authoritative dense ordering, and hierarchy consistently.
+Hierarchy atom sites are validated against reconstructed `InstanceAtomId` values.
+Geometry is restored separately and validated by the owning `Model`, `Ensemble`,
+or `Trajectory` against that topology layout.
 
 Runtime domain objects are not required to be generic file-format DTOs. Source
 metadata that is not canonical represented molecular or topology state should
@@ -1027,9 +1215,10 @@ than one molecule, for example a fragmentation transformation may return
 
 Topology-changing system operations return a new topology rather than mutating a
 published topology in place. They do not automatically remap existing dense
-geometry/data into the new topology.
+geometry/data unless that operation explicitly defines and returns the necessary
+correspondence, as hierarchy-aware slicing does.
 
-Coordinate-only operations never mutate `Graph`, `Hierarchy`, `Perception`, or
+Coordinate-only operations never mutate `Graph`, `Perception`, `Hierarchy`, or
 `Topology`.
 
 ## Naming and module style
@@ -1039,13 +1228,15 @@ The intended molecule field/type naming is idiomatic Rust:
 ```rust
 pub struct Molecule {
     graph: Graph,
-    hierarchy: Hierarchy,
     perception: Perception,
 }
 ```
 
+`Topology` owns the system-level `Hierarchy`; the exact physical field/module
+layout is not normative.
+
 Field names use `snake_case`; type names use `UpperCamelCase`. Patterns such as
-`graph: Graph`, `hierarchy: Hierarchy`, and `perception: Perception` are normal
+`graph: Graph`, `perception: Perception`, and `hierarchy: Hierarchy` are normal
 Rust style and are preferred over redundant names unless a real ambiguity
 appears.
 
@@ -1055,33 +1246,40 @@ The exact file/module layout is not normative; semantic boundaries are.
 
 When deciding where new state belongs:
 
-1. Is it authoritative atom/bond/stereo chemistry? Put it in `Graph`.
-2. Is it coordinate-independent residue/chain/polymer organization within one
-   connected molecule? Put it in `Hierarchy`.
-3. Is it fundamental chemistry derived from the represented graph? Put it in
-   `Perception`.
-4. Does it identify which connected molecules exist in one coordinate-free
-   system or define their topology-wide layout? Put it in `Topology`.
+1. Is it authoritative atom/bond/stereo chemistry of one connected molecule?
+   Put it in `Graph`.
+2. Is it fundamental chemistry derived from the represented molecular graph?
+   Put it in `Perception`.
+3. Does it identify which connected molecules exist in one coordinate-free
+   system or define their topology-wide atom/bond layout? Put it in `Topology`.
+4. Is it coordinate-independent residue/chain/polymer/atom-site organization of
+   system atoms, potentially spanning molecule instances? Put it in the
+   `Hierarchy` owned by `Topology`.
 5. Is it task-specific analysis, typing, scoring, or parameterization? Keep it
    in a separate derived object.
 6. Is it dense coordinate/model/frame data? Store it in a topology-agnostic
    numerical container above `Topology`.
-7. Does an operation need to interpret dense data by semantic atom/bond identity?
-   Perform it at the `Model`, `Ensemble`, or `Trajectory` level where topology
-   and numerical state meet.
+7. Does an operation need to interpret dense data by semantic atom/bond/hierarchy
+   identity? Perform it at the `Model`, `Ensemble`, or `Trajectory` level where
+   topology and numerical state meet.
 8. Does an asserted new bond connect two current molecule instances? Construct a
    new connected `Molecule` and therefore a new `Topology`.
 9. Does a workflow change topology? Construct the new topology and its new dense
-   state explicitly; do not rely on a generic remapping layer.
+   state explicitly; do not rely on a generic remapping layer. Narrow
+   operation-specific correspondence is appropriate when required by the
+   operation.
 
 The core invariants are intentionally simple:
 
 > A Kekule `Molecule` is one connected, geometry-independent molecular entity
-> represented by `Graph + Hierarchy + Perception`.
+> represented by `Graph + Perception`.
 
 > A Kekule `Topology` is one immutable, geometry-independent molecular system
 > composed of one or more explicit `Molecule` instances with authoritative
-> topology-wide identity and dense layout.
+> topology-wide identity, dense layout, and system-level `Hierarchy`.
+
+> `Hierarchy` is owned exactly once by `Topology`; it may span molecule-instance
+> boundaries and maps atom sites to topology-qualified `InstanceAtomId` values.
 
 > `Model`, `Ensemble`, and `Trajectory` each own their shared `Topology` exactly
 > once. Their dense numerical subobjects do not own topology identity.
