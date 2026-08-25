@@ -1,9 +1,9 @@
 use std::fmt;
 
 use crate::geometry::Point3;
-use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT};
+use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 
-/// A dense numerical coordinate array in canonical model length units.
+/// A dense numerical coordinate array in Kekule's canonical length unit.
 ///
 /// `Positions` has no topology context. Structural owners such as [`super::Model`]
 /// validate its length and translate semantic atom identifiers to dense indices.
@@ -13,7 +13,7 @@ pub struct Positions {
 }
 
 impl Positions {
-    pub(super) fn from_model_values(values: Vec<Point3>) -> Self {
+    pub(super) fn from_canonical_values(values: Vec<Point3>) -> Self {
         debug_assert!(values.iter().all(|point| point.is_finite()));
         Self { values }
     }
@@ -23,7 +23,9 @@ impl Positions {
     where
         T: AsRef<[Point3]>,
     {
-        let factor = positions.unit().conversion_factor_to(MODEL_LENGTH_UNIT)?;
+        let factor = positions
+            .unit()
+            .conversion_factor_to(CANONICAL_LENGTH_UNIT)?;
         let source = positions.value().as_ref();
         let values = source
             .iter()
@@ -56,7 +58,7 @@ impl Positions {
     }
 
     pub fn values(&self) -> Quantity<&[Point3]> {
-        Quantity::new(self.values.as_slice(), MODEL_LENGTH_UNIT)
+        Quantity::new(self.values.as_slice(), CANONICAL_LENGTH_UNIT)
     }
 
     /// Copies a deterministic dense projection in the requested index order.
@@ -77,7 +79,7 @@ impl Positions {
         self.values
             .get(index)
             .copied()
-            .map(|point| Quantity::new(point, MODEL_LENGTH_UNIT))
+            .map(|point| Quantity::new(point, CANONICAL_LENGTH_UNIT))
             .ok_or(PositionError::InvalidIndex { index })
     }
 
@@ -86,7 +88,7 @@ impl Positions {
         index: usize,
         position: Quantity<Point3>,
     ) -> Result<(), PositionError> {
-        let point = position.to_unit(MODEL_LENGTH_UNIT)?.to_value();
+        let point = position.to_unit(CANONICAL_LENGTH_UNIT)?.to_value();
         if !point.is_finite() {
             return Err(PositionError::NonFinitePosition { index });
         }
@@ -121,7 +123,9 @@ impl Positions {
     where
         T: AsRef<[Point3]>,
     {
-        let factor = positions.unit().conversion_factor_to(MODEL_LENGTH_UNIT)?;
+        let factor = positions
+            .unit()
+            .conversion_factor_to(CANONICAL_LENGTH_UNIT)?;
         let source = positions.value().as_ref();
         if source.len() != self.len() {
             return Err(PositionError::PositionCountMismatch {

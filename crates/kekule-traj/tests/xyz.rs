@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use kekule::core::PropValue;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::topology::Topology;
-use kekule::units::{Quantity, ANGSTROM, MODEL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
+use kekule::units::{Quantity, ANGSTROM, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
 use kekule_traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
 use kekule_traj::io::{
     create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory, open_trajectory,
@@ -33,6 +33,14 @@ fn topology() -> Arc<Topology> {
 
 fn water_topology() -> Arc<Topology> {
     build_topology(&["O", "H", "H"], &[(0, 1), (0, 2)])
+}
+
+fn assert_xs_close(buffer: &FrameBuffer, expected: &[f64]) {
+    let actual = point_xs(buffer);
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.into_iter().zip(expected) {
+        assert!((actual - expected).abs() < 1.0e-12);
+    }
 }
 
 fn temporary_path(extension: Option<&str>) -> PathBuf {
@@ -90,7 +98,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
     buffer
         .set_velocities(Some(Quantity::new(
             [Vector3::new(1.0, 0.0, 0.0), Vector3::new(2.0, 0.0, 0.0)],
-            MODEL_VELOCITY_UNIT,
+            CANONICAL_VELOCITY_UNIT,
         )))
         .unwrap();
     buffer
@@ -102,7 +110,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
         .insert("stale".into(), PropValue::Bool(true));
 
     assert!(reader.read_next(&mut buffer).unwrap());
-    assert_eq!(point_xs(&buffer), vec![0.0, 3.0]);
+    assert_xs_close(&buffer, &[0.0, 0.3]);
     assert_eq!(buffer.positions().values().value().as_ptr(), pointer);
     assert!(buffer.cell().is_none());
     assert!(buffer.frame_view().velocities().is_none());
@@ -111,7 +119,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
     assert!(buffer.props().is_empty());
 
     assert!(reader.read_next(&mut buffer).unwrap());
-    assert_eq!(point_xs(&buffer), vec![1.0, 4.0]);
+    assert_xs_close(&buffer, &[0.1, 0.4]);
     let before_eof = point_xs(&buffer);
     assert!(!reader.read_next(&mut buffer).unwrap());
     assert_eq!(point_xs(&buffer), before_eof);
@@ -131,7 +139,7 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
     .unwrap();
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     reader.read_next(&mut buffer).unwrap();
-    assert_eq!(point_xs(&buffer), vec![1.0, 4.0]);
+    assert_xs_close(&buffer, &[0.1, 0.4]);
 
     for (input, expected) in [
         (
@@ -210,14 +218,14 @@ fn indexed_xyz_matches_sequential_and_random_reads_preserve_cursor() {
     let mut buffer = FrameBuffer::new(topology);
 
     reader.read_frame(1, &mut buffer).unwrap();
-    assert_eq!(point_xs(&buffer), vec![1.0, 4.0]);
+    assert_xs_close(&buffer, &[0.1, 0.4]);
     assert!(reader.read_next(&mut buffer).unwrap());
-    assert_eq!(point_xs(&buffer), vec![0.0, 3.0]);
+    assert_xs_close(&buffer, &[0.0, 0.3]);
     assert!(matches!(
         reader.read_frame(2, &mut buffer),
         Err(TrajectoryError::FrameIndexOutOfRange(2))
     ));
-    assert_eq!(point_xs(&buffer), vec![0.0, 3.0]);
+    assert_xs_close(&buffer, &[0.0, 0.3]);
 }
 
 #[test]
@@ -252,7 +260,10 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     .unwrap();
     let mut decoded = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut decoded).unwrap());
-    assert_eq!(decoded.positions().values().value(), &points);
+    assert_eq!(
+        decoded.positions().values().value(),
+        buffer.positions().values().value()
+    );
     assert!(reader.read_next(&mut decoded).unwrap());
     assert!(!reader.read_next(&mut decoded).unwrap());
 
@@ -631,9 +642,9 @@ fn independently_generated_ase_fixture_matches_expected_frames() {
     .unwrap();
     let mut buffer = FrameBuffer::new(topology);
     assert!(reader.read_next(&mut buffer).unwrap());
-    assert_eq!(point_xs(&buffer), vec![0.0, 0.9572, -0.239987]);
+    assert_xs_close(&buffer, &[0.0, 0.09572, -0.0239987]);
     assert!(reader.read_next(&mut buffer).unwrap());
-    assert_eq!(point_xs(&buffer), vec![0.1, 1.0572, -0.139987]);
+    assert_xs_close(&buffer, &[0.01, 0.10572, -0.0139987]);
     assert!(!reader.read_next(&mut buffer).unwrap());
 }
 
