@@ -161,7 +161,10 @@ fn add_and_remove_hydrogens_round_trip_methane_semantics() {
         .iter()
         .all(|entry| molecule.atom(entry.hydrogen).is_err()));
     perceive(&mut molecule).expect("re-perceive collapsed methane");
-    assert_eq!(molecule.to_canonical_smiles().expect("canonical"), "C");
+    assert_eq!(
+        smiles_api::write_canonical(&molecule).expect("canonical"),
+        "C"
+    );
 }
 
 #[test]

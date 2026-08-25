@@ -1,24 +1,56 @@
 use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::geometry::Point3;
 use kekule::sdf::{self, SdfParseOptions};
+use kekule::smiles;
 use kekule::structure::{Model, Positions};
 use kekule::units::{Quantity, ANGSTROM};
 
 fn one_smiles(input: &str) -> Molecule {
-    let mut molecules = Molecule::from_smiles(input).expect("SMILES interprets");
+    let mut molecules = smiles::to_molecules(input).expect("SMILES interprets");
     assert_eq!(molecules.len(), 1);
     molecules.pop().expect("component count was checked")
 }
 
 #[test]
 fn smiles_partitions_components_in_source_order() {
-    let molecules = Molecule::from_smiles("CC.O.[Na+]").expect("dot SMILES interprets");
+    let molecules = smiles::to_molecules("CC.O.[Na+]").expect("dot SMILES interprets");
     assert_eq!(molecules.len(), 3);
     assert_eq!(molecules[0].atom_count(), 2);
     assert_eq!(molecules[1].atoms().next().unwrap().1.element.symbol(), "O");
     assert_eq!(
         molecules[2].atoms().next().unwrap().1.element.symbol(),
         "Na"
+    );
+}
+
+#[test]
+fn smiles_convenience_preserves_cardinality_and_matches_explicit_pipeline() {
+    let ethanol = smiles::to_molecules("CCO").expect("ethanol interprets");
+    assert_eq!(ethanol.len(), 1);
+
+    let salt = smiles::to_molecules("[Na+].[Cl-]").expect("salt interprets");
+    assert_eq!(salt.len(), 2);
+
+    let document = smiles::parse_str("[Na+].[Cl-]").expect("salt parses");
+    let explicit = smiles::interpret(&document)
+        .expect("salt interprets explicitly")
+        .to_molecules();
+    assert_eq!(salt, explicit);
+}
+
+#[test]
+fn smiles_writers_remain_available_through_the_format_namespace() {
+    let ethanol = one_smiles("CCO");
+    assert_eq!(smiles::write(&ethanol).expect("SMILES writes"), "CCO");
+    assert_eq!(
+        smiles::write_canonical(&ethanol).expect("canonical SMILES writes"),
+        "CCO"
+    );
+
+    let chiral = one_smiles("F[C@H](Cl)Br");
+    assert_eq!(
+        smiles::write_isomeric(&chiral).expect("isomeric SMILES writes"),
+        "F[C@H](Cl)Br"
     );
 }
 

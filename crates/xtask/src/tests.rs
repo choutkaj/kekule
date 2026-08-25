@@ -5,7 +5,7 @@ fn perceive(molecule: &mut Molecule) {
 }
 
 fn one_smiles(input: &str) -> Result<Molecule, String> {
-    let mut molecules = Molecule::from_smiles(input).map_err(|error| error.to_string())?;
+    let mut molecules = kekule::smiles::to_molecules(input).map_err(|error| error.to_string())?;
     if molecules.len() != 1 {
         return Err(format!(
             "expected one connected molecule, found {}",
