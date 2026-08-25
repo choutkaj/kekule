@@ -468,10 +468,37 @@ impl MolfileInterpretation {
     }
 
     /// Assembles all interpreted components and their matching geometry into one model.
+    ///
+    /// The model receives one synthetic chain `A`, with one one-based `UNL`
+    /// residue per connected source component. Molecule definitions remain
+    /// hierarchy-free.
     pub fn to_model(self) -> Result<Model, ModelBuildError> {
         let mut builder = ModelBuilder::new();
+        let mut component_atoms = Vec::with_capacity(self.components.len());
         for component in self.components {
-            builder.add_molecule(&component.molecule, &component.positions)?;
+            let local_atoms = component.molecule.atom_ids().collect::<Vec<_>>();
+            let instance = builder.add_molecule(&component.molecule, &component.positions)?;
+            component_atoms.push((instance, local_atoms));
+        }
+        let hierarchy = builder.topology_builder_mut().hierarchy_mut();
+        let chain = hierarchy.add_chain("A", None)?;
+        for (index, (instance, atoms)) in component_atoms.into_iter().enumerate() {
+            let sequence =
+                i32::try_from(index + 1).map_err(|_| ModelBuildError::CapacityOverflow)?;
+            let residue = hierarchy.add_residue(
+                chain,
+                "UNL",
+                Some(sequence),
+                Some(sequence.to_string()),
+                None,
+            )?;
+            for atom in atoms {
+                hierarchy.add_atom_site(
+                    residue,
+                    crate::topology::InstanceAtomId::new(instance, atom),
+                    crate::topology::SmcraAtomSiteMetadata::default(),
+                )?;
+            }
         }
         builder.build()
     }

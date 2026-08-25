@@ -59,6 +59,20 @@ impl Positions {
         Quantity::new(self.values.as_slice(), MODEL_LENGTH_UNIT)
     }
 
+    /// Copies a deterministic dense projection in the requested index order.
+    pub fn select_indices(&self, indices: &[usize]) -> Result<Self, PositionError> {
+        let values = indices
+            .iter()
+            .map(|index| {
+                self.values
+                    .get(*index)
+                    .copied()
+                    .ok_or(PositionError::InvalidIndex { index: *index })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { values })
+    }
+
     pub fn position_at(&self, index: usize) -> Result<Quantity<Point3>, PositionError> {
         self.values
             .get(index)

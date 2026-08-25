@@ -2,7 +2,7 @@ use kekule::dssp::{
     self, DsspChainBreak, DsspError, DsspLimits, DsspOptions, DsspResource, DsspSecondaryStructure,
 };
 use kekule::mmcif::{self, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions};
-use kekule::topology::InstanceResidueId;
+use kekule::topology::SmcraResidueId;
 
 const CRAMBIN_MMCIF: &str = include_str!("../../../benchmarks/corpora/smoke/data/rcsb/1CRN.cif");
 
@@ -32,7 +32,7 @@ fn dssp_matches_biopython_mkdssp_4_6_1_for_crambin() {
         .collect::<String>();
 
     assert_eq!(residues.len(), 46);
-    let first_key: InstanceResidueId = residues[0].key();
+    let first_key: SmcraResidueId = residues[0].key();
     assert!(result.get(first_key).is_some());
     assert_eq!(codes, " EE SSHHHHHHHHHHHTTT  HHHHHHHHS EE SSS   GGG  ");
     assert_eq!(residues[0].chain_break(), DsspChainBreak::NewChain);

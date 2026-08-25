@@ -149,23 +149,43 @@ fn model_and_view_preserve_shared_topology_and_qualified_hierarchy_navigation() 
         .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
         .unwrap();
     let bond = editor.add_bond(carbon, oxygen, BondOrder::Single).unwrap();
-    let chain = editor.hierarchy_mut().add_chain("A", None).unwrap();
-    let residue = editor
-        .hierarchy_mut()
-        .add_residue(chain, "GLY", Some(1), None, None)
-        .unwrap();
-    let carbon_site = editor
-        .add_atom_site(residue, carbon, SmcraAtomSiteMetadata::default())
-        .unwrap();
-    editor
-        .add_atom_site(residue, oxygen, SmcraAtomSiteMetadata::default())
-        .unwrap();
     let molecule = editor.finish().unwrap();
 
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(&molecule).unwrap();
     let first = builder.add_instance(definition).unwrap();
     let second = builder.add_instance(definition).unwrap();
+    let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
+    let first_residue = builder
+        .hierarchy_mut()
+        .add_residue(chain, "GLY", Some(1), None, None)
+        .unwrap();
+    let second_residue = builder
+        .hierarchy_mut()
+        .add_residue(chain, "GLY", Some(2), None, None)
+        .unwrap();
+    let carbon_site = builder
+        .hierarchy_mut()
+        .add_atom_site(
+            first_residue,
+            InstanceAtomId::new(first, carbon),
+            SmcraAtomSiteMetadata::default(),
+        )
+        .unwrap();
+    for (residue, instance, atom) in [
+        (first_residue, first, oxygen),
+        (second_residue, second, carbon),
+        (second_residue, second, oxygen),
+    ] {
+        builder
+            .hierarchy_mut()
+            .add_atom_site(
+                residue,
+                InstanceAtomId::new(instance, atom),
+                SmcraAtomSiteMetadata::default(),
+            )
+            .unwrap();
+    }
     let topology = Arc::new(builder.build().unwrap());
     let mut model = Model::new(
         Arc::clone(&topology),
@@ -178,15 +198,14 @@ fn model_and_view_preserve_shared_topology_and_qualified_hierarchy_navigation() 
     )
     .unwrap();
 
-    let first_chain = InstanceChainId::new(first, chain);
-    let second_residue = InstanceResidueId::new(second, residue);
-    let first_site = InstanceAtomSiteId::new(first, carbon_site);
+    let first_chain = chain;
+    let first_site = carbon_site;
     let first_atom = InstanceAtomId::new(first, carbon);
     let second_atom = InstanceAtomId::new(second, carbon);
     let first_bond = InstanceBondId::new(first, bond);
     let view = model.view();
 
-    assert_eq!(model.chains().count(), 2);
+    assert_eq!(model.chains().count(), 1);
     assert_eq!(model.residues().count(), 2);
     assert_eq!(model.atom_sites().count(), 4);
     assert_eq!(
@@ -614,4 +633,109 @@ fn topology_subset_transforms_return_topology_directly_and_preserve_noops() {
     assert_eq!(subset.instance_count(), 1);
     assert_eq!(subset.atom_count(), 2);
     assert!(!Arc::ptr_eq(&subset, &topology));
+}
+
+#[test]
+fn model_and_ensemble_slices_reuse_one_subset_mapping_for_dense_state() {
+    let mut editor = MoleculeEditor::new();
+    let first = editor
+        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+        .unwrap();
+    let second = editor
+        .add_atom(Atom::new(Element::from_symbol("N").unwrap()))
+        .unwrap();
+    let third = editor
+        .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
+        .unwrap();
+    editor.add_bond(first, second, BondOrder::Single).unwrap();
+    editor.add_bond(second, third, BondOrder::Double).unwrap();
+    let molecule = editor.finish().unwrap();
+    let mut builder = ModelBuilder::new();
+    let instance = builder
+        .add_molecule(
+            &molecule,
+            &positions([
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(2.0, 0.0, 0.0),
+                Point3::new(3.0, 0.0, 0.0),
+            ]),
+        )
+        .unwrap();
+    let chain = builder
+        .topology_builder_mut()
+        .hierarchy_mut()
+        .add_chain("A", None)
+        .unwrap();
+    for (sequence, atom) in [(1, first), (2, second), (3, third)] {
+        let residue = builder
+            .topology_builder_mut()
+            .hierarchy_mut()
+            .add_residue(chain, "RES", Some(sequence), None, None)
+            .unwrap();
+        builder
+            .topology_builder_mut()
+            .hierarchy_mut()
+            .add_atom_site(
+                residue,
+                InstanceAtomId::new(instance, atom),
+                SmcraAtomSiteMetadata::default(),
+            )
+            .unwrap();
+    }
+    let mut model = builder.build().unwrap();
+    model
+        .atom_data_mut()
+        .set_occupancies([Some(0.1), Some(0.2), Some(0.3)])
+        .unwrap();
+    model
+        .bond_data_mut()
+        .set_property(
+            "score",
+            Quantity::new([Some(10.0), Some(20.0)], DIMENSIONLESS),
+        )
+        .unwrap();
+    let source_topology = model.shared_topology();
+    let selection = AtomSelection::from_atoms(
+        &source_topology,
+        [
+            InstanceAtomId::new(instance, first),
+            InstanceAtomId::new(instance, second),
+        ],
+    )
+    .unwrap();
+
+    let sliced = model.slice(&selection).unwrap();
+    assert_eq!(sliced.topology().instance_count(), 1);
+    assert_eq!(sliced.topology().residues().count(), 2);
+    assert_eq!(
+        sliced.positions().values().value(),
+        &[Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)]
+    );
+    assert_eq!(
+        sliced.atom_data().occupancies(),
+        Some(&[Some(0.1), Some(0.2)][..])
+    );
+    assert_eq!(
+        sliced
+            .bond_data()
+            .property("score")
+            .unwrap()
+            .unwrap()
+            .value(),
+        &[Some(10.0)]
+    );
+
+    let ensemble = Ensemble::from_models(&[model.clone(), model]).unwrap();
+    let sliced_ensemble = ensemble.slice(&selection).unwrap();
+    assert_eq!(sliced_ensemble.len(), 2);
+    assert_eq!(sliced_ensemble.topology().atom_count(), 2);
+    assert_eq!(
+        sliced_ensemble
+            .member(1)
+            .unwrap()
+            .positions()
+            .values()
+            .value(),
+        sliced.positions().values().value()
+    );
 }
