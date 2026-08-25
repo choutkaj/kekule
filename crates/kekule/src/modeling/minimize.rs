@@ -2,7 +2,10 @@ use std::fmt;
 
 use crate::geometry::{Point3, Vector3};
 use crate::structure::{Model, PositionError};
-use crate::units::{Quantity, UnitError, MODEL_GRADIENT_UNIT, MODEL_LENGTH_UNIT};
+use crate::units::{
+    Quantity, UnitError, ANGSTROM, CANONICAL_GRADIENT_UNIT, CANONICAL_LENGTH_UNIT,
+    KILOJOULE_PER_MOLE_PER_ANGSTROM,
+};
 
 use super::potential::{Potential, PotentialError, PotentialEvaluation};
 
@@ -29,9 +32,9 @@ impl Default for MinimizeOptions {
     fn default() -> Self {
         Self {
             max_iterations: 1_000,
-            gradient_tolerance: Quantity::new(1.0e-4, MODEL_GRADIENT_UNIT),
-            initial_step: Quantity::new(0.1, MODEL_LENGTH_UNIT),
-            minimum_step: Quantity::new(1.0e-8, MODEL_LENGTH_UNIT),
+            gradient_tolerance: Quantity::new(1.0e-4, KILOJOULE_PER_MOLE_PER_ANGSTROM),
+            initial_step: Quantity::new(0.1, ANGSTROM),
+            minimum_step: Quantity::new(1.0e-8, ANGSTROM),
             backtracking_factor: 0.5,
             armijo_coefficient: 1.0e-4,
             max_backtracks: 24,
@@ -130,18 +133,20 @@ pub fn minimize(
                 break;
             }
             let trial_positions = displaced_positions(&current_positions, &direction, step);
-            working.set_positions(Quantity::new(trial_positions, MODEL_LENGTH_UNIT))?;
+            working.set_positions(Quantity::new(trial_positions, CANONICAL_LENGTH_UNIT))?;
             let trial_result = potential.evaluate(working.view());
             evaluations += 1;
             let trial = match trial_result {
                 Ok(trial) => trial,
                 Err(error) if error.is_invalid_geometry() => {
-                    working.set_positions(Quantity::new(&current_positions, MODEL_LENGTH_UNIT))?;
+                    working
+                        .set_positions(Quantity::new(&current_positions, CANONICAL_LENGTH_UNIT))?;
                     step *= options.backtracking_factor;
                     continue;
                 }
                 Err(error) => {
-                    working.set_positions(Quantity::new(&current_positions, MODEL_LENGTH_UNIT))?;
+                    working
+                        .set_positions(Quantity::new(&current_positions, CANONICAL_LENGTH_UNIT))?;
                     return Err(MinimizationError::Potential(error));
                 }
             };
@@ -151,12 +156,12 @@ pub fn minimize(
                 accepted = Some(trial);
                 break;
             }
-            working.set_positions(Quantity::new(&current_positions, MODEL_LENGTH_UNIT))?;
+            working.set_positions(Quantity::new(&current_positions, CANONICAL_LENGTH_UNIT))?;
             step *= options.backtracking_factor;
         }
 
         let Some(trial) = accepted else {
-            working.set_positions(Quantity::new(&current_positions, MODEL_LENGTH_UNIT))?;
+            working.set_positions(Quantity::new(&current_positions, CANONICAL_LENGTH_UNIT))?;
             return Ok(result(
                 working,
                 initial_energy,
@@ -179,9 +184,11 @@ struct ValidatedOptions {
 }
 
 fn validate_options(options: MinimizeOptions) -> Result<ValidatedOptions, MinimizationError> {
-    let gradient_tolerance = options.gradient_tolerance.value_in(MODEL_GRADIENT_UNIT)?;
-    let initial_step = options.initial_step.value_in(MODEL_LENGTH_UNIT)?;
-    let minimum_step = options.minimum_step.value_in(MODEL_LENGTH_UNIT)?;
+    let gradient_tolerance = options
+        .gradient_tolerance
+        .value_in(CANONICAL_GRADIENT_UNIT)?;
+    let initial_step = options.initial_step.value_in(CANONICAL_LENGTH_UNIT)?;
+    let minimum_step = options.minimum_step.value_in(CANONICAL_LENGTH_UNIT)?;
     if !gradient_tolerance.is_finite() || gradient_tolerance <= 0.0 {
         return Err(MinimizationError::InvalidOptions(
             "gradient tolerance must be finite and positive",
@@ -259,7 +266,7 @@ fn result(
         model,
         initial_energy,
         final_energy: evaluation.energy(),
-        final_max_gradient: Quantity::new(final_max_gradient, MODEL_GRADIENT_UNIT),
+        final_max_gradient: Quantity::new(final_max_gradient, CANONICAL_GRADIENT_UNIT),
         iterations,
         evaluations,
         status,

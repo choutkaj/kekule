@@ -9,7 +9,7 @@ fn primitive_dense_storage_uses_usize_without_topology_imports() {
         ANGSTROM,
     ))
     .unwrap();
-    assert_eq!(positions.position_at(1).unwrap().value().x, 1.0);
+    assert!((positions.position_at(1).unwrap().value().x - 0.1).abs() < 1.0e-15);
     positions
         .set_position_at(0, Quantity::new(Point3::new(2.0, 0.0, 0.0), ANGSTROM))
         .unwrap();

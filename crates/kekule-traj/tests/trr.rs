@@ -7,7 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use kekule::core::PropValue;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::topology::Topology;
-use kekule::units::{Quantity, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
+use kekule::units::{
+    Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND,
+};
 use kekule_traj::io::trr::{
     TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrScalarPrecision, TrrWriteOptions, TrrWriter,
     TRR_LAMBDA_PROPERTY,
@@ -62,7 +64,7 @@ fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuff
                 Vector3::new(4.0, 5.0, 6.0),
                 Vector3::new(7.0, 8.0, 9.0),
             ],
-            MODEL_VELOCITY_UNIT,
+            CANONICAL_VELOCITY_UNIT,
         )))
         .unwrap();
     frame
@@ -72,7 +74,7 @@ fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuff
                 Vector3::new(40.0, 50.0, 60.0),
                 Vector3::new(70.0, 80.0, 90.0),
             ],
-            MODEL_FORCE_UNIT,
+            CANONICAL_FORCE_UNIT,
         )))
         .unwrap();
     frame.set_cell(Some(
@@ -139,7 +141,7 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         let mut destination = FrameBuffer::new(Arc::clone(&topology));
         let pointer = destination.positions().values().value().as_ptr();
         assert!(reader.read_next(&mut destination).unwrap());
-        assert_xs_close(&destination, &[0.0, 30.0, 60.0]);
+        assert_xs_close(&destination, &[0.0, 3.0, 6.0]);
         assert_eq!(destination.frame_view().step(), Some(4));
         assert_eq!(destination.frame_view().time().unwrap().value(), &1.0);
         assert!(destination.cell().is_some());
@@ -157,7 +159,7 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
             Some(&PropValue::Float(0.125))
         );
         assert!(reader.read_next(&mut destination).unwrap());
-        assert_xs_close(&destination, &[10.0, 40.0, 70.0]);
+        assert_xs_close(&destination, &[1.0, 4.0, 7.0]);
         assert!(destination.cell().is_none());
         assert!(destination.frame_view().velocities().is_none());
         assert!(destination.frame_view().forces().is_none());
@@ -167,7 +169,7 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         );
         assert_eq!(destination.positions().values().value().as_ptr(), pointer);
         assert!(reader.read_next(&mut destination).unwrap());
-        assert_xs_close(&destination, &[20.0, 50.0, 80.0]);
+        assert_xs_close(&destination, &[2.0, 5.0, 8.0]);
         assert_eq!(
             destination
                 .frame_view()
@@ -199,9 +201,9 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         .unwrap();
         assert_eq!(indexed.frame_count(), Some(3));
         indexed.read_frame(1, &mut destination).unwrap();
-        assert_xs_close(&destination, &[10.0, 40.0, 70.0]);
+        assert_xs_close(&destination, &[1.0, 4.0, 7.0]);
         assert!(indexed.read_next(&mut destination).unwrap());
-        assert_xs_close(&destination, &[0.0, 30.0, 60.0]);
+        assert_xs_close(&destination, &[0.0, 3.0, 6.0]);
     }
 }
 
@@ -548,7 +550,7 @@ fn indexed_trr_accepts_per_frame_precision_and_verifies_both_payloads() {
     let mut destination = FrameBuffer::new(topology);
     assert_eq!(reader.frame_count(), Some(2));
     reader.read_frame(1, &mut destination).unwrap();
-    assert_xs_close(&destination, &[10.0, 40.0, 70.0]);
+    assert_xs_close(&destination, &[1.0, 4.0, 7.0]);
 }
 
 #[test]
@@ -658,7 +660,7 @@ fn independently_generated_mdanalysis_trr_preserves_all_supported_fields() {
     .unwrap();
     let mut buffer = FrameBuffer::new(topology);
     assert!(reader.read_next(&mut buffer).unwrap());
-    assert_xs_close(&buffer, &[0.0, 3.0, 6.0]);
+    assert_xs_close(&buffer, &[0.0, 0.3, 0.6]);
     assert!(buffer.cell().is_some());
     assert!(buffer.frame_view().velocities().is_some());
     assert!(buffer.frame_view().forces().is_some());
@@ -668,7 +670,7 @@ fn independently_generated_mdanalysis_trr_preserves_all_supported_fields() {
         Some(&PropValue::Float(0.125))
     );
     assert!(reader.read_next(&mut buffer).unwrap());
-    assert_xs_close(&buffer, &[1.0, 4.0, 7.0]);
+    assert_xs_close(&buffer, &[0.1, 0.4, 0.7]);
     assert_eq!(buffer.frame_view().step(), Some(1));
     assert_eq!(
         buffer.props().get(TRR_LAMBDA_PROPERTY),

@@ -36,7 +36,7 @@ fn two_bond_instances_topology() -> Arc<Topology> {
 }
 
 fn positions(points: impl AsRef<[Point3]>) -> Positions {
-    Positions::new(Quantity::new(points, ANGSTROM)).unwrap()
+    Positions::new(Quantity::new(points, NANOMETER)).unwrap()
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn positions_are_topology_free_unit_aware_and_transactional() {
     let mut values =
         Positions::new(Quantity::new([Point3::new(0.1, 0.0, 0.0)], NANOMETER)).unwrap();
     assert_eq!(values.len(), 1);
-    assert_eq!(values.values().value()[0], Point3::new(1.0, 0.0, 0.0));
+    assert_eq!(values.values().value()[0], Point3::new(0.1, 0.0, 0.0));
     let pointer = values.values().value().as_ptr();
     values
         .set_all(Quantity::new([Point3::new(2.0, 0.0, 0.0)], ANGSTROM))
@@ -284,7 +284,7 @@ fn atom_data_columns_names_units_and_updates_are_strongly_validated() {
     );
     assert_eq!(
         data.b_factors.as_ref().map(|column| column.unit),
-        Some(SQUARE_ANGSTROM)
+        Some(SQUARE_NANOMETER)
     );
 
     data.set_property(
@@ -509,14 +509,13 @@ fn model_and_view_resolve_semantic_atoms_into_dense_state() {
         .unwrap();
     assert_eq!(model.position(atom).unwrap().value().x, 1.0);
     assert_eq!(model.occupancy(atom).unwrap(), Some(0.75));
-    assert_eq!(
-        model.view().b_factor(atom).unwrap(),
-        Some(Quantity::new(12.5, SQUARE_ANGSTROM))
-    );
+    let b_factor = model.view().b_factor(atom).unwrap().unwrap();
+    assert_eq!(b_factor.unit(), SQUARE_NANOMETER);
+    assert!((b_factor.to_value() - 0.125).abs() < 1.0e-15);
     model
         .set_position(atom, Quantity::new(Point3::new(4.0, 0.0, 0.0), ANGSTROM))
         .unwrap();
-    assert_eq!(model.position(atom).unwrap().value().x, 4.0);
+    assert!((model.position(atom).unwrap().value().x - 0.4).abs() < 1.0e-15);
     assert_eq!(
         model.set_atom_data(AtomData::new(2)),
         Err(ModelError::AtomDataCountMismatch {

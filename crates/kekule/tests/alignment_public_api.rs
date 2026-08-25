@@ -7,7 +7,7 @@ use kekule::{
     geometry::Point3,
     structure::{Model, Positions},
     topology::{AtomSelection, TopologyBuilder},
-    units::{Quantity, ANGSTROM, MODEL_LENGTH_UNIT},
+    units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT},
 };
 use std::sync::Arc;
 
@@ -47,9 +47,15 @@ fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::er
 
     let result: RigidAlignment = kabsch(moving.view(), reference.view(), &selection)?;
     assert_eq!(result.selected_atom_count(), 4);
-    assert_eq!(result.rmsd().unit(), MODEL_LENGTH_UNIT);
-    for (moving, reference) in moving_points.into_iter().zip(reference_points) {
-        let aligned = result.transform().transform_point(moving);
+    assert_eq!(result.rmsd().unit(), CANONICAL_LENGTH_UNIT);
+    for (moving, reference) in moving
+        .positions()
+        .values()
+        .value()
+        .iter()
+        .zip(reference.positions().values().value().iter())
+    {
+        let aligned = result.transform().transform_point(*moving);
         assert!((aligned.x - reference.x).abs() < 1.0e-12);
         assert!((aligned.y - reference.y).abs() < 1.0e-12);
         assert!((aligned.z - reference.z).abs() < 1.0e-12);

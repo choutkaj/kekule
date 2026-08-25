@@ -23,6 +23,19 @@ fn model_molecules(model: &kekule::structure::Model) -> Vec<&Molecule> {
         .collect()
 }
 
+fn assert_point_close(actual: Point3, expected: Point3) {
+    assert!((actual.x - expected.x).abs() < 1.0e-15);
+    assert!((actual.y - expected.y).abs() < 1.0e-15);
+    assert!((actual.z - expected.z).abs() < 1.0e-15);
+}
+
+fn assert_points_close(actual: &[Point3], expected: &[Point3]) {
+    assert_eq!(actual.len(), expected.len());
+    for (&actual, &expected) in actual.iter().zip(expected) {
+        assert_point_close(actual, expected);
+    }
+}
+
 #[test]
 fn parsed_smiles_document_converts_components_in_source_order() {
     let document = smiles::parse_str("[Na+].[Cl-]").expect("SMILES parses");
@@ -41,7 +54,10 @@ fn parsed_smiles_document_converts_components_in_source_order() {
 fn molfile_document_model_retains_published_component_geometry() {
     let document = molfile::parse_str(DISCONNECTED_MOLFILE).expect("Molfile parses");
     let interpretation = molfile::interpret(&document).expect("Molfile report interpretation");
-    let expected = [Point3::new(1.25, 2.5, 3.75), Point3::new(-4.0, 5.5, -6.25)];
+    let expected = [
+        Point3::new(0.125, 0.25, 0.375),
+        Point3::new(-0.4, 0.55, -0.625),
+    ];
     for (component, expected) in interpretation.components().iter().zip(expected) {
         let mapping = component
             .report()
@@ -53,13 +69,13 @@ fn molfile_document_model_retains_published_component_geometry() {
             .atom_ids()
             .position(|atom| atom == mapping.atom())
             .expect("mapped canonical atom");
-        assert_eq!(
+        assert_point_close(
             component
                 .positions()
                 .position_at(position_index)
                 .expect("mapped source coordinate")
                 .to_value(),
-            expected
+            expected,
         );
     }
     let molecules = document.to_molecules().expect("Molfile interprets");
@@ -72,9 +88,12 @@ fn molfile_document_model_retains_published_component_geometry() {
         model_molecules(&model),
         molecules.iter().collect::<Vec<_>>()
     );
-    assert_eq!(
+    assert_points_close(
         model.positions().values().value(),
-        &[Point3::new(1.25, 2.5, 3.75), Point3::new(-4.0, 5.5, -6.25),]
+        &[
+            Point3::new(0.125, 0.25, 0.375),
+            Point3::new(-0.4, 0.55, -0.625),
+        ],
     );
     assert_eq!(element(model_molecules(&model)[0]).symbol(), "Na");
     assert_eq!(element(model_molecules(&model)[1]).symbol(), "Cl");
@@ -119,14 +138,14 @@ fn molfile_model_remaps_interleaved_source_atoms_to_component_positions() {
     );
     assert_eq!(element(&molecules[1]).symbol(), "Na");
     assert_eq!(element(&molecules[2]).symbol(), "Cl");
-    assert_eq!(
+    assert_points_close(
         model.positions().values().value(),
         &[
-            Point3::new(10.0, 11.0, 12.0),
-            Point3::new(30.0, 31.0, 32.0),
-            Point3::new(20.0, 21.0, 22.0),
-            Point3::new(40.0, 41.0, 42.0),
-        ]
+            Point3::new(1.0, 1.1, 1.2),
+            Point3::new(3.0, 3.1, 3.2),
+            Point3::new(2.0, 2.1, 2.2),
+            Point3::new(4.0, 4.1, 4.2),
+        ],
     );
 }
 
@@ -154,16 +173,19 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
         model_molecules(&first_model),
         first_molecules.iter().collect::<Vec<_>>()
     );
-    assert_eq!(
+    assert_points_close(
         first_model.positions().values().value(),
-        &[Point3::new(1.25, 2.5, 3.75), Point3::new(-4.0, 5.5, -6.25),]
+        &[
+            Point3::new(0.125, 0.25, 0.375),
+            Point3::new(-0.4, 0.55, -0.625),
+        ],
     );
 
     assert_eq!(second_molecules.len(), 1);
     assert_eq!(second_model.topology().instance_count(), 1);
-    assert_eq!(
+    assert_points_close(
         second_model.positions().values().value(),
-        &[Point3::new(9.0, 8.0, 7.0)]
+        &[Point3::new(0.9, 0.8, 0.7)],
     );
     assert!(first_molecules
         .iter()
