@@ -1,8 +1,8 @@
-use kekule::bio::SmcraAtomSiteMetadata;
 use kekule::core::{Atom, AtomId, BondOrder, Element, HydrogenDeclaration, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::modeling::potential::{Potential, PotentialError};
 use kekule::structure::{Ensemble, Model, Positions};
+use kekule::topology::AtomSiteMetadata;
 use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
 use kekule_traj::{FrameBuffer, TrajectoryFrame};
 
@@ -303,7 +303,7 @@ fn hierarchy_bearing_molecules_are_supported() {
             .add_atom_site(
                 residue,
                 InstanceAtomId::new(instance, atom),
-                SmcraAtomSiteMetadata::default(),
+                AtomSiteMetadata::default(),
             )
             .unwrap();
     }
