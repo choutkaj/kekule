@@ -93,12 +93,52 @@ pub mod substructure {
 }
 
 pub mod smiles {
+    use std::fmt;
+
     use crate::core::Molecule;
     pub use crate::io::{
         MolWriteError, SmilesAtomMapping, SmilesBondMapping, SmilesDocument, SmilesDocumentToken,
         SmilesDocumentTokenKind, SmilesInterpretError, SmilesInterpretation,
         SmilesInterpretationReport, SmilesParseError, SmilesParseOptions,
     };
+
+    /// Error produced by the concise SMILES parse-and-interpret convenience.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub enum SmilesReadError {
+        Parse(SmilesParseError),
+        Interpret(SmilesInterpretError),
+    }
+
+    impl fmt::Display for SmilesReadError {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Self::Parse(error) => write!(formatter, "{error}"),
+                Self::Interpret(error) => write!(formatter, "{error}"),
+            }
+        }
+    }
+
+    impl std::error::Error for SmilesReadError {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            match self {
+                Self::Parse(error) => Some(error),
+                Self::Interpret(error) => Some(error),
+            }
+        }
+    }
+
+    impl From<SmilesParseError> for SmilesReadError {
+        fn from(error: SmilesParseError) -> Self {
+            Self::Parse(error)
+        }
+    }
+
+    impl From<SmilesInterpretError> for SmilesReadError {
+        fn from(error: SmilesInterpretError) -> Self {
+            Self::Interpret(error)
+        }
+    }
 
     pub fn parse_str(input: &str) -> Result<SmilesDocument, SmilesParseError> {
         crate::io::parse_smiles_document(input)
@@ -115,6 +155,15 @@ pub mod smiles {
         document: &SmilesDocument,
     ) -> Result<SmilesInterpretation, SmilesInterpretError> {
         crate::io::interpret_smiles_document(document)
+    }
+
+    /// Parses and interprets one SMILES record into source-ordered connected components.
+    ///
+    /// This is the concise form of [`parse_str`] followed by [`interpret`].
+    /// Dot-delimited components remain separate, and no perception is run implicitly.
+    pub fn to_molecules(input: &str) -> Result<Vec<Molecule>, SmilesReadError> {
+        let document = parse_str(input)?;
+        Ok(interpret(&document)?.to_molecules())
     }
 
     pub fn write(molecule: &Molecule) -> Result<String, MolWriteError> {
