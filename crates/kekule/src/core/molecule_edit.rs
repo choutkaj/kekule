@@ -159,7 +159,6 @@ pub struct MoleculeEditor {
 }
 
 // Unit tests exercise chemistry algorithms against in-progress editor state.
-// This coercion is deliberately unavailable in normal library builds.
 #[cfg(test)]
 impl std::ops::Deref for MoleculeEditor {
     type Target = Molecule;
@@ -271,7 +270,7 @@ impl MoleculeEditor {
 fn publish_molecule(
     mut molecule: Molecule,
 ) -> std::result::Result<Molecule, MoleculePublicationError> {
-    if molecule.is_empty() {
+    if molecule.atom_count() == 0 {
         return Err(MoleculePublicationError::EmptyGraph);
     }
     validate_graph(&molecule).map_err(MoleculePublicationError::InvalidGraph)?;
