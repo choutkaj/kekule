@@ -1,7 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::bio::{Hierarchy, SmcraAtomSite};
+use crate::bio::{Hierarchy, SmcraAtomSite, SmcraResidueId};
 use crate::core::{AtomId, BondOrder, HydrogenDeclaration};
 use crate::geometry::Point3;
 use crate::io::mmcif_interpret::{MmcifEntityKind, MmcifInterpretationReport};
@@ -35,7 +35,6 @@ pub enum MmcifWriteError {
     CoordinatePrecisionTooLarge(usize),
     InvalidModel(String),
     InvalidHierarchy {
-        molecule: MoleculeInstanceId,
         message: String,
     },
     MissingEntityClassification(MoleculeInstanceId),
@@ -47,6 +46,18 @@ pub enum MmcifWriteError {
     UnsupportedEntityClassification {
         molecule: MoleculeInstanceId,
         classification: String,
+    },
+    ConflictingAsymEntityIds {
+        asym_id: String,
+        entity_ids: Vec<String>,
+    },
+    ConflictingAsymEntityClassifications {
+        asym_id: String,
+        classifications: Vec<MmcifEntityKind>,
+    },
+    ConflictingSourceEntityClassifications {
+        entity_id: String,
+        classifications: Vec<MmcifEntityKind>,
     },
     UnknownClassifiedMolecule(MoleculeInstanceId),
     DuplicateAsymId(String),
@@ -61,6 +72,9 @@ pub enum MmcifWriteError {
         value: String,
     },
     DuplicateAtomIdentity(InstanceAtomId),
+    MissingAtomProvenance(InstanceAtomId),
+    DuplicateAtomProvenance(InstanceAtomId),
+    UnknownAtomProvenance(InstanceAtomId),
     UnsupportedAtomField {
         atom: InstanceAtomId,
         field: &'static str,
@@ -75,7 +89,6 @@ pub enum MmcifWriteError {
         order: BondOrder,
     },
     AmbiguousConnectionSelector(InstanceAtomId),
-    UnrepresentableInstanceBoundary(MoleculeInstanceId),
     UnsupportedTextValue {
         field: &'static str,
     },
@@ -92,8 +105,8 @@ impl fmt::Display for MmcifWriteError {
                 "mmCIF coordinate precision {precision} exceeds the supported maximum of {MAX_COORDINATE_PRECISION}"
             ),
             Self::InvalidModel(message) => write!(f, "invalid molecular model: {message}"),
-            Self::InvalidHierarchy { molecule, message } => {
-                write!(f, "invalid hierarchy for {molecule}: {message}")
+            Self::InvalidHierarchy { message } => {
+                write!(f, "invalid topology hierarchy: {message}")
             }
             Self::MissingEntityClassification(molecule) => write!(
                 f,
@@ -117,6 +130,27 @@ impl fmt::Display for MmcifWriteError {
                 f,
                 "{molecule} has unsupported mmCIF entity classification `{classification}`"
             ),
+            Self::ConflictingAsymEntityIds {
+                asym_id,
+                entity_ids,
+            } => write!(
+                f,
+                "mmCIF structural instance `{asym_id}` has conflicting source entity IDs {entity_ids:?}"
+            ),
+            Self::ConflictingAsymEntityClassifications {
+                asym_id,
+                classifications,
+            } => write!(
+                f,
+                "mmCIF structural instance `{asym_id}` has conflicting entity classifications {classifications:?}"
+            ),
+            Self::ConflictingSourceEntityClassifications {
+                entity_id,
+                classifications,
+            } => write!(
+                f,
+                "source mmCIF entity `{entity_id}` has conflicting classifications {classifications:?}"
+            ),
             Self::UnknownClassifiedMolecule(molecule) => write!(
                 f,
                 "mmCIF entity semantics reference unknown {molecule}"
@@ -139,6 +173,15 @@ impl fmt::Display for MmcifWriteError {
                 f,
                 "{atom} duplicates an mmCIF atom identity within one residue"
             ),
+            Self::MissingAtomProvenance(atom) => {
+                write!(f, "{atom} has no atom-level mmCIF source provenance")
+            }
+            Self::DuplicateAtomProvenance(atom) => {
+                write!(f, "{atom} has duplicate atom-level mmCIF source provenance")
+            }
+            Self::UnknownAtomProvenance(atom) => {
+                write!(f, "mmCIF source provenance references unknown {atom}")
+            }
             Self::UnsupportedAtomField { atom, field } => {
                 write!(f, "{atom} has unsupported atom field `{field}`")
             }
@@ -156,10 +199,6 @@ impl fmt::Display for MmcifWriteError {
             Self::AmbiguousConnectionSelector(atom) => write!(
                 f,
                 "{atom} cannot be selected unambiguously by an mmCIF struct_conn partner"
-            ),
-            Self::UnrepresentableInstanceBoundary(molecule) => write!(
-                f,
-                "{molecule} spans disconnected structural-instance IDs and cannot be represented losslessly"
             ),
             Self::UnsupportedTextValue { field } => write!(
                 f,
@@ -245,6 +284,15 @@ impl EntityKind {
             Self::Branched | Self::NonPolymer | Self::Water => "HETATM",
         }
     }
+
+    fn as_source(self) -> MmcifEntityKind {
+        match self {
+            Self::Polymer => MmcifEntityKind::Polymer,
+            Self::Branched => MmcifEntityKind::Branched,
+            Self::NonPolymer => MmcifEntityKind::NonPolymer,
+            Self::Water => MmcifEntityKind::Water,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -260,8 +308,23 @@ struct AsymRow {
 }
 
 #[derive(Debug, Clone)]
+struct AtomEntityAssignment {
+    entity_id: String,
+    asym_id: String,
+    kind: EntityKind,
+}
+
+#[derive(Debug)]
+struct EntityPlan {
+    entities: Vec<EntityRow>,
+    asyms: Vec<AsymRow>,
+    atoms: BTreeMap<InstanceAtomId, AtomEntityAssignment>,
+}
+
+#[derive(Debug, Clone)]
 struct AtomRow {
     atom: InstanceAtomId,
+    residue: Option<SmcraResidueId>,
     entity_id: String,
     asym_id: String,
     group_pdb: String,
@@ -283,7 +346,6 @@ struct AtomRow {
 
 #[derive(Debug, Clone)]
 struct ConnectionRow {
-    bond: InstanceBondId,
     left: InstanceAtomId,
     right: InstanceAtomId,
     order: BondOrder,
@@ -303,7 +365,8 @@ pub fn write_mmcif_model(
 ) -> Result<String, MmcifWriteError> {
     validate_options(&options)?;
     let classifications = normalize_entity_classifications(model, std::iter::empty())?;
-    let prepared = prepare_model(model, &classifications)?;
+    let plan = generic_entity_plan(model, &classifications)?;
+    let prepared = prepare_model(model, plan)?;
     render_model(&prepared, &options)
 }
 
@@ -319,7 +382,8 @@ pub fn write_mmcif_model_with_classifications(
             .iter()
             .map(|(molecule, kind)| (molecule, vec![kind.clone()])),
     )?;
-    let prepared = prepare_model(model, &classifications)?;
+    let plan = generic_entity_plan(model, &classifications)?;
+    let prepared = prepare_model(model, plan)?;
     render_model(&prepared, &options)
 }
 
@@ -329,14 +393,23 @@ pub fn write_mmcif_model_with_report(
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
     validate_options(&options)?;
-    let classifications = normalize_entity_classifications(
-        model,
-        report
-            .instances()
-            .iter()
-            .map(|instance| (instance.molecule(), instance.entity_kinds().to_vec())),
-    )?;
-    let prepared = prepare_model(model, &classifications)?;
+    let plan = if report
+        .instances()
+        .iter()
+        .all(|instance| instance.atoms().is_empty())
+    {
+        let classifications = normalize_entity_classifications(
+            model,
+            report
+                .instances()
+                .iter()
+                .map(|instance| (instance.molecule(), instance.entity_kinds().to_vec())),
+        )?;
+        generic_entity_plan(model, &classifications)?
+    } else {
+        report_entity_plan(model, report)?
+    };
+    let prepared = prepare_model(model, plan)?;
     render_model(&prepared, &options)
 }
 
@@ -359,10 +432,7 @@ fn validate_options(options: &MmcifWriteOptions) -> Result<(), MmcifWriteError> 
     Ok(())
 }
 
-fn prepare_model(
-    model: &Model,
-    classifications: &BTreeMap<MoleculeInstanceId, EntityKind>,
-) -> Result<PreparedModel, MmcifWriteError> {
+fn hierarchy_asym_ids(model: &Model) -> Result<BTreeSet<String>, MmcifWriteError> {
     let mut reserved_asym_ids = BTreeSet::new();
     for (_, chain) in model.topology().hierarchy().chains() {
         if chain.label_id().is_empty() {
@@ -376,17 +446,99 @@ fn prepare_model(
             ));
         }
     }
+    Ok(reserved_asym_ids)
+}
 
-    let mut small_asym_ids = BTreeMap::new();
-    for (id, _) in model.topology().instances() {
-        if model
+fn generic_entity_plan(
+    model: &Model,
+    classifications: &BTreeMap<MoleculeInstanceId, EntityKind>,
+) -> Result<EntityPlan, MmcifWriteError> {
+    let hierarchy = model.topology().hierarchy();
+    let mut reserved_asym_ids = hierarchy_asym_ids(model)?;
+    let mut entities = Vec::new();
+    let mut asyms = Vec::new();
+    let mut atoms = BTreeMap::new();
+
+    for (_, chain) in hierarchy.chains() {
+        let sites = chain
+            .residues()
+            .iter()
+            .flat_map(|residue| {
+                hierarchy
+                    .residue(*residue)
+                    .into_iter()
+                    .flat_map(|residue| residue.atom_sites().iter().copied())
+            })
+            .filter_map(|site| hierarchy.atom_site(site).ok())
+            .collect::<Vec<_>>();
+        if sites.is_empty() {
+            continue;
+        }
+        let source_kinds = sites
+            .iter()
+            .filter_map(|site| classifications.get(&site.atom().molecule()).copied())
+            .map(EntityKind::as_source)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let kind = match source_kinds.as_slice() {
+            [kind] => entity_kind_from_source(sites[0].atom().molecule(), kind)?,
+            _ => {
+                return Err(MmcifWriteError::ConflictingAsymEntityClassifications {
+                    asym_id: chain.label_id().to_owned(),
+                    classifications: source_kinds,
+                });
+            }
+        };
+        let entity_id = (entities.len() + 1).to_string();
+        entities.push(EntityRow {
+            id: entity_id.clone(),
+            kind,
+        });
+        asyms.push(AsymRow {
+            id: chain.label_id().to_owned(),
+            entity_id: entity_id.clone(),
+        });
+        for site in sites {
+            let atom = site.atom();
+            if atoms
+                .insert(
+                    atom,
+                    AtomEntityAssignment {
+                        entity_id: entity_id.clone(),
+                        asym_id: chain.label_id().to_owned(),
+                        kind,
+                    },
+                )
+                .is_some()
+            {
+                return Err(MmcifWriteError::DuplicateAtomSite(atom));
+            }
+        }
+    }
+
+    for (id, molecule) in model.topology().instances() {
+        let definition = model
             .topology()
-            .molecule(id)
-            .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
-            .atom_sites()
-            .next()
-            .is_some()
-        {
+            .definition_for_instance(id)
+            .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
+        let qualified_atoms = definition
+            .molecule()
+            .atoms()
+            .map(|(atom, _)| molecule.qualify_atom(atom))
+            .collect::<Vec<_>>();
+        let assigned = qualified_atoms
+            .iter()
+            .filter(|atom| atoms.contains_key(atom))
+            .count();
+        if assigned != 0 {
+            if assigned != qualified_atoms.len() {
+                let missing = qualified_atoms
+                    .into_iter()
+                    .find(|atom| !atoms.contains_key(atom))
+                    .expect("partially assigned molecule has a missing atom site");
+                return Err(MmcifWriteError::MissingAtomSite(missing));
+            }
             continue;
         }
         let base = format!("M{}", one_based_serial(id.raw()));
@@ -397,25 +549,213 @@ fn prepare_model(
             suffix += 1;
         }
         reserved_asym_ids.insert(candidate.clone());
-        small_asym_ids.insert(id, candidate);
+        let kind = entity_kind(molecule, classifications)?;
+        let entity_id = (entities.len() + 1).to_string();
+        entities.push(EntityRow {
+            id: entity_id.clone(),
+            kind,
+        });
+        asyms.push(AsymRow {
+            id: candidate.clone(),
+            entity_id: entity_id.clone(),
+        });
+        for atom in qualified_atoms {
+            atoms.insert(
+                atom,
+                AtomEntityAssignment {
+                    entity_id: entity_id.clone(),
+                    asym_id: candidate.clone(),
+                    kind,
+                },
+            );
+        }
     }
 
+    Ok(EntityPlan {
+        entities,
+        asyms,
+        atoms,
+    })
+}
+
+fn report_entity_plan(
+    model: &Model,
+    report: &MmcifInterpretationReport,
+) -> Result<EntityPlan, MmcifWriteError> {
+    let _ = hierarchy_asym_ids(model)?;
+    let mut seen_instances = BTreeSet::new();
+    let mut provenance = BTreeMap::new();
+    let mut reserved_entity_ids = BTreeSet::new();
+    for instance in report.instances() {
+        if model.topology().instance(instance.molecule()).is_err() {
+            return Err(MmcifWriteError::UnknownClassifiedMolecule(
+                instance.molecule(),
+            ));
+        }
+        if !seen_instances.insert(instance.molecule()) {
+            return Err(MmcifWriteError::DuplicateEntityClassification(
+                instance.molecule(),
+            ));
+        }
+        for atom in instance.atoms() {
+            if atom.atom().molecule() != instance.molecule()
+                || model.topology().atom(atom.atom()).is_err()
+            {
+                return Err(MmcifWriteError::UnknownAtomProvenance(atom.atom()));
+            }
+            if let Some(entity_id) = atom.entity_id() {
+                reserved_entity_ids.insert(entity_id.to_owned());
+            }
+            if provenance.insert(atom.atom(), atom).is_some() {
+                return Err(MmcifWriteError::DuplicateAtomProvenance(atom.atom()));
+            }
+        }
+    }
+
+    let hierarchy = model.topology().hierarchy();
     let mut entities = Vec::new();
+    let mut entity_kinds = BTreeMap::<String, EntityKind>::new();
     let mut asyms = Vec::new();
+    let mut atoms = BTreeMap::new();
+    let mut generated_serial = 1usize;
+    for (_, chain) in hierarchy.chains() {
+        let sites = chain
+            .residues()
+            .iter()
+            .flat_map(|residue| {
+                hierarchy
+                    .residue(*residue)
+                    .into_iter()
+                    .flat_map(|residue| residue.atom_sites().iter().copied())
+            })
+            .filter_map(|site| hierarchy.atom_site(site).ok())
+            .collect::<Vec<_>>();
+        if sites.is_empty() {
+            continue;
+        }
+        let source_atoms = sites
+            .iter()
+            .map(|site| {
+                provenance
+                    .get(&site.atom())
+                    .copied()
+                    .ok_or(MmcifWriteError::MissingAtomProvenance(site.atom()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for atom in &source_atoms {
+            if atom.asym_id() != chain.label_id() {
+                return Err(MmcifWriteError::InconsistentAtomSite {
+                    atom: atom.atom(),
+                    field: "source asym_id",
+                });
+            }
+        }
+        let source_entity_ids = source_atoms
+            .iter()
+            .filter_map(|atom| atom.entity_id().map(str::to_owned))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        if source_entity_ids.len() > 1 {
+            return Err(MmcifWriteError::ConflictingAsymEntityIds {
+                asym_id: chain.label_id().to_owned(),
+                entity_ids: source_entity_ids,
+            });
+        }
+        let source_kinds = source_atoms
+            .iter()
+            .map(|atom| atom.entity_kind.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let kind = match source_kinds.as_slice() {
+            [kind] => entity_kind_from_source(source_atoms[0].atom().molecule(), kind)?,
+            _ => {
+                return Err(MmcifWriteError::ConflictingAsymEntityClassifications {
+                    asym_id: chain.label_id().to_owned(),
+                    classifications: source_kinds,
+                });
+            }
+        };
+        let entity_id = if let Some(entity_id) = source_entity_ids.first() {
+            entity_id.clone()
+        } else {
+            loop {
+                let candidate = format!("K{generated_serial}");
+                generated_serial += 1;
+                if reserved_entity_ids.insert(candidate.clone()) {
+                    break candidate;
+                }
+            }
+        };
+        if let Some(existing) = entity_kinds.get(&entity_id) {
+            if *existing != kind {
+                return Err(MmcifWriteError::ConflictingSourceEntityClassifications {
+                    entity_id,
+                    classifications: vec![existing.as_source(), kind.as_source()],
+                });
+            }
+        } else {
+            entity_kinds.insert(entity_id.clone(), kind);
+            entities.push(EntityRow {
+                id: entity_id.clone(),
+                kind,
+            });
+        }
+        asyms.push(AsymRow {
+            id: chain.label_id().to_owned(),
+            entity_id: entity_id.clone(),
+        });
+        for site in sites {
+            let atom = site.atom();
+            if atoms
+                .insert(
+                    atom,
+                    AtomEntityAssignment {
+                        entity_id: entity_id.clone(),
+                        asym_id: chain.label_id().to_owned(),
+                        kind,
+                    },
+                )
+                .is_some()
+            {
+                return Err(MmcifWriteError::DuplicateAtomSite(atom));
+            }
+        }
+    }
+
+    for atom in model.topology().atom_ids() {
+        if !atoms.contains_key(atom) {
+            return Err(MmcifWriteError::MissingAtomProvenance(*atom));
+        }
+    }
+    for atom in provenance.keys() {
+        if !atoms.contains_key(atom) {
+            return Err(MmcifWriteError::UnknownAtomProvenance(*atom));
+        }
+    }
+
+    Ok(EntityPlan {
+        entities,
+        asyms,
+        atoms,
+    })
+}
+
+fn prepare_model(model: &Model, plan: EntityPlan) -> Result<PreparedModel, MmcifWriteError> {
+    let EntityPlan {
+        entities,
+        asyms,
+        atoms: assignments,
+    } = plan;
+
     let mut atoms = Vec::new();
-    let mut asym_seen = BTreeSet::new();
     for (id, molecule) in model.topology().instances() {
         let definition = model
             .topology()
             .definition_for_instance(id)
             .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
         validate_graph_chemistry(molecule, definition)?;
-        let entity_id = one_based_serial(id.raw()).to_string();
-        let kind = entity_kind(molecule, classifications)?;
-        entities.push(EntityRow {
-            id: entity_id.clone(),
-            kind,
-        });
         if model
             .topology()
             .molecule(id)
@@ -429,27 +769,31 @@ fn prepare_model(
                 molecule,
                 definition,
                 model.topology().hierarchy(),
-                &entity_id,
-                kind,
-                &mut asyms,
-                &mut asym_seen,
+                &assignments,
                 &mut atoms,
             )?;
         } else {
-            let asym_id = small_asym_ids
-                .get(&id)
-                .expect("small-molecule asym ID was allocated")
-                .clone();
-            asyms.push(AsymRow {
-                id: asym_id.clone(),
-                entity_id: entity_id.clone(),
-            });
-            asym_seen.insert(asym_id.clone());
-            collect_small_rows(
-                model, molecule, definition, &entity_id, &asym_id, kind, &mut atoms,
-            )?;
+            collect_small_rows(model, molecule, definition, &assignments, &mut atoms)?;
         }
     }
+
+    let hierarchy_order = model
+        .topology()
+        .hierarchy()
+        .chains()
+        .flat_map(|(_, chain)| chain.residues().iter().copied())
+        .filter_map(|residue| model.topology().hierarchy().residue(residue).ok())
+        .flat_map(|residue| residue.atom_sites().iter().copied())
+        .filter_map(|site| model.topology().hierarchy().atom_site(site).ok())
+        .enumerate()
+        .map(|(index, site)| (site.atom(), index))
+        .collect::<BTreeMap<_, _>>();
+    atoms.sort_by_key(|row| {
+        hierarchy_order
+            .get(&row.atom)
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
 
     let atom_indexes = atoms
         .iter()
@@ -468,15 +812,8 @@ fn prepare_model(
         let right = molecule.qualify_atom(bond.b());
         validate_connection_selector(left, &atoms, &atom_indexes)?;
         validate_connection_selector(right, &atoms, &atom_indexes)?;
-        connections.push(ConnectionRow {
-            bond: bond_id,
-            left,
-            right,
-            order,
-        });
+        connections.push(ConnectionRow { left, right, order });
     }
-    validate_instance_boundaries(model, &atoms, &connections)?;
-
     Ok(PreparedModel {
         entities,
         asyms,
@@ -495,6 +832,24 @@ fn entity_kind(
         .ok_or(MmcifWriteError::MissingEntityClassification(molecule.id()))
 }
 
+fn entity_kind_from_source(
+    molecule: MoleculeInstanceId,
+    kind: &MmcifEntityKind,
+) -> Result<EntityKind, MmcifWriteError> {
+    match kind {
+        MmcifEntityKind::Polymer => Ok(EntityKind::Polymer),
+        MmcifEntityKind::Branched => Ok(EntityKind::Branched),
+        MmcifEntityKind::NonPolymer => Ok(EntityKind::NonPolymer),
+        MmcifEntityKind::Water => Ok(EntityKind::Water),
+        MmcifEntityKind::Other(classification) => {
+            Err(MmcifWriteError::UnsupportedEntityClassification {
+                molecule,
+                classification: classification.clone(),
+            })
+        }
+    }
+}
+
 fn normalize_entity_classifications(
     model: &Model,
     entries: impl IntoIterator<Item = (MoleculeInstanceId, Vec<MmcifEntityKind>)>,
@@ -510,16 +865,7 @@ fn normalize_entity_classifications(
             .into_iter()
             .collect::<Vec<_>>();
         let kind = match kinds.as_slice() {
-            [MmcifEntityKind::Polymer] => EntityKind::Polymer,
-            [MmcifEntityKind::Branched] => EntityKind::Branched,
-            [MmcifEntityKind::NonPolymer] => EntityKind::NonPolymer,
-            [MmcifEntityKind::Water] => EntityKind::Water,
-            [MmcifEntityKind::Other(classification)] => {
-                return Err(MmcifWriteError::UnsupportedEntityClassification {
-                    molecule,
-                    classification: classification.clone(),
-                });
-            }
+            [kind] => entity_kind_from_source(molecule, kind)?,
             [] => return Err(MmcifWriteError::MissingEntityClassification(molecule)),
             _ => {
                 return Err(MmcifWriteError::ConflictingEntityClassifications {
@@ -592,10 +938,7 @@ fn collect_macro_rows(
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
     hierarchy: &Hierarchy,
-    entity_id: &str,
-    kind: EntityKind,
-    asyms: &mut Vec<AsymRow>,
-    asym_seen: &mut BTreeSet<String>,
+    assignments: &BTreeMap<InstanceAtomId, AtomEntityAssignment>,
     rows: &mut Vec<AtomRow>,
 ) -> Result<(), MmcifWriteError> {
     let mut sites = BTreeMap::<InstanceAtomId, &SmcraAtomSite>::new();
@@ -604,24 +947,6 @@ fn collect_macro_rows(
             return Err(MmcifWriteError::DuplicateAtomSite(site.atom));
         }
     }
-    for (_, chain) in hierarchy.chains() {
-        let touches_instance = chain.residues().iter().any(|residue| {
-            hierarchy.residue(*residue).is_ok_and(|residue| {
-                residue.atom_sites().iter().any(|site| {
-                    hierarchy
-                        .atom_site(*site)
-                        .is_ok_and(|site| site.atom().molecule() == molecule.id())
-                })
-            })
-        });
-        if touches_instance && asym_seen.insert(chain.label_id.clone()) {
-            asyms.push(AsymRow {
-                id: chain.label_id.clone(),
-                entity_id: entity_id.to_owned(),
-            });
-        }
-    }
-
     for (atom_id, atom) in definition.molecule().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
         let site = sites
@@ -630,10 +955,19 @@ fn collect_macro_rows(
             .ok_or(MmcifWriteError::MissingAtomSite(qualified))?;
         let residue = hierarchy
             .residue(site.residue)
-            .map_err(|error| invalid_hierarchy(molecule, error.to_string()))?;
+            .map_err(|error| invalid_hierarchy(error.to_string()))?;
         let chain = hierarchy
             .chain(residue.chain)
-            .map_err(|error| invalid_hierarchy(molecule, error.to_string()))?;
+            .map_err(|error| invalid_hierarchy(error.to_string()))?;
+        let assignment = assignments
+            .get(&qualified)
+            .ok_or(MmcifWriteError::MissingAtomSite(qualified))?;
+        if assignment.asym_id != chain.label_id {
+            return Err(MmcifWriteError::InconsistentAtomSite {
+                atom: qualified,
+                field: "entity/asymmetry assignment",
+            });
+        }
         if site
             .metadata
             .label_asym_id
@@ -656,7 +990,7 @@ fn collect_macro_rows(
                 field: "type_symbol",
             });
         }
-        let group_pdb = normalized_group_pdb(qualified, None, kind.default_group_pdb())?;
+        let group_pdb = normalized_group_pdb(qualified, None, assignment.kind.default_group_pdb())?;
         let label_atom_id = site
             .metadata
             .label_atom_id
@@ -670,7 +1004,8 @@ fn collect_macro_rows(
             .unwrap_or_else(|| residue.name.clone());
         rows.push(AtomRow {
             atom: qualified,
-            entity_id: entity_id.to_owned(),
+            residue: Some(site.residue()),
+            entity_id: assignment.entity_id.clone(),
             asym_id: chain.label_id.clone(),
             group_pdb,
             type_symbol: atom.element.symbol().to_owned(),
@@ -715,24 +1050,26 @@ fn collect_small_rows(
     model: &Model,
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
-    entity_id: &str,
-    asym_id: &str,
-    kind: EntityKind,
+    assignments: &BTreeMap<InstanceAtomId, AtomEntityAssignment>,
     rows: &mut Vec<AtomRow>,
 ) -> Result<(), MmcifWriteError> {
-    let component_id = if kind == EntityKind::Water {
-        "HOH"
-    } else {
-        "MOL"
-    };
     for (atom_id, atom) in definition.molecule().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
+        let assignment = assignments
+            .get(&qualified)
+            .ok_or(MmcifWriteError::MissingAtomSite(qualified))?;
+        let component_id = if assignment.kind == EntityKind::Water {
+            "HOH"
+        } else {
+            "MOL"
+        };
         let atom_name = generated_atom_name(atom.element.symbol(), atom_id);
         rows.push(AtomRow {
             atom: qualified,
-            entity_id: entity_id.to_owned(),
-            asym_id: asym_id.to_owned(),
-            group_pdb: normalized_group_pdb(qualified, None, kind.default_group_pdb())?,
+            residue: None,
+            entity_id: assignment.entity_id.clone(),
+            asym_id: assignment.asym_id.clone(),
+            group_pdb: normalized_group_pdb(qualified, None, assignment.kind.default_group_pdb())?,
             type_symbol: atom.element.symbol().to_owned(),
             label_atom_id: atom_name.clone(),
             label_alt_id: None,
@@ -756,7 +1093,7 @@ fn collect_small_rows(
             formal_charge: atom.formal_charge,
             auth_seq_id: None,
             auth_comp_id: component_id.to_owned(),
-            auth_asym_id: asym_id.to_owned(),
+            auth_asym_id: assignment.asym_id.clone(),
             auth_atom_id: atom_name,
         });
     }
@@ -843,7 +1180,7 @@ fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), MmcifWriteError> {
                 row.insertion_code.as_deref().unwrap_or("")
             )
         } else {
-            "unsequenced".to_owned()
+            format!("unsequenced:{:?}", row.residue)
         };
         if !identities.insert((row.asym_id.clone(), residue, row.label_atom_id.clone())) {
             return Err(MmcifWriteError::DuplicateAtomIdentity(row.atom));
@@ -852,66 +1189,8 @@ fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), MmcifWriteError> {
     Ok(())
 }
 
-fn validate_instance_boundaries(
-    model: &Model,
-    atoms: &[AtomRow],
-    connections: &[ConnectionRow],
-) -> Result<(), MmcifWriteError> {
-    let atom_rows = atoms
-        .iter()
-        .map(|row| (row.atom, row))
-        .collect::<BTreeMap<_, _>>();
-    for (molecule_id, molecule) in model.topology().instances() {
-        let asym_ids = atoms
-            .iter()
-            .filter(|row| row.atom.molecule() == molecule_id)
-            .map(|row| row.asym_id.clone())
-            .collect::<BTreeSet<_>>();
-        if asym_ids.len() <= 1 {
-            continue;
-        }
-        let mut adjacency = BTreeMap::<String, BTreeSet<String>>::new();
-        for asym_id in &asym_ids {
-            adjacency.entry(asym_id.clone()).or_default();
-        }
-        for connection in connections
-            .iter()
-            .filter(|connection| connection.bond.molecule() == molecule_id)
-        {
-            let left = &atom_rows[&connection.left].asym_id;
-            let right = &atom_rows[&connection.right].asym_id;
-            if left != right {
-                adjacency
-                    .entry(left.clone())
-                    .or_default()
-                    .insert(right.clone());
-                adjacency
-                    .entry(right.clone())
-                    .or_default()
-                    .insert(left.clone());
-            }
-        }
-        let start = asym_ids.iter().next().expect("multiple asym IDs").clone();
-        let mut queue = VecDeque::from([start]);
-        let mut visited = BTreeSet::new();
-        while let Some(asym_id) = queue.pop_front() {
-            if !visited.insert(asym_id.clone()) {
-                continue;
-            }
-            queue.extend(adjacency[&asym_id].iter().cloned());
-        }
-        if visited != asym_ids {
-            return Err(MmcifWriteError::UnrepresentableInstanceBoundary(
-                molecule.id(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn invalid_hierarchy(molecule: &MoleculeInstance, message: impl Into<String>) -> MmcifWriteError {
+fn invalid_hierarchy(message: impl Into<String>) -> MmcifWriteError {
     MmcifWriteError::InvalidHierarchy {
-        molecule: molecule.id(),
         message: message.into(),
     }
 }

@@ -238,6 +238,10 @@ pub mod mmcif {
     /// Writes a generic model with explicit format-specific entity semantics.
     ///
     /// Every molecule instance must occur exactly once in `classifications`.
+    /// Generic writing deterministically assigns one mmCIF entity to each
+    /// populated topology hierarchy chain (and one to each hierarchy-free
+    /// instance). Instances touched by the same chain must therefore have the
+    /// same explicit classification.
     pub fn write_with_classifications(
         model: &crate::structure::Model,
         classifications: &MmcifEntityClassifications,
@@ -246,10 +250,16 @@ pub mod mmcif {
         crate::io::write_mmcif_model_with_classifications(model, classifications, options)
     }
 
-    /// Writes a canonical model while preserving explicit source mmCIF entity kinds.
+    /// Writes a canonical model while preserving source mmCIF entity/asymmetry semantics.
     ///
-    /// The report must classify every molecule instance exactly once. Conflicting
-    /// source kinds are rejected instead of being guessed or collapsed.
+    /// Atom-level report provenance keeps one source entity and structural
+    /// asymmetry consistent even when it spans multiple connected-component
+    /// molecule instances. Conflicting source identity is rejected. Because the
+    /// emitted foundational atom-site loop requires label identifiers, an
+    /// auth-only source is deterministically normalized by copying its author
+    /// atom, component, and asymmetry identifiers into the corresponding label
+    /// output fields; the original report still records that those label fields
+    /// were absent.
     pub fn write_with_report(
         model: &crate::structure::Model,
         report: &MmcifInterpretationReport,
