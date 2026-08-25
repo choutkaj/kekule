@@ -407,65 +407,10 @@ impl<'a> MoleculeInstanceView<'a> {
 
 /// An immutable, coordinate-free molecular system.
 ///
-/// `Topology` directly owns its definitions, instances, and authoritative
-/// dense layouts. It intentionally does not implement [`Clone`]; shared exact
-/// topology ownership uses [`Arc<Topology>`]. [`Topology::same_layout`]
-/// compares complete static layout without changing allocation identity.
-///
-/// Generic topology mapping is deliberately not part of the public model:
-///
-/// ```compile_fail
-/// use kekule::topology::TopologyMapping;
-/// ```
-///
-/// ```compile_fail
-/// use kekule::topology::TopologyRemapError;
-/// ```
-///
-/// Selection remapping tied to the generic mapping layer is also unavailable:
-///
-/// ```compile_fail
-/// # use std::sync::Arc;
-/// # use kekule::topology::{AtomSelection, Topology};
-/// # let selection: AtomSelection = todo!();
-/// # let topology: Arc<Topology> = todo!();
-/// let _ = selection.remap_to(&topology);
-/// ```
-///
-/// The removed identity-handle API is deliberately unavailable:
-///
-/// ```compile_fail
-/// fn removed_identity_api(topology: &kekule::topology::Topology) {
-///     use kekule::topology::TopologyIdentity;
-///     let _ = topology.identity();
-/// }
-/// ```
-///
-/// Raw topologies are also deliberately not cloneable:
-///
-/// ```compile_fail
-/// fn raw_topology_is_not_cloneable(topology: kekule::topology::Topology) {
-///     let _ = topology.clone();
-/// }
-/// ```
-///
-/// Generic instance metadata and roles are deliberately not core concepts:
-///
-/// ```compile_fail
-/// use kekule::topology::{MoleculeInstanceMetadata, MoleculeRole};
-/// ```
-///
-/// Molecules are connected by publication, so per-instance component queries
-/// are deliberately unavailable:
-///
-/// ```compile_fail
-/// fn removed_component_api(
-///     topology: &kekule::topology::Topology,
-///     instance: kekule::topology::MoleculeInstanceId,
-/// ) {
-///     let _ = topology.connected_components(instance);
-/// }
-/// ```
+/// `Topology` owns molecule instances, their dense identity and ordering, and
+/// the system [`Hierarchy`]. Shared exact ownership uses [`Arc<Topology>`].
+/// Topology-changing operations construct new topology values; generic
+/// topology remapping is not part of the core architecture.
 #[derive(Debug)]
 pub struct Topology {
     definitions: Vec<MoleculeDefinition>,

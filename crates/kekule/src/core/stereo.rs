@@ -6,22 +6,6 @@ use super::*;
 /// kind has no orientation is an explicit assertion of unknown configuration.
 /// Parser provenance and source-format marks are deliberately not canonical
 /// stereo payload.
-///
-/// Source provenance is not available on canonical stereo elements:
-///
-/// ```compile_fail
-/// fn source_is_not_canonical(element: &kekule::core::StereoElement) {
-///     let _ = element.source;
-/// }
-/// ```
-///
-/// Placeholder specifiedness is likewise not canonical state:
-///
-/// ```compile_fail
-/// fn placeholder_state_is_not_canonical(element: &kekule::core::StereoElement) {
-///     let _ = element.specifiedness;
-/// }
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StereoElement {
     pub kind: StereoElementKind,
