@@ -156,13 +156,21 @@ impl fmt::Display for MmcifConnectionResolutionReason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifAtomProvenance {
     pub(crate) atom: InstanceAtomId,
+    pub(crate) type_symbol: String,
     pub(crate) source_line: usize,
     pub(crate) atom_site_id: Option<String>,
+    pub(crate) label_atom_name: Option<String>,
     pub(crate) atom_name: String,
+    pub(crate) auth_atom_name: Option<String>,
+    pub(crate) label_component_id: Option<String>,
     pub(crate) component_id: String,
+    pub(crate) auth_component_id: Option<String>,
+    pub(crate) label_asym_id: Option<String>,
     pub(crate) asym_id: String,
     pub(crate) auth_asym_id: Option<String>,
     pub(crate) entity_id: Option<String>,
+    pub(crate) entity_kind: MmcifEntityKind,
+    pub(crate) residue_key: String,
     pub(crate) label_sequence_id: Option<i32>,
     pub(crate) author_sequence_id: Option<String>,
     pub(crate) insertion_code: Option<String>,
@@ -183,18 +191,48 @@ impl MmcifAtomProvenance {
         self.atom_site_id.as_deref()
     }
 
+    /// Returns `_atom_site.label_atom_id`, falling back to
+    /// `_atom_site.auth_atom_id` when the label identifier is absent.
     pub fn atom_name(&self) -> &str {
         &self.atom_name
     }
 
+    /// Returns the source `_atom_site.label_atom_id`, without applying an
+    /// author-identifier fallback.
+    pub fn label_atom_name(&self) -> Option<&str> {
+        self.label_atom_name.as_deref()
+    }
+
+    pub fn auth_atom_name(&self) -> Option<&str> {
+        self.auth_atom_name.as_deref()
+    }
+
+    /// Returns `_atom_site.label_comp_id`, falling back to
+    /// `_atom_site.auth_comp_id` when the label identifier is absent.
     pub fn component_id(&self) -> &str {
         &self.component_id
+    }
+
+    /// Returns the source `_atom_site.label_comp_id`, without applying an
+    /// author-identifier fallback.
+    pub fn label_component_id(&self) -> Option<&str> {
+        self.label_component_id.as_deref()
+    }
+
+    pub fn auth_component_id(&self) -> Option<&str> {
+        self.auth_component_id.as_deref()
     }
 
     /// Returns `_atom_site.label_asym_id`, falling back to
     /// `_atom_site.auth_asym_id` when the label identifier is absent.
     pub fn asym_id(&self) -> &str {
         &self.asym_id
+    }
+
+    /// Returns the source `_atom_site.label_asym_id`, without applying an
+    /// author-identifier fallback.
+    pub fn label_asym_id(&self) -> Option<&str> {
+        self.label_asym_id.as_deref()
     }
 
     /// Returns the independently preserved author asymmetry identifier.
@@ -204,6 +242,11 @@ impl MmcifAtomProvenance {
 
     pub fn entity_id(&self) -> Option<&str> {
         self.entity_id.as_deref()
+    }
+
+    /// Returns the source or explicitly inferred entity kind for this atom.
+    pub const fn entity_kind(&self) -> &MmcifEntityKind {
+        &self.entity_kind
     }
 
     pub const fn label_sequence_id(&self) -> Option<i32> {

@@ -238,7 +238,7 @@ pub(super) fn read_atom_rows(
                 .or_default()
                 .insert(alt_id.clone());
             (
-                format!("occurrence:{}", state.occurrence),
+                format!("occurrence:{comp_id}:{}", state.occurrence),
                 Some(state.occurrence),
             )
         };

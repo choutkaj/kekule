@@ -47,6 +47,13 @@ impl ScalarPropertyColumn {
             .any(Option::is_some)
             .then_some(Self { unit, values })
     }
+
+    fn select_indices(&self, indices: &[usize]) -> Option<Self> {
+        Self::from_values(
+            self.unit,
+            indices.iter().map(|index| self.values[*index]).collect(),
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -243,6 +250,33 @@ impl AtomData {
     /// Returns whether at least one canonical or custom data column is present.
     pub fn has_data(&self) -> bool {
         self.occupancies.is_some() || self.b_factors.is_some() || !self.properties.is_empty()
+    }
+
+    /// Copies a dense projection in the requested index order.
+    pub fn select_indices(&self, indices: &[usize]) -> Result<Self, AtomDataError> {
+        for index in indices {
+            validate_index(self.len(), *index)?;
+        }
+        Ok(Self {
+            len: indices.len(),
+            occupancies: self
+                .occupancies
+                .as_ref()
+                .and_then(|column| column.select_indices(indices)),
+            b_factors: self
+                .b_factors
+                .as_ref()
+                .and_then(|column| column.select_indices(indices)),
+            properties: self
+                .properties
+                .iter()
+                .filter_map(|(name, column)| {
+                    column
+                        .select_indices(indices)
+                        .map(|column| (name.clone(), column))
+                })
+                .collect(),
+        })
     }
 
     pub fn occupancies(&self) -> Option<&[Option<f64>]> {
@@ -596,6 +630,25 @@ impl BondData {
     /// Returns whether at least one custom data column is present.
     pub fn has_data(&self) -> bool {
         !self.properties.is_empty()
+    }
+
+    /// Copies a dense projection in the requested index order.
+    pub fn select_indices(&self, indices: &[usize]) -> Result<Self, BondDataError> {
+        for index in indices {
+            validate_bond_index(self.len(), *index)?;
+        }
+        Ok(Self {
+            len: indices.len(),
+            properties: self
+                .properties
+                .iter()
+                .filter_map(|(name, column)| {
+                    column
+                        .select_indices(indices)
+                        .map(|column| (name.clone(), column))
+                })
+                .collect(),
+        })
     }
 
     /// Iterates custom scalar properties in stable name order.

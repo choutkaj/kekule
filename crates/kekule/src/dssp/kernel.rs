@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::bio::{Hierarchy, SmcraChain, SmcraResidue, SmcraResidueId};
 use crate::geometry::Point3;
 use crate::structure::ModelView;
-use crate::topology::{InstanceAtomId, InstanceResidueId, MoleculeInstanceId};
 
 use super::*;
 
@@ -115,7 +114,7 @@ struct BetaSlot {
 
 #[derive(Debug, Clone)]
 struct BackboneResidue {
-    key: InstanceResidueId,
+    key: SmcraResidueId,
     source: DsspResidueSource,
     chain: usize,
     n: Vec3,
@@ -145,7 +144,6 @@ struct BackboneResidue {
 
 #[derive(Debug, Clone, Copy)]
 struct ChainFragment<'a> {
-    molecule: MoleculeInstanceId,
     hierarchy: &'a Hierarchy,
     chain: &'a SmcraChain,
     discovery_order: usize,
@@ -153,7 +151,6 @@ struct ChainFragment<'a> {
 
 #[derive(Debug, Clone, Copy)]
 struct ChainResidue<'a> {
-    molecule: MoleculeInstanceId,
     hierarchy: &'a Hierarchy,
     chain: &'a SmcraChain,
     residue: SmcraResidueId,
@@ -163,8 +160,6 @@ struct ChainResidue<'a> {
 #[derive(Debug)]
 struct LogicalChain<'a> {
     label_id: String,
-    author_id: Option<String>,
-    residue_identities: BTreeSet<(i32, Option<String>, Option<String>)>,
     residues: Vec<ChainResidue<'a>>,
     discovery_order: usize,
 }
@@ -272,75 +267,38 @@ fn extract_backbones(
     let mut chain_segments = 0;
     let mut fragments = Vec::new();
 
+    let hierarchy = model.topology().hierarchy();
     for (molecule_id, _) in model.topology().instances() {
-        let definition = model
-            .topology()
-            .definition_for_instance(molecule_id)
-            .expect("topology instance references a validated definition");
-        let molecule = definition.molecule();
-        if molecule.hierarchy().is_empty() {
+        if !hierarchy
+            .atom_sites()
+            .any(|(_, site)| site.atom().molecule() == molecule_id)
+        {
             report.ignored_instances.push(molecule_id);
-            continue;
-        }
-        let hierarchy = molecule.hierarchy();
-        for (_, chain) in hierarchy.chains() {
-            fragments.push(ChainFragment {
-                molecule: molecule_id,
-                hierarchy,
-                chain,
-                discovery_order: fragments.len(),
-            });
         }
     }
+    for (_, chain) in hierarchy.chains() {
+        fragments.push(ChainFragment {
+            hierarchy,
+            chain,
+            discovery_order: fragments.len(),
+        });
+    }
 
-    // Connected-molecule partitioning can split one logical polymer chain
-    // across several macro-molecule instances. Reassemble fragments with the
-    // same chain identity when their canonical residue identities are
-    // disjoint. Overlapping residue identities start another logical chain,
-    // which preserves repeated copies of the same molecule definition.
+    // Hierarchy chains are already topology-global and may span molecule
+    // instances, so no fragment reassembly is required here.
     let mut logical_chains = Vec::<LogicalChain<'_>>::new();
     let mut residue_discovery_order = 0usize;
     for fragment in fragments {
-        let identities = fragment
-            .chain
-            .residues()
-            .iter()
-            .filter_map(|residue_id| {
-                let residue = fragment
-                    .hierarchy
-                    .residue(*residue_id)
-                    .expect("validated hierarchy chain references live residues");
-                residue.label_seq_id().map(|label_seq_id| {
-                    (
-                        label_seq_id,
-                        residue.author_seq_id().map(str::to_owned),
-                        residue.insertion_code().map(str::to_owned),
-                    )
-                })
-            })
-            .collect::<BTreeSet<_>>();
-        let target = (!identities.is_empty()).then(|| {
-            logical_chains.iter().position(|logical| {
-                logical.label_id == fragment.chain.label_id()
-                    && logical.author_id.as_deref() == fragment.chain.author_id()
-                    && logical.residue_identities.is_disjoint(&identities)
-            })
+        logical_chains.push(LogicalChain {
+            label_id: fragment.chain.label_id().to_owned(),
+            residues: Vec::new(),
+            discovery_order: fragment.discovery_order,
         });
-        let target = target.flatten().unwrap_or_else(|| {
-            logical_chains.push(LogicalChain {
-                label_id: fragment.chain.label_id().to_owned(),
-                author_id: fragment.chain.author_id().map(str::to_owned),
-                residue_identities: BTreeSet::new(),
-                residues: Vec::new(),
-                discovery_order: fragment.discovery_order,
-            });
-            logical_chains.len() - 1
-        });
-        let logical = &mut logical_chains[target];
-        logical.residue_identities.extend(identities);
+        let logical = logical_chains
+            .last_mut()
+            .expect("just inserted logical chain");
         for &residue in fragment.chain.residues() {
             logical.residues.push(ChainResidue {
-                molecule: fragment.molecule,
                 hierarchy: fragment.hierarchy,
                 chain: fragment.chain,
                 residue,
@@ -411,7 +369,6 @@ fn extract_chain(
     let mut forced_break = false;
 
     for chain_residue in chain_residues {
-        let molecule_id = chain_residue.molecule;
         let hierarchy = chain_residue.hierarchy;
         let chain = chain_residue.chain;
         let residue_id = chain_residue.residue;
@@ -419,10 +376,9 @@ fn extract_chain(
             hierarchy
                 .residue(residue_id)
                 .map_err(|error| DsspError::InvalidHierarchy {
-                    molecule: molecule_id,
                     message: error.to_string(),
                 })?;
-        let key = InstanceResidueId::new(molecule_id, residue_id);
+        let key = residue_id;
         if residue.label_seq_id.is_none() {
             report.non_peptide_residues += 1;
             forced_break = true;
@@ -437,7 +393,6 @@ fn extract_chain(
                 hierarchy
                     .atom_site(site_id)
                     .map_err(|error| DsspError::InvalidHierarchy {
-                        molecule: molecule_id,
                         message: error.to_string(),
                     })?;
             let atom_name = site
@@ -456,12 +411,11 @@ fn extract_chain(
                     atom_name: BACKBONE_NAMES[backbone_index],
                 });
             }
-            let atom = InstanceAtomId::new(molecule_id, site.atom);
+            let atom = site.atom;
             backbone[backbone_index] = Some(Vec3::from(
                 model
                     .position(atom)
                     .map_err(|error| DsspError::InvalidHierarchy {
-                        molecule: molecule_id,
                         message: error.to_string(),
                     })?
                     .to_value(),
@@ -881,9 +835,7 @@ fn calculate_beta_sheets(
             continue;
         };
         counts.bridges += 1;
-        if residues[first].key.molecule() == residues[second].key.molecule()
-            && residues[first].chain == residues[second].chain
-        {
+        if residues[first].chain == residues[second].chain {
             counts.intra_chain += 1;
         } else {
             counts.inter_chain += 1;
@@ -948,8 +900,8 @@ fn calculate_beta_sheets(
     bridges.sort_by_key(|bridge| {
         let residue = &residues[bridge.i[0]];
         (
-            residue.key.molecule().raw(),
             residue.source.chain_label_id.clone(),
+            residue.key.raw(),
             bridge.i[0],
         )
     });
@@ -1309,10 +1261,7 @@ mod tests {
         let mut residues = (0..count)
             .zip(0..=u32::MAX)
             .map(|(index, raw)| BackboneResidue {
-                key: InstanceResidueId::new(
-                    MoleculeInstanceId::new(0),
-                    crate::bio::SmcraResidueId::new(raw),
-                ),
+                key: crate::bio::SmcraResidueId::new(raw),
                 source: DsspResidueSource {
                     residue_name: "ALA".to_owned(),
                     chain_label_id: "A".to_owned(),

@@ -6,20 +6,20 @@ use super::*;
 
 /// One published, non-empty, connected, geometry-independent molecular entity.
 ///
-/// Authoritative represented chemistry is owned by [`Graph`], optional
-/// coordinate-independent organization by [`Hierarchy`], and reconstructible
-/// derived chemistry by [`Perception`]. Construction and structural editing
-/// publish exclusively through [`MoleculeEditor::finish`].
+/// Authoritative represented chemistry is owned by [`Graph`] and
+/// reconstructible derived chemistry by [`Perception`]. System-level residue,
+/// chain, and atom-site organization belongs to [`crate::topology::Topology`].
+/// Construction and structural editing publish exclusively through
+/// [`MoleculeEditor::finish`].
 #[derive(Debug, Clone)]
 pub struct Molecule {
     pub(crate) graph: Graph,
-    pub(crate) hierarchy: Hierarchy,
     pub(crate) perception: Perception,
 }
 
 impl PartialEq for Molecule {
     fn eq(&self, other: &Self) -> bool {
-        self.graph == other.graph && self.hierarchy == other.hierarchy
+        self.graph == other.graph
     }
 }
 
@@ -122,10 +122,6 @@ impl From<&Bond> for BondChemistry {
 impl Molecule {
     pub fn graph(&self) -> &Graph {
         &self.graph
-    }
-
-    pub fn hierarchy(&self) -> &Hierarchy {
-        &self.hierarchy
     }
 
     pub fn atom_count(&self) -> usize {

@@ -2,7 +2,7 @@ use kekule::core::{
     Atom, AtomId, BondOrder, Element, Molecule, MoleculeEditor, MoleculePublicationError,
     Perception,
 };
-use kekule::topology::TopologyBuilder;
+use kekule::topology::{InstanceAtomId, TopologyBuilder};
 
 fn carbon() -> Atom {
     Atom::new(Element::from_symbol("C").expect("carbon exists"))
@@ -51,21 +51,31 @@ fn perception_is_reconstructible_and_not_part_of_represented_equality() {
 }
 
 #[test]
-fn hierarchy_is_owned_by_the_universal_molecule() {
+fn hierarchy_is_owned_by_topology() {
     let mut editor = MoleculeEditor::new();
     let atom = editor.add_atom(carbon()).unwrap();
-    let chain = editor.hierarchy_mut().add_chain("A", None).unwrap();
-    let residue = editor
+    let molecule = editor
+        .finish()
+        .expect("molecule publishes without hierarchy");
+    let mut builder = TopologyBuilder::new();
+    let instance = builder.add_molecule(&molecule).unwrap();
+    let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
+    let residue = builder
         .hierarchy_mut()
         .add_residue(chain, "GLY", Some(1), None, None)
         .unwrap();
-    editor
-        .add_atom_site(residue, atom, Default::default())
+    builder
+        .hierarchy_mut()
+        .add_atom_site(
+            residue,
+            InstanceAtomId::new(instance, atom),
+            Default::default(),
+        )
         .unwrap();
-    let molecule = editor.finish().expect("valid hierarchy publishes");
-    assert_eq!(molecule.hierarchy().chains().count(), 1);
-    assert_eq!(molecule.hierarchy().residues().count(), 1);
-    assert_eq!(molecule.hierarchy().atom_sites().count(), 1);
+    let topology = builder.build().expect("valid hierarchy publishes");
+    assert_eq!(topology.hierarchy().chains().count(), 1);
+    assert_eq!(topology.hierarchy().residues().count(), 1);
+    assert_eq!(topology.hierarchy().atom_sites().count(), 1);
 }
 
 #[test]
@@ -77,5 +87,5 @@ fn topology_definitions_consume_the_universal_molecule_directly() {
     let topology = builder.build().unwrap();
     let stored = topology.definition(definition).unwrap().molecule();
     assert_eq!(stored, &molecule);
-    assert!(stored.hierarchy().is_empty());
+    assert!(topology.hierarchy().is_empty());
 }

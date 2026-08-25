@@ -12,7 +12,9 @@ use atom_site::{
     read_asym_entities, read_atom_rows, read_entity_types, select_alt_locations,
     select_coordinate_model,
 };
-use build::{build_molecule, graph_error, group_rows, polymer_asym_order};
+use build::{
+    build_molecule, build_topology_hierarchy, graph_error, group_rows, polymer_asym_order,
+};
 use struct_conn::{read_connections, InstanceUnion};
 
 pub(crate) use ensemble::interpret_mmcif_ensemble;
@@ -99,6 +101,8 @@ fn interpret_block(
             qualified_atom_data.extend(atom_data);
         }
     }
+    *builder.topology_builder_mut().hierarchy_mut() =
+        build_topology_hierarchy(&report.instances, &polymer_asym_order)?;
     let mut model = builder.build().map_err(graph_error)?;
     let mut occupancies = vec![None; model.topology().atom_count()];
     let mut b_factors = vec![None; model.topology().atom_count()];
@@ -118,26 +122,17 @@ fn interpret_block(
         .set_b_factors(Quantity::new(b_factors, SQUARE_ANGSTROM))
         .map_err(graph_error)?;
     model.set_atom_data(atom_data).map_err(graph_error)?;
-    report.macromolecules = model
-        .topology()
-        .instances()
-        .filter(|(id, _)| {
-            model
-                .topology()
-                .definition_for_instance(*id)
-                .is_ok_and(|definition| definition.hierarchy().is_some())
+    report.macromolecules = report
+        .instances
+        .iter()
+        .filter(|instance| {
+            instance
+                .entity_kinds()
+                .iter()
+                .any(MmcifEntityKind::is_macro)
         })
         .count();
-    report.small_molecules = model
-        .topology()
-        .instances()
-        .filter(|(id, _)| {
-            model
-                .topology()
-                .definition_for_instance(*id)
-                .is_ok_and(|definition| definition.hierarchy().is_none())
-        })
-        .count();
+    report.small_molecules = report.instances.len() - report.macromolecules;
     report.solvent_molecules = report
         .instances
         .iter()

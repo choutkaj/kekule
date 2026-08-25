@@ -1,20 +1,21 @@
 //! Immutable coordinate-free molecular systems, qualified identities, dense
 //! orderings, and compiled selections.
 
+pub mod hierarchy;
 pub mod transform;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
-use crate::bio::{
-    Hierarchy, SmcraAtomSite, SmcraAtomSiteId, SmcraChain, SmcraChainId, SmcraResidue,
-    SmcraResidueId,
-};
 use crate::core::{
     Atom, AtomId, Bond, BondId, Element, Molecule, MoleculeConnectivityError, PropMap,
 };
 use crate::substructure::QueryMatch;
+pub use hierarchy::{
+    Hierarchy, HierarchyError, SmcraAtomSite, SmcraAtomSiteId, SmcraAtomSiteMetadata, SmcraChain,
+    SmcraChainId, SmcraIdKind, SmcraResidue, SmcraResidueId,
+};
 
 fixed_u32_id!(MoleculeDefinitionId, "definition");
 fixed_u32_id!(MoleculeInstanceId, "molecule");
@@ -75,103 +76,11 @@ impl fmt::Display for InstanceBondId {
     }
 }
 
-/// One definition-local SMCRA chain qualified by its molecule instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InstanceChainId {
-    molecule: MoleculeInstanceId,
-    chain: SmcraChainId,
-}
-
-impl InstanceChainId {
-    pub const fn new(molecule: MoleculeInstanceId, chain: SmcraChainId) -> Self {
-        Self { molecule, chain }
-    }
-
-    pub const fn molecule(self) -> MoleculeInstanceId {
-        self.molecule
-    }
-
-    pub const fn chain(self) -> SmcraChainId {
-        self.chain
-    }
-}
-
-impl fmt::Display for InstanceChainId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}:chain{}", self.molecule, self.chain.raw())
-    }
-}
-
-/// One definition-local SMCRA residue qualified by its molecule instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InstanceResidueId {
-    molecule: MoleculeInstanceId,
-    residue: SmcraResidueId,
-}
-
-impl InstanceResidueId {
-    pub const fn new(molecule: MoleculeInstanceId, residue: SmcraResidueId) -> Self {
-        Self { molecule, residue }
-    }
-
-    pub const fn molecule(self) -> MoleculeInstanceId {
-        self.molecule
-    }
-
-    pub const fn residue(self) -> SmcraResidueId {
-        self.residue
-    }
-}
-
-impl fmt::Display for InstanceResidueId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}:residue{}", self.molecule, self.residue.raw())
-    }
-}
-
-/// One definition-local SMCRA atom site qualified by its molecule instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InstanceAtomSiteId {
-    molecule: MoleculeInstanceId,
-    atom_site: SmcraAtomSiteId,
-}
-
-impl InstanceAtomSiteId {
-    pub const fn new(molecule: MoleculeInstanceId, atom_site: SmcraAtomSiteId) -> Self {
-        Self {
-            molecule,
-            atom_site,
-        }
-    }
-
-    pub const fn molecule(self) -> MoleculeInstanceId {
-        self.molecule
-    }
-
-    pub const fn atom_site(self) -> SmcraAtomSiteId {
-        self.atom_site
-    }
-}
-
-impl fmt::Display for InstanceAtomSiteId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "{}:atom-site{}",
-            self.molecule,
-            self.atom_site.raw()
-        )
-    }
-}
-
-/// A definition-owned SMCRA chain borrowed through one molecule instance.
-///
-/// Hierarchical navigation remains instance-qualified. Use [`Self::local`]
-/// only when definition-local identity is explicitly required.
+/// A topology-global SMCRA chain borrowed from a [`Topology`].
 #[derive(Clone, Copy)]
 pub struct InstanceChain<'a> {
     topology: &'a Topology,
-    id: InstanceChainId,
+    id: SmcraChainId,
 }
 
 impl fmt::Debug for InstanceChain<'_> {
@@ -184,11 +93,11 @@ impl fmt::Debug for InstanceChain<'_> {
 }
 
 impl<'a> InstanceChain<'a> {
-    const fn new(topology: &'a Topology, id: InstanceChainId) -> Self {
+    const fn new(topology: &'a Topology, id: SmcraChainId) -> Self {
         Self { topology, id }
     }
 
-    pub const fn id(self) -> InstanceChainId {
+    pub const fn id(self) -> SmcraChainId {
         self.id
     }
 
@@ -202,32 +111,31 @@ impl<'a> InstanceChain<'a> {
 
     pub fn residues(self) -> impl ExactSizeIterator<Item = InstanceResidue<'a>> + 'a {
         let topology = self.topology;
-        let molecule = self.id.molecule();
-        self.local().residues().iter().copied().map(move |residue| {
-            InstanceResidue::new(topology, InstanceResidueId::new(molecule, residue))
-        })
+        self.local()
+            .residues()
+            .iter()
+            .copied()
+            .map(move |residue| InstanceResidue::new(topology, residue))
     }
 
     pub fn props(self) -> &'a PropMap {
         self.local().props()
     }
 
-    /// Returns the underlying definition-local node.
+    /// Returns the underlying topology-owned node.
     pub fn local(self) -> &'a SmcraChain {
         self.topology
-            .local_chain(self.id)
-            .expect("instance chain view references a validated local chain")
+            .hierarchy
+            .chain(self.id)
+            .expect("chain view references a validated topology hierarchy")
     }
 }
 
-/// A definition-owned SMCRA residue borrowed through one molecule instance.
-///
-/// Hierarchical navigation remains instance-qualified. Use [`Self::local`]
-/// only when definition-local identity is explicitly required.
+/// A topology-global SMCRA residue borrowed from a [`Topology`].
 #[derive(Clone, Copy)]
 pub struct InstanceResidue<'a> {
     topology: &'a Topology,
-    id: InstanceResidueId,
+    id: SmcraResidueId,
 }
 
 impl fmt::Debug for InstanceResidue<'_> {
@@ -240,19 +148,16 @@ impl fmt::Debug for InstanceResidue<'_> {
 }
 
 impl<'a> InstanceResidue<'a> {
-    const fn new(topology: &'a Topology, id: InstanceResidueId) -> Self {
+    const fn new(topology: &'a Topology, id: SmcraResidueId) -> Self {
         Self { topology, id }
     }
 
-    pub const fn id(self) -> InstanceResidueId {
+    pub const fn id(self) -> SmcraResidueId {
         self.id
     }
 
     pub fn chain(self) -> InstanceChain<'a> {
-        InstanceChain::new(
-            self.topology,
-            InstanceChainId::new(self.id.molecule(), self.local().chain()),
-        )
+        InstanceChain::new(self.topology, self.local().chain())
     }
 
     pub fn name(self) -> &'a str {
@@ -281,32 +186,31 @@ impl<'a> InstanceResidue<'a> {
 
     pub fn atom_sites(self) -> impl ExactSizeIterator<Item = InstanceAtomSite<'a>> + 'a {
         let topology = self.topology;
-        let molecule = self.id.molecule();
-        self.local().atom_sites().iter().copied().map(move |site| {
-            InstanceAtomSite::new(topology, InstanceAtomSiteId::new(molecule, site))
-        })
+        self.local()
+            .atom_sites()
+            .iter()
+            .copied()
+            .map(move |site| InstanceAtomSite::new(topology, site))
     }
 
     pub fn props(self) -> &'a PropMap {
         self.local().props()
     }
 
-    /// Returns the underlying definition-local node.
+    /// Returns the underlying topology-owned node.
     pub fn local(self) -> &'a SmcraResidue {
         self.topology
-            .local_residue(self.id)
-            .expect("instance residue view references a validated local residue")
+            .hierarchy
+            .residue(self.id)
+            .expect("residue view references a validated topology hierarchy")
     }
 }
 
-/// A definition-owned SMCRA atom site borrowed through one molecule instance.
-///
-/// Hierarchical navigation remains instance-qualified. Use [`Self::local`]
-/// only when definition-local identity is explicitly required.
+/// A topology-global SMCRA atom site borrowed from a [`Topology`].
 #[derive(Clone, Copy)]
 pub struct InstanceAtomSite<'a> {
     topology: &'a Topology,
-    id: InstanceAtomSiteId,
+    id: SmcraAtomSiteId,
 }
 
 impl fmt::Debug for InstanceAtomSite<'_> {
@@ -319,23 +223,20 @@ impl fmt::Debug for InstanceAtomSite<'_> {
 }
 
 impl<'a> InstanceAtomSite<'a> {
-    const fn new(topology: &'a Topology, id: InstanceAtomSiteId) -> Self {
+    const fn new(topology: &'a Topology, id: SmcraAtomSiteId) -> Self {
         Self { topology, id }
     }
 
-    pub const fn id(self) -> InstanceAtomSiteId {
+    pub const fn id(self) -> SmcraAtomSiteId {
         self.id
     }
 
     pub fn atom(self) -> InstanceAtomId {
-        InstanceAtomId::new(self.id.molecule(), self.local().atom())
+        self.local().atom()
     }
 
     pub fn residue(self) -> InstanceResidue<'a> {
-        InstanceResidue::new(
-            self.topology,
-            InstanceResidueId::new(self.id.molecule(), self.local().residue()),
-        )
+        InstanceResidue::new(self.topology, self.local().residue())
     }
 
     pub fn metadata(self) -> &'a crate::bio::SmcraAtomSiteMetadata {
@@ -346,11 +247,12 @@ impl<'a> InstanceAtomSite<'a> {
         self.local().props()
     }
 
-    /// Returns the underlying definition-local node.
+    /// Returns the underlying topology-owned node.
     pub fn local(self) -> &'a SmcraAtomSite {
         self.topology
-            .local_atom_site(self.id)
-            .expect("instance atom-site view references a validated local atom site")
+            .hierarchy
+            .atom_site(self.id)
+            .expect("atom-site view references a validated topology hierarchy")
     }
 }
 
@@ -368,10 +270,6 @@ impl MoleculeDefinition {
 
     pub fn molecule(&self) -> &Molecule {
         &self.molecule
-    }
-
-    pub fn hierarchy(&self) -> Option<&Hierarchy> {
-        (!self.molecule.hierarchy().is_empty()).then(|| self.molecule.hierarchy())
     }
 }
 
@@ -398,26 +296,14 @@ impl MoleculeInstance {
     pub const fn qualify_bond(&self, bond: BondId) -> InstanceBondId {
         InstanceBondId::new(self.id, bond)
     }
-
-    pub const fn qualify_chain(&self, chain: SmcraChainId) -> InstanceChainId {
-        InstanceChainId::new(self.id, chain)
-    }
-
-    pub const fn qualify_residue(&self, residue: SmcraResidueId) -> InstanceResidueId {
-        InstanceResidueId::new(self.id, residue)
-    }
-
-    pub const fn qualify_atom_site(&self, atom_site: SmcraAtomSiteId) -> InstanceAtomSiteId {
-        InstanceAtomSiteId::new(self.id, atom_site)
-    }
 }
 
 /// One explicit molecule occurrence borrowed from a [`Topology`].
 ///
 /// This is the instance-first system view. The underlying [`Molecule`] retains
-/// definition-local identities, while atoms, bonds, and hierarchy reached
-/// through this view are qualified by this occurrence's
-/// [`MoleculeInstanceId`].
+/// definition-local identities, while atoms and bonds reached through this
+/// view are qualified by this occurrence's [`MoleculeInstanceId`]. Hierarchy
+/// methods are projections over the one topology-owned hierarchy.
 #[derive(Clone, Copy)]
 pub struct MoleculeInstanceView<'a> {
     topology: &'a Topology,
@@ -480,12 +366,37 @@ impl<'a> MoleculeInstanceView<'a> {
             .map(move |(bond, payload)| (InstanceBondId::new(instance, bond), payload))
     }
 
-    /// Returns this occurrence's qualified hierarchy when one is present.
-    pub fn hierarchy(self) -> Option<InstanceHierarchy<'a>> {
-        self.definition().hierarchy().map(|_| InstanceHierarchy {
-            molecule: self.id,
-            topology: self.topology,
+    /// Iterates complete chains that contain at least one atom in this molecule.
+    /// A returned chain is not clipped and may also contain atoms from other
+    /// molecule instances.
+    pub fn chains(self) -> impl Iterator<Item = InstanceChain<'a>> + 'a {
+        let molecule = self.id;
+        self.topology.chains().filter(move |chain| {
+            chain
+                .residues()
+                .flat_map(InstanceResidue::atom_sites)
+                .any(|site| site.atom().molecule() == molecule)
         })
+    }
+
+    /// Iterates complete residues that contain at least one atom in this molecule.
+    /// A returned residue is not clipped and may contain sites from other
+    /// molecule instances.
+    pub fn residues(self) -> impl Iterator<Item = InstanceResidue<'a>> + 'a {
+        let molecule = self.id;
+        self.topology.residues().filter(move |residue| {
+            residue
+                .atom_sites()
+                .any(|site| site.atom().molecule() == molecule)
+        })
+    }
+
+    /// Iterates atom sites whose atoms belong to this molecule instance.
+    pub fn atom_sites(self) -> impl Iterator<Item = InstanceAtomSite<'a>> + 'a {
+        let molecule = self.id;
+        self.topology
+            .atom_sites()
+            .filter(move |site| site.atom().molecule() == molecule)
     }
 
     pub const fn qualify_atom(self, atom: AtomId) -> InstanceAtomId {
@@ -494,133 +405,6 @@ impl<'a> MoleculeInstanceView<'a> {
 
     pub const fn qualify_bond(self, bond: BondId) -> InstanceBondId {
         InstanceBondId::new(self.id, bond)
-    }
-
-    pub const fn qualify_chain(self, chain: SmcraChainId) -> InstanceChainId {
-        InstanceChainId::new(self.id, chain)
-    }
-
-    pub const fn qualify_residue(self, residue: SmcraResidueId) -> InstanceResidueId {
-        InstanceResidueId::new(self.id, residue)
-    }
-
-    pub const fn qualify_atom_site(self, atom_site: SmcraAtomSiteId) -> InstanceAtomSiteId {
-        InstanceAtomSiteId::new(self.id, atom_site)
-    }
-}
-
-/// A hierarchy borrowed through one qualified molecule instance.
-#[derive(Debug, Clone, Copy)]
-pub struct InstanceHierarchy<'a> {
-    molecule: MoleculeInstanceId,
-    topology: &'a Topology,
-}
-
-impl<'a> InstanceHierarchy<'a> {
-    pub const fn molecule(&self) -> MoleculeInstanceId {
-        self.molecule
-    }
-
-    pub fn chains(self) -> impl Iterator<Item = InstanceChain<'a>> + 'a {
-        let molecule = self.molecule;
-        let topology = self.topology;
-        self.local_hierarchy().chains().map(move |(chain, _)| {
-            InstanceChain::new(topology, InstanceChainId::new(molecule, chain))
-        })
-    }
-
-    pub fn residues(self) -> impl Iterator<Item = InstanceResidue<'a>> + 'a {
-        let molecule = self.molecule;
-        let topology = self.topology;
-        self.local_hierarchy().residues().map(move |(residue, _)| {
-            InstanceResidue::new(topology, InstanceResidueId::new(molecule, residue))
-        })
-    }
-
-    pub fn atom_sites(self) -> impl Iterator<Item = InstanceAtomSite<'a>> + 'a {
-        let molecule = self.molecule;
-        let topology = self.topology;
-        self.local_hierarchy().atom_sites().map(move |(site, _)| {
-            InstanceAtomSite::new(topology, InstanceAtomSiteId::new(molecule, site))
-        })
-    }
-
-    pub fn chain(self, id: InstanceChainId) -> Result<InstanceChain<'a>, TopologyError> {
-        self.ensure_molecule(id.molecule())?;
-        self.topology.chain(id)
-    }
-
-    pub fn residue(self, id: InstanceResidueId) -> Result<InstanceResidue<'a>, TopologyError> {
-        self.ensure_molecule(id.molecule())?;
-        self.topology.residue(id)
-    }
-
-    pub fn atom_site(self, id: InstanceAtomSiteId) -> Result<InstanceAtomSite<'a>, TopologyError> {
-        self.ensure_molecule(id.molecule())?;
-        self.topology.atom_site(id)
-    }
-
-    pub fn atom_for_site(self, site: InstanceAtomSiteId) -> Result<InstanceAtomId, TopologyError> {
-        self.ensure_molecule(site.molecule())?;
-        self.topology.atom_for_site(site)
-    }
-
-    pub fn atom_site_for_atom(
-        self,
-        atom: InstanceAtomId,
-    ) -> Result<Option<InstanceAtomSite<'a>>, TopologyError> {
-        self.ensure_molecule(atom.molecule())?;
-        self.topology.atom_site_for_atom(atom)
-    }
-
-    pub fn residue_for_atom(
-        self,
-        atom: InstanceAtomId,
-    ) -> Result<Option<InstanceResidue<'a>>, TopologyError> {
-        self.ensure_molecule(atom.molecule())?;
-        self.topology.residue_for_atom(atom)
-    }
-
-    pub fn chain_for_atom(
-        self,
-        atom: InstanceAtomId,
-    ) -> Result<Option<InstanceChain<'a>>, TopologyError> {
-        self.ensure_molecule(atom.molecule())?;
-        self.topology.chain_for_atom(atom)
-    }
-
-    pub fn residue_for_site(
-        self,
-        site: InstanceAtomSiteId,
-    ) -> Result<InstanceResidue<'a>, TopologyError> {
-        self.ensure_molecule(site.molecule())?;
-        self.topology.residue_for_site(site)
-    }
-
-    pub fn chain_for_residue(
-        self,
-        residue: InstanceResidueId,
-    ) -> Result<InstanceChain<'a>, TopologyError> {
-        self.ensure_molecule(residue.molecule())?;
-        self.topology.chain_for_residue(residue)
-    }
-
-    fn local_hierarchy(self) -> &'a Hierarchy {
-        self.topology
-            .definition_for_instance(self.molecule)
-            .expect("qualified hierarchy has a live molecule instance")
-            .hierarchy()
-            .expect("qualified hierarchy belongs to a macromolecule definition")
-    }
-
-    fn ensure_molecule(self, actual: MoleculeInstanceId) -> Result<(), TopologyError> {
-        if actual != self.molecule {
-            return Err(TopologyError::HierarchyInstanceMismatch {
-                expected: self.molecule,
-                actual,
-            });
-        }
-        Ok(())
     }
 }
 
@@ -693,6 +477,7 @@ pub struct Topology {
     instance_bonds: Vec<InstanceBondId>,
     atom_indices: BTreeMap<InstanceAtomId, TopologyAtomIndex>,
     bond_indices: BTreeMap<InstanceBondId, TopologyBondIndex>,
+    hierarchy: Hierarchy,
 }
 
 impl Topology {
@@ -718,6 +503,7 @@ impl Topology {
             && self.instance_bonds == other.instance_bonds
             && self.atom_indices == other.atom_indices
             && self.bond_indices == other.bond_indices
+            && self.hierarchy == other.hierarchy
     }
 
     pub fn definition(
@@ -794,110 +580,54 @@ impl Topology {
             .filter(move |instance| instance.definition == definition))
     }
 
-    pub fn hierarchy(
-        &self,
-        instance: MoleculeInstanceId,
-    ) -> Result<Option<InstanceHierarchy<'_>>, TopologyError> {
-        Ok(self
-            .definition_for_instance(instance)?
-            .hierarchy()
-            .map(|_| InstanceHierarchy {
-                molecule: instance,
-                topology: self,
-            }))
+    /// Returns the one authoritative system-level hierarchy.
+    pub const fn hierarchy(&self) -> &Hierarchy {
+        &self.hierarchy
     }
 
-    /// Iterates every qualified SMCRA chain in instance then hierarchy order.
+    /// Iterates every topology-global SMCRA chain in hierarchy order.
     pub fn chains(&self) -> impl Iterator<Item = InstanceChain<'_>> {
-        self.instances.iter().flat_map(move |instance| {
-            let molecule = instance.id;
-            self.definitions[instance.definition.index()]
-                .hierarchy()
-                .into_iter()
-                .flat_map(move |hierarchy| {
-                    hierarchy.chains().map(move |(chain, _)| {
-                        InstanceChain::new(self, InstanceChainId::new(molecule, chain))
-                    })
-                })
-        })
+        self.hierarchy
+            .chains()
+            .map(move |(id, _)| InstanceChain::new(self, id))
     }
 
-    /// Iterates every qualified SMCRA residue in instance then hierarchy order.
+    /// Iterates every topology-global SMCRA residue in hierarchy order.
     pub fn residues(&self) -> impl Iterator<Item = InstanceResidue<'_>> {
-        self.instances.iter().flat_map(move |instance| {
-            let molecule = instance.id;
-            self.definitions[instance.definition.index()]
-                .hierarchy()
-                .into_iter()
-                .flat_map(move |hierarchy| {
-                    hierarchy.residues().map(move |(residue, _)| {
-                        InstanceResidue::new(self, InstanceResidueId::new(molecule, residue))
-                    })
-                })
-        })
+        self.hierarchy
+            .residues()
+            .map(move |(id, _)| InstanceResidue::new(self, id))
     }
 
-    /// Iterates every qualified SMCRA atom site in instance then hierarchy order.
+    /// Iterates every topology-global SMCRA atom site in hierarchy order.
     pub fn atom_sites(&self) -> impl Iterator<Item = InstanceAtomSite<'_>> {
-        self.instances.iter().flat_map(move |instance| {
-            let molecule = instance.id;
-            self.definitions[instance.definition.index()]
-                .hierarchy()
-                .into_iter()
-                .flat_map(move |hierarchy| {
-                    hierarchy.atom_sites().map(move |(site, _)| {
-                        InstanceAtomSite::new(self, InstanceAtomSiteId::new(molecule, site))
-                    })
-                })
-        })
+        self.hierarchy
+            .atom_sites()
+            .map(move |(id, _)| InstanceAtomSite::new(self, id))
     }
 
-    pub fn chain(&self, id: InstanceChainId) -> Result<InstanceChain<'_>, TopologyError> {
-        self.local_chain(id)?;
+    pub fn chain(&self, id: SmcraChainId) -> Result<InstanceChain<'_>, TopologyError> {
+        self.hierarchy
+            .chain(id)
+            .map_err(|_| TopologyError::InvalidChainId(id))?;
         Ok(InstanceChain::new(self, id))
     }
 
-    fn local_chain(&self, id: InstanceChainId) -> Result<&SmcraChain, TopologyError> {
-        let hierarchy = self
-            .definition_for_instance(id.molecule())?
-            .hierarchy()
-            .ok_or(TopologyError::InvalidChainId(id))?;
-        hierarchy
-            .chain(id.chain())
-            .map_err(|_| TopologyError::InvalidChainId(id))
-    }
-
-    pub fn residue(&self, id: InstanceResidueId) -> Result<InstanceResidue<'_>, TopologyError> {
-        self.local_residue(id)?;
+    pub fn residue(&self, id: SmcraResidueId) -> Result<InstanceResidue<'_>, TopologyError> {
+        self.hierarchy
+            .residue(id)
+            .map_err(|_| TopologyError::InvalidResidueId(id))?;
         Ok(InstanceResidue::new(self, id))
     }
 
-    fn local_residue(&self, id: InstanceResidueId) -> Result<&SmcraResidue, TopologyError> {
-        let hierarchy = self
-            .definition_for_instance(id.molecule())?
-            .hierarchy()
-            .ok_or(TopologyError::InvalidResidueId(id))?;
-        hierarchy
-            .residue(id.residue())
-            .map_err(|_| TopologyError::InvalidResidueId(id))
-    }
-
-    pub fn atom_site(&self, id: InstanceAtomSiteId) -> Result<InstanceAtomSite<'_>, TopologyError> {
-        self.local_atom_site(id)?;
+    pub fn atom_site(&self, id: SmcraAtomSiteId) -> Result<InstanceAtomSite<'_>, TopologyError> {
+        self.hierarchy
+            .atom_site(id)
+            .map_err(|_| TopologyError::InvalidAtomSiteId(id))?;
         Ok(InstanceAtomSite::new(self, id))
     }
 
-    fn local_atom_site(&self, id: InstanceAtomSiteId) -> Result<&SmcraAtomSite, TopologyError> {
-        let hierarchy = self
-            .definition_for_instance(id.molecule())?
-            .hierarchy()
-            .ok_or(TopologyError::InvalidAtomSiteId(id))?;
-        hierarchy
-            .atom_site(id.atom_site())
-            .map_err(|_| TopologyError::InvalidAtomSiteId(id))
-    }
-
-    pub fn atom_for_site(&self, site: InstanceAtomSiteId) -> Result<InstanceAtomId, TopologyError> {
+    pub fn atom_for_site(&self, site: SmcraAtomSiteId) -> Result<InstanceAtomId, TopologyError> {
         let atom = self.atom_site(site)?.atom();
         self.atom(atom)?;
         Ok(atom)
@@ -908,12 +638,10 @@ impl Topology {
         atom: InstanceAtomId,
     ) -> Result<Option<InstanceAtomSite<'_>>, TopologyError> {
         self.atom(atom)?;
-        let Some(hierarchy) = self.definition_for_instance(atom.molecule())?.hierarchy() else {
-            return Ok(None);
-        };
-        Ok(hierarchy.atom_site_for_atom(atom.atom()).map(|site| {
-            InstanceAtomSite::new(self, InstanceAtomSiteId::new(atom.molecule(), site.id()))
-        }))
+        Ok(self
+            .hierarchy
+            .atom_site_for_atom(atom)
+            .map(|site| InstanceAtomSite::new(self, site.id())))
     }
 
     pub fn residue_for_atom(
@@ -938,14 +666,14 @@ impl Topology {
 
     pub fn residue_for_site(
         &self,
-        site: InstanceAtomSiteId,
+        site: SmcraAtomSiteId,
     ) -> Result<InstanceResidue<'_>, TopologyError> {
         Ok(self.atom_site(site)?.residue())
     }
 
     pub fn chain_for_residue(
         &self,
-        residue: InstanceResidueId,
+        residue: SmcraResidueId,
     ) -> Result<InstanceChain<'_>, TopologyError> {
         Ok(self.residue(residue)?.chain())
     }
@@ -1071,18 +799,31 @@ impl Topology {
 
 /// Linear, validate-then-commit builder for coordinate-free topology.
 ///
-/// Macro-molecule insertion validates static graph/hierarchy consistency with
-/// coordinate validation disabled. Detached source coordinates are not scanned or
-/// cloned into topology definitions.
+/// Molecule definitions and instances are staged before the one system-level
+/// hierarchy is validated against their final instance-qualified atom IDs.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TopologyBuilder {
     definitions: Vec<MoleculeDefinition>,
     instances: Vec<MoleculeInstance>,
+    hierarchy: Hierarchy,
 }
 
 impl TopologyBuilder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Returns staged system-level hierarchy state.
+    pub const fn hierarchy(&self) -> &Hierarchy {
+        &self.hierarchy
+    }
+
+    /// Returns mutable staged hierarchy state.
+    ///
+    /// References are checked transactionally by [`Self::build`]; published
+    /// topologies never expose mutable hierarchy access.
+    pub fn hierarchy_mut(&mut self) -> &mut Hierarchy {
+        &mut self.hierarchy
     }
 
     pub fn reserve_definitions(&mut self, additional: usize) -> Result<(), TopologyBuildError> {
@@ -1237,6 +978,9 @@ impl TopologyBuilder {
             }
         }
 
+        validate_hierarchy(&self.hierarchy, &atom_indices)
+            .map_err(TopologyBuildError::InvalidHierarchy)?;
+
         Ok(Topology {
             definitions: self.definitions,
             instances: self.instances,
@@ -1244,6 +988,7 @@ impl TopologyBuilder {
             instance_bonds,
             atom_indices,
             bond_indices,
+            hierarchy: self.hierarchy,
         })
     }
 
@@ -1343,6 +1088,193 @@ fn validate_nonempty_graph(graph: &Molecule) -> Result<(), TopologyBuildError> {
     Ok(())
 }
 
+/// A hierarchy reference or reverse lookup that cannot be published in a topology.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TopologyHierarchyError {
+    InvalidChainIdentifier {
+        slot: usize,
+        id: SmcraChainId,
+    },
+    InvalidResidueIdentifier {
+        slot: usize,
+        id: SmcraResidueId,
+    },
+    InvalidAtomSiteIdentifier {
+        slot: usize,
+        id: SmcraAtomSiteId,
+    },
+    InvalidChainResidue {
+        chain: SmcraChainId,
+        residue: SmcraResidueId,
+    },
+    InvalidResidueChain {
+        residue: SmcraResidueId,
+        chain: SmcraChainId,
+    },
+    InconsistentChainResidue {
+        chain: SmcraChainId,
+        residue: SmcraResidueId,
+    },
+    InvalidResidueAtomSite {
+        residue: SmcraResidueId,
+        site: SmcraAtomSiteId,
+    },
+    InvalidAtomSiteResidue {
+        site: SmcraAtomSiteId,
+        residue: SmcraResidueId,
+    },
+    InconsistentResidueAtomSite {
+        residue: SmcraResidueId,
+        site: SmcraAtomSiteId,
+    },
+    InvalidAtomSiteAtom {
+        site: SmcraAtomSiteId,
+        atom: InstanceAtomId,
+    },
+    InconsistentAtomLookup {
+        site: SmcraAtomSiteId,
+        atom: InstanceAtomId,
+    },
+}
+
+impl fmt::Display for TopologyHierarchyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl std::error::Error for TopologyHierarchyError {}
+
+fn validate_hierarchy(
+    hierarchy: &Hierarchy,
+    atom_indices: &BTreeMap<InstanceAtomId, TopologyAtomIndex>,
+) -> Result<(), TopologyHierarchyError> {
+    for (slot, (chain_id, chain)) in hierarchy.chains().enumerate() {
+        if chain_id.index() != slot {
+            return Err(TopologyHierarchyError::InvalidChainIdentifier { slot, id: chain_id });
+        }
+        for residue_id in chain.residues() {
+            let residue = hierarchy.residue(*residue_id).map_err(|_| {
+                TopologyHierarchyError::InvalidChainResidue {
+                    chain: chain_id,
+                    residue: *residue_id,
+                }
+            })?;
+            if residue.chain() != chain_id
+                || chain
+                    .residues()
+                    .iter()
+                    .filter(|candidate| **candidate == *residue_id)
+                    .count()
+                    != 1
+            {
+                return Err(TopologyHierarchyError::InconsistentChainResidue {
+                    chain: chain_id,
+                    residue: *residue_id,
+                });
+            }
+        }
+    }
+    for (slot, (residue_id, residue)) in hierarchy.residues().enumerate() {
+        if residue_id.index() != slot {
+            return Err(TopologyHierarchyError::InvalidResidueIdentifier {
+                slot,
+                id: residue_id,
+            });
+        }
+        let chain = hierarchy.chain(residue.chain()).map_err(|_| {
+            TopologyHierarchyError::InvalidResidueChain {
+                residue: residue_id,
+                chain: residue.chain(),
+            }
+        })?;
+        if chain
+            .residues()
+            .iter()
+            .filter(|candidate| **candidate == residue_id)
+            .count()
+            != 1
+        {
+            return Err(TopologyHierarchyError::InconsistentChainResidue {
+                chain: residue.chain(),
+                residue: residue_id,
+            });
+        }
+        for site_id in residue.atom_sites() {
+            let site = hierarchy.atom_site(*site_id).map_err(|_| {
+                TopologyHierarchyError::InvalidResidueAtomSite {
+                    residue: residue_id,
+                    site: *site_id,
+                }
+            })?;
+            if site.residue() != residue_id
+                || residue
+                    .atom_sites()
+                    .iter()
+                    .filter(|candidate| **candidate == *site_id)
+                    .count()
+                    != 1
+            {
+                return Err(TopologyHierarchyError::InconsistentResidueAtomSite {
+                    residue: residue_id,
+                    site: *site_id,
+                });
+            }
+        }
+    }
+    for (slot, (site_id, site)) in hierarchy.atom_sites().enumerate() {
+        if site_id.index() != slot {
+            return Err(TopologyHierarchyError::InvalidAtomSiteIdentifier { slot, id: site_id });
+        }
+        let residue = hierarchy.residue(site.residue()).map_err(|_| {
+            TopologyHierarchyError::InvalidAtomSiteResidue {
+                site: site_id,
+                residue: site.residue(),
+            }
+        })?;
+        if residue
+            .atom_sites()
+            .iter()
+            .filter(|candidate| **candidate == site_id)
+            .count()
+            != 1
+        {
+            return Err(TopologyHierarchyError::InconsistentResidueAtomSite {
+                residue: site.residue(),
+                site: site_id,
+            });
+        }
+        if !atom_indices.contains_key(&site.atom()) {
+            return Err(TopologyHierarchyError::InvalidAtomSiteAtom {
+                site: site_id,
+                atom: site.atom(),
+            });
+        }
+        if hierarchy
+            .atom_site_for_atom(site.atom())
+            .is_none_or(|mapped| mapped.id() != site_id)
+        {
+            return Err(TopologyHierarchyError::InconsistentAtomLookup {
+                site: site_id,
+                atom: site.atom(),
+            });
+        }
+    }
+    for (atom, site_id) in hierarchy.atom_lookup_entries() {
+        if !hierarchy
+            .atom_site(site_id)
+            .is_ok_and(|site| site.atom() == atom)
+        {
+            return Err(TopologyHierarchyError::InconsistentAtomLookup {
+                site: site_id,
+                atom,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Fixed-width identifier spaces owned by [`Topology`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1377,6 +1309,8 @@ pub enum TopologyBuildError {
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
     /// A staged definition was not instantiated and cannot be published.
     UnusedMoleculeDefinition(MoleculeDefinitionId),
+    /// The staged system hierarchy is inconsistent with itself or the topology.
+    InvalidHierarchy(TopologyHierarchyError),
     /// A topology collection exceeded the fixed-width identifier space for `kind`.
     IdentifierCapacityExceeded(TopologyIdKind),
 }
@@ -1402,6 +1336,9 @@ impl fmt::Display for TopologyBuildError {
                     "molecule definition {id} is not referenced by any instance"
                 )
             }
+            Self::InvalidHierarchy(error) => {
+                write!(formatter, "invalid topology hierarchy: {error}")
+            }
             Self::IdentifierCapacityExceeded(kind) => {
                 write!(formatter, "{kind} identifier capacity exceeded")
             }
@@ -1418,13 +1355,9 @@ pub enum TopologyError {
     InvalidMoleculeInstanceId(MoleculeInstanceId),
     InvalidAtomId(InstanceAtomId),
     InvalidBondId(InstanceBondId),
-    InvalidChainId(InstanceChainId),
-    InvalidResidueId(InstanceResidueId),
-    InvalidAtomSiteId(InstanceAtomSiteId),
-    HierarchyInstanceMismatch {
-        expected: MoleculeInstanceId,
-        actual: MoleculeInstanceId,
-    },
+    InvalidChainId(SmcraChainId),
+    InvalidResidueId(SmcraResidueId),
+    InvalidAtomSiteId(SmcraAtomSiteId),
     InvalidAtomIndex(TopologyAtomIndex),
     InvalidBondIndex(TopologyBondIndex),
 }
@@ -1443,10 +1376,6 @@ impl fmt::Display for TopologyError {
             Self::InvalidChainId(id) => write!(formatter, "invalid topology chain: {id}"),
             Self::InvalidResidueId(id) => write!(formatter, "invalid topology residue: {id}"),
             Self::InvalidAtomSiteId(id) => write!(formatter, "invalid topology atom site: {id}"),
-            Self::HierarchyInstanceMismatch { expected, actual } => write!(
-                formatter,
-                "hierarchy for {expected} cannot resolve an identifier qualified by {actual}"
-            ),
             Self::InvalidAtomIndex(index) => write!(formatter, "invalid {index}"),
             Self::InvalidBondIndex(index) => write!(formatter, "invalid {index}"),
         }
@@ -1559,7 +1488,7 @@ impl AtomSelection {
 
     pub fn for_atom_sites(
         topology: &Arc<Topology>,
-        atom_sites: impl IntoIterator<Item = InstanceAtomSiteId>,
+        atom_sites: impl IntoIterator<Item = SmcraAtomSiteId>,
     ) -> Result<Self, SelectionError> {
         let atom_sites = atom_sites.into_iter().collect::<BTreeSet<_>>();
         let atoms = atom_sites
@@ -1575,7 +1504,7 @@ impl AtomSelection {
 
     pub fn for_residues(
         topology: &Arc<Topology>,
-        residues: impl IntoIterator<Item = InstanceResidueId>,
+        residues: impl IntoIterator<Item = SmcraResidueId>,
     ) -> Result<Self, SelectionError> {
         let residues = residues.into_iter().collect::<BTreeSet<_>>();
         for residue in &residues {
@@ -1594,7 +1523,7 @@ impl AtomSelection {
 
     pub fn for_chains(
         topology: &Arc<Topology>,
-        chains: impl IntoIterator<Item = InstanceChainId>,
+        chains: impl IntoIterator<Item = SmcraChainId>,
     ) -> Result<Self, SelectionError> {
         let chains = chains.into_iter().collect::<BTreeSet<_>>();
         for chain in &chains {
@@ -1652,6 +1581,10 @@ impl AtomSelection {
         &self.topology
     }
 
+    pub(crate) fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
     pub fn indices(&self) -> &[TopologyAtomIndex] {
         &self.indices
     }
@@ -1680,9 +1613,9 @@ pub enum SelectionError {
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
     InvalidMoleculeInstanceId(MoleculeInstanceId),
     InvalidAtomId(InstanceAtomId),
-    InvalidChainId(InstanceChainId),
-    InvalidResidueId(InstanceResidueId),
-    InvalidAtomSiteId(InstanceAtomSiteId),
+    InvalidChainId(SmcraChainId),
+    InvalidResidueId(SmcraResidueId),
+    InvalidAtomSiteId(SmcraAtomSiteId),
     InvalidAtomIndex(TopologyAtomIndex),
 }
 
@@ -2035,19 +1968,11 @@ mod tests {
     }
 
     #[test]
-    fn reused_macro_hierarchy_navigation_and_selections_are_instance_qualified() {
+    fn topology_global_hierarchy_crosses_molecule_boundaries() {
         let mut macro_builder = crate::core::MoleculeEditor::new();
         let atom = macro_builder
             .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
             .expect("atom identifier capacity");
-        let chain = macro_builder.hierarchy_mut().add_chain("A", None).unwrap();
-        let residue = macro_builder
-            .hierarchy_mut()
-            .add_residue(chain, "GLY", Some(1), None, None)
-            .unwrap();
-        let site = macro_builder
-            .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
-            .unwrap();
         let molecule = macro_builder.finish().unwrap();
 
         let mut builder = TopologyBuilder::new();
@@ -2057,55 +1982,54 @@ mod tests {
         let small_definition = builder.add_molecule_definition(&small).unwrap();
         let small_instance = builder.add_instance(small_definition).unwrap();
         let second = builder.add_instance(definition).unwrap();
+        let chain = builder
+            .hierarchy_mut()
+            .add_chain("A", Some("AUTH".into()))
+            .unwrap();
+        let first_residue = builder
+            .hierarchy_mut()
+            .add_residue(chain, "GLY", Some(1), Some("10".into()), None)
+            .unwrap();
+        let second_residue = builder
+            .hierarchy_mut()
+            .add_residue(chain, "GLY", Some(2), Some("11".into()), None)
+            .unwrap();
+        let first_atom = InstanceAtomId::new(first, atom);
+        let second_atom = InstanceAtomId::new(second, atom);
+        let first_site = builder
+            .hierarchy_mut()
+            .add_atom_site(first_residue, first_atom, SmcraAtomSiteMetadata::default())
+            .unwrap();
+        let second_site = builder
+            .hierarchy_mut()
+            .add_atom_site(
+                second_residue,
+                second_atom,
+                SmcraAtomSiteMetadata::default(),
+            )
+            .unwrap();
         let topology = Arc::new(builder.build().unwrap());
         assert_eq!(topology.definition_count(), 2);
-        assert!(topology
-            .definition(definition)
-            .unwrap()
-            .hierarchy()
-            .is_some());
-        assert!(topology
-            .definition(small_definition)
-            .unwrap()
-            .hierarchy()
-            .is_none());
+        assert_eq!(topology.hierarchy().chains().count(), 1);
         let first_molecule = topology.molecule(first).unwrap();
         assert_eq!(first_molecule.molecule(), &molecule);
         assert_eq!(
             first_molecule
-                .hierarchy()
-                .unwrap()
                 .chains()
                 .map(InstanceChain::id)
                 .collect::<Vec<_>>(),
-            vec![InstanceChainId::new(first, chain)]
+            vec![chain]
         );
         assert!(topology
             .molecule(small_instance)
             .unwrap()
-            .hierarchy()
+            .chains()
+            .next()
             .is_none());
-
-        let first_chain = InstanceChainId::new(first, chain);
-        let second_chain = InstanceChainId::new(second, chain);
-        let first_residue = InstanceResidueId::new(first, residue);
-        let second_residue = InstanceResidueId::new(second, residue);
-        let first_site = InstanceAtomSiteId::new(first, site);
-        let second_site = InstanceAtomSiteId::new(second, site);
-        let first_atom = InstanceAtomId::new(first, atom);
-        let second_atom = InstanceAtomId::new(second, atom);
-
-        assert_ne!(first_chain, second_chain);
-        assert_ne!(first_residue, second_residue);
-        assert_ne!(first_site, second_site);
-        assert_eq!(first_chain.chain(), second_chain.chain());
-        assert_eq!(first_residue.residue(), second_residue.residue());
-        assert_eq!(first_site.atom_site(), second_site.atom_site());
-        assert_eq!(first_residue.to_string(), "molecule0:residue0");
 
         assert_eq!(
             topology.chains().map(InstanceChain::id).collect::<Vec<_>>(),
-            vec![first_chain, second_chain]
+            vec![chain]
         );
         assert_eq!(
             topology
@@ -2122,29 +2046,8 @@ mod tests {
             vec![first_site, second_site]
         );
 
-        for (chain_id, residue_id, site_id, atom_id) in [
-            (first_chain, first_residue, first_site, first_atom),
-            (second_chain, second_residue, second_site, second_atom),
-        ] {
-            let chain_view = topology.chain(chain_id).unwrap();
-            assert_eq!(chain_view.id(), chain_id);
-            assert_eq!(chain_view.label_id(), "A");
-            assert_eq!(chain_view.local().id(), chain);
-            let residues = chain_view.residues().collect::<Vec<_>>();
-            assert_eq!(residues.len(), 1);
-            assert_eq!(residues[0].id(), residue_id);
-            assert_eq!(residues[0].chain().id(), chain_id);
-            assert_eq!(residues[0].name(), "GLY");
-            let atom_sites = residues[0].atom_sites().collect::<Vec<_>>();
-            assert_eq!(atom_sites.len(), 1);
-            assert_eq!(atom_sites[0].id(), site_id);
-            assert_eq!(atom_sites[0].residue().id(), residue_id);
-            assert_eq!(atom_sites[0].atom(), atom_id);
-        }
-        assert!(std::ptr::eq(
-            topology.chain(first_chain).unwrap().local(),
-            topology.chain(second_chain).unwrap().local()
-        ));
+        let chain_view = topology.chain(chain).unwrap();
+        assert_eq!(chain_view.residues().count(), 2);
 
         assert_eq!(topology.atom_for_site(first_site).unwrap(), first_atom);
         assert_eq!(
@@ -2161,7 +2064,7 @@ mod tests {
         );
         assert_eq!(
             topology.chain_for_atom(first_atom).unwrap().unwrap().id(),
-            first_chain
+            chain
         );
         assert_eq!(
             topology.residue_for_site(first_site).unwrap().id(),
@@ -2169,25 +2072,8 @@ mod tests {
         );
         assert_eq!(
             topology.chain_for_residue(first_residue).unwrap().id(),
-            first_chain
+            chain
         );
-
-        let scoped = topology.hierarchy(first).unwrap().unwrap();
-        assert_eq!(
-            scoped.chains().map(InstanceChain::id).collect::<Vec<_>>(),
-            vec![first_chain]
-        );
-        assert_eq!(
-            scoped.atom_site_for_atom(first_atom).unwrap().unwrap().id(),
-            first_site
-        );
-        assert!(matches!(
-            scoped.chain(second_chain),
-            Err(TopologyError::HierarchyInstanceMismatch {
-                expected,
-                actual,
-            }) if expected == first && actual == second
-        ));
 
         let small_atom = topology
             .atom_ids()
@@ -2200,11 +2086,11 @@ mod tests {
         assert!(topology.chain_for_atom(small_atom).unwrap().is_none());
 
         assert_eq!(
-            AtomSelection::for_chains(&topology, [first_chain])
+            AtomSelection::for_chains(&topology, [chain])
                 .unwrap()
                 .semantic_ids(&topology)
                 .unwrap(),
-            vec![first_atom]
+            vec![first_atom, second_atom]
         );
         assert_eq!(
             AtomSelection::for_residues(&topology, [second_residue])
@@ -2227,5 +2113,95 @@ mod tests {
                 .unwrap(),
             vec![first_atom, second_atom]
         );
+
+        let chain_selection = AtomSelection::for_chains(&topology, [chain]).unwrap();
+        let subset = topology.subset(&chain_selection).unwrap();
+        assert_eq!(subset.topology().instance_count(), 2);
+        assert_eq!(subset.topology().chains().count(), 1);
+        assert_eq!(subset.topology().residues().count(), 2);
+        assert_eq!(subset.topology().atom_sites().count(), 2);
+        assert_eq!(
+            subset.correspondence().source_atom_indices(),
+            [TopologyAtomIndex::new(0), TopologyAtomIndex::new(2)]
+        );
+        assert!(subset.correspondence().target_atom(small_atom).is_none());
+    }
+
+    #[test]
+    fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
+        let mut editor = crate::core::MoleculeEditor::new();
+        let first = editor
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .unwrap();
+        let middle = editor
+            .add_atom(Atom::new(Element::from_symbol("N").unwrap()))
+            .unwrap();
+        let tombstone = editor
+            .add_atom(Atom::new(Element::from_symbol("H").unwrap()))
+            .unwrap();
+        editor.delete_atom(tombstone).unwrap();
+        let last = editor
+            .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
+            .unwrap();
+        editor.add_bond(first, middle, BondOrder::Single).unwrap();
+        editor.add_bond(middle, last, BondOrder::Double).unwrap();
+        let molecule = editor.finish().unwrap();
+        assert_eq!(last.raw(), 3);
+
+        let mut builder = TopologyBuilder::new();
+        let instance = builder.add_molecule(&molecule).unwrap();
+        let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
+        for (sequence, atom) in [(1, first), (2, middle), (3, last)] {
+            let residue = builder
+                .hierarchy_mut()
+                .add_residue(chain, "RES", Some(sequence), None, None)
+                .unwrap();
+            builder
+                .hierarchy_mut()
+                .add_atom_site(
+                    residue,
+                    InstanceAtomId::new(instance, atom),
+                    SmcraAtomSiteMetadata::default(),
+                )
+                .unwrap();
+        }
+        let source = Arc::new(builder.build().unwrap());
+        let selection = AtomSelection::from_atoms(
+            &source,
+            [
+                InstanceAtomId::new(instance, first),
+                InstanceAtomId::new(instance, last),
+            ],
+        )
+        .unwrap();
+
+        let subset = source.subset(&selection).unwrap();
+        assert_eq!(subset.topology().instance_count(), 2);
+        assert_eq!(subset.topology().atom_count(), 2);
+        assert_eq!(subset.topology().bond_count(), 0);
+        assert_eq!(subset.topology().chains().count(), 1);
+        assert_eq!(subset.topology().residues().count(), 2);
+        assert_eq!(subset.topology().atom_sites().count(), 2);
+        assert_eq!(
+            subset
+                .topology()
+                .residues()
+                .map(|residue| residue.label_seq_id())
+                .collect::<Vec<_>>(),
+            [Some(1), Some(3)]
+        );
+        assert_eq!(
+            subset.correspondence().source_atom_indices(),
+            [TopologyAtomIndex::new(0), TopologyAtomIndex::new(2)]
+        );
+        assert!(subset
+            .correspondence()
+            .target_atom(InstanceAtomId::new(instance, middle))
+            .is_none());
+        let target_last = subset
+            .correspondence()
+            .target_atom(InstanceAtomId::new(instance, last))
+            .expect("selected tombstone-separated atom is mapped");
+        assert_eq!(subset.topology().atom_index(target_last).unwrap().raw(), 1);
     }
 }
