@@ -2113,6 +2113,18 @@ mod tests {
                 .unwrap(),
             vec![first_atom, second_atom]
         );
+
+        let chain_selection = AtomSelection::for_chains(&topology, [chain]).unwrap();
+        let subset = topology.subset(&chain_selection).unwrap();
+        assert_eq!(subset.topology().instance_count(), 2);
+        assert_eq!(subset.topology().chains().count(), 1);
+        assert_eq!(subset.topology().residues().count(), 2);
+        assert_eq!(subset.topology().atom_sites().count(), 2);
+        assert_eq!(
+            subset.correspondence().source_atom_indices(),
+            [TopologyAtomIndex::new(0), TopologyAtomIndex::new(2)]
+        );
+        assert!(subset.correspondence().target_atom(small_atom).is_none());
     }
 
     #[test]
@@ -2124,12 +2136,17 @@ mod tests {
         let middle = editor
             .add_atom(Atom::new(Element::from_symbol("N").unwrap()))
             .unwrap();
+        let tombstone = editor
+            .add_atom(Atom::new(Element::from_symbol("H").unwrap()))
+            .unwrap();
+        editor.delete_atom(tombstone).unwrap();
         let last = editor
             .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
             .unwrap();
         editor.add_bond(first, middle, BondOrder::Single).unwrap();
         editor.add_bond(middle, last, BondOrder::Double).unwrap();
         let molecule = editor.finish().unwrap();
+        assert_eq!(last.raw(), 3);
 
         let mut builder = TopologyBuilder::new();
         let instance = builder.add_molecule(&molecule).unwrap();
@@ -2181,5 +2198,10 @@ mod tests {
             .correspondence()
             .target_atom(InstanceAtomId::new(instance, middle))
             .is_none());
+        let target_last = subset
+            .correspondence()
+            .target_atom(InstanceAtomId::new(instance, last))
+            .expect("selected tombstone-separated atom is mapped");
+        assert_eq!(subset.topology().atom_index(target_last).unwrap().raw(), 1);
     }
 }

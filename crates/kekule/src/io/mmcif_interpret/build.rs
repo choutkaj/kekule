@@ -107,13 +107,18 @@ struct BuiltAtomProvenance {
     type_symbol: String,
     source_line: usize,
     atom_site_id: Option<String>,
+    label_atom_name: Option<String>,
     atom_name: String,
     auth_atom_name: Option<String>,
+    label_component_id: Option<String>,
     component_id: String,
     auth_component_id: Option<String>,
+    label_asym_id: Option<String>,
     asym_id: String,
     auth_asym_id: Option<String>,
     entity_id: Option<String>,
+    entity_kind: MmcifEntityKind,
+    residue_key: String,
     label_sequence_id: Option<i32>,
     author_sequence_id: Option<String>,
     insertion_code: Option<String>,
@@ -148,13 +153,18 @@ impl BuiltMoleculeProvenance {
                         type_symbol: atom.type_symbol,
                         source_line: atom.source_line,
                         atom_site_id: atom.atom_site_id,
+                        label_atom_name: atom.label_atom_name,
                         atom_name: atom.atom_name,
                         auth_atom_name: atom.auth_atom_name,
+                        label_component_id: atom.label_component_id,
                         component_id: atom.component_id,
                         auth_component_id: atom.auth_component_id,
+                        label_asym_id: atom.label_asym_id,
                         asym_id: atom.asym_id,
                         auth_asym_id: atom.auth_asym_id,
                         entity_id: atom.entity_id,
+                        entity_kind: atom.entity_kind,
+                        residue_key: atom.residue_key,
                         label_sequence_id: atom.label_sequence_id,
                         author_sequence_id: atom.author_sequence_id,
                         insertion_code: atom.insertion_code,
@@ -380,13 +390,18 @@ pub(super) fn build_molecule(
             type_symbol: row.element.symbol().to_owned(),
             source_line: row.line,
             atom_site_id: row.atom_site_id.clone(),
+            label_atom_name: row.label_atom_name.clone(),
             atom_name: row.atom_name.clone(),
             auth_atom_name: row.auth_atom_name.clone(),
+            label_component_id: row.label_comp_id.clone(),
             component_id: row.comp_id.clone(),
             auth_component_id: row.auth_comp_id.clone(),
+            label_asym_id: row.label_asym_id.clone(),
             asym_id: row.asym_id.clone(),
             auth_asym_id: row.auth_asym_id.clone(),
             entity_id: row.entity_id.clone(),
+            entity_kind: row.kind.clone(),
+            residue_key: row.residue_key.clone(),
             label_sequence_id: row.label_seq_id,
             author_sequence_id: row.auth_seq_id.clone(),
             insertion_code: row.insertion_code.clone(),
@@ -536,6 +551,17 @@ pub(super) fn build_topology_hierarchy(
     instances: &[MmcifInstanceProvenance],
     polymer_asym_order: &BTreeMap<String, usize>,
 ) -> Result<Hierarchy, MmcifInterpretError> {
+    #[derive(Clone)]
+    struct ResidueMetadata {
+        component_id: String,
+        label_component_id: Option<String>,
+        author_component_id: Option<String>,
+        label_sequence_id: Option<i32>,
+        author_sequence_id: Option<String>,
+        insertion_code: Option<String>,
+        occurrence: Option<usize>,
+    }
+
     let mut hierarchy = Hierarchy::new();
     let mut chains = BTreeMap::new();
     let mut residues = BTreeMap::new();
@@ -544,14 +570,72 @@ pub(super) fn build_topology_hierarchy(
         .flat_map(|instance| instance.atoms.iter())
         .collect::<Vec<_>>();
     atoms.sort_by_key(|atom| atom.source_line);
+    let mut chain_authors = BTreeMap::<String, Option<String>>::new();
+    let mut residue_metadata = BTreeMap::<(String, String), ResidueMetadata>::new();
+    for atom in &atoms {
+        merge_optional_source_value(
+            chain_authors.entry(atom.asym_id.clone()).or_default(),
+            atom.auth_asym_id.as_ref(),
+            "auth_asym_id",
+            &atom.asym_id,
+            atom.source_line,
+        )?;
+        let key = (atom.asym_id.clone(), atom.residue_key.clone());
+        if let Some(metadata) = residue_metadata.get_mut(&key) {
+            if metadata.component_id != atom.component_id
+                || metadata.label_sequence_id != atom.label_sequence_id
+                || metadata.insertion_code != atom.insertion_code
+                || metadata.occurrence != atom.occurrence
+            {
+                return Err(inconsistent_residue_metadata(
+                    atom,
+                    "canonical residue identity",
+                ));
+            }
+            merge_optional_source_value(
+                &mut metadata.label_component_id,
+                atom.label_component_id.as_ref(),
+                "label_comp_id",
+                &atom.residue_key,
+                atom.source_line,
+            )?;
+            merge_optional_source_value(
+                &mut metadata.author_component_id,
+                atom.auth_component_id.as_ref(),
+                "auth_comp_id",
+                &atom.residue_key,
+                atom.source_line,
+            )?;
+            merge_optional_source_value(
+                &mut metadata.author_sequence_id,
+                atom.author_sequence_id.as_ref(),
+                "auth_seq_id",
+                &atom.residue_key,
+                atom.source_line,
+            )?;
+        } else {
+            residue_metadata.insert(
+                key,
+                ResidueMetadata {
+                    component_id: atom.component_id.clone(),
+                    label_component_id: atom.label_component_id.clone(),
+                    author_component_id: atom.auth_component_id.clone(),
+                    label_sequence_id: atom.label_sequence_id,
+                    author_sequence_id: atom.author_sequence_id.clone(),
+                    insertion_code: atom.insertion_code.clone(),
+                    occurrence: atom.occurrence,
+                },
+            );
+        }
+    }
     let mut ordered_polymer_chains = polymer_asym_order.iter().collect::<Vec<_>>();
     ordered_polymer_chains.sort_by_key(|(_, order)| **order);
     for (asym_id, _) in ordered_polymer_chains {
-        let Some(atom) = atoms.iter().find(|atom| &atom.asym_id == asym_id) else {
+        let Some(_) = atoms.iter().find(|atom| &atom.asym_id == asym_id) else {
             continue;
         };
         let chain = hierarchy
-            .add_chain(asym_id.clone(), atom.auth_asym_id.clone())
+            .add_chain(asym_id.clone(), chain_authors[asym_id].clone())
             .map_err(hierarchy_error)?;
         chains.insert(asym_id.clone(), chain);
     }
@@ -560,36 +644,30 @@ pub(super) fn build_topology_hierarchy(
             *chain
         } else {
             let chain = hierarchy
-                .add_chain(atom.asym_id.clone(), atom.auth_asym_id.clone())
+                .add_chain(atom.asym_id.clone(), chain_authors[&atom.asym_id].clone())
                 .map_err(hierarchy_error)?;
             chains.insert(atom.asym_id.clone(), chain);
             chain
         };
-        let residue_key = (
-            atom.asym_id.clone(),
-            atom.label_sequence_id,
-            atom.author_sequence_id.clone(),
-            atom.insertion_code.clone(),
-            atom.component_id.clone(),
-            atom.occurrence,
-        );
+        let residue_key = (atom.asym_id.clone(), atom.residue_key.clone());
         let residue = if let Some(residue) = residues.get(&residue_key) {
             *residue
         } else {
+            let metadata = &residue_metadata[&residue_key];
             let residue = hierarchy
                 .add_residue(
                     chain,
-                    atom.component_id.clone(),
-                    atom.label_sequence_id,
-                    atom.author_sequence_id.clone(),
-                    atom.insertion_code.clone(),
+                    metadata.component_id.clone(),
+                    metadata.label_sequence_id,
+                    metadata.author_sequence_id.clone(),
+                    metadata.insertion_code.clone(),
                 )
                 .map_err(hierarchy_error)?;
             hierarchy
                 .set_residue_component_ids(
                     residue,
-                    Some(atom.component_id.clone()),
-                    atom.auth_component_id.clone(),
+                    metadata.label_component_id.clone(),
+                    metadata.author_component_id.clone(),
                 )
                 .map_err(hierarchy_error)?;
             residues.insert(residue_key, residue);
@@ -601,15 +679,53 @@ pub(super) fn build_topology_hierarchy(
                 atom.atom,
                 SmcraAtomSiteMetadata {
                     type_symbol: Some(atom.type_symbol.clone()),
-                    label_asym_id: Some(atom.asym_id.clone()),
+                    label_asym_id: atom.label_asym_id.clone(),
                     auth_asym_id: atom.auth_asym_id.clone(),
-                    label_atom_id: Some(atom.atom_name.clone()),
+                    label_atom_id: atom.label_atom_name.clone(),
                     auth_atom_id: atom.auth_atom_name.clone(),
                 },
             )
             .map_err(hierarchy_error)?;
     }
     Ok(hierarchy)
+}
+
+fn merge_optional_source_value(
+    current: &mut Option<String>,
+    incoming: Option<&String>,
+    field: &'static str,
+    identity: &str,
+    source_line: usize,
+) -> Result<(), MmcifInterpretError> {
+    let Some(incoming) = incoming else {
+        return Ok(());
+    };
+    if let Some(current) = current {
+        if current != incoming {
+            return Err(MmcifInterpretError::new(
+                Some(source_line),
+                format!(
+                    "canonical hierarchy identity `{identity}` has conflicting _atom_site.{field} values `{current}` and `{incoming}`"
+                ),
+            ));
+        }
+    } else {
+        *current = Some(incoming.clone());
+    }
+    Ok(())
+}
+
+fn inconsistent_residue_metadata(
+    atom: &MmcifAtomProvenance,
+    field: &'static str,
+) -> MmcifInterpretError {
+    MmcifInterpretError::new(
+        Some(atom.source_line),
+        format!(
+            "canonical residue `{}` in asymmetry `{}` has inconsistent {field}",
+            atom.residue_key, atom.asym_id
+        ),
+    )
 }
 
 pub(super) fn graph_error(error: impl fmt::Display) -> MmcifInterpretError {

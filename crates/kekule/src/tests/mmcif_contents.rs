@@ -48,6 +48,32 @@ _audit_author.pdbx_ordinal
 'Example Author' 1
 "#;
 
+const SPLIT_SOURCE_CHAIN: &str = r#"
+data_split_source_chain
+loop_
+_entity.id
+_entity.type
+7 polymer
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 7
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+ATOM 1 C CA GLY A 7 1 0.0 0.0 0.0
+ATOM 2 C CA ALA A 7 2 10.0 0.0 0.0
+"#;
+
 const MULTI_MODEL: &str = r#"
 data_multi
 loop_
@@ -445,6 +471,25 @@ ATOM 2 C C1 GLY Z 1 1 1.0 0.0 0.0 1
     assert!(hierarchy
         .atom_sites()
         .all(|(_, site)| site.atom().molecule() == MoleculeInstanceId::new(0)));
+
+    let written = mmcif::write_with_report(
+        result.model(),
+        result.report(),
+        MmcifWriteOptions::default(),
+    )
+    .expect("one connected molecule may retain two source asymmetries");
+    let round_trip = mmcif::interpret(&parse(&written), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(round_trip.topology().instance_count(), 1);
+    assert_eq!(
+        round_trip
+            .topology()
+            .hierarchy()
+            .chains()
+            .map(|(_, chain)| chain.label_id())
+            .collect::<Vec<_>>(),
+        ["Z", "A"]
+    );
+    assert_eq!(round_trip.topology().bond_count(), 1);
 }
 
 #[test]
@@ -602,6 +647,224 @@ ATOM 1 C CA CAX GLY GLC A X 1 7 100 B 0.0 0.0 0.0
 }
 
 #[test]
+fn auth_only_hierarchy_identity_is_preserved_then_deterministically_label_normalized() {
+    let input = r#"
+data_auth_only
+loop_
+_entity.id
+_entity.type
+1 polymer
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+X 1
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.auth_atom_id
+_atom_site.label_comp_id
+_atom_site.auth_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+ATOM 1 C . CAX . GLC . X 1 . 100 0.0 0.0 0.0
+"#;
+    let interpreted = mmcif::interpret(&parse(input), MmcifInterpretOptions::default()).unwrap();
+    let atom = &interpreted.report().instances()[0].atoms()[0];
+    assert_eq!(atom.label_asym_id(), None);
+    assert_eq!(atom.auth_asym_id(), Some("X"));
+    assert_eq!(atom.label_atom_name(), None);
+    assert_eq!(atom.auth_atom_name(), Some("CAX"));
+    assert_eq!(atom.label_component_id(), None);
+    assert_eq!(atom.auth_component_id(), Some("GLC"));
+    let hierarchy = interpreted.topology().hierarchy();
+    let (_, chain) = hierarchy.chains().next().unwrap();
+    assert_eq!(chain.label_id(), "X");
+    assert_eq!(chain.author_id(), Some("X"));
+    let residue = hierarchy.residue(chain.residues()[0]).unwrap();
+    assert_eq!(residue.label_comp_id(), None);
+    assert_eq!(residue.author_comp_id(), Some("GLC"));
+    let site = hierarchy.atom_site(residue.atom_sites()[0]).unwrap();
+    assert_eq!(site.metadata().label_asym_id, None);
+    assert_eq!(site.metadata().label_atom_id, None);
+
+    let written = mmcif::write_with_report(
+        interpreted.model(),
+        interpreted.report(),
+        MmcifWriteOptions::default(),
+    )
+    .unwrap();
+    let normalized = mmcif::interpret(&parse(&written), MmcifInterpretOptions::default()).unwrap();
+    let atom = &normalized.report().instances()[0].atoms()[0];
+    assert_eq!(atom.label_asym_id(), Some("X"));
+    assert_eq!(atom.label_atom_name(), Some("CAX"));
+    assert_eq!(atom.label_component_id(), Some("GLC"));
+    assert_eq!(atom.auth_asym_id(), Some("X"));
+    assert_eq!(atom.auth_atom_name(), Some("CAX"));
+    assert_eq!(atom.auth_component_id(), Some("GLC"));
+}
+
+#[test]
+fn canonical_label_residue_rejects_conflicting_author_aliases() {
+    let input = r#"
+data_conflicting_residue_alias
+loop_
+_entity.id
+_entity.type
+1 polymer
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.auth_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+ATOM 1 N N GLY GLC A X 1 7 100 0.0 0.0 0.0
+ATOM 2 C CA GLY GLC A X 1 7 101 10.0 0.0 0.0
+"#;
+    let error = mmcif::interpret(&parse(input), MmcifInterpretOptions::default()).unwrap_err();
+    assert!(error
+        .message()
+        .contains("conflicting _atom_site.auth_seq_id"));
+
+    let conflicting_label_component = input.replace(
+        "ATOM 2 C CA GLY GLC A X 1 7 101",
+        "ATOM 2 C CA ALA GLC A X 1 7 100",
+    );
+    let error = mmcif::interpret(
+        &parse(&conflicting_label_component),
+        MmcifInterpretOptions::default(),
+    )
+    .unwrap_err();
+    assert!(error.message().contains("canonical residue identity"));
+
+    let conflicting_author_component = input.replace(
+        "ATOM 2 C CA GLY GLC A X 1 7 101",
+        "ATOM 2 C CA GLY ALC A X 1 7 100",
+    );
+    let error = mmcif::interpret(
+        &parse(&conflicting_author_component),
+        MmcifInterpretOptions::default(),
+    )
+    .unwrap_err();
+    assert!(error
+        .message()
+        .contains("conflicting _atom_site.auth_comp_id"));
+
+    let conflicting_chain_alias = input.replace(
+        "ATOM 2 C CA GLY GLC A X 1 7 101",
+        "ATOM 2 C CA GLY GLC A Y 1 7 100",
+    );
+    let error = mmcif::interpret(
+        &parse(&conflicting_chain_alias),
+        MmcifInterpretOptions::default(),
+    )
+    .unwrap_err();
+    assert!(error
+        .message()
+        .contains("conflicting _atom_site.auth_asym_id"));
+}
+
+#[test]
+fn canonical_label_residue_uses_one_compatible_author_alias() {
+    let input = r#"
+data_compatible_residue_alias
+loop_
+_entity.id
+_entity.type
+1 polymer
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.auth_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+ATOM 1 N N GLY GLC A X 1 7 . 0.0 0.0 0.0
+ATOM 2 C CA GLY GLC A X 1 7 100 10.0 0.0 0.0
+"#;
+    let interpreted = mmcif::interpret(&parse(input), MmcifInterpretOptions::default()).unwrap();
+    let hierarchy = interpreted.topology().hierarchy();
+    let (_, chain) = hierarchy.chains().next().unwrap();
+    assert_eq!(chain.residues().len(), 1);
+    let residue = hierarchy.residue(chain.residues()[0]).unwrap();
+    assert_eq!(residue.label_seq_id(), Some(7));
+    assert_eq!(residue.author_seq_id(), Some("100"));
+}
+
+#[test]
+fn unsequenced_component_identity_distinguishes_source_residues() {
+    let input = r#"
+data_unsequenced_components
+loop_
+_entity.id
+_entity.type
+1 non-polymer
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+HETATM 1 C C1 LIG A 1 0.0 0.0 0.0
+HETATM 2 C C1 ION A 1 10.0 0.0 0.0
+"#;
+    let interpreted = mmcif::interpret(&parse(input), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(interpreted.topology().instance_count(), 2);
+    let hierarchy = interpreted.topology().hierarchy();
+    let (_, chain) = hierarchy.chains().next().unwrap();
+    assert_eq!(chain.residues().len(), 2);
+    assert_eq!(
+        chain
+            .residues()
+            .iter()
+            .map(|residue| hierarchy.residue(*residue).unwrap().name())
+            .collect::<Vec<_>>(),
+        ["LIG", "ION"]
+    );
+}
+
+#[test]
 fn disconnected_waters_share_one_source_hierarchy_chain() {
     let input = r#"
 data_waters
@@ -635,6 +898,21 @@ HETATM 2 O O HOH W 1 5.0 0.0 0.0
     assert_eq!(chain.label_id(), "W");
     assert_eq!(chain.residues().len(), 2);
     assert_eq!(hierarchy.atom_sites().count(), 2);
+
+    let written = mmcif::write_with_report(
+        result.model(),
+        result.report(),
+        MmcifWriteOptions::default(),
+    )
+    .unwrap();
+    let round_trip = mmcif::interpret(&parse(&written), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(round_trip.topology().instance_count(), 2);
+    assert_eq!(round_trip.topology().hierarchy().chains().count(), 1);
+    assert!(round_trip
+        .report()
+        .instances()
+        .iter()
+        .all(|instance| instance.entity_kinds() == [MmcifEntityKind::Water]));
 }
 
 #[test]
@@ -1395,6 +1673,21 @@ hydrog A N 1 W O .
         .next()
         .is_some());
     assert_eq!(result.report().applied_connections, 1);
+
+    let written = mmcif::write_with_report(
+        result.model(),
+        result.report(),
+        MmcifWriteOptions::default(),
+    )
+    .expect("one connected molecule may span distinct source entities and asymmetries");
+    let round_trip = mmcif::interpret(&parse(&written), MmcifInterpretOptions::default()).unwrap();
+    assert!(round_trip.report().instances().iter().any(|instance| {
+        instance.entity_kinds().contains(&MmcifEntityKind::Polymer)
+            && instance
+                .entity_kinds()
+                .contains(&MmcifEntityKind::NonPolymer)
+    }));
+    assert_eq!(round_trip.report().applied_connections(), 1);
 }
 
 #[test]
@@ -1559,6 +1852,113 @@ covale A N 1 A CA 1 doub
             .order,
         BondOrder::Double
     );
+}
+
+#[test]
+fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
+    let interpreted =
+        mmcif::interpret(&parse(SPLIT_SOURCE_CHAIN), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(interpreted.topology().instance_count(), 2);
+    assert_eq!(interpreted.topology().hierarchy().chains().count(), 1);
+    assert!(interpreted
+        .report()
+        .instances()
+        .iter()
+        .flat_map(|instance| instance.atoms())
+        .all(|atom| {
+            atom.entity_id() == Some("7") && atom.entity_kind() == &MmcifEntityKind::Polymer
+        }));
+
+    let written = mmcif::write_with_report(
+        interpreted.model(),
+        interpreted.report(),
+        MmcifWriteOptions::default(),
+    )
+    .expect("a source asymmetry may span disconnected molecule instances");
+    let document = parse(&written);
+    let block = &document.blocks()[0];
+    let struct_asym = block
+        .loop_with_tag("_struct_asym.id")
+        .expect("writer emits structural asymmetries");
+    assert_eq!(struct_asym.row_count(), 1);
+    let asym_entity = struct_asym
+        .value(0, "_struct_asym.entity_id")
+        .unwrap()
+        .optional_text()
+        .unwrap();
+    let atom_sites = block
+        .loop_with_tag("_atom_site.label_entity_id")
+        .expect("writer emits atom sites");
+    assert!((0..atom_sites.row_count()).all(|row| {
+        atom_sites
+            .value(row, "_atom_site.label_entity_id")
+            .and_then(|value| value.optional_text())
+            == Some(asym_entity)
+    }));
+
+    let round_trip = mmcif::interpret(&document, MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(round_trip.topology().instance_count(), 2);
+    assert_eq!(round_trip.topology().hierarchy().chains().count(), 1);
+    assert_eq!(round_trip.topology().bond_count(), 0);
+    assert!(round_trip
+        .report()
+        .instances()
+        .iter()
+        .all(|instance| { instance.entity_kinds() == [MmcifEntityKind::Polymer] }));
+
+    let mut generic = MmcifEntityClassifications::new();
+    for (molecule, _) in interpreted.topology().instances() {
+        generic.insert(molecule, MmcifEntityKind::Polymer).unwrap();
+    }
+    let generic_written = mmcif::write_with_classifications(
+        interpreted.model(),
+        &generic,
+        MmcifWriteOptions::default(),
+    )
+    .expect("consistent generic classifications represent a cross-molecule chain");
+    let generic_round_trip =
+        mmcif::interpret(&parse(&generic_written), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(generic_round_trip.topology().instance_count(), 2);
+    assert_eq!(
+        generic_round_trip.topology().hierarchy().chains().count(),
+        1
+    );
+
+    let mut conflicting = MmcifEntityClassifications::new();
+    let molecules = interpreted
+        .topology()
+        .instances()
+        .map(|(molecule, _)| molecule)
+        .collect::<Vec<_>>();
+    conflicting
+        .insert(molecules[0], MmcifEntityKind::Polymer)
+        .unwrap();
+    conflicting
+        .insert(molecules[1], MmcifEntityKind::NonPolymer)
+        .unwrap();
+    assert!(matches!(
+        mmcif::write_with_classifications(
+            interpreted.model(),
+            &conflicting,
+            MmcifWriteOptions::default(),
+        ),
+        Err(MmcifWriteError::ConflictingAsymEntityClassifications {
+            asym_id,
+            ..
+        }) if asym_id == "A"
+    ));
+
+    let mut contradictory_report = interpreted.report().clone();
+    contradictory_report.instances[1].atoms[0].entity_id = Some("8".to_owned());
+    assert!(matches!(
+        mmcif::write_with_report(
+            interpreted.model(),
+            &contradictory_report,
+            MmcifWriteOptions::default(),
+        ),
+        Err(MmcifWriteError::ConflictingAsymEntityIds { asym_id, .. })
+            if asym_id == "A"
+    ));
 }
 
 #[test]
