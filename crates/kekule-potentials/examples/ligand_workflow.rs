@@ -5,7 +5,7 @@ use kekule::{
     modeling::{minimize, MinimizeOptions},
     sdf::{self, SdfParseOptions, SdfRecordInterpretation},
     structure::{Model, Positions},
-    units::{Quantity, ANGSTROM, MODEL_GRADIENT_UNIT},
+    units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE_PER_ANGSTROM},
 };
 use kekule_potentials::dreiding::{DreidingPotential, DreidingPrepareOptions};
 
@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &mut potential,
         MinimizeOptions {
             max_iterations: 10_000,
-            gradient_tolerance: 0.05 * MODEL_GRADIENT_UNIT,
+            gradient_tolerance: 0.05 * KILOJOULE_PER_MOLE_PER_ANGSTROM,
             ..MinimizeOptions::default()
         },
     )?;

@@ -7,7 +7,9 @@ use std::sync::Arc;
 use kekule::core::{Atom, BondOrder, Element, PropValue};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::topology::TopologyBuilder;
-use kekule::units::{Quantity, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
+use kekule::units::{
+    Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND,
+};
 use kekule_traj::io::trr::{TrrScalarPrecision, TrrWriteOptions};
 use kekule_traj::io::{create_trajectory_writer, OverwritePolicy, TrajectoryWriteOptions};
 use kekule_traj::{FrameBuffer, TrajectoryFormat, TrajectoryWriter};
@@ -63,7 +65,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Vector3::new(4.0, 5.0, 6.0),
                 Vector3::new(7.0, 8.0, 9.0),
             ],
-            MODEL_VELOCITY_UNIT,
+            CANONICAL_VELOCITY_UNIT,
         )))?;
         frame.set_forces(Some(Quantity::new(
             [
@@ -71,7 +73,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Vector3::new(40.0, 50.0, 60.0),
                 Vector3::new(70.0, 80.0, 90.0),
             ],
-            MODEL_FORCE_UNIT,
+            CANONICAL_FORCE_UNIT,
         )))?;
         frame.set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))?;
         frame.set_step(Some(step));

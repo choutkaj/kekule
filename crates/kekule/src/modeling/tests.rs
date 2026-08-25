@@ -9,8 +9,8 @@ use crate::modeling::potential::{
 use crate::structure::{Ensemble, Model, ModelBuildError, ModelView, PositionError, Positions};
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId, TopologyBuildError};
 use crate::units::{
-    Quantity, ANGSTROM, MODEL_ENERGY_UNIT, MODEL_FORCE_CONSTANT_UNIT, MODEL_GRADIENT_UNIT,
-    NANOMETER,
+    Quantity, ANGSTROM, CANONICAL_ENERGY_UNIT, CANONICAL_GRADIENT_UNIT, CANONICAL_LENGTH_UNIT,
+    KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM, NANOMETER,
 };
 
 fn two_atom_small(distance: f64) -> (Molecule, Positions, AtomId, AtomId, BondId) {
@@ -67,7 +67,7 @@ fn model_preserves_local_ids_and_dense_round_trips() {
     );
     assert_eq!(
         model.position(qb).unwrap(),
-        Quantity::new(Point3::new(1.5, 0.0, 0.0), ANGSTROM)
+        Quantity::new(Point3::new(0.15, 0.0, 0.0), CANONICAL_LENGTH_UNIT)
     );
     assert!(model
         .topology()
@@ -87,9 +87,12 @@ fn positions_convert_source_units_before_model_construction() {
 
     let model = Model::from_molecule(&small, &positions).unwrap();
     let qualified = InstanceAtomId::new(MoleculeInstanceId::new(0), atom);
-    assert_eq!(model.position(qualified).unwrap().unit(), ANGSTROM);
-    assert_eq!(model.position(qualified).unwrap().x, 1.5);
-    assert_eq!(positions.values().unit(), ANGSTROM);
+    assert_eq!(
+        model.position(qualified).unwrap().unit(),
+        CANONICAL_LENGTH_UNIT
+    );
+    assert_eq!(model.position(qualified).unwrap().x, 0.15);
+    assert_eq!(positions.values().unit(), CANONICAL_LENGTH_UNIT);
     assert_eq!(source[0].x, 0.15);
 }
 
@@ -191,7 +194,7 @@ fn construction_copies_positions_and_preserves_sources() {
     assert_eq!(small, source);
     assert_eq!(
         positions.position_at(0).unwrap(),
-        Quantity::new(Point3::new(0.0, 0.0, 0.0), ANGSTROM)
+        Quantity::new(Point3::new(0.0, 0.0, 0.0), CANONICAL_LENGTH_UNIT)
     );
     assert_eq!(model.topology().definition_count(), 1);
 }
@@ -251,7 +254,7 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
         [HarmonicBondParameter::new(
             qualified,
             Quantity::new(1.0, ANGSTROM),
-            Quantity::new(100.0, MODEL_FORCE_CONSTANT_UNIT),
+            Quantity::new(100.0, KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM),
         )],
     )
     .unwrap();
@@ -259,10 +262,7 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
     assert!((initial.energy().to_value() - 50.0).abs() < 1.0e-10);
     let result = minimize(&model, &mut potential, MinimizeOptions::default()).unwrap();
     assert!(result.final_energy < result.initial_energy);
-    assert_eq!(
-        model.positions().values().value()[1],
-        Point3::new(2.0, 0.0, 0.0)
-    );
+    assert!((model.positions().values().value()[1].x - 0.2).abs() < 1.0e-15);
 
     let rebuilt = Model::from_molecule(&small, &positions).unwrap();
     assert_eq!(
@@ -275,7 +275,10 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
     coincident
         .set_position(
             InstanceAtomId::new(instance, AtomId::new(2)),
-            Quantity::new(coincident.positions().values().value()[0], ANGSTROM),
+            Quantity::new(
+                coincident.positions().values().value()[0],
+                CANONICAL_LENGTH_UNIT,
+            ),
         )
         .unwrap();
     assert_eq!(
@@ -307,7 +310,7 @@ fn harmonic_potential_rejects_periodic_model_and_ensemble_state() {
         [HarmonicBondParameter::new(
             qualified,
             Quantity::new(1.0, ANGSTROM),
-            Quantity::new(100.0, MODEL_FORCE_CONSTANT_UNIT),
+            Quantity::new(100.0, KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM),
         )],
     )
     .unwrap();
@@ -347,7 +350,7 @@ struct RecoverableGeometryPotential;
 impl Potential for RecoverableGeometryPotential {
     fn evaluate(&mut self, model: ModelView<'_>) -> Result<PotentialEvaluation, PotentialError> {
         let coordinate = model.positions().values().value()[1].x;
-        if coordinate <= 0.25 {
+        if coordinate <= 0.025 {
             return Err(PotentialError::invalid_geometry(
                 "test coordinate",
                 [model.topology().atom_ids()[1]],
@@ -356,10 +359,10 @@ impl Potential for RecoverableGeometryPotential {
         }
         PotentialEvaluation::new(
             model,
-            Quantity::new(0.5 * coordinate * coordinate, MODEL_ENERGY_UNIT),
+            Quantity::new(0.5 * coordinate * coordinate, CANONICAL_ENERGY_UNIT),
             Quantity::new(
                 vec![Vector3::zero(), Vector3::new(coordinate, 0.0, 0.0)],
-                MODEL_GRADIENT_UNIT,
+                CANONICAL_GRADIENT_UNIT,
             ),
         )
     }
@@ -377,10 +380,10 @@ impl Potential for BackendFailurePotential {
         }
         PotentialEvaluation::new(
             model,
-            Quantity::new(0.5, MODEL_ENERGY_UNIT),
+            Quantity::new(0.5, CANONICAL_ENERGY_UNIT),
             Quantity::new(
                 vec![Vector3::zero(), Vector3::new(1.0, 0.0, 0.0)],
-                MODEL_GRADIENT_UNIT,
+                CANONICAL_GRADIENT_UNIT,
             ),
         )
     }
@@ -400,8 +403,8 @@ fn minimization_backtracks_invalid_geometry_but_propagates_backend_failures() {
     assert_eq!(result.status, MinimizationStatus::MaxIterations);
     assert_eq!(result.iterations, 1);
     assert_eq!(result.evaluations, 3);
-    assert_eq!(result.model.positions().values().value()[1].x, 0.5);
-    assert_eq!(model.positions().values().value()[1].x, 1.0);
+    assert!((result.model.positions().values().value()[1].x - 0.05).abs() < 1.0e-15);
+    assert!((model.positions().values().value()[1].x - 0.1).abs() < 1.0e-15);
 
     let error = minimize(&model, &mut BackendFailurePotential { calls: 0 }, options).unwrap_err();
     assert!(matches!(

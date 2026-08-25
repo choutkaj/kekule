@@ -5,7 +5,7 @@ use kekule::modeling::potential::{
 };
 use kekule::structure::{Model, Positions};
 use kekule::topology::{InstanceBondId, MoleculeInstanceId};
-use kekule::units::{Quantity, ANGSTROM, MODEL_FORCE_CONSTANT_UNIT};
+use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM};
 use kekule_traj::{FrameBuffer, TrajectoryFrame};
 
 fn bonded_model() -> (Model, InstanceBondId) {
@@ -33,7 +33,7 @@ fn kekule_potentials_consume_trajectory_views_without_coordinate_copies() {
         [HarmonicBondParameter::new(
             bond,
             Quantity::new(1.0, ANGSTROM),
-            Quantity::new(100.0, MODEL_FORCE_CONSTANT_UNIT),
+            Quantity::new(100.0, KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM),
         )],
     )
     .unwrap();

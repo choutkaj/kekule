@@ -11,7 +11,7 @@ use kekule::alignment::{kabsch_with_options, AlignmentError, KabschOptions, Rigi
 use kekule::geometry::{PeriodicCell, PeriodicCellError, RigidTransform};
 use kekule::structure::Positions;
 use kekule::topology::AtomSelection;
-use kekule::units::{Quantity, MODEL_LENGTH_UNIT};
+use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 use crate::{Forces, FrameError, Trajectory, TrajectoryError, TrajectoryFrame, Velocities};
 
@@ -215,7 +215,7 @@ impl Trajectory {
                 moving, reference, selection, weights, None, frame,
             )?);
         }
-        Ok(Quantity::new(values, MODEL_LENGTH_UNIT))
+        Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
     }
 
     /// Fits every frame and measures RMSD without changing the trajectory.
@@ -275,7 +275,7 @@ impl Trajectory {
                 frame,
             )?);
         }
-        Ok(Quantity::new(values, MODEL_LENGTH_UNIT))
+        Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
     }
 }
 
@@ -335,7 +335,7 @@ fn transform_frame(
         .copied()
         .map(|point| transform.transform_point(point))
         .collect::<Vec<_>>();
-    let positions = Positions::new(Quantity::new(positions, MODEL_LENGTH_UNIT))
+    let positions = Positions::new(Quantity::new(positions, CANONICAL_LENGTH_UNIT))
         .map_err(FrameError::from)
         .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
     let cell = source
@@ -617,7 +617,9 @@ mod tests {
     use kekule::geometry::{Matrix3, Point3, Vector3};
     use kekule::structure::AtomData;
     use kekule::topology::{Topology, TopologyBuilder};
-    use kekule::units::{Quantity, ANGSTROM, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT, PICOSECOND};
+    use kekule::units::{
+        Quantity, ANGSTROM, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND,
+    };
 
     fn make_topology(atom_count: usize) -> Arc<Topology> {
         let mut graph = kekule::core::MoleculeEditor::new();
@@ -655,7 +657,7 @@ mod tests {
 
     fn frame(topology: &Arc<Topology>, points: &[Point3]) -> TrajectoryFrame {
         TrajectoryFrame::new(
-            Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
+            Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
             topology.bond_count(),
         )
     }
@@ -712,7 +714,7 @@ mod tests {
         let selection = all(&topology);
 
         let uniform = trajectory.rmsd_to_frame(0, &selection).unwrap();
-        assert_eq!(uniform.unit(), MODEL_LENGTH_UNIT);
+        assert_eq!(uniform.unit(), CANONICAL_LENGTH_UNIT);
         assert_close(uniform.value()[0], 0.0, 1.0e-14);
         assert_close(uniform.value()[1], 5.0_f64.sqrt(), 1.0e-14);
 
@@ -802,7 +804,7 @@ mod tests {
         .unwrap();
         let reference_cell = transform_cell(moving_cell, transform).unwrap();
         let mut reference_frame = TrajectoryFrame::new(
-            Positions::new(Quantity::new(&reference, ANGSTROM)).unwrap(),
+            Positions::new(Quantity::new(&reference, NANOMETER)).unwrap(),
             topology.bond_count(),
         );
         reference_frame.set_cell(Some(reference_cell));
@@ -810,7 +812,7 @@ mod tests {
             .set_velocities(Some(
                 Velocities::new(Quantity::new(
                     vec![Vector3::new(0.0, 1.0, 0.0); 4],
-                    MODEL_VELOCITY_UNIT,
+                    CANONICAL_VELOCITY_UNIT,
                 ))
                 .unwrap(),
             ))
@@ -819,14 +821,14 @@ mod tests {
             .set_forces(Some(
                 Forces::new(Quantity::new(
                     vec![Vector3::new(-1.0, 0.0, 0.0); 4],
-                    MODEL_FORCE_UNIT,
+                    CANONICAL_FORCE_UNIT,
                 ))
                 .unwrap(),
             ))
             .unwrap();
 
         let mut moving_frame = TrajectoryFrame::new(
-            Positions::new(Quantity::new(&moving, ANGSTROM)).unwrap(),
+            Positions::new(Quantity::new(&moving, NANOMETER)).unwrap(),
             topology.bond_count(),
         );
         moving_frame.set_cell(Some(moving_cell));
@@ -834,7 +836,7 @@ mod tests {
             .set_velocities(Some(
                 Velocities::new(Quantity::new(
                     vec![Vector3::new(1.0, 0.0, 0.0); 4],
-                    MODEL_VELOCITY_UNIT,
+                    CANONICAL_VELOCITY_UNIT,
                 ))
                 .unwrap(),
             ))
@@ -843,7 +845,7 @@ mod tests {
             .set_forces(Some(
                 Forces::new(Quantity::new(
                     vec![Vector3::new(0.0, 1.0, 0.0); 4],
-                    MODEL_FORCE_UNIT,
+                    CANONICAL_FORCE_UNIT,
                 ))
                 .unwrap(),
             ))
