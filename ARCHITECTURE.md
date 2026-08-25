@@ -1006,6 +1006,97 @@ boundaries and is required for structural navigation and slicing.
 Other concerns should not be added speculatively. They may be introduced later
 only as separate concepts when concrete requirements establish their semantics.
 
+## Physical quantities and units
+
+Kekule has one runtime physical-unit architecture for the entire library. It
+must not define independent "model", "trajectory", "QM", or other subsystem
+unit conventions. Public APIs may accept values expressed in any compatible
+`Unit`; when numerical domain state is normalized for internal storage, it uses
+one library-wide canonical unit system.
+
+The intended core remains deliberately small:
+
+```text
+BaseDimension
+    -> Dimension
+         -> Unit
+
+value + Unit
+    -> Quantity<T>
+```
+
+`Dimension` represents integer powers of the independent physical dimensions.
+`Unit` represents one linear unit by its dimension, conversion scale, and
+optional symbol. `Quantity<T>` pairs an arbitrary supported value/container with
+one runtime `Unit`.
+
+Runtime units are intentional. Kekule should not replace this architecture with
+a compile-time type-level quantity system merely to encode dimensions in Rust
+types. Runtime units fit parsing, serialization, dynamic APIs, foreign-language
+interfaces, trajectories, potentials, and user-selected units while keeping the
+core representation straightforward.
+
+Unit conversion is explicit at boundaries. Canonicalization does not mean that
+non-canonical units are second-class: `ANGSTROM`, `BOHR`, `KILOCALORIE_PER_MOLE`,
+and other compatible units remain valid public inputs and outputs where useful.
+The canonical system defines only the preferred numerical representation used
+inside Kekule.
+
+### Dimensional coherence at molecular scale
+
+The canonical unit system must be both dimensionally and numerically coherent
+for molecular mechanics and dynamics.
+
+`Mass` and `Amount` remain independent base dimensions. Atomic and molecular
+masses expressed in daltons are treated dimensionally as molar mass
+(`Mass / Amount`), consistent with `1 Da = 1 g/mol` for unit bookkeeping. This
+allows molecular-scale mechanics to compose naturally with molar energies such
+as `kJ/mol`.
+
+In particular, the canonical basis must satisfy the identity:
+
+```text
+CANONICAL_MASS_UNIT
+    * CANONICAL_LENGTH_UNIT^2
+    / CANONICAL_TIME_UNIT^2
+
+== dimensionally and numerically ==
+
+CANONICAL_ENERGY_UNIT
+```
+
+and therefore likewise produce coherent velocity, force, gradient, and force
+constant units without hidden subsystem-specific conversion factors.
+
+### Library-wide canonical unit system
+
+The preferred canonical basis is:
+
+```text
+CANONICAL_LENGTH_UNIT          = NANOMETER
+CANONICAL_MASS_UNIT            = DALTON
+CANONICAL_TIME_UNIT            = PICOSECOND
+CANONICAL_ENERGY_UNIT          = KILOJOULE_PER_MOLE
+CANONICAL_CHARGE_UNIT          = ELEMENTARY_CHARGE
+CANONICAL_TEMPERATURE_UNIT     = KELVIN
+CANONICAL_ANGLE_UNIT           = RADIAN
+
+CANONICAL_VELOCITY_UNIT        = NANOMETER / PICOSECOND
+CANONICAL_FORCE_UNIT           = KILOJOULE_PER_MOLE / NANOMETER
+CANONICAL_GRADIENT_UNIT        = KILOJOULE_PER_MOLE / NANOMETER
+CANONICAL_FORCE_CONSTANT_UNIT  = KILOJOULE_PER_MOLE / NANOMETER^2
+```
+
+These names are library-wide. They must not use a `MODEL_` prefix, because the
+canonical convention is not owned by or restricted to the `Model` type. The
+same canonical units apply wherever Kekule stores the corresponding physical
+quantity internally.
+
+Subsystem-specific canonical unit families should not be introduced unless a
+future requirement demonstrates that one shared convention is technically
+insufficient. Interfaces to external tools may of course convert to whatever
+units those tools require without changing Kekule's canonical system.
+
 ## Geometry boundary
 
 Geometry starts above `Topology`.
@@ -1052,9 +1143,9 @@ cell, occupancies, B-factors, and other model/frame state do not belong in
 
 ### Dense numerical containers
 
-`Positions`, `Velocities`, and `Forces` are dense numerical arrays in canonical
-model units. They validate numerical shape, units, and finite values as
-appropriate, but are otherwise topology-agnostic.
+`Positions`, `Velocities`, and `Forces` are dense numerical arrays in Kekule's
+library-wide canonical units. They validate numerical shape, units, and finite
+values as appropriate, but are otherwise topology-agnostic.
 
 `AtomData` and `BondData` are likewise dense data containers rather than
 Topology owners. They may retain a logical item count even when all optional
@@ -1268,6 +1359,10 @@ When deciding where new state belongs:
    state explicitly; do not rely on a generic remapping layer. Narrow
    operation-specific correspondence is appropriate when required by the
    operation.
+10. Is a physical quantity stored numerically inside Kekule? Accept compatible
+    units at the boundary and normalize it to the one library-wide canonical
+    unit for that quantity rather than creating a subsystem-specific unit
+    convention.
 
 The core invariants are intentionally simple:
 
@@ -1283,3 +1378,8 @@ The core invariants are intentionally simple:
 
 > `Model`, `Ensemble`, and `Trajectory` each own their shared `Topology` exactly
 > once. Their dense numerical subobjects do not own topology identity.
+
+> Kekule has one library-wide canonical physical-unit system. Runtime
+> `Quantity<T>` values may use any compatible unit at interfaces, but internal
+> normalized numerical state does not define independent subsystem-specific
+> canonical unit conventions.
