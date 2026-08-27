@@ -43,14 +43,25 @@ duplicate covale A C1 A C2 {order}
 #[test]
 fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::mmcif::{
-        self, MmcifEntityClassifications, MmcifEntityKind, MmcifInterpretOptions,
+        self, MmcifBlock, MmcifEntityClassifications, MmcifEntityKind, MmcifInterpretOptions,
         MmcifParseOptions, MmcifWriteError, MmcifWriteOptions,
     };
 
     let document = mmcif::parse_str(MINIMAL_MMCIF, MmcifParseOptions::default())?;
     let interpreted = mmcif::interpret(&document, MmcifInterpretOptions::default())?;
+    let block: &MmcifBlock = &document.blocks()[0];
+    let block_interpreted = mmcif::interpret_block(block, MmcifInterpretOptions::default())?;
 
     assert_eq!(document.blocks().len(), 1);
+    assert_eq!(interpreted.report().block_name(), "demo");
+    assert_eq!(block_interpreted.report(), interpreted.report());
+    assert!(block_interpreted
+        .topology()
+        .same_layout(interpreted.topology()));
+    assert_eq!(
+        block_interpreted.model().positions(),
+        interpreted.model().positions()
+    );
     assert_eq!(interpreted.model().topology().instance_count(), 1);
     assert!(!interpreted.model().topology().hierarchy().is_empty());
     assert_eq!(interpreted.model().positions().len(), 2);
@@ -76,6 +87,26 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     )?;
     assert!(written.starts_with("data_model\n"));
     assert!(mmcif::parse_str(&written, MmcifParseOptions::default()).is_ok());
+    let custom_written = mmcif::write_with_report(
+        interpreted.model(),
+        interpreted.report(),
+        MmcifWriteOptions {
+            block_name: "custom".to_owned(),
+            ..MmcifWriteOptions::default()
+        },
+    )?;
+    assert!(custom_written.starts_with("data_custom\n"));
+    assert!(matches!(
+        mmcif::write_with_report(
+            interpreted.model(),
+            interpreted.report(),
+            MmcifWriteOptions {
+                block_name: String::new(),
+                ..MmcifWriteOptions::default()
+            }
+        ),
+        Err(MmcifWriteError::InvalidBlockName(name)) if name.is_empty()
+    ));
     assert_eq!(
         mmcif::write(interpreted.model(), MmcifWriteOptions::default()),
         Err(MmcifWriteError::MissingEntityClassification(

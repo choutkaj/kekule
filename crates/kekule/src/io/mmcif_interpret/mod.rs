@@ -7,7 +7,7 @@ mod types;
 use crate::structure::{AtomData, ModelBuilder};
 use crate::units::{Quantity, SQUARE_ANGSTROM};
 
-use super::{MmcifDataBlock, MmcifDocument};
+use super::{MmcifBlock, MmcifDocument};
 use atom_site::{
     read_asym_entities, read_atom_rows, read_entity_types, select_alt_locations,
     select_coordinate_model,
@@ -17,7 +17,7 @@ use build::{
 };
 use struct_conn::{read_connections, InstanceUnion};
 
-pub(crate) use ensemble::interpret_mmcif_ensemble;
+pub(crate) use ensemble::{interpret_mmcif_ensemble, interpret_mmcif_ensemble_block};
 pub use types::{
     MmcifAltLocPolicy, MmcifAtomProvenance, MmcifConnectionResolutionReason,
     MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
@@ -46,18 +46,18 @@ pub(crate) fn interpret_mmcif(
             "document has atom-site data in more than one data block",
         ));
     }
-    interpret_block(blocks[0], options)
+    interpret_mmcif_block(blocks[0], options)
 }
 
-fn interpret_block(
-    block: &MmcifDataBlock,
+pub(crate) fn interpret_mmcif_block(
+    block: &MmcifBlock,
     options: MmcifInterpretOptions,
 ) -> Result<MmcifInterpretation, MmcifInterpretError> {
     let entities = read_entity_types(block)?;
     let asym_entities = read_asym_entities(block)?;
     let atom_table = block
         .loop_with_tag("_atom_site.type_symbol")
-        .expect("selected block has atom-site data");
+        .ok_or_else(|| MmcifInterpretError::new(None, "block has no atom-site loop"))?;
     if atom_table.row_count() == 0 {
         return Err(MmcifInterpretError::new(
             None,
@@ -65,7 +65,7 @@ fn interpret_block(
         ));
     }
     let mut report = MmcifInterpretationReport {
-        data_block: block.name().to_owned(),
+        block_name: block.name().to_owned(),
         entity_definitions: entities.len(),
         ..MmcifInterpretationReport::default()
     };

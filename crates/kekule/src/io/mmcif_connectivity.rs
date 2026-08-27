@@ -4,7 +4,7 @@ use crate::chemistry::localize_source_aromatic_bonds;
 use crate::core::{AtomId, BondOrder, Molecule, MoleculeEditor};
 
 use super::mmcif_interpret as raw;
-use super::{MmcifDataBlock, MmcifLoopTable, MmcifValue};
+use super::{MmcifBlock, MmcifLoopTable, MmcifValue};
 
 pub(crate) struct StagedAtomProvenance<'a> {
     pub(crate) atom: AtomId,
@@ -19,7 +19,7 @@ pub(crate) struct StagedAtomProvenance<'a> {
 }
 
 pub(crate) fn complete_editor_connectivity<'a>(
-    block: &MmcifDataBlock,
+    block: &MmcifBlock,
     editor: &mut MoleculeEditor,
     atoms: impl IntoIterator<Item = StagedAtomProvenance<'a>>,
 ) -> Result<(), raw::MmcifInterpretError> {
@@ -86,7 +86,7 @@ struct ConnectivityCatalog {
 }
 
 impl ConnectivityCatalog {
-    fn from_block(block: &MmcifDataBlock) -> Result<Self, raw::MmcifInterpretError> {
+    fn from_block(block: &MmcifBlock) -> Result<Self, raw::MmcifInterpretError> {
         let mut catalog = Self::default();
         if let Some(table) = block.loop_with_tag("_chem_comp_bond.comp_id") {
             for row in 0..table.row_count() {

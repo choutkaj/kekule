@@ -100,6 +100,31 @@ HETATM 3 C C1 LIG A 1 5.0 0.0 0.0 0.80 20.0 2
 HETATM 4 O O1 LIG A 1 6.2 0.0 0.0 0.90 21.0 2
 "#;
 
+const MULTI_BLOCK: &str = r#"
+data_FIRST
+loop_
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+C C1 ONE A 0.0 0.0 0.0
+
+data_SECOND
+loop_
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+N N1 TWO B 5.0 0.0 0.0
+O O1 THREE C 10.0 0.0 0.0
+"#;
+
 const REPEATED_RESIDUE_ENSEMBLE: &str = r#"
 data_repeated_residues
 loop_
@@ -399,6 +424,82 @@ fn mmcif_parse_preserves_unknown_categories_without_chemistry() {
             .unwrap()
             .row_count(),
         4
+    );
+}
+
+#[test]
+fn mmcif_parse_preserves_multiple_named_blocks() {
+    let document = parse(MULTI_BLOCK);
+
+    assert_eq!(document.blocks().len(), 2);
+    assert_eq!(document.blocks()[0].name(), "FIRST");
+    assert_eq!(document.blocks()[1].name(), "SECOND");
+    assert_eq!(
+        document.block("FIRST").map(|block| block.name()),
+        Some("FIRST")
+    );
+    assert_eq!(
+        document.block("second").map(|block| block.name()),
+        Some("SECOND")
+    );
+}
+
+#[test]
+fn sibling_blocks_are_interpreted_independently() {
+    let document = parse(MULTI_BLOCK);
+    let first = mmcif::interpret_block(
+        document.block("FIRST").expect("first block"),
+        MmcifInterpretOptions::default(),
+    )
+    .expect("first block interprets");
+    let second = mmcif::interpret_block(
+        document.block("SECOND").expect("second block"),
+        MmcifInterpretOptions::default(),
+    )
+    .expect("second block interprets");
+
+    assert_eq!(first.report().block_name(), "FIRST");
+    assert_eq!(second.report().block_name(), "SECOND");
+    assert_eq!(first.model().atom_count(), 1);
+    assert_eq!(second.model().atom_count(), 2);
+    assert_eq!(first.model().topology().instance_count(), 1);
+    assert_eq!(second.model().topology().instance_count(), 2);
+    assert_eq!(first.model().positions().values().value()[0].x, 0.0);
+    assert!((second.model().positions().values().value()[0].x - 0.5).abs() < 1.0e-15);
+}
+
+#[test]
+fn block_interpreters_reject_a_block_without_atom_site_data() {
+    let document = parse("data_METADATA\n_entry.id metadata-only\n");
+    let block = document.block("METADATA").expect("metadata block");
+
+    let model_error = mmcif::interpret_block(block, MmcifInterpretOptions::default())
+        .expect_err("metadata block has no model");
+    assert!(model_error.message().contains("no atom-site loop"));
+    assert!(matches!(
+        mmcif::interpret_ensemble_block(block, mmcif::MmcifEnsembleInterpretOptions::default()),
+        Err(mmcif::MmcifEnsembleInterpretError::NoCoordinateModels)
+    ));
+}
+
+#[test]
+fn document_model_interpretation_delegates_for_exactly_one_atom_site_block() {
+    let document = parse(MIXED);
+    let from_document =
+        mmcif::interpret(&document, MmcifInterpretOptions::default()).expect("document interprets");
+    let from_block =
+        mmcif::interpret_block(&document.blocks()[0], MmcifInterpretOptions::default())
+            .expect("block interprets");
+
+    assert_eq!(from_document.report(), from_block.report());
+    assert!(from_document.topology().same_layout(from_block.topology()));
+    assert_eq!(
+        from_document.model().positions(),
+        from_block.model().positions()
+    );
+    assert_eq!(
+        from_document.model().atom_data(),
+        from_block.model().atom_data()
     );
 }
 
@@ -1027,22 +1128,8 @@ fn ensemble_interpretation_rejects_empty_explicit_model_selection_without_panick
 }
 
 #[test]
-fn ensemble_interpretation_rejects_multiple_atom_site_data_blocks() {
-    let second_block = r#"
-data_second
-loop_
-_atom_site.group_PDB
-_atom_site.id
-_atom_site.type_symbol
-_atom_site.label_atom_id
-_atom_site.label_comp_id
-_atom_site.label_asym_id
-_atom_site.Cartn_x
-_atom_site.Cartn_y
-_atom_site.Cartn_z
-HETATM 1 C C1 LIG B 0.0 0.0 0.0
-"#;
-    let document = parse(&format!("{MIXED}\n{second_block}"));
+fn document_interpreters_reject_multiple_atom_site_blocks() {
+    let document = parse(MULTI_BLOCK);
     let single_error = mmcif::interpret(&document, MmcifInterpretOptions::default())
         .expect_err("ambiguous blocks");
     assert!(single_error
@@ -1050,8 +1137,36 @@ HETATM 1 C C1 LIG B 0.0 0.0 0.0
         .contains("atom-site data in more than one data block"));
     assert!(matches!(
         mmcif::interpret_ensemble(&document, mmcif::MmcifEnsembleInterpretOptions::default(),),
-        Err(mmcif::MmcifEnsembleInterpretError::MultipleAtomSiteDataBlocks)
+        Err(mmcif::MmcifEnsembleInterpretError::MultipleAtomSiteBlocks)
     ));
+}
+
+#[test]
+fn ensemble_block_interpretation_matches_exactly_one_document_helper() {
+    let document = parse(MULTI_MODEL);
+    let from_document =
+        mmcif::interpret_ensemble(&document, mmcif::MmcifEnsembleInterpretOptions::default())
+            .expect("document ensemble interprets");
+    let from_block = mmcif::interpret_ensemble_block(
+        &document.blocks()[0],
+        mmcif::MmcifEnsembleInterpretOptions::default(),
+    )
+    .expect("block ensemble interprets");
+
+    assert_eq!(from_document.reports(), from_block.reports());
+    assert!(from_document
+        .ensemble()
+        .topology()
+        .same_layout(from_block.ensemble().topology()));
+    assert_eq!(from_document.ensemble().len(), from_block.ensemble().len());
+    for (document_member, block_member) in from_document
+        .ensemble()
+        .members()
+        .zip(from_block.ensemble().members())
+    {
+        assert_eq!(document_member.positions(), block_member.positions());
+        assert_eq!(document_member.atom_data(), block_member.atom_data());
+    }
 }
 
 #[test]
@@ -1803,7 +1918,7 @@ covale A N 1 A CA 1 doub
         &original,
         &report,
         MmcifWriteOptions {
-            data_block_name: "round_trip".to_owned(),
+            block_name: "round_trip".to_owned(),
             coordinate_precision: 4,
         },
     )
