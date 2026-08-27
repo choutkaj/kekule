@@ -3,10 +3,10 @@ use std::sync::Arc;
 
 use crate::structure::{AtomData, Ensemble, EnsembleMember, Positions};
 
-use super::super::MmcifDocument;
+use super::super::{MmcifBlock, MmcifDocument};
 use super::atom_site::coordinate_model_ids;
 use super::build::graph_error;
-use super::interpret_mmcif;
+use super::interpret_mmcif_block;
 use super::types::{
     MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
     MmcifInterpretOptions, MmcifInterpretationReport, MmcifModelSelection,
@@ -18,9 +18,6 @@ pub(crate) fn interpret_mmcif_ensemble(
     document: &MmcifDocument,
     options: MmcifEnsembleInterpretOptions,
 ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
-    if options.model_ids.as_ref().is_some_and(Vec::is_empty) {
-        return Err(MmcifEnsembleInterpretError::EmptyModelSelection);
-    }
     let blocks = document
         .blocks()
         .iter()
@@ -30,9 +27,23 @@ pub(crate) fn interpret_mmcif_ensemble(
         return Err(MmcifEnsembleInterpretError::NoCoordinateModels);
     }
     if blocks.len() > 1 {
-        return Err(MmcifEnsembleInterpretError::MultipleAtomSiteDataBlocks);
+        return Err(MmcifEnsembleInterpretError::MultipleAtomSiteBlocks);
     }
-    let block = blocks[0];
+    interpret_mmcif_ensemble_block(blocks[0], options)
+}
+
+/// Interprets explicitly selected or all coordinate models in one block as
+/// one shared-topology non-temporal ensemble.
+pub(crate) fn interpret_mmcif_ensemble_block(
+    block: &MmcifBlock,
+    options: MmcifEnsembleInterpretOptions,
+) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+    if options.model_ids.as_ref().is_some_and(Vec::is_empty) {
+        return Err(MmcifEnsembleInterpretError::EmptyModelSelection);
+    }
+    if block.loop_with_tag("_atom_site.type_symbol").is_none() {
+        return Err(MmcifEnsembleInterpretError::NoCoordinateModels);
+    }
     let available =
         coordinate_model_ids(block).map_err(|error| MmcifEnsembleInterpretError::Model {
             model_id: "<model inventory>".to_owned(),
@@ -58,8 +69,8 @@ pub(crate) fn interpret_mmcif_ensemble(
 
     let mut interpreted = Vec::with_capacity(selected.len());
     for model_id in &selected {
-        let interpretation = interpret_mmcif(
-            document,
+        let interpretation = interpret_mmcif_block(
+            block,
             MmcifInterpretOptions {
                 strict_entity_metadata: options.strict_entity_metadata,
                 altloc_policy: options.altloc_policy.clone(),

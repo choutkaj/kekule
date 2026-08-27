@@ -237,7 +237,7 @@ pub mod sdf {
 
 pub mod mmcif {
     pub use crate::io::{
-        MmcifAltLocPolicy, MmcifAtomProvenance, MmcifConnectionResolutionReason, MmcifDataBlock,
+        MmcifAltLocPolicy, MmcifAtomProvenance, MmcifBlock, MmcifConnectionResolutionReason,
         MmcifDocument, MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions,
         MmcifEnsembleInterpretation, MmcifEntityClassifications, MmcifEntityKind, MmcifEntry,
         MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions,
@@ -254,7 +254,10 @@ pub mod mmcif {
         crate::io::parse_mmcif_str(input, options)
     }
 
-    /// Interprets one coordinate-containing data block as clean molecular objects.
+    /// Interprets a document containing exactly one atom-site block.
+    ///
+    /// Documents with multiple atom-site blocks require explicit selection via
+    /// [`interpret_block`].
     pub fn interpret(
         document: &MmcifDocument,
         options: MmcifInterpretOptions,
@@ -262,12 +265,34 @@ pub mod mmcif {
         crate::io::interpret_mmcif(document, options)
     }
 
-    /// Interprets multiple coordinate models as one verified shared-topology ensemble.
+    /// Interprets one CIF/mmCIF data block as one selected coordinate model.
+    ///
+    /// Coordinate-model selection applies only within `block`; sibling blocks
+    /// in the source document are independent interpretation scopes.
+    pub fn interpret_block(
+        block: &MmcifBlock,
+        options: MmcifInterpretOptions,
+    ) -> Result<MmcifInterpretation, MmcifInterpretError> {
+        crate::io::interpret_mmcif_block(block, options)
+    }
+
+    /// Interprets the exactly one atom-site block in a document as an ensemble.
+    ///
+    /// Documents with multiple atom-site blocks require explicit selection via
+    /// [`interpret_ensemble_block`].
     pub fn interpret_ensemble(
         document: &MmcifDocument,
         options: MmcifEnsembleInterpretOptions,
     ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
         crate::io::interpret_mmcif_ensemble(document, options)
+    }
+
+    /// Interprets coordinate models in one block as a shared-topology ensemble.
+    pub fn interpret_ensemble_block(
+        block: &MmcifBlock,
+        options: MmcifEnsembleInterpretOptions,
+    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+        crate::io::interpret_mmcif_ensemble_block(block, options)
     }
 
     /// Attempts to write a model without inventing mmCIF entity semantics.

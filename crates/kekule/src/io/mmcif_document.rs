@@ -64,28 +64,29 @@ struct MmcifToken {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifDocument {
-    blocks: Vec<MmcifDataBlock>,
+    blocks: Vec<MmcifBlock>,
 }
 
 impl MmcifDocument {
-    pub fn blocks(&self) -> &[MmcifDataBlock] {
+    pub fn blocks(&self) -> &[MmcifBlock] {
         &self.blocks
     }
 
-    pub fn block(&self, name: &str) -> Option<&MmcifDataBlock> {
+    pub fn block(&self, name: &str) -> Option<&MmcifBlock> {
         self.blocks
             .iter()
             .find(|block| block.name.eq_ignore_ascii_case(name))
     }
 }
 
+/// One independently interpretable CIF/mmCIF data block.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcifDataBlock {
+pub struct MmcifBlock {
     name: String,
     entries: Vec<MmcifEntry>,
 }
 
-impl MmcifDataBlock {
+impl MmcifBlock {
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -279,7 +280,7 @@ fn parse_tokens(
                 ));
             }
         }
-        blocks.push(MmcifDataBlock { name, entries });
+        blocks.push(MmcifBlock { name, entries });
     }
     if blocks.is_empty() {
         return Err(MmcifParseError::new(1, "missing data block"));
