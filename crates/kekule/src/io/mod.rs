@@ -10,7 +10,10 @@ mod v2000;
 mod v3000;
 
 pub use mmcif_document::*;
-pub(crate) use mmcif_interpret::{interpret_mmcif, interpret_mmcif_ensemble};
+pub(crate) use mmcif_interpret::{
+    interpret_mmcif, interpret_mmcif_block, interpret_mmcif_ensemble,
+    interpret_mmcif_ensemble_block,
+};
 pub use mmcif_interpret::{
     MmcifAltLocPolicy, MmcifAtomProvenance, MmcifConnectionResolutionReason,
     MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,

@@ -4,15 +4,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::core::Element;
 use crate::geometry::Point3;
 
-use super::super::{MmcifDataBlock, MmcifLoopTable, MmcifValue};
+use super::super::{MmcifBlock, MmcifLoopTable, MmcifValue};
 use super::types::{
     MmcifAltLocPolicy, MmcifEntityKind, MmcifInterpretError, MmcifInterpretIssue,
     MmcifInterpretOptions, MmcifInterpretationReport, MmcifModelSelection,
 };
 
-pub(super) fn coordinate_model_ids(
-    block: &MmcifDataBlock,
-) -> Result<Vec<String>, MmcifInterpretError> {
+pub(super) fn coordinate_model_ids(block: &MmcifBlock) -> Result<Vec<String>, MmcifInterpretError> {
     let table = block
         .loop_with_tag("_atom_site.type_symbol")
         .ok_or_else(|| MmcifInterpretError::new(None, "data block has no atom-site loop"))?;
@@ -30,7 +28,7 @@ pub(super) fn coordinate_model_ids(
 }
 
 pub(super) fn read_entity_types(
-    block: &MmcifDataBlock,
+    block: &MmcifBlock,
 ) -> Result<BTreeMap<String, MmcifEntityKind>, MmcifInterpretError> {
     let mut entities = BTreeMap::new();
     if let Some(table) = block.loop_with_tag("_entity.id") {
@@ -56,7 +54,7 @@ pub(super) fn read_entity_types(
 }
 
 pub(super) fn read_asym_entities(
-    block: &MmcifDataBlock,
+    block: &MmcifBlock,
 ) -> Result<BTreeMap<String, String>, MmcifInterpretError> {
     let mut instances = BTreeMap::new();
     if let Some(table) = block.loop_with_tag("_struct_asym.id") {

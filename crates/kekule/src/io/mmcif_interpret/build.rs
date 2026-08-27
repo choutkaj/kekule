@@ -10,7 +10,7 @@ use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::{Quantity, ANGSTROM};
 
 use super::super::staged_coordinates::StagedCoordinates;
-use super::super::MmcifDataBlock;
+use super::super::MmcifBlock;
 use super::atom_site::{optional, AtomRow};
 use super::struct_conn::{DeclaredConnection, InstanceUnion};
 use super::types::{
@@ -25,7 +25,7 @@ pub(super) struct MoleculeGroup {
     instance_keys: BTreeSet<String>,
 }
 
-pub(super) fn polymer_asym_order(block: &MmcifDataBlock) -> BTreeMap<String, usize> {
+pub(super) fn polymer_asym_order(block: &MmcifBlock) -> BTreeMap<String, usize> {
     let mut order = BTreeMap::new();
     let Some(table) = block.loop_with_tag("_pdbx_poly_seq_scheme.asym_id") else {
         return order;
@@ -181,7 +181,7 @@ impl BuiltMoleculeProvenance {
 impl BuiltMolecule {
     pub(super) fn complete_connectivity(
         &mut self,
-        block: &MmcifDataBlock,
+        block: &MmcifBlock,
     ) -> Result<(), MmcifInterpretError> {
         let Self {
             editor, provenance, ..

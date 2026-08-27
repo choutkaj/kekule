@@ -502,7 +502,8 @@ impl MmcifEnsembleInterpretation {
 pub enum MmcifEnsembleInterpretError {
     NoCoordinateModels,
     EmptyModelSelection,
-    MultipleAtomSiteDataBlocks,
+    /// Document-level interpretation found more than one atom-site block.
+    MultipleAtomSiteBlocks,
     DuplicateRequestedModel(String),
     UnknownRequestedModel(String),
     Model {
@@ -526,12 +527,12 @@ impl fmt::Display for MmcifEnsembleInterpretError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoCoordinateModels => {
-                formatter.write_str("mmCIF document contains no coordinate models")
+                formatter.write_str("mmCIF input contains no coordinate models")
             }
             Self::EmptyModelSelection => {
                 formatter.write_str("explicit mmCIF coordinate model selection is empty")
             }
-            Self::MultipleAtomSiteDataBlocks => formatter
+            Self::MultipleAtomSiteBlocks => formatter
                 .write_str("mmCIF document has atom-site data in more than one data block"),
             Self::DuplicateRequestedModel(model) => {
                 write!(formatter, "coordinate model `{model}` was requested more than once")

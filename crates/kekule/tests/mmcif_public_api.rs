@@ -43,14 +43,24 @@ duplicate covale A C1 A C2 {order}
 #[test]
 fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::mmcif::{
-        self, MmcifEntityClassifications, MmcifEntityKind, MmcifInterpretOptions,
+        self, MmcifBlock, MmcifEntityClassifications, MmcifEntityKind, MmcifInterpretOptions,
         MmcifParseOptions, MmcifWriteError, MmcifWriteOptions,
     };
 
     let document = mmcif::parse_str(MINIMAL_MMCIF, MmcifParseOptions::default())?;
     let interpreted = mmcif::interpret(&document, MmcifInterpretOptions::default())?;
+    let block: &MmcifBlock = &document.blocks()[0];
+    let block_interpreted = mmcif::interpret_block(block, MmcifInterpretOptions::default())?;
 
     assert_eq!(document.blocks().len(), 1);
+    assert_eq!(block_interpreted.report(), interpreted.report());
+    assert!(block_interpreted
+        .topology()
+        .same_layout(interpreted.topology()));
+    assert_eq!(
+        block_interpreted.model().positions(),
+        interpreted.model().positions()
+    );
     assert_eq!(interpreted.model().topology().instance_count(), 1);
     assert!(!interpreted.model().topology().hierarchy().is_empty());
     assert_eq!(interpreted.model().positions().len(), 2);

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::core::BondOrder;
 
-use super::super::{MmcifDataBlock, MmcifLoopTable, MmcifValue};
+use super::super::{MmcifBlock, MmcifLoopTable, MmcifValue};
 use super::atom_site::{optional, optional_i32, required, row_error, AtomRow};
 use super::types::{
     MmcifConnectionResolutionReason, MmcifInterpretError, MmcifInterpretIssue,
@@ -17,7 +17,7 @@ pub(super) struct DeclaredConnection {
 }
 
 pub(super) fn read_connections(
-    block: &MmcifDataBlock,
+    block: &MmcifBlock,
     rows: &[AtomRow],
     all_rows: &[AtomRow],
     selected_model: &str,
