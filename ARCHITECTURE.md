@@ -435,7 +435,7 @@ Kekule uses a two-stage input architecture:
 source text / bytes
     -> parse
 format-specific Document
-    -> optional format-specific Record selection
+    -> optional format-specific Record/Block selection
     -> interpret / canonicalize
 canonical Kekule domain objects
 ```
@@ -452,7 +452,9 @@ canonical chemistry object.
 Record-oriented formats should expose explicit format-specific record values.
 A record is the semantic unit that can be interpreted independently. Formats
 that intrinsically represent one record do not need an additional public record
-wrapper merely for uniformity.
+wrapper merely for uniformity. Formats with another native independently
+interpretable scope should use that native concept rather than invent a generic
+`Record` wrapper.
 
 Conceptually:
 
@@ -468,22 +470,30 @@ SdfDocument
 
 SdfRecord
   one independently interpretable SDF record
+
+MmcifDocument
+  blocks: Vec<MmcifBlock>
+
+MmcifBlock
+  one CIF/mmCIF data block
+  one independently interpretable mmCIF scope
 ```
 
-The exact representation of more complex formats such as mmCIF may follow their
-native structure rather than being forced into this simple record shape.
+`MmcifBlock` is Kekule's concise public name for the CIF/mmCIF data-block
+concept introduced by a `data_...` header. Kekule does not add an `MmcifRecord`
+layer or force mmCIF into the record-oriented SDF shape.
 
 ### Format namespaces and domain-object independence
 
 Format-specific syntax belongs to the format boundary, not to canonical domain
 objects. Parsing, interpretation, writing, and ergonomic whole-source helpers
 should therefore live in a format namespace or on a format-specific
-`Document`/`Record` value.
+`Document`/`Record`/`Block` value.
 
 The intended dependency direction is:
 
 ```text
-format namespace / Document / Record
+format namespace / Document / Record / Block
     -> parse / interpret / write
     -> Molecule / Topology / Model / Ensemble
 
@@ -515,7 +525,7 @@ result's `to_model()`, because those types already represent the format boundary
 High-level conveniences are encouraged when they materially improve ordinary
 usage, but they must compose the same authoritative parse -> interpret -> publish
 pipeline rather than implement a second interpretation path. Expert callers
-must remain able to access the explicit `Document`/`Record`, interpretation
+must remain able to access the explicit `Document`/`Record`/`Block`, interpretation
 options, reports, mappings, and diagnostics beneath the convenience.
 
 Convenience naming must expose semantic cardinality. If one source record can
@@ -662,12 +672,74 @@ actually present in the source.
 This synthetic hierarchy belongs only to the assembled `Topology`; the
 underlying `Molecule` definitions remain hierarchy-free.
 
+### mmCIF document and block boundary
+
+An mmCIF source may contain multiple CIF/mmCIF data blocks. Kekule preserves
+those source scopes explicitly:
+
+```text
+MmcifDocument
+  blocks: Vec<MmcifBlock>
+
+MmcifBlock
+  one CIF/mmCIF data block
+  entries/items/loops belonging to that block
+```
+
+The public accessors should use the same concise vocabulary:
+
+```text
+document.blocks()
+document.block(name)
+```
+
+One `MmcifBlock` is the independently interpretable mmCIF unit. Sibling blocks
+in one `MmcifDocument` are independent source scopes; they must not be combined
+into one `Topology`, `Model`, or `Ensemble` merely because they occur in the
+same file.
+
+Coordinate-model multiplicity is a separate concept that lives *inside* one
+block. Conceptually:
+
+```text
+MmcifDocument
+  MmcifBlock A
+    coordinate model 1
+    coordinate model 2
+      -> Ensemble when interpreted together with verified shared topology
+
+  MmcifBlock B
+    coordinate model 1
+      -> Model when one realization is selected
+```
+
+The canonical block-level interpretation surface is conceptually:
+
+```text
+mmcif::interpret_block(block, options)
+  -> MmcifInterpretation -> Model + report
+
+mmcif::interpret_ensemble_block(block, options)
+  -> MmcifEnsembleInterpretation -> Ensemble + reports
+```
+
+Document-level `mmcif::interpret(document, ...)` and
+`mmcif::interpret_ensemble(document, ...)` may remain as ergonomic exact-one
+structural-block conveniences. They must select exactly one block containing
+interpretable atom-site data and delegate to the corresponding block-level
+pipeline. Zero matching blocks or more than one matching block is an error; the
+caller must then select or iterate `document.blocks()` explicitly.
+
+This convenience rule must not create a second mmCIF interpretation path. The
+block-level functions are authoritative, and document-level helpers delegate to
+them.
+
 ### mmCIF hierarchy interpretation
 
 mmCIF hierarchy must be reconstructed as one topology-level hierarchy, not as
 independent copies attached to connected molecules.
 
-The interpretation order is conceptually:
+The interpretation order for one `MmcifBlock` is conceptually:
 
 ```text
 _atom_site and related mmCIF categories
@@ -701,9 +773,9 @@ several hierarchy chains referencing one molecule instance.
 
 ### Format-specific conversion capabilities
 
-Concrete format document and record types should expose only conversions that
-make semantic sense for that format. Kekule does not need one universal public
-`Document` trait with unsupported operations.
+Concrete format document and record/block types should expose only conversions
+that make semantic sense for that format. Kekule does not need one universal
+public `Document` trait with unsupported operations.
 
 Typical capabilities are conceptually:
 
@@ -723,7 +795,13 @@ SdfRecord
   -> to_model()
 
 MmcifDocument
-  -> model/ensemble interpretation according to explicit selection policy
+  -> blocks()
+  -> block(name)
+  -> exact-one-block model/ensemble interpretation convenience
+
+MmcifBlock
+  -> model interpretation according to explicit model-selection policy
+  -> ensemble interpretation for multiple coordinate models
 ```
 
 Higher-level coordinate formats may naturally expose `Model`, `Ensemble`, or
@@ -739,7 +817,7 @@ objects.
 
 Source metadata belongs in a canonical domain object only when its semantics are
 part of that object's architecture. Otherwise it remains attached to the format
-record, interpretation result, or another explicit sidecar.
+record, block, interpretation result, or another explicit sidecar.
 
 Convenience methods such as `to_molecules()` or `to_model()` may provide the
 common owned result, while lower-level interpretation APIs may continue to
@@ -1427,7 +1505,7 @@ When deciding where new state belongs:
     unit for that quantity rather than creating a subsystem-specific unit
     convention.
 11. Is an operation specific to a file or serialization format? Put it in that
-    format namespace or on a format-specific `Document`/`Record`, not on
+    format namespace or on a format-specific `Document`/`Record`/`Block`, not on
     `Molecule`, `Topology`, `Model`, `Ensemble`, or `Trajectory`. Ergonomic
     helpers may compose the canonical parse/interpret pipeline but must not
     create an independent conversion path.
