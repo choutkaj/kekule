@@ -321,7 +321,7 @@ impl MmcifInstanceProvenance {
 /// partner diagnostics.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MmcifInterpretationReport {
-    pub(crate) data_block: String,
+    pub(crate) block_name: String,
     pub(crate) entity_definitions: usize,
     pub(crate) coordinate_models: usize,
     pub(crate) selected_model: Option<String>,
@@ -336,8 +336,8 @@ pub struct MmcifInterpretationReport {
 }
 
 impl MmcifInterpretationReport {
-    pub fn data_block(&self) -> &str {
-        &self.data_block
+    pub fn block_name(&self) -> &str {
+        &self.block_name
     }
 
     pub const fn entity_definitions(&self) -> usize {

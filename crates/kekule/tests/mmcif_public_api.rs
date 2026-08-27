@@ -53,6 +53,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     let block_interpreted = mmcif::interpret_block(block, MmcifInterpretOptions::default())?;
 
     assert_eq!(document.blocks().len(), 1);
+    assert_eq!(interpreted.report().block_name(), "demo");
     assert_eq!(block_interpreted.report(), interpreted.report());
     assert!(block_interpreted
         .topology()
@@ -86,6 +87,26 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     )?;
     assert!(written.starts_with("data_model\n"));
     assert!(mmcif::parse_str(&written, MmcifParseOptions::default()).is_ok());
+    let custom_written = mmcif::write_with_report(
+        interpreted.model(),
+        interpreted.report(),
+        MmcifWriteOptions {
+            block_name: "custom".to_owned(),
+            ..MmcifWriteOptions::default()
+        },
+    )?;
+    assert!(custom_written.starts_with("data_custom\n"));
+    assert!(matches!(
+        mmcif::write_with_report(
+            interpreted.model(),
+            interpreted.report(),
+            MmcifWriteOptions {
+                block_name: String::new(),
+                ..MmcifWriteOptions::default()
+            }
+        ),
+        Err(MmcifWriteError::InvalidBlockName(name)) if name.is_empty()
+    ));
     assert_eq!(
         mmcif::write(interpreted.model(), MmcifWriteOptions::default()),
         Err(MmcifWriteError::MissingEntityClassification(
