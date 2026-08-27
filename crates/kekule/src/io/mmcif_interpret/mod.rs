@@ -65,7 +65,7 @@ pub(crate) fn interpret_mmcif_block(
         ));
     }
     let mut report = MmcifInterpretationReport {
-        data_block: block.name().to_owned(),
+        block_name: block.name().to_owned(),
         entity_definitions: entities.len(),
         ..MmcifInterpretationReport::default()
     };

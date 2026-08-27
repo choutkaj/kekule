@@ -458,8 +458,8 @@ fn sibling_blocks_are_interpreted_independently() {
     )
     .expect("second block interprets");
 
-    assert_eq!(first.report().data_block(), "FIRST");
-    assert_eq!(second.report().data_block(), "SECOND");
+    assert_eq!(first.report().block_name(), "FIRST");
+    assert_eq!(second.report().block_name(), "SECOND");
     assert_eq!(first.model().atom_count(), 1);
     assert_eq!(second.model().atom_count(), 2);
     assert_eq!(first.model().topology().instance_count(), 1);
@@ -1918,7 +1918,7 @@ covale A N 1 A CA 1 doub
         &original,
         &report,
         MmcifWriteOptions {
-            data_block_name: "round_trip".to_owned(),
+            block_name: "round_trip".to_owned(),
             coordinate_precision: 4,
         },
     )

@@ -15,14 +15,14 @@ const MAX_COORDINATE_PRECISION: usize = 15;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifWriteOptions {
-    pub data_block_name: String,
+    pub block_name: String,
     pub coordinate_precision: usize,
 }
 
 impl Default for MmcifWriteOptions {
     fn default() -> Self {
         Self {
-            data_block_name: "model".to_owned(),
+            block_name: "model".to_owned(),
             coordinate_precision: 3,
         }
     }
@@ -31,7 +31,7 @@ impl Default for MmcifWriteOptions {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MmcifWriteError {
-    InvalidDataBlockName(String),
+    InvalidBlockName(String),
     CoordinatePrecisionTooLarge(usize),
     InvalidModel(String),
     InvalidHierarchy {
@@ -97,7 +97,7 @@ pub enum MmcifWriteError {
 impl fmt::Display for MmcifWriteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidDataBlockName(name) => {
+            Self::InvalidBlockName(name) => {
                 write!(f, "invalid mmCIF data block name `{name}`")
             }
             Self::CoordinatePrecisionTooLarge(precision) => write!(
@@ -414,14 +414,14 @@ pub fn write_mmcif_model_with_report(
 }
 
 fn validate_options(options: &MmcifWriteOptions) -> Result<(), MmcifWriteError> {
-    if options.data_block_name.is_empty()
+    if options.block_name.is_empty()
         || !options
-            .data_block_name
+            .block_name
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || "_-.".contains(character))
     {
-        return Err(MmcifWriteError::InvalidDataBlockName(
-            options.data_block_name.clone(),
+        return Err(MmcifWriteError::InvalidBlockName(
+            options.block_name.clone(),
         ));
     }
     if options.coordinate_precision > MAX_COORDINATE_PRECISION {
@@ -1201,7 +1201,7 @@ fn render_model(
 ) -> Result<String, MmcifWriteError> {
     let mut output = String::with_capacity(model.atoms.len().saturating_mul(160));
     output.push_str("data_");
-    output.push_str(&options.data_block_name);
+    output.push_str(&options.block_name);
     output.push_str("\n#\n");
 
     write_loop_header(&mut output, &["_entity.id", "_entity.type"]);
