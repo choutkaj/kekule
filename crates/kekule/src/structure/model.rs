@@ -36,7 +36,11 @@ impl PartialEq for Model {
 
 impl Model {
     /// Creates a non-periodic model with empty atom and bond property tables.
-    pub fn new(topology: Arc<Topology>, positions: Positions) -> Result<Self, ModelError> {
+    pub fn new(
+        topology: impl Into<Arc<Topology>>,
+        positions: Positions,
+    ) -> Result<Self, ModelError> {
+        let topology = topology.into();
         validate_positions_len(&topology, &positions)?;
         let properties = Properties::realization(topology.atom_count(), topology.bond_count());
         Ok(Self {
@@ -49,11 +53,12 @@ impl Model {
 
     /// Creates a model from complete geometry and realization properties.
     pub fn with_properties(
-        topology: Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         positions: Positions,
         cell: Option<PeriodicCell>,
         properties: Properties,
     ) -> Result<Self, ModelError> {
+        let topology = topology.into();
         validate_dimensions(&topology, &positions, &properties)?;
         properties.validate_realization_canonical_properties()?;
         Ok(Self {
@@ -513,6 +518,16 @@ impl<'a> ModelView<'a> {
 
     pub fn shared_topology(self) -> Arc<Topology> {
         Arc::clone(self.topology)
+    }
+
+    /// Materializes this validated borrowed realization as an owned model.
+    pub fn to_model(self) -> Model {
+        Model {
+            topology: Arc::clone(self.topology),
+            positions: self.positions.clone(),
+            cell: self.cell.cloned(),
+            properties: self.properties.clone(),
+        }
     }
 
     pub fn atom(self, atom: InstanceAtomId) -> Result<&'a Atom, TopologyError> {

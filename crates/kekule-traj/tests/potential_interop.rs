@@ -40,7 +40,7 @@ fn kekule_potentials_consume_trajectory_views_without_coordinate_copies() {
 
     let frame = TrajectoryFrame::new(model.positions().clone(), model.topology().bond_count());
     assert!(potential
-        .evaluate(frame.view(&topology).unwrap().model_view())
+        .evaluate(frame.view(&topology).unwrap().as_model())
         .is_ok());
 
     let mut buffer = FrameBuffer::new(topology);
