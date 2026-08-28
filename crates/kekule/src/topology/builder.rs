@@ -27,6 +27,22 @@ impl TopologyBuilder {
         Self::default()
     }
 
+    pub(super) fn from_topology(topology: Topology) -> Self {
+        let Topology {
+            definitions,
+            instances,
+            hierarchy,
+            properties,
+            ..
+        } = topology;
+        Self {
+            definitions,
+            instances,
+            hierarchy,
+            properties,
+        }
+    }
+
     /// Returns staged system-level hierarchy state.
     pub const fn hierarchy(&self) -> &Hierarchy {
         &self.hierarchy

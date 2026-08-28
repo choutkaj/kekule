@@ -210,6 +210,203 @@ fn builder_add_molecule_is_the_concise_single_instance_path() {
     assert_eq!(topology.molecule(instance).unwrap().molecule(), &molecule);
 }
 
+fn annotated_topology() -> Topology {
+    let (molecule, carbon, oxygen, bond) = tombstoned_molecule();
+    let mut builder = TopologyBuilder::new();
+    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let first = builder.add_instance(definition).unwrap();
+    builder.add_instance(definition).unwrap();
+    let chain = builder
+        .hierarchy_mut()
+        .add_chain("A", Some("auth-A".into()))
+        .unwrap();
+    let residue = builder
+        .hierarchy_mut()
+        .add_residue(chain, "LIG", Some(7), Some("8".into()), None)
+        .unwrap();
+    builder
+        .hierarchy_mut()
+        .add_atom_site(
+            residue,
+            InstanceAtomId::new(first, carbon),
+            AtomSiteMetadata {
+                label_atom_id: Some("C1".into()),
+                ..AtomSiteMetadata::default()
+            },
+        )
+        .unwrap();
+
+    let owner_key = PropertyKey::new("source").unwrap();
+    let value_key = PropertyKey::new("tag").unwrap();
+    builder
+        .insert_property(owner_key, PropertyValue::String("annotated".into()))
+        .unwrap();
+    fn insert_values(
+        table: &mut crate::properties::PropertyTable,
+        key: &PropertyKey,
+        values: Vec<Option<i64>>,
+    ) {
+        table
+            .insert(key.clone(), PropertyColumn::Int(values))
+            .unwrap();
+    }
+    insert_values(
+        builder.molecule_instance_properties_mut(),
+        &value_key,
+        vec![Some(10), Some(20)],
+    );
+    insert_values(
+        builder.atom_properties_mut(),
+        &value_key,
+        vec![Some(1), Some(2), Some(3), Some(4)],
+    );
+    insert_values(
+        builder.bond_properties_mut(),
+        &value_key,
+        vec![Some(5), Some(6)],
+    );
+    insert_values(builder.chain_properties_mut(), &value_key, vec![Some(30)]);
+    insert_values(builder.residue_properties_mut(), &value_key, vec![Some(40)]);
+    insert_values(
+        builder.atom_site_properties_mut(),
+        &value_key,
+        vec![Some(50)],
+    );
+
+    assert_eq!(
+        builder.bond_properties_mut().value(&value_key, 0).unwrap(),
+        Some(PropertyValue::Int(5))
+    );
+    assert_eq!(oxygen.raw(), 2);
+    assert_eq!(bond.raw(), 1);
+    builder.build().unwrap()
+}
+
+#[test]
+fn into_builder_round_trip_preserves_complete_topology_state() {
+    let topology = annotated_topology();
+    let definitions = topology.definitions.clone();
+    let instances = topology.instances.clone();
+    let atoms = topology.instance_atoms.clone();
+    let bonds = topology.instance_bonds.clone();
+    let atom_indices = topology.atom_indices.clone();
+    let bond_indices = topology.bond_indices.clone();
+    let hierarchy = topology.hierarchy.clone();
+    let properties = topology.properties.clone();
+
+    let rebuilt = topology.into_builder().build().unwrap();
+
+    assert_eq!(rebuilt.definitions, definitions);
+    assert_eq!(rebuilt.instances, instances);
+    assert_eq!(rebuilt.instance_atoms, atoms);
+    assert_eq!(rebuilt.instance_bonds, bonds);
+    assert_eq!(rebuilt.atom_indices, atom_indices);
+    assert_eq!(rebuilt.bond_indices, bond_indices);
+    assert_eq!(rebuilt.hierarchy, hierarchy);
+    assert_eq!(rebuilt.properties, properties);
+}
+
+#[test]
+fn into_builder_appends_after_preserved_layout_hierarchy_and_properties() {
+    let topology = annotated_topology();
+    let old_definitions = topology.definitions.clone();
+    let old_instances = topology.instances.clone();
+    let old_atoms = topology.instance_atoms.clone();
+    let old_bonds = topology.instance_bonds.clone();
+    let old_hierarchy = topology.hierarchy.clone();
+    let old_properties = topology.properties.clone();
+    let value_key = PropertyKey::new("tag").unwrap();
+    let owner_key = PropertyKey::new("source").unwrap();
+
+    let ligand = perceived_molecule("CN");
+    let mut builder = topology.into_builder();
+    let appended_instance = builder.add_molecule(&ligand).unwrap();
+    let extended = builder.build().unwrap();
+
+    assert_eq!(appended_instance, MoleculeInstanceId::new(2));
+    assert_eq!(extended.definition_count(), old_definitions.len() + 1);
+    assert_eq!(extended.instance_count(), old_instances.len() + 1);
+    assert_eq!(
+        extended.instance(appended_instance).unwrap().definition(),
+        MoleculeDefinitionId::new(1)
+    );
+    assert_eq!(
+        extended
+            .definition(MoleculeDefinitionId::new(1))
+            .unwrap()
+            .molecule(),
+        &ligand
+    );
+    assert_eq!(
+        &extended.definitions[..old_definitions.len()],
+        old_definitions
+    );
+    assert_eq!(&extended.instances[..old_instances.len()], old_instances);
+    assert_eq!(&extended.atom_ids()[..old_atoms.len()], old_atoms);
+    assert_eq!(&extended.bond_ids()[..old_bonds.len()], old_bonds);
+    for (index, atom) in old_atoms.iter().copied().enumerate() {
+        assert_eq!(
+            extended.atom_index(atom),
+            Some(TopologyAtomIndex::new(index as u32))
+        );
+    }
+    for (index, bond) in old_bonds.iter().copied().enumerate() {
+        assert_eq!(
+            extended.bond_index(bond),
+            Some(TopologyBondIndex::new(index as u32))
+        );
+    }
+    assert_eq!(extended.hierarchy, old_hierarchy);
+    assert_eq!(extended.chain_properties(), old_properties.chains());
+    assert_eq!(extended.residue_properties(), old_properties.residues());
+    assert_eq!(extended.atom_site_properties(), old_properties.atom_sites());
+    assert_eq!(
+        extended.properties().get(&owner_key),
+        Some(&PropertyValue::String("annotated".into()))
+    );
+    assert_eq!(
+        extended.molecule_instance_properties().get(&value_key),
+        Some(&PropertyColumn::Int(vec![Some(10), Some(20), None]))
+    );
+    assert_eq!(
+        extended.atom_properties().get(&value_key),
+        Some(&PropertyColumn::Int(vec![
+            Some(1),
+            Some(2),
+            Some(3),
+            Some(4),
+            None,
+            None,
+        ]))
+    );
+    assert_eq!(
+        extended.bond_properties().get(&value_key),
+        Some(&PropertyColumn::Int(vec![Some(5), Some(6), None]))
+    );
+    let appended_atoms = ligand
+        .atom_ids()
+        .map(|atom| InstanceAtomId::new(appended_instance, atom))
+        .collect::<Vec<_>>();
+    assert_eq!(&extended.atom_ids()[old_atoms.len()..], appended_atoms);
+    assert_eq!(
+        extended.atom_index(appended_atoms[0]),
+        Some(TopologyAtomIndex::new(4))
+    );
+    assert_eq!(
+        extended.atom_index(appended_atoms[1]),
+        Some(TopologyAtomIndex::new(5))
+    );
+    let appended_bond = InstanceBondId::new(
+        appended_instance,
+        ligand.bond_ids().next().expect("ligand has one bond"),
+    );
+    assert_eq!(extended.bond_ids().last(), Some(&appended_bond));
+    assert_eq!(
+        extended.bond_index(appended_bond),
+        Some(TopologyBondIndex::new(2))
+    );
+}
+
 #[test]
 fn topology_directly_owns_its_layout_collections() {
     let (topology, ..) = topology_with_reused_definition();

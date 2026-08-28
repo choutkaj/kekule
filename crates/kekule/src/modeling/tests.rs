@@ -318,7 +318,7 @@ fn harmonic_potential_rejects_periodic_model_and_ensemble_state() {
     assert!(potential.evaluate(model.view()).is_ok());
     let nonperiodic_ensemble = Ensemble::from_models(&[model.clone()]).unwrap();
     assert!(potential
-        .evaluate(nonperiodic_ensemble.views().next().unwrap())
+        .evaluate(nonperiodic_ensemble.member(0).unwrap().as_model())
         .is_ok());
     let cell = PeriodicCell::orthorhombic(
         Quantity::new(Vector3::new(10.0, 10.0, 10.0), ANGSTROM),
@@ -334,7 +334,7 @@ fn harmonic_potential_rejects_periodic_model_and_ensemble_state() {
 
     let periodic_ensemble = Ensemble::from_models(&[periodic_model.clone()]).unwrap();
     assert_eq!(
-        potential.evaluate(periodic_ensemble.views().next().unwrap()),
+        potential.evaluate(periodic_ensemble.member(0).unwrap().as_model()),
         Err(PotentialError::UnsupportedPeriodicCell)
     );
     let mut independent = Model::from_molecule(&small, &positions).unwrap();

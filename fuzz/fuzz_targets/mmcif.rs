@@ -53,7 +53,11 @@ fuzz_target!(|data: &[u8]| {
         if let Ok(interpreted) =
             interpret_ensemble(&document, MmcifEnsembleInterpretOptions::default())
         {
-            for view in interpreted.ensemble().views() {
+            for view in interpreted
+                .ensemble()
+                .members()
+                .map(|member| member.as_model())
+            {
                 for atom in view.topology().atom_ids() {
                     let _ = view.topology().atom(*atom);
                     let _ = view.position(*atom);
