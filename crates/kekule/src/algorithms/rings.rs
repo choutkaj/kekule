@@ -47,6 +47,12 @@ pub(super) fn compute_ring_membership(mol: &Molecule) -> RingMembership {
     membership
 }
 
+pub fn perceive_ring_membership(mol: &mut Molecule) -> RingMembership {
+    let membership = compute_ring_membership(mol);
+    mol.install_ring_membership(membership.clone());
+    membership
+}
+
 pub(super) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_size: usize) -> bool {
     let Ok(bond) = mol.bond(bond_id) else {
         return false;

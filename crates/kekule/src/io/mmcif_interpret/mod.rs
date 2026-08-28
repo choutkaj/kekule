@@ -5,7 +5,7 @@ mod struct_conn;
 mod types;
 
 use crate::structure::ModelBuilder;
-use crate::units::{Quantity, SQUARE_ANGSTROM};
+use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};
 
 use super::{MmcifBlock, MmcifDocument};
 use atom_site::{
@@ -104,15 +104,22 @@ pub(crate) fn interpret_mmcif_block(
     *builder.topology_builder_mut().hierarchy_mut() =
         build_topology_hierarchy(&report.instances, &polymer_asym_order)?;
     let mut model = builder.build().map_err(graph_error)?;
+    let mut occupancies = vec![None; model.atom_count()];
+    let mut b_factors = vec![None; model.atom_count()];
+    let b_factor_scale = SQUARE_ANGSTROM
+        .conversion_factor_to(SQUARE_NANOMETER)
+        .map_err(graph_error)?;
     for (atom, occupancy, b_factor) in qualified_atom_data {
-        model.set_occupancy(atom, occupancy).map_err(graph_error)?;
-        model
-            .set_b_factor(
-                atom,
-                b_factor.map(|value| Quantity::new(value, SQUARE_ANGSTROM)),
-            )
-            .map_err(graph_error)?;
+        let index = model
+            .topology()
+            .atom_index(atom)
+            .ok_or_else(|| graph_error(format_args!("invalid qualified mmCIF atom: {atom}")))?;
+        occupancies[index.index()] = occupancy;
+        b_factors[index.index()] = b_factor.map(|value| value * b_factor_scale);
     }
+    model
+        .install_canonical_atom_properties(occupancies, b_factors)
+        .map_err(graph_error)?;
     report.macromolecules = report
         .instances
         .iter()

@@ -1246,7 +1246,52 @@ pub enum TopologyHierarchyError {
 
 impl fmt::Display for TopologyHierarchyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{self:?}")
+        match self {
+            Self::InvalidChainIdentifier { slot, id } => write!(
+                formatter,
+                "hierarchy chain slot {slot} stores non-matching identifier {id}"
+            ),
+            Self::InvalidResidueIdentifier { slot, id } => write!(
+                formatter,
+                "hierarchy residue slot {slot} stores non-matching identifier {id}"
+            ),
+            Self::InvalidAtomSiteIdentifier { slot, id } => write!(
+                formatter,
+                "hierarchy atom-site slot {slot} stores non-matching identifier {id}"
+            ),
+            Self::InvalidChainResidue { chain, residue } => write!(
+                formatter,
+                "hierarchy chain {chain} references missing residue {residue}"
+            ),
+            Self::InvalidResidueChain { residue, chain } => write!(
+                formatter,
+                "hierarchy residue {residue} references missing chain {chain}"
+            ),
+            Self::InconsistentChainResidue { chain, residue } => write!(
+                formatter,
+                "hierarchy chain {chain} and residue {residue} do not reference each other"
+            ),
+            Self::InvalidResidueAtomSite { residue, site } => write!(
+                formatter,
+                "hierarchy residue {residue} references missing atom site {site}"
+            ),
+            Self::InvalidAtomSiteResidue { site, residue } => write!(
+                formatter,
+                "hierarchy atom site {site} references missing residue {residue}"
+            ),
+            Self::InconsistentResidueAtomSite { residue, site } => write!(
+                formatter,
+                "hierarchy residue {residue} and atom site {site} do not reference each other"
+            ),
+            Self::InvalidAtomSiteAtom { site, atom } => write!(
+                formatter,
+                "hierarchy atom site {site} references missing topology atom {atom}"
+            ),
+            Self::InconsistentAtomLookup { site, atom } => write!(
+                formatter,
+                "hierarchy atom lookup for {atom} is inconsistent with atom site {site}"
+            ),
+        }
     }
 }
 
@@ -1774,6 +1819,18 @@ mod tests {
         molecule
     }
 
+    #[test]
+    fn hierarchy_errors_have_diagnostic_display_messages() {
+        let error = TopologyHierarchyError::InconsistentResidueAtomSite {
+            residue: ResidueId::new(2),
+            site: AtomSiteId::new(7),
+        };
+        let message = error.to_string();
+        assert!(message.contains("residue2"));
+        assert!(message.contains("atom-site7"));
+        assert!(message.contains("do not reference each other"));
+    }
+
     fn tombstoned_molecule() -> (Molecule, AtomId, AtomId, BondId) {
         let mut graph = crate::core::MoleculeEditor::new();
         let carbon = graph
@@ -1969,7 +2026,7 @@ mod tests {
 
     #[test]
     fn topology_properties_cover_every_domain_and_do_not_change_layout_identity() {
-        let (molecule, carbon, oxygen, _) = tombstoned_molecule();
+        let (molecule, carbon, oxygen, bond) = tombstoned_molecule();
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_molecule_definition(&molecule).unwrap();
         let instance = builder.add_instance(definition).unwrap();
@@ -2035,6 +2092,12 @@ mod tests {
         assert_eq!(
             enriched
                 .atom_property(InstanceAtomId::new(instance, oxygen), &value_key)
+                .unwrap(),
+            Some(PropertyValue::Int(1))
+        );
+        assert_eq!(
+            enriched
+                .bond_property(InstanceBondId::new(instance, bond), &value_key)
                 .unwrap(),
             Some(PropertyValue::Int(1))
         );

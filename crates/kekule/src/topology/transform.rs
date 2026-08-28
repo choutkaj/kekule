@@ -321,7 +321,10 @@ impl Topology {
         let selected = selection
             .indices()
             .iter()
-            .filter_map(|index| self.atom_id(*index))
+            .map(|index| {
+                self.atom_id(*index)
+                    .expect("validated atom selection references a live dense atom")
+            })
             .collect::<BTreeSet<_>>();
         let mut builder = TopologyBuilder::new();
         let mut atom_targets = BTreeMap::new();
@@ -455,13 +458,19 @@ fn copy_filtered_hierarchy(
         let retained_residues = source_chain
             .residues()
             .iter()
-            .filter_map(|id| source.hierarchy().residue(*id).ok())
+            .map(|id| {
+                source
+                    .hierarchy()
+                    .residue(*id)
+                    .expect("published hierarchy chain references a live residue")
+            })
             .filter(|residue| {
                 residue.atom_sites().iter().any(|site| {
                     source
                         .hierarchy()
                         .atom_site(*site)
-                        .is_ok_and(|site| atom_targets.contains_key(&site.atom()))
+                        .map(|site| atom_targets.contains_key(&site.atom()))
+                        .expect("published hierarchy residue references a live atom site")
                 })
             })
             .collect::<Vec<_>>();

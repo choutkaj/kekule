@@ -804,9 +804,15 @@ pub fn write_mol_v2000(molecule: &Molecule) -> std::result::Result<String, MolWr
         atoms
             .iter()
             .filter_map(|id| {
-                let atom = mol.atom(*id).ok()?;
-                (atom.formal_charge != 0)
-                    .then_some((*atom_index.get(id)?, i32::from(atom.formal_charge)))
+                let atom = mol
+                    .atom(*id)
+                    .expect("published molecule atom iteration returned a live atom");
+                (atom.formal_charge != 0).then_some((
+                    *atom_index
+                        .get(id)
+                        .expect("published molecule atom must have a writer index"),
+                    i32::from(atom.formal_charge),
+                ))
             })
             .collect(),
     );
@@ -816,7 +822,9 @@ pub fn write_mol_v2000(molecule: &Molecule) -> std::result::Result<String, MolWr
         atoms
             .iter()
             .filter_map(|id| {
-                let atom = mol.atom(*id).ok()?;
+                let atom = mol
+                    .atom(*id)
+                    .expect("published molecule atom iteration returned a live atom");
                 atom.isotope.map(|isotope| {
                     (
                         *atom_index.get(id).expect("atom indexed"),

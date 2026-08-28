@@ -44,7 +44,6 @@ SDF_FEATURES = (
     "algo.valence.rdkit-like",
     "chem.hydrogen-transforms",
     "chem.perception.default",
-    "core.conformers",
     "io.mol.v2000.parse",
     "io.mol.v2000.write",
     "io.mol.v3000.parse",

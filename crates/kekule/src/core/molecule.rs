@@ -29,7 +29,7 @@ impl PartialEq for Molecule {
 pub struct AtomMut<'a> {
     molecule: &'a mut Molecule,
     id: AtomId,
-    original: AtomChemistry,
+    original: AtomRepresentedState,
 }
 
 impl Deref for AtomMut<'_> {
@@ -52,7 +52,7 @@ impl DerefMut for AtomMut<'_> {
 
 impl Drop for AtomMut<'_> {
     fn drop(&mut self) {
-        if AtomChemistry::from(&**self) != self.original {
+        if AtomRepresentedState::from(&**self) != self.original {
             self.molecule.clear_perception();
             self.molecule.properties.clear_owner();
         }
@@ -93,15 +93,16 @@ impl Drop for BondMut<'_> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct AtomChemistry {
+struct AtomRepresentedState {
     element: Element,
     isotope: Option<u16>,
     formal_charge: i8,
     radical: Option<AtomRadical>,
     hydrogens: HydrogenDeclaration,
+    atom_map: Option<u32>,
 }
 
-impl From<&Atom> for AtomChemistry {
+impl From<&Atom> for AtomRepresentedState {
     fn from(atom: &Atom) -> Self {
         Self {
             element: atom.element,
@@ -109,6 +110,7 @@ impl From<&Atom> for AtomChemistry {
             formal_charge: atom.formal_charge,
             radical: atom.radical,
             hydrogens: atom.hydrogens,
+            atom_map: atom.atom_map,
         }
     }
 }
@@ -201,7 +203,7 @@ impl Molecule {
     }
 
     pub(crate) fn atom_mut(&mut self, id: AtomId) -> Result<AtomMut<'_>> {
-        let original = AtomChemistry::from(self.atom(id)?);
+        let original = AtomRepresentedState::from(self.atom(id)?);
         Ok(AtomMut {
             molecule: self,
             id,
@@ -331,7 +333,10 @@ impl Molecule {
         self.atom(id)?;
         Ok(self.graph.adjacency[id.index()]
             .iter()
-            .filter_map(|bond_id| self.bond(*bond_id).ok())
+            .map(|bond_id| {
+                self.bond(*bond_id)
+                    .expect("published molecule adjacency references a live bond")
+            })
             .map(move |bond| bond.other_atom(id)))
     }
 
@@ -373,9 +378,12 @@ impl Molecule {
 
     pub fn incident_bonds(&self, id: AtomId) -> Result<impl Iterator<Item = (BondId, &Bond)> + '_> {
         self.atom(id)?;
-        Ok(self.graph.adjacency[id.index()]
-            .iter()
-            .filter_map(|bond_id| self.bond(*bond_id).ok().map(|bond| (*bond_id, bond))))
+        Ok(self.graph.adjacency[id.index()].iter().map(|bond_id| {
+            let bond = self
+                .bond(*bond_id)
+                .expect("published molecule adjacency references a live bond");
+            (*bond_id, bond)
+        }))
     }
 
     pub fn bond_between(&self, a: AtomId, b: AtomId) -> Result<Option<BondId>> {
@@ -386,8 +394,8 @@ impl Molecule {
             .copied()
             .find(|bond_id| {
                 self.bond(*bond_id)
-                    .map(|bond| bond.connects(a, b))
-                    .unwrap_or(false)
+                    .expect("published molecule adjacency references a live bond")
+                    .connects(a, b)
             }))
     }
 

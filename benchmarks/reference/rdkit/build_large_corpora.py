@@ -40,7 +40,6 @@ SDF_FEATURES = (
     "algo.rings.sssr",
     "algo.valence.rdkit-like",
     "chem.perception.default",
-    "core.conformers",
     "io.mol.v2000.parse",
     "io.mol.v2000.write",
     "io.mol.v3000.parse",

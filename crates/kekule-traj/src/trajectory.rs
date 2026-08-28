@@ -169,18 +169,18 @@ macro_rules! realization_property_api {
             self.properties.realization_bond_properties()
         }
 
-        pub fn atom_property_value(
+        pub fn atom_property(
             &self,
-            key: &PropertyKey,
             index: usize,
+            key: &PropertyKey,
         ) -> Result<Option<PropertyValue>, FrameError> {
             Ok(self.atom_properties().value(key, index)?)
         }
 
-        pub fn set_atom_property_value(
+        pub fn set_atom_property(
             &mut self,
-            key: PropertyKey,
             index: usize,
+            key: PropertyKey,
             value: Option<PropertyValue>,
         ) -> Result<(), FrameError> {
             Ok(self
@@ -205,18 +205,18 @@ macro_rules! realization_property_api {
             Ok(self.properties.remove_realization_atom_column(key)?)
         }
 
-        pub fn bond_property_value(
+        pub fn bond_property(
             &self,
-            key: &PropertyKey,
             index: usize,
+            key: &PropertyKey,
         ) -> Result<Option<PropertyValue>, FrameError> {
             Ok(self.bond_properties().value(key, index)?)
         }
 
-        pub fn set_bond_property_value(
+        pub fn set_bond_property(
             &mut self,
-            key: PropertyKey,
             index: usize,
+            key: PropertyKey,
             value: Option<PropertyValue>,
         ) -> Result<(), FrameError> {
             Ok(self
@@ -473,6 +473,22 @@ impl<'a> TrajectoryFrameView<'a> {
 
     pub const fn bond_properties(self) -> &'a PropertyTable {
         self.properties.realization_bond_properties()
+    }
+
+    pub fn atom_property(
+        self,
+        index: usize,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyValue>, FrameError> {
+        Ok(self.atom_properties().value(key, index)?)
+    }
+
+    pub fn bond_property(
+        self,
+        index: usize,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyValue>, FrameError> {
+        Ok(self.bond_properties().value(key, index)?)
     }
 
     pub fn occupancy_at(self, index: usize) -> Result<Option<f64>, FrameError> {
@@ -1889,7 +1905,7 @@ mod tests {
             topology.bond_count(),
         );
         frame
-            .set_atom_property_value(key("score"), 0, Some(real(0.8)))
+            .set_atom_property(0, key("score"), Some(real(0.8)))
             .unwrap();
         frame
             .set_time(Some(Quantity::new(2.5, PICOSECOND)))
@@ -1899,7 +1915,7 @@ mod tests {
         let view = frame.view(&topology).unwrap();
         assert_eq!(view.model_view().position(atom).unwrap().value().x, 3.0);
         assert_eq!(
-            view.atom_properties().value(&key("score"), 0).unwrap(),
+            view.atom_property(0, &key("score")).unwrap(),
             Some(PropertyValue::Real {
                 value: 0.8,
                 unit: DIMENSIONLESS,
@@ -1942,7 +1958,7 @@ mod tests {
             topology.bond_count(),
         );
         assert!(matches!(
-            frame.set_atom_property_value(key("occupancy"), 0, Some(PropertyValue::Int(1))),
+            frame.set_atom_property(0, key("occupancy"), Some(PropertyValue::Int(1))),
             Err(FrameError::Property(PropertyError::ReservedKey(_)))
         ));
         frame.set_occupancy_at(0, Some(0.8)).unwrap();
@@ -1969,6 +1985,13 @@ mod tests {
         buffer.set_properties(frame.properties().clone()).unwrap();
         assert_eq!(buffer.occupancy_at(0).unwrap(), Some(0.8));
         assert_eq!(buffer.b_factor_at(0).unwrap(), Some(b_factor));
+        buffer
+            .set_atom_property(0, key("buffer_score"), Some(real(0.4)))
+            .unwrap();
+        assert_eq!(
+            buffer.atom_property(0, &key("buffer_score")).unwrap(),
+            Some(real(0.4))
+        );
         assert!(matches!(
             buffer.remove_atom_property_column(&key("occupancy")),
             Err(FrameError::Property(PropertyError::ReservedKey(_)))
@@ -1985,13 +2008,13 @@ mod tests {
             topology.bond_count(),
         );
         frame
-            .set_atom_property_value(key("score"), 0, Some(real(0.25)))
+            .set_atom_property(0, key("score"), Some(real(0.25)))
             .unwrap();
         frame
-            .set_atom_property_value(key("score"), 1, Some(real(0.75)))
+            .set_atom_property(1, key("score"), Some(real(0.75)))
             .unwrap();
         frame
-            .set_bond_property_value(key("score"), 0, Some(real(9.0)))
+            .set_bond_property(0, key("score"), Some(real(9.0)))
             .unwrap();
         frame
             .insert_property(key("frame_energy"), real(12.0))
@@ -2135,11 +2158,19 @@ mod tests {
         );
         frame.set_step(Some(9));
         frame
-            .set_atom_property_value(key("atom_score"), 0, Some(real(0.6)))
+            .set_atom_property(0, key("atom_score"), Some(real(0.6)))
             .unwrap();
         frame
-            .set_bond_property_value(key("bond_score"), 0, Some(real(4.0)))
+            .set_bond_property(0, key("bond_score"), Some(real(4.0)))
             .unwrap();
+        assert_eq!(
+            frame.atom_property(0, &key("atom_score")).unwrap(),
+            Some(real(0.6))
+        );
+        assert_eq!(
+            frame.bond_property(0, &key("bond_score")).unwrap(),
+            Some(real(4.0))
+        );
         trajectory.push(frame).unwrap();
 
         let mut reader = MemoryTrajectoryReader::new(&trajectory);
@@ -2148,17 +2179,11 @@ mod tests {
         assert_eq!(buffer.positions().values().value()[0].x, 5.0);
         assert_eq!(buffer.frame_view().step(), Some(9));
         assert_eq!(
-            buffer
-                .atom_properties()
-                .value(&key("atom_score"), 0)
-                .unwrap(),
+            buffer.atom_property(0, &key("atom_score")).unwrap(),
             Some(real(0.6))
         );
         assert_eq!(
-            buffer
-                .bond_properties()
-                .value(&key("bond_score"), 0)
-                .unwrap(),
+            buffer.bond_property(0, &key("bond_score")).unwrap(),
             Some(real(4.0))
         );
         assert!(!reader.read_next(&mut buffer).unwrap());
