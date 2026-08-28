@@ -51,15 +51,15 @@ fn model_properties_and_canonical_atom_fields_share_one_store() {
         .unwrap();
     model
         .set_bond_property(
-            PropertyKey::new("bond_tag").unwrap(),
             bond,
+            PropertyKey::new("bond_tag").unwrap(),
             Some(PropertyValue::Int(2)),
         )
         .unwrap();
     model
         .set_atom_property(
-            PropertyKey::new("atom_tag").unwrap(),
             atom,
+            PropertyKey::new("atom_tag").unwrap(),
             Some(PropertyValue::String("carbon".into())),
         )
         .unwrap();
@@ -74,8 +74,8 @@ fn model_properties_and_canonical_atom_fields_share_one_store() {
         .is_some());
     assert!(matches!(
         model.set_atom_property(
-            PropertyKey::new("occupancy").unwrap(),
             atom,
+            PropertyKey::new("occupancy").unwrap(),
             Some(PropertyValue::Int(1)),
         ),
         Err(ModelError::Property(
@@ -84,24 +84,24 @@ fn model_properties_and_canonical_atom_fields_share_one_store() {
     ));
     assert_eq!(
         model
-            .atom_property(&PropertyKey::new("atom_tag").unwrap(), atom)
+            .atom_property(atom, &PropertyKey::new("atom_tag").unwrap())
             .unwrap(),
         Some(PropertyValue::String("carbon".into()))
     );
     assert_eq!(
         model
-            .bond_property(&PropertyKey::new("bond_tag").unwrap(), bond)
+            .bond_property(bond, &PropertyKey::new("bond_tag").unwrap())
             .unwrap(),
         Some(PropertyValue::Int(2))
     );
     let view = model.view();
     assert_eq!(
-        view.atom_property(&PropertyKey::new("atom_tag").unwrap(), atom)
+        view.atom_property(atom, &PropertyKey::new("atom_tag").unwrap())
             .unwrap(),
         Some(PropertyValue::String("carbon".into()))
     );
     assert_eq!(
-        view.bond_property(&PropertyKey::new("bond_tag").unwrap(), bond)
+        view.bond_property(bond, &PropertyKey::new("bond_tag").unwrap())
             .unwrap(),
         Some(PropertyValue::Int(2))
     );
@@ -134,15 +134,15 @@ fn model_slice_projects_entity_properties_and_drops_owner_properties() {
         .unwrap();
     model
         .set_atom_property(
-            PropertyKey::new("selected").unwrap(),
             atom,
+            PropertyKey::new("selected").unwrap(),
             Some(PropertyValue::Bool(true)),
         )
         .unwrap();
     model
         .set_bond_property(
-            PropertyKey::new("bond_selected").unwrap(),
             bond,
+            PropertyKey::new("bond_selected").unwrap(),
             Some(PropertyValue::String("yes".into())),
         )
         .unwrap();
@@ -175,15 +175,15 @@ fn ensemble_collection_and_member_properties_are_separate() {
     let (mut model, atom, bond) = model_fixture();
     model
         .set_atom_property(
-            PropertyKey::new("member_atom").unwrap(),
             atom,
+            PropertyKey::new("member_atom").unwrap(),
             Some(PropertyValue::Int(1)),
         )
         .unwrap();
     model
         .set_bond_property(
-            PropertyKey::new("member_bond").unwrap(),
             bond,
+            PropertyKey::new("member_bond").unwrap(),
             Some(PropertyValue::Int(2)),
         )
         .unwrap();
@@ -207,7 +207,7 @@ fn ensemble_collection_and_member_properties_are_separate() {
         ensemble
             .member(0)
             .unwrap()
-            .atom_property(&PropertyKey::new("member_atom").unwrap(), 0)
+            .atom_property(0, &PropertyKey::new("member_atom").unwrap())
             .unwrap(),
         Some(PropertyValue::Int(1))
     );
@@ -215,16 +215,29 @@ fn ensemble_collection_and_member_properties_are_separate() {
         ensemble
             .member(0)
             .unwrap()
-            .bond_property(&PropertyKey::new("member_bond").unwrap(), 0)
+            .bond_property(0, &PropertyKey::new("member_bond").unwrap())
             .unwrap(),
         Some(PropertyValue::Int(2))
     );
 
     let member = ensemble.member_mut(0).unwrap();
+    member
+        .set_atom_property(
+            0,
+            PropertyKey::new("member_local").unwrap(),
+            Some(PropertyValue::Int(3)),
+        )
+        .unwrap();
+    assert_eq!(
+        member
+            .atom_property(0, &PropertyKey::new("member_local").unwrap())
+            .unwrap(),
+        Some(PropertyValue::Int(3))
+    );
     assert!(matches!(
         member.set_atom_property(
-            PropertyKey::new("b_factor").unwrap(),
             0,
+            PropertyKey::new("b_factor").unwrap(),
             Some(PropertyValue::Int(2)),
         ),
         Err(EnsembleError::Property(error))

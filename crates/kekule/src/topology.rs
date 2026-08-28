@@ -2026,7 +2026,7 @@ mod tests {
 
     #[test]
     fn topology_properties_cover_every_domain_and_do_not_change_layout_identity() {
-        let (molecule, carbon, oxygen, _) = tombstoned_molecule();
+        let (molecule, carbon, oxygen, bond) = tombstoned_molecule();
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_molecule_definition(&molecule).unwrap();
         let instance = builder.add_instance(definition).unwrap();
@@ -2092,6 +2092,12 @@ mod tests {
         assert_eq!(
             enriched
                 .atom_property(InstanceAtomId::new(instance, oxygen), &value_key)
+                .unwrap(),
+            Some(PropertyValue::Int(1))
+        );
+        assert_eq!(
+            enriched
+                .bond_property(InstanceBondId::new(instance, bond), &value_key)
                 .unwrap(),
             Some(PropertyValue::Int(1))
         );
