@@ -50,10 +50,17 @@ fn model_properties_and_canonical_atom_fields_share_one_store() {
         .set_b_factor(atom, Some(Quantity::new(12.5, SQUARE_ANGSTROM)))
         .unwrap();
     model
-        .set_bond_property_value(
+        .set_bond_property(
             PropertyKey::new("bond_tag").unwrap(),
             bond,
             Some(PropertyValue::Int(2)),
+        )
+        .unwrap();
+    model
+        .set_atom_property(
+            PropertyKey::new("atom_tag").unwrap(),
+            atom,
+            Some(PropertyValue::String("carbon".into())),
         )
         .unwrap();
     assert_eq!(model.occupancy(atom).unwrap(), Some(0.75));
@@ -66,7 +73,7 @@ fn model_properties_and_canonical_atom_fields_share_one_store() {
         .get(&PropertyKey::new("occupancy").unwrap())
         .is_some());
     assert!(matches!(
-        model.set_atom_property_value(
+        model.set_atom_property(
             PropertyKey::new("occupancy").unwrap(),
             atom,
             Some(PropertyValue::Int(1)),
@@ -77,7 +84,24 @@ fn model_properties_and_canonical_atom_fields_share_one_store() {
     ));
     assert_eq!(
         model
-            .bond_property_value(&PropertyKey::new("bond_tag").unwrap(), bond)
+            .atom_property(&PropertyKey::new("atom_tag").unwrap(), atom)
+            .unwrap(),
+        Some(PropertyValue::String("carbon".into()))
+    );
+    assert_eq!(
+        model
+            .bond_property(&PropertyKey::new("bond_tag").unwrap(), bond)
+            .unwrap(),
+        Some(PropertyValue::Int(2))
+    );
+    let view = model.view();
+    assert_eq!(
+        view.atom_property(&PropertyKey::new("atom_tag").unwrap(), atom)
+            .unwrap(),
+        Some(PropertyValue::String("carbon".into()))
+    );
+    assert_eq!(
+        view.bond_property(&PropertyKey::new("bond_tag").unwrap(), bond)
             .unwrap(),
         Some(PropertyValue::Int(2))
     );
@@ -109,14 +133,14 @@ fn model_slice_projects_entity_properties_and_drops_owner_properties() {
         .insert_property(PropertyKey::new("energy").unwrap(), PropertyValue::Int(3))
         .unwrap();
     model
-        .set_atom_property_value(
+        .set_atom_property(
             PropertyKey::new("selected").unwrap(),
             atom,
             Some(PropertyValue::Bool(true)),
         )
         .unwrap();
     model
-        .set_bond_property_value(
+        .set_bond_property(
             PropertyKey::new("bond_selected").unwrap(),
             bond,
             Some(PropertyValue::String("yes".into())),
@@ -150,14 +174,14 @@ fn model_slice_projects_entity_properties_and_drops_owner_properties() {
 fn ensemble_collection_and_member_properties_are_separate() {
     let (mut model, atom, bond) = model_fixture();
     model
-        .set_atom_property_value(
+        .set_atom_property(
             PropertyKey::new("member_atom").unwrap(),
             atom,
             Some(PropertyValue::Int(1)),
         )
         .unwrap();
     model
-        .set_bond_property_value(
+        .set_bond_property(
             PropertyKey::new("member_bond").unwrap(),
             bond,
             Some(PropertyValue::Int(2)),
@@ -179,10 +203,26 @@ fn ensemble_collection_and_member_properties_are_separate() {
     assert!(!ensemble.member(0).unwrap().properties().owner_is_empty());
     assert!(ensemble.member(0).unwrap().atom_properties().has_data());
     assert!(ensemble.member(0).unwrap().bond_properties().has_data());
+    assert_eq!(
+        ensemble
+            .member(0)
+            .unwrap()
+            .atom_property(&PropertyKey::new("member_atom").unwrap(), 0)
+            .unwrap(),
+        Some(PropertyValue::Int(1))
+    );
+    assert_eq!(
+        ensemble
+            .member(0)
+            .unwrap()
+            .bond_property(&PropertyKey::new("member_bond").unwrap(), 0)
+            .unwrap(),
+        Some(PropertyValue::Int(2))
+    );
 
     let member = ensemble.member_mut(0).unwrap();
     assert!(matches!(
-        member.set_atom_property_value(
+        member.set_atom_property(
             PropertyKey::new("b_factor").unwrap(),
             0,
             Some(PropertyValue::Int(2)),

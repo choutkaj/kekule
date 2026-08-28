@@ -72,7 +72,7 @@ impl EnsembleMember {
         self.properties.realization_bond_properties()
     }
 
-    pub fn atom_property_value(
+    pub fn atom_property(
         &self,
         key: &PropertyKey,
         index: usize,
@@ -80,7 +80,7 @@ impl EnsembleMember {
         Ok(self.atom_properties().value(key, index)?)
     }
 
-    pub fn set_atom_property_value(
+    pub fn set_atom_property(
         &mut self,
         key: PropertyKey,
         index: usize,
@@ -108,7 +108,7 @@ impl EnsembleMember {
         Ok(self.properties.remove_realization_atom_column(key)?)
     }
 
-    pub fn bond_property_value(
+    pub fn bond_property(
         &self,
         key: &PropertyKey,
         index: usize,
@@ -116,7 +116,7 @@ impl EnsembleMember {
         Ok(self.bond_properties().value(key, index)?)
     }
 
-    pub fn set_bond_property_value(
+    pub fn set_bond_property(
         &mut self,
         key: PropertyKey,
         index: usize,

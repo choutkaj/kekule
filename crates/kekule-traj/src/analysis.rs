@@ -856,7 +856,7 @@ mod tests {
         moving_frame.set_step(Some(25));
         let score_key = PropertyKey::new("score").unwrap();
         moving_frame
-            .set_atom_property_value(
+            .set_atom_property(
                 score_key.clone(),
                 0,
                 Some(PropertyValue::Real {

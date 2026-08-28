@@ -466,10 +466,16 @@ fn generic_entity_plan(
             .flat_map(|residue| {
                 hierarchy
                     .residue(*residue)
-                    .into_iter()
-                    .flat_map(|residue| residue.atom_sites().iter().copied())
+                    .expect("published hierarchy chain references a live residue")
+                    .atom_sites()
+                    .iter()
+                    .copied()
             })
-            .filter_map(|site| hierarchy.atom_site(site).ok())
+            .map(|site| {
+                hierarchy
+                    .atom_site(site)
+                    .expect("published hierarchy residue references a live atom site")
+            })
             .collect::<Vec<_>>();
         if sites.is_empty() {
             continue;
@@ -625,10 +631,16 @@ fn report_entity_plan(
             .flat_map(|residue| {
                 hierarchy
                     .residue(*residue)
-                    .into_iter()
-                    .flat_map(|residue| residue.atom_sites().iter().copied())
+                    .expect("published hierarchy chain references a live residue")
+                    .atom_sites()
+                    .iter()
+                    .copied()
             })
-            .filter_map(|site| hierarchy.atom_site(site).ok())
+            .map(|site| {
+                hierarchy
+                    .atom_site(site)
+                    .expect("published hierarchy residue references a live atom site")
+            })
             .collect::<Vec<_>>();
         if sites.is_empty() {
             continue;
@@ -782,9 +794,21 @@ fn prepare_model(model: &Model, plan: EntityPlan) -> Result<PreparedModel, Mmcif
         .hierarchy()
         .chains()
         .flat_map(|(_, chain)| chain.residues().iter().copied())
-        .filter_map(|residue| model.topology().hierarchy().residue(residue).ok())
+        .map(|residue| {
+            model
+                .topology()
+                .hierarchy()
+                .residue(residue)
+                .expect("published hierarchy chain references a live residue")
+        })
         .flat_map(|residue| residue.atom_sites().iter().copied())
-        .filter_map(|site| model.topology().hierarchy().atom_site(site).ok())
+        .map(|site| {
+            model
+                .topology()
+                .hierarchy()
+                .atom_site(site)
+                .expect("published hierarchy residue references a live atom site")
+        })
         .enumerate()
         .map(|(index, site)| (site.atom(), index))
         .collect::<BTreeMap<_, _>>();

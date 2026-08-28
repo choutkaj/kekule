@@ -56,10 +56,6 @@ pub(crate) fn implementation_expected(
                 .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
             Ok(json!({ "records": records.iter().map(mol_parse_record_json).collect::<Vec<_>>() }))
         }
-        "core.conformers" => {
-            let records = read_small_records_by_suffix(fixture_path)?;
-            Ok(json!({ "records": records.iter().map(conformer_record_json).collect::<Vec<_>>() }))
-        }
         "descriptor.molecular" => {
             let mut records = read_small_records_by_suffix(fixture_path)?;
             Ok(json!({
@@ -813,18 +809,6 @@ pub(crate) fn mol_record_json(record: &IndexedSmallRecord) -> Value {
     })
 }
 
-pub(crate) fn conformer_record_json(record: &IndexedSmallRecord) -> Value {
-    let mol = &record.molecule;
-    json!({
-        "record_index": record.record_index,
-        "status": "ok",
-        "title": record.title,
-        "atom_count": mol.atom_count(),
-        "conformers": Vec::<Value>::new(),
-        "atoms": mol.atoms().map(|(id, atom)| conformer_atom_json(mol, id, atom)).collect::<Vec<_>>(),
-    })
-}
-
 pub(crate) fn molecular_descriptor_record_json(record: &mut IndexedSmallRecord) -> Value {
     if record.molecule.perceive().is_err() {
         return json!({
@@ -947,7 +931,6 @@ pub(crate) fn mol_parse_record_json(record: &IndexedSmallRecord) -> Value {
         "status": "ok",
         "title": record.title,
         "atom_count": mol.atom_count(),
-        "conformers": conformers_json(mol),
         "atoms": atoms_json(mol),
     })
 }
@@ -1341,24 +1324,6 @@ fn rdkit_default_removes_hydrogen(atom: &Atom) -> bool {
         && atom.formal_charge == 0
         && atom.radical.is_none()
         && atom.atom_map.is_none()
-}
-
-pub(crate) fn conformers_json(mol: &Molecule) -> Vec<Vec<Value>> {
-    let _ = mol;
-    Vec::new()
-}
-
-pub(crate) fn conformer_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Value {
-    json!({
-        "index": id.raw(),
-        "atomic_number": atom.element.atomic_number(),
-        "symbol": atom.element.symbol(),
-        "formal_charge": atom.formal_charge,
-        "isotope": atom.isotope,
-        "explicit_hydrogens": atom.hydrogens.explicit_count(),
-        "atom_map": atom.atom_map,
-        "aromatic": mol.atom_is_aromatic(id).ok().flatten().unwrap_or(false),
-    })
 }
 
 pub(crate) fn ring_membership_record_json(record: &mut IndexedSmallRecord) -> Value {

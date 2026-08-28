@@ -600,7 +600,7 @@ impl TrajectoryWriteOptions {
 enum SequentialReaderInner {
     Xyz(xyz::XyzReader<BufReader<File>>),
     Dcd(dcd::DcdReader<BufReader<File>>),
-    Trr(trr::TrrReader<BufReader<File>>),
+    Trr(Box<trr::TrrReader<BufReader<File>>>),
     Xtc(xtc::XtcReader<BufReader<File>>),
 }
 
@@ -773,7 +773,7 @@ pub fn open_trajectory(
             let reader = trr::TrrReader::new(reader, binding, options.trr, options.limits, label)?;
             let metadata = FileTrajectoryMetadata::trr(reader.first_header(), None, false);
             (
-                SequentialReaderInner::Trr(reader),
+                SequentialReaderInner::Trr(Box::new(reader)),
                 metadata,
                 vec![
                     "TRR uses XDR big-endian scalars and explicit lambda preservation policy"
