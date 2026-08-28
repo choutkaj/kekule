@@ -1,7 +1,9 @@
 use std::fmt;
+use std::sync::Arc;
 
 use crate::core::Molecule;
 use crate::structure::{Model, ModelBuildError};
+use crate::topology::Topology;
 
 use super::{
     interpret_molfile_document, parse_molfile_document_with_options, MolfileDocument,
@@ -67,20 +69,32 @@ impl SdfRecord {
         self.source_start_line
     }
 
+    /// Interprets this independently meaningful record once into its richest
+    /// canonical one-realization state.
+    pub fn interpret(&self) -> Result<SdfRecordInterpretation, SdfInterpretError> {
+        interpret_sdf_record(self)
+    }
+
     /// Interprets this record as connected canonical molecules.
     ///
     /// Source coordinates may assist stereo normalization, but are not
     /// retained. No chemical perception is run.
     pub fn to_molecules(&self) -> Result<Vec<Molecule>, SdfInterpretError> {
-        Ok(interpret_sdf_record_molfile(self)?.to_molecules())
+        Ok(self.interpret()?.to_molecules())
+    }
+
+    /// Projects this record's complete static model layout, including the
+    /// deterministic synthetic Molfile hierarchy.
+    pub fn to_topology(&self) -> Result<Arc<Topology>, SdfInterpretError> {
+        Ok(self.interpret()?.to_topology())
     }
 
     /// Interprets this record as one model with one instance per component.
     ///
     /// SDF data fields remain source metadata and are not copied into the
     /// canonical model. No chemical perception is run.
-    pub fn to_model(&self) -> Result<Model, SdfModelError> {
-        Ok(interpret_sdf_record_molfile(self)?.to_model()?)
+    pub fn to_model(&self) -> Result<Model, SdfInterpretError> {
+        Ok(self.interpret()?.to_model())
     }
 }
 
@@ -93,26 +107,51 @@ impl SdfDocument {
     pub fn records(&self) -> &[SdfRecord] {
         &self.records
     }
+
+    /// Interprets every record independently while preserving record boundaries.
+    pub fn interpret(&self) -> Result<SdfInterpretation, SdfInterpretError> {
+        interpret_sdf_document(self)
+    }
 }
 
-/// Canonical interpretation of one SDF record, suitable for SDF writing.
+/// Rich canonical interpretation of one SDF record.
+///
+/// The owned model is the single authoritative topology/geometry state. Its
+/// molecule and topology projections never reinterpret the source.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SdfRecordInterpretation {
     title: String,
-    molecules: Vec<Molecule>,
+    model: Model,
     data_fields: Vec<SdfDataField>,
+    report: SdfRecordInterpretationReport,
 }
 
 impl SdfRecordInterpretation {
-    pub fn new(
+    /// Creates a writable SDF record from an already canonical model.
+    ///
+    /// Source correspondence is empty because this value did not originate
+    /// from SDF parsing. Parsed records receive a populated report through the
+    /// authoritative interpreter.
+    pub fn new(title: impl Into<String>, model: Model, data_fields: Vec<SdfDataField>) -> Self {
+        Self {
+            title: title.into(),
+            model,
+            data_fields,
+            report: SdfRecordInterpretationReport::default(),
+        }
+    }
+
+    fn with_report(
         title: impl Into<String>,
-        molecules: Vec<Molecule>,
+        model: Model,
         data_fields: Vec<SdfDataField>,
+        report: SdfRecordInterpretationReport,
     ) -> Self {
         Self {
             title: title.into(),
-            molecules,
+            model,
             data_fields,
+            report,
         }
     }
 
@@ -120,24 +159,75 @@ impl SdfRecordInterpretation {
         &self.title
     }
 
-    pub fn molecules(&self) -> &[Molecule] {
-        &self.molecules
+    /// Borrows molecule definitions once per occurrence in authoritative
+    /// topology instance order.
+    pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
+        self.model
+            .topology()
+            .molecules()
+            .map(|occurrence| occurrence.molecule())
     }
 
     pub fn to_molecules(self) -> Vec<Molecule> {
-        self.molecules
+        self.model
+            .topology()
+            .molecules()
+            .map(|occurrence| occurrence.molecule().clone())
+            .collect()
+    }
+
+    pub fn model(&self) -> &Model {
+        &self.model
+    }
+
+    pub fn topology(&self) -> &Topology {
+        self.model.topology()
+    }
+
+    pub fn to_model(self) -> Model {
+        self.model
+    }
+
+    /// Consumes the format wrapper and retains shared ownership of its exact
+    /// model topology.
+    pub fn to_topology(self) -> Arc<Topology> {
+        self.model.shared_topology()
     }
 
     pub fn data_fields(&self) -> &[SdfDataField] {
         &self.data_fields
     }
+
+    pub fn report(&self) -> &SdfRecordInterpretationReport {
+        &self.report
+    }
+
+    pub fn to_parts(
+        self,
+    ) -> (
+        String,
+        Model,
+        Vec<SdfDataField>,
+        SdfRecordInterpretationReport,
+    ) {
+        (self.title, self.model, self.data_fields, self.report)
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SdfInterpretError {
     pub(crate) record: usize,
     pub(crate) line: usize,
     pub(crate) message: String,
+    pub(crate) kind: SdfInterpretErrorKind,
+}
+
+/// Structured stage that caused SDF record interpretation to fail.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum SdfInterpretErrorKind {
+    Molfile(super::MolfileInterpretError),
+    ModelBuild(Box<ModelBuildError>),
 }
 
 impl SdfInterpretError {
@@ -152,6 +242,11 @@ impl SdfInterpretError {
     pub fn message(&self) -> &str {
         &self.message
     }
+
+    /// Returns the structured underlying interpretation failure.
+    pub fn kind(&self) -> &SdfInterpretErrorKind {
+        &self.kind
+    }
 }
 
 impl fmt::Display for SdfInterpretError {
@@ -164,49 +259,16 @@ impl fmt::Display for SdfInterpretError {
     }
 }
 
-impl std::error::Error for SdfInterpretError {}
-
-/// Failure to interpret one SDF record and assemble its matching model geometry.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum SdfModelError {
-    Interpretation(SdfInterpretError),
-    ModelBuild(Box<ModelBuildError>),
-}
-
-impl fmt::Display for SdfModelError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Interpretation(error) => error.fmt(formatter),
-            Self::ModelBuild(error) => {
-                write!(formatter, "could not build SDF record model: {error}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for SdfModelError {
+impl std::error::Error for SdfInterpretError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Interpretation(error) => Some(error),
-            Self::ModelBuild(error) => Some(error.as_ref()),
+        match &self.kind {
+            SdfInterpretErrorKind::Molfile(error) => Some(error),
+            SdfInterpretErrorKind::ModelBuild(error) => Some(error.as_ref()),
         }
     }
 }
 
-impl From<SdfInterpretError> for SdfModelError {
-    fn from(error: SdfInterpretError) -> Self {
-        Self::Interpretation(error)
-    }
-}
-
-impl From<ModelBuildError> for SdfModelError {
-    fn from(error: ModelBuildError) -> Self {
-        Self::ModelBuild(Box::new(error))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SdfRecordInterpretationReport {
     record: usize,
     source_start_line: usize,
@@ -436,29 +498,41 @@ pub fn interpret_sdf_document(
     let mut records = Vec::with_capacity(document.records.len());
     let mut reports = Vec::with_capacity(document.records.len());
     for record in &document.records {
-        let interpretation = interpret_sdf_record_molfile(record)?;
-        let mut molecules = Vec::new();
-        let mut molfile_components = Vec::new();
-        for component in interpretation.to_components() {
-            let (molecule, _positions, report) = component.to_parts();
-            molecules.push(molecule);
-            molfile_components.push(report);
-        }
-        records.push(SdfRecordInterpretation::new(
-            record.molfile.header().title(),
-            molecules,
-            record.data_fields.clone(),
-        ));
-        reports.push(SdfRecordInterpretationReport {
-            record: record.source_record_number,
-            source_start_line: record.source_start_line,
-            molfile_components,
-        });
+        let interpretation = record.interpret()?;
+        reports.push(interpretation.report().clone());
+        records.push(interpretation);
     }
     Ok(SdfInterpretation {
         records,
         report: SdfInterpretationReport { records: reports },
     })
+}
+
+fn interpret_sdf_record(record: &SdfRecord) -> Result<SdfRecordInterpretation, SdfInterpretError> {
+    let interpretation = interpret_sdf_record_molfile(record)?;
+    let report = SdfRecordInterpretationReport {
+        record: record.source_record_number,
+        source_start_line: record.source_start_line,
+        molfile_components: interpretation
+            .components()
+            .iter()
+            .map(|component| component.report().clone())
+            .collect(),
+    };
+    let model = interpretation
+        .to_model()
+        .map_err(|error| SdfInterpretError {
+            record: record.source_record_number,
+            line: record.source_start_line,
+            message: format!("could not build SDF record model: {error}"),
+            kind: SdfInterpretErrorKind::ModelBuild(Box::new(error)),
+        })?;
+    Ok(SdfRecordInterpretation::with_report(
+        record.title(),
+        model,
+        record.data_fields.clone(),
+        report,
+    ))
 }
 
 fn interpret_sdf_record_molfile(
@@ -467,6 +541,7 @@ fn interpret_sdf_record_molfile(
     interpret_molfile_document(&record.molfile).map_err(|error| SdfInterpretError {
         record: record.source_record_number,
         line: record.source_start_line + error.line.saturating_sub(1),
-        message: error.message,
+        message: error.message.clone(),
+        kind: SdfInterpretErrorKind::Molfile(error),
     })
 }

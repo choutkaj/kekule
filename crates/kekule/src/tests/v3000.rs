@@ -49,6 +49,39 @@ M  END
 }
 
 #[test]
+fn sdf_v3000_record_interpretation_retains_model_geometry() {
+    let input = "\
+v3000 geometry
+kekule
+
+  0  0  0  0  0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 1 0 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 C 1.2500 -2.5000 3.7500 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 END BOND
+M  V30 END CTAB
+M  END
+$$$$
+";
+    let document = sdf::parse_str(input).expect("V3000 SDF parses");
+    let interpretation = document.records()[0]
+        .interpret()
+        .expect("V3000 SDF interprets");
+    assert_eq!(interpretation.molecules().count(), 1);
+    assert_eq!(interpretation.report().molfile_components().len(), 1);
+    let point = interpretation.model().positions().values().value()[0];
+    assert!((point.x - 0.125).abs() < 1.0e-15);
+    assert!((point.y + 0.25).abs() < 1.0e-15);
+    assert!((point.z - 0.375).abs() < 1.0e-15);
+    assert!(interpretation
+        .topology()
+        .same_layout(interpretation.model().topology()));
+}
+
+#[test]
 fn v3000_preserves_source_declared_tetrahedral_hydrogen_carrier() {
     for (cfg, expected_specified) in [(1, true), (3, true), (2, false)] {
         let input = format!(

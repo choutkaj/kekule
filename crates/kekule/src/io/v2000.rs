@@ -8,7 +8,7 @@ use crate::chemistry::{
 };
 use crate::core::*;
 use crate::geometry::Point3;
-use crate::units::{Quantity, ANGSTROM};
+use crate::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
 use super::staged_coordinates::StagedCoordinates;
@@ -731,6 +731,13 @@ impl fmt::Display for MolWriteError {
 impl std::error::Error for MolWriteError {}
 
 pub fn write_mol_v2000(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
+    write_mol_v2000_with_positions(molecule, None)
+}
+
+fn write_mol_v2000_with_positions(
+    molecule: &Molecule,
+    positions: Option<&[Point3]>,
+) -> std::result::Result<String, MolWriteError> {
     let mol = molecule;
     let projected_stereo = project_molfile_stereo_bond_marks(mol).map_err(MolWriteError::new)?;
     if mol.atom_count() > 999 || mol.bond_count() > 999 {
@@ -744,6 +751,14 @@ pub fn write_mol_v2000(molecule: &Molecule) -> std::result::Result<String, MolWr
     for (serial, atom_id) in (1u64..).zip(atoms.iter()) {
         atom_index.insert(*atom_id, serial);
     }
+    if positions.is_some_and(|positions| positions.len() != atoms.len()) {
+        return Err(MolWriteError::new(
+            "SDF model position count does not match its molecule atom count",
+        ));
+    }
+    let coordinate_scale = CANONICAL_LENGTH_UNIT
+        .conversion_factor_to(ANGSTROM)
+        .map_err(|error| MolWriteError::new(error.to_string()))?;
 
     let title = "";
     let program = "kekule";
@@ -756,11 +771,20 @@ pub fn write_mol_v2000(molecule: &Molecule) -> std::result::Result<String, MolWr
         bonds.len()
     ));
 
-    for atom_id in &atoms {
+    for (atom_offset, atom_id) in atoms.iter().enumerate() {
         let atom = mol
             .atom(*atom_id)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
-        let point = Point3::default();
+        let point = positions
+            .map(|positions| {
+                let point = positions[atom_offset];
+                Point3::new(
+                    point.x * coordinate_scale,
+                    point.y * coordinate_scale,
+                    point.z * coordinate_scale,
+                )
+            })
+            .unwrap_or_default();
         let valence_code = v2000_valence_code(mol, *atom_id, atom)?;
         out.push_str(&format!(
             "{:>10.4}{:>10.4}{:>10.4} {:<3}{:>2}{:>3}  0  0  0{:>3}  0  0  0{:>3}  0  0\n",
@@ -861,12 +885,19 @@ pub fn write_sdf_v2000(
         for field in record.data_fields() {
             validate_sdf_data_field(field)?;
         }
-        let [molecule] = record.molecules() else {
+        let mut molecules = record.molecules();
+        let Some(molecule) = molecules.next() else {
             return Err(MolWriteError::new(
                 "V2000 SDF writing currently requires exactly one connected molecule per record",
             ));
         };
-        let written = write_mol_v2000(molecule)?;
+        if molecules.next().is_some() {
+            return Err(MolWriteError::new(
+                "V2000 SDF writing currently requires exactly one connected molecule per record",
+            ));
+        }
+        let canonical_positions = record.model().positions().values();
+        let written = write_mol_v2000_with_positions(molecule, Some(canonical_positions.value()))?;
         let mut lines = written.lines();
         let _generated_title = lines.next();
         out.push_str(record.title());

@@ -448,6 +448,31 @@ impl Topology {
         TopologyBuilder::new()
     }
 
+    /// Builds a topology containing one explicit occurrence of `molecule`.
+    ///
+    /// The molecule is installed as its own definition and instance. No
+    /// hierarchy is fabricated and no chemical perception is run.
+    pub fn from_molecule(molecule: &Molecule) -> Result<Self, TopologyBuildError> {
+        Self::from_molecules(std::slice::from_ref(molecule))
+    }
+
+    /// Builds a topology containing one explicit occurrence per input molecule.
+    ///
+    /// Input order becomes authoritative instance order. Each input is
+    /// installed as a fresh definition; definition reuse and interning remain
+    /// explicit [`TopologyBuilder`] policies. Empty input fails with
+    /// [`TopologyBuildError::NoMoleculeInstances`]. No hierarchy is fabricated
+    /// and no chemical perception is run.
+    pub fn from_molecules(molecules: &[Molecule]) -> Result<Self, TopologyBuildError> {
+        let mut builder = TopologyBuilder::new();
+        builder.reserve_definitions(molecules.len())?;
+        builder.reserve_instances(molecules.len())?;
+        for molecule in molecules {
+            builder.add_molecule(molecule)?;
+        }
+        builder.build()
+    }
+
     /// Returns whether two topologies have the same complete static layout.
     ///
     /// Layout equality includes chemical and hierarchy content, definition and
@@ -518,7 +543,9 @@ impl Topology {
     }
 
     /// Iterates explicit molecules in authoritative instance order.
-    pub fn molecules(&self) -> impl ExactSizeIterator<Item = MoleculeInstanceView<'_>> {
+    pub fn molecules(
+        &self,
+    ) -> impl ExactSizeIterator<Item = MoleculeInstanceView<'_>> + DoubleEndedIterator {
         self.instances
             .iter()
             .map(|instance| MoleculeInstanceView::new(self, instance.id))

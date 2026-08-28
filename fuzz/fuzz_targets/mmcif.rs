@@ -2,15 +2,15 @@
 
 use libfuzzer_sys::fuzz_target;
 use kekule::mmcif::{
-    interpret, interpret_ensemble, parse_str, MmcifEnsembleInterpretOptions, MmcifEntry,
-    MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions,
+    interpret, interpret_ensemble, parse_str_with_options, MmcifEnsembleInterpretOptions,
+    MmcifEntry, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions,
 };
 
 fuzz_target!(|data: &[u8]| {
     let Ok(input) = std::str::from_utf8(data) else {
         return;
     };
-    if let Ok(document) = parse_str(
+    if let Ok(document) = parse_str_with_options(
         input,
         MmcifParseOptions {
             max_input_bytes: 64 * 1024,

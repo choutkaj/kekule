@@ -1,14 +1,13 @@
 use kekule::dssp::{
     self, DsspChainBreak, DsspError, DsspLimits, DsspOptions, DsspResource, DsspSecondaryStructure,
 };
-use kekule::mmcif::{self, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions};
+use kekule::mmcif::{self, MmcifInterpretOptions, MmcifModelSelection};
 use kekule::topology::ResidueId;
 
 const CRAMBIN_MMCIF: &str = include_str!("../../../benchmarks/corpora/smoke/data/rcsb/1CRN.cif");
 
 fn crambin_model() -> kekule::structure::Model {
-    let document = mmcif::parse_str(CRAMBIN_MMCIF, MmcifParseOptions::default())
-        .expect("checked-in RCSB 1CRN fixture parses");
+    let document = mmcif::parse_str(CRAMBIN_MMCIF).expect("checked-in RCSB 1CRN fixture parses");
     mmcif::interpret(
         &document,
         MmcifInterpretOptions {

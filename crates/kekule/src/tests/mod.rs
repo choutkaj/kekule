@@ -7,7 +7,7 @@ use crate::perception::{
 };
 use crate::sdf::*;
 use crate::smiles::*;
-use crate::structure::Positions;
+use crate::structure::{Model, Positions};
 use crate::{
     canon, molfile, perception as perception_api, sdf, smiles as smiles_api, stereo as stereo_api,
     stereo::*,
@@ -132,7 +132,7 @@ pub(super) fn read_sdf_records_with_options(
     input: &str,
     options: SdfParseOptions,
 ) -> std::result::Result<Vec<SdfRecordInterpretation>, Box<dyn std::error::Error>> {
-    let document = sdf::parse_str(input, options)?;
+    let document = sdf::parse_str_with_options(input, options)?;
     Ok(sdf::interpret(&document)?.to_records())
 }
 
@@ -207,13 +207,19 @@ pub(super) trait SdfRecordTestExt {
 
 impl SdfRecordTestExt for SdfRecordInterpretation {
     fn molecule(&self) -> &Molecule {
-        assert_eq!(
-            self.molecules().len(),
-            1,
+        let mut molecules = self.molecules();
+        let molecule = molecules.next().expect("test record must have a component");
+        assert!(
+            molecules.next().is_none(),
             "test record must have one component"
         );
-        &self.molecules()[0]
+        molecule
     }
+}
+
+pub(super) fn test_model(molecule: &Molecule) -> Model {
+    let positions = test_positions(vec![Point3::default(); molecule.atom_count()]);
+    Model::from_molecule(molecule, &positions).expect("test model builds")
 }
 
 pub(super) fn element_atom(symbol: &str) -> Atom {
