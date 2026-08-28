@@ -1,6 +1,5 @@
 //! Pure-Rust GROMACS TRR/XDR trajectory I/O.
 
-use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
@@ -9,10 +8,12 @@ use crate::{
     TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryFrameView,
     TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
-use kekule::core::{PropMap, PropValue};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::properties::{Properties, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
-use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND};
+use kekule::units::{
+    Quantity, CANONICAL_LENGTH_UNIT, DIMENSIONLESS, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND,
+};
 
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
@@ -151,7 +152,7 @@ pub struct TrrReader<R> {
     velocities: Vec<Vector3>,
     forces: Vec<Vector3>,
     raw: Vec<u8>,
-    props: PropMap,
+    properties: Properties,
     frame_cursor: u64,
     precision_mixed: bool,
 }
@@ -225,9 +226,17 @@ impl<R: Read + Seek> TrrReader<R> {
         positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
         velocities.resize(atom_count, Vector3::zero());
         forces.resize(atom_count, Vector3::zero());
-        let mut props = BTreeMap::new();
+        let mut properties = Properties::realization(atom_count, binding.topology().bond_count());
         if options.lambda_policy == TrrLambdaPolicy::FrameProperty {
-            props.insert(TRR_LAMBDA_PROPERTY.to_owned(), PropValue::Float(0.0));
+            properties
+                .insert(
+                    trr_lambda_key(),
+                    PropertyValue::Real {
+                        value: 0.0,
+                        unit: DIMENSIONLESS,
+                    },
+                )
+                .expect("TRR lambda scratch property is valid");
         }
         Ok(Self {
             reader,
@@ -243,7 +252,7 @@ impl<R: Read + Seek> TrrReader<R> {
             velocities,
             forces,
             raw: Vec::new(),
-            props,
+            properties,
             frame_cursor: 0,
             precision_mixed: false,
         })
@@ -420,14 +429,21 @@ impl<R: Read + Seek> TrrReader<R> {
             )?;
         }
         if self.options.lambda_policy == TrrLambdaPolicy::FrameProperty {
-            let Some(PropValue::Float(lambda)) = self.props.get_mut(TRR_LAMBDA_PROPERTY) else {
-                return Err(frame_error(
-                    &self.source_label,
-                    self.frame_cursor,
-                    "TRR lambda scratch lost its stable property entry",
-                ));
-            };
-            *lambda = header.lambda;
+            self.properties
+                .insert(
+                    trr_lambda_key(),
+                    PropertyValue::Real {
+                        value: header.lambda,
+                        unit: DIMENSIONLESS,
+                    },
+                )
+                .map_err(|_| {
+                    frame_error(
+                        &self.source_label,
+                        self.frame_cursor,
+                        "TRR lambda scratch property became invalid",
+                    )
+                })?;
         }
         self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
             resource_error(
@@ -444,14 +460,14 @@ impl<R: Read + Seek> TrrReader<R> {
         positions: &[Point3],
         velocities: &[Vector3],
         forces: &[Vector3],
-        props: &PropMap,
+        properties: &Properties,
         decoded: &TrrDecodedFrame,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
         let mut data = FrameBufferData::new(Quantity::new(positions, NANOMETER))
             .with_time(Quantity::new(decoded.header.time, PICOSECOND))
             .with_step(decoded.header.step)
-            .with_props(props);
+            .with_properties(properties);
         if let Some(cell) = decoded.cell {
             data = data.with_cell(cell);
         }
@@ -548,7 +564,7 @@ impl<R: Read + Seek> TrrReader<R> {
         random_positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
         random_velocities.resize(atom_count, Vector3::zero());
         random_forces.resize(atom_count, Vector3::zero());
-        let random_props = self.props.clone();
+        let random_properties = self.properties.clone();
         Ok(IndexedTrrReader {
             inner: self,
             offsets,
@@ -556,7 +572,7 @@ impl<R: Read + Seek> TrrReader<R> {
             random_velocities,
             random_forces,
             random_raw: Vec::new(),
-            random_props,
+            random_properties,
         })
     }
 
@@ -620,7 +636,7 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
             &self.positions,
             &self.velocities,
             &self.forces,
-            &self.props,
+            &self.properties,
             &decoded,
             destination,
         )?;
@@ -636,7 +652,7 @@ pub struct IndexedTrrReader<R> {
     random_velocities: Vec<Vector3>,
     random_forces: Vec<Vector3>,
     random_raw: Vec<u8>,
-    random_props: PropMap,
+    random_properties: Properties,
 }
 
 impl<R: Read + Seek> IndexedTrrReader<R> {
@@ -713,7 +729,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
         std::mem::swap(&mut self.inner.velocities, &mut self.random_velocities);
         std::mem::swap(&mut self.inner.forces, &mut self.random_forces);
         std::mem::swap(&mut self.inner.raw, &mut self.random_raw);
-        std::mem::swap(&mut self.inner.props, &mut self.random_props);
+        std::mem::swap(&mut self.inner.properties, &mut self.random_properties);
         self.inner.current_header_offset = offset;
         self.inner.frame_cursor = index;
         let result = self
@@ -741,14 +757,14 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
         std::mem::swap(&mut self.inner.velocities, &mut self.random_velocities);
         std::mem::swap(&mut self.inner.forces, &mut self.random_forces);
         std::mem::swap(&mut self.inner.raw, &mut self.random_raw);
-        std::mem::swap(&mut self.inner.props, &mut self.random_props);
+        std::mem::swap(&mut self.inner.properties, &mut self.random_properties);
         let decoded = result?;
         restore?;
         self.inner.publish(
             &self.random_positions,
             &self.random_velocities,
             &self.random_forces,
-            &self.random_props,
+            &self.random_properties,
             &decoded,
             destination,
         )
@@ -836,18 +852,18 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         if !std::ptr::eq(frame.topology(), self.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
-        if frame.atom_data().has_data() {
+        if frame.properties().realization_atom_properties().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
-                "atom data",
+                "atom properties",
             ));
         }
-        if frame.bond_data().has_data() {
+        if frame.properties().realization_bond_properties().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
-                "bond data",
+                "bond properties",
             ));
         }
         if self.frame_count == u64::MAX {
@@ -893,7 +909,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             )
         })?;
         let lambda = writer_lambda(
-            frame.props(),
+            frame.properties(),
             self.options.lambda_policy,
             &self.source_label,
             self.frame_count,
@@ -1524,15 +1540,22 @@ fn validate_representable(
     Ok(())
 }
 
+fn trr_lambda_key() -> PropertyKey {
+    PropertyKey::new(TRR_LAMBDA_PROPERTY).expect("TRR lambda property key is valid")
+}
+
 fn writer_lambda(
-    props: &PropMap,
+    properties: &Properties,
     policy: TrrLambdaPolicy,
     source_label: &str,
     frame: u64,
 ) -> Result<f64, TrajectoryError> {
     match policy {
         TrrLambdaPolicy::FrameProperty => {
-            if props.len() != 1 {
+            if properties.iter().len() != 1
+                || properties.realization_atom_properties().has_data()
+                || properties.realization_bond_properties().has_data()
+            {
                 return Err(codec_context(
                     TrajectoryCodecErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
@@ -1541,8 +1564,12 @@ fn writer_lambda(
                     "TRR FrameProperty policy requires exactly gromacs.trr.lambda",
                 ));
             }
-            match props.get(TRR_LAMBDA_PROPERTY) {
-                Some(PropValue::Float(value)) if value.is_finite() => Ok(*value),
+            match properties.get(&trr_lambda_key()) {
+                Some(PropertyValue::Real { value, unit })
+                    if value.is_finite() && *unit == DIMENSIONLESS =>
+                {
+                    Ok(*value)
+                }
                 _ => Err(codec_context(
                     TrajectoryCodecErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
@@ -1553,7 +1580,7 @@ fn writer_lambda(
             }
         }
         TrrLambdaPolicy::RequireZero => {
-            if !props.is_empty() {
+            if !properties.is_empty() {
                 return Err(writer_field_error(source_label, frame, "properties"));
             }
             Ok(0.0)

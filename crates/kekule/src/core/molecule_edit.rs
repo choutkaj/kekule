@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::properties::Properties;
+
 use super::{
     Atom, AtomId, Bond, BondId, BondOrder, Graph, Molecule, Perception, Result, StereoElement,
     StereoElementId, StereoGroup, StereoGroupId,
@@ -181,6 +183,7 @@ impl Default for MoleculeEditor {
             working: Molecule {
                 graph: Graph::default(),
                 perception: Perception::default(),
+                properties: Properties::molecule(0, 0),
             },
         }
     }

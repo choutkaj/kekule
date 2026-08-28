@@ -870,13 +870,27 @@ fn partition_molfile_staging(
                     line: 1,
                     message: error.to_string(),
                 })?;
-            editor
-                .working_mut()
-                .bond_props_mut(new)
-                .expect("new component bond is live")
-                .clone_from(&bond.props);
             bond_map.insert(old, new);
         }
+        let mut properties =
+            crate::properties::Properties::molecule(atom_map.len(), bond_map.len());
+        *properties.atoms_mut() = graph
+            .properties()
+            .atoms()
+            .select_indices(&old_atoms.iter().map(|id| id.index()).collect::<Vec<_>>())
+            .map_err(|error| MolfileInterpretError {
+                line: 1,
+                message: error.to_string(),
+            })?;
+        *properties.bonds_mut() = graph
+            .properties()
+            .bonds()
+            .select_indices(&bond_map.keys().map(|id| id.index()).collect::<Vec<_>>())
+            .map_err(|error| MolfileInterpretError {
+                line: 1,
+                message: error.to_string(),
+            })?;
+        *editor.working_mut().properties_mut() = properties;
         let remapped_stereo = source_stereo
             .iter()
             .filter_map(|mark| {

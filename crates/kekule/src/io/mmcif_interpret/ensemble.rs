@@ -1,11 +1,10 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::structure::{AtomData, Ensemble, EnsembleMember, Positions};
+use crate::structure::{Ensemble, EnsembleMember, Positions};
 
 use super::super::{MmcifBlock, MmcifDocument};
 use super::atom_site::coordinate_model_ids;
-use super::build::graph_error;
 use super::interpret_mmcif_block;
 use super::types::{
     MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
@@ -115,25 +114,8 @@ pub(crate) fn interpret_mmcif_ensemble_block(
             .map_err(MmcifEnsembleInterpretError::Position)?;
         let mut member = EnsembleMember::new(positions, shared_topology.bond_count());
         member.set_cell(model.cell().copied());
-        let mut atom_data = AtomData::new(shared_topology.atom_count());
-        if let Some(occupancies) = model.atom_data().occupancies() {
-            atom_data.set_occupancies(occupancies).map_err(|error| {
-                MmcifEnsembleInterpretError::Model {
-                    model_id: model_id.clone(),
-                    error: graph_error(error),
-                }
-            })?;
-        }
-        if let Some(b_factors) = model.atom_data().b_factors() {
-            atom_data.set_b_factors(b_factors).map_err(|error| {
-                MmcifEnsembleInterpretError::Model {
-                    model_id: model_id.clone(),
-                    error: graph_error(error),
-                }
-            })?;
-        }
         member
-            .set_atom_data(atom_data)
+            .set_properties(model.properties().clone())
             .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
         ensemble
             .push(member)

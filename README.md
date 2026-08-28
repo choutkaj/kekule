@@ -34,7 +34,7 @@ Topology = molecule definitions + instances + dense ordering + Hierarchy
 
 Hierarchy = Chain -> Residue -> AtomSite -> InstanceAtomId
 
-Model      = Topology + Positions + optional cell + AtomData + BondData
+Model      = Topology + Positions + optional cell + Properties
 Ensemble   = Topology + finite non-temporal realizations
 Trajectory = Topology + temporally ordered frames
 ```
