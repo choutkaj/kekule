@@ -20,15 +20,17 @@ pub use mmcif_write::*;
 pub use sdf_document::*;
 pub use smiles::{
     parse_smiles_document, parse_smiles_document_with_options, write_canonical_smiles,
-    write_isomeric_smiles, write_smiles, SmilesAtomMapping, SmilesBondMapping, SmilesDocument,
-    SmilesDocumentToken, SmilesDocumentTokenKind, SmilesInterpretError, SmilesInterpretation,
+    write_isomeric_smiles, write_smiles, SmilesAtomMapping, SmilesBondMapping,
+    SmilesComponentCountError, SmilesComponentInterpretation, SmilesDocument, SmilesDocumentToken,
+    SmilesDocumentTokenKind, SmilesInterpretError, SmilesInterpretation,
     SmilesInterpretationReport, SmilesParseError, SmilesParseOptions,
 };
 pub use structure_documents::{
     interpret_molfile_document, parse_molfile_document, parse_molfile_document_with_options,
-    MolfileAtomMapping, MolfileBondMapping, MolfileDocument, MolfileHeader, MolfileInterpretError,
-    MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning, MolfileLine,
-    MolfileModelError, MolfileParseError, MolfileParseOptions, MolfileVersion,
+    MolfileAtomMapping, MolfileBondMapping, MolfileComponentInterpretation, MolfileDocument,
+    MolfileHeader, MolfileInterpretError, MolfileInterpretation, MolfileInterpretationReport,
+    MolfileInterpretationWarning, MolfileLine, MolfileModelError, MolfileParseError,
+    MolfileParseOptions, MolfileVersion,
 };
 pub use v2000::*;
 pub use v3000::*;
