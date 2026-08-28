@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use crate::algorithms::RingMembership;
+use crate::algorithms::{validate_stereo, RingMembership};
 use crate::core::*;
 
 use super::super::rings::{bond_in_ring_smaller_than, compute_ring_membership};
@@ -11,19 +11,130 @@ use super::super::{
     atom_hydrogen_count, double_bond_between_aromatic_atoms, double_bond_endpoint_carriers,
     double_bond_has_noncarbon_endpoint, double_bond_is_in_ring,
 };
-use super::{CipAssignmentIssue, CipAssignmentOptions, CipResult, CipSkippedReason};
+use super::{
+    CipAssignment, CipAssignmentError, CipAssignmentIssue, CipAssignmentOptions,
+    CipAssignmentReport, CipResult, CipSkipped, CipSkippedReason,
+};
 
-#[path = "assignment.rs"]
 mod assignment;
 
-pub(super) use assignment::{
-    assign_cip_element, assign_deferred_tetrahedral_rule6, descriptor_is_absolute_tetrahedral,
-    element_is_finally_nonstereogenic, set_stereo_descriptor, CipElementAssignment,
-};
 use assignment::{
-    rank_carrier_signatures, rank_tetrahedral_signatures_with_rule6,
-    tetrahedral_descriptor_from_ranked,
+    assign_cip_element, assign_deferred_tetrahedral_rule6, descriptor_is_absolute_tetrahedral,
+    element_is_finally_nonstereogenic, rank_carrier_signatures,
+    rank_tetrahedral_signatures_with_rule6, set_stereo_descriptor,
+    tetrahedral_descriptor_from_ranked, CipElementAssignment,
 };
+
+pub(super) fn assign_cip_descriptors_with_options(
+    mol: &mut Molecule,
+    options: CipAssignmentOptions,
+) -> std::result::Result<CipAssignmentReport, CipAssignmentError> {
+    if let Err(error) = validate_stereo(mol) {
+        return Err(CipAssignmentError {
+            issues: error
+                .issues
+                .into_iter()
+                .map(|issue| CipAssignmentIssue::InvalidStereo { issue })
+                .collect(),
+        });
+    }
+
+    let previous_stereo = mol.replace_stereo_perception(Some(StereoPerception::default()));
+    let mut report = CipAssignmentReport::default();
+    let mut issues = Vec::new();
+
+    let mut pending = mol
+        .stereo_elements()
+        .map(|(id, element)| (id, element.clone()))
+        .collect::<Vec<_>>();
+
+    while !pending.is_empty() {
+        let round_mol = mol.clone();
+        let mut next_pending = Vec::new();
+        let mut round_assignments = Vec::new();
+        let mut assigned_this_round = false;
+        for (id, element) in pending {
+            match assign_cip_element(&round_mol, id, &element, options) {
+                CipElementAssignment::Assigned(descriptor) => {
+                    round_assignments.push((id, descriptor));
+                    assigned_this_round = true;
+                }
+                CipElementAssignment::Skipped(reason) => {
+                    report.skipped.push(CipSkipped {
+                        element: id,
+                        reason,
+                    });
+                }
+                CipElementAssignment::Deferred => next_pending.push((id, element)),
+                CipElementAssignment::Issue(issue) => issues.push(issue),
+            }
+        }
+        for (id, descriptor) in round_assignments {
+            set_stereo_descriptor(mol, id, descriptor);
+            report.assigned.push(CipAssignment {
+                element: id,
+                descriptor,
+            });
+        }
+        if !assigned_this_round {
+            match assign_deferred_tetrahedral_rule6(mol, &next_pending, options) {
+                Ok(assignments) if !assignments.is_empty() => {
+                    let has_absolute_assignment = assignments
+                        .iter()
+                        .any(|(_, descriptor)| descriptor_is_absolute_tetrahedral(*descriptor));
+                    let assignments_to_apply = assignments
+                        .into_iter()
+                        .filter(|(_, descriptor)| {
+                            !has_absolute_assignment
+                                || descriptor_is_absolute_tetrahedral(*descriptor)
+                        })
+                        .collect::<Vec<_>>();
+                    let assigned_ids = assignments_to_apply
+                        .iter()
+                        .map(|(id, _)| *id)
+                        .collect::<Vec<_>>();
+                    for (id, descriptor) in assignments_to_apply {
+                        set_stereo_descriptor(mol, id, descriptor);
+                        report.assigned.push(CipAssignment {
+                            element: id,
+                            descriptor,
+                        });
+                    }
+                    pending = next_pending
+                        .into_iter()
+                        .filter(|(id, _)| !assigned_ids.contains(id))
+                        .collect();
+                    continue;
+                }
+                Ok(_) => {}
+                Err(issue) => {
+                    issues.push(issue);
+                    break;
+                }
+            }
+            for (id, element) in next_pending {
+                match element_is_finally_nonstereogenic(mol, id, &element, options) {
+                    Ok(true) => report.skipped.push(CipSkipped {
+                        element: id,
+                        reason: CipSkippedReason::NotStereogenic,
+                    }),
+                    Ok(false) => {
+                        issues.push(CipAssignmentIssue::UnresolvedPriority { element: id })
+                    }
+                    Err(issue) => issues.push(issue),
+                }
+            }
+            break;
+        }
+        pending = next_pending;
+    }
+    if issues.is_empty() {
+        Ok(report)
+    } else {
+        drop(mol.replace_stereo_perception(previous_stereo));
+        Err(CipAssignmentError { issues })
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RankedCarriers {
@@ -1974,5 +2085,4 @@ fn permutation_is_even(positions: &[usize]) -> bool {
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
 mod tests;
