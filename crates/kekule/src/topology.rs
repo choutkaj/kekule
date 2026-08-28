@@ -8,9 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::{
-    Atom, AtomId, Bond, BondId, Element, Molecule, MoleculeConnectivityError, PropMap,
-};
+use crate::core::{Atom, AtomId, Bond, BondId, Element, Molecule, MoleculeConnectivityError};
+use crate::properties::{Properties, PropertyError, PropertyKey, PropertyTable, PropertyValue};
 use crate::substructure::QueryMatch;
 pub use hierarchy::{
     AtomSite, AtomSiteId, AtomSiteMetadata, Chain, ChainId, Hierarchy, HierarchyError,
@@ -118,8 +117,11 @@ impl<'a> ChainView<'a> {
             .map(move |residue| ResidueView::new(topology, residue))
     }
 
-    pub fn props(self) -> &'a PropMap {
-        self.local().props()
+    pub fn property(self, key: &PropertyKey) -> Result<Option<PropertyValue>, PropertyError> {
+        self.topology
+            .properties
+            .chains()
+            .value(key, self.id.index())
     }
 
     pub(crate) fn local(self) -> &'a Chain {
@@ -192,8 +194,11 @@ impl<'a> ResidueView<'a> {
             .map(move |site| AtomSiteView::new(topology, site))
     }
 
-    pub fn props(self) -> &'a PropMap {
-        self.local().props()
+    pub fn property(self, key: &PropertyKey) -> Result<Option<PropertyValue>, PropertyError> {
+        self.topology
+            .properties
+            .residues()
+            .value(key, self.id.index())
     }
 
     pub(crate) fn local(self) -> &'a Residue {
@@ -241,8 +246,11 @@ impl<'a> AtomSiteView<'a> {
         self.local().metadata()
     }
 
-    pub fn props(self) -> &'a PropMap {
-        self.local().props()
+    pub fn property(self, key: &PropertyKey) -> Result<Option<PropertyValue>, PropertyError> {
+        self.topology
+            .properties
+            .atom_sites()
+            .value(key, self.id.index())
     }
 
     pub(crate) fn local(self) -> &'a AtomSite {
@@ -347,6 +355,13 @@ impl<'a> MoleculeInstanceView<'a> {
         self.definition().molecule()
     }
 
+    pub fn property(self, key: &PropertyKey) -> Result<Option<PropertyValue>, PropertyError> {
+        self.topology
+            .properties
+            .molecule_instances()
+            .value(key, self.id.index())
+    }
+
     /// Iterates atoms with topology-wide, instance-qualified identities.
     pub fn atoms(self) -> impl Iterator<Item = (InstanceAtomId, &'a Atom)> + 'a {
         let instance = self.id;
@@ -420,6 +435,7 @@ pub struct Topology {
     atom_indices: BTreeMap<InstanceAtomId, TopologyAtomIndex>,
     bond_indices: BTreeMap<InstanceBondId, TopologyBondIndex>,
     hierarchy: Hierarchy,
+    properties: Properties,
 }
 
 impl Topology {
@@ -525,6 +541,74 @@ impl Topology {
     /// Returns the one authoritative system-level hierarchy.
     pub const fn hierarchy(&self) -> &Hierarchy {
         &self.hierarchy
+    }
+
+    pub const fn properties(&self) -> &Properties {
+        &self.properties
+    }
+
+    pub const fn molecule_instance_properties(&self) -> &PropertyTable {
+        self.properties.molecule_instances()
+    }
+
+    pub const fn atom_properties(&self) -> &PropertyTable {
+        self.properties.atoms()
+    }
+
+    pub const fn bond_properties(&self) -> &PropertyTable {
+        self.properties.bonds()
+    }
+
+    pub const fn chain_properties(&self) -> &PropertyTable {
+        self.properties.chains()
+    }
+
+    pub const fn residue_properties(&self) -> &PropertyTable {
+        self.properties.residues()
+    }
+
+    pub const fn atom_site_properties(&self) -> &PropertyTable {
+        self.properties.atom_sites()
+    }
+
+    pub fn molecule_instance_property(
+        &self,
+        instance: MoleculeInstanceId,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyValue>, TopologyError> {
+        self.instance(instance)?;
+        self.properties
+            .molecule_instances()
+            .value(key, instance.index())
+            .map_err(|error| TopologyError::Property(Box::new(error)))
+    }
+
+    pub fn atom_property(
+        &self,
+        atom: InstanceAtomId,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyValue>, TopologyError> {
+        let index = self
+            .atom_index(atom)
+            .ok_or(TopologyError::InvalidAtomId(atom))?;
+        self.properties
+            .atoms()
+            .value(key, index.index())
+            .map_err(|error| TopologyError::Property(Box::new(error)))
+    }
+
+    pub fn bond_property(
+        &self,
+        bond: InstanceBondId,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyValue>, TopologyError> {
+        let index = self
+            .bond_index(bond)
+            .ok_or(TopologyError::InvalidBondId(bond))?;
+        self.properties
+            .bonds()
+            .value(key, index.index())
+            .map_err(|error| TopologyError::Property(Box::new(error)))
     }
 
     /// Iterates every topology-global hierarchy chain in hierarchy order.
@@ -742,6 +826,7 @@ pub struct TopologyBuilder {
     definitions: Vec<MoleculeDefinition>,
     instances: Vec<MoleculeInstance>,
     hierarchy: Hierarchy,
+    properties: Properties,
 }
 
 impl TopologyBuilder {
@@ -760,6 +845,52 @@ impl TopologyBuilder {
     /// topologies never expose mutable hierarchy access.
     pub fn hierarchy_mut(&mut self) -> &mut Hierarchy {
         &mut self.hierarchy
+    }
+
+    pub fn insert_property(
+        &mut self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>, PropertyError> {
+        self.properties.insert(key, value)
+    }
+
+    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.properties.remove(key)
+    }
+
+    pub fn clear_properties(&mut self) {
+        self.properties.clear_owner();
+    }
+
+    pub fn molecule_instance_properties_mut(&mut self) -> &mut PropertyTable {
+        self.sync_property_dimensions();
+        self.properties.molecule_instances_mut()
+    }
+
+    pub fn atom_properties_mut(&mut self) -> &mut PropertyTable {
+        self.sync_property_dimensions();
+        self.properties.atoms_mut()
+    }
+
+    pub fn bond_properties_mut(&mut self) -> &mut PropertyTable {
+        self.sync_property_dimensions();
+        self.properties.bonds_mut()
+    }
+
+    pub fn chain_properties_mut(&mut self) -> &mut PropertyTable {
+        self.sync_property_dimensions();
+        self.properties.chains_mut()
+    }
+
+    pub fn residue_properties_mut(&mut self) -> &mut PropertyTable {
+        self.sync_property_dimensions();
+        self.properties.residues_mut()
+    }
+
+    pub fn atom_site_properties_mut(&mut self) -> &mut PropertyTable {
+        self.sync_property_dimensions();
+        self.properties.atom_sites_mut()
     }
 
     pub fn reserve_definitions(&mut self, additional: usize) -> Result<(), TopologyBuildError> {
@@ -833,7 +964,7 @@ impl TopologyBuilder {
             .map(|(_, instance)| instance)
     }
 
-    pub fn build(self) -> Result<Topology, TopologyBuildError> {
+    pub fn build(mut self) -> Result<Topology, TopologyBuildError> {
         if self.instances.is_empty() {
             return Err(TopologyBuildError::NoMoleculeInstances);
         }
@@ -917,6 +1048,15 @@ impl TopologyBuilder {
         validate_hierarchy(&self.hierarchy, &atom_indices)
             .map_err(TopologyBuildError::InvalidHierarchy)?;
 
+        self.properties.resize_domains(
+            self.instances.len(),
+            atom_count,
+            bond_count,
+            self.hierarchy.chains().count(),
+            self.hierarchy.residues().count(),
+            self.hierarchy.atom_sites().count(),
+        );
+
         Ok(Topology {
             definitions: self.definitions,
             instances: self.instances,
@@ -925,7 +1065,37 @@ impl TopologyBuilder {
             atom_indices,
             bond_indices,
             hierarchy: self.hierarchy,
+            properties: self.properties,
         })
+    }
+
+    fn sync_property_dimensions(&mut self) {
+        let atom_count = self
+            .instances
+            .iter()
+            .map(|instance| {
+                self.definitions[instance.definition.index()]
+                    .molecule()
+                    .atom_count()
+            })
+            .sum();
+        let bond_count = self
+            .instances
+            .iter()
+            .map(|instance| {
+                self.definitions[instance.definition.index()]
+                    .molecule()
+                    .bond_count()
+            })
+            .sum();
+        self.properties.resize_domains(
+            self.instances.len(),
+            atom_count,
+            bond_count,
+            self.hierarchy.chains().count(),
+            self.hierarchy.residues().count(),
+            self.hierarchy.atom_sites().count(),
+        );
     }
 
     fn commit_definition(
@@ -1025,7 +1195,7 @@ fn validate_nonempty_graph(graph: &Molecule) -> Result<(), TopologyBuildError> {
 }
 
 /// A hierarchy reference or reverse lookup that cannot be published in a topology.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TopologyHierarchyError {
     InvalidChainIdentifier {
@@ -1284,7 +1454,7 @@ impl fmt::Display for TopologyBuildError {
 
 impl std::error::Error for TopologyBuildError {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TopologyError {
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
@@ -1296,6 +1466,7 @@ pub enum TopologyError {
     InvalidAtomSiteId(AtomSiteId),
     InvalidAtomIndex(TopologyAtomIndex),
     InvalidBondIndex(TopologyBondIndex),
+    Property(Box<PropertyError>),
 }
 
 impl fmt::Display for TopologyError {
@@ -1314,11 +1485,21 @@ impl fmt::Display for TopologyError {
             Self::InvalidAtomSiteId(id) => write!(formatter, "invalid topology atom site: {id}"),
             Self::InvalidAtomIndex(index) => write!(formatter, "invalid {index}"),
             Self::InvalidBondIndex(index) => write!(formatter, "invalid {index}"),
+            Self::Property(error) => write!(formatter, "invalid topology property: {error}"),
         }
     }
 }
 
-impl std::error::Error for TopologyError {}
+impl std::error::Error for TopologyError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Property(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl Eq for TopologyError {}
 
 /// A topology-bound, sorted, unique dense atom selection.
 #[derive(Debug, Clone)]
@@ -1582,6 +1763,7 @@ impl std::error::Error for SelectionError {}
 mod tests {
     use super::*;
     use crate::core::BondOrder;
+    use crate::properties::{PropertyColumn, PropertyKey, PropertyValue};
     use crate::query;
     use crate::substructure;
     use crate::topology::AtomSiteMetadata;
@@ -1783,6 +1965,101 @@ mod tests {
 
         assert!(!Arc::ptr_eq(&forward, &reverse));
         assert!(!forward.same_layout(&reverse));
+    }
+
+    #[test]
+    fn topology_properties_cover_every_domain_and_do_not_change_layout_identity() {
+        let (molecule, carbon, oxygen, _) = tombstoned_molecule();
+        let mut builder = TopologyBuilder::new();
+        let definition = builder.add_molecule_definition(&molecule).unwrap();
+        let instance = builder.add_instance(definition).unwrap();
+        let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
+        let residue = builder
+            .hierarchy_mut()
+            .add_residue(chain, "LIG", Some(1), None, None)
+            .unwrap();
+        builder
+            .hierarchy_mut()
+            .add_atom_site(
+                residue,
+                InstanceAtomId::new(instance, carbon),
+                AtomSiteMetadata {
+                    label_atom_id: Some("C1".into()),
+                    ..AtomSiteMetadata::default()
+                },
+            )
+            .unwrap();
+
+        let owner_key = PropertyKey::new("source").unwrap();
+        let value_key = PropertyKey::new("tag").unwrap();
+        builder
+            .insert_property(owner_key.clone(), PropertyValue::String("test".into()))
+            .unwrap();
+        fn insert_tag(table: &mut crate::properties::PropertyTable, key: &PropertyKey) {
+            table
+                .insert(key.clone(), PropertyColumn::Int(vec![Some(1); table.len()]))
+                .unwrap();
+        }
+        insert_tag(builder.molecule_instance_properties_mut(), &value_key);
+        insert_tag(builder.atom_properties_mut(), &value_key);
+        insert_tag(builder.bond_properties_mut(), &value_key);
+        insert_tag(builder.chain_properties_mut(), &value_key);
+        insert_tag(builder.residue_properties_mut(), &value_key);
+        insert_tag(builder.atom_site_properties_mut(), &value_key);
+        let enriched = builder.build().unwrap();
+
+        assert_eq!(
+            enriched.properties().get(&owner_key),
+            Some(&PropertyValue::String("test".into()))
+        );
+        assert_eq!(enriched.molecule_instance_properties().len(), 1);
+        assert_eq!(enriched.atom_properties().len(), 2);
+        assert_eq!(enriched.bond_properties().len(), 1);
+        assert_eq!(enriched.chain_properties().len(), 1);
+        assert_eq!(enriched.residue_properties().len(), 1);
+        assert_eq!(enriched.atom_site_properties().len(), 1);
+        assert_eq!(
+            enriched
+                .molecule_instance_property(instance, &value_key)
+                .unwrap(),
+            Some(PropertyValue::Int(1))
+        );
+        assert_eq!(
+            enriched
+                .molecule(instance)
+                .unwrap()
+                .property(&value_key)
+                .unwrap(),
+            Some(PropertyValue::Int(1))
+        );
+        assert_eq!(
+            enriched
+                .atom_property(InstanceAtomId::new(instance, oxygen), &value_key)
+                .unwrap(),
+            Some(PropertyValue::Int(1))
+        );
+
+        let mut plain_builder = TopologyBuilder::new();
+        let definition = plain_builder.add_molecule_definition(&molecule).unwrap();
+        let instance = plain_builder.add_instance(definition).unwrap();
+        let chain = plain_builder.hierarchy_mut().add_chain("A", None).unwrap();
+        let residue = plain_builder
+            .hierarchy_mut()
+            .add_residue(chain, "LIG", Some(1), None, None)
+            .unwrap();
+        plain_builder
+            .hierarchy_mut()
+            .add_atom_site(
+                residue,
+                InstanceAtomId::new(instance, carbon),
+                AtomSiteMetadata {
+                    label_atom_id: Some("C1".into()),
+                    ..AtomSiteMetadata::default()
+                },
+            )
+            .unwrap();
+        let plain = plain_builder.build().unwrap();
+        assert!(enriched.same_layout(&plain));
     }
 
     #[test]
@@ -2094,7 +2371,70 @@ mod tests {
                 )
                 .unwrap();
         }
+        let owner_key = PropertyKey::new("owner_note").unwrap();
+        let value_key = PropertyKey::new("source_index").unwrap();
+        builder
+            .insert_property(owner_key.clone(), PropertyValue::Bool(true))
+            .unwrap();
+        builder
+            .molecule_instance_properties_mut()
+            .insert(value_key.clone(), PropertyColumn::Int(vec![Some(10)]))
+            .unwrap();
+        builder
+            .atom_properties_mut()
+            .insert(
+                value_key.clone(),
+                PropertyColumn::Int(vec![Some(1), Some(2), Some(3)]),
+            )
+            .unwrap();
+        builder
+            .bond_properties_mut()
+            .insert(
+                value_key.clone(),
+                PropertyColumn::Int(vec![Some(4), Some(5)]),
+            )
+            .unwrap();
+        builder
+            .chain_properties_mut()
+            .insert(value_key.clone(), PropertyColumn::Int(vec![Some(6)]))
+            .unwrap();
+        builder
+            .residue_properties_mut()
+            .insert(
+                value_key.clone(),
+                PropertyColumn::Int(vec![Some(7), Some(8), Some(9)]),
+            )
+            .unwrap();
+        builder
+            .atom_site_properties_mut()
+            .insert(
+                value_key.clone(),
+                PropertyColumn::Int(vec![Some(10), Some(11), Some(12)]),
+            )
+            .unwrap();
         let source = Arc::new(builder.build().unwrap());
+        let whole_selection = AtomSelection::from_atoms(
+            &source,
+            [first, middle, last].map(|atom| InstanceAtomId::new(instance, atom)),
+        )
+        .unwrap();
+        let whole = source.subset(&whole_selection).unwrap();
+        assert_eq!(
+            whole
+                .topology()
+                .molecule_instance_properties()
+                .get(&value_key),
+            Some(&PropertyColumn::Int(vec![Some(10)]))
+        );
+
+        let partial_selection = AtomSelection::from_atoms(
+            &source,
+            [first, middle].map(|atom| InstanceAtomId::new(instance, atom)),
+        )
+        .unwrap();
+        let partial = source.subset(&partial_selection).unwrap();
+        assert!(!partial.topology().molecule_instance_properties().has_data());
+
         let selection = AtomSelection::from_atoms(
             &source,
             [
@@ -2132,5 +2472,51 @@ mod tests {
             .target_atom(InstanceAtomId::new(instance, last))
             .expect("selected tombstone-separated atom is mapped");
         assert_eq!(subset.topology().atom_index(target_last).unwrap().raw(), 1);
+        let projected = subset.topology();
+        assert!(projected.properties().get(&owner_key).is_none());
+        assert!(!projected.molecule_instance_properties().has_data());
+        assert_eq!(
+            projected.atom_properties().get(&value_key).unwrap(),
+            &PropertyColumn::Int(vec![Some(1), Some(3)])
+        );
+        assert!(!projected.bond_properties().has_data());
+        assert_eq!(
+            projected.chain_properties().get(&value_key).unwrap(),
+            &PropertyColumn::Int(vec![Some(6)])
+        );
+        assert_eq!(
+            projected.residue_properties().get(&value_key).unwrap(),
+            &PropertyColumn::Int(vec![Some(7), Some(9)])
+        );
+        assert_eq!(
+            projected.atom_site_properties().get(&value_key).unwrap(),
+            &PropertyColumn::Int(vec![Some(10), Some(12)])
+        );
+    }
+
+    #[test]
+    fn retaining_one_whole_instance_projects_exactly_one_instance_property_row() {
+        let mut editor = crate::core::MoleculeEditor::new();
+        editor
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .unwrap();
+        let molecule = editor.finish().unwrap();
+        let mut builder = TopologyBuilder::new();
+        let definition = builder.add_molecule_definition(&molecule).unwrap();
+        builder.add_instance(definition).unwrap();
+        let second = builder.add_instance(definition).unwrap();
+        let key = PropertyKey::new("instance_score").unwrap();
+        builder
+            .molecule_instance_properties_mut()
+            .insert(key.clone(), PropertyColumn::Int(vec![Some(10), Some(20)]))
+            .unwrap();
+        let source = Arc::new(builder.build().unwrap());
+
+        let retained = transform::retain_instances(&source, [second]).unwrap();
+        assert_eq!(retained.instance_count(), 1);
+        assert_eq!(
+            retained.molecule_instance_properties().get(&key),
+            Some(&PropertyColumn::Int(vec![Some(20)]))
+        );
     }
 }

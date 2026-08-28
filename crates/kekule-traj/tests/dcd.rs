@@ -2,6 +2,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::units::{Quantity, ANGSTROM, PICOSECOND};
 use kekule_traj::io::dcd::{
@@ -261,8 +262,11 @@ fn indexed_dcd_restoration_failure_does_not_publish_or_change_destination() {
         None,
     );
     destination
-        .props_mut()
-        .insert("sentinel".into(), kekule::core::PropValue::Bool(true));
+        .insert_property(
+            PropertyKey::new("sentinel").unwrap(),
+            PropertyValue::Bool(true),
+        )
+        .unwrap();
     let before = buffer_snapshot(&destination);
     control.arm_at_current_position();
     let error = indexed.read_frame(1, &mut destination).unwrap_err();
@@ -535,10 +539,12 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
         Some(cell),
     );
     bond_annotated
-        .bond_data_mut()
-        .set_property(
-            "conformational_entropy",
-            Quantity::new(vec![Some(1.0); topology.bond_count()], ANGSTROM),
+        .insert_bond_property_column(
+            PropertyKey::new("conformational_entropy").unwrap(),
+            kekule::properties::PropertyColumn::Real {
+                unit: ANGSTROM,
+                values: vec![Some(1.0); topology.bond_count()],
+            },
         )
         .unwrap();
     assert_eq!(

@@ -1330,11 +1330,10 @@ different internal map.
 
 ### `Properties`
 
-`Properties` is the complete generic property namespace attached to one owning
-Kekule object.
-
-It contains scalar values describing the owner itself and zero or more
-`PropertyTable`s describing entity domains addressed by that owner.
+`Properties` is the unified storage concept for generic annotations owned at one
+scope. It contains scalar values describing the owner itself and may internally
+aggregate zero or more `PropertyTable`s for repeated entity domains addressed by
+that owner.
 
 Conceptually:
 
@@ -1353,29 +1352,49 @@ Properties
     ... only where meaningful for that owner
 ```
 
-The exact physical representation of the set of tables is not normative. The
-public API should expose domain-specific accessors appropriate to the owner
-rather than requiring callers to drive a generic public target enum.
+The exact physical nesting of those tables inside `Properties` is an
+implementation detail. The public API is owner-centric: `properties()` exposes
+the owner-level property namespace, while repeated entity domains are exposed
+directly by the owning domain object through accessors such as
+`atom_properties()` and `bond_properties()`. Callers should not have to navigate
+through `properties().atoms()` or drive a generic public target enum. This keeps
+the valid property domains of each owner explicit and lets the owner enforce its
+identity and mutation invariants.
 
 For example:
 
 ```text
 molecule.properties()
-molecule.properties().atoms()
-molecule.properties().bonds()
+molecule.atom_properties()
+molecule.bond_properties()
 
 model.properties()
-model.properties().atoms()
-model.properties().bonds()
+model.atom_properties()
+model.bond_properties()
 
 topology.properties()
-topology.properties().molecule_instances()
-topology.properties().atoms()
-topology.properties().bonds()
-topology.properties().chains()
-topology.properties().residues()
-topology.properties().atom_sites()
+topology.molecule_instance_properties()
+topology.atom_properties()
+topology.bond_properties()
+topology.chain_properties()
+topology.residue_properties()
+topology.atom_site_properties()
+
+ensemble.properties()
+ensemble_member.properties()
+ensemble_member.atom_properties()
+ensemble_member.bond_properties()
+
+trajectory.properties()
+trajectory_frame.properties()
+trajectory_frame.atom_properties()
+trajectory_frame.bond_properties()
 ```
+
+Thus `properties()` has one consistent public meaning: properties attached
+directly to that owner. Per-entity property tables are reached through the
+owner's semantic domain accessors, even if the implementation stores everything
+inside one `Properties` value.
 
 The full word `properties` is preferred in the public API over the abbreviation
 `props`.

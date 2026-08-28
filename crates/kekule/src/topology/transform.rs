@@ -14,6 +14,7 @@ use super::{
     TopologyBuilder,
 };
 use crate::core::{MoleculeError, MoleculePublicationError};
+use crate::properties::PropertyError;
 
 /// Retains complete molecule instances in source topology order.
 ///
@@ -139,6 +140,8 @@ fn retain_normalized(
     }
 
     let mut atom_targets = BTreeMap::new();
+    let mut bond_targets = BTreeMap::new();
+    let mut instance_sources = Vec::with_capacity(retained.len);
     for (source_instance, instance) in topology
         .instances()
         .filter(|(id, _)| retained.contains(*id))
@@ -146,22 +149,38 @@ fn retain_normalized(
         let target_definition = definition_targets[instance.definition().index()]
             .expect("retained instance has a retained definition");
         let target_instance = builder.add_instance(target_definition)?;
-        for atom in topology
+        instance_sources.push(Some(source_instance.index()));
+        let source_definition = topology
             .definition_for_instance(source_instance)
             .expect("retained instance references a live definition")
-            .molecule()
-            .atom_ids()
-        {
+            .molecule();
+        for atom in source_definition.atom_ids() {
             atom_targets.insert(
                 InstanceAtomId::new(source_instance, atom),
                 InstanceAtomId::new(target_instance, atom),
             );
         }
+        for bond in source_definition.bond_ids() {
+            bond_targets.insert(
+                InstanceBondId::new(source_instance, bond),
+                InstanceBondId::new(target_instance, bond),
+            );
+        }
     }
 
-    copy_filtered_hierarchy(topology, builder.hierarchy_mut(), &atom_targets)?;
+    let hierarchy_projection =
+        copy_filtered_hierarchy(topology, builder.hierarchy_mut(), &atom_targets)?;
 
-    Ok(Arc::new(builder.build()?))
+    let mut target = builder.build()?;
+    target.properties = project_topology_properties(
+        topology,
+        &target,
+        &instance_sources,
+        &atom_targets,
+        &bond_targets,
+        &hierarchy_projection,
+    )?;
+    Ok(Arc::new(target))
 }
 
 /// Failure to construct an immutable whole-instance topology subset.
@@ -176,6 +195,7 @@ pub enum TopologyTransformError {
     TopologyBuild(TopologyBuildError),
     /// The retained hierarchy could not be reconstructed.
     Hierarchy(HierarchyError),
+    Property(PropertyError),
 }
 
 impl fmt::Display for TopologyTransformError {
@@ -193,6 +213,9 @@ impl fmt::Display for TopologyTransformError {
             Self::Hierarchy(error) => {
                 write!(formatter, "cannot retain topology hierarchy: {error}")
             }
+            Self::Property(error) => {
+                write!(formatter, "cannot project topology properties: {error}")
+            }
         }
     }
 }
@@ -208,6 +231,12 @@ impl From<TopologyBuildError> for TopologyTransformError {
 impl From<HierarchyError> for TopologyTransformError {
     fn from(error: HierarchyError) -> Self {
         Self::Hierarchy(error)
+    }
+}
+
+impl From<PropertyError> for TopologyTransformError {
+    fn from(error: PropertyError) -> Self {
+        Self::Property(error)
     }
 }
 
@@ -297,6 +326,7 @@ impl Topology {
         let mut builder = TopologyBuilder::new();
         let mut atom_targets = BTreeMap::new();
         let mut bond_targets = BTreeMap::new();
+        let mut instance_sources = Vec::new();
 
         for molecule_view in self.molecules() {
             let source_molecule = molecule_view.molecule();
@@ -307,6 +337,7 @@ impl Topology {
             if selected_local.is_empty() {
                 continue;
             }
+            let whole_instance_selected = selected_local.len() == source_molecule.atom_count();
             let mut visited = BTreeSet::new();
             for seed in source_molecule.atom_ids() {
                 if !selected_local.contains(&seed) || !visited.insert(seed) {
@@ -334,6 +365,8 @@ impl Topology {
                 }
                 let target_molecule = editor.finish()?;
                 let target_instance = builder.add_molecule(&target_molecule)?;
+                instance_sources
+                    .push(whole_instance_selected.then_some(molecule_view.id().index()));
                 for source_atom in membership.iter().copied() {
                     atom_targets.insert(
                         InstanceAtomId::new(molecule_view.id(), source_atom),
@@ -352,8 +385,18 @@ impl Topology {
             }
         }
 
-        copy_filtered_hierarchy(self, builder.hierarchy_mut(), &atom_targets)?;
-        let target = Arc::new(builder.build()?);
+        let hierarchy_projection =
+            copy_filtered_hierarchy(self, builder.hierarchy_mut(), &atom_targets)?;
+        let mut target = builder.build()?;
+        target.properties = project_topology_properties(
+            self,
+            &target,
+            &instance_sources,
+            &atom_targets,
+            &bond_targets,
+            &hierarchy_projection,
+        )?;
+        let target = Arc::new(target);
         let atom_sources = atom_targets
             .iter()
             .map(|(source, target)| (*target, *source))
@@ -395,13 +438,20 @@ impl Topology {
     }
 }
 
+#[derive(Debug, Default)]
+struct HierarchyProjection {
+    chains: Vec<usize>,
+    residues: Vec<usize>,
+    atom_sites: Vec<usize>,
+}
+
 fn copy_filtered_hierarchy(
     source: &Topology,
     target: &mut super::Hierarchy,
     atom_targets: &BTreeMap<InstanceAtomId, InstanceAtomId>,
-) -> Result<(), HierarchyError> {
-    target.props_mut().clone_from(source.hierarchy().props());
-    for (_, source_chain) in source.hierarchy().chains() {
+) -> Result<HierarchyProjection, HierarchyError> {
+    let mut projection = HierarchyProjection::default();
+    for (source_chain_id, source_chain) in source.hierarchy().chains() {
         let retained_residues = source_chain
             .residues()
             .iter()
@@ -422,9 +472,7 @@ fn copy_filtered_hierarchy(
             source_chain.label_id().to_owned(),
             source_chain.author_id().map(str::to_owned),
         )?;
-        target
-            .chain_props_mut(chain)?
-            .clone_from(source_chain.props());
+        projection.chains.push(source_chain_id.index());
         for source_residue in retained_residues {
             let residue = target.add_residue(
                 chain,
@@ -433,28 +481,69 @@ fn copy_filtered_hierarchy(
                 source_residue.author_seq_id().map(str::to_owned),
                 source_residue.insertion_code().map(str::to_owned),
             )?;
+            projection.residues.push(source_residue.id().index());
             target.set_residue_component_ids(
                 residue,
                 source_residue.label_comp_id().map(str::to_owned),
                 source_residue.author_comp_id().map(str::to_owned),
             )?;
-            target
-                .residue_props_mut(residue)?
-                .clone_from(source_residue.props());
             for source_site_id in source_residue.atom_sites() {
                 let source_site = source.hierarchy().atom_site(*source_site_id)?;
                 let Some(target_atom) = atom_targets.get(&source_site.atom()).copied() else {
                     continue;
                 };
-                let site =
-                    target.add_atom_site(residue, target_atom, source_site.metadata().clone())?;
-                target
-                    .atom_site_props_mut(site)?
-                    .clone_from(source_site.props());
+                target.add_atom_site(residue, target_atom, source_site.metadata().clone())?;
+                projection.atom_sites.push(source_site.id().index());
             }
         }
     }
-    Ok(())
+    Ok(projection)
+}
+
+fn project_topology_properties(
+    source: &Topology,
+    target: &Topology,
+    instance_sources: &[Option<usize>],
+    atom_targets: &BTreeMap<InstanceAtomId, InstanceAtomId>,
+    bond_targets: &BTreeMap<InstanceBondId, InstanceBondId>,
+    hierarchy: &HierarchyProjection,
+) -> Result<crate::properties::Properties, PropertyError> {
+    let atom_sources = atom_targets
+        .iter()
+        .map(|(source, target)| (*target, *source))
+        .collect::<BTreeMap<_, _>>();
+    let bond_sources = bond_targets
+        .iter()
+        .map(|(source, target)| (*target, *source))
+        .collect::<BTreeMap<_, _>>();
+    let atom_indices = target
+        .atom_ids()
+        .iter()
+        .map(|target_atom| {
+            source
+                .atom_index(atom_sources[target_atom])
+                .expect("projected source atom has a dense index")
+                .index()
+        })
+        .collect::<Vec<_>>();
+    let bond_indices = target
+        .bond_ids()
+        .iter()
+        .map(|target_bond| {
+            source
+                .bond_index(bond_sources[target_bond])
+                .expect("projected source bond has a dense index")
+                .index()
+        })
+        .collect::<Vec<_>>();
+    source.properties().project_topology(
+        instance_sources,
+        &atom_indices,
+        &bond_indices,
+        &hierarchy.chains,
+        &hierarchy.residues,
+        &hierarchy.atom_sites,
+    )
 }
 
 /// Failure to construct a hierarchy-aware induced topology subset.
@@ -467,6 +556,7 @@ pub enum TopologySubsetError {
     Publication(MoleculePublicationError),
     Hierarchy(HierarchyError),
     TopologyBuild(TopologyBuildError),
+    Property(PropertyError),
 }
 
 impl fmt::Display for TopologySubsetError {
@@ -482,6 +572,7 @@ impl fmt::Display for TopologySubsetError {
             Self::TopologyBuild(error) => {
                 write!(formatter, "cannot publish subset topology: {error}")
             }
+            Self::Property(error) => write!(formatter, "cannot project subset properties: {error}"),
         }
     }
 }
@@ -511,5 +602,11 @@ impl From<HierarchyError> for TopologySubsetError {
 impl From<TopologyBuildError> for TopologySubsetError {
     fn from(error: TopologyBuildError) -> Self {
         Self::TopologyBuild(error)
+    }
+}
+
+impl From<PropertyError> for TopologySubsetError {
+    fn from(error: PropertyError) -> Self {
+        Self::Property(error)
     }
 }

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use kekule::core::PropValue;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::units::{Quantity, ANGSTROM, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
 use kekule_traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
@@ -106,8 +106,11 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
         .unwrap();
     buffer.set_step(Some(7));
     buffer
-        .props_mut()
-        .insert("stale".into(), PropValue::Bool(true));
+        .insert_property(
+            PropertyKey::new("stale").unwrap(),
+            PropertyValue::Bool(true),
+        )
+        .unwrap();
 
     assert!(reader.read_next(&mut buffer).unwrap());
     assert_xs_close(&buffer, &[0.0, 0.3]);
@@ -116,7 +119,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
     assert!(buffer.frame_view().velocities().is_none());
     assert!(buffer.frame_view().time().is_none());
     assert!(buffer.frame_view().step().is_none());
-    assert!(buffer.props().is_empty());
+    assert!(buffer.properties().is_empty());
 
     assert!(reader.read_next(&mut buffer).unwrap());
     assert_xs_close(&buffer, &[0.1, 0.4]);
@@ -281,10 +284,12 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     );
     buffer.set_step(None);
     buffer
-        .bond_data_mut()
-        .set_property(
-            "conformational_entropy",
-            Quantity::new(vec![Some(1.0)], ANGSTROM),
+        .insert_bond_property_column(
+            PropertyKey::new("conformational_entropy").unwrap(),
+            PropertyColumn::Real {
+                unit: ANGSTROM,
+                values: vec![Some(1.0)],
+            },
         )
         .unwrap();
     assert_eq!(

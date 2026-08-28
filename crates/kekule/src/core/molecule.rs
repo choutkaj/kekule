@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
+use crate::properties::{Properties, PropertyError, PropertyKey, PropertyTable, PropertyValue};
+
 use super::*;
 
 /// One published, non-empty, connected, geometry-independent molecular entity.
@@ -15,6 +17,7 @@ use super::*;
 pub struct Molecule {
     pub(crate) graph: Graph,
     pub(crate) perception: Perception,
+    pub(crate) properties: Properties,
 }
 
 impl PartialEq for Molecule {
@@ -51,6 +54,7 @@ impl Drop for AtomMut<'_> {
     fn drop(&mut self) {
         if AtomChemistry::from(&**self) != self.original {
             self.molecule.clear_perception();
+            self.molecule.properties.clear_owner();
         }
     }
 }
@@ -83,6 +87,7 @@ impl Drop for BondMut<'_> {
     fn drop(&mut self) {
         if BondChemistry::from(&**self) != self.original {
             self.molecule.clear_perception();
+            self.molecule.properties.clear_owner();
         }
     }
 }
@@ -155,6 +160,8 @@ impl Molecule {
         debug_assert_eq!(slot, self.graph.atoms.len());
         self.graph.atoms.push(Some(atom));
         self.graph.adjacency.push(Vec::new());
+        self.properties.resize_atoms(self.graph.atoms.len());
+        self.properties.clear_owner();
         self.clear_perception();
         Ok(id)
     }
@@ -178,6 +185,8 @@ impl Molecule {
         let atom = self.graph.atoms[id.index()]
             .take()
             .ok_or(MoleculeError::InvalidAtomId(id))?;
+        self.properties.atoms_mut().clear_index(id.index());
+        self.properties.clear_owner();
         self.prune_stereo_for_atom(id);
         self.clear_perception();
         Ok(atom)
@@ -210,15 +219,26 @@ impl Molecule {
         self.atoms().map(|(id, _)| id)
     }
 
-    /// Returns mutable generic annotations without changing represented chemistry.
-    pub fn atom_props_mut(&mut self, id: AtomId) -> Result<&mut PropMap> {
-        Ok(&mut self
-            .graph
-            .atoms
-            .get_mut(id.index())
-            .and_then(Option::as_mut)
-            .ok_or(MoleculeError::InvalidAtomId(id))?
-            .props)
+    pub fn atom_property(&self, id: AtomId, key: &PropertyKey) -> Result<Option<PropertyValue>> {
+        self.atom(id)?;
+        self.properties
+            .atoms()
+            .value(key, id.index())
+            .map_err(|error| MoleculeError::Property(Box::new(error)))
+    }
+
+    /// Sets one definition-scoped atom property without invalidating perception.
+    pub fn set_atom_property(
+        &mut self,
+        id: AtomId,
+        key: PropertyKey,
+        value: Option<PropertyValue>,
+    ) -> Result<()> {
+        self.atom(id)?;
+        self.properties
+            .atoms_mut()
+            .set_value(key, id.index(), value)
+            .map_err(|error| MoleculeError::Property(Box::new(error)))
     }
 
     /// Inserts a bond into crate-private construction or editing staging.
@@ -235,6 +255,8 @@ impl Molecule {
         self.graph.bonds.push(Some(Bond::new(a, b, order)));
         self.graph.adjacency[a.index()].push(id);
         self.graph.adjacency[b.index()].push(id);
+        self.properties.resize_bonds(self.graph.bonds.len());
+        self.properties.clear_owner();
         self.clear_perception();
         Ok(id)
     }
@@ -250,6 +272,8 @@ impl Molecule {
         self.remove_incident_bond(bond.a, id);
         self.remove_incident_bond(bond.b, id);
         self.prune_stereo_for_bond(id);
+        self.properties.bonds_mut().clear_index(id.index());
+        self.properties.clear_owner();
         self.clear_perception();
         Ok(bond)
     }
@@ -281,15 +305,26 @@ impl Molecule {
         self.bonds().map(|(id, _)| id)
     }
 
-    /// Returns mutable generic annotations without changing represented chemistry.
-    pub fn bond_props_mut(&mut self, id: BondId) -> Result<&mut PropMap> {
-        Ok(&mut self
-            .graph
-            .bonds
-            .get_mut(id.index())
-            .and_then(Option::as_mut)
-            .ok_or(MoleculeError::InvalidBondId(id))?
-            .props)
+    pub fn bond_property(&self, id: BondId, key: &PropertyKey) -> Result<Option<PropertyValue>> {
+        self.bond(id)?;
+        self.properties
+            .bonds()
+            .value(key, id.index())
+            .map_err(|error| MoleculeError::Property(Box::new(error)))
+    }
+
+    /// Sets one definition-scoped bond property without invalidating perception.
+    pub fn set_bond_property(
+        &mut self,
+        id: BondId,
+        key: PropertyKey,
+        value: Option<PropertyValue>,
+    ) -> Result<()> {
+        self.bond(id)?;
+        self.properties
+            .bonds_mut()
+            .set_value(key, id.index(), value)
+            .map_err(|error| MoleculeError::Property(Box::new(error)))
     }
 
     pub fn neighbors(&self, id: AtomId) -> Result<impl Iterator<Item = AtomId> + '_> {
@@ -356,12 +391,46 @@ impl Molecule {
             }))
     }
 
-    pub fn props(&self) -> &PropMap {
-        &self.graph.props
+    pub const fn properties(&self) -> &Properties {
+        &self.properties
     }
 
-    pub fn props_mut(&mut self) -> &mut PropMap {
-        &mut self.graph.props
+    pub(crate) fn properties_mut(&mut self) -> &mut Properties {
+        &mut self.properties
+    }
+
+    pub fn insert_property(
+        &mut self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>> {
+        self.properties
+            .insert(key, value)
+            .map_err(|error| MoleculeError::Property(Box::new(error)))
+    }
+
+    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.properties.remove(key)
+    }
+
+    pub fn clear_properties(&mut self) {
+        self.properties.clear_owner();
+    }
+
+    /// Reads the complete stable-slot atom property table.
+    ///
+    /// Mutation is intentionally available only through [`Self::set_atom_property`],
+    /// which validates that the target atom is live.
+    pub const fn atom_properties(&self) -> &PropertyTable {
+        self.properties.atoms()
+    }
+
+    /// Reads the complete stable-slot bond property table.
+    ///
+    /// Mutation is intentionally available only through [`Self::set_bond_property`],
+    /// which validates that the target bond is live.
+    pub const fn bond_properties(&self) -> &PropertyTable {
+        self.properties.bonds()
     }
 
     pub fn perception(&self) -> &Perception {
@@ -434,6 +503,7 @@ impl Molecule {
             StereoElementId::new,
         )?;
         self.graph.stereo_elements.push(Some(element));
+        self.properties.clear_owner();
         self.invalidate_stereo();
         Ok(id)
     }
@@ -474,6 +544,7 @@ impl Molecule {
                 .expect("validated stereo element should remain live"),
             replacement,
         );
+        self.properties.clear_owner();
         self.invalidate_stereo();
         Ok(previous)
     }
@@ -487,6 +558,7 @@ impl Molecule {
             .and_then(Option::take)
             .ok_or(MoleculeError::InvalidStereoElementId(id))?;
         self.remove_stereo_element_from_groups(id);
+        self.properties.clear_owner();
         self.invalidate_stereo();
         element.group = None;
         Ok(element)
@@ -538,6 +610,7 @@ impl Molecule {
                 .group = Some(id);
         }
         self.graph.stereo_groups.push(Some(group));
+        self.properties.clear_owner();
         self.invalidate_stereo();
         Ok(id)
     }
@@ -569,6 +642,7 @@ impl Molecule {
                 }
             }
         }
+        self.properties.clear_owner();
         self.invalidate_stereo();
         Ok(group)
     }
@@ -608,6 +682,7 @@ impl Molecule {
             StereoGroupId::new,
         )?;
         self.graph.stereo_groups.push(None);
+        self.properties.clear_owner();
         Ok(id)
     }
 
@@ -1053,7 +1128,7 @@ impl fmt::Display for MoleculeIdKind {
 }
 
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MoleculeError {
     InvalidAtomId(AtomId),
     InvalidBondId(BondId),
@@ -1068,6 +1143,7 @@ pub enum MoleculeError {
     /// A new value cannot be represented by the fixed-width ID for `kind`.
     IdentifierCapacityExceeded(MoleculeIdKind),
     UnsupportedFeature(&'static str),
+    Property(Box<PropertyError>),
 }
 
 impl fmt::Display for MoleculeError {
@@ -1086,11 +1162,21 @@ impl fmt::Display for MoleculeError {
                 write!(f, "{kind} identifier capacity exceeded")
             }
             Self::UnsupportedFeature(name) => write!(f, "unsupported feature: {name}"),
+            Self::Property(error) => write!(f, "invalid molecule property: {error}"),
         }
     }
 }
 
-impl std::error::Error for MoleculeError {}
+impl Eq for MoleculeError {}
+
+impl std::error::Error for MoleculeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Property(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 fn checked_molecule_id<T>(
     length: usize,
@@ -1100,6 +1186,43 @@ fn checked_molecule_id<T>(
     checked_raw_id(length)
         .map(construct)
         .map_err(|_| MoleculeError::IdentifierCapacityExceeded(kind))
+}
+
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use crate::properties::{PropertyKey, PropertyValue};
+
+    #[test]
+    fn generic_properties_neither_invalidate_perception_nor_affect_equality() {
+        let mut editor = MoleculeEditor::new();
+        let atom = editor
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .unwrap();
+        let mut molecule = editor.finish().unwrap();
+        molecule.perceive().unwrap();
+        let perceived = molecule.perception().clone();
+        let represented = molecule.clone();
+
+        molecule
+            .insert_property(
+                PropertyKey::new("source").unwrap(),
+                PropertyValue::String("generated".into()),
+            )
+            .unwrap();
+        molecule
+            .set_atom_property(
+                atom,
+                PropertyKey::new("selected").unwrap(),
+                Some(PropertyValue::Bool(true)),
+            )
+            .unwrap();
+
+        assert_eq!(molecule.perception(), &perceived);
+        assert_eq!(molecule, represented);
+        molecule.clear_perception();
+        assert_eq!(molecule, represented);
+    }
 }
 
 #[cfg(all(test, target_pointer_width = "64"))]

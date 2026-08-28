@@ -1,16 +1,4 @@
-use std::collections::BTreeMap;
-
 use super::*;
-
-pub type PropMap = BTreeMap<String, PropValue>;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum PropValue {
-    String(String),
-    Int(i64),
-    Float(f64),
-    Bool(bool),
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Atom {
@@ -20,7 +8,6 @@ pub struct Atom {
     pub radical: Option<AtomRadical>,
     pub hydrogens: HydrogenDeclaration,
     pub atom_map: Option<u32>,
-    pub props: PropMap,
 }
 
 impl Atom {
@@ -32,7 +19,6 @@ impl Atom {
             radical: None,
             hydrogens: HydrogenDeclaration::default(),
             atom_map: None,
-            props: PropMap::new(),
         }
     }
 }
@@ -103,17 +89,11 @@ pub struct Bond {
     pub(crate) a: AtomId,
     pub(crate) b: AtomId,
     pub order: BondOrder,
-    pub props: PropMap,
 }
 
 impl Bond {
     pub fn new(a: AtomId, b: AtomId, order: BondOrder) -> Self {
-        Self {
-            a,
-            b,
-            order,
-            props: PropMap::new(),
-        }
+        Self { a, b, order }
     }
 
     pub const fn a(&self) -> AtomId {

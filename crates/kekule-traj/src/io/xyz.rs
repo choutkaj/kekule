@@ -744,9 +744,18 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
             (frame.forces().is_some(), "forces"),
             (frame.time().is_some(), "time"),
             (frame.step().is_some(), "step"),
-            (frame.atom_data().has_data(), "atom data"),
-            (frame.bond_data().has_data(), "bond data"),
-            (!frame.props().is_empty(), "frame properties"),
+            (
+                frame.properties().realization_atom_properties().has_data(),
+                "atom properties",
+            ),
+            (
+                frame.properties().realization_bond_properties().has_data(),
+                "bond properties",
+            ),
+            (
+                !frame.properties().owner_is_empty(),
+                "frame owner properties",
+            ),
         ];
         if let Some((_, field)) = unsupported.into_iter().find(|(present, _)| *present) {
             return Err(writer_field_error(
