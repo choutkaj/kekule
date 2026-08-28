@@ -26,27 +26,20 @@ use stereo::{stereo_cip_record_json, stereo_perception_group_record_json, stereo
 
 #[cfg(test)]
 pub(crate) use chemistry::explicit_valence_json;
-#[cfg(test)]
 pub(crate) use io::{
-    read_canonical_smiles_records, read_nonisomeric_smiles_records, read_smiles_records,
-    smiles_unsupported_subset_reason, IndexedSmallRecord, IndexedSmilesRecord,
-};
-#[cfg(test)]
-pub(crate) use smiles::{
-    canonical_smiles_record_json, smiles_components_perceived_semantic_json,
-    smiles_perceived_atoms_json, smiles_perceived_bonds_json, smiles_perceived_semantic_json,
-    smiles_write_record_json,
-};
-#[cfg(test)]
-pub(crate) use stereo::stereo_perception_record_json;
-
-#[cfg(not(test))]
-use io::{
     read_canonical_smiles_records, read_nonisomeric_smiles_records, read_smiles_records,
     IndexedSmallRecord,
 };
-#[cfg(not(test))]
-use smiles::{canonical_smiles_record_json, smiles_write_record_json};
+#[cfg(test)]
+pub(crate) use io::{smiles_unsupported_subset_reason, IndexedSmilesRecord};
+pub(crate) use smiles::{canonical_smiles_record_json, smiles_write_record_json};
+#[cfg(test)]
+pub(crate) use smiles::{
+    smiles_components_perceived_semantic_json, smiles_perceived_atoms_json,
+    smiles_perceived_bonds_json, smiles_perceived_semantic_json,
+};
+#[cfg(test)]
+pub(crate) use stereo::stereo_perception_record_json;
 
 pub(crate) fn implementation_expected(
     benchmark: &str,

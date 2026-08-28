@@ -1,19 +1,17 @@
 use super::*;
 
-pub(in crate::algorithms::cip) fn descriptor_is_absolute_tetrahedral(
-    descriptor: StereoDescriptor,
-) -> bool {
+pub(super) fn descriptor_is_absolute_tetrahedral(descriptor: StereoDescriptor) -> bool {
     matches!(descriptor, StereoDescriptor::R | StereoDescriptor::S)
 }
 
-pub(in crate::algorithms::cip) enum CipElementAssignment {
+pub(super) enum CipElementAssignment {
     Assigned(StereoDescriptor),
     Skipped(CipSkippedReason),
     Deferred,
     Issue(CipAssignmentIssue),
 }
 
-pub(in crate::algorithms::cip) fn assign_cip_element(
+pub(super) fn assign_cip_element(
     mol: &Molecule,
     id: StereoElementId,
     element: &StereoElement,
@@ -58,7 +56,7 @@ fn double_bond_cip_stereogenic(mol: &Molecule, stereo: &DoubleBondStereo) -> Opt
     Some(true)
 }
 
-pub(in crate::algorithms::cip) fn set_stereo_descriptor(
+pub(super) fn set_stereo_descriptor(
     mol: &mut Molecule,
     id: StereoElementId,
     descriptor: StereoDescriptor,
@@ -358,7 +356,7 @@ fn ranked_tetrahedral_carriers(
     }
 }
 
-pub(in crate::algorithms::cip) fn assign_deferred_tetrahedral_rule6(
+pub(super) fn assign_deferred_tetrahedral_rule6(
     mol: &Molecule,
     pending: &[(StereoElementId, StereoElement)],
     options: CipAssignmentOptions,
@@ -380,7 +378,7 @@ pub(in crate::algorithms::cip) fn assign_deferred_tetrahedral_rule6(
     Ok(assignments)
 }
 
-pub(in crate::algorithms::cip) fn element_is_finally_nonstereogenic(
+pub(super) fn element_is_finally_nonstereogenic(
     mol: &Molecule,
     element: StereoElementId,
     stereo_element: &StereoElement,
