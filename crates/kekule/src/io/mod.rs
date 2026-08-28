@@ -10,10 +10,6 @@ mod v2000;
 mod v3000;
 
 pub use mmcif_document::*;
-pub(crate) use mmcif_interpret::{
-    interpret_mmcif, interpret_mmcif_block, interpret_mmcif_ensemble,
-    interpret_mmcif_ensemble_block,
-};
 pub use mmcif_interpret::{
     MmcifAltLocPolicy, MmcifAtomProvenance, MmcifConnectionResolutionReason,
     MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
@@ -23,11 +19,10 @@ pub use mmcif_interpret::{
 pub use mmcif_write::*;
 pub use sdf_document::*;
 pub use smiles::{
-    interpret_smiles_document, parse_smiles_document, parse_smiles_document_with_options,
-    write_canonical_smiles, write_isomeric_smiles, write_smiles, SmilesAtomMapping,
-    SmilesBondMapping, SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind,
-    SmilesInterpretError, SmilesInterpretation, SmilesInterpretationReport, SmilesParseError,
-    SmilesParseOptions,
+    parse_smiles_document, parse_smiles_document_with_options, write_canonical_smiles,
+    write_isomeric_smiles, write_smiles, SmilesAtomMapping, SmilesBondMapping, SmilesDocument,
+    SmilesDocumentToken, SmilesDocumentTokenKind, SmilesInterpretError, SmilesInterpretation,
+    SmilesInterpretationReport, SmilesParseError, SmilesParseOptions,
 };
 pub use structure_documents::{
     interpret_molfile_document, parse_molfile_document, parse_molfile_document_with_options,

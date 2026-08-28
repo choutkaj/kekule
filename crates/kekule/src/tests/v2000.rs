@@ -17,7 +17,7 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
     assert_eq!(interpretation.report().ignored_record_lines(), &[6]);
 
     let sdf_text = format!("{molfile_text}>  <FIELD>\nvalue\n\n$$$$\n");
-    let document = sdf::parse_str(&sdf_text, SdfParseOptions::default()).expect("SDF parses");
+    let document = sdf::parse_str(&sdf_text).expect("SDF parses");
     assert_eq!(document.records()[0].data_fields()[0].value(), "value");
     let interpretation = sdf::interpret(&document).expect("SDF interprets");
     let records = interpretation.records();
@@ -60,8 +60,8 @@ fn molfile_and_sdf_documents_parse_adjacent_three_digit_counts() {
     assert_eq!(document.bond_records().len(), 999);
 
     let sdf_text = format!("{molfile_text}$$$$\n");
-    let document = sdf::parse_str(&sdf_text, SdfParseOptions::default())
-        .expect("SDF delegates to fixed-width Molfile counts parsing");
+    let document =
+        sdf::parse_str(&sdf_text).expect("SDF delegates to fixed-width Molfile counts parsing");
     assert_eq!(document.records()[0].molfile().atom_records().len(), 999);
     assert_eq!(document.records()[0].molfile().bond_records().len(), 999);
 }
@@ -199,12 +199,12 @@ M  END
 ";
     let input = format!("{complete}{unterminated}");
 
-    let error = sdf::parse_str(&input, SdfParseOptions::default())
+    let error = sdf::parse_str(&input)
         .expect_err("a previous delimiter must not waive the final delimiter");
     assert_eq!(error.record(), 2);
     assert!(error.message().contains("missing final"));
 
-    let document = sdf::parse_str(
+    let document = sdf::parse_str_with_options(
         &input,
         SdfParseOptions {
             allow_missing_final_delimiter: true,
@@ -226,17 +226,17 @@ One
 M  END
 ";
     let stray = format!("{molfile}orphan text\n$$$$\n");
-    let error = sdf::parse_str(&stray, SdfParseOptions::default())
-        .expect_err("unstructured post-CTAB content must not be discarded");
+    let error =
+        sdf::parse_str(&stray).expect_err("unstructured post-CTAB content must not be discarded");
     assert!(error.message().contains("unexpected content"));
 
     let delimited_field = format!("{molfile}>  <FIELD>\nvalue\n$$$$\n");
-    let document = sdf::parse_str(&delimited_field, SdfParseOptions::default())
+    let document = sdf::parse_str(&delimited_field)
         .expect("the record delimiter unambiguously terminates the final field");
     assert_eq!(document.records()[0].data_fields()[0].value(), "value");
 
     let unterminated_field = format!("{molfile}>  <FIELD>\nvalue\n");
-    let error = sdf::parse_str(
+    let error = sdf::parse_str_with_options(
         &unterminated_field,
         SdfParseOptions {
             allow_missing_final_delimiter: true,
@@ -260,7 +260,7 @@ $$$$
 ";
     let two_records = format!("{record}{record}");
 
-    let input_error = sdf::parse_str(
+    let input_error = sdf::parse_str_with_options(
         record,
         SdfParseOptions {
             max_input_bytes: record.len() - 1,
@@ -270,7 +270,7 @@ $$$$
     .expect_err("input byte limit should apply before parsing");
     assert!(input_error.message().contains("input"));
 
-    let record_count_error = sdf::parse_str(
+    let record_count_error = sdf::parse_str_with_options(
         &two_records,
         SdfParseOptions {
             max_records: 1,
@@ -281,7 +281,7 @@ $$$$
     assert_eq!(record_count_error.record(), 2);
     assert!(record_count_error.message().contains("record count"));
 
-    let record_size_error = sdf::parse_str(
+    let record_size_error = sdf::parse_str_with_options(
         record,
         SdfParseOptions {
             max_record_bytes: 1,
@@ -441,7 +441,7 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
     let molecule = read_smiles("C").expect("methane parses");
     let record = SdfRecordInterpretation::new(
         "safe title",
-        vec![molecule.clone()],
+        test_model(&molecule),
         vec![SdfDataField::new("NOTES", "> leading marker\nsecond line")],
     );
     let written = sdf::write_v2000(&[record]).expect("representable field should write");
@@ -469,7 +469,7 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
             "record delimiter",
         ),
     ] {
-        let record = SdfRecordInterpretation::new(title, vec![molecule.clone()], vec![field]);
+        let record = SdfRecordInterpretation::new(title, test_model(&molecule), vec![field]);
         let error =
             sdf::write_v2000(&[record]).expect_err("unrepresentable SDF metadata must fail");
         assert!(error.message().contains(expected), "{expected}: {error}");
@@ -618,8 +618,8 @@ fn molfile_and_sdf_parse_supported_syntax_before_chemistry_interpretation() {
         .contains("unsupported element"));
 
     let sdf_source = format!("{molfile_source}$$$$\n");
-    let document = sdf::parse_str(&sdf_source, SdfParseOptions::default())
-        .expect("SDF record structure should parse independently");
+    let document =
+        sdf::parse_str(&sdf_source).expect("SDF record structure should parse independently");
     let error =
         sdf::interpret(&document).expect_err("SDF delegates chemistry interpretation to Molfile");
     assert_eq!(error.record(), 1);
@@ -790,8 +790,8 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
 
     let fields = vec![SdfDataField::new("NOTES", "line one\nline two")];
     let records = vec![
-        SdfRecordInterpretation::new("metadata title", vec![molecule.clone()], fields.clone()),
-        SdfRecordInterpretation::new("metadata title", vec![molecule], fields),
+        SdfRecordInterpretation::new("metadata title", test_model(&molecule), fields.clone()),
+        SdfRecordInterpretation::new("metadata title", test_model(&molecule), fields),
     ];
     let sdf_text = sdf::write_v2000(&records).expect("two records should write");
     assert_eq!(sdf_text.lines().nth(1), Some("kekule"));

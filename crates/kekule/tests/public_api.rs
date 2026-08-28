@@ -1,6 +1,6 @@
 use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::geometry::Point3;
-use kekule::sdf::{self, SdfParseOptions};
+use kekule::sdf;
 use kekule::smiles;
 use kekule::structure::{Model, Positions};
 use kekule::units::{Quantity, ANGSTROM};
@@ -39,6 +39,42 @@ fn smiles_convenience_preserves_cardinality_and_matches_explicit_pipeline() {
 }
 
 #[test]
+fn smiles_default_options_and_topology_projection_are_consistent() {
+    let default_document = smiles::parse_str("CCO.[Na+]").expect("default parse");
+    let explicit_document =
+        smiles::parse_str_with_options("CCO.[Na+]", smiles::SmilesParseOptions::default())
+            .expect("explicit default parse");
+    assert_eq!(default_document, explicit_document);
+
+    let interpretation = default_document.interpret().expect("document interprets");
+    assert_eq!(interpretation.molecules().count(), 2);
+    assert!(interpretation
+        .molecules()
+        .all(|molecule| molecule.perception() == &kekule::core::Perception::default()));
+
+    let topology = interpretation.to_topology().expect("topology builds");
+    assert_eq!(topology.instance_count(), 2);
+    assert_eq!(topology.atom_count(), 4);
+    assert_eq!(
+        topology
+            .molecules()
+            .map(|occurrence| occurrence.molecule().atom_count())
+            .collect::<Vec<_>>(),
+        vec![3, 1]
+    );
+    assert!(topology.hierarchy().is_empty());
+
+    let concise = smiles::to_topology("CCO.[Na+]").expect("concise topology builds");
+    assert!(concise.same_layout(&topology));
+    assert_eq!(
+        smiles::to_topology("CCO")
+            .expect("connected topology")
+            .instance_count(),
+        1
+    );
+}
+
+#[test]
 fn smiles_writers_remain_available_through_the_format_namespace() {
     let ethanol = one_smiles("CCO");
     assert_eq!(smiles::write(&ethanol).expect("SMILES writes"), "CCO");
@@ -57,7 +93,7 @@ fn smiles_writers_remain_available_through_the_format_namespace() {
 #[test]
 fn sdf_preserves_record_boundaries_and_component_order() {
     let input = "first\nkekule\n\n  2  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\nM  END\n$$$$\nsecond\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0\nM  END\n$$$$\n";
-    let document = sdf::parse_str(input, SdfParseOptions::default()).unwrap();
+    let document = sdf::parse_str(input).unwrap();
     let records = sdf::interpret(&document).unwrap().to_records();
     assert_eq!(records.len(), 2);
     assert_eq!(records[0].title(), "first");

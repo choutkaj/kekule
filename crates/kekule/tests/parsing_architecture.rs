@@ -53,7 +53,15 @@ fn parsed_smiles_document_converts_components_in_source_order() {
 #[test]
 fn molfile_document_model_retains_published_component_geometry() {
     let document = molfile::parse_str(DISCONNECTED_MOLFILE).expect("Molfile parses");
-    let interpretation = molfile::interpret(&document).expect("Molfile report interpretation");
+    assert_eq!(
+        document,
+        molfile::parse_str_with_options(
+            DISCONNECTED_MOLFILE,
+            molfile::MolfileParseOptions::default(),
+        )
+        .expect("explicit default Molfile parse")
+    );
+    let interpretation = document.interpret().expect("Molfile report interpretation");
     let expected = [
         Point3::new(0.125, 0.25, 0.375),
         Point3::new(-0.4, 0.55, -0.625),
@@ -79,11 +87,13 @@ fn molfile_document_model_retains_published_component_geometry() {
         );
     }
     let molecules = document.to_molecules().expect("Molfile interprets");
+    let topology = document.to_topology().expect("Molfile topology builds");
     let model = document.to_model().expect("Molfile model builds");
 
     assert_eq!(molecules.len(), 2);
     assert_eq!(model.topology().instance_count(), 2);
     assert_eq!(model.atom_count(), 2);
+    assert!(topology.same_layout(model.topology()));
     assert_eq!(
         model_molecules(&model),
         molecules.iter().collect::<Vec<_>>()
@@ -154,13 +164,48 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
     let input = format!(
         "{DISCONNECTED_MOLFILE}>  <ROLE>\nions\n\n$$$$\nsecond\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    9.0000    8.0000    7.0000 N   0  0  0  0  0  0  0  0  0  0  0  0\nM  END\n$$$$\n"
     );
-    let document = sdf::parse_str(&input, sdf::SdfParseOptions::default()).expect("SDF parses");
+    let document = sdf::parse_str(&input).expect("SDF parses");
+    assert_eq!(
+        document,
+        sdf::parse_str_with_options(&input, sdf::SdfParseOptions::default())
+            .expect("explicit default SDF parse")
+    );
     let records: &[sdf::SdfRecord] = document.records();
 
     assert_eq!(records.len(), 2);
     assert_eq!(records[0].source_record_number(), 1);
     assert_eq!(records[1].source_record_number(), 2);
     assert_eq!(records[0].data_fields()[0].value(), "ions");
+
+    let first_interpretation = records[0].interpret().expect("rich record interpretation");
+    assert_eq!(first_interpretation.title(), "salt-like");
+    assert_eq!(first_interpretation.data_fields()[0].value(), "ions");
+    assert_eq!(first_interpretation.report().record(), 1);
+    assert_eq!(first_interpretation.report().molfile_components().len(), 2);
+    assert_eq!(first_interpretation.molecules().count(), 2);
+    assert!(first_interpretation
+        .topology()
+        .same_layout(first_interpretation.model().topology()));
+    assert_points_close(
+        first_interpretation.model().positions().values().value(),
+        &[
+            Point3::new(0.125, 0.25, 0.375),
+            Point3::new(-0.4, 0.55, -0.625),
+        ],
+    );
+    let projected_topology = first_interpretation.clone().to_topology();
+    let projected_model = first_interpretation.clone().to_model();
+    let projected_molecules = first_interpretation.to_molecules();
+    assert!(projected_topology.same_layout(projected_model.topology()));
+    assert_eq!(
+        projected_topology
+            .molecules()
+            .map(|occurrence| occurrence.molecule())
+            .collect::<Vec<_>>(),
+        projected_molecules.iter().collect::<Vec<_>>()
+    );
+    assert_eq!(projected_topology.hierarchy().chains().count(), 1);
+    assert_eq!(projected_topology.hierarchy().residues().count(), 2);
 
     let first_molecules = records[0].to_molecules().expect("first record interprets");
     let first_model = records[0].to_model().expect("first record model builds");
@@ -195,4 +240,24 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
         .into_iter()
         .chain(model_molecules(&second_model))
         .all(|molecule| molecule.perception() == &Perception::default()));
+
+    let document_interpretation = document
+        .interpret()
+        .expect("document interprets per record");
+    assert_eq!(document_interpretation.records().len(), 2);
+    assert_eq!(document_interpretation.report().records().len(), 2);
+    assert_eq!(document_interpretation.records()[0].report().record(), 1);
+    assert_eq!(document_interpretation.records()[1].report().record(), 2);
+
+    let written = sdf::write_v2000(&[document_interpretation.records()[1].clone()])
+        .expect("single-component rich record writes");
+    let round_trip_document = sdf::parse_str(&written).expect("written record parses");
+    let round_trip = round_trip_document.records()[0]
+        .interpret()
+        .expect("written record interprets");
+    assert_eq!(round_trip.title(), "second");
+    assert_points_close(
+        round_trip.model().positions().values().value(),
+        &[Point3::new(0.9, 0.8, 0.7)],
+    );
 }

@@ -9,6 +9,7 @@ use crate::core::{
     MoleculeEditor, StereoElementId,
 };
 use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
+use crate::topology::Topology;
 
 use super::staged_coordinates::StagedCoordinates;
 use super::v2000::{interpret_v2000_syntax, parse_counts_line, parse_v2000_syntax, V2000Syntax};
@@ -239,12 +240,24 @@ impl MolfileDocument {
         &self.unsupported_records
     }
 
+    /// Interprets this document once into connected chemistry with matching
+    /// component geometry and source reports.
+    pub fn interpret(&self) -> Result<MolfileInterpretation, MolfileInterpretError> {
+        interpret_molfile_document(self)
+    }
+
     /// Interprets this source document as connected canonical molecules.
     ///
     /// Coordinates may participate in source-stereo normalization, but are not
     /// retained in the returned molecules. No chemical perception is run.
     pub fn to_molecules(&self) -> Result<Vec<Molecule>, MolfileInterpretError> {
-        Ok(interpret_molfile_document(self)?.to_molecules())
+        Ok(self.interpret()?.to_molecules())
+    }
+
+    /// Interprets this source document and projects its complete static model
+    /// layout, including the deterministic synthetic hierarchy.
+    pub fn to_topology(&self) -> Result<std::sync::Arc<Topology>, MolfileModelError> {
+        Ok(self.interpret()?.to_topology()?)
     }
 
     /// Interprets this source document as one geometry-bearing model.
@@ -252,7 +265,7 @@ impl MolfileDocument {
     /// Each disconnected source component becomes one molecule instance in
     /// the model topology. No chemical perception is run.
     pub fn to_model(&self) -> Result<Model, MolfileModelError> {
-        Ok(interpret_molfile_document(self)?.to_model()?)
+        Ok(self.interpret()?.to_model()?)
     }
 }
 
@@ -465,6 +478,14 @@ impl MolfileInterpretation {
 
     pub fn to_components(self) -> Vec<MolfileComponentInterpretation> {
         self.components
+    }
+
+    /// Projects the complete static layout assembled by [`Self::to_model`].
+    ///
+    /// The returned shared topology includes the same deterministic synthetic
+    /// chain/residue hierarchy as the model projection.
+    pub fn to_topology(self) -> Result<std::sync::Arc<Topology>, ModelBuildError> {
+        Ok(self.to_model()?.shared_topology())
     }
 
     /// Assembles all interpreted components and their matching geometry into one model.
