@@ -5,12 +5,10 @@
 //! state against it. Semantic atom, bond, and hierarchy navigation occurs
 //! through topology-owning aggregates rather than detached dense arrays.
 
-mod data;
 mod ensemble;
 mod model;
 mod positions;
 
-pub use data::*;
 pub use ensemble::*;
 pub use model::*;
 pub use positions::*;

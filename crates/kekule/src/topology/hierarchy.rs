@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use super::InstanceAtomId;
-use crate::core::PropMap;
 
 fixed_u32_id!(ChainId, "chain");
 fixed_u32_id!(ResidueId, "residue");
@@ -18,7 +17,6 @@ pub struct Hierarchy {
     pub(crate) residues: Vec<Residue>,
     atom_sites: Vec<AtomSite>,
     atom_lookup: BTreeMap<InstanceAtomId, AtomSiteId>,
-    props: PropMap,
 }
 
 impl Hierarchy {
@@ -52,7 +50,6 @@ impl Hierarchy {
             label_id,
             author_id,
             residues: Vec::new(),
-            props: PropMap::new(),
         });
         Ok(id)
     }
@@ -83,7 +80,6 @@ impl Hierarchy {
             author_seq_id,
             insertion_code,
             atom_sites: Vec::new(),
-            props: PropMap::new(),
         });
         self.chains[chain.index()].residues.push(id);
         Ok(id)
@@ -110,7 +106,6 @@ impl Hierarchy {
             residue,
             atom,
             metadata,
-            props: PropMap::new(),
         });
         self.residues[residue.index()].atom_sites.push(id);
         self.atom_lookup.insert(atom, id);
@@ -163,39 +158,6 @@ impl Hierarchy {
         Ok(())
     }
 
-    /// Returns checked mutable access to one chain's property map.
-    pub fn chain_props_mut(
-        &mut self,
-        chain: ChainId,
-    ) -> std::result::Result<&mut PropMap, HierarchyError> {
-        self.chains
-            .get_mut(chain.index())
-            .map(|chain| &mut chain.props)
-            .ok_or(HierarchyError::InvalidChainId(chain))
-    }
-
-    /// Returns checked mutable access to one residue's property map.
-    pub fn residue_props_mut(
-        &mut self,
-        residue: ResidueId,
-    ) -> std::result::Result<&mut PropMap, HierarchyError> {
-        self.residues
-            .get_mut(residue.index())
-            .map(|residue| &mut residue.props)
-            .ok_or(HierarchyError::InvalidResidueId(residue))
-    }
-
-    /// Returns checked mutable access to one atom site's property map.
-    pub fn atom_site_props_mut(
-        &mut self,
-        site: AtomSiteId,
-    ) -> std::result::Result<&mut PropMap, HierarchyError> {
-        self.atom_sites
-            .get_mut(site.index())
-            .map(|site| &mut site.props)
-            .ok_or(HierarchyError::InvalidAtomSiteId(site))
-    }
-
     pub fn chains(&self) -> impl Iterator<Item = (ChainId, &Chain)> {
         self.chains.iter().map(|chain| (chain.id, chain))
     }
@@ -207,14 +169,6 @@ impl Hierarchy {
     pub fn atom_sites(&self) -> impl Iterator<Item = (AtomSiteId, &AtomSite)> {
         self.atom_sites.iter().map(|site| (site.id, site))
     }
-
-    pub fn props(&self) -> &PropMap {
-        &self.props
-    }
-
-    pub fn props_mut(&mut self) -> &mut PropMap {
-        &mut self.props
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -223,7 +177,6 @@ pub struct Chain {
     pub(crate) label_id: String,
     pub(crate) author_id: Option<String>,
     pub(crate) residues: Vec<ResidueId>,
-    pub(crate) props: PropMap,
 }
 
 impl Chain {
@@ -242,10 +195,6 @@ impl Chain {
     pub fn residues(&self) -> &[ResidueId] {
         &self.residues
     }
-
-    pub fn props(&self) -> &PropMap {
-        &self.props
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -259,7 +208,6 @@ pub struct Residue {
     pub(crate) author_seq_id: Option<String>,
     pub(crate) insertion_code: Option<String>,
     pub(crate) atom_sites: Vec<AtomSiteId>,
-    pub(crate) props: PropMap,
 }
 
 impl Residue {
@@ -298,10 +246,6 @@ impl Residue {
     pub fn atom_sites(&self) -> &[AtomSiteId] {
         &self.atom_sites
     }
-
-    pub fn props(&self) -> &PropMap {
-        &self.props
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -310,7 +254,6 @@ pub struct AtomSite {
     pub(crate) residue: ResidueId,
     pub(crate) atom: InstanceAtomId,
     pub(crate) metadata: AtomSiteMetadata,
-    pub(crate) props: PropMap,
 }
 
 impl AtomSite {
@@ -328,10 +271,6 @@ impl AtomSite {
 
     pub fn metadata(&self) -> &AtomSiteMetadata {
         &self.metadata
-    }
-
-    pub fn props(&self) -> &PropMap {
-        &self.props
     }
 }
 

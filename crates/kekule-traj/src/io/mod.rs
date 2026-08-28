@@ -657,7 +657,7 @@ impl TrajectoryReader for SequentialFileTrajectoryReader {
 enum IndexedReaderInner {
     Xyz(xyz::IndexedXyzReader<BufReader<File>>),
     Dcd(dcd::IndexedDcdReader<BufReader<File>>),
-    Trr(trr::IndexedTrrReader<BufReader<File>>),
+    Trr(Box<trr::IndexedTrrReader<BufReader<File>>>),
     Xtc(xtc::IndexedXtcReader<BufReader<File>>),
 }
 
@@ -857,7 +857,7 @@ pub fn open_indexed_trajectory(
                 reader.precision_mixed(),
             );
             (
-                IndexedReaderInner::Trr(reader),
+                IndexedReaderInner::Trr(Box::new(reader)),
                 metadata,
                 vec!["TRR index verified every XDR frame and payload block".into()],
             )

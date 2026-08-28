@@ -78,7 +78,6 @@ fn atom_new_sets_chemically_general_defaults() {
     assert_eq!(atom.radical, None);
     assert_eq!(atom.hydrogens, HydrogenDeclaration::Infer { explicit: 0 });
     assert_eq!(atom.atom_map, None);
-    assert!(atom.props.is_empty());
 }
 
 #[test]
@@ -89,18 +88,12 @@ fn atom_payload_fields_can_be_set_and_read() {
     atom.radical = Some(AtomRadical::Doublet);
     atom.hydrogens = HydrogenDeclaration::Fixed(3);
     atom.atom_map = Some(7);
-    atom.props
-        .insert("label".to_owned(), PropValue::String("alpha".to_owned()));
 
     assert_eq!(atom.isotope, Some(13));
     assert_eq!(atom.formal_charge, -1);
     assert_eq!(atom.radical, Some(AtomRadical::Doublet));
     assert_eq!(atom.hydrogens, HydrogenDeclaration::Fixed(3));
     assert_eq!(atom.atom_map, Some(7));
-    assert_eq!(
-        atom.props.get("label"),
-        Some(&PropValue::String("alpha".to_owned()))
-    );
 }
 
 #[test]
@@ -144,18 +137,13 @@ fn bond_new_sets_endpoints_and_order() {
     assert_eq!(single.b(), b);
     assert_eq!(single.endpoints(), (a, b));
     assert_eq!(single.order, BondOrder::Single);
-    assert!(single.props.is_empty());
     assert_eq!(double.order, BondOrder::Double);
 }
 
 #[test]
 fn bond_payload_fields_can_be_set_and_read() {
-    let mut bond = Bond::new(AtomId::new(1), AtomId::new(2), BondOrder::Dative);
-    bond.props
-        .insert("score".to_owned(), PropValue::Float(1.25));
-
+    let bond = Bond::new(AtomId::new(1), AtomId::new(2), BondOrder::Dative);
     assert_eq!(bond.order, BondOrder::Dative);
-    assert_eq!(bond.props.get("score"), Some(&PropValue::Float(1.25)));
 }
 
 #[test]
@@ -668,14 +656,23 @@ fn topology_deletions_prune_referencing_stereo_state() {
 }
 
 #[test]
-fn prop_value_equality_covers_all_initial_variants() {
+fn property_value_equality_covers_all_initial_variants() {
     assert_eq!(
-        PropValue::String("value".to_owned()),
-        PropValue::String("value".to_owned())
+        PropertyValue::String("value".to_owned()),
+        PropertyValue::String("value".to_owned())
     );
-    assert_eq!(PropValue::Int(42), PropValue::Int(42));
-    assert_eq!(PropValue::Float(2.5), PropValue::Float(2.5));
-    assert_eq!(PropValue::Bool(true), PropValue::Bool(true));
+    assert_eq!(PropertyValue::Int(42), PropertyValue::Int(42));
+    assert_eq!(
+        PropertyValue::Real {
+            value: 2.5,
+            unit: crate::units::DIMENSIONLESS
+        },
+        PropertyValue::Real {
+            value: 2.5,
+            unit: crate::units::DIMENSIONLESS
+        }
+    );
+    assert_eq!(PropertyValue::Bool(true), PropertyValue::Bool(true));
 }
 
 #[test]

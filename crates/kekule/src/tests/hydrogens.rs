@@ -298,10 +298,12 @@ fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
         .add_atom(element_atom("H"))
         .expect("atom identifier capacity");
     graph
-        .atom_mut(property_hydrogen)
-        .expect("property hydrogen")
-        .props
-        .insert("source".into(), PropValue::String("kept".into()));
+        .set_atom_property(
+            property_hydrogen,
+            PropertyKey::new("source").unwrap(),
+            Some(PropertyValue::String("kept".into())),
+        )
+        .unwrap();
     graph
         .add_bond(third_carbon, property_hydrogen, BondOrder::Single)
         .expect("property bond");

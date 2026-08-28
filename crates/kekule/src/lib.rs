@@ -10,7 +10,7 @@
 //! Dynamic structure follows three explicit relationships:
 //!
 //! - [`structure::Model`] = one [`topology::Topology`] plus dense positions,
-//!   an optional periodic cell, and dimensioned per-atom and per-bond data;
+//!   an optional periodic cell, and unified per-atom and per-bond properties;
 //! - [`structure::Ensemble`] = one topology plus finite non-temporal members;
 //!
 //! Ordered multi-frame trajectories and their file codecs live in the
@@ -75,6 +75,7 @@ pub mod dssp;
 pub mod geometry;
 mod io;
 pub mod modeling;
+pub mod properties;
 pub mod query;
 pub mod structure;
 pub mod topology;

@@ -27,7 +27,10 @@ M  END
 
     assert_eq!(mol.atom_count(), 3);
     assert_eq!(mol.bond_count(), 2);
-    assert!(mol.props().get("sdf.title").is_none());
+    assert!(mol
+        .properties()
+        .get(&PropertyKey::new("sdf.title").unwrap())
+        .is_none());
     let atom0 = mol.atom(AtomId::new(0)).expect("atom exists");
     let atom1 = mol.atom(AtomId::new(1)).expect("atom exists");
     let atom2 = mol.atom(AtomId::new(2)).expect("atom exists");
@@ -406,18 +409,27 @@ M  END
 #[test]
 fn mol_v3000_writer_round_trips_supported_metadata() {
     let mut molecule = crate::core::MoleculeEditor::new();
-    molecule.props_mut().insert(
-        "sdf.title".to_owned(),
-        PropValue::String("metadata title".to_owned()),
-    );
-    molecule.props_mut().insert(
-        "sdf.program".to_owned(),
-        PropValue::String("metadata program".to_owned()),
-    );
-    molecule.props_mut().insert(
-        "sdf.comment".to_owned(),
-        PropValue::String("metadata comment".to_owned()),
-    );
+    molecule
+        .properties_mut()
+        .insert(
+            PropertyKey::new("sdf.title").unwrap(),
+            PropertyValue::String("metadata title".to_owned()),
+        )
+        .unwrap();
+    molecule
+        .properties_mut()
+        .insert(
+            PropertyKey::new("sdf.program").unwrap(),
+            PropertyValue::String("metadata program".to_owned()),
+        )
+        .unwrap();
+    molecule
+        .properties_mut()
+        .insert(
+            PropertyKey::new("sdf.comment").unwrap(),
+            PropertyValue::String("metadata comment".to_owned()),
+        )
+        .unwrap();
 
     let mut nitrogen = Atom::new(Element::from_symbol("N").expect("N"));
     nitrogen.formal_charge = 1;
@@ -450,7 +462,10 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
     assert!(written.contains("RAD=2"));
 
     let reparsed = read_molfile(&written).expect("written V3000 should parse");
-    assert!(reparsed.props().get("sdf.title").is_none());
+    assert!(reparsed
+        .properties()
+        .get(&PropertyKey::new("sdf.title").unwrap())
+        .is_none());
     assert_eq!(
         reparsed.atom(AtomId::new(0)).expect("atom").formal_charge,
         1

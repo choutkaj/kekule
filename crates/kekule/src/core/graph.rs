@@ -1,9 +1,9 @@
-use super::{Atom, Bond, BondId, PropMap, StereoElement, StereoGroup};
+use super::{Atom, Bond, BondId, StereoElement, StereoGroup};
 
 /// Authoritative represented chemistry for one molecule.
 ///
 /// `Graph` owns stable local atom and bond slots, adjacency, represented
-/// stereochemistry, and graph-level annotations. Structural mutation is kept
+/// stereochemistry. Structural mutation is kept
 /// crate-private and is published only through `MoleculeEditor::finish`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Graph {
@@ -12,7 +12,6 @@ pub struct Graph {
     pub(crate) adjacency: Vec<Vec<BondId>>,
     pub(crate) stereo_elements: Vec<Option<StereoElement>>,
     pub(crate) stereo_groups: Vec<Option<StereoGroup>>,
-    pub(crate) props: PropMap,
 }
 
 impl Graph {

@@ -4,11 +4,12 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kekule::core::{Atom, BondOrder, Element, PropValue};
+use kekule::core::{Atom, BondOrder, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::topology::TopologyBuilder;
 use kekule::units::{
-    Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND,
+    Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, DIMENSIONLESS, NANOMETER, PICOSECOND,
 };
 use kekule_traj::io::trr::{TrrScalarPrecision, TrrWriteOptions};
 use kekule_traj::io::{create_trajectory_writer, OverwritePolicy, TrajectoryWriteOptions};
@@ -77,11 +78,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         )))?;
         frame.set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))?;
         frame.set_step(Some(step));
-        frame.props_mut().clear();
-        frame.props_mut().insert(
-            "gromacs.trr.lambda".into(),
-            PropValue::Float(0.125 + step as f64 * 0.125),
-        );
+        frame.properties_mut().clear_owner();
+        frame.properties_mut().insert(
+            PropertyKey::new("gromacs.trr.lambda")?,
+            PropertyValue::Real {
+                value: 0.125 + step as f64 * 0.125,
+                unit: DIMENSIONLESS,
+            },
+        )?;
         writer.write_frame(frame.frame_view())?;
     }
     writer.finish()?;

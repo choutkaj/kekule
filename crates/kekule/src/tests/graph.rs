@@ -359,39 +359,78 @@ fn absent_perception_remains_absent_after_topology_mutation() {
 }
 
 #[test]
-fn property_maps_can_be_mutated_without_topology_changes() {
+fn properties_can_be_mutated_without_topology_changes() {
     let mut mol = crate::core::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let bond = mol
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
-    mol.props_mut().insert(
-        "name".to_owned(),
-        PropValue::String("carbon monoxide".to_owned()),
-    );
-    mol.atom_mut(a)
-        .expect("atom exists")
-        .props
-        .insert("role".to_owned(), PropValue::String("donor".to_owned()));
-    mol.bond_mut(bond)
-        .expect("bond exists")
-        .props
-        .insert("source".to_owned(), PropValue::Bool(true));
+    let name = PropertyKey::new("name").unwrap();
+    let role = PropertyKey::new("role").unwrap();
+    let source = PropertyKey::new("source").unwrap();
+    mol.properties_mut()
+        .insert(
+            name.clone(),
+            PropertyValue::String("carbon monoxide".to_owned()),
+        )
+        .unwrap();
+    mol.set_atom_property(
+        a,
+        role.clone(),
+        Some(PropertyValue::String("donor".to_owned())),
+    )
+    .unwrap();
+    mol.set_bond_property(bond, source.clone(), Some(PropertyValue::Bool(true)))
+        .unwrap();
 
     assert_eq!(mol.atom_count(), 2);
     assert_eq!(mol.bond_count(), 1);
     assert_eq!(
-        mol.props().get("name"),
-        Some(&PropValue::String("carbon monoxide".to_owned()))
+        mol.properties().get(&name),
+        Some(&PropertyValue::String("carbon monoxide".to_owned()))
     );
     assert_eq!(
-        mol.atom(a).expect("atom exists").props.get("role"),
-        Some(&PropValue::String("donor".to_owned()))
+        mol.atom_property(a, &role).unwrap(),
+        Some(PropertyValue::String("donor".to_owned()))
     );
     assert_eq!(
-        mol.bond(bond).expect("bond exists").props.get("source"),
-        Some(&PropValue::Bool(true))
+        mol.bond_property(bond, &source).unwrap(),
+        Some(PropertyValue::Bool(true))
+    );
+}
+
+#[test]
+fn atom_and_bond_properties_follow_stable_ids_across_tombstones() {
+    let mut molecule = crate::core::MoleculeEditor::new();
+    let first = molecule.add_atom(carbon()).unwrap();
+    let removed = molecule.add_atom(carbon()).unwrap();
+    let last = molecule.add_atom(oxygen()).unwrap();
+    let removed_bond = molecule
+        .add_bond(first, removed, BondOrder::Single)
+        .unwrap();
+    let retained_bond = molecule.add_bond(first, last, BondOrder::Double).unwrap();
+    let tag = PropertyKey::new("tag").unwrap();
+    molecule
+        .set_atom_property(last, tag.clone(), Some(PropertyValue::Int(3)))
+        .unwrap();
+    molecule
+        .set_bond_property(
+            retained_bond,
+            tag.clone(),
+            Some(PropertyValue::String("retained".into())),
+        )
+        .unwrap();
+    molecule.delete_bond(removed_bond).unwrap();
+    molecule.delete_atom(removed).unwrap();
+
+    assert_eq!(
+        molecule.atom_property(last, &tag).unwrap(),
+        Some(PropertyValue::Int(3))
+    );
+    assert_eq!(
+        molecule.bond_property(retained_bond, &tag).unwrap(),
+        Some(PropertyValue::String("retained".into()))
     );
 }
 
@@ -406,16 +445,24 @@ fn property_and_coordinate_edits_preserve_computed_state() {
     mol.begin_aromaticity(AromaticityModel::RdkitLike);
     let before = mol.perception().clone();
 
-    mol.atom_mut(atoms[0])
-        .expect("atom exists")
-        .props
-        .insert("label".to_owned(), PropValue::String("a".to_owned()));
-    mol.bond_mut(bonds[0])
-        .expect("bond exists")
-        .props
-        .insert("score".to_owned(), PropValue::Int(1));
-    mol.props_mut()
-        .insert("name".to_owned(), PropValue::String("triangle".to_owned()));
+    mol.set_atom_property(
+        atoms[0],
+        PropertyKey::new("label").unwrap(),
+        Some(PropertyValue::String("a".to_owned())),
+    )
+    .unwrap();
+    mol.set_bond_property(
+        bonds[0],
+        PropertyKey::new("score").unwrap(),
+        Some(PropertyValue::Int(1)),
+    )
+    .unwrap();
+    mol.properties_mut()
+        .insert(
+            PropertyKey::new("name").unwrap(),
+            PropertyValue::String("triangle".to_owned()),
+        )
+        .unwrap();
     assert_eq!(mol.perception(), &before);
     assert!(mol.ring_membership().is_some());
     assert!(mol.ring_set().is_some());

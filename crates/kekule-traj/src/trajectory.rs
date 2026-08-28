@@ -3,12 +3,9 @@
 
 use std::{fmt, io, sync::Arc};
 
-use kekule::core::PropMap;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::structure::{
-    AtomData, AtomDataError, BondData, BondDataError, ModelError, ModelView, PositionError,
-    Positions,
-};
+use kekule::properties::{Properties, PropertyError};
+use kekule::structure::{ModelError, ModelView, PositionError, Positions};
 use kekule::topology::transform::TopologySubsetError;
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::units::{
@@ -164,29 +161,24 @@ vector_array!(Forces, CANONICAL_FORCE_UNIT);
 pub struct TrajectoryFrame {
     positions: Positions,
     cell: Option<PeriodicCell>,
-    atom_data: AtomData,
-    bond_data: BondData,
+    properties: Properties,
     velocities: Option<Velocities>,
     forces: Option<Forces>,
     time: Option<Quantity<f64>>,
     step: Option<u64>,
-    props: PropMap,
 }
 
 impl TrajectoryFrame {
     pub fn new(positions: Positions, bond_count: usize) -> Self {
-        let atom_data = AtomData::new(positions.len());
-        let bond_data = BondData::new(bond_count);
+        let properties = Properties::realization(positions.len(), bond_count);
         Self {
             positions,
             cell: None,
-            atom_data,
-            bond_data,
+            properties,
             velocities: None,
             forces: None,
             time: None,
             step: None,
-            props: PropMap::new(),
         }
     }
 
@@ -202,41 +194,28 @@ impl TrajectoryFrame {
         self.cell = cell;
     }
 
-    pub fn atom_data(&self) -> &AtomData {
-        &self.atom_data
+    pub const fn properties(&self) -> &Properties {
+        &self.properties
     }
 
-    pub fn atom_data_mut(&mut self) -> &mut AtomData {
-        &mut self.atom_data
+    pub fn properties_mut(&mut self) -> &mut Properties {
+        &mut self.properties
     }
 
-    pub fn set_atom_data(&mut self, atom_data: AtomData) -> Result<(), FrameError> {
-        if atom_data.len() != self.positions.len() {
+    pub fn set_properties(&mut self, properties: Properties) -> Result<(), FrameError> {
+        if properties.atoms().len() != self.positions.len() {
             return Err(FrameError::AtomCountMismatch {
                 expected: self.positions.len(),
-                actual: atom_data.len(),
+                actual: properties.atoms().len(),
             });
         }
-        self.atom_data = atom_data;
-        Ok(())
-    }
-
-    pub fn bond_data(&self) -> &BondData {
-        &self.bond_data
-    }
-
-    pub fn bond_data_mut(&mut self) -> &mut BondData {
-        &mut self.bond_data
-    }
-
-    pub fn set_bond_data(&mut self, bond_data: BondData) -> Result<(), FrameError> {
-        if bond_data.len() != self.bond_data.len() {
+        if properties.bonds().len() != self.properties.bonds().len() {
             return Err(FrameError::BondCountMismatch {
-                expected: self.bond_data.len(),
-                actual: bond_data.len(),
+                expected: self.properties.bonds().len(),
+                actual: properties.bonds().len(),
             });
         }
-        self.bond_data = bond_data;
+        self.properties = properties;
         Ok(())
     }
 
@@ -254,14 +233,6 @@ impl TrajectoryFrame {
 
     pub const fn step(&self) -> Option<u64> {
         self.step
-    }
-
-    pub fn props(&self) -> &PropMap {
-        &self.props
-    }
-
-    pub fn props_mut(&mut self) -> &mut PropMap {
-        &mut self.props
     }
 
     pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), FrameError> {
@@ -300,11 +271,11 @@ impl TrajectoryFrame {
 
     pub fn validate(&self, topology: &Arc<Topology>) -> Result<(), FrameError> {
         validate_atom_count(topology.atom_count(), self.positions.len())?;
-        validate_atom_count(topology.atom_count(), self.atom_data.len())?;
-        if self.bond_data.len() != topology.bond_count() {
+        validate_atom_count(topology.atom_count(), self.properties.atoms().len())?;
+        if self.properties.bonds().len() != topology.bond_count() {
             return Err(FrameError::BondCountMismatch {
                 expected: topology.bond_count(),
-                actual: self.bond_data.len(),
+                actual: self.properties.bonds().len(),
             });
         }
         if let Some(values) = &self.velocities {
@@ -325,13 +296,11 @@ impl TrajectoryFrame {
             topology,
             positions: &self.positions,
             cell: self.cell.as_ref(),
-            atom_data: &self.atom_data,
-            bond_data: &self.bond_data,
+            properties: &self.properties,
             velocities: self.velocities.as_ref().map(Velocities::values),
             forces: self.forces.as_ref().map(Forces::values),
             time: self.time,
             step: self.step,
-            props: &self.props,
         })
     }
 }
@@ -342,13 +311,11 @@ pub struct TrajectoryFrameView<'a> {
     topology: &'a Arc<Topology>,
     positions: &'a Positions,
     cell: Option<&'a PeriodicCell>,
-    atom_data: &'a AtomData,
-    bond_data: &'a BondData,
+    properties: &'a Properties,
     velocities: Option<Quantity<&'a [Vector3]>>,
     forces: Option<Quantity<&'a [Vector3]>>,
     time: Option<Quantity<f64>>,
     step: Option<u64>,
-    props: &'a PropMap,
 }
 
 impl<'a> TrajectoryFrameView<'a> {
@@ -372,12 +339,8 @@ impl<'a> TrajectoryFrameView<'a> {
         self.cell
     }
 
-    pub const fn atom_data(self) -> &'a AtomData {
-        self.atom_data
-    }
-
-    pub const fn bond_data(self) -> &'a BondData {
-        self.bond_data
+    pub const fn properties(self) -> &'a Properties {
+        self.properties
     }
 
     pub const fn velocities(self) -> Option<Quantity<&'a [Vector3]>> {
@@ -396,19 +359,9 @@ impl<'a> TrajectoryFrameView<'a> {
         self.step
     }
 
-    pub const fn props(self) -> &'a PropMap {
-        self.props
-    }
-
     pub fn model_view(self) -> ModelView<'a> {
-        ModelView::new(
-            self.topology,
-            self.positions,
-            self.cell,
-            self.atom_data,
-            self.bond_data,
-        )
-        .expect("trajectory frame view has validated topology")
+        ModelView::new(self.topology, self.positions, self.cell, self.properties)
+            .expect("trajectory frame view has validated topology")
     }
 }
 
@@ -416,7 +369,7 @@ impl<'a> TrajectoryFrameView<'a> {
 ///
 /// A decoder builds this value only after it has read one complete frame into
 /// reusable scratch. [`FrameBuffer::replace_from_data`] validates every field,
-/// including atom and bond data dimensions, before changing the destination,
+/// including atom and bond property-table dimensions, before changing the destination,
 /// converts units once, reuses dense-array allocations, and clears optional
 /// fields omitted from this value.
 #[derive(Debug, Clone, Copy)]
@@ -427,9 +380,7 @@ pub struct FrameBufferData<'a> {
     forces: Option<Quantity<&'a [Vector3]>>,
     time: Option<Quantity<f64>>,
     step: Option<u64>,
-    atom_data: Option<&'a AtomData>,
-    bond_data: Option<&'a BondData>,
-    props: Option<&'a PropMap>,
+    properties: Option<&'a Properties>,
 }
 
 impl<'a> FrameBufferData<'a> {
@@ -442,9 +393,7 @@ impl<'a> FrameBufferData<'a> {
             forces: None,
             time: None,
             step: None,
-            atom_data: None,
-            bond_data: None,
-            props: None,
+            properties: None,
         }
     }
 
@@ -457,9 +406,7 @@ impl<'a> FrameBufferData<'a> {
             forces: frame.forces,
             time: frame.time,
             step: frame.step,
-            atom_data: Some(frame.atom_data),
-            bond_data: Some(frame.bond_data),
-            props: Some(frame.props),
+            properties: Some(frame.properties),
         }
     }
 
@@ -488,18 +435,8 @@ impl<'a> FrameBufferData<'a> {
         self
     }
 
-    pub const fn with_atom_data(mut self, atom_data: &'a AtomData) -> Self {
-        self.atom_data = Some(atom_data);
-        self
-    }
-
-    pub const fn with_bond_data(mut self, bond_data: &'a BondData) -> Self {
-        self.bond_data = Some(bond_data);
-        self
-    }
-
-    pub const fn with_props(mut self, props: &'a PropMap) -> Self {
-        self.props = Some(props);
+    pub const fn with_properties(mut self, properties: &'a Properties) -> Self {
+        self.properties = Some(properties);
         self
     }
 }
@@ -510,15 +447,13 @@ pub struct FrameBuffer {
     topology: Arc<Topology>,
     positions: Positions,
     cell: Option<PeriodicCell>,
-    atom_data: AtomData,
-    bond_data: BondData,
+    properties: Properties,
     velocities: Velocities,
     has_velocities: bool,
     forces: Forces,
     has_forces: bool,
     time: Option<Quantity<f64>>,
     step: Option<u64>,
-    props: PropMap,
 }
 
 impl FrameBuffer {
@@ -526,15 +461,13 @@ impl FrameBuffer {
         Self {
             positions: Positions::zeros(topology.atom_count()),
             cell: None,
-            atom_data: AtomData::new(topology.atom_count()),
-            bond_data: BondData::new(topology.bond_count()),
+            properties: Properties::realization(topology.atom_count(), topology.bond_count()),
             velocities: Velocities::zeros(topology.atom_count()),
             has_velocities: false,
             forces: Forces::zeros(topology.atom_count()),
             has_forces: false,
             time: None,
             step: None,
-            props: PropMap::new(),
             topology,
         }
     }
@@ -555,20 +488,12 @@ impl FrameBuffer {
         self.cell.as_ref()
     }
 
-    pub fn atom_data(&self) -> &AtomData {
-        &self.atom_data
+    pub const fn properties(&self) -> &Properties {
+        &self.properties
     }
 
-    pub fn atom_data_mut(&mut self) -> &mut AtomData {
-        &mut self.atom_data
-    }
-
-    pub fn bond_data(&self) -> &BondData {
-        &self.bond_data
-    }
-
-    pub fn bond_data_mut(&mut self) -> &mut BondData {
-        &mut self.bond_data
+    pub fn properties_mut(&mut self) -> &mut Properties {
+        &mut self.properties
     }
 
     pub fn set_positions<T>(&mut self, positions: Quantity<T>) -> Result<(), FrameError>
@@ -629,47 +554,33 @@ impl FrameBuffer {
         self.step = step;
     }
 
-    pub fn set_atom_data(&mut self, atom_data: AtomData) -> Result<(), FrameError> {
-        if atom_data.len() != self.topology.atom_count() {
+    pub fn set_properties(&mut self, properties: Properties) -> Result<(), FrameError> {
+        if properties.atoms().len() != self.topology.atom_count() {
             return Err(FrameError::AtomCountMismatch {
                 expected: self.topology.atom_count(),
-                actual: atom_data.len(),
+                actual: properties.atoms().len(),
             });
         }
-        self.atom_data = atom_data;
-        Ok(())
-    }
-
-    pub fn set_bond_data(&mut self, bond_data: BondData) -> Result<(), FrameError> {
-        if bond_data.len() != self.topology.bond_count() {
+        if properties.bonds().len() != self.topology.bond_count() {
             return Err(FrameError::BondCountMismatch {
                 expected: self.topology.bond_count(),
-                actual: bond_data.len(),
+                actual: properties.bonds().len(),
             });
         }
-        self.bond_data = bond_data;
+        self.properties = properties;
         Ok(())
-    }
-
-    pub fn props(&self) -> &PropMap {
-        &self.props
-    }
-
-    pub fn props_mut(&mut self) -> &mut PropMap {
-        &mut self.props
     }
 
     /// Clears all per-frame state except positions while retaining reusable
     /// array allocations and the bound topology.
     pub fn reset_dynamic_state(&mut self) {
         self.cell = None;
-        self.atom_data = AtomData::new(self.topology.atom_count());
-        self.bond_data = BondData::new(self.topology.bond_count());
+        self.properties =
+            Properties::realization(self.topology.atom_count(), self.topology.bond_count());
         self.has_velocities = false;
         self.has_forces = false;
         self.time = None;
         self.step = None;
-        self.props.clear();
     }
 
     pub fn model_view(&self) -> ModelView<'_> {
@@ -677,8 +588,7 @@ impl FrameBuffer {
             &self.topology,
             &self.positions,
             self.cell.as_ref(),
-            &self.atom_data,
-            &self.bond_data,
+            &self.properties,
         )
         .expect("frame buffer state is bound to its topology")
     }
@@ -688,19 +598,17 @@ impl FrameBuffer {
             topology: &self.topology,
             positions: &self.positions,
             cell: self.cell.as_ref(),
-            atom_data: &self.atom_data,
-            bond_data: &self.bond_data,
+            properties: &self.properties,
             velocities: self.has_velocities.then(|| self.velocities.values()),
             forces: self.has_forces.then(|| self.forces.values()),
             time: self.time,
             step: self.step,
-            props: &self.props,
         }
     }
 
     /// Replaces the complete visible frame transactionally.
     ///
-    /// All count, unit, finite-value, atom-data, bond-data, and optional-array
+    /// All count, unit, finite-value, property-table, and optional-array
     /// validation completes before any destination field changes.
     /// Existing position, velocity, and force allocations are reused. Optional
     /// fields absent from `data`, including properties, are cleared.
@@ -734,26 +642,18 @@ impl FrameBuffer {
                 Ok(time)
             })
             .transpose()?;
-        if let Some(atom_data) = data.atom_data {
-            validate_atom_count(self.topology.atom_count(), atom_data.len())?;
-        }
-        if let Some(bond_data) = data.bond_data {
-            if bond_data.len() != self.topology.bond_count() {
+        if let Some(properties) = data.properties {
+            validate_atom_count(self.topology.atom_count(), properties.atoms().len())?;
+            if properties.bonds().len() != self.topology.bond_count() {
                 return Err(FrameError::BondCountMismatch {
                     expected: self.topology.bond_count(),
-                    actual: bond_data.len(),
+                    actual: properties.bonds().len(),
                 });
             }
         }
-        let atom_data = data
-            .atom_data
-            .cloned()
-            .unwrap_or_else(|| AtomData::new(self.topology.atom_count()));
-        let bond_data = data
-            .bond_data
-            .cloned()
-            .unwrap_or_else(|| BondData::new(self.topology.bond_count()));
-        let props = data.props.cloned().unwrap_or_default();
+        let properties = data.properties.cloned().unwrap_or_else(|| {
+            Properties::realization(self.topology.atom_count(), self.topology.bond_count())
+        });
 
         self.positions.set_all(data.positions)?;
         self.cell = data.cell;
@@ -775,9 +675,7 @@ impl FrameBuffer {
         }
         self.time = time;
         self.step = data.step;
-        self.atom_data = atom_data;
-        self.bond_data = bond_data;
-        self.props = props;
+        self.properties = properties;
         Ok(())
     }
 
@@ -793,6 +691,7 @@ impl FrameBuffer {
 #[derive(Debug, Clone)]
 pub struct Trajectory {
     topology: Arc<Topology>,
+    properties: Properties,
     frames: Vec<TrajectoryFrame>,
 }
 
@@ -800,6 +699,7 @@ impl Trajectory {
     pub fn new(topology: Arc<Topology>) -> Self {
         Self {
             topology,
+            properties: Properties::new(),
             frames: Vec::new(),
         }
     }
@@ -823,6 +723,14 @@ impl Trajectory {
         Arc::clone(&self.topology)
     }
 
+    pub const fn properties(&self) -> &Properties {
+        &self.properties
+    }
+
+    pub fn properties_mut(&mut self) -> &mut Properties {
+        &mut self.properties
+    }
+
     /// Constructs one topology subset and applies its dense mapping to every frame.
     pub fn slice(&self, selection: &AtomSelection) -> Result<Self, TrajectorySliceError> {
         let subset = self.topology.subset(selection)?;
@@ -843,8 +751,15 @@ impl Trajectory {
             target.push(TrajectoryFrame {
                 positions: frame.positions.select_indices(&atom_indices)?,
                 cell: frame.cell,
-                atom_data: frame.atom_data.select_indices(&atom_indices)?,
-                bond_data: frame.bond_data.select_indices(&bond_indices)?,
+                properties: {
+                    let mut properties =
+                        Properties::realization(atom_indices.len(), bond_indices.len());
+                    *properties.atoms_mut() =
+                        frame.properties.atoms().select_indices(&atom_indices)?;
+                    *properties.bonds_mut() =
+                        frame.properties.bonds().select_indices(&bond_indices)?;
+                    properties
+                },
                 velocities: frame
                     .velocities
                     .as_ref()
@@ -857,7 +772,6 @@ impl Trajectory {
                     .transpose()?,
                 time: frame.time,
                 step: frame.step,
-                props: frame.props.clone(),
             })?;
         }
         Ok(target)
@@ -1025,13 +939,11 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
         let positions = Positions::new(frame.positions.values())?;
         let mut owned = TrajectoryFrame::new(positions, self.trajectory.topology.bond_count());
         owned.cell = frame.cell.copied();
-        owned.atom_data = frame.atom_data.clone();
-        owned.bond_data = frame.bond_data.clone();
+        owned.properties = frame.properties.clone();
         owned.velocities = frame.velocities.map(Velocities::new).transpose()?;
         owned.forces = frame.forces.map(Forces::new).transpose()?;
         owned.time = frame.time;
         owned.step = frame.step;
-        owned.props = frame.props.clone();
         self.trajectory.push(owned)
     }
 }
@@ -1183,8 +1095,7 @@ pub enum FrameError {
     NonFiniteVector { index: usize },
     NonFiniteTime,
     Position(PositionError),
-    AtomData(AtomDataError),
-    BondData(BondDataError),
+    Property(PropertyError),
     Unit(UnitError),
 }
 
@@ -1208,12 +1119,7 @@ impl fmt::Display for FrameError {
             }
             Self::NonFiniteTime => formatter.write_str("trajectory time must be finite"),
             Self::Position(error) => write!(formatter, "invalid frame positions: {error}"),
-            Self::AtomData(error) => {
-                write!(formatter, "invalid frame atom data: {error}")
-            }
-            Self::BondData(error) => {
-                write!(formatter, "invalid frame bond data: {error}")
-            }
+            Self::Property(error) => write!(formatter, "invalid frame property: {error}"),
             Self::Unit(error) => write!(formatter, "invalid frame quantity unit: {error}"),
         }
     }
@@ -1227,15 +1133,9 @@ impl From<PositionError> for FrameError {
     }
 }
 
-impl From<AtomDataError> for FrameError {
-    fn from(error: AtomDataError) -> Self {
-        Self::AtomData(error)
-    }
-}
-
-impl From<BondDataError> for FrameError {
-    fn from(error: BondDataError) -> Self {
-        Self::BondData(error)
+impl From<PropertyError> for FrameError {
+    fn from(error: PropertyError) -> Self {
+        Self::Property(error)
     }
 }
 
@@ -1543,8 +1443,7 @@ pub enum TrajectoryError {
 pub enum TrajectorySliceError {
     Topology(TopologySubsetError),
     Position(PositionError),
-    AtomData(AtomDataError),
-    BondData(BondDataError),
+    Property(PropertyError),
     Frame(Box<FrameError>),
     Trajectory(TrajectoryError),
 }
@@ -1567,14 +1466,9 @@ impl From<PositionError> for TrajectorySliceError {
         Self::Position(error)
     }
 }
-impl From<AtomDataError> for TrajectorySliceError {
-    fn from(error: AtomDataError) -> Self {
-        Self::AtomData(error)
-    }
-}
-impl From<BondDataError> for TrajectorySliceError {
-    fn from(error: BondDataError) -> Self {
-        Self::BondData(error)
+impl From<PropertyError> for TrajectorySliceError {
+    fn from(error: PropertyError) -> Self {
+        Self::Property(error)
     }
 }
 impl From<FrameError> for TrajectorySliceError {
@@ -1702,8 +1596,9 @@ impl From<TrajectoryCodecErrorContext> for TrajectoryError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kekule::core::{Atom, BondOrder, Element, MoleculeEditor, PropValue};
+    use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
     use kekule::geometry::Point3;
+    use kekule::properties::{Properties, PropertyKey, PropertyValue};
     use kekule::topology::{AtomSelection, TopologyBuilder};
     use kekule::units::{
         ANGSTROM, DIMENSIONLESS, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND,
@@ -1730,6 +1625,17 @@ mod tests {
 
     fn positions(values: &[Point3]) -> Positions {
         Positions::new(Quantity::new(values, NANOMETER)).unwrap()
+    }
+
+    fn key(value: &str) -> PropertyKey {
+        PropertyKey::new(value).unwrap()
+    }
+
+    fn real(value: f64) -> PropertyValue {
+        PropertyValue::Real {
+            value,
+            unit: DIMENSIONLESS,
+        }
     }
 
     #[test]
@@ -1799,11 +1705,11 @@ mod tests {
             })
         ));
         assert!(matches!(
-            frame.set_atom_data(AtomData::new(1)),
+            frame.set_properties(Properties::realization(1, topology.bond_count())),
             Err(FrameError::AtomCountMismatch { .. })
         ));
         assert!(matches!(
-            frame.set_bond_data(BondData::new(0)),
+            frame.set_properties(Properties::realization(topology.atom_count(), 0)),
             Err(FrameError::BondCountMismatch { .. })
         ));
     }
@@ -1817,8 +1723,9 @@ mod tests {
             topology.bond_count(),
         );
         frame
-            .atom_data_mut()
-            .set_occupancy_at(0, Some(0.8))
+            .properties_mut()
+            .atoms_mut()
+            .set_value(key("score"), 0, Some(real(0.8)))
             .unwrap();
         frame
             .set_time(Some(Quantity::new(2.5, PICOSECOND)))
@@ -1827,7 +1734,13 @@ mod tests {
 
         let view = frame.view(&topology).unwrap();
         assert_eq!(view.model_view().position(atom).unwrap().value().x, 3.0);
-        assert_eq!(view.model_view().occupancy(atom).unwrap(), Some(0.8));
+        assert_eq!(
+            view.properties().atoms().value(&key("score"), 0).unwrap(),
+            Some(PropertyValue::Real {
+                value: 0.8,
+                unit: DIMENSIONLESS,
+            })
+        );
         assert_eq!(view.time(), Some(Quantity::new(2.5, PICOSECOND)));
         assert_eq!(view.step(), Some(7));
         assert_eq!(
@@ -1867,12 +1780,23 @@ mod tests {
             topology.bond_count(),
         );
         frame
-            .atom_data_mut()
-            .set_occupancies([Some(0.25), Some(0.75)])
+            .properties_mut()
+            .atoms_mut()
+            .set_value(key("score"), 0, Some(real(0.25)))
             .unwrap();
         frame
-            .bond_data_mut()
-            .set_property("score", Quantity::new([Some(9.0)], DIMENSIONLESS))
+            .properties_mut()
+            .atoms_mut()
+            .set_value(key("score"), 1, Some(real(0.75)))
+            .unwrap();
+        frame
+            .properties_mut()
+            .bonds_mut()
+            .set_value(key("score"), 0, Some(real(9.0)))
+            .unwrap();
+        frame
+            .properties_mut()
+            .insert(key("frame_energy"), real(12.0))
             .unwrap();
         frame
             .set_velocities(Some(
@@ -1896,18 +1820,30 @@ mod tests {
             .set_time(Some(Quantity::new(2.0, PICOSECOND)))
             .unwrap();
         frame.set_step(Some(8));
-        let trajectory = Trajectory::from_frames(Arc::clone(&topology), [frame]).unwrap();
+        let mut trajectory = Trajectory::from_frames(Arc::clone(&topology), [frame]).unwrap();
+        trajectory
+            .properties_mut()
+            .insert(
+                key("collection_source"),
+                PropertyValue::String("test".into()),
+            )
+            .unwrap();
 
         let sliced = trajectory.slice(&selection).unwrap();
+        assert!(sliced.properties().owner_is_empty());
         assert_eq!(sliced.topology().atom_count(), 1);
         assert_eq!(sliced.topology().bond_count(), 0);
         let frame = sliced.frame(0).unwrap();
+        assert!(frame.properties().owner_is_empty());
         assert_eq!(
             frame.positions().values().value(),
             &[Point3::new(2.0, 0.0, 0.0)]
         );
-        assert_eq!(frame.atom_data().occupancies(), Some(&[Some(0.75)][..]));
-        assert!(frame.bond_data().property("score").unwrap().is_none());
+        assert_eq!(
+            frame.properties().atoms().value(&key("score"), 0).unwrap(),
+            Some(real(0.75))
+        );
+        assert!(!frame.properties().bonds().has_data());
         assert_eq!(frame.velocities().unwrap().values().value()[0].x, 4.0);
         assert_eq!(frame.forces().unwrap().values().value()[0].x, 6.0);
         assert_eq!(frame.time(), Some(Quantity::new(2.0, PICOSECOND)));
@@ -1923,14 +1859,18 @@ mod tests {
         let force_ptr = buffer.forces.values().value().as_ptr();
         let points = [Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)];
         let vectors = [Vector3::new(1.0, 0.0, 0.0); 2];
-        let mut atom_data = AtomData::new(topology.atom_count());
-        atom_data.set_occupancy_at(0, Some(0.75)).unwrap();
-        let mut bond_data = BondData::new(topology.bond_count());
-        bond_data
-            .set_property("score", Quantity::new([Some(2.0)], DIMENSIONLESS))
+        let mut properties = Properties::realization(topology.atom_count(), topology.bond_count());
+        properties
+            .atoms_mut()
+            .set_value(key("atom_score"), 0, Some(real(0.75)))
             .unwrap();
-        let mut props = PropMap::new();
-        props.insert("codec:value".into(), PropValue::Int(7));
+        properties
+            .bonds_mut()
+            .set_value(key("bond_score"), 0, Some(real(2.0)))
+            .unwrap();
+        properties
+            .insert(key("codec_value"), PropertyValue::Int(7))
+            .unwrap();
 
         buffer
             .replace_from_data(
@@ -1939,9 +1879,7 @@ mod tests {
                     .with_forces(Quantity::new(vectors.as_slice(), CANONICAL_FORCE_UNIT))
                     .with_time(Quantity::new(1.0, PICOSECOND))
                     .with_step(4)
-                    .with_atom_data(&atom_data)
-                    .with_bond_data(&bond_data)
-                    .with_props(&props),
+                    .with_properties(&properties),
             )
             .unwrap();
         assert!(buffer.frame_view().velocities().is_some());
@@ -1949,9 +1887,12 @@ mod tests {
         assert_eq!(buffer.positions().values().value().as_ptr(), position_ptr);
         assert_eq!(buffer.velocities.values().value().as_ptr(), velocity_ptr);
         assert_eq!(buffer.forces.values().value().as_ptr(), force_ptr);
-        assert!(buffer.atom_data().has_data());
-        assert!(buffer.bond_data().has_data());
-        assert_eq!(buffer.props().get("codec:value"), Some(&PropValue::Int(7)));
+        assert!(buffer.properties().atoms().has_data());
+        assert!(buffer.properties().bonds().has_data());
+        assert_eq!(
+            buffer.properties().get(&key("codec_value")),
+            Some(&PropertyValue::Int(7))
+        );
 
         let before = buffer.frame_view().positions().values().value().to_vec();
         assert!(matches!(
@@ -1973,9 +1914,7 @@ mod tests {
         assert!(buffer.frame_view().forces().is_none());
         assert!(buffer.frame_view().time().is_none());
         assert!(buffer.frame_view().step().is_none());
-        assert!(!buffer.atom_data().has_data());
-        assert!(!buffer.bond_data().has_data());
-        assert!(buffer.props().is_empty());
+        assert!(buffer.properties().is_empty());
     }
 
     #[test]
@@ -2001,12 +1940,14 @@ mod tests {
         );
         frame.set_step(Some(9));
         frame
-            .atom_data_mut()
-            .set_occupancy_at(0, Some(0.6))
+            .properties_mut()
+            .atoms_mut()
+            .set_value(key("atom_score"), 0, Some(real(0.6)))
             .unwrap();
         frame
-            .bond_data_mut()
-            .set_property("score", Quantity::new([Some(4.0)], DIMENSIONLESS))
+            .properties_mut()
+            .bonds_mut()
+            .set_value(key("bond_score"), 0, Some(real(4.0)))
             .unwrap();
         trajectory.push(frame).unwrap();
 
@@ -2015,10 +1956,21 @@ mod tests {
         assert!(reader.read_next(&mut buffer).unwrap());
         assert_eq!(buffer.positions().values().value()[0].x, 5.0);
         assert_eq!(buffer.frame_view().step(), Some(9));
-        assert_eq!(buffer.atom_data().occupancy_at(0).unwrap(), Some(0.6));
         assert_eq!(
-            buffer.bond_data().property_value_at("score", 0).unwrap(),
-            Some(Quantity::new(4.0, DIMENSIONLESS))
+            buffer
+                .properties()
+                .atoms()
+                .value(&key("atom_score"), 0)
+                .unwrap(),
+            Some(real(0.6))
+        );
+        assert_eq!(
+            buffer
+                .properties()
+                .bonds()
+                .value(&key("bond_score"), 0)
+                .unwrap(),
+            Some(real(4.0))
         );
         assert!(!reader.read_next(&mut buffer).unwrap());
 
@@ -2031,19 +1983,21 @@ mod tests {
             written
                 .frame(0)
                 .unwrap()
-                .atom_data()
-                .occupancy_at(0)
+                .properties()
+                .atoms()
+                .value(&key("atom_score"), 0)
                 .unwrap(),
-            Some(0.6)
+            Some(real(0.6))
         );
         assert_eq!(
             written
                 .frame(0)
                 .unwrap()
-                .bond_data()
-                .property_value_at("score", 0)
+                .properties()
+                .bonds()
+                .value(&key("bond_score"), 0)
                 .unwrap(),
-            Some(Quantity::new(4.0, DIMENSIONLESS))
+            Some(real(4.0))
         );
 
         let independent = make_topology(true);

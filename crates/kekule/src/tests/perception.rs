@@ -250,18 +250,27 @@ fn discrete_chemical_perception_changes_only_perception_state() {
     let atom_ids = molecule.atom_ids().collect::<Vec<_>>();
     let annotated_atom = atom_ids[0];
     let annotated_bond = molecule.bond_ids().next().expect("fixture bond");
-    molecule.props_mut().insert(
-        "perception_purity_fixture".to_owned(),
-        PropValue::String("molecule property".to_owned()),
-    );
     molecule
-        .atom_props_mut(annotated_atom)
-        .expect("fixture atom")
-        .insert("atom_note".to_owned(), PropValue::Bool(true));
+        .properties_mut()
+        .insert(
+            PropertyKey::new("perception_purity_fixture").unwrap(),
+            PropertyValue::String("molecule property".to_owned()),
+        )
+        .unwrap();
     molecule
-        .bond_props_mut(annotated_bond)
-        .expect("fixture bond")
-        .insert("bond_note".to_owned(), PropValue::Int(7));
+        .set_atom_property(
+            annotated_atom,
+            PropertyKey::new("atom_note").unwrap(),
+            Some(PropertyValue::Bool(true)),
+        )
+        .unwrap();
+    molecule
+        .set_bond_property(
+            annotated_bond,
+            PropertyKey::new("bond_note").unwrap(),
+            Some(PropertyValue::Int(7)),
+        )
+        .unwrap();
 
     let stereo_element = molecule
         .stereo_element_ids()

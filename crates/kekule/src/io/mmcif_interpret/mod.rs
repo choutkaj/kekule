@@ -4,7 +4,7 @@ mod ensemble;
 mod struct_conn;
 mod types;
 
-use crate::structure::{AtomData, ModelBuilder};
+use crate::structure::ModelBuilder;
 use crate::units::{Quantity, SQUARE_ANGSTROM};
 
 use super::{MmcifBlock, MmcifDocument};
@@ -104,24 +104,15 @@ pub(crate) fn interpret_mmcif_block(
     *builder.topology_builder_mut().hierarchy_mut() =
         build_topology_hierarchy(&report.instances, &polymer_asym_order)?;
     let mut model = builder.build().map_err(graph_error)?;
-    let mut occupancies = vec![None; model.topology().atom_count()];
-    let mut b_factors = vec![None; model.topology().atom_count()];
     for (atom, occupancy, b_factor) in qualified_atom_data {
-        let index = model
-            .topology()
-            .atom_index(atom)
-            .expect("interpreted atom has a dense topology index");
-        occupancies[index.index()] = occupancy;
-        b_factors[index.index()] = b_factor;
+        model.set_occupancy(atom, occupancy).map_err(graph_error)?;
+        model
+            .set_b_factor(
+                atom,
+                b_factor.map(|value| Quantity::new(value, SQUARE_ANGSTROM)),
+            )
+            .map_err(graph_error)?;
     }
-    let mut atom_data = AtomData::new(model.atom_count());
-    atom_data
-        .set_occupancies(occupancies)
-        .map_err(graph_error)?;
-    atom_data
-        .set_b_factors(Quantity::new(b_factors, SQUARE_ANGSTROM))
-        .map_err(graph_error)?;
-    model.set_atom_data(atom_data).map_err(graph_error)?;
     report.macromolecules = report
         .instances
         .iter()

@@ -347,7 +347,7 @@ fn transform_frame(
     let mut transformed = TrajectoryFrame::new(positions, topology.bond_count());
     transformed.set_cell(cell);
     transformed
-        .set_atom_data(source.atom_data().clone())
+        .set_properties(source.properties().clone())
         .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
     if let Some(values) = source.velocities() {
         let rotated = values
@@ -379,7 +379,6 @@ fn transform_frame(
         .set_time(source.time())
         .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
     transformed.set_step(source.step());
-    transformed.props_mut().clone_from(source.props());
     Ok(transformed)
 }
 
@@ -613,12 +612,13 @@ mod tests {
 
     use super::*;
     use kekule::alignment::{AlignmentGeometry, PeriodicAlignmentPolicy};
-    use kekule::core::{Atom, BondOrder, Element, PropValue};
+    use kekule::core::{Atom, BondOrder, Element};
     use kekule::geometry::{Matrix3, Point3, Vector3};
-    use kekule::structure::AtomData;
+    use kekule::properties::{PropertyKey, PropertyValue};
     use kekule::topology::{Topology, TopologyBuilder};
     use kekule::units::{
-        Quantity, ANGSTROM, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND,
+        Quantity, ANGSTROM, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, DIMENSIONLESS,
+        NANOMETER, PICOSECOND,
     };
 
     fn make_topology(atom_count: usize) -> Arc<Topology> {
@@ -854,12 +854,28 @@ mod tests {
             .set_time(Some(Quantity::new(2.5, PICOSECOND)))
             .unwrap();
         moving_frame.set_step(Some(25));
-        let mut atom_data = AtomData::new(topology.atom_count());
-        atom_data.set_occupancy_at(0, Some(0.7)).unwrap();
-        moving_frame.set_atom_data(atom_data.clone()).unwrap();
+        let score_key = PropertyKey::new("score").unwrap();
         moving_frame
-            .props_mut()
-            .insert("label".to_owned(), PropValue::String("moving".to_owned()));
+            .properties_mut()
+            .atoms_mut()
+            .set_value(
+                score_key.clone(),
+                0,
+                Some(PropertyValue::Real {
+                    value: 0.7,
+                    unit: DIMENSIONLESS,
+                }),
+            )
+            .unwrap();
+        let label_key = PropertyKey::new("label").unwrap();
+        moving_frame
+            .properties_mut()
+            .insert(
+                label_key.clone(),
+                PropertyValue::String("moving".to_owned()),
+            )
+            .unwrap();
+        let expected_properties = moving_frame.properties().clone();
         let mut trajectory =
             Trajectory::from_frames(Arc::clone(&topology), [reference_frame, moving_frame])
                 .unwrap();
@@ -907,10 +923,10 @@ mod tests {
         }
         assert_eq!(transformed.time(), Some(Quantity::new(2.5, PICOSECOND)));
         assert_eq!(transformed.step(), Some(25));
-        assert_eq!(transformed.atom_data(), &atom_data);
+        assert_eq!(transformed.properties(), &expected_properties);
         assert_eq!(
-            transformed.props().get("label"),
-            Some(&PropValue::String("moving".to_owned()))
+            transformed.properties().get(&label_key),
+            Some(&PropertyValue::String("moving".to_owned()))
         );
     }
 

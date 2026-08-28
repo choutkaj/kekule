@@ -483,7 +483,12 @@ fn removable_hydrogen(
     if atom.hydrogens.explicit_count() != 0 {
         return Ok(Err(RetainedHydrogenReason::EncodedHydrogenCount));
     }
-    if !atom.props.is_empty() {
+    if molecule
+        .properties()
+        .atoms()
+        .row_has_data(hydrogen.index())
+        .expect("live atom has a property-table row")
+    {
         return Ok(Err(RetainedHydrogenReason::AtomProperties));
     }
     let incident = molecule.incident_bonds(hydrogen)?.collect::<Vec<_>>();
@@ -501,7 +506,12 @@ fn removable_hydrogen(
     if bond.order != BondOrder::Single {
         return Ok(Err(RetainedHydrogenReason::NonSingleBond));
     }
-    if !bond.props.is_empty() {
+    if molecule
+        .properties()
+        .bonds()
+        .row_has_data(bond_id.index())
+        .expect("live bond has a property-table row")
+    {
         return Ok(Err(RetainedHydrogenReason::BondProperties));
     }
     Ok(Ok((parent, bond_id)))
