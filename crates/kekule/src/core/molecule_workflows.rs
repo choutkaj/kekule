@@ -12,9 +12,8 @@ impl Molecule {
     /// This derives perception from the canonical represented chemistry and
     /// never rewrites atoms, bonds, or represented stereochemistry.
     ///
-    /// There is no public normalization step between interpretation and
-    /// perception:
-    ///
+    /// Interpretation publishes canonical represented chemistry directly;
+    /// there is no separate public normalization step before perception.
     pub fn perceive(&mut self) -> Result<(), PerceptionError> {
         perceive_molecule(self)
     }

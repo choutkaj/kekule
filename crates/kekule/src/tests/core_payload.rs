@@ -1,5 +1,5 @@
 use super::*;
-use crate::properties::PropertyValue;
+use crate::properties::{PropertyKey, PropertyValue};
 
 #[test]
 fn element_from_atomic_number_accepts_periodic_table_bounds() {
@@ -692,6 +692,27 @@ fn mutable_payload_access_invalidates_fresh_perception() {
     mark_all_fresh(&mut mol);
     mol.bond_mut(bond).expect("bond exists").order = BondOrder::Double;
     assert_all_stale(&mol);
+}
+
+#[test]
+fn atom_map_only_mutation_invalidates_perception_and_owner_properties() {
+    let mut molecule = crate::core::MoleculeEditor::new();
+    let atom = molecule
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let owner_key = PropertyKey::new("calculation_label").unwrap();
+    molecule
+        .insert_property(
+            owner_key.clone(),
+            PropertyValue::String("before mutation".to_owned()),
+        )
+        .unwrap();
+    mark_all_fresh(&mut molecule);
+
+    molecule.atom_mut(atom).unwrap().atom_map = Some(7);
+
+    assert_all_stale(&molecule);
+    assert_eq!(molecule.properties().get(&owner_key), None);
 }
 
 #[test]

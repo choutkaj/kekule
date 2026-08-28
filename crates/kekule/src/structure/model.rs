@@ -336,10 +336,20 @@ impl Model {
         Ok(())
     }
 
-    pub fn atom_property_value(
+    pub(crate) fn install_canonical_atom_properties(
+        &mut self,
+        occupancies: Vec<Option<f64>>,
+        b_factors: Vec<Option<f64>>,
+    ) -> Result<(), ModelError> {
+        Ok(self
+            .properties
+            .install_canonical_realization_atom_columns(occupancies, b_factors)?)
+    }
+
+    pub fn atom_property(
         &self,
-        key: &PropertyKey,
         atom: InstanceAtomId,
+        key: &PropertyKey,
     ) -> Result<Option<PropertyValue>, ModelError> {
         let index = self
             .topology
@@ -348,10 +358,10 @@ impl Model {
         Ok(self.atom_properties().value(key, index.index())?)
     }
 
-    pub fn set_atom_property_value(
+    pub fn set_atom_property(
         &mut self,
-        key: PropertyKey,
         atom: InstanceAtomId,
+        key: PropertyKey,
         value: Option<PropertyValue>,
     ) -> Result<(), ModelError> {
         let index = self
@@ -380,10 +390,10 @@ impl Model {
         Ok(self.properties.remove_realization_atom_column(key)?)
     }
 
-    pub fn bond_property_value(
+    pub fn bond_property(
         &self,
-        key: &PropertyKey,
         bond: InstanceBondId,
+        key: &PropertyKey,
     ) -> Result<Option<PropertyValue>, ModelError> {
         let index = self
             .topology
@@ -392,10 +402,10 @@ impl Model {
         Ok(self.bond_properties().value(key, index.index())?)
     }
 
-    pub fn set_bond_property_value(
+    pub fn set_bond_property(
         &mut self,
-        key: PropertyKey,
         bond: InstanceBondId,
+        key: PropertyKey,
         value: Option<PropertyValue>,
     ) -> Result<(), ModelError> {
         let index = self
@@ -618,6 +628,30 @@ impl<'a> ModelView<'a> {
 
     pub const fn bond_properties(self) -> &'a PropertyTable {
         self.properties.realization_bond_properties()
+    }
+
+    pub fn atom_property(
+        self,
+        atom: InstanceAtomId,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyValue>, ModelError> {
+        let index = self
+            .topology
+            .atom_index(atom)
+            .ok_or(ModelError::InvalidAtomId(atom))?;
+        Ok(self.atom_properties().value(key, index.index())?)
+    }
+
+    pub fn bond_property(
+        self,
+        bond: InstanceBondId,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyValue>, ModelError> {
+        let index = self
+            .topology
+            .bond_index(bond)
+            .ok_or(ModelError::InvalidBondId(bond))?;
+        Ok(self.bond_properties().value(key, index.index())?)
     }
 
     pub fn occupancy(self, atom: InstanceAtomId) -> Result<Option<f64>, ModelError> {
