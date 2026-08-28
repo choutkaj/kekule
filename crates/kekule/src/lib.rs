@@ -98,7 +98,8 @@ pub mod smiles {
 
     use crate::core::Molecule;
     pub use crate::io::{
-        MolWriteError, SmilesAtomMapping, SmilesBondMapping, SmilesDocument, SmilesDocumentToken,
+        MolWriteError, SmilesAtomMapping, SmilesBondMapping, SmilesComponentCountError,
+        SmilesComponentInterpretation, SmilesDocument, SmilesDocumentToken,
         SmilesDocumentTokenKind, SmilesInterpretError, SmilesInterpretation,
         SmilesInterpretationReport, SmilesParseError, SmilesParseOptions,
     };
@@ -201,10 +202,10 @@ pub mod smiles {
 
 pub mod molfile {
     pub use crate::io::{
-        MolWriteError, MolfileAtomMapping, MolfileBondMapping, MolfileDocument, MolfileHeader,
-        MolfileInterpretError, MolfileInterpretation, MolfileInterpretationReport,
-        MolfileInterpretationWarning, MolfileLine, MolfileModelError, MolfileParseError,
-        MolfileParseOptions, MolfileVersion,
+        MolWriteError, MolfileAtomMapping, MolfileBondMapping, MolfileComponentInterpretation,
+        MolfileDocument, MolfileHeader, MolfileInterpretError, MolfileInterpretation,
+        MolfileInterpretationReport, MolfileInterpretationWarning, MolfileLine, MolfileModelError,
+        MolfileParseError, MolfileParseOptions, MolfileVersion,
     };
 
     use crate::core::Molecule;
@@ -237,8 +238,8 @@ pub mod molfile {
 
 pub mod sdf {
     pub use crate::io::{
-        MolWriteError, SdfDataField, SdfDocument, SdfInterpretError, SdfInterpretation,
-        SdfInterpretationReport, SdfParseError, SdfParseOptions, SdfRecord,
+        MolWriteError, SdfDataField, SdfDocument, SdfInterpretError, SdfInterpretErrorKind,
+        SdfInterpretation, SdfInterpretationReport, SdfParseError, SdfParseOptions, SdfRecord,
         SdfRecordInterpretation, SdfRecordInterpretationReport,
     };
 

@@ -222,8 +222,10 @@ pub struct SdfInterpretError {
     pub(crate) kind: SdfInterpretErrorKind,
 }
 
+/// Structured stage that caused SDF record interpretation to fail.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum SdfInterpretErrorKind {
+#[non_exhaustive]
+pub enum SdfInterpretErrorKind {
     Molfile(super::MolfileInterpretError),
     ModelBuild(Box<ModelBuildError>),
 }
@@ -239,6 +241,11 @@ impl SdfInterpretError {
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    /// Returns the structured underlying interpretation failure.
+    pub fn kind(&self) -> &SdfInterpretErrorKind {
+        &self.kind
     }
 }
 
