@@ -1,5 +1,16 @@
 use std::collections::BTreeSet;
 use std::fmt;
+use std::sync::Arc;
+
+use crate::core::Molecule;
+use crate::structure::Model;
+use crate::topology::Topology;
+
+use super::mmcif_interpret::{
+    interpret_mmcif, interpret_mmcif_block, interpret_mmcif_ensemble,
+    interpret_mmcif_ensemble_block, MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions,
+    MmcifEnsembleInterpretation, MmcifInterpretError, MmcifInterpretOptions, MmcifInterpretation,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MmcifParseOptions {
@@ -77,6 +88,34 @@ impl MmcifDocument {
             .iter()
             .find(|block| block.name.eq_ignore_ascii_case(name))
     }
+
+    /// Interprets the exactly one structural block using default policy.
+    pub fn interpret(&self) -> Result<MmcifInterpretation, MmcifInterpretError> {
+        self.interpret_with_options(MmcifInterpretOptions::default())
+    }
+
+    /// Interprets the exactly one structural block using explicit policy.
+    pub fn interpret_with_options(
+        &self,
+        options: MmcifInterpretOptions,
+    ) -> Result<MmcifInterpretation, MmcifInterpretError> {
+        interpret_mmcif(self, options)
+    }
+
+    /// Interprets all coordinate models in the exactly one structural block.
+    pub fn interpret_ensemble(
+        &self,
+    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+        self.interpret_ensemble_with_options(MmcifEnsembleInterpretOptions::default())
+    }
+
+    /// Interprets selected coordinate models in the exactly one structural block.
+    pub fn interpret_ensemble_with_options(
+        &self,
+        options: MmcifEnsembleInterpretOptions,
+    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+        interpret_mmcif_ensemble(self, options)
+    }
 }
 
 /// One independently interpretable CIF/mmCIF data block.
@@ -107,6 +146,67 @@ impl MmcifBlock {
             MmcifEntry::Loop(table) if table.column_index(tag).is_some() => Some(table),
             _ => None,
         })
+    }
+
+    /// Interprets one selected coordinate model using default policy.
+    pub fn interpret(&self) -> Result<MmcifInterpretation, MmcifInterpretError> {
+        self.interpret_with_options(MmcifInterpretOptions::default())
+    }
+
+    /// Interprets one selected coordinate model using explicit policy.
+    pub fn interpret_with_options(
+        &self,
+        options: MmcifInterpretOptions,
+    ) -> Result<MmcifInterpretation, MmcifInterpretError> {
+        interpret_mmcif_block(self, options)
+    }
+
+    pub fn to_molecules(&self) -> Result<Vec<Molecule>, MmcifInterpretError> {
+        Ok(self.interpret()?.to_molecules())
+    }
+
+    pub fn to_molecules_with_options(
+        &self,
+        options: MmcifInterpretOptions,
+    ) -> Result<Vec<Molecule>, MmcifInterpretError> {
+        Ok(self.interpret_with_options(options)?.to_molecules())
+    }
+
+    pub fn to_topology(&self) -> Result<Arc<Topology>, MmcifInterpretError> {
+        Ok(self.interpret()?.to_topology())
+    }
+
+    pub fn to_topology_with_options(
+        &self,
+        options: MmcifInterpretOptions,
+    ) -> Result<Arc<Topology>, MmcifInterpretError> {
+        Ok(self.interpret_with_options(options)?.to_topology())
+    }
+
+    pub fn to_model(&self) -> Result<Model, MmcifInterpretError> {
+        Ok(self.interpret()?.to_model())
+    }
+
+    pub fn to_model_with_options(
+        &self,
+        options: MmcifInterpretOptions,
+    ) -> Result<Model, MmcifInterpretError> {
+        Ok(self.interpret_with_options(options)?.to_model())
+    }
+
+    /// Interprets all coordinate models in this block using default policy.
+    pub fn interpret_ensemble(
+        &self,
+    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+        self.interpret_ensemble_with_options(MmcifEnsembleInterpretOptions::default())
+    }
+
+    /// Interprets selected coordinate models in this block using explicit policy.
+    pub fn interpret_ensemble_with_options(
+        &self,
+        options: MmcifEnsembleInterpretOptions,
+    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+        interpret_mmcif_ensemble_block(self, options)
     }
 }
 

@@ -102,13 +102,15 @@ pub mod smiles {
         SmilesDocumentTokenKind, SmilesInterpretError, SmilesInterpretation,
         SmilesInterpretationReport, SmilesParseError, SmilesParseOptions,
     };
+    use crate::topology::{Topology, TopologyBuildError};
 
     /// Error produced by the concise SMILES parse-and-interpret convenience.
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone, PartialEq)]
     #[non_exhaustive]
     pub enum SmilesReadError {
         Parse(SmilesParseError),
         Interpret(SmilesInterpretError),
+        Topology(Box<TopologyBuildError>),
     }
 
     impl fmt::Display for SmilesReadError {
@@ -116,6 +118,7 @@ pub mod smiles {
             match self {
                 Self::Parse(error) => write!(formatter, "{error}"),
                 Self::Interpret(error) => write!(formatter, "{error}"),
+                Self::Topology(error) => write!(formatter, "{error}"),
             }
         }
     }
@@ -125,6 +128,7 @@ pub mod smiles {
             match self {
                 Self::Parse(error) => Some(error),
                 Self::Interpret(error) => Some(error),
+                Self::Topology(error) => Some(error.as_ref()),
             }
         }
     }
@@ -138,6 +142,12 @@ pub mod smiles {
     impl From<SmilesInterpretError> for SmilesReadError {
         fn from(error: SmilesInterpretError) -> Self {
             Self::Interpret(error)
+        }
+    }
+
+    impl From<TopologyBuildError> for SmilesReadError {
+        fn from(error: TopologyBuildError) -> Self {
+            Self::Topology(Box::new(error))
         }
     }
 
@@ -155,7 +165,7 @@ pub mod smiles {
     pub fn interpret(
         document: &SmilesDocument,
     ) -> Result<SmilesInterpretation, SmilesInterpretError> {
-        crate::io::interpret_smiles_document(document)
+        document.interpret()
     }
 
     /// Parses and interprets one SMILES record into source-ordered connected components.
@@ -164,7 +174,16 @@ pub mod smiles {
     /// Dot-delimited components remain separate, and no perception is run implicitly.
     pub fn to_molecules(input: &str) -> Result<Vec<Molecule>, SmilesReadError> {
         let document = parse_str(input)?;
-        Ok(interpret(&document)?.to_molecules())
+        Ok(document.interpret()?.to_molecules())
+    }
+
+    /// Parses and interprets one SMILES record as a coordinate-free topology.
+    ///
+    /// Every dot-delimited connected component becomes one explicit molecule
+    /// occurrence in source order. No hierarchy or perception is fabricated.
+    pub fn to_topology(input: &str) -> Result<Topology, SmilesReadError> {
+        let document = parse_str(input)?;
+        Ok(document.interpret()?.to_topology()?)
     }
 
     pub fn write(molecule: &Molecule) -> Result<String, MolWriteError> {
@@ -204,7 +223,7 @@ pub mod molfile {
     pub fn interpret(
         document: &MolfileDocument,
     ) -> Result<MolfileInterpretation, MolfileInterpretError> {
-        crate::io::interpret_molfile_document(document)
+        document.interpret()
     }
 
     pub fn write_v2000(molecule: &Molecule) -> Result<String, MolWriteError> {
@@ -219,16 +238,23 @@ pub mod molfile {
 pub mod sdf {
     pub use crate::io::{
         MolWriteError, SdfDataField, SdfDocument, SdfInterpretError, SdfInterpretation,
-        SdfInterpretationReport, SdfModelError, SdfParseError, SdfParseOptions, SdfRecord,
+        SdfInterpretationReport, SdfParseError, SdfParseOptions, SdfRecord,
         SdfRecordInterpretation, SdfRecordInterpretationReport,
     };
 
-    pub fn parse_str(input: &str, options: SdfParseOptions) -> Result<SdfDocument, SdfParseError> {
+    pub fn parse_str(input: &str) -> Result<SdfDocument, SdfParseError> {
+        parse_str_with_options(input, SdfParseOptions::default())
+    }
+
+    pub fn parse_str_with_options(
+        input: &str,
+        options: SdfParseOptions,
+    ) -> Result<SdfDocument, SdfParseError> {
         crate::io::parse_sdf_document(input, options)
     }
 
     pub fn interpret(document: &SdfDocument) -> Result<SdfInterpretation, SdfInterpretError> {
-        crate::io::interpret_sdf_document(document)
+        document.interpret()
     }
 
     pub fn write_v2000(records: &[SdfRecordInterpretation]) -> Result<String, MolWriteError> {
@@ -248,7 +274,11 @@ pub mod mmcif {
     };
 
     /// Parses a structural mmCIF data document without assigning molecular meaning.
-    pub fn parse_str(
+    pub fn parse_str(input: &str) -> Result<MmcifDocument, MmcifParseError> {
+        parse_str_with_options(input, MmcifParseOptions::default())
+    }
+
+    pub fn parse_str_with_options(
         input: &str,
         options: MmcifParseOptions,
     ) -> Result<MmcifDocument, MmcifParseError> {
@@ -263,7 +293,7 @@ pub mod mmcif {
         document: &MmcifDocument,
         options: MmcifInterpretOptions,
     ) -> Result<MmcifInterpretation, MmcifInterpretError> {
-        crate::io::interpret_mmcif(document, options)
+        document.interpret_with_options(options)
     }
 
     /// Interprets one CIF/mmCIF data block as one selected coordinate model.
@@ -274,7 +304,7 @@ pub mod mmcif {
         block: &MmcifBlock,
         options: MmcifInterpretOptions,
     ) -> Result<MmcifInterpretation, MmcifInterpretError> {
-        crate::io::interpret_mmcif_block(block, options)
+        block.interpret_with_options(options)
     }
 
     /// Interprets the exactly one atom-site block in a document as an ensemble.
@@ -285,7 +315,7 @@ pub mod mmcif {
         document: &MmcifDocument,
         options: MmcifEnsembleInterpretOptions,
     ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
-        crate::io::interpret_mmcif_ensemble(document, options)
+        document.interpret_ensemble_with_options(options)
     }
 
     /// Interprets coordinate models in one block as a shared-topology ensemble.
@@ -293,7 +323,7 @@ pub mod mmcif {
         block: &MmcifBlock,
         options: MmcifEnsembleInterpretOptions,
     ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
-        crate::io::interpret_mmcif_ensemble_block(block, options)
+        block.interpret_ensemble_with_options(options)
     }
 
     /// Attempts to write a model without inventing mmCIF entity semantics.

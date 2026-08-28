@@ -17,7 +17,7 @@ use descriptors::{
 use io::{
     interpret_molfile, interpret_sdf, mol_record_json, read_small_records_by_suffix,
     read_stereo_perception_records_by_suffix, read_stereo_records_by_suffix, sdf_record_json,
-    small_record, smarts_query_records_json, substructure_record_json,
+    small_record, smarts_query_records_json, substructure_record_json, zero_coordinate_model,
 };
 use smiles::{
     isomeric_smiles_record_is_stereo_bearing, isomeric_smiles_record_json, smiles_parse_record_json,
@@ -57,15 +57,16 @@ pub(crate) fn implementation_expected(
             let records = read_small_records_by_suffix(fixture_path)?;
             let records = records
                 .into_iter()
-                .map(|record| {
+                .map(|record| -> Result<_, Box<dyn Error>> {
                     let fields = record
                         .sdf_fields
                         .into_iter()
                         .map(|(name, value)| SdfDataField::new(name, value))
                         .collect();
-                    SdfRecordInterpretation::new(record.title, vec![record.molecule], fields)
+                    let model = zero_coordinate_model(&record.molecule)?;
+                    Ok(SdfRecordInterpretation::new(record.title, model, fields))
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, _>>()?;
             let written = sdf::write_v2000(&records)?;
             let records = interpret_sdf(&written)?
                 .into_iter()

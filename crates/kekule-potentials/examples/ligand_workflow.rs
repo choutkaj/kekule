@@ -3,7 +3,7 @@ use std::{error::Error, fs};
 use kekule::{
     geometry::Point3,
     modeling::{minimize, MinimizeOptions},
-    sdf::{self, SdfParseOptions, SdfRecordInterpretation},
+    sdf::{self, SdfRecordInterpretation},
     structure::{Model, Positions},
     units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE_PER_ANGSTROM},
 };
@@ -12,7 +12,7 @@ use kekule_potentials::dreiding::{DreidingPotential, DreidingPrepareOptions};
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse and canonically interpret one SDF record without perceiving it.
     let input = fs::read_to_string("examples/ligand.sdf")?;
-    let document = sdf::parse_str(&input, SdfParseOptions::default())?;
+    let document = sdf::parse_str(&input)?;
     let mut records = sdf::interpret(&document)?.to_records();
     assert_eq!(records.len(), 1, "expected one ligand record");
 
@@ -72,10 +72,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         minimized.final_energy.unit()
     );
 
-    // Reassemble the original record metadata. Molecule output is geometry-independent.
+    // Reassemble the original record metadata around the minimized geometry-rich model.
     let output = sdf::write_v2000(&[SdfRecordInterpretation::new(
         title,
-        vec![ligand],
+        minimized.model,
         data_fields,
     )])?;
     fs::write("examples/ligand-minimized.sdf", output)?;

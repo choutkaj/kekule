@@ -159,6 +159,46 @@ fn builder_rejects_empty_topologies_and_unused_definitions() {
 }
 
 #[test]
+fn canonical_molecule_constructors_preserve_order_without_interning_or_perception() {
+    let carbon = crate::tests::read_smiles("C").expect("carbon interprets");
+    let carbon_oxygen = crate::tests::read_smiles("CO").expect("methanol fragment interprets");
+
+    let single = Topology::from_molecule(&carbon_oxygen).expect("single topology builds");
+    assert_eq!(single.definition_count(), 1);
+    assert_eq!(single.instance_count(), 1);
+    assert_eq!(single.atom_count(), 2);
+    assert_eq!(single.bond_count(), 1);
+    assert!(single.hierarchy().is_empty());
+    assert_eq!(
+        single.molecules().next().unwrap().molecule().perception(),
+        &crate::core::Perception::default()
+    );
+
+    let molecules = vec![carbon.clone(), carbon_oxygen.clone(), carbon];
+    let several = Topology::from_molecules(&molecules).expect("multi topology builds");
+    assert_eq!(several.definition_count(), 3);
+    assert_eq!(several.instance_count(), 3);
+    assert_eq!(several.atom_count(), 4);
+    assert_eq!(several.bond_count(), 1);
+    assert_eq!(
+        several
+            .molecules()
+            .map(|occurrence| occurrence.molecule().atom_count())
+            .collect::<Vec<_>>(),
+        vec![1, 2, 1]
+    );
+    assert!(several.hierarchy().is_empty());
+    assert!(several.molecules().all(
+        |occurrence| occurrence.molecule().perception() == &crate::core::Perception::default()
+    ));
+
+    assert!(matches!(
+        Topology::from_molecules(&[]),
+        Err(TopologyBuildError::NoMoleculeInstances)
+    ));
+}
+
+#[test]
 fn builder_add_molecule_is_the_concise_single_instance_path() {
     let molecule = perceived_molecule("CO");
     let mut builder = TopologyBuilder::new();

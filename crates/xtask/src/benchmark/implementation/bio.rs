@@ -24,7 +24,7 @@ const MMCIF_ATOM_SITE_FIELDS: &[&str] = &[
 
 pub(super) fn mmcif_document_json(fixture_path: &Path) -> Result<Value, Box<dyn Error>> {
     let input = fs::read_to_string(fixture_path)?;
-    let document = mmcif::parse_str(&input, MmcifParseOptions::default())?;
+    let document = mmcif::parse_str(&input)?;
     let table = document
         .blocks()
         .iter()
@@ -53,7 +53,7 @@ pub(super) fn mmcif_document_json(fixture_path: &Path) -> Result<Value, Box<dyn 
 }
 pub(super) fn dssp_record_json(fixture_path: &Path) -> Result<Value, Box<dyn Error>> {
     let input = fs::read_to_string(fixture_path)?;
-    let document = mmcif::parse_str(&input, MmcifParseOptions::default())?;
+    let document = mmcif::parse_str(&input)?;
     let interpretation = mmcif::interpret(
         &document,
         MmcifInterpretOptions {

@@ -23,6 +23,17 @@ impl SmilesDocument {
         &self.components
     }
 
+    /// Interprets this document into source-ordered connected components.
+    ///
+    /// This is the authoritative method-form entry point; namespace helpers
+    /// delegate to the same implementation.
+    pub fn interpret(
+        &self,
+    ) -> Result<super::interpret::SmilesInterpretation, super::interpret::SmilesInterpretError>
+    {
+        super::interpret::interpret_smiles_document(self)
+    }
+
     /// Interprets this source document as connected canonical molecules.
     ///
     /// Dot-delimited components remain separate and no chemical perception is
@@ -30,7 +41,7 @@ impl SmilesDocument {
     pub fn to_molecules(
         &self,
     ) -> Result<Vec<crate::core::Molecule>, super::interpret::SmilesInterpretError> {
-        Ok(super::interpret::interpret_smiles_document(self)?.to_molecules())
+        Ok(self.interpret()?.to_molecules())
     }
 }
 

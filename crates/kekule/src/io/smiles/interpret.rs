@@ -11,6 +11,7 @@ use crate::core::{
     StereoCarrier, StereoElement, StereoElementId, StereoElementKind, TetrahedralOrientation,
     TetrahedralStereo,
 };
+use crate::topology::{Topology, TopologyBuildError};
 
 use super::parse::{
     PendingStereoCarrier, PendingTetrahedral, SmilesAtomSyntax, SmilesBondToken,
@@ -175,6 +176,14 @@ impl SmilesInterpretation {
             .into_iter()
             .map(SmilesComponentInterpretation::to_molecule)
             .collect()
+    }
+
+    /// Projects every source component into one topology occurrence.
+    ///
+    /// Component order becomes authoritative topology instance order. The
+    /// projection fabricates no hierarchy and runs no perception.
+    pub fn to_topology(self) -> Result<Topology, TopologyBuildError> {
+        Topology::from_molecules(&self.to_molecules())
     }
 
     /// Convenience access for callers that require exactly one component.

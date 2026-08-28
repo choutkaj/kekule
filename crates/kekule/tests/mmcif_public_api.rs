@@ -44,17 +44,25 @@ duplicate covale A C1 A C2 {order}
 fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::mmcif::{
         self, MmcifBlock, MmcifEntityClassifications, MmcifEntityKind, MmcifInterpretOptions,
-        MmcifParseOptions, MmcifWriteError, MmcifWriteOptions,
+        MmcifWriteError, MmcifWriteOptions,
     };
 
-    let document = mmcif::parse_str(MINIMAL_MMCIF, MmcifParseOptions::default())?;
+    let document = mmcif::parse_str(MINIMAL_MMCIF)?;
+    assert_eq!(
+        document,
+        mmcif::parse_str_with_options(MINIMAL_MMCIF, mmcif::MmcifParseOptions::default())?
+    );
     let interpreted = mmcif::interpret(&document, MmcifInterpretOptions::default())?;
     let block: &MmcifBlock = &document.blocks()[0];
     let block_interpreted = mmcif::interpret_block(block, MmcifInterpretOptions::default())?;
+    let method_default = block.interpret()?;
+    let method_explicit = block.interpret_with_options(MmcifInterpretOptions::default())?;
 
     assert_eq!(document.blocks().len(), 1);
     assert_eq!(interpreted.report().block_name(), "demo");
     assert_eq!(block_interpreted.report(), interpreted.report());
+    assert_eq!(method_default.report(), method_explicit.report());
+    assert_eq!(document.interpret()?.report(), method_default.report());
     assert!(block_interpreted
         .topology()
         .same_layout(interpreted.topology()));
@@ -65,6 +73,28 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     assert_eq!(interpreted.model().topology().instance_count(), 1);
     assert!(!interpreted.model().topology().hierarchy().is_empty());
     assert_eq!(interpreted.model().positions().len(), 2);
+    assert_eq!(interpreted.molecules().count(), 1);
+    assert!(interpreted
+        .molecules()
+        .all(|molecule| molecule.perception() == &kekule::core::Perception::default()));
+    assert!(interpreted
+        .topology()
+        .same_layout(interpreted.model().topology()));
+    let owned_topology = method_default.clone().to_topology();
+    let owned_model = method_default.clone().to_model();
+    let owned_molecules = method_default.to_molecules();
+    assert!(owned_topology.same_layout(owned_model.topology()));
+    assert_eq!(
+        owned_topology
+            .molecules()
+            .map(|occurrence| occurrence.molecule())
+            .collect::<Vec<_>>(),
+        owned_molecules.iter().collect::<Vec<_>>()
+    );
+    assert!(block
+        .to_topology()?
+        .same_layout(block.to_model()?.topology()));
+    assert_eq!(block.to_molecules()?.len(), 1);
     assert_eq!(interpreted.report().selected_model(), Some("1"));
     assert_eq!(interpreted.report().instances().len(), 1);
     let provenance = &interpreted.report().instances()[0];
@@ -86,7 +116,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         MmcifWriteOptions::default(),
     )?;
     assert!(written.starts_with("data_model\n"));
-    assert!(mmcif::parse_str(&written, MmcifParseOptions::default()).is_ok());
+    assert!(mmcif::parse_str(&written).is_ok());
     let custom_written = mmcif::write_with_report(
         interpreted.model(),
         interpreted.report(),
@@ -130,9 +160,9 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
 
 #[test]
 fn duplicate_agreeing_authoritative_bond_evidence_is_idempotent() {
-    use kekule::mmcif::{self, MmcifInterpretOptions, MmcifParseOptions};
+    use kekule::mmcif::{self, MmcifInterpretOptions};
 
-    let document = mmcif::parse_str(&with_struct_conn("sing"), MmcifParseOptions::default())
+    let document = mmcif::parse_str(&with_struct_conn("sing"))
         .expect("duplicate agreeing connectivity parses");
     let interpreted = mmcif::interpret(&document, MmcifInterpretOptions::default())
         .expect("duplicate agreeing connectivity is accepted");
@@ -150,9 +180,9 @@ fn duplicate_agreeing_authoritative_bond_evidence_is_idempotent() {
 
 #[test]
 fn duplicate_conflicting_authoritative_bond_evidence_is_rejected() {
-    use kekule::mmcif::{self, MmcifInterpretError, MmcifInterpretOptions, MmcifParseOptions};
+    use kekule::mmcif::{self, MmcifInterpretError, MmcifInterpretOptions};
 
-    let document = mmcif::parse_str(&with_struct_conn("doub"), MmcifParseOptions::default())
+    let document = mmcif::parse_str(&with_struct_conn("doub"))
         .expect("duplicate conflicting connectivity parses");
     let error: MmcifInterpretError = mmcif::interpret(&document, MmcifInterpretOptions::default())
         .expect_err("conflicting authoritative bond orders must be rejected");
