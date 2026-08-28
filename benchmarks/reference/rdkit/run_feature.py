@@ -21,7 +21,6 @@ SUPPORTED_FEATURES = {
     "algo.valence.rdkit-like",
     "chem.hydrogen-transforms",
     "chem.perception.default",
-    "core.conformers",
     "descriptor.molecular",
     "descriptor.rotatable-bonds.rdkit-strict",
     "io.mol.v2000.parse",
@@ -220,9 +219,6 @@ def generate_document(
     elif feature_id == "io.mol.v3000.parse":
         records = read_records_by_suffix(fixture_path, rdkit["Chem"])
         expected = {"records": [mol_parse_record(record) for record in records]}
-    elif feature_id == "core.conformers":
-        records = read_records_by_suffix(fixture_path, rdkit["Chem"])
-        expected = {"records": [conformer_record(record) for record in records]}
     elif feature_id == "descriptor.molecular":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {
@@ -948,36 +944,6 @@ def ring_set_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def conformer_record(record: dict[str, Any]) -> dict[str, Any]:
-    mol = record["mol"]
-    if mol is None:
-        return {
-            "record_index": record["record_index"],
-            "status": record["status"],
-        }
-    conformers = []
-    for conformer in mol.GetConformers():
-        conformers.append(
-            [
-                {
-                    "atom_index": index,
-                    "x": conformer.GetAtomPosition(index).x,
-                    "y": conformer.GetAtomPosition(index).y,
-                    "z": conformer.GetAtomPosition(index).z,
-                }
-                for index in range(mol.GetNumAtoms())
-            ]
-        )
-    return {
-        "record_index": record["record_index"],
-        "status": "ok",
-        "title": record["title"],
-        "atom_count": mol.GetNumAtoms(),
-        "conformers": conformers,
-        "atoms": [conformer_atom_json(atom) for atom in mol.GetAtoms()],
-    }
-
-
 def mol_parse_record(record: dict[str, Any]) -> dict[str, Any]:
     mol = record["mol"]
     if mol is None:
@@ -985,39 +951,16 @@ def mol_parse_record(record: dict[str, Any]) -> dict[str, Any]:
             "record_index": record["record_index"],
             "status": record["status"],
         }
-    conformers = conformers_json(mol)
     return {
         "record_index": record["record_index"],
         "status": "ok",
         "title": record["title"],
         "atom_count": mol.GetNumAtoms(),
-        "conformers": conformers,
         "atoms": [
             atom_json(atom, record["radicals"].get(atom.GetIdx()))
             for atom in mol.GetAtoms()
         ],
     }
-
-
-def conformers_json(mol: Any) -> list[list[dict[str, Any]]]:
-    conformers = []
-    for conformer in mol.GetConformers():
-        conformers.append(
-            [
-                {
-                    "atom_index": index,
-                    "x": conformer.GetAtomPosition(index).x,
-                    "y": conformer.GetAtomPosition(index).y,
-                    "z": conformer.GetAtomPosition(index).z,
-                }
-                for index in range(mol.GetNumAtoms())
-            ]
-        )
-    return conformers
-
-
-def conformer_atom_json(atom: Any) -> dict[str, Any]:
-    return basic_atom_json(atom)
 
 
 def basic_atom_json(atom: Any) -> dict[str, Any]:

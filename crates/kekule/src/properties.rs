@@ -201,6 +201,54 @@ impl PropertyColumn {
         }
     }
 
+    fn select_optional_indices(&self, indices: &[Option<usize>]) -> Self {
+        match self {
+            Self::Bool(values) => Self::Bool(
+                indices
+                    .iter()
+                    .map(|index| index.and_then(|index| values[index]))
+                    .collect(),
+            ),
+            Self::Int(values) => Self::Int(
+                indices
+                    .iter()
+                    .map(|index| index.and_then(|index| values[index]))
+                    .collect(),
+            ),
+            Self::Real { unit, values } => Self::Real {
+                unit: *unit,
+                values: indices
+                    .iter()
+                    .map(|index| index.and_then(|index| values[index]))
+                    .collect(),
+            },
+            Self::String(values) => Self::String(
+                indices
+                    .iter()
+                    .map(|index| index.and_then(|index| values[index].clone()))
+                    .collect(),
+            ),
+        }
+    }
+
+    fn populated_len(&self) -> usize {
+        match self {
+            Self::Bool(values) => values.iter().filter(|value| value.is_some()).count(),
+            Self::Int(values) => values.iter().filter(|value| value.is_some()).count(),
+            Self::Real { values, .. } => values.iter().filter(|value| value.is_some()).count(),
+            Self::String(values) => values.iter().filter(|value| value.is_some()).count(),
+        }
+    }
+
+    fn is_populated_at(&self, index: usize) -> bool {
+        match self {
+            Self::Bool(values) => values[index].is_some(),
+            Self::Int(values) => values[index].is_some(),
+            Self::Real { values, .. } => values[index].is_some(),
+            Self::String(values) => values[index].is_some(),
+        }
+    }
+
     fn resize_missing(&mut self, len: usize) {
         match self {
             Self::Bool(values) => values.resize(len, None),
@@ -225,6 +273,7 @@ impl PropertyColumn {
 pub struct PropertyTable {
     len: usize,
     columns: BTreeMap<PropertyKey, PropertyColumn>,
+    populated: BTreeMap<PropertyKey, usize>,
 }
 
 impl PropertyTable {
@@ -232,6 +281,7 @@ impl PropertyTable {
         Self {
             len,
             columns: BTreeMap::new(),
+            populated: BTreeMap::new(),
         }
     }
 
@@ -252,7 +302,7 @@ impl PropertyTable {
         Ok(self
             .columns
             .values()
-            .any(|column| column.value(index).is_ok_and(|value| value.is_some())))
+            .any(|column| column.is_populated_at(index)))
     }
 
     pub fn get(&self, key: &PropertyKey) -> Option<&PropertyColumn> {
@@ -290,6 +340,7 @@ impl PropertyTable {
         }
         column.validate()?;
         if column.is_all_missing() {
+            self.populated.remove(&key);
             return Ok(self.columns.remove(&key));
         }
         if let Some(PropertyColumn::Real { unit, .. }) = self.columns.get(&key) {
@@ -302,10 +353,13 @@ impl PropertyTable {
                 return Err(PropertyError::TypeMismatch { key });
             }
         }
+        let populated = column.populated_len();
+        self.populated.insert(key.clone(), populated);
         Ok(self.columns.insert(key, column))
     }
 
     pub fn remove(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
+        self.populated.remove(key);
         self.columns.remove(key)
     }
 
@@ -355,16 +409,33 @@ impl PropertyTable {
                 },
                 PropertyValue::String(_) => PropertyColumn::String(vec![None; self.len]),
             };
-            assign_value(&mut column, &key, index, Some(value))?;
+            assign_value(&mut column, index, Some(value));
+            self.populated.insert(key.clone(), 1);
             self.columns.insert(key, column);
             return Ok(());
         };
-        let mut staged = column.clone();
-        assign_value(&mut staged, &key, index, value)?;
-        if staged.is_all_missing() {
+
+        let value = validate_value_for_column(column, &key, index, value)?;
+        let was_populated = column.is_populated_at(index);
+        let will_be_populated = value.is_some();
+        let column = self
+            .columns
+            .get_mut(&key)
+            .expect("validated property column must remain present");
+        assign_value(column, index, value);
+
+        let populated = self
+            .populated
+            .get_mut(&key)
+            .expect("published property column must have a populated count");
+        match (was_populated, will_be_populated) {
+            (false, true) => *populated += 1,
+            (true, false) => *populated -= 1,
+            _ => {}
+        }
+        if *populated == 0 {
+            self.populated.remove(&key);
             self.columns.remove(&key);
-        } else {
-            self.columns.insert(key, staged);
         }
         Ok(())
     }
@@ -377,7 +448,7 @@ impl PropertyTable {
         for index in indices {
             self.validate_index(*index)?;
         }
-        let columns = self
+        let columns: BTreeMap<_, _> = self
             .columns
             .iter()
             .filter_map(|(key, column)| {
@@ -385,9 +456,14 @@ impl PropertyTable {
                 (!selected.is_all_missing()).then(|| (key.clone(), selected))
             })
             .collect();
+        let populated = columns
+            .iter()
+            .map(|(key, column)| (key.clone(), column.populated_len()))
+            .collect();
         Ok(Self {
             len: indices.len(),
             columns,
+            populated,
         })
     }
 
@@ -398,33 +474,68 @@ impl PropertyTable {
         for index in indices.iter().flatten() {
             self.validate_index(*index)?;
         }
-        let mut selected = Self::new(indices.len());
-        for (key, column) in &self.columns {
-            for (target, source) in indices.iter().enumerate() {
-                let value = source
-                    .map(|source| column.value(source))
-                    .transpose()?
-                    .flatten();
-                selected.set_value(key.clone(), target, value)?;
-            }
-        }
-        Ok(selected)
+        let columns: BTreeMap<_, _> = self
+            .columns
+            .iter()
+            .filter_map(|(key, column)| {
+                let selected = column.select_optional_indices(indices);
+                (!selected.is_all_missing()).then(|| (key.clone(), selected))
+            })
+            .collect();
+        let populated = columns
+            .iter()
+            .map(|(key, column)| (key.clone(), column.populated_len()))
+            .collect();
+        Ok(Self {
+            len: indices.len(),
+            columns,
+            populated,
+        })
     }
 
     pub(crate) fn resize_missing(&mut self, len: usize) {
+        let previous_len = self.len;
         self.len = len;
-        for column in self.columns.values_mut() {
-            column.resize_missing(len);
+        if len >= previous_len {
+            for column in self.columns.values_mut() {
+                column.resize_missing(len);
+            }
+            return;
         }
+        let populated = &mut self.populated;
+        self.columns.retain(|key, column| {
+            column.resize_missing(len);
+            let count = column.populated_len();
+            if count == 0 {
+                populated.remove(key);
+                false
+            } else {
+                populated.insert(key.clone(), count);
+                true
+            }
+        });
     }
 
     pub(crate) fn clear_index(&mut self, index: usize) {
         if index >= self.len {
             return;
         }
-        self.columns.retain(|_, column| {
+        let populated = &mut self.populated;
+        self.columns.retain(|key, column| {
+            let was_populated = column.is_populated_at(index);
             column.clear(index);
-            !column.is_all_missing()
+            let count = populated
+                .get_mut(key)
+                .expect("published property column must have a populated count");
+            if was_populated {
+                *count -= 1;
+            }
+            if *count == 0 {
+                populated.remove(key);
+                false
+            } else {
+                true
+            }
         });
     }
 
@@ -443,12 +554,37 @@ fn is_reserved_realization_atom_key(key: &PropertyKey) -> bool {
     matches!(key.as_str(), "occupancy" | "b_factor")
 }
 
-fn assign_value(
-    column: &mut PropertyColumn,
+fn validate_value_for_column(
+    column: &PropertyColumn,
     key: &PropertyKey,
     index: usize,
     value: Option<PropertyValue>,
-) -> Result<(), PropertyError> {
+) -> Result<Option<PropertyValue>, PropertyError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    match (column, value) {
+        (PropertyColumn::Bool(_), value @ PropertyValue::Bool(_))
+        | (PropertyColumn::Int(_), value @ PropertyValue::Int(_))
+        | (PropertyColumn::String(_), value @ PropertyValue::String(_)) => Ok(Some(value)),
+        (
+            PropertyColumn::Real { unit, .. },
+            PropertyValue::Real {
+                value,
+                unit: source_unit,
+            },
+        ) => {
+            let value = value * source_unit.conversion_factor_to(*unit)?;
+            if !value.is_finite() {
+                return Err(PropertyError::NonFiniteValue { index: Some(index) });
+            }
+            Ok(Some(PropertyValue::Real { value, unit: *unit }))
+        }
+        _ => Err(PropertyError::TypeMismatch { key: key.clone() }),
+    }
+}
+
+fn assign_value(column: &mut PropertyColumn, index: usize, value: Option<PropertyValue>) {
     match (column, value) {
         (PropertyColumn::Bool(values), None) => values[index] = None,
         (PropertyColumn::Bool(values), Some(PropertyValue::Bool(value))) => {
@@ -463,22 +599,11 @@ fn assign_value(
             values[index] = Some(value)
         }
         (PropertyColumn::Real { values, .. }, None) => values[index] = None,
-        (
-            PropertyColumn::Real { unit, values },
-            Some(PropertyValue::Real {
-                value,
-                unit: source_unit,
-            }),
-        ) => {
-            let value = value * source_unit.conversion_factor_to(*unit)?;
-            if !value.is_finite() {
-                return Err(PropertyError::NonFiniteValue { index: Some(index) });
-            }
-            values[index] = Some(value);
+        (PropertyColumn::Real { values, .. }, Some(PropertyValue::Real { value, unit: _ })) => {
+            values[index] = Some(value)
         }
-        _ => return Err(PropertyError::TypeMismatch { key: key.clone() }),
+        _ => unreachable!("property cell assignment must be prevalidated"),
     }
-    Ok(())
 }
 
 /// Complete generic property namespace for an owning domain object.
@@ -722,6 +847,38 @@ impl Properties {
             })
             .transpose()?;
         self.atoms.set_value(b_factor_key(), index, value)
+    }
+
+    /// Installs complete canonical realization atom columns after validating
+    /// their dense shape and canonical units.
+    pub(crate) fn install_canonical_realization_atom_columns(
+        &mut self,
+        occupancies: Vec<Option<f64>>,
+        b_factors: Vec<Option<f64>>,
+    ) -> Result<(), PropertyError> {
+        self.validate_realization_canonical_properties()?;
+        let occupancy = PropertyColumn::Real {
+            unit: DIMENSIONLESS,
+            values: occupancies,
+        };
+        let b_factor = PropertyColumn::Real {
+            unit: SQUARE_NANOMETER,
+            values: b_factors,
+        };
+
+        for column in [&occupancy, &b_factor] {
+            if column.len() != self.atoms.len() {
+                return Err(PropertyError::LengthMismatch {
+                    expected: self.atoms.len(),
+                    actual: column.len(),
+                });
+            }
+            column.validate()?;
+        }
+
+        self.atoms.insert(occupancy_key(), occupancy)?;
+        self.atoms.insert(b_factor_key(), b_factor)?;
+        self.validate_realization_canonical_properties()
     }
 
     /// Validates the canonical realization-level atom columns, if present.
@@ -1052,6 +1209,103 @@ mod tests {
     }
 
     #[test]
+    fn failed_single_cell_updates_leave_the_existing_column_unchanged() {
+        let mut table = PropertyTable::new(3);
+        table
+            .insert(
+                key("distance"),
+                PropertyColumn::Real {
+                    unit: NANOMETER,
+                    values: vec![Some(1.0), Some(2.0), None],
+                },
+            )
+            .unwrap();
+
+        for invalid in [
+            PropertyValue::Int(4),
+            PropertyValue::Real {
+                value: 3.0,
+                unit: KELVIN,
+            },
+            PropertyValue::Real {
+                value: f64::INFINITY,
+                unit: NANOMETER,
+            },
+        ] {
+            let before = table.clone();
+            assert!(table.set_value(key("distance"), 1, Some(invalid)).is_err());
+            assert_eq!(table, before);
+        }
+    }
+
+    #[test]
+    fn compatible_single_cell_updates_convert_without_changing_column_unit() {
+        let mut table = PropertyTable::new(2);
+        table
+            .insert(
+                key("distance"),
+                PropertyColumn::Real {
+                    unit: NANOMETER,
+                    values: vec![Some(1.0), None],
+                },
+            )
+            .unwrap();
+        table
+            .set_value(
+                key("distance"),
+                1,
+                Some(PropertyValue::Real {
+                    value: 5.0,
+                    unit: ANGSTROM,
+                }),
+            )
+            .unwrap();
+
+        let Some(PropertyColumn::Real { unit, values }) = table.get(&key("distance")) else {
+            panic!("distance should remain a real column");
+        };
+        assert_eq!(*unit, NANOMETER);
+        assert_eq!(values[0], Some(1.0));
+        assert!((values[1].unwrap() - 0.5).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn successful_single_cell_update_keeps_the_column_allocation() {
+        let mut table = PropertyTable::new(4);
+        table
+            .insert(
+                key("labels"),
+                PropertyColumn::String(vec![Some("a".into()), None, None, None]),
+            )
+            .unwrap();
+        let before = match table.get(&key("labels")).unwrap() {
+            PropertyColumn::String(values) => values.as_ptr(),
+            _ => unreachable!(),
+        };
+
+        table
+            .set_value(key("labels"), 3, Some(PropertyValue::String("d".into())))
+            .unwrap();
+
+        let after = match table.get(&key("labels")).unwrap() {
+            PropertyColumn::String(values) => values.as_ptr(),
+            _ => unreachable!(),
+        };
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn clearing_the_final_populated_cell_removes_the_column() {
+        let mut table = PropertyTable::new(4);
+        table
+            .set_value(key("flag"), 2, Some(PropertyValue::Bool(true)))
+            .unwrap();
+        table.clear_value(key("flag"), 2).unwrap();
+        assert_eq!(table.get(&key("flag")), None);
+        assert!(!table.has_data());
+    }
+
+    #[test]
     fn checked_projection_preserves_columns_and_missing_cells() {
         let mut table = PropertyTable::new(3);
         table
@@ -1069,6 +1323,50 @@ mod tests {
         assert_eq!(selected.value(&key("flag"), 1).unwrap(), None);
         assert!(matches!(
             table.select_indices(&[3]),
+            Err(PropertyError::InvalidIndex { .. })
+        ));
+    }
+
+    #[test]
+    fn optional_projection_is_column_wise_and_preserves_real_units() {
+        let mut table = PropertyTable::new(3);
+        table
+            .insert(
+                key("distance"),
+                PropertyColumn::Real {
+                    unit: ANGSTROM,
+                    values: vec![Some(1.0), None, Some(3.0)],
+                },
+            )
+            .unwrap();
+        table
+            .insert(
+                key("label"),
+                PropertyColumn::String(vec![Some("a".into()), None, Some("c".into())]),
+            )
+            .unwrap();
+
+        let selected = table
+            .select_optional_indices(&[Some(2), None, Some(0), Some(1)])
+            .unwrap();
+        assert_eq!(
+            selected.get(&key("distance")),
+            Some(&PropertyColumn::Real {
+                unit: ANGSTROM,
+                values: vec![Some(3.0), None, Some(1.0), None],
+            })
+        );
+        assert_eq!(
+            selected.get(&key("label")),
+            Some(&PropertyColumn::String(vec![
+                Some("c".into()),
+                None,
+                Some("a".into()),
+                None,
+            ]))
+        );
+        assert!(matches!(
+            table.select_optional_indices(&[Some(3)]),
             Err(PropertyError::InvalidIndex { .. })
         ));
     }
@@ -1149,5 +1447,27 @@ mod tests {
             malformed.validate_realization_canonical_properties(),
             Err(PropertyError::InvalidCanonicalProperty(_))
         ));
+    }
+
+    #[test]
+    fn canonical_realization_columns_install_in_bulk_and_normalize_missing_columns() {
+        let mut properties = Properties::realization(3, 0);
+        properties
+            .install_canonical_realization_atom_columns(
+                vec![Some(1.0), None, Some(0.5)],
+                vec![Some(0.125), None, Some(0.25)],
+            )
+            .unwrap();
+        assert_eq!(properties.occupancy_at(2).unwrap(), Some(0.5));
+        assert_eq!(
+            properties.b_factor_at(0).unwrap(),
+            Some(Quantity::new(0.125, SQUARE_NANOMETER))
+        );
+
+        properties
+            .install_canonical_realization_atom_columns(vec![None; 3], vec![None; 3])
+            .unwrap();
+        assert_eq!(properties.atoms().get(&occupancy_key()), None);
+        assert_eq!(properties.atoms().get(&b_factor_key()), None);
     }
 }
