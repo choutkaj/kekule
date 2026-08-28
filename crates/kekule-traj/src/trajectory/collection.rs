@@ -15,16 +15,16 @@ pub struct Trajectory {
 }
 
 impl Trajectory {
-    pub fn new(topology: Arc<Topology>) -> Self {
+    pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
         Self {
-            topology,
+            topology: topology.into(),
             properties: Properties::new(),
             frames: Vec::new(),
         }
     }
 
     pub fn from_frames(
-        topology: Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         frames: impl IntoIterator<Item = TrajectoryFrame>,
     ) -> Result<Self, TrajectoryError> {
         let mut trajectory = Self::new(topology);
@@ -110,10 +110,21 @@ impl Trajectory {
         self.frames.is_empty()
     }
 
-    pub fn frame(&self, index: usize) -> Option<&TrajectoryFrame> {
+    /// Returns one topology-bound frame view by stable trajectory index.
+    pub fn frame(&self, index: usize) -> Option<TrajectoryFrameView<'_>> {
+        self.frames.get(index).map(|frame| {
+            frame
+                .view(&self.topology)
+                .expect("trajectory validates frame topology on insertion")
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn frame_payload(&self, index: usize) -> Option<&TrajectoryFrame> {
         self.frames.get(index)
     }
 
+    /// Iterates topology-bound frame views in stable trajectory order.
     pub fn frames(&self) -> impl ExactSizeIterator<Item = TrajectoryFrameView<'_>> {
         self.frames.iter().map(|frame| {
             frame

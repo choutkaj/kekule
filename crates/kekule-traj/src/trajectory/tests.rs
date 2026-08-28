@@ -1,6 +1,6 @@
 use super::*;
 use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
-use kekule::geometry::{Point3, Vector3};
+use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{Properties, PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::Positions;
 use kekule::topology::{AtomSelection, Topology, TopologyBuilder};
@@ -123,12 +123,28 @@ fn frames_validate_all_dense_dimensions_at_the_owner_boundary() {
 fn frame_view_borrows_model_state_and_preserves_time_and_step() {
     let topology = make_topology(false);
     let atom = topology.atom_ids()[0];
+    let cell = PeriodicCell::orthorhombic(
+        Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
+        [true; 3],
+    )
+    .unwrap();
+    let score = key("score");
     let mut frame = TrajectoryFrame::new(
         positions(&[Point3::new(3.0, 0.0, 0.0)]),
         topology.bond_count(),
     );
+    frame.set_cell(Some(cell));
     frame
-        .set_atom_property(0, key("score"), Some(real(0.8)))
+        .insert_property(key("method"), PropertyValue::String("md".into()))
+        .unwrap();
+    frame
+        .set_atom_property(0, score.clone(), Some(real(0.8)))
+        .unwrap();
+    frame
+        .set_velocities(Some(Velocities::zeros(topology.atom_count())))
+        .unwrap();
+    frame
+        .set_forces(Some(Forces::zeros(topology.atom_count())))
         .unwrap();
     frame
         .set_time(Some(Quantity::new(2.5, PICOSECOND)))
@@ -136,7 +152,7 @@ fn frame_view_borrows_model_state_and_preserves_time_and_step() {
     frame.set_step(Some(7));
 
     let view = frame.view(&topology).unwrap();
-    assert_eq!(view.model_view().position(atom).unwrap().value().x, 3.0);
+    assert_eq!(view.as_model().position(atom).unwrap().value().x, 3.0);
     assert_eq!(
         view.atom_property(0, &key("score")).unwrap(),
         Some(PropertyValue::Real {
@@ -146,10 +162,82 @@ fn frame_view_borrows_model_state_and_preserves_time_and_step() {
     );
     assert_eq!(view.time(), Some(Quantity::new(2.5, PICOSECOND)));
     assert_eq!(view.step(), Some(7));
+    assert!(view.velocities().is_some());
+    assert!(view.forces().is_some());
     assert_eq!(
         view.positions().values().value().as_ptr(),
         frame.positions().values().value().as_ptr()
     );
+    let model = view.to_model();
+    assert!(Arc::ptr_eq(&model.shared_topology(), &topology));
+    assert_eq!(model.positions(), frame.positions());
+    assert_eq!(model.cell(), frame.cell());
+    assert_eq!(model.properties(), frame.properties());
+
+    frame
+        .set_atom_property(0, score.clone(), Some(real(0.2)))
+        .unwrap();
+    assert_eq!(
+        model.atom_properties().value(&score, 0).unwrap(),
+        Some(real(0.8))
+    );
+}
+
+#[test]
+fn canonical_trajectory_constructors_accept_owned_and_shared_topology() {
+    let owned_new = Trajectory::new(Arc::try_unwrap(make_topology(false)).unwrap());
+    let shared = owned_new.shared_topology();
+    let shared_new = Trajectory::new(Arc::clone(&shared));
+    assert!(Arc::ptr_eq(&shared_new.shared_topology(), &shared));
+
+    let owned_topology = Arc::try_unwrap(make_topology(false)).unwrap();
+    let owned_frames = Trajectory::from_frames(
+        owned_topology,
+        [TrajectoryFrame::new(
+            positions(&[Point3::new(1.0, 0.0, 0.0)]),
+            0,
+        )],
+    )
+    .unwrap();
+    let shared_frames = Trajectory::from_frames(
+        owned_frames.shared_topology(),
+        [TrajectoryFrame::new(
+            positions(&[Point3::new(2.0, 0.0, 0.0)]),
+            0,
+        )],
+    )
+    .unwrap();
+    assert!(owned_frames
+        .topology()
+        .same_layout(shared_frames.topology()));
+}
+
+#[test]
+fn trajectory_frame_views_are_topology_bound_and_stably_ordered() {
+    let topology = make_topology(false);
+    let mut first = TrajectoryFrame::new(positions(&[Point3::new(1.0, 0.0, 0.0)]), 0);
+    first.set_step(Some(10));
+    let mut second = TrajectoryFrame::new(positions(&[Point3::new(2.0, 0.0, 0.0)]), 0);
+    second.set_step(Some(20));
+    let trajectory = Trajectory::from_frames(Arc::clone(&topology), [first, second]).unwrap();
+
+    assert_eq!(trajectory.frame(0).unwrap().step(), Some(10));
+    assert_eq!(trajectory.frame(1).unwrap().step(), Some(20));
+    assert!(trajectory.frame(2).is_none());
+    assert_eq!(
+        trajectory
+            .frames()
+            .map(|frame| frame.step())
+            .collect::<Vec<_>>(),
+        [Some(10), Some(20)]
+    );
+    assert!(Arc::ptr_eq(
+        &trajectory.frame(0).unwrap().shared_topology(),
+        &topology
+    ));
+    let model = trajectory.frame(0).unwrap().to_model();
+    assert!(Arc::ptr_eq(&model.shared_topology(), &topology));
+    assert_eq!(model.positions().values().value()[0].x, 1.0);
 }
 
 #[test]
@@ -287,8 +375,8 @@ fn trajectory_slice_transfers_every_per_atom_frame_field() {
         Some(real(0.75))
     );
     assert!(!frame.bond_properties().has_data());
-    assert_eq!(frame.velocities().unwrap().values().value()[0].x, 4.0);
-    assert_eq!(frame.forces().unwrap().values().value()[0].x, 6.0);
+    assert_eq!(frame.velocities().unwrap().value()[0].x, 4.0);
+    assert_eq!(frame.forces().unwrap().value()[0].x, 6.0);
     assert_eq!(frame.time(), Some(Quantity::new(2.0, PICOSECOND)));
     assert_eq!(frame.step(), Some(8));
 }

@@ -1,9 +1,9 @@
 use super::*;
 use crate::core::{Atom, BondOrder, Element, MoleculeEditor};
-use crate::geometry::Point3;
+use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::properties::{Properties, PropertyColumn, PropertyKey, PropertyValue};
 use crate::topology::TopologyBuilder;
-use crate::units::{Quantity, KELVIN, NANOMETER, SQUARE_ANGSTROM, SQUARE_NANOMETER};
+use crate::units::{Quantity, ANGSTROM, KELVIN, NANOMETER, SQUARE_ANGSTROM, SQUARE_NANOMETER};
 use std::sync::Arc;
 
 fn model_fixture() -> (
@@ -34,6 +34,158 @@ fn model_fixture() -> (
         atom,
         crate::topology::InstanceBondId::new(instance, bond),
     )
+}
+
+fn single_atom_topology() -> crate::topology::Topology {
+    let mut editor = MoleculeEditor::new();
+    editor
+        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+        .unwrap();
+    crate::topology::Topology::from_molecule(&editor.finish().unwrap()).unwrap()
+}
+
+fn single_position(x: f64) -> Positions {
+    Positions::new(Quantity::new([Point3::new(x, 0.0, 0.0)], NANOMETER)).unwrap()
+}
+
+#[test]
+fn canonical_model_constructors_accept_owned_and_shared_topology() {
+    let owned = Model::new(single_atom_topology(), single_position(1.0)).unwrap();
+    let shared = owned.shared_topology();
+    let shared_model = Model::new(Arc::clone(&shared), single_position(2.0)).unwrap();
+    assert!(Arc::ptr_eq(&shared_model.shared_topology(), &shared));
+
+    let owned_complete = Model::with_properties(
+        single_atom_topology(),
+        single_position(3.0),
+        None,
+        Properties::realization(1, 0),
+    )
+    .unwrap();
+    let shared_complete = Model::with_properties(
+        owned_complete.shared_topology(),
+        single_position(4.0),
+        None,
+        Properties::realization(1, 0),
+    )
+    .unwrap();
+    assert!(owned_complete
+        .topology()
+        .same_layout(shared_complete.topology()));
+}
+
+#[test]
+fn canonical_ensemble_constructors_accept_owned_and_shared_topology() {
+    let owned_new = Ensemble::new(single_atom_topology());
+    let shared = owned_new.shared_topology();
+    let shared_new = Ensemble::new(Arc::clone(&shared));
+    assert!(Arc::ptr_eq(&shared_new.shared_topology(), &shared));
+
+    let owned_members = Ensemble::from_members(
+        single_atom_topology(),
+        [EnsembleMember::new(single_position(1.0), 0)],
+    )
+    .unwrap();
+    let shared_members = Ensemble::from_members(
+        owned_members.shared_topology(),
+        [EnsembleMember::new(single_position(2.0), 0)],
+    )
+    .unwrap();
+    assert!(owned_members
+        .topology()
+        .same_layout(shared_members.topology()));
+}
+
+#[test]
+fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
+    let topology = Arc::new(single_atom_topology());
+    let cell = PeriodicCell::orthorhombic(
+        Quantity::new(Vector3::new(10.0, 10.0, 10.0), ANGSTROM),
+        [true; 3],
+    )
+    .unwrap();
+    let key = PropertyKey::new("score").unwrap();
+    let mut first = EnsembleMember::new(single_position(1.0), 0);
+    first.set_cell(Some(cell));
+    first
+        .insert_property(
+            PropertyKey::new("method").unwrap(),
+            PropertyValue::String("sampled".into()),
+        )
+        .unwrap();
+    first
+        .set_atom_property(0, key.clone(), Some(PropertyValue::Int(7)))
+        .unwrap();
+    first.set_weight(Some(0.25)).unwrap();
+    let mut second = EnsembleMember::new(single_position(2.0), 0);
+    second.set_weight(Some(0.75)).unwrap();
+    let mut ensemble = Ensemble::from_members(Arc::clone(&topology), [first, second]).unwrap();
+
+    assert_eq!(
+        ensemble
+            .members()
+            .map(|member| member.positions().values().value()[0].x)
+            .collect::<Vec<_>>(),
+        [1.0, 2.0]
+    );
+    assert_eq!(
+        ensemble
+            .members()
+            .map(EnsembleMemberView::weight)
+            .collect::<Vec<_>>(),
+        [Some(0.25), Some(0.75)]
+    );
+
+    let member = ensemble.member(0).unwrap();
+    assert!(Arc::ptr_eq(&member.shared_topology(), &topology));
+    let borrowed = member.as_model();
+    assert!(Arc::ptr_eq(&borrowed.shared_topology(), &topology));
+    assert_eq!(
+        borrowed.positions().values().value().as_ptr(),
+        member.positions().values().value().as_ptr()
+    );
+    let owned = member.to_model();
+    assert!(Arc::ptr_eq(&owned.shared_topology(), &topology));
+    assert_eq!(owned.positions(), member.positions());
+    assert_eq!(owned.cell(), member.cell());
+    assert_eq!(owned.properties(), member.properties());
+
+    ensemble
+        .member_mut(0)
+        .unwrap()
+        .set_atom_property(0, key.clone(), Some(PropertyValue::Int(9)))
+        .unwrap();
+    assert_eq!(
+        owned.atom_properties().value(&key, 0).unwrap(),
+        Some(PropertyValue::Int(7))
+    );
+}
+
+#[test]
+fn model_view_materialization_clones_realization_and_shares_topology() {
+    let mut source = Model::new(single_atom_topology(), single_position(1.0)).unwrap();
+    let topology = source.shared_topology();
+    let key = PropertyKey::new("score").unwrap();
+    let atom = topology.atom_ids()[0];
+    source
+        .set_atom_property(atom, key.clone(), Some(PropertyValue::Int(4)))
+        .unwrap();
+    let owned = source.view().to_model();
+
+    assert!(Arc::ptr_eq(&owned.shared_topology(), &topology));
+    assert_eq!(owned.positions(), source.positions());
+    assert_eq!(owned.properties(), source.properties());
+    source
+        .set_atom_property(atom, key.clone(), Some(PropertyValue::Int(8)))
+        .unwrap();
+    source
+        .set_position(atom, Quantity::new(Point3::new(9.0, 0.0, 0.0), NANOMETER))
+        .unwrap();
+    assert_eq!(
+        owned.atom_property(atom, &key).unwrap(),
+        Some(PropertyValue::Int(4))
+    );
+    assert_eq!(owned.position(atom).unwrap().value().x, 1.0);
 }
 
 #[test]

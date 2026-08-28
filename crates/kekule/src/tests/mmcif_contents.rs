@@ -1408,11 +1408,21 @@ ATOM 4 C CA GLY A 1 1 B 0.9 11.0 0.0 0.0 2
         interpreted.reports()[1].instances()[0].atoms()[0].atom()
     );
     assert_eq!(
-        ensemble.views().next().unwrap().occupancy(atom).unwrap(),
+        ensemble
+            .member(0)
+            .unwrap()
+            .as_model()
+            .occupancy(atom)
+            .unwrap(),
         Some(0.8)
     );
     assert_eq!(
-        ensemble.views().nth(1).unwrap().occupancy(atom).unwrap(),
+        ensemble
+            .member(1)
+            .unwrap()
+            .as_model()
+            .occupancy(atom)
+            .unwrap(),
         Some(0.9)
     );
     let selected_altlocs = interpreted
