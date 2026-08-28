@@ -18,7 +18,7 @@
 //! transformed trajectory.
 //!
 //! Coordinate-dependent kernels in `kekule` and external potential adapters
-//! can consume [`TrajectoryFrameView::model_view`] or
+//! can consume [`TrajectoryFrameView::as_model`] or
 //! [`FrameBuffer::model_view`] without copying coordinates.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]

@@ -448,6 +448,16 @@ impl Topology {
         TopologyBuilder::new()
     }
 
+    /// Consumes this published topology and stages a topology transformation.
+    ///
+    /// Existing definitions, instances, semantic identifiers, dense order,
+    /// hierarchy, and static properties are retained. Appending through the
+    /// returned builder assigns new identifiers after the retained identity
+    /// spaces, and [`TopologyBuilder::build`] reconstructs derived lookups.
+    pub fn into_builder(self) -> TopologyBuilder {
+        TopologyBuilder::from_topology(self)
+    }
+
     /// Builds a topology containing one explicit occurrence of `molecule`.
     ///
     /// The molecule is installed as its own definition and instance. No

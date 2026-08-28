@@ -128,15 +128,21 @@ fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
     .unwrap();
 
     let energies = ensemble
-        .views()
-        .map(|view| potential.evaluate(view).unwrap().energy().to_value())
+        .members()
+        .map(|member| {
+            potential
+                .evaluate(member.as_model())
+                .unwrap()
+                .energy()
+                .to_value()
+        })
         .collect::<Vec<_>>();
     assert_eq!(energies.len(), 2);
     assert!(energies.iter().all(|energy| energy.is_finite()));
     let topology = model.shared_topology();
     let frame_view = frame.view(&topology).unwrap();
     assert!(potential
-        .evaluate(frame_view.model_view())
+        .evaluate(frame_view.as_model())
         .unwrap()
         .energy()
         .is_finite());
@@ -186,7 +192,7 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
 
     let periodic_ensemble = Ensemble::from_models(&[periodic_model.clone()]).unwrap();
     assert_eq!(
-        potential.evaluate(periodic_ensemble.views().next().unwrap()),
+        potential.evaluate(periodic_ensemble.member(0).unwrap().as_model()),
         Err(PotentialError::UnsupportedPeriodicCell)
     );
     let mut periodic_frame = TrajectoryFrame::new(
@@ -199,7 +205,7 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
             periodic_frame
                 .view(&model.shared_topology())
                 .unwrap()
-                .model_view(),
+                .as_model(),
         ),
         Err(PotentialError::UnsupportedPeriodicCell)
     );

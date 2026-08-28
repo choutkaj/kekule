@@ -206,7 +206,88 @@ impl EnsembleMember {
     }
 }
 
-/// A finite stable-order collection of non-temporal models.
+/// Borrowed topology-bound view of one ensemble member.
+#[derive(Debug, Clone, Copy)]
+pub struct EnsembleMemberView<'a> {
+    topology: &'a Arc<Topology>,
+    member: &'a EnsembleMember,
+}
+
+impl<'a> EnsembleMemberView<'a> {
+    fn new(topology: &'a Arc<Topology>, member: &'a EnsembleMember) -> Self {
+        Self { topology, member }
+    }
+
+    pub fn topology(self) -> &'a Topology {
+        self.topology
+    }
+
+    pub fn shared_topology(self) -> Arc<Topology> {
+        Arc::clone(self.topology)
+    }
+
+    pub fn positions(self) -> &'a Positions {
+        self.member.positions()
+    }
+
+    pub fn cell(self) -> Option<&'a PeriodicCell> {
+        self.member.cell()
+    }
+
+    pub fn properties(self) -> &'a Properties {
+        self.member.properties()
+    }
+
+    pub fn atom_properties(self) -> &'a PropertyTable {
+        self.member.atom_properties()
+    }
+
+    pub fn bond_properties(self) -> &'a PropertyTable {
+        self.member.bond_properties()
+    }
+
+    pub fn atom_property(
+        self,
+        index: usize,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyValue>, EnsembleError> {
+        self.member.atom_property(index, key)
+    }
+
+    pub fn bond_property(
+        self,
+        index: usize,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyValue>, EnsembleError> {
+        self.member.bond_property(index, key)
+    }
+
+    pub fn occupancy_at(self, index: usize) -> Result<Option<f64>, EnsembleError> {
+        self.member.occupancy_at(index)
+    }
+
+    pub fn b_factor_at(self, index: usize) -> Result<Option<Quantity<f64>>, EnsembleError> {
+        self.member.b_factor_at(index)
+    }
+
+    pub fn weight(self) -> Option<f64> {
+        self.member.weight()
+    }
+
+    /// Projects this member into zero-copy borrowed model semantics.
+    pub fn as_model(self) -> ModelView<'a> {
+        self.member
+            .view(self.topology)
+            .expect("ensemble member view has validated topology")
+    }
+
+    /// Materializes this member as an owned model, excluding ensemble weight.
+    pub fn to_model(self) -> Model {
+        self.as_model().to_model()
+    }
+}
+
+/// A finite stable-order collection of non-temporal realizations.
 #[derive(Debug, Clone)]
 pub struct Ensemble {
     topology: Arc<Topology>,
@@ -215,16 +296,16 @@ pub struct Ensemble {
 }
 
 impl Ensemble {
-    pub fn new(topology: Arc<Topology>) -> Self {
+    pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
         Self {
-            topology,
+            topology: topology.into(),
             properties: Properties::new(),
             members: Vec::new(),
         }
     }
 
     pub fn from_members(
-        topology: Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         members: impl IntoIterator<Item = EnsembleMember>,
     ) -> Result<Self, EnsembleError> {
         let mut ensemble = Self::new(topology);
@@ -325,12 +406,18 @@ impl Ensemble {
         Ok(target)
     }
 
-    pub fn members(&self) -> impl ExactSizeIterator<Item = &EnsembleMember> {
-        self.members.iter()
+    /// Iterates topology-bound member views in stable collection order.
+    pub fn members(&self) -> impl ExactSizeIterator<Item = EnsembleMemberView<'_>> {
+        self.members
+            .iter()
+            .map(|member| EnsembleMemberView::new(&self.topology, member))
     }
 
-    pub fn member(&self, index: usize) -> Option<&EnsembleMember> {
-        self.members.get(index)
+    /// Returns one topology-bound member view by stable collection index.
+    pub fn member(&self, index: usize) -> Option<EnsembleMemberView<'_>> {
+        self.members
+            .get(index)
+            .map(|member| EnsembleMemberView::new(&self.topology, member))
     }
 
     pub fn member_mut(&mut self, index: usize) -> Option<&mut EnsembleMember> {
@@ -369,14 +456,6 @@ impl Ensemble {
             .validate_realization_canonical_properties()?;
         self.members.push(member);
         Ok(())
-    }
-
-    pub fn views(&self) -> impl ExactSizeIterator<Item = ModelView<'_>> {
-        self.members.iter().map(|member| {
-            member
-                .view(&self.topology)
-                .expect("ensemble validates shared topology allocation")
-        })
     }
 
     pub fn normalize_weights(&mut self) -> Result<(), EnsembleError> {

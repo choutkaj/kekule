@@ -4,7 +4,7 @@ use kekule::geometry::{PeriodicCell, Vector3};
 use kekule::properties::{
     Properties, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue,
 };
-use kekule::structure::{ModelView, Positions};
+use kekule::structure::{Model, ModelView, Positions};
 use kekule::topology::Topology;
 use kekule::units::{
     Quantity, Unit, CANONICAL_FORCE_UNIT, CANONICAL_TIME_UNIT, CANONICAL_VELOCITY_UNIT,
@@ -408,8 +408,17 @@ impl<'a> TrajectoryFrameView<'a> {
         self.step
     }
 
-    pub fn model_view(self) -> ModelView<'a> {
+    /// Projects this frame into zero-copy borrowed model semantics.
+    pub fn as_model(self) -> ModelView<'a> {
         ModelView::new(self.topology, self.positions, self.cell, self.properties)
             .expect("trajectory frame view has validated topology")
+    }
+
+    /// Materializes model-relevant frame state as an owned model.
+    ///
+    /// Velocities, forces, time, and step are trajectory-specific and are not
+    /// represented by the returned model.
+    pub fn to_model(self) -> Model {
+        self.as_model().to_model()
     }
 }

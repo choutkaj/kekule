@@ -135,8 +135,8 @@ impl Trajectory {
                 .enumerate()
                 .map(|(frame, moving)| {
                     kabsch_with_options(
-                        moving.model_view(),
-                        reference.model_view(),
+                        moving.as_model(),
+                        reference.as_model(),
                         fit_selection,
                         options,
                     )
@@ -260,8 +260,8 @@ impl Trajectory {
         let mut values = Vec::with_capacity(self.len());
         for (frame, moving) in self.frames().enumerate() {
             let alignment = kabsch_with_options(
-                moving.model_view(),
-                reference.model_view(),
+                moving.as_model(),
+                reference.as_model(),
                 fit_selection,
                 options.superposition,
             )
@@ -912,10 +912,10 @@ mod tests {
         {
             assert_vector_close(actual, expected, 1.0e-12);
         }
-        for velocity in transformed.velocities().unwrap().values().to_value() {
+        for velocity in transformed.velocities().unwrap().value().iter() {
             assert_vector_close(*velocity, Vector3::new(0.0, 1.0, 0.0), 2.0e-12);
         }
-        for force in transformed.forces().unwrap().values().to_value() {
+        for force in transformed.forces().unwrap().value().iter() {
             assert_vector_close(*force, Vector3::new(-1.0, 0.0, 0.0), 2.0e-12);
         }
         assert_eq!(transformed.time(), Some(Quantity::new(2.5, PICOSECOND)));
@@ -953,7 +953,7 @@ mod tests {
         )
         .unwrap();
         let before = (0..trajectory.len())
-            .map(|frame| trajectory.frame(frame).unwrap().clone())
+            .map(|frame| trajectory.frame_payload(frame).unwrap().clone())
             .collect::<Vec<_>>();
 
         assert_eq!(
@@ -973,7 +973,7 @@ mod tests {
             })
         );
         let after = (0..trajectory.len())
-            .map(|frame| trajectory.frame(frame).unwrap().clone())
+            .map(|frame| trajectory.frame_payload(frame).unwrap().clone())
             .collect::<Vec<_>>();
         assert_eq!(after, before);
     }
