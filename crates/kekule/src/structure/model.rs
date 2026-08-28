@@ -3,14 +3,16 @@ use std::sync::Arc;
 
 use crate::core::{Atom, Bond, Molecule};
 use crate::geometry::{PeriodicCell, Point3};
-use crate::properties::{Properties, PropertyColumn, PropertyError, PropertyKey, PropertyValue};
+use crate::properties::{
+    Properties, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue,
+};
 use crate::topology::transform::TopologySubsetError;
 use crate::topology::{
     AtomSelection, AtomSiteId, AtomSiteView, ChainId, ChainView, Hierarchy, InstanceAtomId,
     InstanceBondId, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, ResidueId,
     ResidueView, Topology, TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyError,
 };
-use crate::units::{Quantity, DIMENSIONLESS, SQUARE_NANOMETER};
+use crate::units::Quantity;
 
 use super::{PositionError, Positions};
 
@@ -53,7 +55,7 @@ impl Model {
         properties: Properties,
     ) -> Result<Self, ModelError> {
         validate_dimensions(&topology, &positions, &properties)?;
-        validate_canonical_atom_properties(&properties)?;
+        properties.validate_realization_canonical_properties()?;
         Ok(Self {
             topology,
             positions,
@@ -105,19 +107,10 @@ impl Model {
             .positions
             .select_indices(&atom_indices)
             .map_err(ModelError::from)?;
-        let atom_properties = self
+        let properties = self
             .properties
-            .atoms()
-            .select_indices(&atom_indices)
+            .project_realization(&atom_indices, &bond_indices)
             .map_err(ModelError::Property)?;
-        let bond_properties = self
-            .properties
-            .bonds()
-            .select_indices(&bond_indices)
-            .map_err(ModelError::Property)?;
-        let mut properties = Properties::realization(atom_indices.len(), bond_indices.len());
-        *properties.atoms_mut() = atom_properties;
-        *properties.bonds_mut() = bond_properties;
         Ok(Self::with_properties(
             subset.shared_topology(),
             positions,
@@ -259,8 +252,28 @@ impl Model {
         &self.properties
     }
 
-    pub fn properties_mut(&mut self) -> &mut Properties {
-        &mut self.properties
+    pub fn insert_property(
+        &mut self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>, ModelError> {
+        Ok(self.properties.insert(key, value)?)
+    }
+
+    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.properties.remove(key)
+    }
+
+    pub fn clear_properties(&mut self) {
+        self.properties.clear_owner();
+    }
+
+    pub const fn atom_properties(&self) -> &PropertyTable {
+        self.properties.realization_atom_properties()
+    }
+
+    pub const fn bond_properties(&self) -> &PropertyTable {
+        self.properties.realization_bond_properties()
     }
 
     pub fn set_properties(&mut self, properties: Properties) -> Result<(), ModelError> {
@@ -276,7 +289,7 @@ impl Model {
                 actual: properties.bonds().len(),
             });
         }
-        validate_canonical_atom_properties(&properties)?;
+        properties.validate_realization_canonical_properties()?;
         self.properties = properties;
         Ok(())
     }
@@ -286,15 +299,7 @@ impl Model {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        match self
-            .properties
-            .atoms()
-            .value(&occupancy_key(), index.index())?
-        {
-            Some(PropertyValue::Real { value, unit }) if unit == DIMENSIONLESS => Ok(Some(value)),
-            None => Ok(None),
-            _ => Err(ModelError::InvalidCanonicalProperty("occupancy")),
-        }
+        Ok(self.properties.occupancy_at(index.index())?)
     }
 
     pub fn b_factor(&self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, ModelError> {
@@ -302,17 +307,7 @@ impl Model {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        match self
-            .properties
-            .atoms()
-            .value(&b_factor_key(), index.index())?
-        {
-            Some(PropertyValue::Real { value, unit }) if unit == SQUARE_NANOMETER => {
-                Ok(Some(Quantity::new(value, unit)))
-            }
-            None => Ok(None),
-            _ => Err(ModelError::InvalidCanonicalProperty("b_factor")),
-        }
+        Ok(self.properties.b_factor_at(index.index())?)
     }
 
     pub fn set_occupancy(
@@ -324,14 +319,7 @@ impl Model {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        self.properties.atoms_mut().set_reserved_value(
-            occupancy_key(),
-            index.index(),
-            value.map(|value| PropertyValue::Real {
-                value,
-                unit: DIMENSIONLESS,
-            }),
-        )?;
+        self.properties.set_occupancy_at(index.index(), value)?;
         Ok(())
     }
 
@@ -344,16 +332,7 @@ impl Model {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        let value = value
-            .map(|value| {
-                let value = value.to_unit(SQUARE_NANOMETER)?.to_value();
-                PropertyValue::real(value, SQUARE_NANOMETER)
-            })
-            .transpose()
-            .map_err(ModelError::Property)?;
-        self.properties
-            .atoms_mut()
-            .set_reserved_value(b_factor_key(), index.index(), value)?;
+        self.properties.set_b_factor_at(index.index(), value)?;
         Ok(())
     }
 
@@ -366,7 +345,7 @@ impl Model {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.properties.atoms().value(key, index.index())?)
+        Ok(self.atom_properties().value(key, index.index())?)
     }
 
     pub fn set_atom_property_value(
@@ -381,8 +360,24 @@ impl Model {
             .ok_or(ModelError::InvalidAtomId(atom))?;
         Ok(self
             .properties
-            .atoms_mut()
-            .set_value(key, index.index(), value)?)
+            .set_realization_atom_value(key, index.index(), value)?)
+    }
+
+    pub fn insert_atom_property_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>, ModelError> {
+        Ok(self
+            .properties
+            .insert_realization_atom_column(key, column)?)
+    }
+
+    pub fn remove_atom_property_column(
+        &mut self,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyColumn>, ModelError> {
+        Ok(self.properties.remove_realization_atom_column(key)?)
     }
 
     pub fn bond_property_value(
@@ -394,7 +389,7 @@ impl Model {
             .topology
             .bond_index(bond)
             .ok_or(ModelError::InvalidBondId(bond))?;
-        Ok(self.properties.bonds().value(key, index.index())?)
+        Ok(self.bond_properties().value(key, index.index())?)
     }
 
     pub fn set_bond_property_value(
@@ -409,8 +404,21 @@ impl Model {
             .ok_or(ModelError::InvalidBondId(bond))?;
         Ok(self
             .properties
-            .bonds_mut()
-            .set_value(key, index.index(), value)?)
+            .set_realization_bond_value(key, index.index(), value)?)
+    }
+
+    pub fn insert_bond_property_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>, ModelError> {
+        Ok(self
+            .properties
+            .insert_realization_bond_column(key, column)?)
+    }
+
+    pub fn remove_bond_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
+        self.properties.remove_realization_bond_column(key)
     }
 
     pub fn atom_count(&self) -> usize {
@@ -458,28 +466,6 @@ fn validate_dimensions(
     Ok(())
 }
 
-fn occupancy_key() -> PropertyKey {
-    PropertyKey::new("occupancy").expect("canonical property key is valid")
-}
-
-fn b_factor_key() -> PropertyKey {
-    PropertyKey::new("b_factor").expect("canonical property key is valid")
-}
-
-fn validate_canonical_atom_properties(properties: &Properties) -> Result<(), ModelError> {
-    if let Some(column) = properties.atoms().get(&occupancy_key()) {
-        if !matches!(column, PropertyColumn::Real { unit, .. } if *unit == DIMENSIONLESS) {
-            return Err(ModelError::InvalidCanonicalProperty("occupancy"));
-        }
-    }
-    if let Some(column) = properties.atoms().get(&b_factor_key()) {
-        if !matches!(column, PropertyColumn::Real { unit, .. } if *unit == SQUARE_NANOMETER) {
-            return Err(ModelError::InvalidCanonicalProperty("b_factor"));
-        }
-    }
-    Ok(())
-}
-
 /// Borrowed topology, positions, cell, and realization properties for structural
 /// kernels.
 #[derive(Debug, Clone, Copy)]
@@ -498,7 +484,7 @@ impl<'a> ModelView<'a> {
         properties: &'a Properties,
     ) -> Result<Self, ModelError> {
         validate_dimensions(topology, positions, properties)?;
-        validate_canonical_atom_properties(properties)?;
+        properties.validate_realization_canonical_properties()?;
         Ok(Self {
             topology,
             positions,
@@ -626,20 +612,20 @@ impl<'a> ModelView<'a> {
         self.properties
     }
 
+    pub const fn atom_properties(self) -> &'a PropertyTable {
+        self.properties.realization_atom_properties()
+    }
+
+    pub const fn bond_properties(self) -> &'a PropertyTable {
+        self.properties.realization_bond_properties()
+    }
+
     pub fn occupancy(self, atom: InstanceAtomId) -> Result<Option<f64>, ModelError> {
         let index = self
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        match self
-            .properties
-            .atoms()
-            .value(&occupancy_key(), index.index())?
-        {
-            Some(PropertyValue::Real { value, unit }) if unit == DIMENSIONLESS => Ok(Some(value)),
-            None => Ok(None),
-            _ => Err(ModelError::InvalidCanonicalProperty("occupancy")),
-        }
+        Ok(self.properties.occupancy_at(index.index())?)
     }
 
     pub fn b_factor(self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, ModelError> {
@@ -647,17 +633,7 @@ impl<'a> ModelView<'a> {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        match self
-            .properties
-            .atoms()
-            .value(&b_factor_key(), index.index())?
-        {
-            Some(PropertyValue::Real { value, unit }) if unit == SQUARE_NANOMETER => {
-                Ok(Some(Quantity::new(value, unit)))
-            }
-            None => Ok(None),
-            _ => Err(ModelError::InvalidCanonicalProperty("b_factor")),
-        }
+        Ok(self.properties.b_factor_at(index.index())?)
     }
 
     pub fn atom_count(self) -> usize {
@@ -675,7 +651,6 @@ pub enum ModelError {
     InvalidBondId(InstanceBondId),
     Position(PositionError),
     Property(PropertyError),
-    InvalidCanonicalProperty(&'static str),
 }
 
 impl fmt::Display for ModelError {
@@ -697,9 +672,6 @@ impl fmt::Display for ModelError {
             Self::InvalidBondId(bond) => write!(formatter, "invalid topology bond: {bond}"),
             Self::Position(error) => write!(formatter, "invalid position data: {error}"),
             Self::Property(error) => write!(formatter, "invalid model property: {error}"),
-            Self::InvalidCanonicalProperty(key) => {
-                write!(formatter, "invalid canonical model atom property {key:?}")
-            }
         }
     }
 }

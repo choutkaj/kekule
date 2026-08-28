@@ -9,9 +9,6 @@ mod molecule_workflows;
 mod perception;
 mod stereo;
 
-pub use crate::properties::{
-    Properties, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue,
-};
 pub use atom_bond::*;
 pub use element::*;
 pub use element_reference::*;

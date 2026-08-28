@@ -1185,8 +1185,8 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
     let shared_topology = ensemble.shared_topology();
     assert!(ensemble.members().all(|member| {
         member.positions().len() == shared_topology.atom_count()
-            && member.properties().atoms().len() == shared_topology.atom_count()
-            && member.properties().bonds().len() == shared_topology.bond_count()
+            && member.atom_properties().len() == shared_topology.atom_count()
+            && member.bond_properties().len() == shared_topology.bond_count()
     }));
     let first_positions = ensemble
         .members()
@@ -1197,10 +1197,7 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
 
     assert_eq!(interpreted.reports()[0].selected_model(), Some("1"));
     assert_eq!(interpreted.reports()[1].selected_model(), Some("2"));
-    let member_properties = ensemble
-        .members()
-        .map(|member| member.properties())
-        .collect::<Vec<_>>();
+    let member_properties = ensemble.members().collect::<Vec<_>>();
     let occupancy = PropertyKey::new("occupancy").unwrap();
     let b_factor = PropertyKey::new("b_factor").unwrap();
     for (member, expected_occupancies, expected_b_factors) in [
@@ -1209,14 +1206,14 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
     ] {
         for index in 0..2 {
             assert_eq!(
-                member.atoms().value(&occupancy, index).unwrap(),
+                member.atom_properties().value(&occupancy, index).unwrap(),
                 Some(PropertyValue::Real {
                     value: expected_occupancies[index],
                     unit: DIMENSIONLESS
                 })
             );
             let Some(PropertyValue::Real { value, unit }) =
-                member.atoms().value(&b_factor, index).unwrap()
+                member.atom_properties().value(&b_factor, index).unwrap()
             else {
                 panic!("B-factor")
             };
@@ -1916,9 +1913,7 @@ covale A N 1 A CA 1 doub
         .set_b_factor(first_atom, Some(Quantity::new(0.125, NANOMETER.powi(2))))
         .unwrap();
     original
-        .properties_mut()
-        .atoms_mut()
-        .insert(
+        .insert_atom_property_column(
             PropertyKey::new("analysis_score").unwrap(),
             PropertyColumn::Real {
                 unit: DIMENSIONLESS,

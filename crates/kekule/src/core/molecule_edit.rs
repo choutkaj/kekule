@@ -1,8 +1,10 @@
 use std::fmt;
 
+use crate::properties::Properties;
+
 use super::{
-    Atom, AtomId, Bond, BondId, BondOrder, Graph, Molecule, Perception, Properties, Result,
-    StereoElement, StereoElementId, StereoGroup, StereoGroupId,
+    Atom, AtomId, Bond, BondId, BondOrder, Graph, Molecule, Perception, Result, StereoElement,
+    StereoElementId, StereoGroup, StereoGroupId,
 };
 
 /// A connectedness violation at a public [`Molecule`] boundary.

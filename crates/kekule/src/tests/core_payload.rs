@@ -1,4 +1,5 @@
 use super::*;
+use crate::properties::PropertyValue;
 
 #[test]
 fn element_from_atomic_number_accepts_periodic_table_bounds() {

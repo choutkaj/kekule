@@ -744,8 +744,14 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
             (frame.forces().is_some(), "forces"),
             (frame.time().is_some(), "time"),
             (frame.step().is_some(), "step"),
-            (frame.properties().atoms().has_data(), "atom properties"),
-            (frame.properties().bonds().has_data(), "bond properties"),
+            (
+                frame.properties().realization_atom_properties().has_data(),
+                "atom properties",
+            ),
+            (
+                frame.properties().realization_bond_properties().has_data(),
+                "bond properties",
+            ),
             (
                 !frame.properties().owner_is_empty(),
                 "frame owner properties",

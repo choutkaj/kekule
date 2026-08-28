@@ -149,7 +149,7 @@ fn retain_normalized(
         let target_definition = definition_targets[instance.definition().index()]
             .expect("retained instance has a retained definition");
         let target_instance = builder.add_instance(target_definition)?;
-        instance_sources.push(source_instance.index());
+        instance_sources.push(Some(source_instance.index()));
         let source_definition = topology
             .definition_for_instance(source_instance)
             .expect("retained instance references a live definition")
@@ -337,6 +337,7 @@ impl Topology {
             if selected_local.is_empty() {
                 continue;
             }
+            let whole_instance_selected = selected_local.len() == source_molecule.atom_count();
             let mut visited = BTreeSet::new();
             for seed in source_molecule.atom_ids() {
                 if !selected_local.contains(&seed) || !visited.insert(seed) {
@@ -364,7 +365,8 @@ impl Topology {
                 }
                 let target_molecule = editor.finish()?;
                 let target_instance = builder.add_molecule(&target_molecule)?;
-                instance_sources.push(molecule_view.id().index());
+                instance_sources
+                    .push(whole_instance_selected.then_some(molecule_view.id().index()));
                 for source_atom in membership.iter().copied() {
                     atom_targets.insert(
                         InstanceAtomId::new(molecule_view.id(), source_atom),
@@ -501,7 +503,7 @@ fn copy_filtered_hierarchy(
 fn project_topology_properties(
     source: &Topology,
     target: &Topology,
-    instance_sources: &[usize],
+    instance_sources: &[Option<usize>],
     atom_targets: &BTreeMap<InstanceAtomId, InstanceAtomId>,
     bond_targets: &BTreeMap<InstanceBondId, InstanceBondId>,
     hierarchy: &HierarchyProjection,

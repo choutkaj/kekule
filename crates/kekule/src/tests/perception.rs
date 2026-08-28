@@ -1,4 +1,5 @@
 use super::*;
+use crate::properties::{PropertyKey, PropertyValue};
 
 fn aromatic_atom(molecule: &Molecule, atom: AtomId) -> bool {
     molecule.atom_is_aromatic(atom).expect("atom exists") == Some(true)
@@ -251,8 +252,7 @@ fn discrete_chemical_perception_changes_only_perception_state() {
     let annotated_atom = atom_ids[0];
     let annotated_bond = molecule.bond_ids().next().expect("fixture bond");
     molecule
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("perception_purity_fixture").unwrap(),
             PropertyValue::String("molecule property".to_owned()),
         )

@@ -106,8 +106,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
         .unwrap();
     buffer.set_step(Some(7));
     buffer
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("stale").unwrap(),
             PropertyValue::Bool(true),
         )
@@ -285,9 +284,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     );
     buffer.set_step(None);
     buffer
-        .properties_mut()
-        .bonds_mut()
-        .insert(
+        .insert_bond_property_column(
             PropertyKey::new("conformational_entropy").unwrap(),
             PropertyColumn::Real {
                 unit: ANGSTROM,

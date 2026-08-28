@@ -106,10 +106,7 @@ fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuff
         .set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))
         .unwrap();
     frame.set_step(Some(step));
-    frame
-        .properties_mut()
-        .insert(lambda_key(), lambda(0.125))
-        .unwrap();
+    frame.insert_property(lambda_key(), lambda(0.125)).unwrap();
     frame
 }
 
@@ -131,16 +128,10 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         second.set_cell(None);
         second.set_velocities::<&[Vector3]>(None).unwrap();
         second.set_forces::<&[Vector3]>(None).unwrap();
-        second
-            .properties_mut()
-            .insert(lambda_key(), lambda(0.25))
-            .unwrap();
+        second.insert_property(lambda_key(), lambda(0.25)).unwrap();
         writer.write_frame(second.frame_view()).unwrap();
         let mut third = populated_frame(&topology, 2.0, 6);
-        third
-            .properties_mut()
-            .insert(lambda_key(), lambda(0.375))
-            .unwrap();
+        third.insert_property(lambda_key(), lambda(0.375)).unwrap();
         writer.write_frame(third.frame_view()).unwrap();
         let bytes = writer.finish().unwrap().into_inner();
 
@@ -299,8 +290,7 @@ fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
     .unwrap();
     let mut destination = populated_frame(&topology, 9.0, 99);
     destination
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("sentinel").unwrap(),
             PropertyValue::Bool(true),
         )
@@ -402,7 +392,7 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
         codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
         Some(TrajectoryCodecErrorKind::UnsupportedField)
     );
-    frame.properties_mut().clear_owner();
+    frame.clear_properties();
     writer.write_frame(frame.frame_view()).unwrap();
     let bytes = writer.finish().unwrap().into_inner();
     let mut reader = TrrReader::new(
@@ -523,9 +513,7 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
 
     let mut bond_annotated = populated_frame(&topology, 0.0, 0);
     bond_annotated
-        .properties_mut()
-        .bonds_mut()
-        .insert(
+        .insert_bond_property_column(
             PropertyKey::new("conformational_entropy").unwrap(),
             PropertyColumn::Real {
                 unit: NANOMETER,

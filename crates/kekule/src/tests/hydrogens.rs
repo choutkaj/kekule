@@ -2,6 +2,7 @@ use super::*;
 use crate::hydrogens::{
     AddHydrogensOptions, AddedHydrogenOrigin, HydrogenTransformError, RetainedHydrogenReason,
 };
+use crate::properties::{PropertyKey, PropertyValue};
 
 fn perceived_smiles(input: &str) -> Molecule {
     let mut molecule = read_smiles(input).expect("SMILES should parse");

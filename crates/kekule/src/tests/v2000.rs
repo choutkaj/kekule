@@ -1,4 +1,5 @@
 use super::*;
+use crate::properties::{PropertyKey, PropertyValue};
 
 #[test]
 fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
@@ -758,29 +759,25 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         .finish()
         .expect("metadata fixture should be connected");
     molecule
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("sdf.title").unwrap(),
             PropertyValue::String("metadata title".to_owned()),
         )
         .unwrap();
     molecule
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("sdf.program").unwrap(),
             PropertyValue::String("metadata program".to_owned()),
         )
         .unwrap();
     molecule
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("sdf.comment").unwrap(),
             PropertyValue::String("metadata comment".to_owned()),
         )
         .unwrap();
     molecule
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("sdf.field.NOTES").unwrap(),
             PropertyValue::String("line one\nline two".to_owned()),
         )
