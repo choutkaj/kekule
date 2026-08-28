@@ -348,8 +348,8 @@ impl Model {
 
     pub fn atom_property(
         &self,
-        key: &PropertyKey,
         atom: InstanceAtomId,
+        key: &PropertyKey,
     ) -> Result<Option<PropertyValue>, ModelError> {
         let index = self
             .topology
@@ -360,8 +360,8 @@ impl Model {
 
     pub fn set_atom_property(
         &mut self,
-        key: PropertyKey,
         atom: InstanceAtomId,
+        key: PropertyKey,
         value: Option<PropertyValue>,
     ) -> Result<(), ModelError> {
         let index = self
@@ -392,8 +392,8 @@ impl Model {
 
     pub fn bond_property(
         &self,
-        key: &PropertyKey,
         bond: InstanceBondId,
+        key: &PropertyKey,
     ) -> Result<Option<PropertyValue>, ModelError> {
         let index = self
             .topology
@@ -404,8 +404,8 @@ impl Model {
 
     pub fn set_bond_property(
         &mut self,
-        key: PropertyKey,
         bond: InstanceBondId,
+        key: PropertyKey,
         value: Option<PropertyValue>,
     ) -> Result<(), ModelError> {
         let index = self
@@ -632,8 +632,8 @@ impl<'a> ModelView<'a> {
 
     pub fn atom_property(
         self,
-        key: &PropertyKey,
         atom: InstanceAtomId,
+        key: &PropertyKey,
     ) -> Result<Option<PropertyValue>, ModelError> {
         let index = self
             .topology
@@ -644,8 +644,8 @@ impl<'a> ModelView<'a> {
 
     pub fn bond_property(
         self,
-        key: &PropertyKey,
         bond: InstanceBondId,
+        key: &PropertyKey,
     ) -> Result<Option<PropertyValue>, ModelError> {
         let index = self
             .topology

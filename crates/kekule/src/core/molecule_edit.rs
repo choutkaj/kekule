@@ -84,7 +84,45 @@ pub enum GraphValidationError {
 
 impl fmt::Display for GraphValidationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{self:?}")
+        match self {
+            Self::AdjacencySlotCount => formatter.write_str(
+                "molecular graph adjacency has a different slot count than atom storage",
+            ),
+            Self::TombstonedAtomHasAdjacency { atom } => {
+                write!(
+                    formatter,
+                    "tombstoned atom atom{} still has adjacency entries",
+                    atom.raw()
+                )
+            }
+            Self::InvalidBondEndpoint { bond } => {
+                write!(formatter, "bond bond{} references a missing atom", bond.raw())
+            }
+            Self::InvalidAdjacencyBond { atom, bond } => write!(
+                formatter,
+                "atom atom{} adjacency references missing bond bond{}",
+                atom.raw(),
+                bond.raw()
+            ),
+            Self::AdjacencyEndpointMismatch { atom, bond } => write!(
+                formatter,
+                "atom atom{} adjacency contains bond bond{}, but that bond is not incident to the atom",
+                atom.raw(),
+                bond.raw()
+            ),
+            Self::DuplicateAdjacencyEntry { atom, bond } => write!(
+                formatter,
+                "atom atom{} adjacency contains bond bond{} more than once",
+                atom.raw(),
+                bond.raw()
+            ),
+            Self::MissingAdjacencyEntry { atom, bond } => write!(
+                formatter,
+                "bond bond{} is missing from atom atom{} adjacency",
+                bond.raw(),
+                atom.raw()
+            ),
+        }
     }
 }
 
@@ -118,7 +156,43 @@ pub enum StereoPublicationError {
 
 impl fmt::Display for StereoPublicationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{self:?}")
+        match self {
+            Self::InvalidElementReference { element } => write!(
+                formatter,
+                "stereo element stereo{} references an invalid atom or bond",
+                element.raw()
+            ),
+            Self::InvalidElementGroup { element } => write!(
+                formatter,
+                "stereo element stereo{} references a missing stereo group",
+                element.raw()
+            ),
+            Self::EmptyGroup { group } => {
+                write!(
+                    formatter,
+                    "stereo group group{} contains no members",
+                    group.raw()
+                )
+            }
+            Self::InvalidGroupMember { group, element } => write!(
+                formatter,
+                "stereo group group{} references missing stereo element stereo{}",
+                group.raw(),
+                element.raw()
+            ),
+            Self::DuplicateGroupMember { group, element } => write!(
+                formatter,
+                "stereo group group{} contains stereo element stereo{} more than once",
+                group.raw(),
+                element.raw()
+            ),
+            Self::InconsistentGroupMembership { group, element } => write!(
+                formatter,
+                "stereo group group{} and stereo element stereo{} disagree about membership",
+                group.raw(),
+                element.raw()
+            ),
+        }
     }
 }
 
@@ -492,6 +566,34 @@ mod tests {
 
     fn atom(symbol: &str) -> Atom {
         Atom::new(Element::from_symbol(symbol).expect("fixture element"))
+    }
+
+    #[test]
+    fn graph_validation_errors_have_diagnostic_display_messages() {
+        let error = GraphValidationError::InvalidAdjacencyBond {
+            atom: AtomId::new(4),
+            bond: BondId::new(9),
+        };
+        let message = error.to_string();
+        assert_eq!(
+            message,
+            "atom atom4 adjacency references missing bond bond9"
+        );
+        assert!(!message.contains("InvalidAdjacencyBond"));
+    }
+
+    #[test]
+    fn stereo_publication_errors_have_diagnostic_display_messages() {
+        let error = StereoPublicationError::DuplicateGroupMember {
+            group: StereoGroupId::new(2),
+            element: StereoElementId::new(7),
+        };
+        let message = error.to_string();
+        assert_eq!(
+            message,
+            "stereo group group2 contains stereo element stereo7 more than once"
+        );
+        assert!(!message.contains("DuplicateGroupMember"));
     }
 
     #[test]

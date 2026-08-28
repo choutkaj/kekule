@@ -857,8 +857,8 @@ mod tests {
         let score_key = PropertyKey::new("score").unwrap();
         moving_frame
             .set_atom_property(
-                score_key.clone(),
                 0,
+                score_key.clone(),
                 Some(PropertyValue::Real {
                     value: 0.7,
                     unit: DIMENSIONLESS,
