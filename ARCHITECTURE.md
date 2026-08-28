@@ -1294,6 +1294,22 @@ connectivity, atom count, bond count, hierarchy identity, or dense layout
 produces a new `Topology` rather than mutating an existing topology underneath
 geometry-bearing state.
 
+Ordinary append-style extension follows the same publication rule. The primary
+API should stage from the existing published topology and publish a new value:
+
+```rust
+let mut builder = topology.into_builder();
+builder.add_molecule(&ligand);
+let topology = builder.build()?;
+```
+
+`into_builder()` is a topology transformation boundary, not hidden mutation. For
+append-only extension it should preserve the existing definitions, instances,
+semantic IDs, authoritative dense order, hierarchy IDs, and retained static
+properties, then append new identities deterministically. A non-consuming
+clone-based convenience may be added later if justified, but direct structural
+mutation such as `topology.add_molecule(...)` is not the canonical API.
+
 The core architecture does not provide a generic topology-remapping framework.
 If a workflow changes topology, geometry or other dense state for the new system
 must be constructed explicitly according to that workflow's own semantics.
@@ -1852,6 +1868,90 @@ parallel storage architecture.
 Primitive dense containers must not expose APIs that require a `Topology`
 parameter merely to translate semantic IDs. Semantic navigation belongs to the
 higher-level object that owns both topology and dense/property state.
+
+### Canonical construction and realization projection
+
+The canonical format-independent construction graph is:
+
+```text
+                          + Positions
+                          |
+Molecule(s) -> Topology --+----------------------> Model
+                          |
+                          + EnsembleMember(s) ----> Ensemble
+                          |
+                          + TrajectoryFrame(s) ---> Trajectory
+
+Ensemble   -- select member --> EnsembleMemberView -- as_model() --> ModelView
+                                              `---- to_model() --> Model
+
+Trajectory -- select frame  --> TrajectoryFrameView -- as_model() --> ModelView
+                                              `---- to_model() --> Model
+```
+
+The native vocabulary of each owning collection remains authoritative. An
+`Ensemble` contains `EnsembleMember` payloads, not `Model` values. A `Trajectory`
+contains `TrajectoryFrame` payloads, not `Model` values. A selected member or
+frame may nevertheless be projected into model semantics because the containing
+collection supplies the shared topology context.
+
+The intended ordinary construction surface is:
+
+| Object | Canonical construction |
+| --- | --- |
+| `Topology` | `Topology::from_molecule(...)`, `Topology::from_molecules(...)`, or `TopologyBuilder` |
+| `Model` | `Model::new(topology, positions)` |
+| `Ensemble` | `Ensemble::new(topology)` plus `push(member)`, or `Ensemble::from_members(topology, members)` |
+| `Trajectory` | `Trajectory::new(topology)` plus `push(frame)`, or `Trajectory::from_frames(topology, frames)` |
+
+The public constructors should make passing either an owned `Topology` or the
+library's shared topology handle ergonomic where this does not weaken ownership
+semantics. The smart-pointer spelling is an implementation detail; callers
+should not need to restructure otherwise natural construction code merely to
+wrap an already complete topology.
+
+There is no special singular collection constructor. A one-member ensemble or a
+one-frame trajectory uses the same member/frame construction path as any other
+cardinality.
+
+Selection from collections should bind the stored topology-free payload to the
+collection's topology and return a borrowed topology-aware view:
+
+```text
+ensemble.member(i)  -> Option<EnsembleMemberView<'_>>
+ensemble.members()  -> Iterator<Item = EnsembleMemberView<'_>>
+
+trajectory.frame(i) -> Option<TrajectoryFrameView<'_>>
+trajectory.frames() -> Iterator<Item = TrajectoryFrameView<'_>>
+```
+
+The topology-free `EnsembleMember` and `TrajectoryFrame` remain the payload types
+used for construction and storage. Their corresponding views are borrowed
+navigation/projection helpers, not additional canonical owning objects.
+
+Projection into model semantics uses an ownership-explicit naming convention:
+
+```text
+member.as_model() -> ModelView<'_>
+member.to_model() -> Model
+
+frame.as_model()  -> ModelView<'_>
+frame.to_model()  -> Model
+```
+
+`as_model()` is a zero-copy borrowed projection. `to_model()` explicitly
+materializes an owned `Model`, cloning realization state as required while
+sharing the immutable topology. `ModelView` should likewise provide the explicit
+owned materialization operation needed to support this convention.
+
+The collection itself must not expose convenience methods such as
+`ensemble.model(i)` or `trajectory.model(i)`: those names incorrectly suggest
+that the collection contains models. The semantic operation is selection of a
+member/frame followed by an optional projection to model semantics.
+
+No Model-based `Ensemble`/`Trajectory` construction API is required by this
+architecture. If such conveniences are ever justified, they must remain
+secondary to the native `EnsembleMember`/`TrajectoryFrame` construction model.
 
 ## `Model`
 
