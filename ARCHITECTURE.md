@@ -35,15 +35,17 @@ The intended ownership hierarchy is therefore:
 ```text
 Molecule
   one connected geometry-independent molecular entity
-  Graph + Perception
+  Graph + Perception + definition-scoped Properties
 
 Topology
   one geometry-independent system made from one or more Molecule instances
   topology-wide atom/bond identity and dense ordering
   one system-level Hierarchy, which may be empty
+  system-scoped Properties
 
 Model
   one geometry-dependent realization of a Topology
+  realization-scoped Properties
 
 Ensemble
   several non-temporal realizations of one Topology
@@ -83,6 +85,7 @@ The intended core shape is:
 pub struct Molecule {
     graph: Graph,
     perception: Perception,
+    properties: Properties,
 }
 ```
 
@@ -98,6 +101,11 @@ Perception
   derived chemical interpretation
   reconstructible from represented chemistry plus an explicit perception model
   does not define molecular identity
+
+Properties
+  extensible geometry-independent annotations valid for this molecular definition
+  may target the molecule itself, its atoms, or its bonds
+  do not define represented chemistry or molecular identity
 ```
 
 Residue, chain, polymer, asymmetry, and atom-site organization do not belong to
@@ -109,7 +117,10 @@ several disconnected `Molecule` instances, and one connected `Molecule` may span
 several hierarchy chains.
 
 `Molecule` contains no coordinates, conformers, velocities, periodic cell,
-residue/chain hierarchy, or other system/geometry-dependent state.
+residue/chain hierarchy, or other system/geometry-dependent state. Its
+properties must likewise be geometry-independent and valid for every use of that
+molecular definition. Properties that differ between instances of the same
+molecule definition belong at `Topology` scope instead.
 
 ### Connectedness invariant
 
@@ -142,6 +153,12 @@ Graph
 
 The exact physical storage is an implementation detail, but it should remain
 purpose-built for chemistry, compact, deterministic, and efficient.
+
+Generic annotations do not live inside `Graph`, `Atom`, or `Bond`. Definition-
+scoped object, atom, and bond annotations live in the containing `Molecule`'s
+`Properties`. This keeps represented graph chemistry separate from extensible
+metadata and prevents generic annotations from affecting molecular identity or
+perception invalidation.
 
 ### Represented atom chemistry
 
@@ -207,6 +224,11 @@ component names
 atom-site annotations
 mappings from hierarchy atom sites to InstanceAtomId
 ```
+
+Fixed semantic hierarchy fields remain strongly typed hierarchy state. Generic
+annotations targeting chains, residues, atom sites, or the system as a whole are
+stored in `Topology`'s `Properties`, not as independent property maps embedded in
+each hierarchy node.
 
 Hierarchy is orthogonal to molecular connectedness:
 
@@ -330,7 +352,10 @@ CIP assignments
 Not every calculated property belongs in `Perception`. Fingerprints,
 descriptors, partial charges, force-field types, pharmacophore features,
 rotatable-bond classifications, scoring terms, and other task-specific results
-remain separate derived objects unless explicitly promoted by the architecture.
+remain separate derived objects by default. When a caller deliberately attaches
+such a result to a domain object and its validity matches that owner's scope, it
+may be stored through the generic `Properties` layer instead. This does not turn
+it into fundamental chemical perception.
 
 ### Structural graph derivations versus chemical perception
 
@@ -353,7 +378,7 @@ chemically perceived:
 ```
 
 This distinction may be reflected internally if useful, but the public
-`Molecule` architecture remains `Graph + Perception`.
+`Molecule` architecture remains `Graph + Perception + Properties`.
 
 ### Perception installation and invalidation
 
@@ -367,8 +392,11 @@ checked installation APIs, but installation must validate references and
 dimensions and must never rewrite authoritative graph chemistry.
 
 Public convenience APIs may expose perception-backed queries directly through
-`Molecule`; callers should not need to duplicate perceived flags into `Atom` or
-`Bond`.
+`Molecule`; callers should not need to duplicate perceived flags into generic
+properties.
+
+Mutating generic properties does not change represented graph chemistry and must
+not invalidate perception.
 
 ## Editing
 
@@ -409,6 +437,7 @@ exactly one connected component
 valid atom/bond references
 valid adjacency
 valid stereo references
+valid property-table dimensions for retained atom/bond identity spaces
 ```
 
 Hierarchy validation is not a `MoleculeEditor` responsibility. Hierarchy is
@@ -416,7 +445,10 @@ validated when a `Topology` is published.
 
 Chemical perception need not be valid during editing. On successful
 publication, stale perception must be discarded, recomputed, or explicitly
-reinstalled through a checked path.
+reinstalled through a checked path. Per-atom and per-bond properties may be
+projected through editor identity when their target entity survives; owner-level
+properties must follow the explicit transformation semantics rather than being
+blindly assumed valid for a structurally changed molecule.
 
 The same editor concept may be used for construction from scratch; a separate
 public `MoleculeBuilder` is not architecturally required unless it provides
@@ -751,7 +783,7 @@ _atom_site and related mmCIF categories
     -> install Molecule instances into one Topology
     -> establish source atom -> InstanceAtomId correspondence
     -> construct one Hierarchy over those InstanceAtomId values
-    -> attach Positions / AtomData and publish Model or Ensemble
+    -> attach Positions / realization Properties and publish Model or Ensemble
 ```
 
 The hierarchy must preserve distinct mmCIF label and author identity where both
@@ -770,6 +802,11 @@ If one source chain/asymmetry spans several disconnected graph components, the
 result must remain one hierarchy chain referencing atoms from several molecule
 instances. If several source chains are covalently connected, they remain
 several hierarchy chains referencing one molecule instance.
+
+Recognized semantic realization data such as occupancy and B-factor may be
+promoted into reserved atom property columns with dedicated APIs. Arbitrary
+source fields are not automatically promoted into canonical properties merely
+because a generic property layer exists.
 
 ### Format-specific conversion capabilities
 
@@ -816,8 +853,10 @@ warnings, data fields, provenance, or other sidecars alongside the canonical
 objects.
 
 Source metadata belongs in a canonical domain object only when its semantics are
-part of that object's architecture. Otherwise it remains attached to the format
-record, block, interpretation result, or another explicit sidecar.
+part of that object's architecture or when an interpretation step explicitly
+promotes it into the generic property layer with a well-defined scope and
+target. Otherwise it remains attached to the format record, block,
+interpretation result, or another explicit sidecar.
 
 Convenience methods such as `to_molecules()` or `to_model()` may provide the
 common owned result, while lower-level interpretation APIs may continue to
@@ -876,10 +915,12 @@ Topology
   canonical dense atom/bond ordering
   identity <-> dense-index mappings
   Hierarchy
+  Properties
 ```
 
 Topology contains no positions, velocities, forces, periodic cell, conformers,
-frame ordering, or other geometry-dependent state.
+frame ordering, or other geometry-dependent state. Its properties are likewise
+coordinate-independent and valid for this exact system layout.
 
 ### Molecule instances are the public system concept
 
@@ -947,9 +988,10 @@ not the primary scientific mental model presented to ordinary callers.
 A published topology must not contain unused molecule definitions. Every
 `MoleculeDefinition` must be referenced by at least one `MoleculeInstance`.
 
-The minimal core does not attach a generic `MoleculeInstanceMetadata` object to
-each instance. Contextual roles, annotations, or source metadata can be added
-later only when concrete use cases justify their semantics.
+Instance-specific generic annotations do not require a parallel
+`MoleculeInstanceMetadata` object. They belong in the molecule-instance
+`PropertyTable` of the containing `Topology`'s `Properties`. Definition-invariant
+annotations remain on the reusable `Molecule` definition instead.
 
 ### Instance-qualified molecular identity
 
@@ -974,7 +1016,7 @@ atom site eventually points into a molecule instance.
 
 ### Dense topology ordering
 
-Numerical and geometry-bearing state requires a deterministic dense ordering over
+Numerical and property-column state requires a deterministic dense ordering over
 the complete system.
 
 Topology therefore owns an authoritative dense atom order and, where useful, a
@@ -995,8 +1037,9 @@ TopologyAtomIndex / TopologyBondIndex
   dense storage position
 ```
 
-Dense ordering tells `Model`, `Ensemble`, and `Trajectory` how to interpret their
-numerical arrays. The arrays themselves do not own topology identity.
+Dense ordering tells `Properties`, `Model`, `Ensemble`, and `Trajectory` how to
+interpret topology-wide atom and bond columns and numerical arrays. Detached
+tables/arrays themselves do not own topology identity.
 
 ### Hierarchy ownership and invariants
 
@@ -1016,6 +1059,9 @@ hierarchy nodes may reference atoms from any molecule instance in the Topology
 There must not be a second authoritative hierarchy stored inside molecule
 definitions or instances. Molecule-centric hierarchy APIs are projections of the
 topology hierarchy.
+
+Generic chain/residue/atom-site annotations are likewise stored once at topology
+scope in property tables keyed to the topology-owned hierarchy identities.
 
 ### No topology-level covalent bonds
 
@@ -1064,9 +1110,9 @@ remapped onto the resulting target `InstanceAtomId` values; empty residues and
 chains are omitted.
 
 The subset operation should return a narrow, operation-specific source-to-target
-correspondence sufficient to transfer dense state such as positions, atom data,
-velocities, and forces. This is not a resurrection of a generic foundational
-`TopologyMapping` abstraction.
+correspondence sufficient to transfer dense state such as positions,
+per-entity property columns, velocities, and forces. This is not a resurrection
+of a generic foundational `TopologyMapping` abstraction.
 
 With that primitive, higher-level objects may expose ergonomic operations such
 as:
@@ -1081,10 +1127,16 @@ trajectory.slice(selection)
 subset topology once and apply the same dense-index correspondence to every
 member/frame.
 
+Property propagation through structural transformations is conservative.
+Per-entity columns may be projected when a valid source-to-target entity
+correspondence exists. Owner-level scalar properties are not automatically
+copied to a structurally changed owner unless the operation explicitly defines
+that their semantics remain valid.
+
 ### Construction and invariants
 
-A topology builder may stage definitions, instances, and hierarchy and publish
-an immutable `Topology` only after validation.
+A topology builder may stage definitions, instances, hierarchy, and properties
+and publish an immutable `Topology` only after validation.
 
 A published topology must satisfy at least:
 
@@ -1097,6 +1149,7 @@ instance-qualified atom/bond identities are valid
 dense atom/bond ordering is complete and deterministic
 identity/index mappings are mutually consistent
 hierarchy references and lookups are valid and complete for every stored site
+all topology property tables match their target-domain cardinalities/orderings
 ```
 
 Convenience construction may add one fresh definition and one instance in a
@@ -1105,10 +1158,17 @@ then instantiate it many times.
 
 ### Immutability and topology changes
 
-Published `Topology` is immutable.
+Published `Topology` is structurally immutable.
 
 Shared exact ownership should use `Arc<Topology>` rather than cloning independent
 copies of topology state.
+
+Topology properties are annotations, not structural layout. They may be staged
+through `TopologyBuilder` and exposed read-only through a shared published
+`Topology`. The architecture does not require interior mutability merely to add
+annotations after an `Arc<Topology>` is already shared; workflows that require a
+modified static property set may construct a new topology value with the same
+layout.
 
 A chemical or structural transformation that changes molecule membership,
 connectivity, atom count, bond count, hierarchy identity, or dense layout
@@ -1128,12 +1188,16 @@ The current core intentionally remains minimal.
 It does not introduce:
 
 ```text
-generic molecule-instance metadata
 generic provenance framework
 geometry-dependent interactions
 inter-molecule topology bonds
 generic topology remapping
 ```
+
+A unified generic property layer is part of the core because annotations already
+exist across molecule, hierarchy, model, ensemble, and trajectory surfaces and
+need one coherent ownership/storage model. It is not a generic provenance
+framework and does not imply automatic ingestion of arbitrary source metadata.
 
 System-level chain/residue/atom-site hierarchy is not speculative metadata; it
 is part of the core Topology architecture because hierarchy can span molecule
@@ -1141,6 +1205,356 @@ boundaries and is required for structural navigation and slicing.
 
 Other concerns should not be added speculatively. They may be introduced later
 only as separate concepts when concrete requirements establish their semantics.
+
+## Properties
+
+Kekule has one generic property architecture for extensible annotations across
+its canonical molecular and structural objects. The canonical public vocabulary
+is:
+
+```text
+PropertyKey
+PropertyValue
+PropertyColumn
+PropertyTable
+Properties
+```
+
+The old parallel concepts `PropMap`, `AtomData`, and `BondData` are not separate
+architectural layers. Their useful semantics are folded into this one property
+system.
+
+Properties are annotations. They do not replace strongly typed core chemistry,
+hierarchy, geometry, or trajectory fields, and they do not define molecular or
+topology identity.
+
+### `PropertyKey`
+
+`PropertyKey` identifies one property by name. It is a validated key type rather
+than an unconstrained `String` scattered throughout the API.
+
+The exact validation grammar is an implementation detail, but it should be
+stable, deterministic, and shared by object values and columns. A conservative
+ASCII identifier grammar and bounded key length are preferred.
+
+Conceptually:
+
+```text
+PropertyKey("energy")
+PropertyKey("partial_charge")
+PropertyKey("source_id")
+```
+
+### `PropertyValue`
+
+`PropertyValue` is one scalar value of one property attached directly to an
+owner.
+
+The initial value domain is deliberately small:
+
+```rust
+pub enum PropertyValue {
+    Bool(bool),
+    Int(i64),
+    Real { value: f64, unit: Unit },
+    String(String),
+}
+```
+
+Real-valued properties are always unit-aware. A dimensionless real uses
+`DIMENSIONLESS`; there is no parallel untyped floating-point property concept.
+Stored real values must be finite.
+
+`PropertyValue` is intended for scalar/object-level annotations such as a model
+energy, method label, boolean status, or integer generation number. Large arrays
+or structured analysis results should not be forced into scalar property values.
+
+### `PropertyColumn`
+
+`PropertyColumn` represents one property repeated over a homogeneous entity
+domain in authoritative owner order.
+
+Conceptually, columns mirror the scalar property value domain:
+
+```rust
+pub enum PropertyColumn {
+    Bool(Vec<Option<bool>>),
+    Int(Vec<Option<i64>>),
+    Real { unit: Unit, values: Vec<Option<f64>> },
+    String(Vec<Option<String>>),
+}
+```
+
+`Option` permits a property to be absent for individual entities. One column has
+one type, one semantic key, and for real-valued data one stored unit. Compatible
+real-valued updates are converted into the stored unit. An entirely absent
+column may be normalized away.
+
+For dense topology domains, column position follows the topology's authoritative
+dense order. For definition-local molecule atom/bond domains, owner APIs map
+stable local identities to the corresponding property-table positions; detached
+columns themselves do not resolve semantic IDs.
+
+### `PropertyTable`
+
+`PropertyTable` is the columnar property store for one homogeneous entity
+domain.
+
+Conceptually:
+
+```rust
+pub struct PropertyTable {
+    len: usize,
+    columns: BTreeMap<PropertyKey, PropertyColumn>,
+}
+```
+
+Every column in one table has the table's logical length. Examples include:
+
+```text
+Molecule atom PropertyTable
+Topology molecule-instance PropertyTable
+Topology atom PropertyTable
+Topology residue PropertyTable
+Model atom PropertyTable
+TrajectoryFrame bond PropertyTable
+```
+
+Columnar storage is the canonical representation for per-entity properties.
+Kekule should not embed an independent map in every `Atom`, `Bond`, `Residue`,
+or other repeated entity merely to attach generic annotations.
+
+Stable deterministic iteration is preferred. `BTreeMap` is therefore a suitable
+initial implementation unless a demonstrated performance requirement justifies a
+different internal map.
+
+### `Properties`
+
+`Properties` is the complete generic property namespace attached to one owning
+Kekule object.
+
+It contains scalar values describing the owner itself and zero or more
+`PropertyTable`s describing entity domains addressed by that owner.
+
+Conceptually:
+
+```text
+Properties
+  owner values
+    PropertyKey -> PropertyValue
+
+  entity-domain tables
+    atoms              -> PropertyTable
+    bonds              -> PropertyTable
+    molecule_instances -> PropertyTable
+    chains             -> PropertyTable
+    residues           -> PropertyTable
+    atom_sites         -> PropertyTable
+    ... only where meaningful for that owner
+```
+
+The exact physical representation of the set of tables is not normative. The
+public API should expose domain-specific accessors appropriate to the owner
+rather than requiring callers to drive a generic public target enum.
+
+For example:
+
+```text
+molecule.properties()
+molecule.properties().atoms()
+molecule.properties().bonds()
+
+model.properties()
+model.properties().atoms()
+model.properties().bonds()
+
+topology.properties()
+topology.properties().molecule_instances()
+topology.properties().atoms()
+topology.properties().bonds()
+topology.properties().chains()
+topology.properties().residues()
+topology.properties().atom_sites()
+```
+
+The full word `properties` is preferred in the public API over the abbreviation
+`props`.
+
+### Ownership and validity
+
+Property scope is determined by the narrowest owner whose lifetime exactly
+matches the property's validity.
+
+```text
+Molecule
+  geometry-independent and invariant across every instance of this definition
+
+Topology
+  geometry-independent but specific to this exact system / instance layout
+
+Model
+  specific to one concrete realization
+
+EnsembleMember
+  specific to one non-temporal realization
+
+TrajectoryFrame
+  specific to one temporal realization
+
+Ensemble / Trajectory
+  collection-level annotations that apply to the collection itself
+```
+
+Target and owner are independent dimensions. An atom property may legitimately
+exist at Molecule, Topology, Model, EnsembleMember, or TrajectoryFrame scope, but
+those values have different validity semantics.
+
+For example:
+
+```text
+Molecule atom property
+  definition-invariant atom class
+
+Topology atom property
+  static force-field assignment specific to this assembled system
+
+Model atom property
+  geometry-dependent SASA or charge for one realization
+
+TrajectoryFrame atom property
+  instantaneous per-frame analysis value
+```
+
+A property that differs between two instances of one reusable molecular
+definition cannot live on the definition's `Molecule`; it belongs at topology or
+realization scope.
+
+### Owner shapes
+
+The intended conceptual property targets are:
+
+```text
+Molecule Properties
+  owner
+  atoms
+  bonds
+
+Topology Properties
+  owner
+  molecule_instances
+  atoms
+  bonds
+  chains
+  residues
+  atom_sites
+
+Model Properties
+  owner
+  atoms
+  bonds
+
+Ensemble Properties
+  owner
+
+EnsembleMember Properties
+  owner
+  atoms
+  bonds
+
+Trajectory Properties
+  owner
+
+TrajectoryFrame Properties
+  owner
+  atoms
+  bonds
+```
+
+Additional target domains should be added only when a concrete owning identity
+space exists and the semantics justify them.
+
+### Canonical scientific state versus generic properties
+
+The property system is an extensibility mechanism, not a replacement for the
+type system.
+
+Strongly defined core state remains available through dedicated fields/APIs, for
+example:
+
+```text
+Atom.element / formal_charge / represented hydrogens
+Bond.order
+Hierarchy labels and identifiers
+Positions
+PeriodicCell
+EnsembleMember.weight
+TrajectoryFrame.time / step
+TrajectoryFrame.velocities / forces
+```
+
+Canonical per-entity scientific annotations may reuse `PropertyTable` as their
+physical storage when that eliminates a redundant data container. Occupancy and
+B-factor are the primary initial examples: they belong to realization atom
+properties, but retain dedicated semantic APIs, canonical units, validation,
+and reserved names rather than becoming arbitrary user-defined strings.
+
+Thus `AtomData` and `BondData` disappear as public architectural concepts while
+their strongest implementation idea -- validated, unit-aware columnar storage --
+becomes the generic `PropertyTable` / `PropertyColumn` substrate.
+
+### Identity, equality, and perception
+
+Generic properties do not define represented molecular chemistry.
+
+Consequently:
+
+```text
+changing Molecule properties
+  -> does not change Graph identity
+  -> does not invalidate Perception
+  -> does not make an otherwise identical represented Molecule chemically unequal
+
+changing Topology properties
+  -> does not change topology layout identity
+  -> does not change same-layout compatibility
+```
+
+APIs that intentionally compare complete annotations may be added separately if
+needed, but structural/chemical equality must not accidentally include generic
+properties merely because of derived `PartialEq` on storage structs.
+
+### Transformations and propagation
+
+Property propagation is explicit and conservative.
+
+When a transformation provides a valid source-to-target correspondence for a
+repeated entity domain, its `PropertyTable` columns may be projected through that
+correspondence. This is the natural behavior for retained atoms, bonds, residues,
+or frames.
+
+Owner-level `PropertyValue`s are not automatically valid after a structural
+transformation. For example, a total energy, system label, or score attached to
+a full model may no longer describe a sliced model. Such values are copied only
+when the operation explicitly guarantees or defines that behavior.
+
+The generic property layer must not invent semantic recomputation rules.
+
+### Source metadata boundary
+
+The existence of a generic property system does not mean arbitrary parser fields
+are automatically copied into canonical objects.
+
+```text
+arbitrary source metadata
+  -> stays on format Document / Record / Block / interpretation sidecar
+
+recognized canonical or explicitly promoted data
+  -> may populate a typed core field or a property with defined owner/target
+```
+
+SDF data fields therefore remain SDF record metadata unless explicitly promoted.
+Known mmCIF atom-site quantities such as occupancy and B-factor may be promoted
+because their canonical semantics and realization scope are defined.
 
 ## Physical quantities and units
 
@@ -1226,7 +1640,8 @@ CANONICAL_FORCE_CONSTANT_UNIT  = KILOJOULE_PER_MOLE / NANOMETER^2
 These names are library-wide. They must not use a `MODEL_` prefix, because the
 canonical convention is not owned by or restricted to the `Model` type. The
 same canonical units apply wherever Kekule stores the corresponding physical
-quantity internally.
+quantity internally, including real-valued generic properties and property
+columns when normalized storage is appropriate.
 
 Subsystem-specific canonical unit families should not be introduced unless a
 future requirement demonstrates that one shared convention is technically
@@ -1251,47 +1666,54 @@ The intended separation is:
 
 ```text
 Topology
-  defines semantic identities, Hierarchy, and dense atom/bond ordering
+  defines semantic identities, Hierarchy, static Properties,
+  and dense atom/bond ordering
 
-Positions / AtomData / BondData / Velocities / Forces
-  store dense numerical state
+Positions / Velocities / Forces
+  store dense numerical geometry/dynamics state
   know their own shape/length and numerical units as appropriate
   do not own Topology
   do not carry topology identity
 
+Properties / PropertyTable / PropertyColumn
+  store extensible annotations at the owner scope where they are valid
+  per-entity tables know their logical shape and units/types
+  detached tables/columns do not own Topology identity
+
 Model / Ensemble / Trajectory
   own the Topology context exactly once
-  validate dense state against that Topology
+  own realization/collection Properties as appropriate
+  validate dense state and property-table dimensions against that Topology
   provide semantic atom/bond/hierarchy access when topology context is required
 ```
 
-This means operations such as resolving an `InstanceAtomId` to a coordinate are
-operations on `Model`, `Ensemble` member/frame views, or `Trajectory` frame
-views, not operations on a detached `Positions` array.
+This means operations such as resolving an `InstanceAtomId` to a coordinate or a
+realization atom property are operations on `Model`, `Ensemble` member/frame
+views, or `Trajectory` frame views, not on a detached `Positions` array or
+`PropertyTable`.
 
 Similarly, topology compatibility is an invariant of the owning aggregate. It
 is not established by storing repeated `Arc<Topology>` handles inside every
-numerical subobject.
+numerical or property subobject.
 
 Geometry-dependent quantities such as positions, velocities, forces, periodic
 cell, occupancies, B-factors, and other model/frame state do not belong in
-`Molecule` or `Topology`.
+`Molecule` or static `Topology` properties.
 
-### Dense numerical containers
+### Dense numerical and property containers
 
 `Positions`, `Velocities`, and `Forces` are dense numerical arrays in Kekule's
 library-wide canonical units. They validate numerical shape, units, and finite
 values as appropriate, but are otherwise topology-agnostic.
 
-`AtomData` and `BondData` are likewise dense data containers rather than
-Topology owners. They may retain a logical item count even when all optional
-columns are absent. Whether particular atom/bond data belongs at model, member,
-frame, or another level is intentionally not settled by this storage rule and
-may be refined separately.
+`PropertyTable` and `PropertyColumn` provide the corresponding generic columnar
+storage for extensible per-entity data. The former `AtomData` and `BondData`
+public concepts are folded into this property layer rather than maintained as a
+parallel storage architecture.
 
-The primitive dense containers must not expose APIs that require a `Topology`
+Primitive dense containers must not expose APIs that require a `Topology`
 parameter merely to translate semantic IDs. Semantic navigation belongs to the
-higher-level object that owns both topology and dense state.
+higher-level object that owns both topology and dense/property state.
 
 ## `Model`
 
@@ -1304,13 +1726,15 @@ Model
   shared Topology          <- owned once
   Positions
   optional periodic cell
-  model-level AtomData
-  model-level BondData
+  Properties
+    owner-level values
+    atom PropertyTable
+    bond PropertyTable
 ```
 
 A `Model` does not duplicate molecular chemistry or hierarchy. It interprets
-dense realization state against its topology's authoritative identities, dense
-layout, and hierarchy.
+dense realization state and property columns against its topology's
+authoritative identities, dense layout, and hierarchy.
 
 `Model` is specifically Kekule's geometry-bearing `Topology + Positions`
 abstraction. Multiple coordinate models from a source format are several
@@ -1321,16 +1745,21 @@ Construction validates at least:
 
 ```text
 Positions length == Topology atom count
-AtomData logical length == Topology atom count
-BondData logical length == Topology bond count
+Model atom PropertyTable length == Topology atom count
+Model bond PropertyTable length == Topology bond count
 ```
 
 After construction, public mutation APIs must preserve those dimensional
 invariants.
 
-Semantic operations such as `position(InstanceAtomId)` and hierarchy-aware
-selection/slicing belong on `Model` or a model-level borrowed view because only
-that layer owns both the topology and the numerical state.
+Canonical realization atom data such as occupancy and B-factor are represented
+inside the atom property table but retain dedicated typed APIs and validation.
+There is no parallel model-level `AtomData`/`BondData` architecture.
+
+Semantic operations such as `position(InstanceAtomId)`, atom/bond property
+access by semantic ID, and hierarchy-aware selection/slicing belong on `Model`
+or a model-level borrowed view because only that layer owns both topology and the
+realization state.
 
 ## `Ensemble`
 
@@ -1341,21 +1770,28 @@ Conceptually:
 ```text
 Ensemble
   shared Topology          <- owned once
+  collection Properties
   members[]
     Positions
-    optional member-level geometry/data
+    optional periodic cell
+    Properties
+      owner-level values
+      atom PropertyTable
+      bond PropertyTable
     optional weight
 ```
 
-Members do not own or repeat the shared topology. Their dense state is interpreted
-in the `Ensemble` topology's authoritative order.
+Members do not own or repeat the shared topology. Their dense state and
+property columns are interpreted in the `Ensemble` topology's authoritative
+order.
 
 Insertion/construction validates every member's dimensions against the ensemble
 topology. Differences between members are geometric or member-level data, not
 molecular or hierarchy identity.
 
 An ensemble weight is contextual to membership in that ensemble and therefore
-belongs to the member relation rather than to `Topology`.
+belongs to the member relation rather than to `Topology`. It remains a dedicated
+semantic field/API rather than an arbitrary generic property.
 
 ## `Trajectory`
 
@@ -1366,23 +1802,29 @@ Conceptually:
 ```text
 Trajectory
   shared Topology          <- owned once
+  collection Properties
   ordered frames[]
     Positions
     optional periodic cell
-    optional AtomData / BondData
+    Properties
+      owner-level values
+      atom PropertyTable
+      bond PropertyTable
     optional Velocities / Forces
     optional time / step
-    optional frame properties
 ```
 
-Frames do not own or repeat the shared topology. Their dense arrays are
-interpreted in the `Trajectory` topology's authoritative order.
+Frames do not own or repeat the shared topology. Their dense arrays and property
+columns are interpreted in the `Trajectory` topology's authoritative order.
 
 Insertion, decoding, and reusable frame-buffer publication validate frame
-shapes against the trajectory topology. Streaming infrastructure may use
-reusable buffers for allocation efficiency, but those buffers follow the same
-ownership rule: topology context is owned once by the buffer/container rather
-than repeated inside every numerical array.
+shapes and property-table dimensions against the trajectory topology. Streaming
+infrastructure may use reusable buffers for allocation efficiency, but those
+buffers follow the same ownership rule: topology context is owned once by the
+buffer/container rather than repeated inside every numerical/property subobject.
+
+Time, step, velocities, and forces remain dedicated semantic fields/APIs rather
+than being demoted into arbitrary generic properties.
 
 A trajectory represents one fixed-topology epoch. Topology-changing chemistry or
 hierarchy is not represented by silently mutating one shared topology. A workflow
@@ -1392,10 +1834,11 @@ construct the geometry belonging to each epoch.
 ## Molecular identity and equality
 
 Authoritative molecular identity is defined by represented molecular state, not
-by derived cache population or system hierarchy.
+by derived cache population, generic properties, or system hierarchy.
 
 `Perception` must therefore not make two otherwise identical represented
-molecules unequal merely because one has different cache presence.
+molecules unequal merely because one has different cache presence. Generic
+properties likewise do not participate in represented-molecule equality.
 
 A `Molecule` is independent of the residue/chain context in which one of its
 instances appears. The same molecular definition may be instantiated in several
@@ -1403,20 +1846,27 @@ hierarchical contexts without becoming a different `Molecule`.
 
 Topology layout equality is distinct from graph isomorphism or chemical
 identity. Full topology layout equality may include molecule definitions,
-instances, hierarchy, semantic IDs, and dense ordering. Two independently
-constructed topologies may represent chemically equivalent systems while still
-having different hierarchy IDs or dense layouts.
+instances, hierarchy, semantic IDs, and dense ordering, but generic properties
+must not accidentally alter layout compatibility. Two independently constructed
+topologies may represent chemically equivalent systems while still having
+different hierarchy IDs or dense layouts.
+
+If complete annotated-state equality is needed, it should be an explicit API
+rather than an accidental consequence of deriving `PartialEq` over storage
+structs containing properties.
 
 ## Persistence and reconstruction
 
-Persistence consumers may store molecular graph/perception and topology
-hierarchy separately according to their ownership boundaries.
+Persistence consumers may store molecular graph/perception, properties, and
+topology hierarchy separately according to their ownership boundaries.
 
-Molecule reconstruction order is:
+Molecule reconstruction order is conceptually:
 
 ```text
 Graph
   -> validate represented graph
+Properties
+  -> validate definition-local owner/atom/bond property dimensions
 Perception
   -> checked install last
 Molecule
@@ -1428,14 +1878,16 @@ or rejected before publication.
 Loading must never weaken the connectedness invariant.
 
 Topology persistence must reconstruct definitions, instances, qualified
-atom/bond identities, authoritative dense ordering, and hierarchy consistently.
-Hierarchy atom sites are validated against reconstructed `InstanceAtomId` values.
-Geometry is restored separately and validated by the owning `Model`, `Ensemble`,
-or `Trajectory` against that topology layout.
+atom/bond identities, authoritative dense ordering, hierarchy, and topology
+property tables consistently. Hierarchy atom sites are validated against
+reconstructed `InstanceAtomId` values. Geometry and realization properties are
+restored separately and validated by the owning `Model`, `Ensemble`, or
+`Trajectory` against that topology layout.
 
 Runtime domain objects are not required to be generic file-format DTOs. Source
-metadata that is not canonical represented molecular or topology state should
-remain in format records or other external sidecars.
+metadata that is not canonical represented molecular/topology state and has not
+been explicitly promoted into a property with defined semantics should remain in
+format records or other external sidecars.
 
 ## Mutation and transformations
 
@@ -1450,6 +1902,9 @@ published topology in place. They do not automatically remap existing dense
 geometry/data unless that operation explicitly defines and returns the necessary
 correspondence, as hierarchy-aware slicing does.
 
+Per-entity property columns may follow such an explicit correspondence. Generic
+owner-level properties are not blindly copied to structurally changed owners.
+
 Coordinate-only operations never mutate `Graph`, `Perception`, `Hierarchy`, or
 `Topology`.
 
@@ -1461,16 +1916,31 @@ The intended molecule field/type naming is idiomatic Rust:
 pub struct Molecule {
     graph: Graph,
     perception: Perception,
+    properties: Properties,
 }
 ```
 
-`Topology` owns the system-level `Hierarchy`; the exact physical field/module
-layout is not normative.
+`Topology` owns the system-level `Hierarchy` and `Properties`; the exact physical
+field/module layout is not normative.
+
+The canonical property vocabulary is:
+
+```text
+PropertyKey
+PropertyValue
+PropertyColumn
+PropertyTable
+Properties
+```
+
+The public API should prefer the full word `properties` rather than `props`.
+`PropMap`, `AtomData`, `BondData`, and `RealizationProperties` are not canonical
+architectural names.
 
 Field names use `snake_case`; type names use `UpperCamelCase`. Patterns such as
-`graph: Graph`, `perception: Perception`, and `hierarchy: Hierarchy` are normal
-Rust style and are preferred over redundant names unless a real ambiguity
-appears.
+`graph: Graph`, `perception: Perception`, `hierarchy: Hierarchy`, and
+`properties: Properties` are normal Rust style and are preferred over redundant
+names unless a real ambiguity appears.
 
 The exact file/module layout is not normative; semantic boundaries are.
 
@@ -1482,50 +1952,68 @@ When deciding where new state belongs:
    Put it in `Graph`.
 2. Is it fundamental chemistry derived from the represented molecular graph?
    Put it in `Perception`.
-3. Does it identify which connected molecules exist in one coordinate-free
+3. Is it an extensible annotation whose validity exactly matches one molecular
+   definition, one system layout, one realization, or one collection? Put it in
+   that owner's `Properties`, using an owner-level `PropertyValue` or the
+   appropriate per-entity `PropertyTable`.
+4. Does it identify which connected molecules exist in one coordinate-free
    system or define their topology-wide atom/bond layout? Put it in `Topology`.
-4. Is it coordinate-independent residue/chain/polymer/atom-site organization of
+5. Is it coordinate-independent residue/chain/polymer/atom-site organization of
    system atoms, potentially spanning molecule instances? Put it in the
-   `Hierarchy` owned by `Topology`.
-5. Is it task-specific analysis, typing, scoring, or parameterization? Keep it
-   in a separate derived object.
-6. Is it dense coordinate/model/frame data? Store it in a topology-agnostic
-   numerical container above `Topology`.
-7. Does an operation need to interpret dense data by semantic atom/bond/hierarchy
-   identity? Perform it at the `Model`, `Ensemble`, or `Trajectory` level where
-   topology and numerical state meet.
-8. Does an asserted new bond connect two current molecule instances? Construct a
+   `Hierarchy` owned by `Topology`; generic annotations about those hierarchy
+   nodes belong in topology property tables.
+6. Is it a substantial task-specific analysis, typing, scoring, parameterization,
+   or other derived result whose own data model is meaningful? Prefer a separate
+   derived object. Attach selected results as properties only deliberately and
+   at the scope where their validity is defined.
+7. Is it dense coordinate/model/frame data? Store it in a topology-agnostic
+   numerical container or the owning realization's property tables above
+   `Topology`, according to its semantics.
+8. Does an operation need to interpret dense data or property columns by semantic
+   atom/bond/hierarchy identity? Perform it at the `Model`, `Ensemble`,
+   `Trajectory`, or owning `Topology` level where the identity context exists.
+9. Does an asserted new bond connect two current molecule instances? Construct a
    new connected `Molecule` and therefore a new `Topology`.
-9. Does a workflow change topology? Construct the new topology and its new dense
-   state explicitly; do not rely on a generic remapping layer. Narrow
-   operation-specific correspondence is appropriate when required by the
-   operation.
-10. Is a physical quantity stored numerically inside Kekule? Accept compatible
-    units at the boundary and normalize it to the one library-wide canonical
-    unit for that quantity rather than creating a subsystem-specific unit
-    convention.
-11. Is an operation specific to a file or serialization format? Put it in that
+10. Does a workflow change topology? Construct the new topology and its new dense
+    state explicitly; do not rely on a generic remapping layer. Narrow
+    operation-specific correspondence is appropriate when required by the
+    operation.
+11. Is a physical quantity stored numerically inside Kekule, including as a real
+    property value/column? Accept compatible units at the boundary and normalize
+    consistently rather than creating a subsystem-specific unit convention.
+12. Is an operation specific to a file or serialization format? Put it in that
     format namespace or on a format-specific `Document`/`Record`/`Block`, not on
     `Molecule`, `Topology`, `Model`, `Ensemble`, or `Trajectory`. Ergonomic
     helpers may compose the canonical parse/interpret pipeline but must not
     create an independent conversion path.
+13. Is an arbitrary source field merely available in an input format? Do not
+    automatically turn it into a generic property. Promotion requires defined
+    canonical semantics, owner scope, and target domain.
 
 The core invariants are intentionally simple:
 
 > A Kekule `Molecule` is one connected, geometry-independent molecular entity
-> represented by `Graph + Perception`.
+> represented by authoritative `Graph`, reconstructible `Perception`, and
+> definition-scoped generic `Properties` that do not define chemical identity.
 
 > A Kekule `Topology` is one immutable, geometry-independent molecular system
 > composed of one or more explicit `Molecule` instances with authoritative
-> topology-wide identity, dense layout, and system-level `Hierarchy`.
+> topology-wide identity, dense layout, system-level `Hierarchy`, and
+> system-scoped `Properties` that do not define layout identity.
 
 > `Hierarchy` is owned exactly once by `Topology`; it may span molecule-instance
 > boundaries and maps atom sites to topology-qualified `InstanceAtomId` values.
 
 > `Model`, `Ensemble`, and `Trajectory` each own their shared `Topology` exactly
-> once. Their dense numerical subobjects do not own topology identity.
+> once. Geometry-bearing realizations use the same generic `Properties` /
+> `PropertyTable` substrate instead of parallel `AtomData` and `BondData`
+> architectures.
+
+> A property is owned at the narrowest scope whose lifetime matches its validity,
+> and per-entity properties are stored column-wise rather than as a separate map
+> embedded in every repeated entity.
 
 > Kekule has one library-wide canonical physical-unit system. Runtime
 > `Quantity<T>` values may use any compatible unit at interfaces, but internal
-> normalized numerical state does not define independent subsystem-specific
-> canonical unit conventions.
+> normalized numerical state and real-valued properties do not define
+> independent subsystem-specific canonical unit conventions.
