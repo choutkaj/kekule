@@ -15,14 +15,14 @@ use kekule::{
         StereoElementKind, StereoGroup, StereoGroupKind, TetrahedralOrientation,
     },
     dssp, hydrogens,
-    mmcif::{self, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions},
+    mmcif::{self, MmcifInterpretOptions, MmcifModelSelection},
     molfile,
     perception::{
         rings,
         valence::{self, ValenceModel, ValenceOptions},
     },
     query,
-    sdf::{self, SdfDataField, SdfParseOptions, SdfRecordInterpretation},
+    sdf::{self, SdfDataField, SdfRecordInterpretation},
     smiles::{self},
     stereo::{
         self, CoordinateStereoError, CoordinateStereoMaterializationReport, StereoCandidate,

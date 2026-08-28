@@ -5,8 +5,8 @@ mod write;
 
 pub use canonical::write_canonical_smiles;
 pub use interpret::{
-    interpret_smiles_document, SmilesAtomMapping, SmilesBondMapping, SmilesInterpretError,
-    SmilesInterpretation, SmilesInterpretationReport,
+    SmilesAtomMapping, SmilesBondMapping, SmilesComponentCountError, SmilesComponentInterpretation,
+    SmilesInterpretError, SmilesInterpretation, SmilesInterpretationReport,
 };
 pub use parse::{
     parse_smiles_document, parse_smiles_document_with_options, SmilesDocument, SmilesDocumentToken,

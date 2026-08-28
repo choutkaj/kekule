@@ -310,7 +310,7 @@ auth covale X LIG 50 C7 X LIG 50 O7
 "#;
 
 fn parse(input: &str) -> mmcif::MmcifDocument {
-    mmcif::parse_str(input, MmcifParseOptions::default()).expect("mmCIF parses")
+    mmcif::parse_str(input).expect("mmCIF parses")
 }
 
 fn connection_input(atom_sites: &str, tags: &str, values: &str) -> String {
@@ -379,7 +379,7 @@ fn deterministic_mmcif_parser_and_interpreters_fuzz_smoke_are_panic_free() {
     ] {
         for input in deterministic_text_mutations(seed) {
             std::panic::catch_unwind(|| {
-                let Ok(document) = mmcif::parse_str(
+                let Ok(document) = mmcif::parse_str_with_options(
                     &input,
                     MmcifParseOptions {
                         max_input_bytes: 64 * 1024,
@@ -1155,8 +1155,27 @@ fn ensemble_block_interpretation_matches_exactly_one_document_helper() {
         mmcif::MmcifEnsembleInterpretOptions::default(),
     )
     .expect("block ensemble interprets");
+    let method_default = document.blocks()[0]
+        .interpret_ensemble()
+        .expect("default block method interprets");
+    let method_explicit = document.blocks()[0]
+        .interpret_ensemble_with_options(mmcif::MmcifEnsembleInterpretOptions::default())
+        .expect("explicit block method interprets");
+    let document_method = document
+        .interpret_ensemble()
+        .expect("document method delegates to its structural block");
 
     assert_eq!(from_document.reports(), from_block.reports());
+    assert_eq!(method_default.reports(), method_explicit.reports());
+    assert_eq!(document_method.reports(), method_default.reports());
+    assert!(method_default
+        .topology()
+        .same_layout(method_default.ensemble().topology()));
+    assert!(method_default
+        .clone()
+        .to_ensemble()
+        .topology()
+        .same_layout(method_default.topology()));
     assert!(from_document
         .ensemble()
         .topology()

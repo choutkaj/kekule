@@ -647,7 +647,8 @@ mod tests {
     fn fused_ten_electron_perimeter_preserves_explicit_aromatic_fusion_single() {
         let source = "On2c1-c(ccc2)ccn1";
         let document = crate::io::parse_smiles_document(source).expect("parses");
-        let (mut molecule, report) = crate::io::interpret_smiles_document(&document)
+        let (mut molecule, report) = document
+            .interpret()
             .expect("interprets")
             .to_parts()
             .expect("one component");

@@ -164,8 +164,20 @@ pub(super) fn interpret_molfile(input: &str) -> Result<Molecule, Box<dyn Error>>
 }
 
 pub(super) fn interpret_sdf(input: &str) -> Result<Vec<SdfRecordInterpretation>, Box<dyn Error>> {
-    let document = sdf::parse_str(input, SdfParseOptions::default())?;
+    let document = sdf::parse_str(input)?;
     Ok(sdf::interpret(&document)?.to_records())
+}
+
+pub(super) fn zero_coordinate_model(
+    molecule: &Molecule,
+) -> Result<kekule::structure::Model, Box<dyn Error>> {
+    let positions = kekule::structure::Positions::new(kekule::units::Quantity::new(
+        vec![kekule::geometry::Point3::default(); molecule.atom_count()],
+        kekule::units::ANGSTROM,
+    ))?;
+    Ok(kekule::structure::Model::from_molecule(
+        molecule, &positions,
+    )?)
 }
 
 pub(super) fn interpret_smiles(input: &str) -> Result<Molecule, Box<dyn Error>> {

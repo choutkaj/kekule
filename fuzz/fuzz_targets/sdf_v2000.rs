@@ -1,13 +1,15 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use kekule::sdf::{interpret, parse_str, write_v2000, SdfParseOptions};
+use kekule::sdf::{
+    interpret, parse_str, parse_str_with_options, write_v2000, SdfParseOptions,
+};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(input) = std::str::from_utf8(data) else {
         return;
     };
-    if let Ok(document) = parse_str(
+    if let Ok(document) = parse_str_with_options(
         input,
         SdfParseOptions {
             allow_missing_final_delimiter: true,
@@ -18,7 +20,7 @@ fuzz_target!(|data: &[u8]| {
             return;
         };
         if let Ok(output) = write_v2000(interpreted.records()) {
-            if let Ok(document) = parse_str(&output, SdfParseOptions::default()) {
+            if let Ok(document) = parse_str(&output) {
                 let _ = interpret(&document);
             }
         }

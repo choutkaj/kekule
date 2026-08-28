@@ -1,7 +1,9 @@
 use std::fmt;
+use std::sync::Arc;
 
+use crate::core::Molecule;
 use crate::structure::{Ensemble, EnsembleError, Model};
-use crate::topology::{InstanceAtomId, MoleculeInstanceId};
+use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MmcifAltLocPolicy {
@@ -410,6 +412,28 @@ impl MmcifInterpretation {
         self.model.topology()
     }
 
+    /// Borrows molecule definitions once per occurrence in authoritative
+    /// topology instance order.
+    pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
+        self.model
+            .topology()
+            .molecules()
+            .map(|occurrence| occurrence.molecule())
+    }
+
+    pub fn to_molecules(self) -> Vec<Molecule> {
+        self.model
+            .topology()
+            .molecules()
+            .map(|occurrence| occurrence.molecule().clone())
+            .collect()
+    }
+
+    /// Retains shared ownership of the model's exact topology allocation.
+    pub fn to_topology(self) -> Arc<Topology> {
+        self.model.shared_topology()
+    }
+
     pub fn to_model(self) -> Model {
         self.model
     }
@@ -490,6 +514,14 @@ impl MmcifEnsembleInterpretation {
 
     pub fn reports(&self) -> &[MmcifInterpretationReport] {
         &self.reports
+    }
+
+    pub fn topology(&self) -> &Topology {
+        self.ensemble.topology()
+    }
+
+    pub fn to_ensemble(self) -> Ensemble {
+        self.ensemble
     }
 
     pub fn to_parts(self) -> (Ensemble, Vec<MmcifInterpretationReport>) {
