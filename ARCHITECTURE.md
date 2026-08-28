@@ -459,117 +459,253 @@ editor and thereby bypass publication validation.
 
 ## Parsing and interpretation
 
-### Two-stage format boundary
+### Canonical parsing pipeline
 
-Kekule uses a two-stage input architecture:
+Kekule uses one format boundary and one canonical publication path:
 
 ```text
 source text / bytes
     -> parse
 format-specific Document
-    -> optional format-specific Record/Block selection
+    -> select the format's independently interpretable scope when nested
+       (Record, Block, or equivalent)
     -> interpret / canonicalize
-canonical Kekule domain objects
+format-specific Interpretation
+    -> borrowed views or owned projections
+       -> Vec<Molecule>
+       -> Topology
+       -> Model
+       -> Ensemble / Trajectory when the source semantics justify them
 ```
 
-Parsing preserves source-format structure and syntax. Interpretation is the
-boundary that translates those source assertions into Kekule's canonical domain
-model.
+Parsing is format-specific. Canonical target semantics are not. The interpretation
+object should retain the richest canonical Kekule state justified by the selected
+source scope; simpler outputs are projections that deliberately discard
+information rather than independent reinterpretations of the source.
 
-A `Document` is format-specific. It may retain syntax, source locations,
-metadata, coordinates, unsupported records, data blocks, or other information
-required for faithful interpretation and diagnostics. It is not itself a
-canonical chemistry object.
+The canonical target hierarchy is:
 
-Record-oriented formats should expose explicit format-specific record values.
-A record is the semantic unit that can be interpreted independently. Formats
-that intrinsically represent one record do not need an additional public record
-wrapper merely for uniformity. Formats with another native independently
-interpretable scope should use that native concept rather than invent a generic
-`Record` wrapper.
+| Source scope | `Vec<Molecule>` | `Topology` | `Model` | `Ensemble` / `Trajectory` |
+| --- | --- | --- | --- | --- |
+| SMILES record/document | natural | natural | not represented | not represented |
+| Molfile document | lossy projection | lossy projection | natural | not represented |
+| SDF record | lossy projection | lossy projection | natural | not represented |
+| mmCIF block, one selected coordinate model | lossy projection | lossy projection | natural | not represented |
+| mmCIF block, several compatible coordinate models | projection of one selected interpretation policy | shared topology | selected-model projection | `Ensemble` is natural |
+| trajectory/coordinate stream with external topology | usually not reconstructed from the coordinate format alone | supplied externally | one-frame view/model where useful | `Trajectory` is natural |
 
-Conceptually:
+"Natural" means that the source scope directly carries the information needed for
+that canonical object. "Lossy projection" means the source carries richer state,
+usually geometry and/or system hierarchy, that is intentionally discarded.
+
+Formats that contain only coordinates are a separate capability class. They must
+not invent molecular chemistry merely to satisfy this table. XTC/DCD-like formats
+normally require an external `Topology`; XYZ-like formats require an explicit
+connectivity interpretation policy before they can become chemically meaningful
+`Model` values.
+
+### Independently interpretable source scopes
+
+A `Document` preserves source-format syntax and container organization. It may
+retain source locations, metadata, coordinates, unsupported records, data blocks,
+or other information required for faithful interpretation and diagnostics. It is
+not itself a canonical chemistry object.
+
+The format's native independently interpretable scope must remain explicit:
 
 ```text
-SmilesDocument
-  one molecular record
+SMILES
+  SmilesDocument
+    -> SmilesInterpretation
 
-MolfileDocument
-  one molecular record
+Molfile
+  MolfileDocument
+    -> MolfileInterpretation
 
-SdfDocument
-  records: Vec<SdfRecord>
+SDF
+  SdfDocument
+    -> records: Vec<SdfRecord>
+         -> SdfRecordInterpretation
 
-SdfRecord
-  one independently interpretable SDF record
-
-MmcifDocument
-  blocks: Vec<MmcifBlock>
-
-MmcifBlock
-  one CIF/mmCIF data block
-  one independently interpretable mmCIF scope
+mmCIF
+  MmcifDocument
+    -> blocks: Vec<MmcifBlock>
+         -> MmcifInterpretation         (one selected coordinate model)
+         -> MmcifEnsembleInterpretation (several compatible coordinate models)
 ```
 
-`MmcifBlock` is Kekule's concise public name for the CIF/mmCIF data-block
-concept introduced by a `data_...` header. Kekule does not add an `MmcifRecord`
-layer or force mmCIF into the record-oriented SDF shape.
+Formats that intrinsically represent one record do not need a synthetic public
+`Record` wrapper merely for uniformity. Record-oriented formats should expose
+records, and block-oriented formats should expose blocks. Kekule should not force
+all formats through one generic `Document`/`Record` trait with unsupported
+operations.
 
-### Format namespaces and domain-object independence
+`SdfRecord` is the independently interpretable SDF unit. `MmcifBlock` is the
+independently interpretable CIF/mmCIF data-block unit. Sibling SDF records and
+sibling mmCIF blocks are independent source scopes and must not be silently merged
+into one `Topology`, `Model`, or `Ensemble` merely because they occur in the same
+file.
 
-Format-specific syntax belongs to the format boundary, not to canonical domain
-objects. Parsing, interpretation, writing, and ergonomic whole-source helpers
-should therefore live in a format namespace or on a format-specific
-`Document`/`Record`/`Block` value.
+### Consistent parse API
 
-The intended dependency direction is:
-
-```text
-format namespace / Document / Record / Block
-    -> parse / interpret / write
-    -> Molecule / Topology / Model / Ensemble
-
-canonical domain objects
-    -> do not depend on a particular source or serialization syntax
-```
-
-Consequently, canonical domain objects should not accumulate format-specific
-constructors or writers such as:
-
-```text
-Molecule::from_smiles(...)
-Molecule::to_smiles(...)
-Model::from_mmcif(...)
-```
-
-Equivalent functionality belongs under the corresponding format surface, for
-example conceptually:
+Text formats should use the same parse vocabulary:
 
 ```rust
-let molecules = smiles::to_molecules("CCO")?;
-let text = smiles::write(&molecule)?;
+smiles::parse_str(input)?
+smiles::parse_str_with_options(input, options)?
+
+molfile::parse_str(input)?
+molfile::parse_str_with_options(input, options)?
+
+sdf::parse_str(input)?
+sdf::parse_str_with_options(input, options)?
+
+mmcif::parse_str(input)?
+mmcif::parse_str_with_options(input, options)?
 ```
 
-Format-specific source objects may still expose natural conversions such as
-`SdfRecord::to_molecules()`, `SdfRecord::to_model()`, or an mmCIF interpretation
-result's `to_model()`, because those types already represent the format boundary.
+The no-options form uses the format's documented defaults. Explicit options are
+available through the `_with_options` form. Future byte-oriented formats should
+follow the analogous `parse_bytes` / `parse_bytes_with_options` convention where
+appropriate.
 
-High-level conveniences are encouraged when they materially improve ordinary
-usage, but they must compose the same authoritative parse -> interpret -> publish
-pipeline rather than implement a second interpretation path. Expert callers
-must remain able to access the explicit `Document`/`Record`/`Block`, interpretation
-options, reports, mappings, and diagnostics beneath the convenience.
+Parsing only parses. It does not publish canonical molecules, run chemical
+perception, choose a main component, or perform a format-independent modelling
+workflow.
 
-Convenience naming must expose semantic cardinality. If one source record can
-produce several connected molecular components, the convenience should return
-and be named for `Vec<Molecule>`/`to_molecules()` rather than present itself as a
-singular `Molecule` constructor. Likewise, a convenience that promises one
-`Model` is appropriate only where its format and selection policy actually
-define one model.
+### Interpretation is the richest result
 
-### Component output and `to_molecules`
+Interpretation translates source assertions into canonical Kekule state. The
+interpretation object should retain all successfully interpreted canonical state
+needed for its format scope plus format-specific reports, mappings, provenance,
+and metadata sidecars.
 
-The canonical molecule-producing result for one molecular record is:
+For a geometry-free format such as SMILES, the richest canonical state is the
+source-ordered connected molecular components plus interpretation diagnostics.
+
+For a one-realization geometry-bearing scope such as a Molfile, SDF record, or one
+selected mmCIF coordinate model, the richest canonical state is a `Model` (or
+state exactly equivalent to `Topology + Positions` plus realization properties)
+alongside the format-specific report/metadata. Geometry-independent outputs are
+projections from that same interpreted state.
+
+In particular, `SdfRecordInterpretation` must retain geometry. It must not eagerly
+collapse to only `Vec<Molecule>` plus SDF data fields and thereby make
+`to_model()` require a second interpretation path. Conceptually its shape is:
+
+```text
+SdfRecordInterpretation
+  canonical Model                 # topology + matching Positions
+  SDF title/data fields           # source metadata sidecar
+  interpretation report/mappings
+```
+
+The exact physical field layout is an implementation detail, but after one SDF
+record has been interpreted the same interpretation value must be sufficient to
+inspect or obtain its molecules, topology, model, metadata, and report without
+reinterpreting the source.
+
+For a scope containing several compatible realizations of one topology, such as
+multiple coordinate models within one mmCIF block, the richest multi-realization
+result is an `Ensemble`. Multiple coordinate models are not automatically a
+`Trajectory` because the source does not necessarily assign temporal semantics.
+
+### Borrowed accessors and owned projections
+
+Interpretation APIs should consistently distinguish non-consuming access from
+owned projection using Kekule's established naming convention:
+
+```text
+interpretation.model()        -> borrowed Model access
+interpretation.topology()     -> borrowed Topology access
+interpretation.molecules()    -> borrowed/iterated Molecule access
+
+interpretation.to_model()     -> consume/project to owned Model
+interpretation.to_topology()  -> consume/project to shared-owned/owned Topology
+interpretation.to_molecules() -> consume/project to owned Vec<Molecule>
+```
+
+The non-`to_` family leaves the interpretation available so callers may continue
+to inspect reports, mappings, provenance, and metadata. The consuming `to_*`
+family is for callers that are finished with the format-specific interpretation
+wrapper and want to retain only a canonical Kekule object.
+
+The exact ownership type of an owned topology projection may follow Kekule's
+shared-topology architecture, for example `Arc<Topology>`, rather than forcing an
+expensive independent topology clone. The semantic distinction is borrowed versus
+owned/shared-owned access, not the spelling of the smart pointer.
+
+### Format-level ergonomic conversions
+
+The common path should be concise while remaining a composition of parse and
+interpret rather than a second code path.
+
+For SMILES:
+
+```rust
+let molecules = smiles::to_molecules("CCO.[Na+]")?;
+let topology = smiles::to_topology("CCO.[Na+]")?;
+```
+
+The explicit path remains available:
+
+```rust
+let document = smiles::parse_str("CCO.[Na+]")?;
+let interpretation = document.interpret()?;
+let molecules = interpretation.to_molecules();
+```
+
+For SDF:
+
+```rust
+let document = sdf::parse_str(text)?;
+let record = &document.records()[0];
+let interpretation = record.interpret()?;
+
+let molecules = interpretation.molecules();
+let topology = interpretation.topology();
+let model = interpretation.model();
+```
+
+and the independently interpretable record may expose direct conveniences:
+
+```text
+record.to_molecules()
+record.to_topology()
+record.to_model()
+```
+
+For mmCIF the same vocabulary applies at block scope, with explicit
+interpretation options where model/alternate-location policy is required:
+
+```rust
+let document = mmcif::parse_str(text)?;
+let block = &document.blocks()[0];
+let interpretation = block.interpret_with_options(options)?;
+
+let molecules = interpretation.molecules();
+let topology = interpretation.topology();
+let model = interpretation.model();
+```
+
+and conceptually:
+
+```text
+block.to_molecules(...)
+block.to_topology(...)
+block.to_model(...)
+block.interpret_ensemble_with_options(...)
+```
+
+A method form on `Document`/`Record`/`Block` is preferred for ordinary navigation
+once that source object already exists. Format-namespace free functions may remain
+as concise whole-source conveniences or compatibility wrappers, but there must be
+one authoritative implementation path beneath them.
+
+### Component output and cardinality
+
+The canonical molecule-producing result for a source scope that may contain
+several disconnected molecular components is:
 
 ```rust
 Result<Vec<Molecule>>
@@ -586,95 +722,116 @@ Examples:
 "CC(=O)[O-].[Na+]"  -> [acetate, sodium]
 ```
 
-Component order follows deterministic source/interpreter order. Element zero
-does not carry a semantic guarantee that it is the chemically "main" component.
-A caller may choose the first component if that is its desired policy, or apply
-an explicit largest/organic/main-component policy separately.
+Component order follows deterministic source/interpreter order. Element zero does
+not carry a semantic guarantee that it is the chemically "main" component. A
+caller may choose the first component if that is its desired policy, or apply an
+explicit largest/organic/main-component policy separately.
 
-At the parsing/interpretation boundary, an owned conversion that returns
-`Vec<Molecule>` should be named `to_molecules()`, not `to_molecule()`. A
-`to_molecule()` API is appropriate only where the input type or operation
-actually guarantees exactly one connected molecule.
+An owned conversion should therefore be named `to_molecules()` whenever the
+source can produce several components. A strict `to_molecule()` convenience is
+appropriate only when the operation either guarantees one connected molecule or
+fails loudly unless exactly one component exists. No convenience may silently
+select the first component.
 
-Because `Molecule` no longer owns hierarchy, `to_molecules()` must not synthesize
-residue or chain organization merely to imitate a structure file. Hierarchy is
-constructed only when a system-level `Topology` is being assembled.
+### Geometry-bearing projections
 
-### Multi-record formats
+For a one-realization geometry-bearing source scope, the canonical relationship
+is:
 
-Multi-record formats must preserve record boundaries rather than flattening all
+```text
+Interpretation
+  richest state: Model + format report/metadata
+
+  -> molecules() / to_molecules()
+       discard geometry and system organization
+       retain the same canonical connected chemistry
+
+  -> topology() / to_topology()
+       discard realization-dependent state
+       retain system molecule instances, hierarchy, static properties, and order
+
+  -> model() / to_model()
+       retain the full one-realization canonical state
+```
+
+"Geometry is ignored" in a molecule/topology projection means geometry is not
+retained in the resulting canonical object. It does not mean coordinates are
+forbidden during interpretation. Coordinates may legitimately participate in
+source-stereo normalization, alternate-location/model selection, connectivity
+resolution, atom correspondence, or other format semantics before being
+discarded.
+
+The chemistry and geometry paths must share one publication pipeline. An
+implementation must not independently reinterpret chemistry for `to_molecules()`,
+`to_topology()`, and `to_model()`.
+
+Detached `Positions` access is not a headline parsing workflow. `Positions` is
+deliberately topology-agnostic dense storage whose semantic meaning depends on
+the matching topology order. Callers may construct a `Model` explicitly from a
+shared `Topology` and matching `Positions` through the canonical model
+constructor, but format APIs should normally return/project the complete `Model`
+rather than encourage independently detached topology and position extraction.
+
+### Projection invariants
+
+All projections from one interpretation under one interpretation policy must be
+mutually consistent.
+
+For any one-realization source interpretation:
+
+```text
+interpretation.model().topology()
+    has the same complete static layout as
+interpretation.topology()
+
+interpretation.to_model().topology()
+    has the same complete static layout as
+interpretation.to_topology()
+
+interpretation.molecules()
+    corresponds exactly to the molecule instances of interpretation.topology()
+    in authoritative instance/source order
+```
+
+Equivalent consuming forms must preserve the same relationship. No projection
+may silently drop a connected component, select a "main" molecule, reorder
+components inconsistently, synthesize different chemistry, or run a different
+perception policy.
+
+If a format constructs or preserves hierarchy, the topology obtained directly
+from the interpretation and the topology inside its model must carry the same
+hierarchy. `to_topology()` must not construct a bare topology while `to_model()`
+secretly adds hierarchy.
+
+### Multi-record and multi-block containers
+
+Multi-record formats preserve record boundaries rather than flattening all
 components from an entire source into one undifferentiated vector.
 
-For SDF, the intended public structure is:
+For SDF:
 
 ```text
 SdfDocument
   records: Vec<SdfRecord>
-
-SdfRecord
-  molfile representation
-  SDF data fields
-  source metadata / diagnostics
 ```
 
-`SdfRecord` is the independently interpretable unit. It may expose
-`to_molecules()` and, when its coordinates are usable, `to_model()`.
+`SdfRecord` is independently interpretable. `SdfDocument` must not expose a
+conversion that interprets all of its records as one `Model`; independent SDF
+records are a collection, not molecule instances of one spatial system.
+Whole-document conveniences may return one interpretation/result per record, but
+their semantics must remain explicitly record-preserving.
 
-An `SdfDocument` must not expose a conversion that interprets all of its records
-as one `Model`. Independent SDF records are a collection, not molecule instances
-of one spatial system. Likewise, the primary document API should preserve the
-record boundary rather than flatten every record's molecules. Whole-document
-conveniences may return one result per record if useful, but their semantics must
-remain explicitly record-preserving.
-
-The parsed source record should simply be called `SdfRecord`; a parallel
-`SdfRecordDocument` naming layer is unnecessary.
-
-### Coordinate-bearing records and models
-
-A coordinate-bearing record may support two distinct canonical outputs:
+An mmCIF source may likewise contain multiple independent data blocks:
 
 ```text
-record.to_molecules()
-  -> canonical connected Molecule values
-  -> source geometry is not retained in the returned domain object
-  -> no synthetic hierarchy is attached to the Molecules
-
-record.to_model()
-  -> the same canonical connected Molecule values
-  -> assembled as molecule instances in one Topology
-  -> hierarchy assembled or synthesized at Topology scope
-  -> source geometry transferred into Positions in matching canonical order
-  -> one Model
+MmcifDocument
+  blocks: Vec<MmcifBlock>
 ```
 
-A single coordinate-bearing record may contain several disconnected molecular
-components. `to_model()` represents them as several connected `Molecule`
-instances in one `Topology`, with the record's coordinates retained as the one
-geometric realization.
-
-The chemistry and geometry paths must share one interpretation/publication
-pipeline. An implementation must not independently reinterpret chemistry for
-`to_molecules()` and `to_model()`. Conceptually, interpretation should first
-produce matched canonical component state:
-
-```text
-source record
-    -> staging chemistry + optional source geometry
-    -> partition connected components
-    -> canonical publication / atom remapping
-    -> canonical Molecule + matching optional component geometry
-    -> optional Topology assembly + hierarchy construction
-```
-
-`to_molecules()` discards the published geometry and does not create hierarchy.
-`to_model()` assembles the published `(Molecule, geometry)` components into
-`Topology + Positions` and may construct hierarchy appropriate to the format.
-
-Coordinates may still be consulted during canonical publication when a format's
-stereochemical interpretation legitimately requires geometry; "geometry is
-ignored" means it is not retained in the resulting `Molecule`, not that the
-interpreter is forbidden from consulting it.
+Sibling blocks must not be combined merely because they occur in one file.
+Document-level exact-one-structural-block conveniences may remain ergonomic, but
+zero or several independently interpretable structural blocks require explicit
+selection/iteration by the caller. Block-level interpretation is authoritative.
 
 ### Synthetic MOL/SDF hierarchy
 
@@ -682,8 +839,8 @@ Molfile and SDF do not normally provide PDB/mmCIF-style chain/residue hierarchy,
 but a geometry-bearing `Model` benefits from uniform hierarchy-aware selection
 and slicing.
 
-When `MolfileDocument::to_model()` or `SdfRecord::to_model()` assembles a
-`Topology`, it should synthesize minimal hierarchy at topology scope:
+When a Molfile or SDF record is interpreted into a `Model`/`Topology`, it should
+synthesize minimal hierarchy at topology scope:
 
 ```text
 one deterministic synthetic chain
@@ -696,42 +853,15 @@ one deterministic synthetic chain
 identifier and residue numbering policy may be implementation-defined, but must
 be deterministic and documented.
 
-If later format-specific evidence supports a more specific residue/component
-identity, it may replace the synthetic default. The initial architecture should
-not attempt speculative ligand/ion/water classification beyond information
-actually present in the source.
-
 This synthetic hierarchy belongs only to the assembled `Topology`; the
-underlying `Molecule` definitions remain hierarchy-free.
+underlying `Molecule` definitions remain hierarchy-free. The same hierarchy must
+be present whether that topology is observed through `to_topology()` or through
+the topology owned by `to_model()`.
 
-### mmCIF document and block boundary
+### mmCIF coordinate models and hierarchy interpretation
 
-An mmCIF source may contain multiple CIF/mmCIF data blocks. Kekule preserves
-those source scopes explicitly:
-
-```text
-MmcifDocument
-  blocks: Vec<MmcifBlock>
-
-MmcifBlock
-  one CIF/mmCIF data block
-  entries/items/loops belonging to that block
-```
-
-The public accessors should use the same concise vocabulary:
-
-```text
-document.blocks()
-document.block(name)
-```
-
-One `MmcifBlock` is the independently interpretable mmCIF unit. Sibling blocks
-in one `MmcifDocument` are independent source scopes; they must not be combined
-into one `Topology`, `Model`, or `Ensemble` merely because they occur in the
-same file.
-
-Coordinate-model multiplicity is a separate concept that lives *inside* one
-block. Conceptually:
+Coordinate-model multiplicity lives inside one `MmcifBlock`, independently of
+block multiplicity:
 
 ```text
 MmcifDocument
@@ -745,33 +875,15 @@ MmcifDocument
       -> Model when one realization is selected
 ```
 
-The canonical block-level interpretation surface is conceptually:
-
-```text
-mmcif::interpret_block(block, options)
-  -> MmcifInterpretation -> Model + report
-
-mmcif::interpret_ensemble_block(block, options)
-  -> MmcifEnsembleInterpretation -> Ensemble + reports
-```
-
-Document-level `mmcif::interpret(document, ...)` and
-`mmcif::interpret_ensemble(document, ...)` may remain as ergonomic exact-one
-structural-block conveniences. They must select exactly one block containing
-interpretable atom-site data and delegate to the corresponding block-level
-pipeline. Zero matching blocks or more than one matching block is an error; the
-caller must then select or iterate `document.blocks()` explicitly.
-
-This convenience rule must not create a second mmCIF interpretation path. The
-block-level functions are authoritative, and document-level helpers delegate to
-them.
-
-### mmCIF hierarchy interpretation
+One selected coordinate model should expose the same molecule/topology/model
+projection family as an SDF record. Several selected compatible coordinate models
+may be interpreted as one shared-topology `Ensemble`. Model selection and
+alternate-location selection are interpretation policy and must be applied once,
+then inherited by every projection from that interpretation.
 
 mmCIF hierarchy must be reconstructed as one topology-level hierarchy, not as
-independent copies attached to connected molecules.
-
-The interpretation order for one `MmcifBlock` is conceptually:
+independent copies attached to connected molecules. The interpretation order for
+one block is conceptually:
 
 ```text
 _atom_site and related mmCIF categories
@@ -783,7 +895,8 @@ _atom_site and related mmCIF categories
     -> install Molecule instances into one Topology
     -> establish source atom -> InstanceAtomId correspondence
     -> construct one Hierarchy over those InstanceAtomId values
-    -> attach Positions / realization Properties and publish Model or Ensemble
+    -> attach Positions / realization Properties
+    -> publish Model or shared-topology Ensemble
 ```
 
 The hierarchy must preserve distinct mmCIF label and author identity where both
@@ -808,42 +921,39 @@ promoted into reserved atom property columns with dedicated APIs. Arbitrary
 source fields are not automatically promoted into canonical properties merely
 because a generic property layer exists.
 
-### Format-specific conversion capabilities
+### Canonical constructors are orthogonal to parsing
 
-Concrete format document and record/block types should expose only conversions
-that make semantic sense for that format. Kekule does not need one universal
-public `Document` trait with unsupported operations.
+Canonical domain objects should provide ergonomic format-independent construction
+without acquiring format-specific constructors.
 
-Typical capabilities are conceptually:
+In particular, `Topology` should support concise construction from one or more
+already canonical connected molecules:
 
-```text
-SmilesDocument
-  -> to_molecules()
-
-MolfileDocument
-  -> to_molecules()
-  -> to_model()
-
-SdfDocument
-  -> records()
-
-SdfRecord
-  -> to_molecules()
-  -> to_model()
-
-MmcifDocument
-  -> blocks()
-  -> block(name)
-  -> exact-one-block model/ensemble interpretation convenience
-
-MmcifBlock
-  -> model interpretation according to explicit model-selection policy
-  -> ensemble interpretation for multiple coordinate models
+```rust
+let topology = Topology::from_molecule(&molecule)?;
+let topology = Topology::from_molecules(&molecules)?;
 ```
 
-Higher-level coordinate formats may naturally expose `Model`, `Ensemble`, or
-trajectory-oriented interpretation rather than pretending that all formats have
-the same conversion surface.
+The simple constructor semantics are one explicit molecule instance per input
+molecule, in input order. Definition interning/reuse remains an advanced builder
+concern and must not make the ordinary constructor's scientific semantics
+surprising.
+
+Likewise the canonical relationship:
+
+```text
+Topology + Positions -> Model
+```
+
+should remain available through `Model::new(...)` (with the library's shared
+ownership type for topology). This is a general domain constructor, not the
+standard parsing workflow. Geometry-bearing format interpretation should normally
+produce/project a complete `Model` directly.
+
+Canonical domain objects must not accumulate format-specific constructors or
+writers such as `Molecule::from_smiles(...)` or `Model::from_mmcif(...)`.
+Equivalent functionality belongs in the format namespace or on the
+format-specific source/interpretation types.
 
 ### Reports, metadata, and source correspondence
 
@@ -853,20 +963,21 @@ warnings, data fields, provenance, or other sidecars alongside the canonical
 objects.
 
 Source metadata belongs in a canonical domain object only when its semantics are
-part of that object's architecture or when an interpretation step explicitly
-promotes it into the generic property layer with a well-defined scope and
-target. Otherwise it remains attached to the format record, block,
+part of that object's architecture or when interpretation explicitly promotes it
+into the generic property layer with a well-defined owner scope and target.
+Otherwise it remains attached to the format document, record, block,
 interpretation result, or another explicit sidecar.
 
-Convenience methods such as `to_molecules()` or `to_model()` may provide the
-common owned result, while lower-level interpretation APIs may continue to
-expose richer reports and mappings.
+SDF data fields therefore remain SDF interpretation/source metadata unless
+explicitly promoted. Known mmCIF atom-site quantities such as occupancy and
+B-factor may be promoted because their canonical semantics and realization scope
+are defined.
 
 ### Interpretation and perception
 
 Parsing recognizes source syntax. Interpretation translates source assertions
 into canonical Kekule graph state and, where a system object is constructed,
-canonical topology hierarchy.
+canonical topology hierarchy and realization state.
 
 Interpretation may perform deterministic representation rewrites required to
 publish a canonical molecule, such as localization of aromatic source bonding
@@ -879,11 +990,11 @@ preserve hierarchy.
 If interpretation yields multiple disconnected components, each component is
 published independently as a valid `Molecule`.
 
-Chemical perception remains a separate explicit operation. Neither
-`to_molecules()` nor `to_model()` implicitly runs default perception merely
-because a canonical `Molecule`, `Topology`, or `Model` is being constructed.
-Requesting geometry must not silently change the installed chemical perception
-relative to requesting the geometry-independent molecules from the same record.
+Chemical perception remains a separate explicit operation. Neither molecule,
+topology, model, ensemble, nor trajectory projection implicitly runs default
+perception merely because a canonical object is being constructed. Requesting
+geometry must not silently change the installed chemical perception relative to
+a geometry-independent projection from the same interpretation.
 
 If future workflows need an ergonomic way to perceive molecule definitions
 already installed in an immutable `Topology` or `Model`, that should be designed
@@ -1152,9 +1263,17 @@ hierarchy references and lookups are valid and complete for every stored site
 all topology property tables match their target-domain cardinalities/orderings
 ```
 
-Convenience construction may add one fresh definition and one instance in a
-single operation. Explicit APIs may separately add a reusable definition and
-then instantiate it many times.
+High-level format-independent construction should include:
+
+```rust
+Topology::from_molecule(&molecule)?
+Topology::from_molecules(&molecules)?
+```
+
+These constructors create one explicit molecule instance per input molecule in
+input order. Explicit builder APIs remain available when callers want reusable
+definitions and repeated instances; definition interning must not make the
+ordinary constructor's scientific semantics surprising.
 
 ### Immutability and topology changes
 
