@@ -262,8 +262,7 @@ fn indexed_dcd_restoration_failure_does_not_publish_or_change_destination() {
         None,
     );
     destination
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("sentinel").unwrap(),
             PropertyValue::Bool(true),
         )
@@ -540,9 +539,7 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
         Some(cell),
     );
     bond_annotated
-        .properties_mut()
-        .bonds_mut()
-        .insert(
+        .insert_bond_property_column(
             PropertyKey::new("conformational_entropy").unwrap(),
             kekule::properties::PropertyColumn::Real {
                 unit: ANGSTROM,

@@ -3,9 +3,12 @@ use std::sync::Arc;
 
 use crate::core::Molecule;
 use crate::geometry::PeriodicCell;
-use crate::properties::{Properties, PropertyError};
+use crate::properties::{
+    Properties, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue,
+};
 use crate::topology::transform::TopologySubsetError;
 use crate::topology::{AtomSelection, Topology, TopologyBuildError, TopologyBuilder};
+use crate::units::Quantity;
 
 use super::{Model, ModelView, PositionError, Positions};
 
@@ -45,23 +48,137 @@ impl EnsembleMember {
         &self.properties
     }
 
-    pub fn properties_mut(&mut self) -> &mut Properties {
-        &mut self.properties
+    pub fn insert_property(
+        &mut self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>, EnsembleError> {
+        Ok(self.properties.insert(key, value)?)
+    }
+
+    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.properties.remove(key)
+    }
+
+    pub fn clear_properties(&mut self) {
+        self.properties.clear_owner();
+    }
+
+    pub const fn atom_properties(&self) -> &PropertyTable {
+        self.properties.realization_atom_properties()
+    }
+
+    pub const fn bond_properties(&self) -> &PropertyTable {
+        self.properties.realization_bond_properties()
+    }
+
+    pub fn atom_property_value(
+        &self,
+        key: &PropertyKey,
+        index: usize,
+    ) -> Result<Option<PropertyValue>, EnsembleError> {
+        Ok(self.atom_properties().value(key, index)?)
+    }
+
+    pub fn set_atom_property_value(
+        &mut self,
+        key: PropertyKey,
+        index: usize,
+        value: Option<PropertyValue>,
+    ) -> Result<(), EnsembleError> {
+        Ok(self
+            .properties
+            .set_realization_atom_value(key, index, value)?)
+    }
+
+    pub fn insert_atom_property_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>, EnsembleError> {
+        Ok(self
+            .properties
+            .insert_realization_atom_column(key, column)?)
+    }
+
+    pub fn remove_atom_property_column(
+        &mut self,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyColumn>, EnsembleError> {
+        Ok(self.properties.remove_realization_atom_column(key)?)
+    }
+
+    pub fn bond_property_value(
+        &self,
+        key: &PropertyKey,
+        index: usize,
+    ) -> Result<Option<PropertyValue>, EnsembleError> {
+        Ok(self.bond_properties().value(key, index)?)
+    }
+
+    pub fn set_bond_property_value(
+        &mut self,
+        key: PropertyKey,
+        index: usize,
+        value: Option<PropertyValue>,
+    ) -> Result<(), EnsembleError> {
+        Ok(self
+            .properties
+            .set_realization_bond_value(key, index, value)?)
+    }
+
+    pub fn insert_bond_property_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>, EnsembleError> {
+        Ok(self
+            .properties
+            .insert_realization_bond_column(key, column)?)
+    }
+
+    pub fn remove_bond_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
+        self.properties.remove_realization_bond_column(key)
+    }
+
+    pub fn occupancy_at(&self, index: usize) -> Result<Option<f64>, EnsembleError> {
+        Ok(self.properties.occupancy_at(index)?)
+    }
+
+    pub fn set_occupancy_at(
+        &mut self,
+        index: usize,
+        value: Option<f64>,
+    ) -> Result<(), EnsembleError> {
+        Ok(self.properties.set_occupancy_at(index, value)?)
+    }
+
+    pub fn b_factor_at(&self, index: usize) -> Result<Option<Quantity<f64>>, EnsembleError> {
+        Ok(self.properties.b_factor_at(index)?)
+    }
+
+    pub fn set_b_factor_at(
+        &mut self,
+        index: usize,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), EnsembleError> {
+        Ok(self.properties.set_b_factor_at(index, value)?)
     }
 
     pub fn set_properties(&mut self, properties: Properties) -> Result<(), EnsembleError> {
-        if properties.atoms().len() != self.positions.len() {
+        if properties.realization_atom_properties().len() != self.positions.len() {
             return Err(EnsembleError::AtomPropertyCountMismatch {
                 expected: self.positions.len(),
-                actual: properties.atoms().len(),
+                actual: properties.realization_atom_properties().len(),
             });
         }
-        if properties.bonds().len() != self.properties.bonds().len() {
+        if properties.realization_bond_properties().len() != self.bond_properties().len() {
             return Err(EnsembleError::BondPropertyCountMismatch {
-                expected: self.properties.bonds().len(),
-                actual: properties.bonds().len(),
+                expected: self.bond_properties().len(),
+                actual: properties.realization_bond_properties().len(),
             });
         }
+        properties.validate_realization_canonical_properties()?;
         self.properties = properties;
         Ok(())
     }
@@ -163,8 +280,20 @@ impl Ensemble {
         &self.properties
     }
 
-    pub fn properties_mut(&mut self) -> &mut Properties {
-        &mut self.properties
+    pub fn insert_property(
+        &mut self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>, EnsembleError> {
+        Ok(self.properties.insert(key, value)?)
+    }
+
+    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.properties.remove(key)
+    }
+
+    pub fn clear_properties(&mut self) {
+        self.properties.clear_owner();
     }
 
     /// Constructs one topology subset and applies its dense mapping to every member.
@@ -187,15 +316,9 @@ impl Ensemble {
             target.push(EnsembleMember {
                 positions: member.positions.select_indices(&atom_indices)?,
                 cell: member.cell,
-                properties: {
-                    let mut properties =
-                        Properties::realization(atom_indices.len(), bond_indices.len());
-                    *properties.atoms_mut() =
-                        member.properties.atoms().select_indices(&atom_indices)?;
-                    *properties.bonds_mut() =
-                        member.properties.bonds().select_indices(&bond_indices)?;
-                    properties
-                },
+                properties: member
+                    .properties
+                    .project_realization(&atom_indices, &bond_indices)?,
                 weight: member.weight,
             })?;
         }
@@ -241,6 +364,9 @@ impl Ensemble {
                 actual: member.properties.bonds().len(),
             });
         }
+        member
+            .properties
+            .validate_realization_canonical_properties()?;
         self.members.push(member);
         Ok(())
     }
@@ -288,6 +414,7 @@ pub enum EnsembleError {
     TopologyBuild(TopologyBuildError),
     Position(PositionError),
     Model(Box<super::ModelError>),
+    Property(Box<PropertyError>),
 }
 
 impl fmt::Display for EnsembleError {
@@ -321,6 +448,7 @@ impl fmt::Display for EnsembleError {
             Self::TopologyBuild(error) => write!(formatter, "cannot build topology: {error}"),
             Self::Position(error) => write!(formatter, "cannot build member positions: {error}"),
             Self::Model(error) => write!(formatter, "invalid ensemble member state: {error}"),
+            Self::Property(error) => write!(formatter, "invalid ensemble member property: {error}"),
         }
     }
 }
@@ -336,6 +464,12 @@ impl From<TopologyBuildError> for EnsembleError {
 impl From<PositionError> for EnsembleError {
     fn from(error: PositionError) -> Self {
         Self::Position(error)
+    }
+}
+
+impl From<PropertyError> for EnsembleError {
+    fn from(error: PropertyError) -> Self {
+        Self::Property(Box::new(error))
     }
 }
 

@@ -332,8 +332,7 @@ fn indexed_xtc_restoration_failure_does_not_publish_or_change_destination() {
     .unwrap();
     let mut destination = source_frame(&topology, 9.0, 99);
     destination
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("sentinel").unwrap(),
             PropertyValue::Bool(true),
         )
@@ -617,8 +616,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     );
     frame.set_cell(source_frame(&topology, 0.0, 0).cell().copied());
     frame
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("unsupported").unwrap(),
             PropertyValue::Bool(true),
         )
@@ -627,11 +625,9 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
         codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
         Some(TrajectoryCodecErrorKind::UnsupportedField)
     );
-    frame.properties_mut().clear_owner();
+    frame.clear_properties();
     frame
-        .properties_mut()
-        .bonds_mut()
-        .insert(
+        .insert_bond_property_column(
             PropertyKey::new("conformational_entropy").unwrap(),
             PropertyColumn::Real {
                 unit: NANOMETER,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::properties::{PropertyKey, PropertyValue};
 
 #[test]
 fn mol_v3000_parses_raw_atoms_bonds_coordinates_and_metadata() {
@@ -410,22 +411,19 @@ M  END
 fn mol_v3000_writer_round_trips_supported_metadata() {
     let mut molecule = crate::core::MoleculeEditor::new();
     molecule
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("sdf.title").unwrap(),
             PropertyValue::String("metadata title".to_owned()),
         )
         .unwrap();
     molecule
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("sdf.program").unwrap(),
             PropertyValue::String("metadata program".to_owned()),
         )
         .unwrap();
     molecule
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("sdf.comment").unwrap(),
             PropertyValue::String("metadata comment".to_owned()),
         )

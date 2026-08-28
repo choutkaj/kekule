@@ -1,4 +1,5 @@
 use super::*;
+use crate::properties::{PropertyKey, PropertyValue};
 
 #[test]
 fn empty_molecule_has_no_atoms_or_bonds() {
@@ -369,12 +370,11 @@ fn properties_can_be_mutated_without_topology_changes() {
     let name = PropertyKey::new("name").unwrap();
     let role = PropertyKey::new("role").unwrap();
     let source = PropertyKey::new("source").unwrap();
-    mol.properties_mut()
-        .insert(
-            name.clone(),
-            PropertyValue::String("carbon monoxide".to_owned()),
-        )
-        .unwrap();
+    mol.insert_property(
+        name.clone(),
+        PropertyValue::String("carbon monoxide".to_owned()),
+    )
+    .unwrap();
     mol.set_atom_property(
         a,
         role.clone(),
@@ -424,6 +424,21 @@ fn atom_and_bond_properties_follow_stable_ids_across_tombstones() {
     molecule.delete_bond(removed_bond).unwrap();
     molecule.delete_atom(removed).unwrap();
 
+    assert!(molecule
+        .set_atom_property(removed, tag.clone(), Some(PropertyValue::Int(9)))
+        .is_err());
+    assert!(molecule
+        .set_bond_property(removed_bond, tag.clone(), Some(PropertyValue::Int(9)))
+        .is_err());
+    assert!(!molecule
+        .atom_properties()
+        .row_has_data(removed.index())
+        .unwrap());
+    assert!(!molecule
+        .bond_properties()
+        .row_has_data(removed_bond.index())
+        .unwrap());
+
     assert_eq!(
         molecule.atom_property(last, &tag).unwrap(),
         Some(PropertyValue::Int(3))
@@ -457,12 +472,11 @@ fn property_and_coordinate_edits_preserve_computed_state() {
         Some(PropertyValue::Int(1)),
     )
     .unwrap();
-    mol.properties_mut()
-        .insert(
-            PropertyKey::new("name").unwrap(),
-            PropertyValue::String("triangle".to_owned()),
-        )
-        .unwrap();
+    mol.insert_property(
+        PropertyKey::new("name").unwrap(),
+        PropertyValue::String("triangle".to_owned()),
+    )
+    .unwrap();
     assert_eq!(mol.perception(), &before);
     assert!(mol.ring_membership().is_some());
     assert!(mol.ring_set().is_some());

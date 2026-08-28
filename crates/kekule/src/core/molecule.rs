@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
+use crate::properties::{Properties, PropertyError, PropertyKey, PropertyTable, PropertyValue};
+
 use super::*;
 
 /// One published, non-empty, connected, geometry-independent molecular entity.
@@ -393,8 +395,42 @@ impl Molecule {
         &self.properties
     }
 
-    pub fn properties_mut(&mut self) -> &mut Properties {
+    pub(crate) fn properties_mut(&mut self) -> &mut Properties {
         &mut self.properties
+    }
+
+    pub fn insert_property(
+        &mut self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>> {
+        self.properties
+            .insert(key, value)
+            .map_err(|error| MoleculeError::Property(Box::new(error)))
+    }
+
+    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.properties.remove(key)
+    }
+
+    pub fn clear_properties(&mut self) {
+        self.properties.clear_owner();
+    }
+
+    /// Reads the complete stable-slot atom property table.
+    ///
+    /// Mutation is intentionally available only through [`Self::set_atom_property`],
+    /// which validates that the target atom is live.
+    pub const fn atom_properties(&self) -> &PropertyTable {
+        self.properties.atoms()
+    }
+
+    /// Reads the complete stable-slot bond property table.
+    ///
+    /// Mutation is intentionally available only through [`Self::set_bond_property`],
+    /// which validates that the target bond is live.
+    pub const fn bond_properties(&self) -> &PropertyTable {
+        self.properties.bonds()
     }
 
     pub fn perception(&self) -> &Perception {
@@ -1169,8 +1205,7 @@ mod property_tests {
         let represented = molecule.clone();
 
         molecule
-            .properties_mut()
-            .insert(
+            .insert_property(
                 PropertyKey::new("source").unwrap(),
                 PropertyValue::String("generated".into()),
             )

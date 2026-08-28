@@ -1,9 +1,9 @@
 use super::*;
 use crate::core::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::geometry::Point3;
-use crate::properties::{Properties, PropertyKey, PropertyValue};
+use crate::properties::{Properties, PropertyColumn, PropertyKey, PropertyValue};
 use crate::topology::TopologyBuilder;
-use crate::units::{Quantity, NANOMETER, SQUARE_ANGSTROM, SQUARE_NANOMETER};
+use crate::units::{Quantity, KELVIN, NANOMETER, SQUARE_ANGSTROM, SQUARE_NANOMETER};
 use std::sync::Arc;
 
 fn model_fixture() -> (
@@ -40,8 +40,7 @@ fn model_fixture() -> (
 fn model_properties_and_canonical_atom_fields_share_one_store() {
     let (mut model, atom, bond) = model_fixture();
     model
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("method").unwrap(),
             PropertyValue::String("test".into()),
         )
@@ -63,17 +62,18 @@ fn model_properties_and_canonical_atom_fields_share_one_store() {
         SQUARE_NANOMETER
     );
     assert!(model
-        .properties()
-        .atoms()
+        .atom_properties()
         .get(&PropertyKey::new("occupancy").unwrap())
         .is_some());
     assert!(matches!(
-        model.properties_mut().atoms_mut().set_value(
+        model.set_atom_property_value(
             PropertyKey::new("occupancy").unwrap(),
-            0,
+            atom,
             Some(PropertyValue::Int(1)),
         ),
-        Err(crate::properties::PropertyError::ReservedKey(_))
+        Err(ModelError::Property(
+            crate::properties::PropertyError::ReservedKey(_)
+        ))
     ));
     assert_eq!(
         model
@@ -81,14 +81,32 @@ fn model_properties_and_canonical_atom_fields_share_one_store() {
             .unwrap(),
         Some(PropertyValue::Int(2))
     );
+    assert!(model.set_occupancy(atom, Some(f64::NAN)).is_err());
+    assert!(model
+        .set_b_factor(atom, Some(Quantity::new(1.0, KELVIN)))
+        .is_err());
+
+    let mut malformed = Properties::realization(model.atom_count(), model.topology().bond_count());
+    malformed
+        .atoms_mut()
+        .insert(
+            PropertyKey::new("occupancy").unwrap(),
+            PropertyColumn::Int(vec![Some(1), None]),
+        )
+        .unwrap();
+    assert!(matches!(
+        model.set_properties(malformed),
+        Err(ModelError::Property(
+            crate::properties::PropertyError::InvalidCanonicalProperty(_)
+        ))
+    ));
 }
 
 #[test]
 fn model_slice_projects_entity_properties_and_drops_owner_properties() {
     let (mut model, atom, bond) = model_fixture();
     model
-        .properties_mut()
-        .insert(PropertyKey::new("energy").unwrap(), PropertyValue::Int(3))
+        .insert_property(PropertyKey::new("energy").unwrap(), PropertyValue::Int(3))
         .unwrap();
     model
         .set_atom_property_value(
@@ -110,8 +128,7 @@ fn model_slice_projects_entity_properties_and_drops_owner_properties() {
     assert!(sliced.properties().owner_is_empty());
     assert_eq!(
         sliced
-            .properties()
-            .atoms()
+            .atom_properties()
             .value(&PropertyKey::new("selected").unwrap(), 0)
             .unwrap(),
         Some(PropertyValue::Bool(true))
@@ -122,8 +139,7 @@ fn model_slice_projects_entity_properties_and_drops_owner_properties() {
     let fully_retained = model.slice(&all_selection).unwrap();
     assert_eq!(
         fully_retained
-            .properties()
-            .bonds()
+            .bond_properties()
             .value(&PropertyKey::new("bond_selected").unwrap(), 0)
             .unwrap(),
         Some(PropertyValue::String("yes".into()))
@@ -149,8 +165,7 @@ fn ensemble_collection_and_member_properties_are_separate() {
         .unwrap();
     let mut ensemble = Ensemble::from_models(&[model]).unwrap();
     ensemble
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("collection").unwrap(),
             PropertyValue::Bool(true),
         )
@@ -158,13 +173,61 @@ fn ensemble_collection_and_member_properties_are_separate() {
     ensemble
         .member_mut(0)
         .unwrap()
-        .properties_mut()
-        .insert(PropertyKey::new("member").unwrap(), PropertyValue::Int(1))
+        .insert_property(PropertyKey::new("member").unwrap(), PropertyValue::Int(1))
         .unwrap();
     assert!(!ensemble.properties().owner_is_empty());
     assert!(!ensemble.member(0).unwrap().properties().owner_is_empty());
-    assert!(ensemble.member(0).unwrap().properties().atoms().has_data());
-    assert!(ensemble.member(0).unwrap().properties().bonds().has_data());
+    assert!(ensemble.member(0).unwrap().atom_properties().has_data());
+    assert!(ensemble.member(0).unwrap().bond_properties().has_data());
+
+    let member = ensemble.member_mut(0).unwrap();
+    assert!(matches!(
+        member.set_atom_property_value(
+            PropertyKey::new("b_factor").unwrap(),
+            0,
+            Some(PropertyValue::Int(2)),
+        ),
+        Err(EnsembleError::Property(error))
+            if matches!(*error, crate::properties::PropertyError::ReservedKey(_))
+    ));
+    member.set_occupancy_at(0, Some(0.5)).unwrap();
+    member
+        .set_b_factor_at(0, Some(Quantity::new(10.0, SQUARE_ANGSTROM)))
+        .unwrap();
+    assert_eq!(member.occupancy_at(0).unwrap(), Some(0.5));
+    assert_eq!(
+        member.b_factor_at(0).unwrap().unwrap().unit(),
+        SQUARE_NANOMETER
+    );
+    assert!(member.set_occupancy_at(0, Some(f64::INFINITY)).is_err());
+    assert!(member
+        .set_b_factor_at(0, Some(Quantity::new(1.0, KELVIN)))
+        .is_err());
+
+    let mut malformed =
+        Properties::realization(member.positions().len(), member.bond_properties().len());
+    malformed
+        .atoms_mut()
+        .insert(
+            PropertyKey::new("b_factor").unwrap(),
+            PropertyColumn::String(vec![Some("bad".into()), None]),
+        )
+        .unwrap();
+    assert!(matches!(
+        member.set_properties(malformed),
+        Err(EnsembleError::Property(error))
+            if matches!(
+                *error,
+                crate::properties::PropertyError::InvalidCanonicalProperty(_)
+            )
+    ));
+
+    let cloned = ensemble.clone();
+    assert_eq!(cloned.properties(), ensemble.properties());
+    let selection =
+        crate::topology::AtomSelection::from_atoms(&ensemble.shared_topology(), [atom]).unwrap();
+    let sliced = ensemble.slice(&selection).unwrap();
+    assert!(sliced.properties().owner_is_empty());
 }
 
 #[test]

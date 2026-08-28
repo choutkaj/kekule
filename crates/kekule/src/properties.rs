@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
-use crate::units::{Unit, UnitError};
+use crate::units::{Quantity, Unit, UnitError, DIMENSIONLESS, SQUARE_NANOMETER};
 
 pub const MAX_PROPERTY_KEY_LEN: usize = 128;
 
@@ -274,9 +274,6 @@ impl PropertyTable {
         key: PropertyKey,
         column: PropertyColumn,
     ) -> Result<Option<PropertyColumn>, PropertyError> {
-        if is_reserved_realization_atom_key(&key) {
-            return Err(PropertyError::ReservedKey(key));
-        }
         self.insert_validated(key, column)
     }
 
@@ -327,18 +324,6 @@ impl PropertyTable {
 
     /// Sets or clears one cell transactionally, removing an all-missing column.
     pub fn set_value(
-        &mut self,
-        key: PropertyKey,
-        index: usize,
-        value: Option<PropertyValue>,
-    ) -> Result<(), PropertyError> {
-        if is_reserved_realization_atom_key(&key) {
-            return Err(PropertyError::ReservedKey(key));
-        }
-        self.set_value_validated(key, index, value)
-    }
-
-    pub(crate) fn set_reserved_value(
         &mut self,
         key: PropertyKey,
         index: usize,
@@ -404,6 +389,26 @@ impl PropertyTable {
             len: indices.len(),
             columns,
         })
+    }
+
+    pub(crate) fn select_optional_indices(
+        &self,
+        indices: &[Option<usize>],
+    ) -> Result<Self, PropertyError> {
+        for index in indices.iter().flatten() {
+            self.validate_index(*index)?;
+        }
+        let mut selected = Self::new(indices.len());
+        for (key, column) in &self.columns {
+            for (target, source) in indices.iter().enumerate() {
+                let value = source
+                    .map(|source| column.value(source))
+                    .transpose()?
+                    .flatten();
+                selected.set_value(key.clone(), target, value)?;
+            }
+        }
+        Ok(selected)
     }
 
     pub(crate) fn resize_missing(&mut self, len: usize) {
@@ -499,30 +504,12 @@ impl Properties {
         Self::with_dimensions(0, 0, 0, 0, 0, 0)
     }
 
-    pub fn molecule(atom_slots: usize, bond_slots: usize) -> Self {
+    pub(crate) fn molecule(atom_slots: usize, bond_slots: usize) -> Self {
         Self::with_dimensions(0, atom_slots, bond_slots, 0, 0, 0)
     }
 
     pub fn realization(atom_count: usize, bond_count: usize) -> Self {
         Self::molecule(atom_count, bond_count)
-    }
-
-    pub fn topology(
-        instance_count: usize,
-        atom_count: usize,
-        bond_count: usize,
-        chain_count: usize,
-        residue_count: usize,
-        atom_site_count: usize,
-    ) -> Self {
-        Self::with_dimensions(
-            instance_count,
-            atom_count,
-            bond_count,
-            chain_count,
-            residue_count,
-            atom_site_count,
-        )
     }
 
     fn with_dimensions(
@@ -585,52 +572,190 @@ impl Properties {
             && !self.atom_sites.has_data()
     }
 
-    pub const fn molecule_instances(&self) -> &PropertyTable {
+    pub(crate) const fn molecule_instances(&self) -> &PropertyTable {
         &self.molecule_instances
     }
 
-    pub fn molecule_instances_mut(&mut self) -> &mut PropertyTable {
+    pub(crate) fn molecule_instances_mut(&mut self) -> &mut PropertyTable {
         &mut self.molecule_instances
     }
 
-    pub const fn atoms(&self) -> &PropertyTable {
+    pub(crate) const fn atoms(&self) -> &PropertyTable {
         &self.atoms
     }
 
-    pub fn atoms_mut(&mut self) -> &mut PropertyTable {
+    pub(crate) fn atoms_mut(&mut self) -> &mut PropertyTable {
         &mut self.atoms
     }
 
-    pub const fn bonds(&self) -> &PropertyTable {
+    pub(crate) const fn bonds(&self) -> &PropertyTable {
         &self.bonds
     }
 
-    pub fn bonds_mut(&mut self) -> &mut PropertyTable {
+    pub(crate) fn bonds_mut(&mut self) -> &mut PropertyTable {
         &mut self.bonds
     }
 
-    pub const fn chains(&self) -> &PropertyTable {
+    pub(crate) const fn chains(&self) -> &PropertyTable {
         &self.chains
     }
 
-    pub fn chains_mut(&mut self) -> &mut PropertyTable {
+    pub(crate) fn chains_mut(&mut self) -> &mut PropertyTable {
         &mut self.chains
     }
 
-    pub const fn residues(&self) -> &PropertyTable {
+    pub(crate) const fn residues(&self) -> &PropertyTable {
         &self.residues
     }
 
-    pub fn residues_mut(&mut self) -> &mut PropertyTable {
+    pub(crate) fn residues_mut(&mut self) -> &mut PropertyTable {
         &mut self.residues
     }
 
-    pub const fn atom_sites(&self) -> &PropertyTable {
+    pub(crate) const fn atom_sites(&self) -> &PropertyTable {
         &self.atom_sites
     }
 
-    pub fn atom_sites_mut(&mut self) -> &mut PropertyTable {
+    pub(crate) fn atom_sites_mut(&mut self) -> &mut PropertyTable {
         &mut self.atom_sites
+    }
+
+    /// Reads the dense atom table of a realization owner.
+    pub const fn realization_atom_properties(&self) -> &PropertyTable {
+        &self.atoms
+    }
+
+    /// Reads the dense bond table of a realization owner.
+    pub const fn realization_bond_properties(&self) -> &PropertyTable {
+        &self.bonds
+    }
+
+    /// Sets a non-canonical realization atom property.
+    pub fn set_realization_atom_value(
+        &mut self,
+        key: PropertyKey,
+        index: usize,
+        value: Option<PropertyValue>,
+    ) -> Result<(), PropertyError> {
+        reject_reserved_realization_atom_key(&key)?;
+        self.atoms.set_value(key, index, value)
+    }
+
+    /// Inserts or replaces a non-canonical realization atom column.
+    pub fn insert_realization_atom_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>, PropertyError> {
+        reject_reserved_realization_atom_key(&key)?;
+        self.atoms.insert(key, column)
+    }
+
+    /// Removes a non-canonical realization atom column.
+    pub fn remove_realization_atom_column(
+        &mut self,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyColumn>, PropertyError> {
+        reject_reserved_realization_atom_key(key)?;
+        Ok(self.atoms.remove(key))
+    }
+
+    pub fn set_realization_bond_value(
+        &mut self,
+        key: PropertyKey,
+        index: usize,
+        value: Option<PropertyValue>,
+    ) -> Result<(), PropertyError> {
+        self.bonds.set_value(key, index, value)
+    }
+
+    pub fn insert_realization_bond_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>, PropertyError> {
+        self.bonds.insert(key, column)
+    }
+
+    pub fn remove_realization_bond_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
+        self.bonds.remove(key)
+    }
+
+    pub fn occupancy_at(&self, index: usize) -> Result<Option<f64>, PropertyError> {
+        match self.atoms.value(&occupancy_key(), index)? {
+            None => Ok(None),
+            Some(PropertyValue::Real { value, unit }) if unit == DIMENSIONLESS => Ok(Some(value)),
+            _ => Err(PropertyError::InvalidCanonicalProperty(occupancy_key())),
+        }
+    }
+
+    pub fn set_occupancy_at(
+        &mut self,
+        index: usize,
+        value: Option<f64>,
+    ) -> Result<(), PropertyError> {
+        let value = value
+            .map(|value| PropertyValue::real(value, DIMENSIONLESS))
+            .transpose()?;
+        self.atoms.set_value(occupancy_key(), index, value)
+    }
+
+    pub fn b_factor_at(&self, index: usize) -> Result<Option<Quantity<f64>>, PropertyError> {
+        match self.atoms.value(&b_factor_key(), index)? {
+            None => Ok(None),
+            Some(PropertyValue::Real { value, unit }) if unit == SQUARE_NANOMETER => {
+                Ok(Some(Quantity::new(value, unit)))
+            }
+            _ => Err(PropertyError::InvalidCanonicalProperty(b_factor_key())),
+        }
+    }
+
+    pub fn set_b_factor_at(
+        &mut self,
+        index: usize,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), PropertyError> {
+        let value = value
+            .map(|value| {
+                let value = value.to_unit(SQUARE_NANOMETER)?.to_value();
+                PropertyValue::real(value, SQUARE_NANOMETER)
+            })
+            .transpose()?;
+        self.atoms.set_value(b_factor_key(), index, value)
+    }
+
+    /// Validates the canonical realization-level atom columns, if present.
+    pub fn validate_realization_canonical_properties(&self) -> Result<(), PropertyError> {
+        if let Some(column) = self.atoms.get(&occupancy_key()) {
+            if !matches!(column, PropertyColumn::Real { unit, .. } if *unit == DIMENSIONLESS) {
+                return Err(PropertyError::InvalidCanonicalProperty(occupancy_key()));
+            }
+        }
+        if let Some(column) = self.atoms.get(&b_factor_key()) {
+            if !matches!(column, PropertyColumn::Real { unit, .. } if *unit == SQUARE_NANOMETER) {
+                return Err(PropertyError::InvalidCanonicalProperty(b_factor_key()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Projects dense realization entity columns and drops owner-level values.
+    pub fn project_realization(
+        &self,
+        atom_indices: &[usize],
+        bond_indices: &[usize],
+    ) -> Result<Self, PropertyError> {
+        let properties = Self {
+            owner: BTreeMap::new(),
+            molecule_instances: PropertyTable::new(0),
+            atoms: self.atoms.select_indices(atom_indices)?,
+            bonds: self.bonds.select_indices(bond_indices)?,
+            chains: PropertyTable::new(0),
+            residues: PropertyTable::new(0),
+            atom_sites: PropertyTable::new(0),
+        };
+        properties.validate_realization_canonical_properties()?;
+        Ok(properties)
     }
 
     pub(crate) fn resize_atoms(&mut self, len: usize) {
@@ -660,7 +785,7 @@ impl Properties {
 
     pub(crate) fn project_topology(
         &self,
-        molecule_instances: &[usize],
+        molecule_instances: &[Option<usize>],
         atoms: &[usize],
         bonds: &[usize],
         chains: &[usize],
@@ -669,7 +794,9 @@ impl Properties {
     ) -> Result<Self, PropertyError> {
         Ok(Self {
             owner: BTreeMap::new(),
-            molecule_instances: self.molecule_instances.select_indices(molecule_instances)?,
+            molecule_instances: self
+                .molecule_instances
+                .select_optional_indices(molecule_instances)?,
             atoms: self.atoms.select_indices(atoms)?,
             bonds: self.bonds.select_indices(bonds)?,
             chains: self.chains.select_indices(chains)?,
@@ -677,6 +804,21 @@ impl Properties {
             atom_sites: self.atom_sites.select_indices(atom_sites)?,
         })
     }
+}
+
+fn occupancy_key() -> PropertyKey {
+    PropertyKey::new("occupancy").expect("canonical property key is valid")
+}
+
+fn b_factor_key() -> PropertyKey {
+    PropertyKey::new("b_factor").expect("canonical property key is valid")
+}
+
+fn reject_reserved_realization_atom_key(key: &PropertyKey) -> Result<(), PropertyError> {
+    if is_reserved_realization_atom_key(key) {
+        return Err(PropertyError::ReservedKey(key.clone()));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -687,6 +829,7 @@ pub enum PropertyError {
     InvalidIndex { len: usize, index: usize },
     TypeMismatch { key: PropertyKey },
     ReservedKey(PropertyKey),
+    InvalidCanonicalProperty(PropertyKey),
     NonFiniteValue { index: Option<usize> },
     Unit(UnitError),
 }
@@ -706,6 +849,10 @@ impl fmt::Display for PropertyError {
             }
             Self::TypeMismatch { key } => write!(formatter, "property {key:?} has a different type"),
             Self::ReservedKey(key) => write!(formatter, "property key {key:?} is reserved for a canonical semantic API"),
+            Self::InvalidCanonicalProperty(key) => write!(
+                formatter,
+                "property {key:?} does not have its canonical realization atom type and unit"
+            ),
             Self::NonFiniteValue { index: Some(index) } => {
                 write!(formatter, "real property value at index {index} must be finite")
             }
@@ -735,7 +882,9 @@ impl From<UnitError> for PropertyError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::units::{ANGSTROM, DIMENSIONLESS, KELVIN, NANOMETER};
+    use crate::units::{
+        Quantity, ANGSTROM, DIMENSIONLESS, KELVIN, NANOMETER, SQUARE_ANGSTROM, SQUARE_NANOMETER,
+    };
 
     fn key(value: &str) -> PropertyKey {
         PropertyKey::new(value).unwrap()
@@ -921,6 +1070,84 @@ mod tests {
         assert!(matches!(
             table.select_indices(&[3]),
             Err(PropertyError::InvalidIndex { .. })
+        ));
+    }
+
+    #[test]
+    fn generic_tables_do_not_reserve_realization_semantic_names() {
+        let mut table = PropertyTable::new(1);
+        table
+            .set_value(key("occupancy"), 0, Some(PropertyValue::Int(7)))
+            .unwrap();
+        table
+            .insert(
+                key("b_factor"),
+                PropertyColumn::String(vec![Some("generic".into())]),
+            )
+            .unwrap();
+        assert_eq!(
+            table.value(&key("occupancy"), 0).unwrap(),
+            Some(PropertyValue::Int(7))
+        );
+        assert_eq!(
+            table.value(&key("b_factor"), 0).unwrap(),
+            Some(PropertyValue::String("generic".into()))
+        );
+    }
+
+    #[test]
+    fn realization_facade_reserves_and_validates_canonical_atom_properties() {
+        let mut properties = Properties::realization(2, 1);
+        for reserved in ["occupancy", "b_factor"] {
+            let key = key(reserved);
+            assert!(matches!(
+                properties.set_realization_atom_value(key.clone(), 0, Some(PropertyValue::Int(1))),
+                Err(PropertyError::ReservedKey(_))
+            ));
+            assert!(matches!(
+                properties.insert_realization_atom_column(
+                    key.clone(),
+                    PropertyColumn::Int(vec![Some(1), None])
+                ),
+                Err(PropertyError::ReservedKey(_))
+            ));
+            assert!(matches!(
+                properties.remove_realization_atom_column(&key),
+                Err(PropertyError::ReservedKey(_))
+            ));
+        }
+
+        properties.set_occupancy_at(0, Some(0.75)).unwrap();
+        properties
+            .set_b_factor_at(1, Some(Quantity::new(12.5, SQUARE_ANGSTROM)))
+            .unwrap();
+        assert_eq!(properties.occupancy_at(0).unwrap(), Some(0.75));
+        let b_factor = properties.b_factor_at(1).unwrap().unwrap();
+        assert_eq!(b_factor.unit(), SQUARE_NANOMETER);
+        assert!((*b_factor.value() - 0.125).abs() < 1.0e-12);
+        assert!(matches!(
+            properties.set_occupancy_at(0, Some(f64::NAN)),
+            Err(PropertyError::NonFiniteValue { .. })
+        ));
+        assert!(matches!(
+            properties.set_b_factor_at(0, Some(Quantity::new(1.0, KELVIN))),
+            Err(PropertyError::Unit(_))
+        ));
+
+        let mut malformed = Properties::realization(2, 1);
+        malformed
+            .atoms_mut()
+            .insert(
+                key("occupancy"),
+                PropertyColumn::Real {
+                    unit: KELVIN,
+                    values: vec![Some(1.0), None],
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            malformed.validate_realization_canonical_properties(),
+            Err(PropertyError::InvalidCanonicalProperty(_))
         ));
     }
 }

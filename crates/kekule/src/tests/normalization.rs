@@ -1,4 +1,5 @@
 use super::*;
+use crate::properties::{PropertyKey, PropertyValue};
 
 fn oxo_halide(oxo_count: usize) -> (MoleculeEditor, AtomId, Vec<AtomId>, Vec<BondId>) {
     let mut molecule = crate::core::MoleculeEditor::new();
@@ -247,8 +248,7 @@ fn aromaticity_perception_preserves_complete_primary_representation() {
     let mut molecule =
         read_smiles("C1=CC=CC=C1[C@H](F)C/C=C/Cl").expect("localized stereo fixture should parse");
     molecule
-        .properties_mut()
-        .insert(
+        .insert_property(
             PropertyKey::new("source").unwrap(),
             PropertyValue::String("fixture".to_owned()),
         )

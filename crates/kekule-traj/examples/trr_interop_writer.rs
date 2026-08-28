@@ -78,8 +78,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         )))?;
         frame.set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))?;
         frame.set_step(Some(step));
-        frame.properties_mut().clear_owner();
-        frame.properties_mut().insert(
+        frame.clear_properties();
+        frame.insert_property(
             PropertyKey::new("gromacs.trr.lambda")?,
             PropertyValue::Real {
                 value: 0.125 + step as f64 * 0.125,

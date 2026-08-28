@@ -4,7 +4,9 @@
 use std::{fmt, io, sync::Arc};
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::properties::{Properties, PropertyError};
+use kekule::properties::{
+    Properties, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue,
+};
 use kekule::structure::{ModelError, ModelView, PositionError, Positions};
 use kekule::topology::transform::TopologySubsetError;
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
@@ -157,6 +159,111 @@ macro_rules! vector_array {
 vector_array!(Velocities, CANONICAL_VELOCITY_UNIT);
 vector_array!(Forces, CANONICAL_FORCE_UNIT);
 
+macro_rules! realization_property_api {
+    () => {
+        pub const fn atom_properties(&self) -> &PropertyTable {
+            self.properties.realization_atom_properties()
+        }
+
+        pub const fn bond_properties(&self) -> &PropertyTable {
+            self.properties.realization_bond_properties()
+        }
+
+        pub fn atom_property_value(
+            &self,
+            key: &PropertyKey,
+            index: usize,
+        ) -> Result<Option<PropertyValue>, FrameError> {
+            Ok(self.atom_properties().value(key, index)?)
+        }
+
+        pub fn set_atom_property_value(
+            &mut self,
+            key: PropertyKey,
+            index: usize,
+            value: Option<PropertyValue>,
+        ) -> Result<(), FrameError> {
+            Ok(self
+                .properties
+                .set_realization_atom_value(key, index, value)?)
+        }
+
+        pub fn insert_atom_property_column(
+            &mut self,
+            key: PropertyKey,
+            column: PropertyColumn,
+        ) -> Result<Option<PropertyColumn>, FrameError> {
+            Ok(self
+                .properties
+                .insert_realization_atom_column(key, column)?)
+        }
+
+        pub fn remove_atom_property_column(
+            &mut self,
+            key: &PropertyKey,
+        ) -> Result<Option<PropertyColumn>, FrameError> {
+            Ok(self.properties.remove_realization_atom_column(key)?)
+        }
+
+        pub fn bond_property_value(
+            &self,
+            key: &PropertyKey,
+            index: usize,
+        ) -> Result<Option<PropertyValue>, FrameError> {
+            Ok(self.bond_properties().value(key, index)?)
+        }
+
+        pub fn set_bond_property_value(
+            &mut self,
+            key: PropertyKey,
+            index: usize,
+            value: Option<PropertyValue>,
+        ) -> Result<(), FrameError> {
+            Ok(self
+                .properties
+                .set_realization_bond_value(key, index, value)?)
+        }
+
+        pub fn insert_bond_property_column(
+            &mut self,
+            key: PropertyKey,
+            column: PropertyColumn,
+        ) -> Result<Option<PropertyColumn>, FrameError> {
+            Ok(self
+                .properties
+                .insert_realization_bond_column(key, column)?)
+        }
+
+        pub fn remove_bond_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
+            self.properties.remove_realization_bond_column(key)
+        }
+
+        pub fn occupancy_at(&self, index: usize) -> Result<Option<f64>, FrameError> {
+            Ok(self.properties.occupancy_at(index)?)
+        }
+
+        pub fn set_occupancy_at(
+            &mut self,
+            index: usize,
+            value: Option<f64>,
+        ) -> Result<(), FrameError> {
+            Ok(self.properties.set_occupancy_at(index, value)?)
+        }
+
+        pub fn b_factor_at(&self, index: usize) -> Result<Option<Quantity<f64>>, FrameError> {
+            Ok(self.properties.b_factor_at(index)?)
+        }
+
+        pub fn set_b_factor_at(
+            &mut self,
+            index: usize,
+            value: Option<Quantity<f64>>,
+        ) -> Result<(), FrameError> {
+            Ok(self.properties.set_b_factor_at(index, value)?)
+        }
+    };
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrajectoryFrame {
     positions: Positions,
@@ -198,23 +305,38 @@ impl TrajectoryFrame {
         &self.properties
     }
 
-    pub fn properties_mut(&mut self) -> &mut Properties {
-        &mut self.properties
+    pub fn insert_property(
+        &mut self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>, PropertyError> {
+        self.properties.insert(key, value)
     }
 
+    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.properties.remove(key)
+    }
+
+    pub fn clear_properties(&mut self) {
+        self.properties.clear_owner();
+    }
+
+    realization_property_api!();
+
     pub fn set_properties(&mut self, properties: Properties) -> Result<(), FrameError> {
-        if properties.atoms().len() != self.positions.len() {
+        if properties.realization_atom_properties().len() != self.positions.len() {
             return Err(FrameError::AtomCountMismatch {
                 expected: self.positions.len(),
-                actual: properties.atoms().len(),
+                actual: properties.realization_atom_properties().len(),
             });
         }
-        if properties.bonds().len() != self.properties.bonds().len() {
+        if properties.realization_bond_properties().len() != self.bond_properties().len() {
             return Err(FrameError::BondCountMismatch {
-                expected: self.properties.bonds().len(),
-                actual: properties.bonds().len(),
+                expected: self.bond_properties().len(),
+                actual: properties.realization_bond_properties().len(),
             });
         }
+        properties.validate_realization_canonical_properties()?;
         self.properties = properties;
         Ok(())
     }
@@ -271,11 +393,11 @@ impl TrajectoryFrame {
 
     pub fn validate(&self, topology: &Arc<Topology>) -> Result<(), FrameError> {
         validate_atom_count(topology.atom_count(), self.positions.len())?;
-        validate_atom_count(topology.atom_count(), self.properties.atoms().len())?;
-        if self.properties.bonds().len() != topology.bond_count() {
+        validate_atom_count(topology.atom_count(), self.atom_properties().len())?;
+        if self.bond_properties().len() != topology.bond_count() {
             return Err(FrameError::BondCountMismatch {
                 expected: topology.bond_count(),
-                actual: self.properties.bonds().len(),
+                actual: self.bond_properties().len(),
             });
         }
         if let Some(values) = &self.velocities {
@@ -284,6 +406,8 @@ impl TrajectoryFrame {
         if let Some(values) = &self.forces {
             validate_atom_count(topology.atom_count(), values.len())?;
         }
+        self.properties
+            .validate_realization_canonical_properties()?;
         Ok(())
     }
 
@@ -341,6 +465,22 @@ impl<'a> TrajectoryFrameView<'a> {
 
     pub const fn properties(self) -> &'a Properties {
         self.properties
+    }
+
+    pub const fn atom_properties(self) -> &'a PropertyTable {
+        self.properties.realization_atom_properties()
+    }
+
+    pub const fn bond_properties(self) -> &'a PropertyTable {
+        self.properties.realization_bond_properties()
+    }
+
+    pub fn occupancy_at(self, index: usize) -> Result<Option<f64>, FrameError> {
+        Ok(self.properties.occupancy_at(index)?)
+    }
+
+    pub fn b_factor_at(self, index: usize) -> Result<Option<Quantity<f64>>, FrameError> {
+        Ok(self.properties.b_factor_at(index)?)
     }
 
     pub const fn velocities(self) -> Option<Quantity<&'a [Vector3]>> {
@@ -492,9 +632,23 @@ impl FrameBuffer {
         &self.properties
     }
 
-    pub fn properties_mut(&mut self) -> &mut Properties {
-        &mut self.properties
+    pub fn insert_property(
+        &mut self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>, PropertyError> {
+        self.properties.insert(key, value)
     }
+
+    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.properties.remove(key)
+    }
+
+    pub fn clear_properties(&mut self) {
+        self.properties.clear_owner();
+    }
+
+    realization_property_api!();
 
     pub fn set_positions<T>(&mut self, positions: Quantity<T>) -> Result<(), FrameError>
     where
@@ -555,18 +709,19 @@ impl FrameBuffer {
     }
 
     pub fn set_properties(&mut self, properties: Properties) -> Result<(), FrameError> {
-        if properties.atoms().len() != self.topology.atom_count() {
+        if properties.realization_atom_properties().len() != self.topology.atom_count() {
             return Err(FrameError::AtomCountMismatch {
                 expected: self.topology.atom_count(),
-                actual: properties.atoms().len(),
+                actual: properties.realization_atom_properties().len(),
             });
         }
-        if properties.bonds().len() != self.topology.bond_count() {
+        if properties.realization_bond_properties().len() != self.topology.bond_count() {
             return Err(FrameError::BondCountMismatch {
                 expected: self.topology.bond_count(),
-                actual: properties.bonds().len(),
+                actual: properties.realization_bond_properties().len(),
             });
         }
+        properties.validate_realization_canonical_properties()?;
         self.properties = properties;
         Ok(())
     }
@@ -643,13 +798,17 @@ impl FrameBuffer {
             })
             .transpose()?;
         if let Some(properties) = data.properties {
-            validate_atom_count(self.topology.atom_count(), properties.atoms().len())?;
-            if properties.bonds().len() != self.topology.bond_count() {
+            validate_atom_count(
+                self.topology.atom_count(),
+                properties.realization_atom_properties().len(),
+            )?;
+            if properties.realization_bond_properties().len() != self.topology.bond_count() {
                 return Err(FrameError::BondCountMismatch {
                     expected: self.topology.bond_count(),
-                    actual: properties.bonds().len(),
+                    actual: properties.realization_bond_properties().len(),
                 });
             }
+            properties.validate_realization_canonical_properties()?;
         }
         let properties = data.properties.cloned().unwrap_or_else(|| {
             Properties::realization(self.topology.atom_count(), self.topology.bond_count())
@@ -727,8 +886,20 @@ impl Trajectory {
         &self.properties
     }
 
-    pub fn properties_mut(&mut self) -> &mut Properties {
-        &mut self.properties
+    pub fn insert_property(
+        &mut self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>, PropertyError> {
+        self.properties.insert(key, value)
+    }
+
+    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.properties.remove(key)
+    }
+
+    pub fn clear_properties(&mut self) {
+        self.properties.clear_owner();
     }
 
     /// Constructs one topology subset and applies its dense mapping to every frame.
@@ -751,15 +922,9 @@ impl Trajectory {
             target.push(TrajectoryFrame {
                 positions: frame.positions.select_indices(&atom_indices)?,
                 cell: frame.cell,
-                properties: {
-                    let mut properties =
-                        Properties::realization(atom_indices.len(), bond_indices.len());
-                    *properties.atoms_mut() =
-                        frame.properties.atoms().select_indices(&atom_indices)?;
-                    *properties.bonds_mut() =
-                        frame.properties.bonds().select_indices(&bond_indices)?;
-                    properties
-                },
+                properties: frame
+                    .properties
+                    .project_realization(&atom_indices, &bond_indices)?,
                 velocities: frame
                     .velocities
                     .as_ref()
@@ -1602,6 +1767,7 @@ mod tests {
     use kekule::topology::{AtomSelection, TopologyBuilder};
     use kekule::units::{
         ANGSTROM, DIMENSIONLESS, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND,
+        SQUARE_ANGSTROM, SQUARE_NANOMETER,
     };
     use std::sync::Arc;
 
@@ -1723,9 +1889,7 @@ mod tests {
             topology.bond_count(),
         );
         frame
-            .properties_mut()
-            .atoms_mut()
-            .set_value(key("score"), 0, Some(real(0.8)))
+            .set_atom_property_value(key("score"), 0, Some(real(0.8)))
             .unwrap();
         frame
             .set_time(Some(Quantity::new(2.5, PICOSECOND)))
@@ -1735,7 +1899,7 @@ mod tests {
         let view = frame.view(&topology).unwrap();
         assert_eq!(view.model_view().position(atom).unwrap().value().x, 3.0);
         assert_eq!(
-            view.properties().atoms().value(&key("score"), 0).unwrap(),
+            view.atom_properties().value(&key("score"), 0).unwrap(),
             Some(PropertyValue::Real {
                 value: 0.8,
                 unit: DIMENSIONLESS,
@@ -1771,6 +1935,47 @@ mod tests {
     }
 
     #[test]
+    fn frame_and_buffer_scope_canonical_atom_properties_to_semantic_apis() {
+        let topology = make_topology(true);
+        let mut frame = TrajectoryFrame::new(
+            positions(&[Point3::origin(), Point3::origin()]),
+            topology.bond_count(),
+        );
+        assert!(matches!(
+            frame.set_atom_property_value(key("occupancy"), 0, Some(PropertyValue::Int(1))),
+            Err(FrameError::Property(PropertyError::ReservedKey(_)))
+        ));
+        frame.set_occupancy_at(0, Some(0.8)).unwrap();
+        frame
+            .set_b_factor_at(0, Some(Quantity::new(25.0, SQUARE_ANGSTROM)))
+            .unwrap();
+        assert_eq!(frame.occupancy_at(0).unwrap(), Some(0.8));
+        let b_factor = frame.b_factor_at(0).unwrap().unwrap();
+        assert_eq!(b_factor.unit(), SQUARE_NANOMETER);
+        assert!((*b_factor.value() - 0.25).abs() < 1.0e-12);
+        assert!(frame.set_occupancy_at(0, Some(f64::NAN)).is_err());
+        assert!(frame
+            .set_b_factor_at(0, Some(Quantity::new(1.0, KELVIN)))
+            .is_err());
+
+        let mut buffer = FrameBuffer::new(Arc::clone(&topology));
+        assert!(matches!(
+            buffer.insert_atom_property_column(
+                key("b_factor"),
+                PropertyColumn::String(vec![Some("bad".into()), None]),
+            ),
+            Err(FrameError::Property(PropertyError::ReservedKey(_)))
+        ));
+        buffer.set_properties(frame.properties().clone()).unwrap();
+        assert_eq!(buffer.occupancy_at(0).unwrap(), Some(0.8));
+        assert_eq!(buffer.b_factor_at(0).unwrap(), Some(b_factor));
+        assert!(matches!(
+            buffer.remove_atom_property_column(&key("occupancy")),
+            Err(FrameError::Property(PropertyError::ReservedKey(_)))
+        ));
+    }
+
+    #[test]
     fn trajectory_slice_transfers_every_per_atom_frame_field() {
         let topology = make_topology(true);
         let atoms = topology.atom_ids();
@@ -1780,23 +1985,16 @@ mod tests {
             topology.bond_count(),
         );
         frame
-            .properties_mut()
-            .atoms_mut()
-            .set_value(key("score"), 0, Some(real(0.25)))
+            .set_atom_property_value(key("score"), 0, Some(real(0.25)))
             .unwrap();
         frame
-            .properties_mut()
-            .atoms_mut()
-            .set_value(key("score"), 1, Some(real(0.75)))
+            .set_atom_property_value(key("score"), 1, Some(real(0.75)))
             .unwrap();
         frame
-            .properties_mut()
-            .bonds_mut()
-            .set_value(key("score"), 0, Some(real(9.0)))
+            .set_bond_property_value(key("score"), 0, Some(real(9.0)))
             .unwrap();
         frame
-            .properties_mut()
-            .insert(key("frame_energy"), real(12.0))
+            .insert_property(key("frame_energy"), real(12.0))
             .unwrap();
         frame
             .set_velocities(Some(
@@ -1822,8 +2020,7 @@ mod tests {
         frame.set_step(Some(8));
         let mut trajectory = Trajectory::from_frames(Arc::clone(&topology), [frame]).unwrap();
         trajectory
-            .properties_mut()
-            .insert(
+            .insert_property(
                 key("collection_source"),
                 PropertyValue::String("test".into()),
             )
@@ -1840,10 +2037,10 @@ mod tests {
             &[Point3::new(2.0, 0.0, 0.0)]
         );
         assert_eq!(
-            frame.properties().atoms().value(&key("score"), 0).unwrap(),
+            frame.atom_properties().value(&key("score"), 0).unwrap(),
             Some(real(0.75))
         );
-        assert!(!frame.properties().bonds().has_data());
+        assert!(!frame.bond_properties().has_data());
         assert_eq!(frame.velocities().unwrap().values().value()[0].x, 4.0);
         assert_eq!(frame.forces().unwrap().values().value()[0].x, 6.0);
         assert_eq!(frame.time(), Some(Quantity::new(2.0, PICOSECOND)));
@@ -1861,12 +2058,10 @@ mod tests {
         let vectors = [Vector3::new(1.0, 0.0, 0.0); 2];
         let mut properties = Properties::realization(topology.atom_count(), topology.bond_count());
         properties
-            .atoms_mut()
-            .set_value(key("atom_score"), 0, Some(real(0.75)))
+            .set_realization_atom_value(key("atom_score"), 0, Some(real(0.75)))
             .unwrap();
         properties
-            .bonds_mut()
-            .set_value(key("bond_score"), 0, Some(real(2.0)))
+            .set_realization_bond_value(key("bond_score"), 0, Some(real(2.0)))
             .unwrap();
         properties
             .insert(key("codec_value"), PropertyValue::Int(7))
@@ -1887,8 +2082,8 @@ mod tests {
         assert_eq!(buffer.positions().values().value().as_ptr(), position_ptr);
         assert_eq!(buffer.velocities.values().value().as_ptr(), velocity_ptr);
         assert_eq!(buffer.forces.values().value().as_ptr(), force_ptr);
-        assert!(buffer.properties().atoms().has_data());
-        assert!(buffer.properties().bonds().has_data());
+        assert!(buffer.atom_properties().has_data());
+        assert!(buffer.bond_properties().has_data());
         assert_eq!(
             buffer.properties().get(&key("codec_value")),
             Some(&PropertyValue::Int(7))
@@ -1940,14 +2135,10 @@ mod tests {
         );
         frame.set_step(Some(9));
         frame
-            .properties_mut()
-            .atoms_mut()
-            .set_value(key("atom_score"), 0, Some(real(0.6)))
+            .set_atom_property_value(key("atom_score"), 0, Some(real(0.6)))
             .unwrap();
         frame
-            .properties_mut()
-            .bonds_mut()
-            .set_value(key("bond_score"), 0, Some(real(4.0)))
+            .set_bond_property_value(key("bond_score"), 0, Some(real(4.0)))
             .unwrap();
         trajectory.push(frame).unwrap();
 
@@ -1958,16 +2149,14 @@ mod tests {
         assert_eq!(buffer.frame_view().step(), Some(9));
         assert_eq!(
             buffer
-                .properties()
-                .atoms()
+                .atom_properties()
                 .value(&key("atom_score"), 0)
                 .unwrap(),
             Some(real(0.6))
         );
         assert_eq!(
             buffer
-                .properties()
-                .bonds()
+                .bond_properties()
                 .value(&key("bond_score"), 0)
                 .unwrap(),
             Some(real(4.0))
@@ -1983,8 +2172,7 @@ mod tests {
             written
                 .frame(0)
                 .unwrap()
-                .properties()
-                .atoms()
+                .atom_properties()
                 .value(&key("atom_score"), 0)
                 .unwrap(),
             Some(real(0.6))
@@ -1993,8 +2181,7 @@ mod tests {
             written
                 .frame(0)
                 .unwrap()
-                .properties()
-                .bonds()
+                .bond_properties()
                 .value(&key("bond_score"), 0)
                 .unwrap(),
             Some(real(4.0))

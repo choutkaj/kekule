@@ -856,9 +856,7 @@ mod tests {
         moving_frame.set_step(Some(25));
         let score_key = PropertyKey::new("score").unwrap();
         moving_frame
-            .properties_mut()
-            .atoms_mut()
-            .set_value(
+            .set_atom_property_value(
                 score_key.clone(),
                 0,
                 Some(PropertyValue::Real {
@@ -869,8 +867,7 @@ mod tests {
             .unwrap();
         let label_key = PropertyKey::new("label").unwrap();
         moving_frame
-            .properties_mut()
-            .insert(
+            .insert_property(
                 label_key.clone(),
                 PropertyValue::String("moving".to_owned()),
             )

@@ -1209,8 +1209,14 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         for (present, field) in [
             (frame.velocities().is_some(), "velocities"),
             (frame.forces().is_some(), "forces"),
-            (frame.properties().atoms().has_data(), "atom properties"),
-            (frame.properties().bonds().has_data(), "bond properties"),
+            (
+                frame.properties().realization_atom_properties().has_data(),
+                "atom properties",
+            ),
+            (
+                frame.properties().realization_bond_properties().has_data(),
+                "bond properties",
+            ),
             (!frame.properties().owner_is_empty(), "owner properties"),
         ] {
             if present {

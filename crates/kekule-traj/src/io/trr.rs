@@ -852,14 +852,14 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         if !std::ptr::eq(frame.topology(), self.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
-        if frame.properties().atoms().has_data() {
+        if frame.properties().realization_atom_properties().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
                 "atom properties",
             ));
         }
-        if frame.properties().bonds().has_data() {
+        if frame.properties().realization_bond_properties().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
@@ -1553,8 +1553,8 @@ fn writer_lambda(
     match policy {
         TrrLambdaPolicy::FrameProperty => {
             if properties.iter().len() != 1
-                || properties.atoms().has_data()
-                || properties.bonds().has_data()
+                || properties.realization_atom_properties().has_data()
+                || properties.realization_bond_properties().has_data()
             {
                 return Err(codec_context(
                     TrajectoryCodecErrorKind::InconsistentMetadata,
