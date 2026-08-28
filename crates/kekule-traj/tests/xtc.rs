@@ -2,6 +2,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use kekule_traj::io::xtc::{XtcMagic, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
@@ -331,8 +332,12 @@ fn indexed_xtc_restoration_failure_does_not_publish_or_change_destination() {
     .unwrap();
     let mut destination = source_frame(&topology, 9.0, 99);
     destination
-        .props_mut()
-        .insert("sentinel".into(), kekule::core::PropValue::Bool(true));
+        .properties_mut()
+        .insert(
+            PropertyKey::new("sentinel").unwrap(),
+            PropertyValue::Bool(true),
+        )
+        .unwrap();
     let before = buffer_snapshot(&destination);
     control.arm_at_current_position();
     let error = indexed.read_frame(1, &mut destination).unwrap_err();
@@ -612,18 +617,26 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     );
     frame.set_cell(source_frame(&topology, 0.0, 0).cell().copied());
     frame
-        .props_mut()
-        .insert("unsupported".into(), kekule::core::PropValue::Bool(true));
+        .properties_mut()
+        .insert(
+            PropertyKey::new("unsupported").unwrap(),
+            PropertyValue::Bool(true),
+        )
+        .unwrap();
     assert_eq!(
         codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
         Some(TrajectoryCodecErrorKind::UnsupportedField)
     );
-    frame.props_mut().clear();
+    frame.properties_mut().clear_owner();
     frame
-        .bond_data_mut()
-        .set_property(
-            "conformational_entropy",
-            Quantity::new(vec![Some(1.0); topology.bond_count()], NANOMETER),
+        .properties_mut()
+        .bonds_mut()
+        .insert(
+            PropertyKey::new("conformational_entropy").unwrap(),
+            PropertyColumn::Real {
+                unit: NANOMETER,
+                values: vec![Some(1.0); topology.bond_count()],
+            },
         )
         .unwrap();
     assert_eq!(

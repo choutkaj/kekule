@@ -6,6 +6,7 @@ use crate::mmcif::{
     MmcifInterpretOptions, MmcifInterpretationReport, MmcifModelSelection, MmcifParseOptions,
     MmcifWriteError, MmcifWriteOptions,
 };
+use crate::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
 use crate::topology::AtomSiteMetadata;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, TopologyBuildError};
@@ -498,8 +499,8 @@ fn document_model_interpretation_delegates_for_exactly_one_atom_site_block() {
         from_block.model().positions()
     );
     assert_eq!(
-        from_document.model().atom_data(),
-        from_block.model().atom_data()
+        from_document.model().properties(),
+        from_block.model().properties()
     );
 }
 
@@ -676,11 +677,13 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
         .entity_kinds()
         .contains(&MmcifEntityKind::Water));
     for (_, definition) in model.topology().definitions() {
-        assert!(definition.molecule().props().is_empty());
+        assert!(definition.molecule().properties().is_empty());
         assert!(definition
             .molecule()
+            .properties()
             .atoms()
-            .all(|(_, atom)| atom.props.keys().all(|key| !key.starts_with("mmcif."))));
+            .iter()
+            .all(|(key, _)| !key.as_str().starts_with("mmcif.")));
     }
     let first_provenance = &interpreted.report().instances[0];
     assert_eq!(first_provenance.coordinate_model_id, "1");
@@ -1165,12 +1168,12 @@ fn ensemble_block_interpretation_matches_exactly_one_document_helper() {
         .zip(from_block.ensemble().members())
     {
         assert_eq!(document_member.positions(), block_member.positions());
-        assert_eq!(document_member.atom_data(), block_member.atom_data());
+        assert_eq!(document_member.properties(), block_member.properties());
     }
 }
 
 #[test]
-fn multimodel_interpretation_builds_shared_topology_with_distinct_atom_data() {
+fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
     let interpreted = mmcif::interpret_ensemble(
         &parse(MULTI_MODEL),
         mmcif::MmcifEnsembleInterpretOptions::default(),
@@ -1182,8 +1185,8 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_atom_data() {
     let shared_topology = ensemble.shared_topology();
     assert!(ensemble.members().all(|member| {
         member.positions().len() == shared_topology.atom_count()
-            && member.atom_data().len() == shared_topology.atom_count()
-            && member.bond_data().len() == shared_topology.bond_count()
+            && member.properties().atoms().len() == shared_topology.atom_count()
+            && member.properties().bonds().len() == shared_topology.bond_count()
     }));
     let first_positions = ensemble
         .members()
@@ -1194,27 +1197,32 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_atom_data() {
 
     assert_eq!(interpreted.reports()[0].selected_model(), Some("1"));
     assert_eq!(interpreted.reports()[1].selected_model(), Some("2"));
-    let atom_data = ensemble
+    let member_properties = ensemble
         .members()
-        .map(|member| member.atom_data())
+        .map(|member| member.properties())
         .collect::<Vec<_>>();
-    assert_eq!(
-        atom_data[0].occupancies(),
-        Some(&[Some(0.4), Some(0.5)][..])
-    );
-    assert_eq!(
-        atom_data[1].occupancies(),
-        Some(&[Some(0.8), Some(0.9)][..])
-    );
-    let first_b_factors = atom_data[0].b_factors().unwrap();
-    assert_eq!(first_b_factors.unit(), SQUARE_NANOMETER);
-    for (actual, expected) in first_b_factors.value().iter().zip([0.1, 0.11]) {
-        assert!((actual.unwrap() - expected).abs() < 1.0e-15);
-    }
-    let second_b_factors = atom_data[1].b_factors().unwrap();
-    assert_eq!(second_b_factors.unit(), SQUARE_NANOMETER);
-    for (actual, expected) in second_b_factors.value().iter().zip([0.2, 0.21]) {
-        assert!((actual.unwrap() - expected).abs() < 1.0e-15);
+    let occupancy = PropertyKey::new("occupancy").unwrap();
+    let b_factor = PropertyKey::new("b_factor").unwrap();
+    for (member, expected_occupancies, expected_b_factors) in [
+        (member_properties[0], [0.4, 0.5], [0.1, 0.11]),
+        (member_properties[1], [0.8, 0.9], [0.2, 0.21]),
+    ] {
+        for index in 0..2 {
+            assert_eq!(
+                member.atoms().value(&occupancy, index).unwrap(),
+                Some(PropertyValue::Real {
+                    value: expected_occupancies[index],
+                    unit: DIMENSIONLESS
+                })
+            );
+            let Some(PropertyValue::Real { value, unit }) =
+                member.atoms().value(&b_factor, index).unwrap()
+            else {
+                panic!("B-factor")
+            };
+            assert_eq!(unit, SQUARE_NANOMETER);
+            assert!((value - expected_b_factors[index]).abs() < 1.0e-15);
+        }
     }
 }
 
@@ -1908,10 +1916,14 @@ covale A N 1 A CA 1 doub
         .set_b_factor(first_atom, Some(Quantity::new(0.125, NANOMETER.powi(2))))
         .unwrap();
     original
-        .atom_data_mut()
-        .set_property(
-            "analysis_score",
-            Quantity::new(vec![Some(3.0), None, None, None], DIMENSIONLESS),
+        .properties_mut()
+        .atoms_mut()
+        .insert(
+            PropertyKey::new("analysis_score").unwrap(),
+            PropertyColumn::Real {
+                unit: DIMENSIONLESS,
+                values: vec![Some(3.0), None, None, None],
+            },
         )
         .unwrap();
     let written = mmcif::write_with_report(
@@ -1938,19 +1950,21 @@ covale A N 1 A CA 1 doub
         round_trip.model().positions().values(),
         original.positions().values()
     );
-    assert_eq!(
-        round_trip.model().atom_data().occupancies(),
-        original.atom_data().occupancies()
-    );
-    assert_eq!(
-        round_trip.model().atom_data().b_factors(),
-        original.atom_data().b_factors()
-    );
+    for atom in original.topology().atom_ids() {
+        assert_eq!(
+            round_trip.model().occupancy(*atom).unwrap(),
+            original.occupancy(*atom).unwrap()
+        );
+        assert_eq!(
+            round_trip.model().b_factor(*atom).unwrap(),
+            original.b_factor(*atom).unwrap()
+        );
+    }
     assert!(round_trip
         .model()
-        .atom_data()
-        .property("analysis_score")
-        .unwrap()
+        .properties()
+        .atoms()
+        .get(&PropertyKey::new("analysis_score").unwrap())
         .is_none());
     let (first_id, _) = round_trip.model().topology().instances().next().unwrap();
     let first = round_trip

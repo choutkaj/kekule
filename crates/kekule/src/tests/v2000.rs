@@ -8,7 +8,10 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
     assert_eq!(document.unsupported_records().len(), 1);
     let interpretation = molfile::interpret(&document).expect("Molfile interprets");
     let molecule = interpretation.molecule();
-    assert!(molecule.props().get("sdf.title").is_none());
+    assert!(molecule
+        .properties()
+        .get(&PropertyKey::new("sdf.title").unwrap())
+        .is_none());
     assert_eq!(interpretation.report().atom_mappings().len(), 1);
     assert_eq!(interpretation.report().ignored_record_lines(), &[6]);
 
@@ -21,8 +24,8 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
     assert_eq!(records[0].data_fields()[0].name(), "FIELD");
     assert!(records[0]
         .molecule()
-        .props()
-        .get("sdf.field.FIELD")
+        .properties()
+        .get(&PropertyKey::new("sdf.field.FIELD").unwrap())
         .is_none());
     assert_eq!(interpretation.report().records().len(), 1);
 }
@@ -754,22 +757,34 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
     let mut molecule = graph_builder
         .finish()
         .expect("metadata fixture should be connected");
-    molecule.props_mut().insert(
-        "sdf.title".to_owned(),
-        PropValue::String("metadata title".to_owned()),
-    );
-    molecule.props_mut().insert(
-        "sdf.program".to_owned(),
-        PropValue::String("metadata program".to_owned()),
-    );
-    molecule.props_mut().insert(
-        "sdf.comment".to_owned(),
-        PropValue::String("metadata comment".to_owned()),
-    );
-    molecule.props_mut().insert(
-        "sdf.field.NOTES".to_owned(),
-        PropValue::String("line one\nline two".to_owned()),
-    );
+    molecule
+        .properties_mut()
+        .insert(
+            PropertyKey::new("sdf.title").unwrap(),
+            PropertyValue::String("metadata title".to_owned()),
+        )
+        .unwrap();
+    molecule
+        .properties_mut()
+        .insert(
+            PropertyKey::new("sdf.program").unwrap(),
+            PropertyValue::String("metadata program".to_owned()),
+        )
+        .unwrap();
+    molecule
+        .properties_mut()
+        .insert(
+            PropertyKey::new("sdf.comment").unwrap(),
+            PropertyValue::String("metadata comment".to_owned()),
+        )
+        .unwrap();
+    molecule
+        .properties_mut()
+        .insert(
+            PropertyKey::new("sdf.field.NOTES").unwrap(),
+            PropertyValue::String("line one\nline two".to_owned()),
+        )
+        .unwrap();
     let mol_text = molfile::write_v2000(&molecule).expect("metadata molecule should write");
     assert_eq!(mol_text.lines().nth(1), Some("kekule"));
     assert_eq!(mol_text.matches("M  CHG").count(), 2);

@@ -128,13 +128,13 @@ struct BuiltAtomProvenance {
     b_factor: Option<f64>,
 }
 
-pub(super) type QualifiedAtomData = Vec<(InstanceAtomId, Option<f64>, Option<f64>)>;
+pub(super) type QualifiedAtomProperties = Vec<(InstanceAtomId, Option<f64>, Option<f64>)>;
 
 impl BuiltMoleculeProvenance {
     pub(super) fn qualify(
         self,
         molecule: MoleculeInstanceId,
-    ) -> (MmcifInstanceProvenance, QualifiedAtomData) {
+    ) -> (MmcifInstanceProvenance, QualifiedAtomProperties) {
         let mut atom_data = Vec::with_capacity(self.atoms.len());
         let provenance = MmcifInstanceProvenance {
             molecule,
@@ -230,15 +230,32 @@ impl BuiltMolecule {
                 let target = editor
                     .add_bond(atom_map[&left], atom_map[&right], source_bond.order)
                     .map_err(graph_error)?;
-                *editor
-                    .working_mut()
-                    .bond_props_mut(target)
-                    .map_err(graph_error)? = source_bond.props.clone();
+                let _ = target;
             }
-            editor
-                .working_mut()
-                .props_mut()
-                .clone_from(self.editor.working().props());
+            let bond_sources = self
+                .editor
+                .working()
+                .bonds()
+                .filter(|(_, bond)| selected.contains(&bond.a()) && selected.contains(&bond.b()))
+                .map(|(id, _)| id.index())
+                .collect::<Vec<_>>();
+            let mut properties =
+                crate::properties::Properties::molecule(component.len(), bond_sources.len());
+            *properties.atoms_mut() = self
+                .editor
+                .working()
+                .properties()
+                .atoms()
+                .select_indices(&component.iter().map(|id| id.index()).collect::<Vec<_>>())
+                .map_err(graph_error)?;
+            *properties.bonds_mut() = self
+                .editor
+                .working()
+                .properties()
+                .bonds()
+                .select_indices(&bond_sources)
+                .map_err(graph_error)?;
+            *editor.working_mut().properties_mut() = properties;
             let mut coordinates =
                 StagedCoordinates::with_atom_capacity(component.len(), self.coordinates.unit())
                     .map_err(graph_error)?;

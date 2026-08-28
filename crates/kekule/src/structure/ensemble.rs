@@ -1,37 +1,31 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::{Molecule, PropMap};
+use crate::core::Molecule;
 use crate::geometry::PeriodicCell;
+use crate::properties::{Properties, PropertyError};
 use crate::topology::transform::TopologySubsetError;
 use crate::topology::{AtomSelection, Topology, TopologyBuildError, TopologyBuilder};
 
-use super::{
-    AtomData, AtomDataError, BondData, BondDataError, Model, ModelView, PositionError, Positions,
-};
+use super::{Model, ModelView, PositionError, Positions};
 
 /// One finite non-temporal ensemble member.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnsembleMember {
     positions: Positions,
     cell: Option<PeriodicCell>,
-    atom_data: AtomData,
-    bond_data: BondData,
+    properties: Properties,
     weight: Option<f64>,
-    props: PropMap,
 }
 
 impl EnsembleMember {
     pub fn new(positions: Positions, bond_count: usize) -> Self {
-        let atom_data = AtomData::new(positions.len());
-        let bond_data = BondData::new(bond_count);
+        let properties = Properties::realization(positions.len(), bond_count);
         Self {
             positions,
             cell: None,
-            atom_data,
-            bond_data,
+            properties,
             weight: None,
-            props: PropMap::new(),
         }
     }
 
@@ -47,41 +41,28 @@ impl EnsembleMember {
         self.cell = cell;
     }
 
-    pub fn atom_data(&self) -> &AtomData {
-        &self.atom_data
+    pub const fn properties(&self) -> &Properties {
+        &self.properties
     }
 
-    pub fn atom_data_mut(&mut self) -> &mut AtomData {
-        &mut self.atom_data
+    pub fn properties_mut(&mut self) -> &mut Properties {
+        &mut self.properties
     }
 
-    pub fn set_atom_data(&mut self, atom_data: AtomData) -> Result<(), EnsembleError> {
-        if atom_data.len() != self.positions.len() {
-            return Err(EnsembleError::AtomDataCountMismatch {
+    pub fn set_properties(&mut self, properties: Properties) -> Result<(), EnsembleError> {
+        if properties.atoms().len() != self.positions.len() {
+            return Err(EnsembleError::AtomPropertyCountMismatch {
                 expected: self.positions.len(),
-                actual: atom_data.len(),
+                actual: properties.atoms().len(),
             });
         }
-        self.atom_data = atom_data;
-        Ok(())
-    }
-
-    pub fn bond_data(&self) -> &BondData {
-        &self.bond_data
-    }
-
-    pub fn bond_data_mut(&mut self) -> &mut BondData {
-        &mut self.bond_data
-    }
-
-    pub fn set_bond_data(&mut self, bond_data: BondData) -> Result<(), EnsembleError> {
-        if bond_data.len() != self.bond_data.len() {
-            return Err(EnsembleError::BondDataCountMismatch {
-                expected: self.bond_data.len(),
-                actual: bond_data.len(),
+        if properties.bonds().len() != self.properties.bonds().len() {
+            return Err(EnsembleError::BondPropertyCountMismatch {
+                expected: self.properties.bonds().len(),
+                actual: properties.bonds().len(),
             });
         }
-        self.bond_data = bond_data;
+        self.properties = properties;
         Ok(())
     }
 
@@ -97,21 +78,12 @@ impl EnsembleMember {
         Ok(())
     }
 
-    pub fn props(&self) -> &PropMap {
-        &self.props
-    }
-
-    pub fn props_mut(&mut self) -> &mut PropMap {
-        &mut self.props
-    }
-
     pub fn view<'a>(&'a self, topology: &'a Arc<Topology>) -> Result<ModelView<'a>, EnsembleError> {
         ModelView::new(
             topology,
             &self.positions,
             self.cell.as_ref(),
-            &self.atom_data,
-            &self.bond_data,
+            &self.properties,
         )
         .map_err(|error| EnsembleError::Model(Box::new(error)))
     }
@@ -121,6 +93,7 @@ impl EnsembleMember {
 #[derive(Debug, Clone)]
 pub struct Ensemble {
     topology: Arc<Topology>,
+    properties: Properties,
     members: Vec<EnsembleMember>,
 }
 
@@ -128,6 +101,7 @@ impl Ensemble {
     pub fn new(topology: Arc<Topology>) -> Self {
         Self {
             topology,
+            properties: Properties::new(),
             members: Vec::new(),
         }
     }
@@ -153,10 +127,8 @@ impl Ensemble {
             let member = EnsembleMember {
                 positions: model.positions.clone(),
                 cell: model.cell,
-                atom_data: model.atom_data.clone(),
-                bond_data: model.bond_data.clone(),
+                properties: model.properties.clone(),
                 weight: None,
-                props: PropMap::new(),
             };
             ensemble.members.push(member);
         }
@@ -187,6 +159,14 @@ impl Ensemble {
         Arc::clone(&self.topology)
     }
 
+    pub const fn properties(&self) -> &Properties {
+        &self.properties
+    }
+
+    pub fn properties_mut(&mut self) -> &mut Properties {
+        &mut self.properties
+    }
+
     /// Constructs one topology subset and applies its dense mapping to every member.
     pub fn slice(&self, selection: &AtomSelection) -> Result<Self, EnsembleSliceError> {
         let subset = self.topology.subset(selection)?;
@@ -207,10 +187,16 @@ impl Ensemble {
             target.push(EnsembleMember {
                 positions: member.positions.select_indices(&atom_indices)?,
                 cell: member.cell,
-                atom_data: member.atom_data.select_indices(&atom_indices)?,
-                bond_data: member.bond_data.select_indices(&bond_indices)?,
+                properties: {
+                    let mut properties =
+                        Properties::realization(atom_indices.len(), bond_indices.len());
+                    *properties.atoms_mut() =
+                        member.properties.atoms().select_indices(&atom_indices)?;
+                    *properties.bonds_mut() =
+                        member.properties.bonds().select_indices(&bond_indices)?;
+                    properties
+                },
                 weight: member.weight,
-                props: member.props.clone(),
             })?;
         }
         Ok(target)
@@ -243,16 +229,16 @@ impl Ensemble {
                 actual: member.positions.len(),
             });
         }
-        if member.atom_data.len() != self.topology.atom_count() {
-            return Err(EnsembleError::AtomDataCountMismatch {
+        if member.properties.atoms().len() != self.topology.atom_count() {
+            return Err(EnsembleError::AtomPropertyCountMismatch {
                 expected: self.topology.atom_count(),
-                actual: member.atom_data.len(),
+                actual: member.properties.atoms().len(),
             });
         }
-        if member.bond_data.len() != self.topology.bond_count() {
-            return Err(EnsembleError::BondDataCountMismatch {
+        if member.properties.bonds().len() != self.topology.bond_count() {
+            return Err(EnsembleError::BondPropertyCountMismatch {
                 expected: self.topology.bond_count(),
-                actual: member.bond_data.len(),
+                actual: member.properties.bonds().len(),
             });
         }
         self.members.push(member);
@@ -294,8 +280,8 @@ pub enum EnsembleError {
     EmptySource,
     TopologyMismatch,
     PositionCountMismatch { expected: usize, actual: usize },
-    AtomDataCountMismatch { expected: usize, actual: usize },
-    BondDataCountMismatch { expected: usize, actual: usize },
+    AtomPropertyCountMismatch { expected: usize, actual: usize },
+    BondPropertyCountMismatch { expected: usize, actual: usize },
     InvalidWeight,
     MissingWeight { member: usize },
     ZeroTotalWeight,
@@ -315,13 +301,13 @@ impl fmt::Display for EnsembleError {
                 formatter,
                 "ensemble topology requires {expected} positions, but received {actual}"
             ),
-            Self::AtomDataCountMismatch { expected, actual } => write!(
+            Self::AtomPropertyCountMismatch { expected, actual } => write!(
                 formatter,
-                "ensemble topology requires atom data of length {expected}, but received {actual}"
+                "ensemble topology requires atom properties of length {expected}, but received {actual}"
             ),
-            Self::BondDataCountMismatch { expected, actual } => write!(
+            Self::BondPropertyCountMismatch { expected, actual } => write!(
                 formatter,
-                "ensemble topology requires bond data of length {expected}, but received {actual}"
+                "ensemble topology requires bond properties of length {expected}, but received {actual}"
             ),
             Self::InvalidWeight => {
                 formatter.write_str("ensemble weight must be finite and non-negative")
@@ -359,8 +345,7 @@ impl From<PositionError> for EnsembleError {
 pub enum EnsembleSliceError {
     Topology(TopologySubsetError),
     Position(PositionError),
-    AtomData(AtomDataError),
-    BondData(BondDataError),
+    Property(PropertyError),
     Ensemble(EnsembleError),
 }
 
@@ -382,14 +367,9 @@ impl From<PositionError> for EnsembleSliceError {
         Self::Position(error)
     }
 }
-impl From<AtomDataError> for EnsembleSliceError {
-    fn from(error: AtomDataError) -> Self {
-        Self::AtomData(error)
-    }
-}
-impl From<BondDataError> for EnsembleSliceError {
-    fn from(error: BondDataError) -> Self {
-        Self::BondData(error)
+impl From<PropertyError> for EnsembleSliceError {
+    fn from(error: PropertyError) -> Self {
+        Self::Property(error)
     }
 }
 impl From<EnsembleError> for EnsembleSliceError {

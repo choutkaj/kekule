@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use kekule::core::PropValue;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::units::{
-    Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND,
+    Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, DIMENSIONLESS, NANOMETER, PICOSECOND,
 };
 use kekule_traj::io::trr::{
     TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrScalarPrecision, TrrWriteOptions, TrrWriter,
@@ -32,6 +32,17 @@ use support::{
 
 fn topology() -> Arc<Topology> {
     build_topology(&["C", "H", "O"], &[(0, 1), (0, 2)])
+}
+
+fn lambda_key() -> PropertyKey {
+    PropertyKey::new(TRR_LAMBDA_PROPERTY).unwrap()
+}
+
+fn lambda(value: f64) -> PropertyValue {
+    PropertyValue::Real {
+        value,
+        unit: DIMENSIONLESS,
+    }
 }
 
 fn assert_xs_close(buffer: &FrameBuffer, expected: &[f64]) {
@@ -96,8 +107,9 @@ fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuff
         .unwrap();
     frame.set_step(Some(step));
     frame
-        .props_mut()
-        .insert(TRR_LAMBDA_PROPERTY.into(), PropValue::Float(0.125));
+        .properties_mut()
+        .insert(lambda_key(), lambda(0.125))
+        .unwrap();
     frame
 }
 
@@ -120,13 +132,15 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         second.set_velocities::<&[Vector3]>(None).unwrap();
         second.set_forces::<&[Vector3]>(None).unwrap();
         second
-            .props_mut()
-            .insert(TRR_LAMBDA_PROPERTY.into(), PropValue::Float(0.25));
+            .properties_mut()
+            .insert(lambda_key(), lambda(0.25))
+            .unwrap();
         writer.write_frame(second.frame_view()).unwrap();
         let mut third = populated_frame(&topology, 2.0, 6);
         third
-            .props_mut()
-            .insert(TRR_LAMBDA_PROPERTY.into(), PropValue::Float(0.375));
+            .properties_mut()
+            .insert(lambda_key(), lambda(0.375))
+            .unwrap();
         writer.write_frame(third.frame_view()).unwrap();
         let bytes = writer.finish().unwrap().into_inner();
 
@@ -155,8 +169,8 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
             .as_ptr();
         let force_pointer = destination.frame_view().forces().unwrap().value().as_ptr();
         assert_eq!(
-            destination.props().get(TRR_LAMBDA_PROPERTY),
-            Some(&PropValue::Float(0.125))
+            destination.properties().get(&lambda_key()),
+            Some(&lambda(0.125))
         );
         assert!(reader.read_next(&mut destination).unwrap());
         assert_xs_close(&destination, &[1.0, 4.0, 7.0]);
@@ -164,8 +178,8 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         assert!(destination.frame_view().velocities().is_none());
         assert!(destination.frame_view().forces().is_none());
         assert_eq!(
-            destination.props().get(TRR_LAMBDA_PROPERTY),
-            Some(&PropValue::Float(0.25))
+            destination.properties().get(&lambda_key()),
+            Some(&lambda(0.25))
         );
         assert_eq!(destination.positions().values().value().as_ptr(), pointer);
         assert!(reader.read_next(&mut destination).unwrap());
@@ -184,8 +198,8 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
             force_pointer
         );
         assert_eq!(
-            destination.props().get(TRR_LAMBDA_PROPERTY),
-            Some(&PropValue::Float(0.375))
+            destination.properties().get(&lambda_key()),
+            Some(&lambda(0.375))
         );
         assert!(!reader.read_next(&mut destination).unwrap());
 
@@ -285,8 +299,12 @@ fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
     .unwrap();
     let mut destination = populated_frame(&topology, 9.0, 99);
     destination
-        .props_mut()
-        .insert("sentinel".into(), PropValue::Bool(true));
+        .properties_mut()
+        .insert(
+            PropertyKey::new("sentinel").unwrap(),
+            PropertyValue::Bool(true),
+        )
+        .unwrap();
     let before = buffer_snapshot(&destination);
     control.arm_at_current_position();
     let error = indexed.read_frame(1, &mut destination).unwrap_err();
@@ -384,7 +402,7 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
         codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
         Some(TrajectoryCodecErrorKind::UnsupportedField)
     );
-    frame.props_mut().clear();
+    frame.properties_mut().clear_owner();
     writer.write_frame(frame.frame_view()).unwrap();
     let bytes = writer.finish().unwrap().into_inner();
     let mut reader = TrrReader::new(
@@ -397,7 +415,7 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
     .unwrap();
     let mut destination = FrameBuffer::new(topology);
     reader.read_next(&mut destination).unwrap();
-    assert!(destination.props().is_empty());
+    assert!(destination.properties().is_empty());
 }
 
 #[test]
@@ -505,10 +523,14 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
 
     let mut bond_annotated = populated_frame(&topology, 0.0, 0);
     bond_annotated
-        .bond_data_mut()
-        .set_property(
-            "conformational_entropy",
-            Quantity::new(vec![Some(1.0); topology.bond_count()], NANOMETER),
+        .properties_mut()
+        .bonds_mut()
+        .insert(
+            PropertyKey::new("conformational_entropy").unwrap(),
+            PropertyColumn::Real {
+                unit: NANOMETER,
+                values: vec![Some(1.0); topology.bond_count()],
+            },
         )
         .unwrap();
     assert_eq!(
@@ -665,16 +687,10 @@ fn independently_generated_mdanalysis_trr_preserves_all_supported_fields() {
     assert!(buffer.frame_view().velocities().is_some());
     assert!(buffer.frame_view().forces().is_some());
     assert_eq!(buffer.frame_view().step(), Some(0));
-    assert_eq!(
-        buffer.props().get(TRR_LAMBDA_PROPERTY),
-        Some(&PropValue::Float(0.125))
-    );
+    assert_eq!(buffer.properties().get(&lambda_key()), Some(&lambda(0.125)));
     assert!(reader.read_next(&mut buffer).unwrap());
     assert_xs_close(&buffer, &[0.1, 0.4, 0.7]);
     assert_eq!(buffer.frame_view().step(), Some(1));
-    assert_eq!(
-        buffer.props().get(TRR_LAMBDA_PROPERTY),
-        Some(&PropValue::Float(0.25))
-    );
+    assert_eq!(buffer.properties().get(&lambda_key()), Some(&lambda(0.25)));
     assert!(!reader.read_next(&mut buffer).unwrap());
 }

@@ -1341,7 +1341,6 @@ fn rdkit_default_removes_hydrogen(atom: &Atom) -> bool {
         && atom.formal_charge == 0
         && atom.radical.is_none()
         && atom.atom_map.is_none()
-        && atom.props.is_empty()
 }
 
 pub(crate) fn conformers_json(mol: &Molecule) -> Vec<Vec<Value>> {

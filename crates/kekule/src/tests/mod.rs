@@ -341,7 +341,6 @@ struct RepresentedAtomSnapshot {
     radical: Option<AtomRadical>,
     hydrogens: HydrogenDeclaration,
     atom_map: Option<u32>,
-    props: PropMap,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -349,7 +348,6 @@ struct RepresentedBondSnapshot {
     a: AtomId,
     b: AtomId,
     order: BondOrder,
-    props: PropMap,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -366,7 +364,6 @@ pub(super) struct RepresentedMoleculeSnapshot {
     adjacency: Vec<Vec<BondId>>,
     stereo_elements: Vec<Option<RepresentedStereoElementSnapshot>>,
     stereo_groups: Vec<Option<StereoGroup>>,
-    props: PropMap,
 }
 
 pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedMoleculeSnapshot {
@@ -383,7 +380,6 @@ pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedM
                     radical: atom.radical,
                     hydrogens: atom.hydrogens,
                     atom_map: atom.atom_map,
-                    props: atom.props.clone(),
                 })
             })
             .collect(),
@@ -396,7 +392,6 @@ pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedM
                     a: bond.a,
                     b: bond.b,
                     order: bond.order,
-                    props: bond.props.clone(),
                 })
             })
             .collect(),
@@ -415,7 +410,6 @@ pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedM
             })
             .collect(),
         stereo_groups: molecule.graph.stereo_groups.clone(),
-        props: molecule.graph.props.clone(),
     }
 }
 

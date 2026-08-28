@@ -247,19 +247,27 @@ fn aromaticity_perception_preserves_complete_primary_representation() {
     let mut molecule =
         read_smiles("C1=CC=CC=C1[C@H](F)C/C=C/Cl").expect("localized stereo fixture should parse");
     molecule
-        .props_mut()
-        .insert("source".to_owned(), PropValue::String("fixture".to_owned()));
+        .properties_mut()
+        .insert(
+            PropertyKey::new("source").unwrap(),
+            PropertyValue::String("fixture".to_owned()),
+        )
+        .unwrap();
     molecule
-        .atom_mut(AtomId::new(0))
-        .expect("first atom")
-        .props
-        .insert("label".to_owned(), PropValue::Int(7));
+        .set_atom_property(
+            AtomId::new(0),
+            PropertyKey::new("label").unwrap(),
+            Some(PropertyValue::Int(7)),
+        )
+        .unwrap();
     let first_bond = molecule.bond_ids().next().expect("first bond");
     molecule
-        .bond_mut(first_bond)
-        .expect("first bond")
-        .props
-        .insert("source".to_owned(), PropValue::Bool(true));
+        .set_bond_property(
+            first_bond,
+            PropertyKey::new("source").unwrap(),
+            Some(PropertyValue::Bool(true)),
+        )
+        .unwrap();
     let positions = crate::structure::Positions::new(crate::units::Quantity::new(
         molecule
             .atom_ids()

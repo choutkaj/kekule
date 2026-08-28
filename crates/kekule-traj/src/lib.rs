@@ -3,7 +3,7 @@
 //!
 //! `kekule-traj` owns ordered frame state and trajectory-specific operations.
 //! It reuses Kekule's immutable [`kekule::topology::Topology`], dense positions,
-//! cells, dimensioned atom and bond data, units, geometry, selections, and the
+//! cells, unified atom and bond properties, units, geometry, selections, and the
 //! borrowed [`kekule::structure::ModelView`] contract rather than
 //! defining a second molecular model.
 //!
