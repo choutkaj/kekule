@@ -2,7 +2,9 @@ mod mmcif_connectivity;
 mod mmcif_document;
 mod mmcif_interpret;
 mod mmcif_write;
+mod molfile_write;
 mod sdf_document;
+mod serialization_write;
 mod smiles;
 mod staged_coordinates;
 mod structure_documents;
@@ -18,6 +20,7 @@ pub use mmcif_interpret::{
 };
 pub use mmcif_write::*;
 pub use sdf_document::*;
+pub use serialization_write::*;
 pub use smiles::{
     parse_smiles_document, parse_smiles_document_with_options, write_canonical_smiles,
     write_isomeric_smiles, write_smiles, SmilesAtomMapping, SmilesBondMapping,

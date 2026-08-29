@@ -105,6 +105,20 @@ pub mod smiles {
     };
     use crate::topology::{Topology, TopologyBuildError};
 
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub enum SmilesWriteMode {
+        #[default]
+        Ordinary,
+        Isomeric,
+        Canonical,
+    }
+
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub struct SmilesWriteOptions {
+        pub mode: SmilesWriteMode,
+    }
+
     /// Error produced by the concise SMILES parse-and-interpret convenience.
     #[derive(Debug, Clone, PartialEq)]
     #[non_exhaustive]
@@ -191,6 +205,32 @@ pub mod smiles {
         crate::io::write_smiles(molecule)
     }
 
+    /// Writes one connected molecule using an explicit SMILES policy.
+    pub fn write_molecule(
+        molecule: &Molecule,
+        options: SmilesWriteOptions,
+    ) -> Result<String, MolWriteError> {
+        match options.mode {
+            SmilesWriteMode::Ordinary => crate::io::write_smiles(molecule),
+            SmilesWriteMode::Isomeric => crate::io::write_isomeric_smiles(molecule),
+            SmilesWriteMode::Canonical => crate::io::write_canonical_smiles(molecule),
+        }
+    }
+
+    /// Writes every explicit topology molecule instance in authoritative order.
+    ///
+    /// Reused definitions are emitted once per occurrence and joined with `.`.
+    pub fn write_topology(
+        topology: &Topology,
+        options: SmilesWriteOptions,
+    ) -> Result<String, MolWriteError> {
+        topology
+            .molecules()
+            .map(|occurrence| write_molecule(occurrence.molecule(), options))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|components| components.join("."))
+    }
+
     pub fn write_isomeric(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_isomeric_smiles(molecule)
     }
@@ -202,13 +242,15 @@ pub mod smiles {
 
 pub mod molfile {
     pub use crate::io::{
-        MolWriteError, MolfileAtomMapping, MolfileBondMapping, MolfileComponentInterpretation,
-        MolfileDocument, MolfileHeader, MolfileInterpretError, MolfileInterpretation,
-        MolfileInterpretationReport, MolfileInterpretationWarning, MolfileLine, MolfileModelError,
-        MolfileParseError, MolfileParseOptions, MolfileVersion,
+        MolWriteError, MolWriteErrorKind, MolfileAtomMapping, MolfileBondMapping,
+        MolfileComponentInterpretation, MolfileDocument, MolfileHeader, MolfileInterpretError,
+        MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning,
+        MolfileLine, MolfileModelError, MolfileParseError, MolfileParseOptions, MolfileVersion,
+        MolfileWriteOptions, MolfileWriteVersion,
     };
 
     use crate::core::Molecule;
+    use crate::structure::Model;
 
     pub fn parse_str(input: &str) -> Result<MolfileDocument, MolfileParseError> {
         crate::io::parse_molfile_document(input)
@@ -234,14 +276,49 @@ pub mod molfile {
     pub fn write_v3000(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_mol_v3000(molecule)
     }
+
+    /// Writes a coordinate-free molecule using zero coordinates.
+    pub fn write_molecule(
+        molecule: &Molecule,
+        options: MolfileWriteOptions,
+    ) -> Result<String, MolWriteError> {
+        crate::io::write_molfile_molecule(molecule, options)
+    }
+
+    /// Writes one geometry-bearing model as one possibly disconnected CTAB.
+    pub fn write_model(
+        model: &Model,
+        options: MolfileWriteOptions,
+    ) -> Result<String, MolWriteError> {
+        crate::io::write_molfile_model(model.view(), options)
+    }
+
+    pub fn write_model_to(
+        writer: &mut impl std::io::Write,
+        model: &Model,
+        options: MolfileWriteOptions,
+    ) -> Result<(), MolWriteError> {
+        crate::io::write_molfile_model_to(writer, model.view(), options)
+    }
+
+    pub fn write_model_v2000(model: &Model) -> Result<String, MolWriteError> {
+        crate::io::write_model_v2000(model.view())
+    }
+
+    pub fn write_model_v3000(model: &Model) -> Result<String, MolWriteError> {
+        crate::io::write_model_v3000(model.view())
+    }
 }
 
 pub mod sdf {
     pub use crate::io::{
-        MolWriteError, SdfDataField, SdfDocument, SdfInterpretError, SdfInterpretErrorKind,
-        SdfInterpretation, SdfInterpretationReport, SdfParseError, SdfParseOptions, SdfRecord,
-        SdfRecordInterpretation, SdfRecordInterpretationReport,
+        MolWriteError, MolfileWriteVersion, SdfDataField, SdfDocument, SdfInterpretError,
+        SdfInterpretErrorKind, SdfInterpretation, SdfInterpretationReport, SdfParseError,
+        SdfParseOptions, SdfRecord, SdfRecordInterpretation, SdfRecordInterpretationReport,
+        SdfWriteError, SdfWriteOptions,
     };
+
+    use crate::structure::{Ensemble, Model};
 
     pub fn parse_str(input: &str) -> Result<SdfDocument, SdfParseError> {
         parse_str_with_options(input, SdfParseOptions::default())
@@ -260,6 +337,64 @@ pub mod sdf {
 
     pub fn write_v2000(records: &[SdfRecordInterpretation]) -> Result<String, MolWriteError> {
         crate::io::write_sdf_v2000(records)
+    }
+
+    pub fn write_model(model: &Model, options: SdfWriteOptions) -> Result<String, SdfWriteError> {
+        crate::io::write_sdf_model(model, options)
+    }
+
+    pub fn write_models(
+        models: &[Model],
+        options: SdfWriteOptions,
+    ) -> Result<String, SdfWriteError> {
+        crate::io::write_sdf_models(models, options)
+    }
+
+    pub fn write_ensemble(
+        ensemble: &Ensemble,
+        options: SdfWriteOptions,
+    ) -> Result<String, SdfWriteError> {
+        crate::io::write_sdf_ensemble(ensemble, options)
+    }
+
+    pub fn write_model_to(
+        writer: &mut impl std::io::Write,
+        model: &Model,
+        options: SdfWriteOptions,
+    ) -> Result<(), SdfWriteError> {
+        crate::io::write_sdf_model_to(writer, model, options)
+    }
+
+    pub fn write_models_to(
+        writer: &mut impl std::io::Write,
+        models: &[Model],
+        options: SdfWriteOptions,
+    ) -> Result<(), SdfWriteError> {
+        crate::io::write_sdf_models_to(writer, models, options)
+    }
+
+    pub fn write_ensemble_to(
+        writer: &mut impl std::io::Write,
+        ensemble: &Ensemble,
+        options: SdfWriteOptions,
+    ) -> Result<(), SdfWriteError> {
+        crate::io::write_sdf_ensemble_to(writer, ensemble, options)
+    }
+
+    /// Expert/round-trip path preserving explicit SDF titles and data fields.
+    pub fn write_records(
+        records: &[SdfRecordInterpretation],
+        options: SdfWriteOptions,
+    ) -> Result<String, SdfWriteError> {
+        crate::io::write_sdf_records(records, options)
+    }
+
+    pub fn write_records_to(
+        writer: &mut impl std::io::Write,
+        records: &[SdfRecordInterpretation],
+        options: SdfWriteOptions,
+    ) -> Result<(), SdfWriteError> {
+        crate::io::write_sdf_records_to(writer, records, options)
     }
 }
 
@@ -340,6 +475,85 @@ pub mod mmcif {
         crate::io::write_mmcif_model(model, options)
     }
 
+    /// Alias naming the canonical object explicitly.
+    pub fn write_model(
+        model: &crate::structure::Model,
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        write(model, options)
+    }
+
+    /// Writes independent models as one deterministic data block per model.
+    pub fn write_models(
+        models: &[crate::structure::Model],
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        crate::io::write_mmcif_models(models, options)
+    }
+
+    pub fn write_models_with_classifications(
+        models: &[crate::structure::Model],
+        classifications: &[MmcifEntityClassifications],
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        crate::io::write_mmcif_models_with_classifications(models, classifications, options)
+    }
+
+    pub fn write_models_with_reports(
+        models: &[crate::structure::Model],
+        reports: &[MmcifInterpretationReport],
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        crate::io::write_mmcif_models_with_reports(models, reports, options)
+    }
+
+    /// Writes one shared-topology ensemble as one multi-model data block.
+    pub fn write_ensemble(
+        ensemble: &crate::structure::Ensemble,
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        crate::io::write_mmcif_ensemble(ensemble, options)
+    }
+
+    pub fn write_ensemble_with_classifications(
+        ensemble: &crate::structure::Ensemble,
+        classifications: &MmcifEntityClassifications,
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        crate::io::write_mmcif_ensemble_with_classifications(ensemble, classifications, options)
+    }
+
+    pub fn write_ensemble_with_reports(
+        ensemble: &crate::structure::Ensemble,
+        reports: &[MmcifInterpretationReport],
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        crate::io::write_mmcif_ensemble_with_reports(ensemble, reports, options)
+    }
+
+    pub fn write_ensemble_interpretation(
+        interpretation: &MmcifEnsembleInterpretation,
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        crate::io::write_mmcif_ensemble_interpretation(interpretation, options)
+    }
+
+    pub fn write_models_to(
+        writer: &mut impl std::io::Write,
+        models: &[crate::structure::Model],
+        options: MmcifWriteOptions,
+    ) -> Result<(), MmcifWriteError> {
+        crate::io::write_mmcif_models_to(writer, models, options)
+    }
+
+    pub fn write_ensemble_to(
+        writer: &mut impl std::io::Write,
+        ensemble: &crate::structure::Ensemble,
+        options: MmcifWriteOptions,
+    ) -> Result<(), MmcifWriteError> {
+        crate::io::write_mmcif_ensemble_to(writer, ensemble, options)
+    }
+
     /// Writes a generic model with explicit format-specific entity semantics.
     ///
     /// Every molecule instance must occur exactly once in `classifications`.
@@ -353,6 +567,14 @@ pub mod mmcif {
         options: MmcifWriteOptions,
     ) -> Result<String, MmcifWriteError> {
         crate::io::write_mmcif_model_with_classifications(model, classifications, options)
+    }
+
+    pub fn write_model_with_classifications(
+        model: &crate::structure::Model,
+        classifications: &MmcifEntityClassifications,
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        write_with_classifications(model, classifications, options)
     }
 
     /// Writes a canonical model while preserving source mmCIF entity/asymmetry semantics.
@@ -371,6 +593,81 @@ pub mod mmcif {
         options: MmcifWriteOptions,
     ) -> Result<String, MmcifWriteError> {
         crate::io::write_mmcif_model_with_report(model, report, options)
+    }
+
+    pub fn write_model_with_report(
+        model: &crate::structure::Model,
+        report: &MmcifInterpretationReport,
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        write_with_report(model, report, options)
+    }
+
+    pub fn write_model_to(
+        writer: &mut impl std::io::Write,
+        model: &crate::structure::Model,
+        options: MmcifWriteOptions,
+    ) -> Result<(), MmcifWriteError> {
+        write_text_to(writer, write_model(model, options)?)
+    }
+
+    pub fn write_model_with_classifications_to(
+        writer: &mut impl std::io::Write,
+        model: &crate::structure::Model,
+        classifications: &MmcifEntityClassifications,
+        options: MmcifWriteOptions,
+    ) -> Result<(), MmcifWriteError> {
+        write_text_to(
+            writer,
+            write_model_with_classifications(model, classifications, options)?,
+        )
+    }
+
+    pub fn write_models_with_classifications_to(
+        writer: &mut impl std::io::Write,
+        models: &[crate::structure::Model],
+        classifications: &[MmcifEntityClassifications],
+        options: MmcifWriteOptions,
+    ) -> Result<(), MmcifWriteError> {
+        write_text_to(
+            writer,
+            write_models_with_classifications(models, classifications, options)?,
+        )
+    }
+
+    pub fn write_ensemble_with_classifications_to(
+        writer: &mut impl std::io::Write,
+        ensemble: &crate::structure::Ensemble,
+        classifications: &MmcifEntityClassifications,
+        options: MmcifWriteOptions,
+    ) -> Result<(), MmcifWriteError> {
+        write_text_to(
+            writer,
+            write_ensemble_with_classifications(ensemble, classifications, options)?,
+        )
+    }
+
+    pub fn write_ensemble_interpretation_to(
+        writer: &mut impl std::io::Write,
+        interpretation: &MmcifEnsembleInterpretation,
+        options: MmcifWriteOptions,
+    ) -> Result<(), MmcifWriteError> {
+        write_text_to(
+            writer,
+            write_ensemble_interpretation(interpretation, options)?,
+        )
+    }
+
+    fn write_text_to(
+        writer: &mut impl std::io::Write,
+        text: String,
+    ) -> Result<(), MmcifWriteError> {
+        writer
+            .write_all(text.as_bytes())
+            .map_err(|error| MmcifWriteError::Io {
+                kind: error.kind(),
+                message: error.to_string(),
+            })
     }
 }
 

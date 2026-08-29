@@ -1,10 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::io::Write;
 
 use crate::core::{AtomId, BondOrder, HydrogenDeclaration};
 use crate::geometry::Point3;
-use crate::io::mmcif_interpret::{MmcifEntityKind, MmcifInterpretationReport};
-use crate::structure::Model;
+use crate::io::mmcif_interpret::{
+    MmcifEnsembleInterpretation, MmcifEntityKind, MmcifInterpretationReport,
+};
+use crate::structure::{Ensemble, Model, ModelView};
 use crate::topology::{AtomSite, Hierarchy, ResidueId};
 use crate::topology::{
     InstanceAtomId, InstanceBondId, MoleculeDefinition, MoleculeInstance, MoleculeInstanceId,
@@ -91,6 +94,23 @@ pub enum MmcifWriteError {
     AmbiguousConnectionSelector(InstanceAtomId),
     UnsupportedTextValue {
         field: &'static str,
+    },
+    EmptyEnsemble,
+    ReportCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    ClassificationCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    IncompatibleEnsembleMember {
+        member: usize,
+        field: &'static str,
+    },
+    Io {
+        kind: std::io::ErrorKind,
+        message: String,
     },
 }
 
@@ -204,6 +224,20 @@ impl fmt::Display for MmcifWriteError {
                 f,
                 "{field} contains a text value that cannot be emitted as a single mmCIF token"
             ),
+            Self::EmptyEnsemble => f.write_str("cannot write an empty ensemble as mmCIF"),
+            Self::ReportCountMismatch { expected, actual } => write!(
+                f,
+                "mmCIF ensemble writing requires {expected} reports, but received {actual}"
+            ),
+            Self::ClassificationCountMismatch { expected, actual } => write!(
+                f,
+                "mmCIF model collection writing requires {expected} classification sets, but received {actual}"
+            ),
+            Self::IncompatibleEnsembleMember { member, field } => write!(
+                f,
+                "ensemble member {member} has incompatible mmCIF {field}"
+            ),
+            Self::Io { message, .. } => write!(f, "mmCIF output failed: {message}"),
         }
     }
 }
@@ -295,13 +329,13 @@ impl EntityKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct EntityRow {
     id: String,
     kind: EntityKind,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct AsymRow {
     id: String,
     entity_id: String,
@@ -314,14 +348,14 @@ struct AtomEntityAssignment {
     kind: EntityKind,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct EntityPlan {
     entities: Vec<EntityRow>,
     asyms: Vec<AsymRow>,
     atoms: BTreeMap<InstanceAtomId, AtomEntityAssignment>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct AtomRow {
     atom: InstanceAtomId,
     residue: Option<ResidueId>,
@@ -344,7 +378,7 @@ struct AtomRow {
     auth_atom_id: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ConnectionRow {
     left: InstanceAtomId,
     right: InstanceAtomId,
@@ -364,10 +398,11 @@ pub fn write_mmcif_model(
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
     validate_options(&options)?;
-    let classifications = normalize_entity_classifications(model, std::iter::empty())?;
-    let plan = generic_entity_plan(model, &classifications)?;
-    let prepared = prepare_model(model, plan)?;
-    render_model(&prepared, &options)
+    let view = model.view();
+    let classifications = normalize_entity_classifications(view, std::iter::empty())?;
+    let plan = generic_entity_plan(view, &classifications)?;
+    let prepared = prepare_model(view, plan)?;
+    render_models(&[prepared], &options)
 }
 
 pub fn write_mmcif_model_with_classifications(
@@ -376,15 +411,16 @@ pub fn write_mmcif_model_with_classifications(
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
     validate_options(&options)?;
+    let view = model.view();
     let classifications = normalize_entity_classifications(
-        model,
+        view,
         classifications
             .iter()
             .map(|(molecule, kind)| (molecule, vec![kind.clone()])),
     )?;
-    let plan = generic_entity_plan(model, &classifications)?;
-    let prepared = prepare_model(model, plan)?;
-    render_model(&prepared, &options)
+    let plan = generic_entity_plan(view, &classifications)?;
+    let prepared = prepare_model(view, plan)?;
+    render_models(&[prepared], &options)
 }
 
 pub fn write_mmcif_model_with_report(
@@ -393,7 +429,186 @@ pub fn write_mmcif_model_with_report(
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
     validate_options(&options)?;
+    let view = model.view();
     let plan = if report
+        .instances()
+        .iter()
+        .all(|instance| instance.atoms().is_empty())
+    {
+        let classifications = normalize_entity_classifications(
+            view,
+            report
+                .instances()
+                .iter()
+                .map(|instance| (instance.molecule(), instance.entity_kinds().to_vec())),
+        )?;
+        generic_entity_plan(view, &classifications)?
+    } else {
+        report_entity_plan(view, report)?
+    };
+    let prepared = prepare_model(view, plan)?;
+    render_models(&[prepared], &options)
+}
+
+pub fn write_mmcif_models(
+    models: &[Model],
+    options: MmcifWriteOptions,
+) -> Result<String, MmcifWriteError> {
+    write_independent_models(models, None, None, options)
+}
+
+pub fn write_mmcif_models_with_classifications(
+    models: &[Model],
+    classifications: &[MmcifEntityClassifications],
+    options: MmcifWriteOptions,
+) -> Result<String, MmcifWriteError> {
+    if classifications.len() != models.len() {
+        return Err(MmcifWriteError::ClassificationCountMismatch {
+            expected: models.len(),
+            actual: classifications.len(),
+        });
+    }
+    write_independent_models(models, Some(classifications), None, options)
+}
+
+pub fn write_mmcif_models_with_reports(
+    models: &[Model],
+    reports: &[MmcifInterpretationReport],
+    options: MmcifWriteOptions,
+) -> Result<String, MmcifWriteError> {
+    if reports.len() != models.len() {
+        return Err(MmcifWriteError::ReportCountMismatch {
+            expected: models.len(),
+            actual: reports.len(),
+        });
+    }
+    write_independent_models(models, None, Some(reports), options)
+}
+
+pub fn write_mmcif_ensemble(
+    ensemble: &Ensemble,
+    options: MmcifWriteOptions,
+) -> Result<String, MmcifWriteError> {
+    write_ensemble_views(ensemble, None, None, options)
+}
+
+pub fn write_mmcif_ensemble_with_classifications(
+    ensemble: &Ensemble,
+    classifications: &MmcifEntityClassifications,
+    options: MmcifWriteOptions,
+) -> Result<String, MmcifWriteError> {
+    write_ensemble_views(ensemble, Some(classifications), None, options)
+}
+
+pub fn write_mmcif_ensemble_with_reports(
+    ensemble: &Ensemble,
+    reports: &[MmcifInterpretationReport],
+    options: MmcifWriteOptions,
+) -> Result<String, MmcifWriteError> {
+    if reports.len() != ensemble.len() {
+        return Err(MmcifWriteError::ReportCountMismatch {
+            expected: ensemble.len(),
+            actual: reports.len(),
+        });
+    }
+    write_ensemble_views(ensemble, None, Some(reports), options)
+}
+
+pub fn write_mmcif_ensemble_interpretation(
+    interpretation: &MmcifEnsembleInterpretation,
+    options: MmcifWriteOptions,
+) -> Result<String, MmcifWriteError> {
+    write_mmcif_ensemble_with_reports(interpretation.ensemble(), interpretation.reports(), options)
+}
+
+pub fn write_mmcif_models_to(
+    writer: &mut impl Write,
+    models: &[Model],
+    options: MmcifWriteOptions,
+) -> Result<(), MmcifWriteError> {
+    writer
+        .write_all(write_mmcif_models(models, options)?.as_bytes())
+        .map_err(mmcif_io)
+}
+
+pub fn write_mmcif_ensemble_to(
+    writer: &mut impl Write,
+    ensemble: &Ensemble,
+    options: MmcifWriteOptions,
+) -> Result<(), MmcifWriteError> {
+    writer
+        .write_all(write_mmcif_ensemble(ensemble, options)?.as_bytes())
+        .map_err(mmcif_io)
+}
+
+fn write_independent_models(
+    models: &[Model],
+    classifications: Option<&[MmcifEntityClassifications]>,
+    reports: Option<&[MmcifInterpretationReport]>,
+    options: MmcifWriteOptions,
+) -> Result<String, MmcifWriteError> {
+    validate_options(&options)?;
+    let mut output = String::new();
+    for (index, model) in models.iter().enumerate() {
+        let block_options = MmcifWriteOptions {
+            block_name: format!("{}_{}", options.block_name, index + 1),
+            coordinate_precision: options.coordinate_precision,
+        };
+        let view = model.view();
+        let plan = if let Some(reports) = reports {
+            entity_plan_from_report(view, &reports[index])?
+        } else {
+            let normalized = normalize_entity_classifications(
+                view,
+                classifications
+                    .map(|all| all[index].iter().map(|(id, kind)| (id, vec![kind.clone()])))
+                    .into_iter()
+                    .flatten(),
+            )?;
+            generic_entity_plan(view, &normalized)?
+        };
+        output.push_str(&render_models(
+            &[prepare_model(view, plan)?],
+            &block_options,
+        )?);
+    }
+    Ok(output)
+}
+
+fn write_ensemble_views(
+    ensemble: &Ensemble,
+    classifications: Option<&MmcifEntityClassifications>,
+    reports: Option<&[MmcifInterpretationReport]>,
+    options: MmcifWriteOptions,
+) -> Result<String, MmcifWriteError> {
+    validate_options(&options)?;
+    if ensemble.is_empty() {
+        return Err(MmcifWriteError::EmptyEnsemble);
+    }
+    let mut prepared = Vec::with_capacity(ensemble.len());
+    for (index, member) in ensemble.members().enumerate() {
+        let view = member.as_model();
+        let plan = if let Some(reports) = reports {
+            entity_plan_from_report(view, &reports[index])?
+        } else {
+            let normalized = normalize_entity_classifications(
+                view,
+                classifications
+                    .into_iter()
+                    .flat_map(|set| set.iter().map(|(id, kind)| (id, vec![kind.clone()]))),
+            )?;
+            generic_entity_plan(view, &normalized)?
+        };
+        prepared.push(prepare_model(view, plan)?);
+    }
+    render_models(&prepared, &options)
+}
+
+fn entity_plan_from_report(
+    model: ModelView<'_>,
+    report: &MmcifInterpretationReport,
+) -> Result<EntityPlan, MmcifWriteError> {
+    if report
         .instances()
         .iter()
         .all(|instance| instance.atoms().is_empty())
@@ -405,12 +620,17 @@ pub fn write_mmcif_model_with_report(
                 .iter()
                 .map(|instance| (instance.molecule(), instance.entity_kinds().to_vec())),
         )?;
-        generic_entity_plan(model, &classifications)?
+        generic_entity_plan(model, &classifications)
     } else {
-        report_entity_plan(model, report)?
-    };
-    let prepared = prepare_model(model, plan)?;
-    render_model(&prepared, &options)
+        report_entity_plan(model, report)
+    }
+}
+
+fn mmcif_io(error: std::io::Error) -> MmcifWriteError {
+    MmcifWriteError::Io {
+        kind: error.kind(),
+        message: error.to_string(),
+    }
 }
 
 fn validate_options(options: &MmcifWriteOptions) -> Result<(), MmcifWriteError> {
@@ -432,7 +652,7 @@ fn validate_options(options: &MmcifWriteOptions) -> Result<(), MmcifWriteError> 
     Ok(())
 }
 
-fn hierarchy_asym_ids(model: &Model) -> Result<BTreeSet<String>, MmcifWriteError> {
+fn hierarchy_asym_ids(model: ModelView<'_>) -> Result<BTreeSet<String>, MmcifWriteError> {
     let mut reserved_asym_ids = BTreeSet::new();
     for (_, chain) in model.topology().hierarchy().chains() {
         if chain.label_id().is_empty() {
@@ -450,7 +670,7 @@ fn hierarchy_asym_ids(model: &Model) -> Result<BTreeSet<String>, MmcifWriteError
 }
 
 fn generic_entity_plan(
-    model: &Model,
+    model: ModelView<'_>,
     classifications: &BTreeMap<MoleculeInstanceId, EntityKind>,
 ) -> Result<EntityPlan, MmcifWriteError> {
     let hierarchy = model.topology().hierarchy();
@@ -585,7 +805,7 @@ fn generic_entity_plan(
 }
 
 fn report_entity_plan(
-    model: &Model,
+    model: ModelView<'_>,
     report: &MmcifInterpretationReport,
 ) -> Result<EntityPlan, MmcifWriteError> {
     let _ = hierarchy_asym_ids(model)?;
@@ -754,7 +974,7 @@ fn report_entity_plan(
     })
 }
 
-fn prepare_model(model: &Model, plan: EntityPlan) -> Result<PreparedModel, MmcifWriteError> {
+fn prepare_model(model: ModelView<'_>, plan: EntityPlan) -> Result<PreparedModel, MmcifWriteError> {
     let EntityPlan {
         entities,
         asyms,
@@ -875,7 +1095,7 @@ fn entity_kind_from_source(
 }
 
 fn normalize_entity_classifications(
-    model: &Model,
+    model: ModelView<'_>,
     entries: impl IntoIterator<Item = (MoleculeInstanceId, Vec<MmcifEntityKind>)>,
 ) -> Result<BTreeMap<MoleculeInstanceId, EntityKind>, MmcifWriteError> {
     let mut classifications = BTreeMap::new();
@@ -958,7 +1178,7 @@ fn validate_graph_chemistry(
 
 #[allow(clippy::too_many_arguments)]
 fn collect_macro_rows(
-    model: &Model,
+    model: ModelView<'_>,
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
     hierarchy: &Hierarchy,
@@ -1071,7 +1291,7 @@ fn collect_macro_rows(
 }
 
 fn collect_small_rows(
-    model: &Model,
+    model: ModelView<'_>,
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
     assignments: &BTreeMap<InstanceAtomId, AtomEntityAssignment>,
@@ -1219,10 +1439,43 @@ fn invalid_hierarchy(message: impl Into<String>) -> MmcifWriteError {
     }
 }
 
-fn render_model(
-    model: &PreparedModel,
+fn render_models(
+    models: &[PreparedModel],
     options: &MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
+    let model = models.first().ok_or(MmcifWriteError::EmptyEnsemble)?;
+    for (member, candidate) in models.iter().enumerate().skip(1) {
+        if candidate.entities != model.entities {
+            return Err(MmcifWriteError::IncompatibleEnsembleMember {
+                member: member + 1,
+                field: "entity representation",
+            });
+        }
+        if candidate.asyms != model.asyms {
+            return Err(MmcifWriteError::IncompatibleEnsembleMember {
+                member: member + 1,
+                field: "structural asymmetry representation",
+            });
+        }
+        if candidate.connections != model.connections {
+            return Err(MmcifWriteError::IncompatibleEnsembleMember {
+                member: member + 1,
+                field: "connectivity representation",
+            });
+        }
+        if candidate.atoms.len() != model.atoms.len()
+            || candidate
+                .atoms
+                .iter()
+                .zip(&model.atoms)
+                .any(|(left, right)| !same_static_atom_row(left, right))
+        {
+            return Err(MmcifWriteError::IncompatibleEnsembleMember {
+                member: member + 1,
+                field: "atom-site representation",
+            });
+        }
+    }
     let mut output = String::with_capacity(model.atoms.len().saturating_mul(160));
     output.push_str("data_");
     output.push_str(&options.block_name);
@@ -1276,36 +1529,40 @@ fn render_model(
         "_atom_site.pdbx_PDB_model_num",
     ];
     write_loop_header(&mut output, ATOM_TAGS);
-    for (serial, atom) in (1u64..).zip(model.atoms.iter()) {
-        write_row(
-            &mut output,
-            vec![
-                atom.group_pdb.clone(),
-                serial.to_string(),
-                cif_value(&atom.type_symbol, "_atom_site.type_symbol")?,
-                cif_value(&atom.label_atom_id, "_atom_site.label_atom_id")?,
-                optional_cif_value(atom.label_alt_id.as_deref(), "_atom_site.label_alt_id")?,
-                cif_value(&atom.label_comp_id, "_atom_site.label_comp_id")?,
-                cif_value(&atom.asym_id, "_atom_site.label_asym_id")?,
-                cif_value(&atom.entity_id, "_atom_site.label_entity_id")?,
-                optional_display(atom.label_seq_id),
-                optional_cif_value(
-                    atom.insertion_code.as_deref(),
-                    "_atom_site.pdbx_PDB_ins_code",
-                )?,
-                format_coordinate(atom.position.x, options.coordinate_precision),
-                format_coordinate(atom.position.y, options.coordinate_precision),
-                format_coordinate(atom.position.z, options.coordinate_precision),
-                optional_float(atom.occupancy),
-                optional_float(atom.b_factor),
-                atom.formal_charge.to_string(),
-                optional_cif_value(atom.auth_seq_id.as_deref(), "_atom_site.auth_seq_id")?,
-                cif_value(&atom.auth_comp_id, "_atom_site.auth_comp_id")?,
-                cif_value(&atom.auth_asym_id, "_atom_site.auth_asym_id")?,
-                cif_value(&atom.auth_atom_id, "_atom_site.auth_atom_id")?,
-                "1".to_owned(),
-            ],
-        );
+    let mut serial = 1u64;
+    for (model_index, prepared) in models.iter().enumerate() {
+        for atom in &prepared.atoms {
+            write_row(
+                &mut output,
+                vec![
+                    atom.group_pdb.clone(),
+                    serial.to_string(),
+                    cif_value(&atom.type_symbol, "_atom_site.type_symbol")?,
+                    cif_value(&atom.label_atom_id, "_atom_site.label_atom_id")?,
+                    optional_cif_value(atom.label_alt_id.as_deref(), "_atom_site.label_alt_id")?,
+                    cif_value(&atom.label_comp_id, "_atom_site.label_comp_id")?,
+                    cif_value(&atom.asym_id, "_atom_site.label_asym_id")?,
+                    cif_value(&atom.entity_id, "_atom_site.label_entity_id")?,
+                    optional_display(atom.label_seq_id),
+                    optional_cif_value(
+                        atom.insertion_code.as_deref(),
+                        "_atom_site.pdbx_PDB_ins_code",
+                    )?,
+                    format_coordinate(atom.position.x, options.coordinate_precision),
+                    format_coordinate(atom.position.y, options.coordinate_precision),
+                    format_coordinate(atom.position.z, options.coordinate_precision),
+                    optional_float(atom.occupancy),
+                    optional_float(atom.b_factor),
+                    atom.formal_charge.to_string(),
+                    optional_cif_value(atom.auth_seq_id.as_deref(), "_atom_site.auth_seq_id")?,
+                    cif_value(&atom.auth_comp_id, "_atom_site.auth_comp_id")?,
+                    cif_value(&atom.auth_asym_id, "_atom_site.auth_asym_id")?,
+                    cif_value(&atom.auth_atom_id, "_atom_site.auth_atom_id")?,
+                    (model_index + 1).to_string(),
+                ],
+            );
+            serial += 1;
+        }
     }
     output.push_str("#\n");
 
@@ -1353,6 +1610,25 @@ fn render_model(
         output.push_str("#\n");
     }
     Ok(output)
+}
+
+fn same_static_atom_row(left: &AtomRow, right: &AtomRow) -> bool {
+    left.atom == right.atom
+        && left.residue == right.residue
+        && left.entity_id == right.entity_id
+        && left.asym_id == right.asym_id
+        && left.group_pdb == right.group_pdb
+        && left.type_symbol == right.type_symbol
+        && left.label_atom_id == right.label_atom_id
+        && left.label_alt_id == right.label_alt_id
+        && left.label_comp_id == right.label_comp_id
+        && left.label_seq_id == right.label_seq_id
+        && left.insertion_code == right.insertion_code
+        && left.formal_charge == right.formal_charge
+        && left.auth_seq_id == right.auth_seq_id
+        && left.auth_comp_id == right.auth_comp_id
+        && left.auth_asym_id == right.auth_asym_id
+        && left.auth_atom_id == right.auth_atom_id
 }
 
 fn write_loop_header(output: &mut String, tags: &[&str]) {
