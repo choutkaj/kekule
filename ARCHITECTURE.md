@@ -2255,3 +2255,133 @@ The core invariants are intentionally simple:
 > `Quantity<T>` values may use any compatible unit at interfaces, but internal
 > normalized numerical state and real-valued properties do not define
 > independent subsystem-specific canonical unit conventions.
+
+## Writing and export
+
+Writing is the format-specific projection of canonical Kekule state into an
+external representation. It is related to parsing and interpretation, but it is
+not a guaranteed lossless inverse: an export format may be unable to represent
+all canonical state owned by `Molecule`, `Topology`, `Model`, or `Ensemble`.
+
+Writing remains format-oriented. Public write/export operations belong in
+format namespaces such as `smiles`, `molfile`, `sdf`, and `mmcif`; canonical
+objects must not acquire format-specific methods such as `model.write_sdf(...)`,
+and Kekule must not introduce a universal `Save`/`Serializable` trait whose
+implementations silently discard unsupported state.
+
+The canonical output mapping is:
+
+| Canonical object | SMILES | Molfile / SDF | mmCIF |
+| --- | --- | --- | --- |
+| `Molecule` | one connected SMILES | coordinate-free Molfile where requested | not a primary target |
+| `Topology` | one dot-separated SMILES record | not directly | not directly |
+| `Model` | explicit topology projection only | one Molfile / one SDF record | one block, one coordinate model |
+| `[Model]` | not direct | one SDF record per model | one block per model |
+| `Ensemble` | not direct | one SDF record per member | one block containing multiple coordinate models |
+
+### SMILES projection
+
+A `Molecule` writes as one connected SMILES. A `Topology` writes as one
+ dot-separated SMILES record by serializing every explicit molecule instance in
+authoritative topology instance order. Reused definitions do not collapse
+repeated instances. This projection intentionally discards hierarchy, topology
+properties, definition reuse, and all geometry.
+
+`Model` and `Ensemble` should not gain direct SMILES writers merely to discard
+geometry implicitly. Callers that want that projection write their topology
+explicitly.
+
+### Molfile and SDF projection
+
+A `Model` is the natural geometry-bearing Molfile/SDF structural unit. One model
+writes as one CTAB / SDF record, and that record may contain several disconnected
+molecule instances from the model topology. Molfile connected-component
+boundaries therefore do not imply that a writer must accept exactly one Kekule
+`Molecule`.
+
+A sequence of independent models writes to SDF as one record per input model in
+input order. The models need not share topology and Kekule must not infer
+ensemble semantics merely because two model topologies happen to be compatible.
+
+An `Ensemble` writes to SDF as one record per ensemble member. Members share the
+ensemble topology by type semantics, but SDF represents them as separate records.
+Format-specific SDF titles and data fields remain SDF-side metadata and are not
+invented or copied into canonical `Model` state. Explicit SDF record wrappers may
+carry such metadata for round-trip or expert writing.
+
+Molfile version selection is format policy. An automatic policy should prefer
+V2000 when the complete record is faithfully representable and promote to V3000
+when required by representational limits. An explicitly requested version must
+fail rather than silently discard canonical chemistry that it cannot encode.
+
+### mmCIF projection
+
+For mmCIF, data-block multiplicity and coordinate-model multiplicity retain their
+separate meanings:
+
+```text
+Model
+  -> one data block
+       one coordinate model
+
+[Model]
+  -> one independent data block per model
+
+Ensemble
+  -> one data block
+       several coordinate models sharing one topology
+```
+
+This distinction is architectural. `Vec<Model>` represents independent objects;
+`Ensemble` represents several non-temporal realizations of one shared topology.
+Even when a sequence of models happens to contain identical topology layouts, a
+writer must not reinterpret it as an ensemble.
+
+Consequently:
+
+```text
+Vec<Model> + mmCIF -> multiple blocks
+Ensemble   + mmCIF -> one multi-model block
+```
+
+Generic `Topology` does not classify molecule instances as mmCIF polymer,
+branched, non-polymer, or water entities. Generic mmCIF writing therefore
+requires explicit format-specific entity classifications, while source-preserving
+round trips may reuse mmCIF interpretation reports/provenance. The writer must
+not guess entity classification from molecular structure or hierarchy presence.
+
+### Shared realization-writing path
+
+Where practical, geometry-bearing writers should operate on borrowed model
+semantics such as `ModelView` rather than require an owned `Model`. This allows
+one structural-writing implementation to serve a `Model`, an
+`EnsembleMemberView`, and later a trajectory-frame view without materializing
+intermediate owned models.
+
+This is an internal reuse principle, not a requirement for one generic public
+writer trait. Clear format-specific implementations are preferred over
+abstraction for its own sake.
+
+Trajectory codecs remain a separate specialized capability and are outside this
+canonical structural-export contract. Their frame views may reuse compatible
+model-view writing machinery in the future where appropriate.
+
+### Output sinks and errors
+
+The foundational writer path should support streaming to an output sink where
+practical, especially for multi-record SDF and multi-model mmCIF. String-returning
+helpers may wrap the same authoritative implementation for ergonomic use.
+
+Write failures are format-specific and must be explicit. Writers must reject
+unsupported selected-version chemistry, missing required mmCIF semantics,
+invalid format metadata, incompatible realization state, or I/O failures rather
+than silently omit canonical state.
+
+### Export is not native persistence
+
+SMILES, Molfile/SDF, and mmCIF are interoperability/export formats. They are not
+the versioned native persistence representation of Kekule's complete canonical
+object graph. Exact persistence may eventually use a separate Kekule-native
+serialization format capable of preserving definitions, hierarchy, perception,
+generic properties, collection metadata, and other canonical state without
+forcing that state through an external chemistry format that cannot represent it.
