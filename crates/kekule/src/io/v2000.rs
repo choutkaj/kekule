@@ -1,15 +1,16 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::algorithms::explicit_valence;
 use crate::chemistry::{
-    localize_source_aromatic_bonds, project_molfile_stereo_bond_marks, SourceStereoBondMark,
-    SourceStereoBondMarkKind,
+    localize_source_aromatic_bonds, SourceStereoBondMark, SourceStereoBondMarkKind,
 };
 use crate::core::*;
 use crate::geometry::Point3;
-use crate::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT};
+use crate::structure::ModelView;
+use crate::units::{Quantity, ANGSTROM};
 
+use super::molfile_write::MolfileRecord;
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
 use super::staged_coordinates::StagedCoordinates;
 use super::structure_documents::{
@@ -705,16 +706,52 @@ where
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MolWriteErrorKind {
+    UnsupportedRepresentation,
+    InvalidModel,
+    InvalidMetadata,
+    Io(std::io::ErrorKind),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MolWriteError {
+    pub(crate) kind: MolWriteErrorKind,
     pub(crate) message: String,
 }
 
 impl MolWriteError {
     pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
+            kind: MolWriteErrorKind::UnsupportedRepresentation,
             message: message.into(),
         }
+    }
+
+    pub(crate) fn invalid_model(message: impl Into<String>) -> Self {
+        Self {
+            kind: MolWriteErrorKind::InvalidModel,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn invalid_metadata(message: impl Into<String>) -> Self {
+        Self {
+            kind: MolWriteErrorKind::InvalidMetadata,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn io(error: std::io::Error) -> Self {
+        Self {
+            kind: MolWriteErrorKind::Io(error.kind()),
+            message: error.to_string(),
+        }
+    }
+
+    pub const fn kind(&self) -> MolWriteErrorKind {
+        self.kind
     }
 
     pub fn message(&self) -> &str {
@@ -731,61 +768,56 @@ impl fmt::Display for MolWriteError {
 impl std::error::Error for MolWriteError {}
 
 pub fn write_mol_v2000(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
-    write_mol_v2000_with_positions(molecule, None)
+    let record = MolfileRecord::molecule(molecule)?;
+    render_mol_v2000(&record, "")
 }
 
-fn write_mol_v2000_with_positions(
-    molecule: &Molecule,
-    positions: Option<&[Point3]>,
+pub(crate) fn write_model_v2000(
+    model: ModelView<'_>,
 ) -> std::result::Result<String, MolWriteError> {
-    let mol = molecule;
-    let projected_stereo = project_molfile_stereo_bond_marks(mol).map_err(MolWriteError::new)?;
-    if mol.atom_count() > 999 || mol.bond_count() > 999 {
+    let record = MolfileRecord::model(model)?;
+    render_mol_v2000(&record, "")
+}
+
+pub(super) fn render_mol_v2000(
+    record: &MolfileRecord<'_>,
+    title: &str,
+) -> std::result::Result<String, MolWriteError> {
+    if record.atoms.len() > V2000_MAX_ATOMS || record.bonds.len() > V2000_MAX_BONDS {
         return Err(MolWriteError::new(
             "V2000 writer supports at most 999 atoms and 999 bonds",
         ));
     }
-    let atoms = mol.atom_ids().collect::<Vec<_>>();
-    let bonds = mol.bond_ids().collect::<Vec<_>>();
-    let mut atom_index = BTreeMap::new();
-    for (serial, atom_id) in (1u64..).zip(atoms.iter()) {
-        atom_index.insert(*atom_id, serial);
-    }
-    if positions.is_some_and(|positions| positions.len() != atoms.len()) {
-        return Err(MolWriteError::new(
-            "SDF model position count does not match its molecule atom count",
-        ));
-    }
-    let coordinate_scale = CANONICAL_LENGTH_UNIT
-        .conversion_factor_to(ANGSTROM)
-        .map_err(|error| MolWriteError::new(error.to_string()))?;
 
-    let title = "";
     let program = "kekule";
     let comment = "";
     let mut out = String::new();
     out.push_str(&format!("{title}\n{program}\n{comment}\n"));
     out.push_str(&format!(
         "{:>3}{:>3}  0  0  0  0            999 V2000\n",
-        atoms.len(),
-        bonds.len()
+        record.atoms.len(),
+        record.bonds.len()
     ));
 
-    for (atom_offset, atom_id) in atoms.iter().enumerate() {
-        let atom = mol
-            .atom(*atom_id)
-            .map_err(|error| MolWriteError::new(error.to_string()))?;
-        let point = positions
-            .map(|positions| {
-                let point = positions[atom_offset];
-                Point3::new(
-                    point.x * coordinate_scale,
-                    point.y * coordinate_scale,
-                    point.z * coordinate_scale,
-                )
-            })
-            .unwrap_or_default();
-        let valence_code = v2000_valence_code(mol, *atom_id, atom)?;
+    for record_atom in &record.atoms {
+        let atom = record_atom.atom;
+        let point = record_atom.position;
+        if atom.atom_map.is_some_and(|atom_map| atom_map > 999) {
+            return Err(MolWriteError::new(format!(
+                "V2000 cannot encode atom-map number {} above 999",
+                atom.atom_map.expect("atom map was checked")
+            )));
+        }
+        if [point.x, point.y, point.z]
+            .into_iter()
+            .any(|coordinate| format!("{coordinate:.4}").len() > 10)
+        {
+            return Err(MolWriteError::new(
+                "V2000 cannot encode a coordinate in its fixed-width atom field",
+            ));
+        }
+        let valence_code =
+            v2000_valence_code(record_atom.molecule, record_atom.id, record_atom.atom)?;
         out.push_str(&format!(
             "{:>10.4}{:>10.4}{:>10.4} {:<3}{:>2}{:>3}  0  0  0{:>3}  0  0  0{:>3}  0  0\n",
             point.x,
@@ -799,43 +831,26 @@ fn write_mol_v2000_with_positions(
         ));
     }
 
-    for bond_id in &bonds {
-        let bond = mol
-            .bond(*bond_id)
-            .map_err(|error| MolWriteError::new(error.to_string()))?;
-        let projection = projected_stereo.get(bond_id).copied();
-        let (from, to) = projection
-            .map(|projection| (projection.from, bond.other_atom(projection.from)))
-            .unwrap_or_else(|| bond.endpoints());
-        let a = atom_index
-            .get(&from)
-            .ok_or_else(|| MolWriteError::new("bond endpoint missing from atom table"))?;
-        let b = atom_index
-            .get(&to)
-            .ok_or_else(|| MolWriteError::new("bond endpoint missing from atom table"))?;
+    for bond in &record.bonds {
         let order_code = v2000_bond_code(bond.order)?;
-        let stereo = projection.map(|projection| projection.kind);
-        let stereo_code = v2000_bond_stereo_code(bond.order, stereo)?;
+        let stereo_code = v2000_bond_stereo_code(bond.order, bond.stereo)?;
         out.push_str(&format!(
             "{:>3}{:>3}{:>3}{:>3}  0  0  0\n",
-            a, b, order_code, stereo_code
+            bond.from, bond.to, order_code, stereo_code
         ));
     }
 
     push_m_record(
         &mut out,
         "CHG",
-        atoms
+        record
+            .atoms
             .iter()
-            .filter_map(|id| {
-                let atom = mol
-                    .atom(*id)
-                    .expect("published molecule atom iteration returned a live atom");
-                (atom.formal_charge != 0).then_some((
-                    *atom_index
-                        .get(id)
-                        .expect("published molecule atom must have a writer index"),
-                    i32::from(atom.formal_charge),
+            .enumerate()
+            .filter_map(|(index, record_atom)| {
+                (record_atom.atom.formal_charge != 0).then_some((
+                    (index + 1) as u64,
+                    i32::from(record_atom.atom.formal_charge),
                 ))
             })
             .collect(),
@@ -843,33 +858,24 @@ fn write_mol_v2000_with_positions(
     push_m_record(
         &mut out,
         "ISO",
-        atoms
+        record
+            .atoms
             .iter()
-            .filter_map(|id| {
-                let atom = mol
-                    .atom(*id)
-                    .expect("published molecule atom iteration returned a live atom");
-                atom.isotope.map(|isotope| {
-                    (
-                        *atom_index.get(id).expect("atom indexed"),
-                        i32::from(isotope),
-                    )
-                })
+            .enumerate()
+            .filter_map(|(index, record_atom)| {
+                record_atom
+                    .atom
+                    .isotope
+                    .map(|isotope| ((index + 1) as u64, i32::from(isotope)))
             })
             .collect(),
     );
     let mut radical_records = Vec::new();
-    for id in &atoms {
-        let atom = mol
-            .atom(*id)
-            .map_err(|error| MolWriteError::new(error.to_string()))?;
-        let Some(radical) = atom.radical else {
+    for (index, record_atom) in record.atoms.iter().enumerate() {
+        let Some(radical) = record_atom.atom.radical else {
             continue;
         };
-        let index = *atom_index
-            .get(id)
-            .ok_or_else(|| MolWriteError::new("atom missing from V2000 atom table"))?;
-        radical_records.push((index, v2000_radical_code(radical)?));
+        radical_records.push(((index + 1) as u64, v2000_radical_code(radical)?));
     }
     push_m_record(&mut out, "RAD", radical_records);
     out.push_str("M  END\n");
@@ -885,27 +891,8 @@ pub fn write_sdf_v2000(
         for field in record.data_fields() {
             validate_sdf_data_field(field)?;
         }
-        let mut molecules = record.molecules();
-        let Some(molecule) = molecules.next() else {
-            return Err(MolWriteError::new(
-                "V2000 SDF writing currently requires exactly one connected molecule per record",
-            ));
-        };
-        if molecules.next().is_some() {
-            return Err(MolWriteError::new(
-                "V2000 SDF writing currently requires exactly one connected molecule per record",
-            ));
-        }
-        let canonical_positions = record.model().positions().values();
-        let written = write_mol_v2000_with_positions(molecule, Some(canonical_positions.value()))?;
-        let mut lines = written.lines();
-        let _generated_title = lines.next();
-        out.push_str(record.title());
-        out.push('\n');
-        for line in lines {
-            out.push_str(line);
-            out.push('\n');
-        }
+        let structural = MolfileRecord::model(record.model().view())?;
+        out.push_str(&render_mol_v2000(&structural, record.title())?);
         for field in record.data_fields() {
             out.push_str(&format!(">  <{}>\n{}\n\n", field.name(), field.value()));
         }
@@ -914,35 +901,37 @@ pub fn write_sdf_v2000(
     Ok(out)
 }
 
-fn validate_sdf_title(title: &str) -> std::result::Result<(), MolWriteError> {
+pub(super) fn validate_sdf_title(title: &str) -> std::result::Result<(), MolWriteError> {
     if title.contains(['\r', '\n']) {
-        return Err(MolWriteError::new(
+        return Err(MolWriteError::invalid_metadata(
             "SDF record titles cannot contain line breaks",
         ));
     }
     Ok(())
 }
 
-fn validate_sdf_data_field(field: &SdfDataField) -> std::result::Result<(), MolWriteError> {
+pub(super) fn validate_sdf_data_field(
+    field: &SdfDataField,
+) -> std::result::Result<(), MolWriteError> {
     let name = field.name();
     if name.is_empty() || name.trim() != name || name.contains(['<', '>', '\r', '\n']) {
-        return Err(MolWriteError::new(
+        return Err(MolWriteError::invalid_metadata(
             "SDF data field names must be nonempty, trimmed, and exclude angle brackets or line breaks",
         ));
     }
     let value = field.value();
     if value.contains('\r') {
-        return Err(MolWriteError::new(
+        return Err(MolWriteError::invalid_metadata(
             "SDF data field values cannot contain carriage returns",
         ));
     }
     if !value.is_empty() && value.split('\n').any(str::is_empty) {
-        return Err(MolWriteError::new(
+        return Err(MolWriteError::invalid_metadata(
             "SDF data field values cannot contain blank lines",
         ));
     }
     if value.lines().any(|line| line.trim() == "$$$$") {
-        return Err(MolWriteError::new(
+        return Err(MolWriteError::invalid_metadata(
             "SDF data field values cannot contain a record delimiter line",
         ));
     }

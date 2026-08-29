@@ -2,14 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::explicit_valence;
 use crate::chemistry::{
-    localize_source_aromatic_bonds, project_molfile_stereo_bond_marks, SourceStereoBondMark,
-    SourceStereoBondMarkKind,
+    localize_source_aromatic_bonds, SourceStereoBondMark, SourceStereoBondMarkKind,
 };
 use crate::core::*;
 use crate::geometry::Point3;
 use crate::io::{MolWriteError, MolfileParseOptions, MolfileVersion, SdfParseError};
+use crate::structure::ModelView;
 use crate::units::{Quantity, ANGSTROM};
 
+use super::molfile_write::MolfileRecord;
 use super::staged_coordinates::StagedCoordinates;
 use super::structure_documents::{
     apply_molfile_declared_valence, checked_line_number, interpret_molfile_atom_fields,
@@ -54,18 +55,23 @@ pub(super) struct V3000BondSyntax {
 }
 
 pub fn write_mol_v3000(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
-    let mol = molecule;
-    let atoms = mol.atom_ids().collect::<Vec<_>>();
-    let bonds = mol.bond_ids().collect::<Vec<_>>();
-    let mut atom_index = BTreeMap::new();
-    for (serial, atom_id) in (1u64..).zip(atoms.iter()) {
-        atom_index.insert(*atom_id, serial);
-    }
+    let record = MolfileRecord::molecule(molecule)?;
+    render_mol_v3000(&record, "")
+}
 
-    let title = "";
+pub(crate) fn write_model_v3000(
+    model: ModelView<'_>,
+) -> std::result::Result<String, MolWriteError> {
+    let record = MolfileRecord::model(model)?;
+    render_mol_v3000(&record, "")
+}
+
+pub(super) fn render_mol_v3000(
+    record: &MolfileRecord<'_>,
+    title: &str,
+) -> std::result::Result<String, MolWriteError> {
     let program = "kekule";
     let comment = "";
-    let projected_stereo = project_molfile_stereo_bond_marks(mol).map_err(MolWriteError::new)?;
 
     let mut out = String::new();
     out.push_str(&format!("{title}\n{program}\n{comment}\n"));
@@ -73,18 +79,13 @@ pub fn write_mol_v3000(molecule: &Molecule) -> std::result::Result<String, MolWr
     out.push_str("M  V30 BEGIN CTAB\n");
     out.push_str(&format!(
         "M  V30 COUNTS {} {} 0 0 0\n",
-        atoms.len(),
-        bonds.len()
+        record.atoms.len(),
+        record.bonds.len()
     ));
     out.push_str("M  V30 BEGIN ATOM\n");
-    for atom_id in &atoms {
-        let atom = mol
-            .atom(*atom_id)
-            .map_err(|error| MolWriteError::new(error.to_string()))?;
-        let point = Point3::default();
-        let index = atom_index
-            .get(atom_id)
-            .ok_or_else(|| MolWriteError::new("atom missing from V3000 atom table"))?;
+    for (index, record_atom) in (1u64..).zip(record.atoms.iter()) {
+        let atom = record_atom.atom;
+        let point = record_atom.position;
         out.push_str(&format!(
             "M  V30 {index} {} {:.4} {:.4} {:.4} {}",
             atom.element.symbol(),
@@ -107,14 +108,17 @@ pub fn write_mol_v3000(molecule: &Molecule) -> std::result::Result<String, MolWr
             HydrogenDeclaration::Infer { .. } => {
                 return Err(MolWriteError::new(format!(
                     "V3000 cannot encode represented hydrogens while leaving implicit-H inference enabled for atom {}",
-                    atom_id.index()
+                    record_atom.id.index()
                 )));
             }
             HydrogenDeclaration::Fixed(explicit) => {
                 if explicit > 0 {
                     out.push_str(&format!(" HCOUNT={explicit}"));
                 } else {
-                    out.push_str(&format!(" VAL={}", explicit_valence(mol, *atom_id)));
+                    out.push_str(&format!(
+                        " VAL={}",
+                        explicit_valence(record_atom.molecule, record_atom.id)
+                    ));
                 }
             }
         }
@@ -122,24 +126,13 @@ pub fn write_mol_v3000(molecule: &Molecule) -> std::result::Result<String, MolWr
     }
     out.push_str("M  V30 END ATOM\n");
     out.push_str("M  V30 BEGIN BOND\n");
-    for (serial, bond_id) in (1u64..).zip(bonds.iter()) {
-        let bond = mol
-            .bond(*bond_id)
-            .map_err(|error| MolWriteError::new(error.to_string()))?;
-        let projection = projected_stereo.get(bond_id).copied();
-        let (from, to) = projection
-            .map(|projection| (projection.from, bond.other_atom(projection.from)))
-            .unwrap_or_else(|| bond.endpoints());
-        let a = atom_index
-            .get(&from)
-            .ok_or_else(|| MolWriteError::new("bond endpoint missing from V3000 atom table"))?;
-        let b = atom_index
-            .get(&to)
-            .ok_or_else(|| MolWriteError::new("bond endpoint missing from V3000 atom table"))?;
+    for (serial, bond) in (1u64..).zip(record.bonds.iter()) {
         let order_code = v3000_bond_code(bond.order)?;
-        out.push_str(&format!("M  V30 {serial} {order_code} {a} {b}"));
-        let stereo = projection.map(|projection| projection.kind);
-        if let Some(cfg) = v3000_bond_cfg(bond.order, stereo)? {
+        out.push_str(&format!(
+            "M  V30 {serial} {order_code} {} {}",
+            bond.from, bond.to
+        ));
+        if let Some(cfg) = v3000_bond_cfg(bond.order, bond.stereo)? {
             out.push_str(&format!(" CFG={cfg}"));
         }
         out.push('\n');
