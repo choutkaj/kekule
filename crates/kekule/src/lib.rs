@@ -475,7 +475,12 @@ pub mod mmcif {
         crate::io::write_mmcif_model(model, options)
     }
 
-    /// Alias naming the canonical object explicitly.
+    /// Attempts to write one model as one block without inventing entity semantics.
+    ///
+    /// This is the canonical-object spelling of [`write()`]. A generic non-empty
+    /// model normally requires [`write_model_with_classifications`]; an
+    /// mmCIF-derived model should use [`write_model_with_report`] to preserve
+    /// source entity and asymmetry semantics.
     pub fn write_model(
         model: &crate::structure::Model,
         options: MmcifWriteOptions,
@@ -483,7 +488,12 @@ pub mod mmcif {
         write(model, options)
     }
 
-    /// Writes independent models as one deterministic data block per model.
+    /// Attempts to write independent models as one deterministic block per model.
+    ///
+    /// This strict entry point does not infer polymer, branched, non-polymer,
+    /// or water classifications. Generic non-empty models normally require
+    /// [`write_models_with_classifications`]; mmCIF-derived models should use
+    /// [`write_models_with_reports`] to preserve source format semantics.
     pub fn write_models(
         models: &[crate::structure::Model],
         options: MmcifWriteOptions,
@@ -507,7 +517,13 @@ pub mod mmcif {
         crate::io::write_mmcif_models_with_reports(models, reports, options)
     }
 
-    /// Writes one shared-topology ensemble as one multi-model data block.
+    /// Attempts to write one shared-topology ensemble as one multi-model block.
+    ///
+    /// This strict entry point does not infer polymer, branched, non-polymer,
+    /// or water classifications. A generic non-empty ensemble normally requires
+    /// [`write_ensemble_with_classifications`]. For mmCIF-derived state, use
+    /// [`write_ensemble_with_reports`] or [`write_ensemble_interpretation`] to
+    /// preserve source format semantics.
     pub fn write_ensemble(
         ensemble: &crate::structure::Ensemble,
         options: MmcifWriteOptions,
@@ -608,7 +624,7 @@ pub mod mmcif {
         model: &crate::structure::Model,
         options: MmcifWriteOptions,
     ) -> Result<(), MmcifWriteError> {
-        write_text_to(writer, write_model(model, options)?)
+        crate::io::write_mmcif_model_to(writer, model, options)
     }
 
     pub fn write_model_with_classifications_to(
@@ -617,10 +633,21 @@ pub mod mmcif {
         classifications: &MmcifEntityClassifications,
         options: MmcifWriteOptions,
     ) -> Result<(), MmcifWriteError> {
-        write_text_to(
+        crate::io::write_mmcif_model_with_classifications_to(
             writer,
-            write_model_with_classifications(model, classifications, options)?,
+            model,
+            classifications,
+            options,
         )
+    }
+
+    pub fn write_model_with_report_to(
+        writer: &mut impl std::io::Write,
+        model: &crate::structure::Model,
+        report: &MmcifInterpretationReport,
+        options: MmcifWriteOptions,
+    ) -> Result<(), MmcifWriteError> {
+        crate::io::write_mmcif_model_with_report_to(writer, model, report, options)
     }
 
     pub fn write_models_with_classifications_to(
@@ -629,10 +656,21 @@ pub mod mmcif {
         classifications: &[MmcifEntityClassifications],
         options: MmcifWriteOptions,
     ) -> Result<(), MmcifWriteError> {
-        write_text_to(
+        crate::io::write_mmcif_models_with_classifications_to(
             writer,
-            write_models_with_classifications(models, classifications, options)?,
+            models,
+            classifications,
+            options,
         )
+    }
+
+    pub fn write_models_with_reports_to(
+        writer: &mut impl std::io::Write,
+        models: &[crate::structure::Model],
+        reports: &[MmcifInterpretationReport],
+        options: MmcifWriteOptions,
+    ) -> Result<(), MmcifWriteError> {
+        crate::io::write_mmcif_models_with_reports_to(writer, models, reports, options)
     }
 
     pub fn write_ensemble_with_classifications_to(
@@ -641,10 +679,21 @@ pub mod mmcif {
         classifications: &MmcifEntityClassifications,
         options: MmcifWriteOptions,
     ) -> Result<(), MmcifWriteError> {
-        write_text_to(
+        crate::io::write_mmcif_ensemble_with_classifications_to(
             writer,
-            write_ensemble_with_classifications(ensemble, classifications, options)?,
+            ensemble,
+            classifications,
+            options,
         )
+    }
+
+    pub fn write_ensemble_with_reports_to(
+        writer: &mut impl std::io::Write,
+        ensemble: &crate::structure::Ensemble,
+        reports: &[MmcifInterpretationReport],
+        options: MmcifWriteOptions,
+    ) -> Result<(), MmcifWriteError> {
+        crate::io::write_mmcif_ensemble_with_reports_to(writer, ensemble, reports, options)
     }
 
     pub fn write_ensemble_interpretation_to(
@@ -652,22 +701,7 @@ pub mod mmcif {
         interpretation: &MmcifEnsembleInterpretation,
         options: MmcifWriteOptions,
     ) -> Result<(), MmcifWriteError> {
-        write_text_to(
-            writer,
-            write_ensemble_interpretation(interpretation, options)?,
-        )
-    }
-
-    fn write_text_to(
-        writer: &mut impl std::io::Write,
-        text: String,
-    ) -> Result<(), MmcifWriteError> {
-        writer
-            .write_all(text.as_bytes())
-            .map_err(|error| MmcifWriteError::Io {
-                kind: error.kind(),
-                message: error.to_string(),
-            })
+        crate::io::write_mmcif_ensemble_interpretation_to(writer, interpretation, options)
     }
 }
 
