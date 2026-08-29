@@ -42,6 +42,28 @@ fn classifications(model: &Model) -> MmcifEntityClassifications {
     classifications
 }
 
+struct BoundedChunkWriter {
+    bytes: Vec<u8>,
+    maximum_chunk: usize,
+}
+
+impl Write for BoundedChunkWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if buffer.len() > self.maximum_chunk {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "writer received a buffered document-sized chunk",
+            ));
+        }
+        self.bytes.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 #[test]
 fn smiles_writes_molecules_and_repeated_topology_instances_in_authoritative_order() {
     let water = molecule("O");
@@ -333,6 +355,120 @@ fn mmcif_model_is_one_block_with_coordinate_model_one_and_classification_is_expl
     .unwrap();
     assert_eq!(mmcif::parse_str(&text).unwrap().blocks().len(), 1);
     assert!(text.lines().any(|line| line.ends_with(" 1")));
+}
+
+#[test]
+fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
+    let first = model("CO", &[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]);
+    let unrelated = model("N", &[[3.0, 0.0, 0.0]]);
+    let models = [first.clone(), unrelated.clone()];
+    let model_classifications = [classifications(&first), classifications(&unrelated)];
+    let expected_models = mmcif::write_models_with_classifications(
+        &models,
+        &model_classifications,
+        MmcifWriteOptions::default(),
+    )
+    .unwrap();
+    let mut streamed_models = BoundedChunkWriter {
+        bytes: Vec::new(),
+        maximum_chunk: 64,
+    };
+    mmcif::write_models_with_classifications_to(
+        &mut streamed_models,
+        &models,
+        &model_classifications,
+        MmcifWriteOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(streamed_models.bytes, expected_models.as_bytes());
+    assert_eq!(
+        mmcif::parse_str(std::str::from_utf8(&streamed_models.bytes).unwrap())
+            .unwrap()
+            .blocks()
+            .len(),
+        2
+    );
+
+    let second = Model::new(
+        first.shared_topology(),
+        Positions::new(Quantity::new(
+            [Point3::new(10.0, 0.0, 0.0), Point3::new(20.0, 0.0, 0.0)],
+            ANGSTROM,
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let ensemble = Ensemble::from_models(&[first.clone(), second]).unwrap();
+    let expected_ensemble = mmcif::write_ensemble_with_classifications(
+        &ensemble,
+        &classifications(&first),
+        MmcifWriteOptions::default(),
+    )
+    .unwrap();
+    let mut streamed_ensemble = BoundedChunkWriter {
+        bytes: Vec::new(),
+        maximum_chunk: 64,
+    };
+    mmcif::write_ensemble_with_classifications_to(
+        &mut streamed_ensemble,
+        &ensemble,
+        &classifications(&first),
+        MmcifWriteOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(streamed_ensemble.bytes, expected_ensemble.as_bytes());
+
+    let document =
+        mmcif::parse_str(std::str::from_utf8(&streamed_ensemble.bytes).unwrap()).unwrap();
+    assert_eq!(document.blocks().len(), 1);
+    assert_eq!(
+        mmcif::interpret_ensemble(&document, MmcifEnsembleInterpretOptions::default())
+            .unwrap()
+            .ensemble()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn mmcif_report_count_mismatch_is_context_neutral() {
+    let first = model("C", &[[1.0, 0.0, 0.0]]);
+    let second = Model::new(
+        first.shared_topology(),
+        Positions::new(Quantity::new([Point3::new(2.0, 0.0, 0.0)], ANGSTROM)).unwrap(),
+    )
+    .unwrap();
+
+    let models_error = mmcif::write_models_with_reports(
+        &[first.clone(), second.clone()],
+        &[],
+        MmcifWriteOptions::default(),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        &models_error,
+        mmcif::MmcifWriteError::ReportCountMismatch {
+            expected: 2,
+            actual: 0
+        }
+    ));
+    assert_eq!(
+        models_error.to_string(),
+        "mmCIF writing requires 2 interpretation reports, but received 0"
+    );
+
+    let ensemble = Ensemble::from_models(&[first, second]).unwrap();
+    let ensemble_error =
+        mmcif::write_ensemble_with_reports(&ensemble, &[], MmcifWriteOptions::default())
+            .unwrap_err();
+    assert!(matches!(
+        &ensemble_error,
+        mmcif::MmcifWriteError::ReportCountMismatch {
+            expected: 2,
+            actual: 0
+        }
+    ));
+    assert_eq!(ensemble_error.to_string(), models_error.to_string());
 }
 
 struct FailingWriter;

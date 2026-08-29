@@ -227,7 +227,7 @@ impl fmt::Display for MmcifWriteError {
             Self::EmptyEnsemble => f.write_str("cannot write an empty ensemble as mmCIF"),
             Self::ReportCountMismatch { expected, actual } => write!(
                 f,
-                "mmCIF ensemble writing requires {expected} reports, but received {actual}"
+                "mmCIF writing requires {expected} interpretation reports, but received {actual}"
             ),
             Self::ClassificationCountMismatch { expected, actual } => write!(
                 f,
@@ -397,12 +397,22 @@ pub fn write_mmcif_model(
     model: &Model,
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
+    let mut output = Vec::new();
+    write_mmcif_model_to(&mut output, model, options)?;
+    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
+}
+
+pub fn write_mmcif_model_to(
+    writer: &mut impl Write,
+    model: &Model,
+    options: MmcifWriteOptions,
+) -> Result<(), MmcifWriteError> {
     validate_options(&options)?;
     let view = model.view();
     let classifications = normalize_entity_classifications(view, std::iter::empty())?;
     let plan = generic_entity_plan(view, &classifications)?;
     let prepared = prepare_model(view, plan)?;
-    render_models(&[prepared], &options)
+    render_model_to(writer, &prepared, &options)
 }
 
 pub fn write_mmcif_model_with_classifications(
@@ -410,6 +420,17 @@ pub fn write_mmcif_model_with_classifications(
     classifications: &MmcifEntityClassifications,
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
+    let mut output = Vec::new();
+    write_mmcif_model_with_classifications_to(&mut output, model, classifications, options)?;
+    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
+}
+
+pub fn write_mmcif_model_with_classifications_to(
+    writer: &mut impl Write,
+    model: &Model,
+    classifications: &MmcifEntityClassifications,
+    options: MmcifWriteOptions,
+) -> Result<(), MmcifWriteError> {
     validate_options(&options)?;
     let view = model.view();
     let classifications = normalize_entity_classifications(
@@ -420,7 +441,7 @@ pub fn write_mmcif_model_with_classifications(
     )?;
     let plan = generic_entity_plan(view, &classifications)?;
     let prepared = prepare_model(view, plan)?;
-    render_models(&[prepared], &options)
+    render_model_to(writer, &prepared, &options)
 }
 
 pub fn write_mmcif_model_with_report(
@@ -428,33 +449,31 @@ pub fn write_mmcif_model_with_report(
     report: &MmcifInterpretationReport,
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
+    let mut output = Vec::new();
+    write_mmcif_model_with_report_to(&mut output, model, report, options)?;
+    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
+}
+
+pub fn write_mmcif_model_with_report_to(
+    writer: &mut impl Write,
+    model: &Model,
+    report: &MmcifInterpretationReport,
+    options: MmcifWriteOptions,
+) -> Result<(), MmcifWriteError> {
     validate_options(&options)?;
     let view = model.view();
-    let plan = if report
-        .instances()
-        .iter()
-        .all(|instance| instance.atoms().is_empty())
-    {
-        let classifications = normalize_entity_classifications(
-            view,
-            report
-                .instances()
-                .iter()
-                .map(|instance| (instance.molecule(), instance.entity_kinds().to_vec())),
-        )?;
-        generic_entity_plan(view, &classifications)?
-    } else {
-        report_entity_plan(view, report)?
-    };
+    let plan = entity_plan_from_report(view, report)?;
     let prepared = prepare_model(view, plan)?;
-    render_models(&[prepared], &options)
+    render_model_to(writer, &prepared, &options)
 }
 
 pub fn write_mmcif_models(
     models: &[Model],
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
-    write_independent_models(models, None, None, options)
+    let mut output = Vec::new();
+    write_mmcif_models_to(&mut output, models, options)?;
+    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
 }
 
 pub fn write_mmcif_models_with_classifications(
@@ -462,13 +481,24 @@ pub fn write_mmcif_models_with_classifications(
     classifications: &[MmcifEntityClassifications],
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
+    let mut output = Vec::new();
+    write_mmcif_models_with_classifications_to(&mut output, models, classifications, options)?;
+    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
+}
+
+pub fn write_mmcif_models_with_classifications_to(
+    writer: &mut impl Write,
+    models: &[Model],
+    classifications: &[MmcifEntityClassifications],
+    options: MmcifWriteOptions,
+) -> Result<(), MmcifWriteError> {
     if classifications.len() != models.len() {
         return Err(MmcifWriteError::ClassificationCountMismatch {
             expected: models.len(),
             actual: classifications.len(),
         });
     }
-    write_independent_models(models, Some(classifications), None, options)
+    write_independent_models_to(writer, models, Some(classifications), None, options)
 }
 
 pub fn write_mmcif_models_with_reports(
@@ -476,20 +506,33 @@ pub fn write_mmcif_models_with_reports(
     reports: &[MmcifInterpretationReport],
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
+    let mut output = Vec::new();
+    write_mmcif_models_with_reports_to(&mut output, models, reports, options)?;
+    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
+}
+
+pub fn write_mmcif_models_with_reports_to(
+    writer: &mut impl Write,
+    models: &[Model],
+    reports: &[MmcifInterpretationReport],
+    options: MmcifWriteOptions,
+) -> Result<(), MmcifWriteError> {
     if reports.len() != models.len() {
         return Err(MmcifWriteError::ReportCountMismatch {
             expected: models.len(),
             actual: reports.len(),
         });
     }
-    write_independent_models(models, None, Some(reports), options)
+    write_independent_models_to(writer, models, None, Some(reports), options)
 }
 
 pub fn write_mmcif_ensemble(
     ensemble: &Ensemble,
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
-    write_ensemble_views(ensemble, None, None, options)
+    let mut output = Vec::new();
+    write_mmcif_ensemble_to(&mut output, ensemble, options)?;
+    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
 }
 
 pub fn write_mmcif_ensemble_with_classifications(
@@ -497,7 +540,18 @@ pub fn write_mmcif_ensemble_with_classifications(
     classifications: &MmcifEntityClassifications,
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
-    write_ensemble_views(ensemble, Some(classifications), None, options)
+    let mut output = Vec::new();
+    write_mmcif_ensemble_with_classifications_to(&mut output, ensemble, classifications, options)?;
+    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
+}
+
+pub fn write_mmcif_ensemble_with_classifications_to(
+    writer: &mut impl Write,
+    ensemble: &Ensemble,
+    classifications: &MmcifEntityClassifications,
+    options: MmcifWriteOptions,
+) -> Result<(), MmcifWriteError> {
+    write_ensemble_views_to(writer, ensemble, Some(classifications), None, options)
 }
 
 pub fn write_mmcif_ensemble_with_reports(
@@ -505,20 +559,46 @@ pub fn write_mmcif_ensemble_with_reports(
     reports: &[MmcifInterpretationReport],
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
+    let mut output = Vec::new();
+    write_mmcif_ensemble_with_reports_to(&mut output, ensemble, reports, options)?;
+    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
+}
+
+pub fn write_mmcif_ensemble_with_reports_to(
+    writer: &mut impl Write,
+    ensemble: &Ensemble,
+    reports: &[MmcifInterpretationReport],
+    options: MmcifWriteOptions,
+) -> Result<(), MmcifWriteError> {
     if reports.len() != ensemble.len() {
         return Err(MmcifWriteError::ReportCountMismatch {
             expected: ensemble.len(),
             actual: reports.len(),
         });
     }
-    write_ensemble_views(ensemble, None, Some(reports), options)
+    write_ensemble_views_to(writer, ensemble, None, Some(reports), options)
 }
 
 pub fn write_mmcif_ensemble_interpretation(
     interpretation: &MmcifEnsembleInterpretation,
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
-    write_mmcif_ensemble_with_reports(interpretation.ensemble(), interpretation.reports(), options)
+    let mut output = Vec::new();
+    write_mmcif_ensemble_interpretation_to(&mut output, interpretation, options)?;
+    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
+}
+
+pub fn write_mmcif_ensemble_interpretation_to(
+    writer: &mut impl Write,
+    interpretation: &MmcifEnsembleInterpretation,
+    options: MmcifWriteOptions,
+) -> Result<(), MmcifWriteError> {
+    write_mmcif_ensemble_with_reports_to(
+        writer,
+        interpretation.ensemble(),
+        interpretation.reports(),
+        options,
+    )
 }
 
 pub fn write_mmcif_models_to(
@@ -526,9 +606,7 @@ pub fn write_mmcif_models_to(
     models: &[Model],
     options: MmcifWriteOptions,
 ) -> Result<(), MmcifWriteError> {
-    writer
-        .write_all(write_mmcif_models(models, options)?.as_bytes())
-        .map_err(mmcif_io)
+    write_independent_models_to(writer, models, None, None, options)
 }
 
 pub fn write_mmcif_ensemble_to(
@@ -536,19 +614,17 @@ pub fn write_mmcif_ensemble_to(
     ensemble: &Ensemble,
     options: MmcifWriteOptions,
 ) -> Result<(), MmcifWriteError> {
-    writer
-        .write_all(write_mmcif_ensemble(ensemble, options)?.as_bytes())
-        .map_err(mmcif_io)
+    write_ensemble_views_to(writer, ensemble, None, None, options)
 }
 
-fn write_independent_models(
+fn write_independent_models_to(
+    writer: &mut impl Write,
     models: &[Model],
     classifications: Option<&[MmcifEntityClassifications]>,
     reports: Option<&[MmcifInterpretationReport]>,
     options: MmcifWriteOptions,
-) -> Result<String, MmcifWriteError> {
+) -> Result<(), MmcifWriteError> {
     validate_options(&options)?;
-    let mut output = String::new();
     for (index, model) in models.iter().enumerate() {
         let block_options = MmcifWriteOptions {
             block_name: format!("{}_{}", options.block_name, index + 1),
@@ -567,41 +643,62 @@ fn write_independent_models(
             )?;
             generic_entity_plan(view, &normalized)?
         };
-        output.push_str(&render_models(
-            &[prepare_model(view, plan)?],
-            &block_options,
-        )?);
+        let prepared = prepare_model(view, plan)?;
+        render_model_to(writer, &prepared, &block_options)?;
     }
-    Ok(output)
+    Ok(())
 }
 
-fn write_ensemble_views(
+fn write_ensemble_views_to(
+    writer: &mut impl Write,
     ensemble: &Ensemble,
     classifications: Option<&MmcifEntityClassifications>,
     reports: Option<&[MmcifInterpretationReport]>,
     options: MmcifWriteOptions,
-) -> Result<String, MmcifWriteError> {
+) -> Result<(), MmcifWriteError> {
     validate_options(&options)?;
-    if ensemble.is_empty() {
-        return Err(MmcifWriteError::EmptyEnsemble);
-    }
-    let mut prepared = Vec::with_capacity(ensemble.len());
-    for (index, member) in ensemble.members().enumerate() {
+    let mut members = ensemble.members().enumerate();
+    let (_, first_member) = members.next().ok_or(MmcifWriteError::EmptyEnsemble)?;
+    let first_view = first_member.as_model();
+    let first_plan = ensemble_entity_plan(first_view, classifications, reports.map(|all| &all[0]))?;
+    let first = prepare_model(first_view, first_plan)?;
+
+    write_block_start(writer, &first, &options)?;
+    let mut atom_serial = 1u64;
+    write_atom_rows(writer, &first.atoms, 1, &mut atom_serial, &options)?;
+
+    for (index, member) in members {
         let view = member.as_model();
-        let plan = if let Some(reports) = reports {
-            entity_plan_from_report(view, &reports[index])?
-        } else {
-            let normalized = normalize_entity_classifications(
-                view,
-                classifications
-                    .into_iter()
-                    .flat_map(|set| set.iter().map(|(id, kind)| (id, vec![kind.clone()]))),
-            )?;
-            generic_entity_plan(view, &normalized)?
-        };
-        prepared.push(prepare_model(view, plan)?);
+        let plan = ensemble_entity_plan(view, classifications, reports.map(|all| &all[index]))?;
+        let candidate = prepare_model(view, plan)?;
+        validate_ensemble_member(&first, &candidate, index + 1)?;
+        write_atom_rows(
+            writer,
+            &candidate.atoms,
+            index + 1,
+            &mut atom_serial,
+            &options,
+        )?;
     }
-    render_models(&prepared, &options)
+    write_block_end(writer, &first)
+}
+
+fn ensemble_entity_plan(
+    model: ModelView<'_>,
+    classifications: Option<&MmcifEntityClassifications>,
+    report: Option<&MmcifInterpretationReport>,
+) -> Result<EntityPlan, MmcifWriteError> {
+    if let Some(report) = report {
+        entity_plan_from_report(model, report)
+    } else {
+        let normalized = normalize_entity_classifications(
+            model,
+            classifications
+                .into_iter()
+                .flat_map(|set| set.iter().map(|(id, kind)| (id, vec![kind.clone()]))),
+        )?;
+        generic_entity_plan(model, &normalized)
+    }
 }
 
 fn entity_plan_from_report(
@@ -1439,71 +1536,87 @@ fn invalid_hierarchy(message: impl Into<String>) -> MmcifWriteError {
     }
 }
 
-fn render_models(
-    models: &[PreparedModel],
+fn render_model_to(
+    writer: &mut impl Write,
+    model: &PreparedModel,
     options: &MmcifWriteOptions,
-) -> Result<String, MmcifWriteError> {
-    let model = models.first().ok_or(MmcifWriteError::EmptyEnsemble)?;
-    for (member, candidate) in models.iter().enumerate().skip(1) {
-        if candidate.entities != model.entities {
-            return Err(MmcifWriteError::IncompatibleEnsembleMember {
-                member: member + 1,
-                field: "entity representation",
-            });
-        }
-        if candidate.asyms != model.asyms {
-            return Err(MmcifWriteError::IncompatibleEnsembleMember {
-                member: member + 1,
-                field: "structural asymmetry representation",
-            });
-        }
-        if candidate.connections != model.connections {
-            return Err(MmcifWriteError::IncompatibleEnsembleMember {
-                member: member + 1,
-                field: "connectivity representation",
-            });
-        }
-        if candidate.atoms.len() != model.atoms.len()
-            || candidate
-                .atoms
-                .iter()
-                .zip(&model.atoms)
-                .any(|(left, right)| !same_static_atom_row(left, right))
-        {
-            return Err(MmcifWriteError::IncompatibleEnsembleMember {
-                member: member + 1,
-                field: "atom-site representation",
-            });
-        }
-    }
-    let mut output = String::with_capacity(model.atoms.len().saturating_mul(160));
-    output.push_str("data_");
-    output.push_str(&options.block_name);
-    output.push_str("\n#\n");
+) -> Result<(), MmcifWriteError> {
+    write_block_start(writer, model, options)?;
+    let mut atom_serial = 1u64;
+    write_atom_rows(writer, &model.atoms, 1, &mut atom_serial, options)?;
+    write_block_end(writer, model)
+}
 
-    write_loop_header(&mut output, &["_entity.id", "_entity.type"]);
+fn validate_ensemble_member(
+    model: &PreparedModel,
+    candidate: &PreparedModel,
+    member: usize,
+) -> Result<(), MmcifWriteError> {
+    if candidate.entities != model.entities {
+        return Err(MmcifWriteError::IncompatibleEnsembleMember {
+            member,
+            field: "entity representation",
+        });
+    }
+    if candidate.asyms != model.asyms {
+        return Err(MmcifWriteError::IncompatibleEnsembleMember {
+            member,
+            field: "structural asymmetry representation",
+        });
+    }
+    if candidate.connections != model.connections {
+        return Err(MmcifWriteError::IncompatibleEnsembleMember {
+            member,
+            field: "connectivity representation",
+        });
+    }
+    if candidate.atoms.len() != model.atoms.len()
+        || candidate
+            .atoms
+            .iter()
+            .zip(&model.atoms)
+            .any(|(left, right)| !same_static_atom_row(left, right))
+    {
+        return Err(MmcifWriteError::IncompatibleEnsembleMember {
+            member,
+            field: "atom-site representation",
+        });
+    }
+    Ok(())
+}
+
+fn write_block_start(
+    writer: &mut impl Write,
+    model: &PreparedModel,
+    options: &MmcifWriteOptions,
+) -> Result<(), MmcifWriteError> {
+    writer
+        .write_all(format!("data_{}\n#\n", options.block_name).as_bytes())
+        .map_err(mmcif_io)?;
+
+    write_loop_header(writer, &["_entity.id", "_entity.type"])?;
     for entity in &model.entities {
         write_row(
-            &mut output,
+            writer,
             vec![
                 cif_value(&entity.id, "_entity.id")?,
                 entity.kind.as_mmcif().to_owned(),
             ],
-        );
+        )?;
     }
-    output.push_str("#\n");
+    writer.write_all(b"#\n").map_err(mmcif_io)?;
 
-    write_loop_header(&mut output, &["_struct_asym.id", "_struct_asym.entity_id"]);
+    write_loop_header(writer, &["_struct_asym.id", "_struct_asym.entity_id"])?;
     for asym in &model.asyms {
         write_row(
-            &mut output,
+            writer,
             vec![
                 cif_value(&asym.id, "_struct_asym.id")?,
                 cif_value(&asym.entity_id, "_struct_asym.entity_id")?,
             ],
-        );
+        )?;
     }
-    output.push_str("#\n");
+    writer.write_all(b"#\n").map_err(mmcif_io)?;
 
     const ATOM_TAGS: &[&str] = &[
         "_atom_site.group_PDB",
@@ -1528,44 +1641,53 @@ fn render_models(
         "_atom_site.auth_atom_id",
         "_atom_site.pdbx_PDB_model_num",
     ];
-    write_loop_header(&mut output, ATOM_TAGS);
-    let mut serial = 1u64;
-    for (model_index, prepared) in models.iter().enumerate() {
-        for atom in &prepared.atoms {
-            write_row(
-                &mut output,
-                vec![
-                    atom.group_pdb.clone(),
-                    serial.to_string(),
-                    cif_value(&atom.type_symbol, "_atom_site.type_symbol")?,
-                    cif_value(&atom.label_atom_id, "_atom_site.label_atom_id")?,
-                    optional_cif_value(atom.label_alt_id.as_deref(), "_atom_site.label_alt_id")?,
-                    cif_value(&atom.label_comp_id, "_atom_site.label_comp_id")?,
-                    cif_value(&atom.asym_id, "_atom_site.label_asym_id")?,
-                    cif_value(&atom.entity_id, "_atom_site.label_entity_id")?,
-                    optional_display(atom.label_seq_id),
-                    optional_cif_value(
-                        atom.insertion_code.as_deref(),
-                        "_atom_site.pdbx_PDB_ins_code",
-                    )?,
-                    format_coordinate(atom.position.x, options.coordinate_precision),
-                    format_coordinate(atom.position.y, options.coordinate_precision),
-                    format_coordinate(atom.position.z, options.coordinate_precision),
-                    optional_float(atom.occupancy),
-                    optional_float(atom.b_factor),
-                    atom.formal_charge.to_string(),
-                    optional_cif_value(atom.auth_seq_id.as_deref(), "_atom_site.auth_seq_id")?,
-                    cif_value(&atom.auth_comp_id, "_atom_site.auth_comp_id")?,
-                    cif_value(&atom.auth_asym_id, "_atom_site.auth_asym_id")?,
-                    cif_value(&atom.auth_atom_id, "_atom_site.auth_atom_id")?,
-                    (model_index + 1).to_string(),
-                ],
-            );
-            serial += 1;
-        }
-    }
-    output.push_str("#\n");
+    write_loop_header(writer, ATOM_TAGS)
+}
 
+fn write_atom_rows(
+    writer: &mut impl Write,
+    atoms: &[AtomRow],
+    model_number: usize,
+    serial: &mut u64,
+    options: &MmcifWriteOptions,
+) -> Result<(), MmcifWriteError> {
+    for atom in atoms {
+        write_row(
+            writer,
+            vec![
+                atom.group_pdb.clone(),
+                serial.to_string(),
+                cif_value(&atom.type_symbol, "_atom_site.type_symbol")?,
+                cif_value(&atom.label_atom_id, "_atom_site.label_atom_id")?,
+                optional_cif_value(atom.label_alt_id.as_deref(), "_atom_site.label_alt_id")?,
+                cif_value(&atom.label_comp_id, "_atom_site.label_comp_id")?,
+                cif_value(&atom.asym_id, "_atom_site.label_asym_id")?,
+                cif_value(&atom.entity_id, "_atom_site.label_entity_id")?,
+                optional_display(atom.label_seq_id),
+                optional_cif_value(
+                    atom.insertion_code.as_deref(),
+                    "_atom_site.pdbx_PDB_ins_code",
+                )?,
+                format_coordinate(atom.position.x, options.coordinate_precision),
+                format_coordinate(atom.position.y, options.coordinate_precision),
+                format_coordinate(atom.position.z, options.coordinate_precision),
+                optional_float(atom.occupancy),
+                optional_float(atom.b_factor),
+                atom.formal_charge.to_string(),
+                optional_cif_value(atom.auth_seq_id.as_deref(), "_atom_site.auth_seq_id")?,
+                cif_value(&atom.auth_comp_id, "_atom_site.auth_comp_id")?,
+                cif_value(&atom.auth_asym_id, "_atom_site.auth_asym_id")?,
+                cif_value(&atom.auth_atom_id, "_atom_site.auth_atom_id")?,
+                model_number.to_string(),
+            ],
+        )?;
+        *serial += 1;
+    }
+    Ok(())
+}
+
+fn write_block_end(writer: &mut impl Write, model: &PreparedModel) -> Result<(), MmcifWriteError> {
+    writer.write_all(b"#\n").map_err(mmcif_io)?;
     if !model.connections.is_empty() {
         let indexes = model
             .atoms
@@ -1586,12 +1708,12 @@ fn render_models(
             "_struct_conn.ptnr2_label_atom_id",
             "_struct_conn.pdbx_value_order",
         ];
-        write_loop_header(&mut output, CONNECTION_TAGS);
+        write_loop_header(writer, CONNECTION_TAGS)?;
         for (serial, connection) in (1u64..).zip(model.connections.iter()) {
             let left = &model.atoms[indexes[&connection.left]];
             let right = &model.atoms[indexes[&connection.right]];
             write_row(
-                &mut output,
+                writer,
                 vec![
                     format!("conn{serial}"),
                     "covale".to_owned(),
@@ -1605,11 +1727,11 @@ fn render_models(
                     cif_value(&right.label_atom_id, "_struct_conn.ptnr2_label_atom_id")?,
                     bond_order_code(connection.order).to_owned(),
                 ],
-            );
+            )?;
         }
-        output.push_str("#\n");
+        writer.write_all(b"#\n").map_err(mmcif_io)?;
     }
-    Ok(output)
+    Ok(())
 }
 
 fn same_static_atom_row(left: &AtomRow, right: &AtomRow) -> bool {
@@ -1631,17 +1753,23 @@ fn same_static_atom_row(left: &AtomRow, right: &AtomRow) -> bool {
         && left.auth_atom_id == right.auth_atom_id
 }
 
-fn write_loop_header(output: &mut String, tags: &[&str]) {
-    output.push_str("loop_\n");
+fn write_loop_header(writer: &mut impl Write, tags: &[&str]) -> Result<(), MmcifWriteError> {
+    writer.write_all(b"loop_\n").map_err(mmcif_io)?;
     for tag in tags {
-        output.push_str(tag);
-        output.push('\n');
+        writer.write_all(tag.as_bytes()).map_err(mmcif_io)?;
+        writer.write_all(b"\n").map_err(mmcif_io)?;
     }
+    Ok(())
 }
 
-fn write_row(output: &mut String, values: Vec<String>) {
-    output.push_str(&values.join(" "));
-    output.push('\n');
+fn write_row(writer: &mut impl Write, values: Vec<String>) -> Result<(), MmcifWriteError> {
+    for (index, value) in values.into_iter().enumerate() {
+        if index != 0 {
+            writer.write_all(b" ").map_err(mmcif_io)?;
+        }
+        writer.write_all(value.as_bytes()).map_err(mmcif_io)?;
+    }
+    writer.write_all(b"\n").map_err(mmcif_io)
 }
 
 fn format_coordinate(value: f64, precision: usize) -> String {
