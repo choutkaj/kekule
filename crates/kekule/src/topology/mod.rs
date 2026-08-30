@@ -1,5 +1,19 @@
-//! Immutable coordinate-free molecular systems, qualified identities, dense
-//! orderings, and compiled selections.
+//! Immutable coordinate-free molecular systems and biological hierarchy.
+//!
+//! A [`Topology`] turns connected molecular definitions into explicit
+//! occurrences in one system. Repeated definitions can be reused—for example,
+//! a solvent box can contain many instances of one water definition—while each
+//! instance still receives distinct [`InstanceAtomId`] and [`InstanceBondId`]
+//! identities.
+//!
+//! The system-wide [`Hierarchy`] organizes those atoms into chains, residues,
+//! and atom sites. Hierarchy is independent of covalent connectedness: one
+//! chain may span several molecule instances, and one connected molecule may
+//! contribute to several chains.
+//!
+//! Topologies are immutable after publication. Use [`TopologyBuilder`] for
+//! assembly, [`Topology::into_builder`] for append-oriented transformation, and
+//! [`transform`] or selections for checked structural subsets.
 
 mod builder;
 mod hierarchy;
@@ -427,10 +441,22 @@ impl<'a> MoleculeInstanceView<'a> {
 
 /// An immutable, coordinate-free molecular system.
 ///
-/// `Topology` owns molecule instances, their dense identity and ordering, and
-/// the system [`Hierarchy`]. Shared exact ownership uses [`std::sync::Arc<Topology>`].
-/// Topology-changing operations construct new topology values; generic
-/// topology remapping is not part of the core architecture.
+/// `Topology` owns reusable molecule definitions, explicit instances of those
+/// definitions, topology-global dense atom and bond order, one system
+/// [`Hierarchy`], and topology-scoped properties. It does not own coordinates.
+/// Attach positions through [`crate::structure::Model`] or another realization
+/// type.
+///
+/// Local [`crate::core::AtomId`] and [`crate::core::BondId`] values identify
+/// entities inside one definition. At system scope they are qualified with a
+/// [`MoleculeInstanceId`] as [`InstanceAtomId`] and [`InstanceBondId`]. This
+/// distinction matters whenever a definition is reused.
+///
+/// Exact shared ownership conventionally uses [`std::sync::Arc<Topology>`].
+/// Some coordinate-dependent APIs require the same allocation, not merely an
+/// independently constructed topology with equal contents. [`Self::same_layout`]
+/// checks complete static layout equality when shared identity is not required.
+/// Topology-changing operations return new published values.
 #[derive(Debug)]
 pub struct Topology {
     definitions: Vec<MoleculeDefinition>,

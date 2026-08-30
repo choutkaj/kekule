@@ -10,6 +10,10 @@ use super::collection::Trajectory;
 use super::frame::{Forces, TrajectoryFrame, TrajectoryFrameView, Velocities};
 use super::{validate_atom_count, TrajectoryError};
 
+/// Sequential reader that publishes complete frames into reusable storage.
+///
+/// `read_next` returns `Ok(false)` only at clean end-of-stream. Implementations
+/// validate a frame completely before replacing the destination buffer.
 pub trait TrajectoryReader {
     fn topology(&self) -> &Topology;
 
@@ -18,6 +22,10 @@ pub trait TrajectoryReader {
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError>;
 }
 
+/// Trajectory reader with random frame access.
+///
+/// Implementations may build an index eagerly; callers should inspect
+/// format-specific metadata when index construction cost matters.
 pub trait SeekableTrajectoryReader: TrajectoryReader {
     fn frame_count(&self) -> Option<u64>;
 
@@ -28,6 +36,10 @@ pub trait SeekableTrajectoryReader: TrajectoryReader {
     ) -> Result<(), TrajectoryError>;
 }
 
+/// Streaming writer for topology-bound frame views.
+///
+/// Writers reject topology mismatches and unsupported frame state rather than
+/// silently dropping data.
 pub trait TrajectoryWriter {
     fn topology(&self) -> &Topology;
 

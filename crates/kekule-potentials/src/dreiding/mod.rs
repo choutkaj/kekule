@@ -4,8 +4,11 @@
 //! structural views.
 //!
 //! This module keeps automatic force-field preparation outside the lightweight
-//! `kekule` core crate. Preparation is explicit: it never interprets or perceives input,
-//! adds hydrogens, changes topology, or updates charges during evaluation.
+//! `kekule` core crate. Call [`DreidingPotential::prepare`] once with a reference
+//! model, then evaluate other structural views sharing that exact topology
+//! through [`kekule::modeling::potential::Potential`]. Preparation is explicit:
+//! it never interprets or perceives input, adds hydrogens, changes topology, or
+//! updates charges during evaluation.
 //!
 //! # Periodic-cell capability
 //!
