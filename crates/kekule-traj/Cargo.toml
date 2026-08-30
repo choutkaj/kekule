@@ -12,7 +12,7 @@ description = "Trajectory storage, streaming, workflows, and pure-Rust file code
 publish = true
 
 [dependencies]
-kekule = { version = "0.1.0", path = "../kekule" }
+kekule = { version = "0.2.0", path = "../kekule" }
 molly = "=0.6.1"
 
 [dev-dependencies]
