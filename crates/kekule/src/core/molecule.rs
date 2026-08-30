@@ -8,11 +8,25 @@ use super::*;
 
 /// One published, non-empty, connected, geometry-independent molecular entity.
 ///
-/// Authoritative represented chemistry is owned by [`Graph`] and
-/// reconstructible derived chemistry by [`Perception`]. System-level residue,
-/// chain, and atom-site organization belongs to [`crate::topology::Topology`].
-/// Construction and structural editing publish exclusively through
-/// [`MoleculeEditor::finish`].
+/// A molecule owns three kinds of state with different semantics:
+///
+/// - [`Graph`] is authoritative represented chemistry: atoms, bonds,
+///   connectivity, and represented stereochemistry.
+/// - [`Perception`] is reconstructible derived chemistry such as valence, rings,
+///   aromaticity, and installed CIP descriptors.
+/// - [`Properties`] contains extensible geometry-independent annotations scoped
+///   to this molecular definition.
+///
+/// Coordinates, periodic cells, velocities, and biological hierarchy do not
+/// belong to a molecule. Put explicit molecule occurrences and hierarchy in a
+/// [`crate::topology::Topology`], then attach geometry with
+/// [`crate::structure::Model`].
+///
+/// Construction and structural editing publish through
+/// [`MoleculeEditor::finish`]. Temporary disconnectedness is allowed inside the
+/// editor but never in a published `Molecule`. Equality compares authoritative
+/// graph chemistry; cached perception and generic properties do not change
+/// molecular identity.
 #[derive(Debug, Clone)]
 pub struct Molecule {
     pub(crate) graph: Graph,

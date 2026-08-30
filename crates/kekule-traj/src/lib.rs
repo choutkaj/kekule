@@ -1,25 +1,49 @@
-//! Fixed-topology molecular trajectory storage, streaming, file I/O, and
-//! trajectory-oriented workflows built on [`kekule`].
+//! Fixed-topology molecular trajectories, streaming I/O, and trajectory
+//! analysis built on [`kekule`].
 //!
-//! `kekule-traj` owns ordered frame state and trajectory-specific operations.
-//! It reuses Kekule's immutable [`kekule::topology::Topology`], dense positions,
-//! cells, unified atom and bond properties, units, geometry, selections, and the
-//! borrowed [`kekule::structure::ModelView`] contract rather than
-//! defining a second molecular model.
+//! # Data model
 //!
-//! The crate provides owned [`TrajectoryFrame`] values, reusable
-//! [`FrameBuffer`] storage, finite in-memory [`Trajectory`] collections, and
-//! streaming reader/writer traits. Production file codecs and format-agnostic
-//! path factories live under [`io`].
+//! [`Trajectory`] is an ordered temporal sequence sharing one immutable
+//! [`kekule::topology::Topology`]. Each [`TrajectoryFrame`] stores dense
+//! positions and optional cell, velocity, force, time, step, and property state;
+//! it carries no independent topology. Insertion validates every dense
+//! dimension against the trajectory topology.
 //!
-//! In-memory trajectory superposition and RMSD workflows live under
-//! [`analysis`]. Direct RMSD never fits coordinates implicitly; the explicitly
-//! named aligned RMSD convenience performs fitting without materializing a
-//! transformed trajectory.
+//! [`TrajectoryFrameView`] and [`FrameBuffer`] expose
+//! [`kekule::structure::ModelView`] without copying coordinates, so structural
+//! analyses and prepared potentials can operate on models, ensemble members,
+//! and trajectory frames through one contract.
 //!
-//! Coordinate-dependent kernels in `kekule` and external potential adapters
-//! can consume [`TrajectoryFrameView::as_model`] or
-//! [`FrameBuffer::model_view`] without copying coordinates.
+//! # In-memory trajectory
+//!
+//! ```
+//! use std::sync::Arc;
+//!
+//! use kekule::{smiles, structure::Positions, topology::Topology};
+//! use kekule_traj::{Trajectory, TrajectoryFrame};
+//!
+//! let molecule = smiles::to_molecules("CC")?.pop().unwrap();
+//! let topology = Arc::new(Topology::from_molecule(&molecule)?);
+//! let frame = TrajectoryFrame::new(
+//!     Positions::zeros(topology.atom_count()),
+//!     topology.bond_count(),
+//! );
+//!
+//! let mut trajectory = Trajectory::new(Arc::clone(&topology));
+//! trajectory.push(frame)?;
+//! assert_eq!(trajectory.len(), 1);
+//! assert_eq!(trajectory.frame(0).unwrap().as_model().atom_count(), 2);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! # File I/O and analysis
+//!
+//! Format-agnostic path readers and writers plus pure-Rust XYZ, DCD, TRR, and
+//! XTC codecs live in [`io`]. Coordinate-only files require explicit evidence
+//! that file atom order matches the supplied topology; equal atom counts are not
+//! treated as correspondence evidence. In-memory superposition and direct or
+//! aligned RMSD workflows live in [`analysis`]. Direct RMSD never performs an
+//! implicit fit.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 // Kekule consistently names owned conversions `to_*`, including consuming ones.

@@ -228,7 +228,25 @@ impl Molecule {
 /// Transactional construction and structural editing state.
 ///
 /// The working graph may be empty, disconnected, or chemically incomplete.
-/// Only [`Self::finish`] can publish a `Molecule`.
+/// [`Self::finish`] validates graph references, connectedness, stereochemistry,
+/// and canonical represented chemistry before publishing a [`Molecule`]. A
+/// failed finish returns structured errors and publishes nothing.
+///
+/// # Example
+///
+/// ```
+/// use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
+///
+/// let mut editor = MoleculeEditor::new();
+/// let carbon = editor.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
+/// let oxygen = editor.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
+/// editor.add_bond(carbon, oxygen, BondOrder::Single)?;
+/// let molecule = editor.finish()?;
+///
+/// assert_eq!(molecule.atom_count(), 2);
+/// assert_eq!(molecule.bond_count(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct MoleculeEditor {
     working: Molecule,

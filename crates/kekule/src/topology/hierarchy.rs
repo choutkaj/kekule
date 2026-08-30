@@ -10,7 +10,12 @@ fixed_u32_id!(AtomSiteId, "atom-site");
 /// Coordinate-independent residue, chain, polymer, and atom-site organization.
 ///
 /// A hierarchy owns no atoms or bonds. Atom sites refer to topology-global
-/// [`InstanceAtomId`] values and may span molecule-instance boundaries.
+/// [`InstanceAtomId`] values and may span molecule-instance boundaries. It is
+/// valid for a topology to have an empty hierarchy.
+///
+/// `Chain`, `Residue`, and `AtomSite` are topology-owned storage nodes. Borrowed
+/// navigation normally uses [`super::ChainView`], [`super::ResidueView`], and
+/// [`super::AtomSiteView`], which retain the containing topology context.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Hierarchy {
     chains: Vec<Chain>,

@@ -157,6 +157,15 @@ macro_rules! vector_array {
 vector_array!(Velocities, CANONICAL_VELOCITY_UNIT);
 vector_array!(Forces, CANONICAL_FORCE_UNIT);
 
+/// One topology-free trajectory realization payload.
+///
+/// A frame always contains positions and may additionally contain a periodic
+/// cell, velocities, forces, time, step, and realization-scoped properties.
+/// Atom and bond dimensions are checked when the frame is viewed with a
+/// topology or inserted into a [`super::Trajectory`].
+///
+/// Use [`Self::view`] for a topology-bound [`TrajectoryFrameView`], or insert
+/// the frame into a trajectory and use [`super::Trajectory::frame`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrajectoryFrame {
     pub(super) positions: Positions,
@@ -322,7 +331,11 @@ impl TrajectoryFrame {
     }
 }
 
-/// Borrowed trajectory frame state.
+/// Borrowed topology-bound trajectory frame state.
+///
+/// The view retains exact topology identity and can be projected to
+/// [`kekule::structure::ModelView`] with [`Self::as_model`] without allocating
+/// or copying coordinate arrays.
 #[derive(Debug, Clone, Copy)]
 pub struct TrajectoryFrameView<'a> {
     pub(super) topology: &'a Arc<Topology>,

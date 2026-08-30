@@ -1,36 +1,72 @@
-//! Pure-Rust molecular graph, structure I/O, perception, bioinformatics, and
-//! modelling foundations.
+//! Pure-Rust foundations for molecular graphs, chemical perception, structure
+//! I/O, structural bioinformatics, and molecular modelling.
 //!
-//! The supported public surface is organized into focused facade modules.
-//! Parsing produces format documents, interpretation publishes canonical
-//! represented domain objects plus reports, and perception or modelling
-//! preparation remains explicit.
+//! # Object model
 //!
-//! System structure is coordinate-free and immutable in [`topology`].
-//! Dynamic structure follows three explicit relationships:
+//! Kekule keeps chemical identity, system organization, and geometry separate:
 //!
-//! - [`structure::Model`] = one [`topology::Topology`] plus dense positions,
-//!   an optional periodic cell, and unified per-atom and per-bond properties;
-//! - [`structure::Ensemble`] = one topology plus finite non-temporal members;
+//! - [`core::Molecule`] is one non-empty connected molecular graph. It owns
+//!   represented chemistry, derived [`core::Perception`], and
+//!   geometry-independent properties.
+//! - [`topology::Topology`] is one coordinate-free system containing one or
+//!   more explicit molecule instances plus an optional biological hierarchy.
+//! - [`structure::Model`] is one realization of a topology: positions, an
+//!   optional periodic cell, and realization-scoped properties.
+//! - [`structure::Ensemble`] stores several non-temporal realizations of one
+//!   shared topology. Ordered trajectories live in the `kekule-traj`
+//!   companion crate.
 //!
-//! Ordered multi-frame trajectories and their file codecs live in the
-//! one-way `kekule-traj` companion crate.
+//! A disconnected salt, solvent box, or protein-ligand complex is therefore a
+//! [`topology::Topology`] containing several connected molecules, not one
+//! disconnected [`core::Molecule`].
 //!
-//! Coordinate-dependent kernels consume borrowed [`structure::ModelView`]
-//! values, allowing the same analysis or prepared potential to operate over a
-//! model, ensemble member, trajectory frame, or reusable frame buffer without
-//! copying coordinates. Models, selections, buffers, and prepared systems may
-//! require the same shared `Arc<Topology>` allocation; primitive dense arrays
-//! carry no topology identity.
-//! [`topology::Topology::same_layout`]
-//! compares complete static layout, including semantic IDs and dense order;
-//! general order-independent structural equivalence and isomorphism mapping
-//! remain future capabilities.
+//! # Typical workflow
 //!
-//! Collection-backed public identifiers are fixed-width and every insertion
-//! that creates one is fallible. Exhausting an atom, bond, stereo,
-//! hierarchy, definition, instance, or dense topology index space returns the
-//! corresponding structured capacity error before canonical state is changed.
+//! Format APIs deliberately separate parsing from chemical interpretation.
+//! Interpretation publishes represented chemistry but does not run perception
+//! implicitly. Geometry is supplied only when constructing a model.
+//!
+//! ```
+//! use kekule::{
+//!     geometry::Point3,
+//!     smiles,
+//!     structure::{Model, Positions},
+//!     units::{Quantity, ANGSTROM},
+//! };
+//!
+//! let mut molecules = smiles::to_molecules("CCO")?;
+//! let mut ethanol = molecules.pop().expect("one connected component");
+//! ethanol.perceive()?;
+//!
+//! let positions = Positions::new(Quantity::new(
+//!     vec![
+//!         Point3::new(0.0, 0.0, 0.0),
+//!         Point3::new(1.5, 0.0, 0.0),
+//!         Point3::new(2.8, 0.0, 0.0),
+//!     ],
+//!     ANGSTROM,
+//! ))?;
+//! let model = Model::from_molecule(&ethanol, &positions)?;
+//!
+//! assert_eq!(model.topology().instance_count(), 1);
+//! assert_eq!(model.atom_count(), 3);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! # Explicit operations
+//!
+//! Kekule avoids hidden chemistry changes. Parsing, interpretation,
+//! perception, hydrogen transforms, coordinate stereo materialization, and
+//! force-field preparation are separate operations. Structural mutation uses
+//! transactional builders or editors so published values retain their
+//! invariants.
+//!
+//! Coordinate-dependent algorithms consume [`structure::ModelView`]. A model,
+//! ensemble member, trajectory frame, or reusable trajectory buffer can
+//! therefore share kernels without copying coordinates. APIs that require an
+//! exact topology context compare the shared `Arc<Topology>` allocation; use
+//! [`topology::Topology::same_layout`] only when complete static layout equality
+//! rather than shared identity is intended.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 // Kekule consistently names owned conversions `to_*`, including consuming ones.
@@ -93,6 +129,13 @@ pub mod substructure {
     };
 }
 
+/// SMILES parsing, interpretation, and molecule/topology writing.
+///
+/// [`smiles::parse_str`] preserves source syntax in a
+/// [`smiles::SmilesDocument`], while [`smiles::interpret`] publishes canonical
+/// connected molecules. [`smiles::to_molecules`] is the concise
+/// parse-and-interpret path. Dot-separated components remain separate molecules
+/// and perception is never run implicitly.
 pub mod smiles {
     use std::fmt;
 
@@ -166,10 +209,12 @@ pub mod smiles {
         }
     }
 
+    /// Parses source text into a syntax-preserving SMILES document.
     pub fn parse_str(input: &str) -> Result<SmilesDocument, SmilesParseError> {
         crate::io::parse_smiles_document(input)
     }
 
+    /// Parses source text with explicit syntax and resource-limit options.
     pub fn parse_str_with_options(
         input: &str,
         options: SmilesParseOptions,
@@ -177,6 +222,9 @@ pub mod smiles {
         crate::io::parse_smiles_document_with_options(input, options)
     }
 
+    /// Interprets parsed syntax as canonical represented chemistry.
+    ///
+    /// No perception is run implicitly.
     pub fn interpret(
         document: &SmilesDocument,
     ) -> Result<SmilesInterpretation, SmilesInterpretError> {
@@ -201,6 +249,7 @@ pub mod smiles {
         Ok(document.interpret()?.to_topology()?)
     }
 
+    /// Writes one connected molecule using ordinary non-canonical SMILES.
     pub fn write(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_smiles(molecule)
     }
@@ -231,15 +280,23 @@ pub mod smiles {
             .map(|components| components.join("."))
     }
 
+    /// Writes one connected molecule while preserving represented stereo.
     pub fn write_isomeric(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_isomeric_smiles(molecule)
     }
 
+    /// Writes deterministic canonical connectivity SMILES.
     pub fn write_canonical(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_canonical_smiles(molecule)
     }
 }
 
+/// Molfile parsing, interpretation, and V2000/V3000 writing.
+///
+/// A parsed [`molfile::MolfileDocument`] is format state. Its interpretation can
+/// project to connected molecules or to a geometry-bearing
+/// [`crate::structure::Model`]. Writers reject chemistry that the selected
+/// Molfile version cannot represent.
 pub mod molfile {
     pub use crate::io::{
         MolWriteError, MolWriteErrorKind, MolfileAtomMapping, MolfileBondMapping,
@@ -252,10 +309,12 @@ pub mod molfile {
     use crate::core::Molecule;
     use crate::structure::Model;
 
+    /// Parses one V2000 or V3000 Molfile without assigning canonical meaning.
     pub fn parse_str(input: &str) -> Result<MolfileDocument, MolfileParseError> {
         crate::io::parse_molfile_document(input)
     }
 
+    /// Parses one Molfile with explicit syntax and resource-limit options.
     pub fn parse_str_with_options(
         input: &str,
         options: MolfileParseOptions,
@@ -263,16 +322,19 @@ pub mod molfile {
         crate::io::parse_molfile_document_with_options(input, options)
     }
 
+    /// Interprets a parsed Molfile into canonical molecules, geometry, and a report.
     pub fn interpret(
         document: &MolfileDocument,
     ) -> Result<MolfileInterpretation, MolfileInterpretError> {
         document.interpret()
     }
 
+    /// Writes a coordinate-free molecule as a V2000 CTAB with zero coordinates.
     pub fn write_v2000(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_mol_v2000(molecule)
     }
 
+    /// Writes a coordinate-free molecule as a V3000 CTAB with zero coordinates.
     pub fn write_v3000(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_mol_v3000(molecule)
     }
@@ -310,6 +372,11 @@ pub mod molfile {
     }
 }
 
+/// Record-oriented SDF parsing, interpretation, and writing.
+///
+/// [`sdf::SdfDocument`] preserves independent records. Interpret or write those
+/// records explicitly; sibling records are not merged into one model or
+/// reinterpreted as an ensemble.
 pub mod sdf {
     pub use crate::io::{
         MolWriteError, MolfileWriteVersion, SdfDataField, SdfDocument, SdfInterpretError,
@@ -320,10 +387,12 @@ pub mod sdf {
 
     use crate::structure::{Ensemble, Model};
 
+    /// Parses an SDF document while preserving independent record boundaries.
     pub fn parse_str(input: &str) -> Result<SdfDocument, SdfParseError> {
         parse_str_with_options(input, SdfParseOptions::default())
     }
 
+    /// Parses an SDF document with explicit syntax and resource-limit options.
     pub fn parse_str_with_options(
         input: &str,
         options: SdfParseOptions,
@@ -331,6 +400,7 @@ pub mod sdf {
         crate::io::parse_sdf_document(input, options)
     }
 
+    /// Interprets every SDF record independently in source order.
     pub fn interpret(document: &SdfDocument) -> Result<SdfInterpretation, SdfInterpretError> {
         document.interpret()
     }
@@ -339,10 +409,12 @@ pub mod sdf {
         crate::io::write_sdf_v2000(records)
     }
 
+    /// Writes one geometry-bearing model as one SDF record.
     pub fn write_model(model: &Model, options: SdfWriteOptions) -> Result<String, SdfWriteError> {
         crate::io::write_sdf_model(model, options)
     }
 
+    /// Writes independent models as independent SDF records in input order.
     pub fn write_models(
         models: &[Model],
         options: SdfWriteOptions,
@@ -350,6 +422,7 @@ pub mod sdf {
         crate::io::write_sdf_models(models, options)
     }
 
+    /// Writes each member of one shared-topology ensemble as an SDF record.
     pub fn write_ensemble(
         ensemble: &Ensemble,
         options: SdfWriteOptions,
@@ -398,6 +471,14 @@ pub mod sdf {
     }
 }
 
+/// Structural mmCIF parsing, interpretation, and writing.
+///
+/// Data blocks are independent interpretation scopes. One selected coordinate
+/// model naturally produces a [`crate::structure::Model`], while compatible
+/// coordinate models from one block may produce an
+/// [`crate::structure::Ensemble`]. Generic writing requires explicit mmCIF
+/// entity classifications because a [`crate::topology::Topology`] does not
+/// invent polymer or entity semantics.
 pub mod mmcif {
     pub use crate::io::{
         MmcifAltLocPolicy, MmcifAtomProvenance, MmcifBlock, MmcifConnectionResolutionReason,
@@ -414,6 +495,7 @@ pub mod mmcif {
         parse_str_with_options(input, MmcifParseOptions::default())
     }
 
+    /// Parses CIF/mmCIF source text with explicit syntax and resource limits.
     pub fn parse_str_with_options(
         input: &str,
         options: MmcifParseOptions,
@@ -705,6 +787,12 @@ pub mod mmcif {
     }
 }
 
+/// Explicit installation of derived valence, ring, and aromaticity state.
+///
+/// [`perception::perceive`] installs Kekule's default transactional perception
+/// profile. The nested modules expose the individual expert algorithms.
+/// Perception does not alter represented graph chemistry and is invalidated by
+/// relevant graph edits.
 pub mod perception {
     pub use crate::chemistry::PerceptionError;
 
@@ -725,6 +813,10 @@ pub mod perception {
         pub use crate::core::ValenceModel;
     }
 
+    /// Ring membership and deterministic ring-basis perception.
+    ///
+    /// Ring perception installs derived state and never changes represented
+    /// bond orders.
     pub mod rings {
         pub use crate::algorithms::{
             perceive_ring_membership, perceive_ring_set, perceive_ring_set_with_options,
@@ -733,6 +825,10 @@ pub mod perception {
         pub use crate::core::{Ring, RingBasisModel, RingBasisState, RingMembership, RingSet};
     }
 
+    /// Aromaticity perception over canonical localized bond orders.
+    ///
+    /// Aromatic membership is derived state; Kekule does not store an aromatic
+    /// bond order in represented graph chemistry.
     pub mod aromaticity {
         pub use crate::algorithms::{
             perceive_aromaticity, perceive_aromaticity_with_ring_options, AromaticityError,
@@ -766,11 +862,15 @@ pub mod stereo {
     };
 }
 
+/// Canonical atom ranking for represented molecular graphs.
+///
+/// Ranking is a graph-derived result and does not reorder or mutate a molecule.
 pub mod canon {
     pub use crate::algorithms::CanonicalAtomRanking;
 
     use crate::core::Molecule;
 
+    /// Computes deterministic canonical equivalence classes without mutation.
     pub fn atom_ranking(molecule: &Molecule) -> CanonicalAtomRanking {
         crate::algorithms::canonical_atom_ranking(molecule)
     }
@@ -835,6 +935,10 @@ pub mod hydrogens {
     }
 }
 
+/// Common foundational types for small examples and interactive use.
+///
+/// The prelude is intentionally small. Format APIs, structure types, and
+/// algorithms remain available through their focused modules.
 pub mod prelude {
     pub use crate::core::{
         Atom, AtomId, Bond, BondId, BondOrder, Element, HydrogenDeclaration, Molecule,

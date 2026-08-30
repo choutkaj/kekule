@@ -1,5 +1,10 @@
 //! Fixed-topology trajectory frames, reusable buffers, in-memory storage, and
 //! streaming reader/writer contracts.
+//!
+//! [`TrajectoryFrame`] is topology-free realization payload, [`Trajectory`]
+//! supplies the shared topology and temporal ordering, and [`FrameBuffer`]
+//! provides reusable validated storage for streaming decoders. The reader and
+//! writer traits publish complete frames transactionally.
 
 macro_rules! realization_property_api {
     () => {

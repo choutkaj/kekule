@@ -1,3 +1,12 @@
+//! Energy-and-gradient evaluation over borrowed structural views.
+//!
+//! [`Potential`] is intentionally small so prepared implementations can live in
+//! companion crates. Implementations bind any parameters and topology context
+//! during their own explicit preparation, then evaluate a
+//! [`crate::structure::ModelView`] without taking ownership of coordinates.
+//! [`PotentialEvaluation`] validates units, finiteness, and gradient dimensions
+//! at the boundary.
+
 use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
