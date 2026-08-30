@@ -51,7 +51,7 @@ fn value_after_flag_finds_following_value() {
 }
 
 #[test]
-fn kekule_package_metadata_uses_the_initial_release_contract() {
+fn package_metadata_is_release_consistent() {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let workspace_manifest: toml::Value = toml::from_str(
         &fs::read_to_string(workspace_root.join("Cargo.toml"))
@@ -59,7 +59,10 @@ fn kekule_package_metadata_uses_the_initial_release_contract() {
     )
     .expect("workspace manifest should parse");
     let workspace_package = &workspace_manifest["workspace"]["package"];
-    assert_eq!(workspace_package["version"].as_str(), Some("0.1.0"));
+    let workspace_version = workspace_package["version"]
+        .as_str()
+        .expect("workspace package version should be a string");
+    assert!(!workspace_version.is_empty());
     assert_eq!(
         workspace_package["repository"].as_str(),
         Some("https://github.com/choutkaj/kekule")
@@ -120,7 +123,8 @@ fn kekule_package_metadata_uses_the_initial_release_contract() {
         .expect("package manifest should parse");
         assert_eq!(
             manifest[section][dependency]["version"].as_str(),
-            Some("0.1.0")
+            Some(workspace_version),
+            "{relative_path} must require the workspace release version of {dependency}"
         );
     }
 
