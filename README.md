@@ -21,9 +21,9 @@ The architectural contract lives in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Concepts
 
-`Molecule` is the foundational type storing one molecule without its geometry. `Molecule` must be a connected graph. Its `Graph` owns authoritative chemistry, while its `Perception` stores derived chemical perception such as rings and aromaticity. Topology is a collection of one or more `Molecule`s together with `Hierarchy` (`Chain`, `Residue`, `AtomSite`). Molecules in `Topology` are not stored naively, but as `Definition`s and `Instance`s. For example, a hundred water molecules will be stored as one `Defintion` and hundred `Instances`. Coordinates are detached from `Molecule` and exist as a `Positions` type.
+`Molecule` is the foundational type storing one molecule without its geometry. `Molecule` must be a connected graph. Its `Graph` owns authoritative chemistry, while its `Perception` stores derived chemical perception such as rings and aromaticity. Topology is a collection of one or more `Molecule`s together with `Hierarchy` (`Chain`, `Residue`, `AtomSite`). Molecules in `Topology` are not stored naively, but as `Definition`s and `Instance`s. For example, a hundred water molecules will be stored as one `Definition` and a hundred `Instances`. Coordinates are detached from `Molecule` and exist as a `Positions` type.
 ```text
-Molecule = Graph + Perception
+Molecule = Graph + Perception + Properties
 Topology = collection of Molecules (stored as definitions and instances) + Hierarchy
 Hierarchy = Chain -> Residue -> AtomSite
 ```
