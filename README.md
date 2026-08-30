@@ -18,6 +18,15 @@ The architectural contract lives in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 > [!NOTE]
 > `kekule` is in early development and should be considered unstable. Breaking API changes will happen without notice.
 
+## Installation
+
+```sh
+cargo add kekule
+```
+
+Trajectory I/O and selected potentials are available separately through the sister crates
+`kekule-traj` and `kekule-potentials`.
+
 
 ## Concepts
 
