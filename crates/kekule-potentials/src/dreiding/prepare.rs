@@ -24,6 +24,10 @@ const KCAL_TO_CANONICAL_ENERGY: f64 = KILOCALORIE_PER_MOLE.scale() / CANONICAL_E
 const COULOMB_KJ_ANGSTROM_PER_MOL_E2: f64 = 1_389.354_576_443_82;
 
 /// Scope used for fixed QEq charge preparation.
+///
+/// Grouping by molecule instance is the default and prevents disconnected
+/// components from exchanging charge during preparation. Whole-topology
+/// grouping deliberately permits that coupling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum QeqGrouping {
@@ -32,6 +36,9 @@ pub enum QeqGrouping {
 }
 
 /// Explicit DREIDING preparation policy.
+///
+/// The default prepares fixed QEq charges independently for each molecule
+/// instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DreidingPrepareOptions {
     pub qeq_grouping: QeqGrouping,
@@ -51,6 +58,8 @@ impl Default for DreidingPrepareOptions {
 /// preparation performed by `dreid-forge`. Evaluation can then consume any
 /// nonperiodic model, ensemble member, or trajectory frame with the same exact
 /// topology. Periodic cells are unsupported during preparation and evaluation.
+/// Preparation validates that required hydrogens are explicit and that the
+/// reference view shares the supplied `Arc<Topology>` allocation.
 #[derive(Debug, Clone)]
 pub struct DreidingPotential {
     pub(crate) topology: Arc<Topology>,

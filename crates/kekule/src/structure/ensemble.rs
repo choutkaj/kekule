@@ -13,6 +13,10 @@ use crate::units::Quantity;
 use super::{Model, ModelView, PositionError, Positions};
 
 /// One finite non-temporal ensemble member.
+///
+/// The member stores realization state but no topology. It becomes
+/// topology-bound only when inserted into an [`Ensemble`] or viewed as an
+/// [`EnsembleMemberView`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnsembleMember {
     positions: Positions,
@@ -288,6 +292,11 @@ impl<'a> EnsembleMemberView<'a> {
 }
 
 /// A finite stable-order collection of non-temporal realizations.
+///
+/// Every member is validated against one shared [`Topology`]. Use an ensemble
+/// for conformers, alternate experimental models, or another non-temporal
+/// finite set of realizations. Use the `kekule-traj` companion crate when frame
+/// order has temporal meaning.
 #[derive(Debug, Clone)]
 pub struct Ensemble {
     topology: Arc<Topology>,

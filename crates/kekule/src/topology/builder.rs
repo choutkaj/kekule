@@ -12,8 +12,31 @@ use super::{
 
 /// Linear, validate-then-commit builder for coordinate-free topology.
 ///
-/// Molecule definitions and instances are staged before the one system-level
-/// hierarchy is validated against their final instance-qualified atom IDs.
+/// Add connected [`Molecule`] values as reusable definitions, then add one or
+/// more explicit instances of each definition. The builder stages the one
+/// system-level hierarchy and validates all hierarchy references against final
+/// instance-qualified atom IDs when [`Self::build`] publishes the topology.
+///
+/// Use [`Self::add_molecule`] when definition reuse is unimportant. Use
+/// [`Self::add_molecule_definition`] followed by [`Self::add_instance`] when
+/// several occurrences should share one definition.
+///
+/// # Example
+///
+/// ```
+/// use kekule::{smiles, topology::TopologyBuilder};
+///
+/// let water = smiles::to_molecules("O")?.pop().unwrap();
+/// let mut builder = TopologyBuilder::new();
+/// let definition = builder.add_molecule_definition(&water)?;
+/// builder.add_instance(definition)?;
+/// builder.add_instance(definition)?;
+/// let topology = builder.build()?;
+///
+/// assert_eq!(topology.definition_count(), 1);
+/// assert_eq!(topology.instance_count(), 2);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TopologyBuilder {
     definitions: Vec<MoleculeDefinition>,

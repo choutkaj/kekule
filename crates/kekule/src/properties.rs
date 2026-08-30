@@ -1,4 +1,15 @@
 //! Unified scalar and columnar annotations for canonical Kekule objects.
+//!
+//! [`Properties`] separates owner-level values from typed tables targeting
+//! atoms, bonds, molecule instances, and hierarchy nodes. Property scope follows
+//! the object that owns it: definition-invariant annotations belong to a
+//! [`crate::core::Molecule`], system annotations to a
+//! [`crate::topology::Topology`], and coordinate-dependent annotations to a
+//! realization such as [`crate::structure::Model`].
+//!
+//! Properties are annotations, not represented graph chemistry. Changing a
+//! generic property does not change molecular identity or trigger chemical
+//! perception.
 
 use std::collections::BTreeMap;
 use std::fmt;
