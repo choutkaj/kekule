@@ -4,6 +4,12 @@
 //! contracts and depend on [`kekule`] only for topology, structural state,
 //! geometry, and units.
 //!
+//! Start with [`open_trajectory`] for sequential reading,
+//! [`open_indexed_trajectory`] for verified random access, or
+//! [`create_trajectory_writer`] for atomic path-backed writing. Each operation
+//! takes explicit topology/order context and returns structured format
+//! diagnostics.
+//!
 //! # Supported profiles
 //!
 //! | Format | Reader | Writer |

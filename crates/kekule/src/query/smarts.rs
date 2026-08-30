@@ -9,6 +9,10 @@ use super::{
     QueryExpressionError, QueryGraph, QueryGraphBuilder,
 };
 
+/// Resource bounds for deterministic SMARTS parsing.
+///
+/// The defaults accept ordinary small-molecule queries while bounding input,
+/// graph, branch, ring-closure, and expression complexity before allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SmartsParseOptions {
     /// Maximum UTF-8 byte length; the bounded grammar itself is ASCII.
@@ -107,10 +111,15 @@ impl fmt::Display for SmartsParseError {
 
 impl std::error::Error for SmartsParseError {}
 
+/// Parses one SMARTS pattern into a syntax-independent [`QueryGraph`].
+///
+/// This uses [`SmartsParseOptions::default`]. Parsing does not match a target or
+/// run chemical perception.
 pub fn parse_smarts(input: &str) -> Result<QueryGraph, SmartsParseError> {
     parse_smarts_with_options(input, SmartsParseOptions::default())
 }
 
+/// Parses one SMARTS pattern with explicit resource limits.
 pub fn parse_smarts_with_options(
     input: &str,
     options: SmartsParseOptions,

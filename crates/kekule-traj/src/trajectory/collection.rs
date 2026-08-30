@@ -6,7 +6,12 @@ use kekule::topology::{AtomSelection, Topology};
 use super::frame::TrajectoryFrame;
 use super::{TrajectoryError, TrajectoryFrameView, TrajectorySliceError};
 
-/// Deliberately loaded finite in-memory trajectory.
+/// A deliberately loaded finite in-memory trajectory.
+///
+/// All frames share one exact [`Topology`] allocation and are stored in stable
+/// temporal order. [`Self::push`] validates a complete frame before mutation.
+/// Use streaming readers and [`super::FrameBuffer`] for trajectories that
+/// should not be loaded completely into memory.
 #[derive(Debug, Clone)]
 pub struct Trajectory {
     pub(super) topology: Arc<Topology>,

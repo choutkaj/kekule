@@ -17,6 +17,16 @@ use crate::units::Quantity;
 use super::{PositionError, Positions};
 
 /// One concrete realization of one immutable topology.
+///
+/// A model owns a shared [`Topology`], one position for every topology atom, an
+/// optional [`PeriodicCell`], and realization-scoped properties. The topology
+/// remains coordinate-free and may be shared with other models, ensemble
+/// members, trajectory frames, selections, and prepared modelling systems.
+///
+/// Use [`Self::from_molecule`] for a single connected molecule,
+/// [`Self::builder`] to assemble several molecules and their positions together,
+/// or [`Self::new`] when an existing topology and correctly ordered dense
+/// positions are already available.
 #[derive(Debug, Clone)]
 pub struct Model {
     pub(super) topology: Arc<Topology>,
@@ -483,6 +493,10 @@ fn validate_dimensions(
 
 /// Borrowed topology, positions, cell, and realization properties for structural
 /// kernels.
+///
+/// `ModelView` is the common coordinate-dependent input contract. It can borrow
+/// an owned [`Model`], an ensemble member, or a trajectory frame without
+/// allocating a temporary model. Views preserve exact topology identity.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelView<'a> {
     topology: &'a Arc<Topology>,
@@ -772,7 +786,10 @@ impl From<PropertyError> for ModelError {
 
 /// Convenience builder that assembles topology and one complete model.
 ///
-/// Geometry is supplied explicitly and remains outside the molecule.
+/// Each call to [`Self::add_molecule`] adds one explicit molecule occurrence and
+/// its dense positions. Geometry is supplied explicitly and remains outside the
+/// molecule. [`Self::build`] publishes both the coordinate-free topology and the
+/// matching model transactionally.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ModelBuilder {
     topology: TopologyBuilder,

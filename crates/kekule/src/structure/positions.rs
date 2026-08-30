@@ -7,6 +7,9 @@ use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 ///
 /// `Positions` has no topology context. Structural owners such as [`super::Model`]
 /// validate its length and translate semantic atom identifiers to dense indices.
+/// Construction accepts any compatible length [`crate::units::Unit`] and
+/// converts values once to the library-wide canonical unit. Non-finite values
+/// are rejected.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Positions {
     values: Vec<Point3>,

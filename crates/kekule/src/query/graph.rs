@@ -54,6 +54,10 @@ impl QueryBond {
 }
 
 /// An immutable graph whose vertices and edges carry boolean query expressions.
+///
+/// Query graphs describe matching predicates rather than represented molecular
+/// chemistry. Construct one programmatically with [`QueryGraphBuilder`] or parse
+/// SMARTS through [`super::parse_smarts`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryGraph {
     atoms: Vec<QueryAtom>,
@@ -127,6 +131,10 @@ impl QueryGraph {
     }
 }
 
+/// Transactional builder for an expression-bearing [`QueryGraph`].
+///
+/// Atoms must be added before bonds that reference them. [`Self::build`]
+/// validates the final adjacency and rejects an empty query.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueryGraphBuilder {
     atoms: Vec<QueryAtom>,

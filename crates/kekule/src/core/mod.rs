@@ -1,3 +1,14 @@
+//! Connected molecular graphs and their represented and perceived chemistry.
+//!
+//! [`Molecule`] is the foundational chemical object. Its [`Graph`] stores
+//! authoritative atoms, bonds, connectivity, and represented stereochemistry;
+//! [`Perception`] stores reconstructible derived chemistry. Use
+//! [`MoleculeEditor`] for construction and structural mutation so the
+//! non-empty, connected publication invariant is checked transactionally.
+//!
+//! Coordinates and residue/chain hierarchy deliberately do not live here. See
+//! [`crate::structure`] and [`crate::topology`] for those layers.
+
 mod atom_bond;
 mod element;
 mod element_reference;
