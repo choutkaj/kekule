@@ -21,58 +21,60 @@ The architectural contract lives in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Concepts
 
-`Molecule` is the single universal molecular type: one non-empty, connected,
-geometry-independent entity. Its `Graph` owns authoritative chemistry, while
-its `Perception` stores reconstructible derived chemistry. Coordinate-independent
-residue and chain organization belongs to the system-level `Hierarchy` owned by
-`Topology`; the hierarchy may be empty.
-
+`Molecule` is the foundational type storing one molecule without its geometry. `Molecule` must be a connected graph. Its `Graph` owns authoritative chemistry, while its `Perception` stores derived chemical perception such as rings and aromaticity. Topology is a collection of one or more `Molecule`s together with `Hierarchy` (`Chain`, `Residue`, `AtomSite`). Molecules in `Topology` are not stored naively, but as `Definition`s and `Instance`s. For example, a hundred water molecules will be stored as one `Defintion` and hundred `Instances`. Coordinates are detached from `Molecule` and exist as a `Positions` type.
 ```text
 Molecule = Graph + Perception
-
-Topology = List of Molecules (stored as definitions and instances) + Hierarchy
-
+Topology = collection of Molecules (stored as definitions and instances) + Hierarchy
 Hierarchy = Chain -> Residue -> AtomSite
-
+```
+Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including `Positions`. `Model` is literally a model of one or more molecules. `Ensemble` and `Trajectory` contain several non-temporal or temporal realizations of a system, respectively.
+```text
 Model      = Topology + Positions
 Ensemble   = Topology + one or more EnsembleMembers
 Trajectory = Topology + one or more TrajectoryFrames
 ```
 
-Coordinates are detached from `Molecule`. Dense `Positions` enter at the
-`Model`, `Ensemble`, or trajectory layer. Structural construction and editing
-use `MoleculeEditor`; only `finish()` can publish a molecule, after validating
-that it is non-empty and connected.
-
-Higher, modeling-based objects are built around `Topology`: an immutable
-topological system containing one or more molecule instances. Source-level
-identities such as an mmCIF entity or chain may map to more than one represented
-molecule instance when the observed structure contains a genuine unresolved
-gap.
-
 ## Examples
 
 ### SMILES
 
-Load and inspect a simple chiral molecule, then write canonical and isomeric
-SMILES:
+Load and inspect a simple chiral molecule, assign its stereochemistry, detect
+its rotatable bonds, then write canonical and isomeric SMILES:
 
 ```rust
 use std::error::Error;
 
-use kekule::smiles;
+use kekule::{
+    rotatable_bonds::{self, RotatableBondOptions},
+    smiles, stereo,
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // A dot-free SMILES produces one connected molecule.
     let mut molecules = smiles::to_molecules("C[C@@H](C(=O)O)N")?;
-    let molecule = molecules.pop().expect("SMILES contains one molecule");
+    let mut molecule = molecules.pop().expect("SMILES contains one molecule");
+    molecule.perceive()?;
 
     println!("atoms: {}", molecule.atom_count());
     println!("bonds: {}", molecule.bond_count());
     println!("formal charge: {}", molecule.formal_charge());
-
+    
+    // Print canonical and isomeric SMILES
     println!("canonical SMILES: {}", smiles::write_canonical(&molecule)?);
     println!("isomeric SMILES: {}", smiles::write_isomeric(&molecule)?);
+    
+    // Assign and print stereochemistry
+    let stereochemistry = stereo::assign_cip_descriptors(&mut molecule)?;
+    for assignment in &stereochemistry.assigned {
+        println!("stereo {}: {:?}", assignment.element, assignment.descriptor);
+    }
+    
+    // Assign and print rotatable bonds
+    let rotatable = rotatable_bonds::detect(&molecule, RotatableBondOptions::STRICT);
+    for &bond_id in rotatable.bond_ids() {
+        let bond = molecule.bond(bond_id)?;
+        println!("rotatable bond {bond_id}: {}-{}", bond.a(), bond.b());
+    }
     Ok(())
 }
 ```
