@@ -13,13 +13,13 @@
 
 `kekule` is an experimental chemistry backend scoped for both small molecules and macromolecules. The project is intended to cover regular cheminformatics workflows, as well as modeling-oriented tasks. `kekule` is human-architected and AI-coded.
 
-The architectural contract lives in [`ARCHITECTURE.md`](ARCHITECTURE.md). Optional external-reference comparisons are documented in [`benchmarks/README.md`](benchmarks/README.md).
+The architectural contract lives in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 > [!NOTE]
-> `kekule` is in early development. Breaking API changes will happen without notice.
+> `kekule` is in early development and should be considered unstable. Breaking API changes will happen without notice.
 
 
-## Concept
+## Concepts
 
 `Molecule` is the single universal molecular type: one non-empty, connected,
 geometry-independent entity. Its `Graph` owns authoritative chemistry, while
@@ -30,13 +30,13 @@ residue and chain organization belongs to the system-level `Hierarchy` owned by
 ```text
 Molecule = Graph + Perception
 
-Topology = molecule definitions + instances + dense ordering + Hierarchy
+Topology = List of Molecules (stored as definitions and instances) + Hierarchy
 
-Hierarchy = Chain -> Residue -> AtomSite -> InstanceAtomId
+Hierarchy = Chain -> Residue -> AtomSite
 
-Model      = Topology + Positions + optional cell + Properties
-Ensemble   = Topology + finite non-temporal realizations
-Trajectory = Topology + temporally ordered frames
+Model      = Topology + Positions
+Ensemble   = Topology + one or more EnsembleMembers
+Trajectory = Topology + one or more TrajectoryFrames
 ```
 
 Coordinates are detached from `Molecule`. Dense `Positions` enter at the
@@ -50,138 +50,121 @@ identities such as an mmCIF entity or chain may map to more than one represented
 molecule instance when the observed structure contains a genuine unresolved
 gap.
 
-### Molecular pipeline
+## Examples
 
-Kekule separates the basic chemistry pipeline into clear stages:
+### SMILES
 
-- **Parse** reads source syntax into a format-specific `*Document`.
-- **Interpret** translates source-asserted chemistry and publishes source-ordered, connected `Molecule` components.
-- **Perceive** derives model-dependent chemical interpretation such as valence, rings, and aromaticity.
-- **CIP** optionally derives stereochemical descriptors such as `R`/`S` and `E`/`Z`.
-
-Interpretation performs deterministic, meaning-preserving representation canonicalization before a molecule becomes observable. Chemistry-changing standardization such as tautomer or protonation-state selection is a separate future concern. High-level APIs may compose parsing and interpretation while perception remains explicit.
-
-Expert workflows can keep every stage explicit:
+Load and inspect a simple chiral molecule, then write canonical and isomeric
+SMILES:
 
 ```rust
 use std::error::Error;
 
-use kekule::{core::Molecule, smiles};
-
-fn load_explicitly(input: &str) -> Result<Vec<Molecule>, Box<dyn Error>> {
-    let document = smiles::parse_str(input)?;
-    let mut molecules = smiles::interpret(&document)?.to_molecules();
-    for molecule in &mut molecules {
-        molecule.perceive()?;
-    }
-    Ok(molecules)
-}
-```
-
-
-## Basic Usage
-
-Parse and inspect a simple chiral molecule, assign its stereochemistry, detect rotatable bonds, and write it back to SMILES:
-
-```rust
-use std::error::Error;
-
-use kekule::{
-    rotatable_bonds::{self, RotatableBondOptions},
-    smiles,
-    stereo,
-};
+use kekule::smiles;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Parse and canonically interpret a chiral amino acid, then perceive it.
+    // A dot-free SMILES produces one connected molecule.
     let mut molecules = smiles::to_molecules("C[C@@H](C(=O)O)N")?;
-    let mut molecule = molecules.pop().expect("SMILES contains one component");
-    molecule.perceive()?;
+    let molecule = molecules.pop().expect("SMILES contains one molecule");
 
-    // Assign absolute CIP descriptors to the perceived stereo elements.
-    let stereochemistry = stereo::assign_cip_descriptors(&mut molecule)?;
-
-    // Detect rotatable bonds using the strict small-molecule definition.
-    let rotatable = rotatable_bonds::detect(&molecule, RotatableBondOptions::STRICT);
-
-    // Inspect basic graph properties and derived chemistry.
     println!("atoms: {}", molecule.atom_count());
     println!("bonds: {}", molecule.bond_count());
     println!("formal charge: {}", molecule.formal_charge());
-    println!("strict rotatable bonds: {}", rotatable.len());
-    for assignment in &stereochemistry.assigned {
-        println!("stereo {:?}: {:?}", assignment.element, assignment.descriptor);
-    }
 
-    // Write canonical connectivity and a stereo-preserving SMILES form.
     println!("canonical SMILES: {}", smiles::write_canonical(&molecule)?);
     println!("isomeric SMILES: {}", smiles::write_isomeric(&molecule)?);
     Ok(())
 }
 ```
 
-## Modeling
+### SDF and mmCIF models
 
-Combine a connected molecule with detached coordinates, then minimize the
-resulting model with the DREIDING force field:
+Load one small molecule from an SDF record and another from an mmCIF data
+block, inspect and save both models, then combine them into a new model and
+write it as mmCIF:
 
 ```rust
-use std::error::Error;
+use std::{
+    error::Error,
+    fs::{self, File},
+};
 
 use kekule::{
-    geometry::Point3,
-    modeling::{minimize, MinimizeOptions},
-    smiles,
-    structure::{Model, Positions},
-    units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE_PER_ANGSTROM},
+    mmcif::{
+        self, MmcifEntityClassifications, MmcifEntityKind, MmcifInterpretOptions, MmcifWriteOptions,
+    },
+    sdf::{self, SdfWriteOptions},
+    structure::Model,
 };
-use kekule_potentials::dreiding::{DreidingPotential, DreidingPrepareOptions};
+
+fn print_model(label: &str, model: &Model) {
+    println!(
+        "{label}: {} molecules, {} atoms, {} bonds",
+        model.topology().instance_count(),
+        model.atom_count(),
+        model.topology().bond_count(),
+    );
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut molecules = smiles::to_molecules("CCO")?;
-    let mut ligand = molecules.pop().expect("SMILES contains one component");
-    ligand.perceive()?;
+    // SDF is record-oriented. This example deliberately loads one record.
+    let sdf_document = sdf::parse_str(&fs::read_to_string("ligand.sdf")?)?;
+    let sdf_record = sdf_document.records().first().expect("SDF has a record");
+    let sdf_model = sdf_record.to_model()?;
+    assert_eq!(sdf_model.topology().instance_count(), 1);
+    print_model("SDF model", &sdf_model);
+    sdf::write_model_to(
+        &mut File::create("ligand-copy.sdf")?,
+        &sdf_model,
+        SdfWriteOptions::default(),
+    )?;
 
-    // Molecule carries no geometry. Supply dense coordinates in atom order.
-    let positions = Positions::new(Quantity::new(
-        ligand
-            .atom_ids()
-            .enumerate()
-            .map(|(index, _)| Point3::new(index as f64, 0.0, 0.0))
-            .collect::<Vec<_>>(),
-        ANGSTROM,
-    ))?;
+    // mmCIF is block-oriented. `interpret` requires exactly one atom-site block
+    // and selects one coordinate model using the supplied options.
+    let cif_document = mmcif::parse_str(&fs::read_to_string("cofactor.cif")?)?;
+    let cif_interpretation = mmcif::interpret(&cif_document, MmcifInterpretOptions::default())?;
+    let cif_model = cif_interpretation.model();
+    assert_eq!(cif_model.topology().instance_count(), 1);
+    print_model("mmCIF model", cif_model);
+    mmcif::write_model_with_report_to(
+        &mut File::create("cofactor-copy.cif")?,
+        cif_model,
+        cif_interpretation.report(),
+        MmcifWriteOptions::default(),
+    )?;
+
+    // Coordinates are dense in molecule atom order for these one-molecule models.
     let mut builder = Model::builder();
-    builder.add_molecule(&ligand, &positions)?;
-    let model = builder.build()?;
+    let sdf_id = builder.add_molecule(
+        sdf_model.topology().molecules().next().unwrap().molecule(),
+        sdf_model.positions(),
+    )?;
+    let cif_id = builder.add_molecule(
+        cif_model.topology().molecules().next().unwrap().molecule(),
+        cif_model.positions(),
+    )?;
+    let combined = builder.build()?;
+    print_model("combined model", &combined);
 
-    // Prepare DREIDING explicitly, then minimize the model.
-    let mut potential = DreidingPotential::prepare(
-        &model.shared_topology(),
-        model.view(),
-        DreidingPrepareOptions::default(),
+    // A newly assembled Model has no format-specific entity roles. You have to supply them explicitly.
+    let mut classifications = MmcifEntityClassifications::new();
+    classifications.insert(sdf_id, MmcifEntityKind::NonPolymer)?;
+    classifications.insert(cif_id, MmcifEntityKind::NonPolymer)?;
+    mmcif::write_model_with_classifications_to(
+        &mut File::create("combined.cif")?,
+        &combined,
+        &classifications,
+        MmcifWriteOptions::default(),
     )?;
-    let minimized = minimize(
-        &model,
-        &mut potential,
-        MinimizeOptions {
-            max_iterations: 10_000,
-            gradient_tolerance: 0.05 * KILOJOULE_PER_MOLE_PER_ANGSTROM,
-            ..MinimizeOptions::default()
-        },
-    )?;
-    println!(
-        "{:?} after {} iterations: {} -> {} {}",
-        minimized.status,
-        minimized.iterations,
-        minimized.initial_energy.value(),
-        minimized.final_energy.value(),
-        minimized.final_energy.unit()
-    );
 
     Ok(())
 }
 ```
+
+The combined-model example intentionally requires one connected small molecule
+per input. Multi-record SDF documents, multi-block or multi-model mmCIF
+documents, and macromolecular systems require an explicit selection and entity
+classification policy.
 
 ## Contributing
 
