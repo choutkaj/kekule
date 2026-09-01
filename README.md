@@ -90,9 +90,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 ### SDF and mmCIF models
 
-Load one small molecule from an SDF record and another from an mmCIF data
-block, inspect and save both models, then combine them into a new model and
-write it as mmCIF:
+Load one small molecule from an SDF record and another from an mmCIF data block, inspect and save both models, then combine them into a new model and write it as mmCIF:
 
 ```rust
 use std::{
@@ -104,7 +102,6 @@ use kekule::{
     mmcif::{self, MmcifInterpretOptions, MmcifWriteOptions},
     sdf::{self, SdfWriteOptions},
     structure::Model,
-    topology::MoleculeClass,
 };
 
 fn print_model(label: &str, model: &Model) {
@@ -143,27 +140,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         MmcifWriteOptions::default(),
     )?;
 
-    // Coordinates are dense in molecule atom order for these one-molecule models.
+    // Initiate Model builder and combine both Models
     let mut builder = Model::builder();
-    let sdf_id = builder.add_molecule(
+    builder.add_molecule(
         sdf_model.topology().molecules().next().unwrap().molecule(),
         sdf_model.positions(),
     )?;
-    let cif_id = builder.add_molecule(
+    builder.add_molecule(
         cif_model.topology().molecules().next().unwrap().molecule(),
         cif_model.positions(),
     )?;
     let combined = builder.build()?;
     print_model("combined model", &combined);
 
-    assert_eq!(
-        combined.topology().molecule_class(sdf_id)?,
-        MoleculeClass::SmallMolecule,
-    );
-    assert_eq!(
-        combined.topology().molecule_class(cif_id)?,
-        MoleculeClass::SmallMolecule,
-    );
+    // Write the combined Model into mmCIF file
     mmcif::write_model_to(
         &mut File::create("combined.cif")?,
         &combined,
@@ -173,10 +163,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 ```
-
-The combined-model example intentionally requires one connected small molecule
-per input. Multi-record SDF documents, multi-block or multi-model mmCIF
-documents, and macromolecular systems require explicit source selection.
+The combined-model example intentionally requires one connected small molecule per input. Multi-record SDF documents, multi-block or multi-model mmCIF documents, and macromolecular systems require explicit source selection.
 
 ## Contributing
 
