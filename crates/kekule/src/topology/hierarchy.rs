@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use super::InstanceAtomId;
+use super::{InstanceAtomId, ResidueClass};
 
 fixed_u32_id!(ChainId, "chain");
 fixed_u32_id!(ResidueId, "residue");
@@ -78,6 +78,7 @@ impl Hierarchy {
         self.residues.push(Residue {
             id,
             chain,
+            class: ResidueClass::Other,
             name: name.clone(),
             label_comp_id: Some(name),
             author_comp_id: None,
@@ -206,6 +207,7 @@ impl Chain {
 pub struct Residue {
     pub(crate) id: ResidueId,
     pub(crate) chain: ChainId,
+    pub(crate) class: ResidueClass,
     pub(crate) name: String,
     pub(crate) label_comp_id: Option<String>,
     pub(crate) author_comp_id: Option<String>,
@@ -222,6 +224,11 @@ impl Residue {
 
     pub const fn chain(&self) -> ChainId {
         self.chain
+    }
+
+    /// Returns this topology-owned residue's canonical class.
+    pub const fn class(&self) -> ResidueClass {
+        self.class
     }
 
     pub fn name(&self) -> &str {

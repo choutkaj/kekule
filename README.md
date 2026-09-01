@@ -101,11 +101,10 @@ use std::{
 };
 
 use kekule::{
-    mmcif::{
-        self, MmcifEntityClassifications, MmcifEntityKind, MmcifInterpretOptions, MmcifWriteOptions,
-    },
+    mmcif::{self, MmcifInterpretOptions, MmcifWriteOptions},
     sdf::{self, SdfWriteOptions},
     structure::Model,
+    topology::MoleculeClass,
 };
 
 fn print_model(label: &str, model: &Model) {
@@ -157,14 +156,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     let combined = builder.build()?;
     print_model("combined model", &combined);
 
-    // A newly assembled Model has no format-specific entity roles. You have to supply them explicitly.
-    let mut classifications = MmcifEntityClassifications::new();
-    classifications.insert(sdf_id, MmcifEntityKind::NonPolymer)?;
-    classifications.insert(cif_id, MmcifEntityKind::NonPolymer)?;
-    mmcif::write_model_with_classifications_to(
+    assert_eq!(
+        combined.topology().molecule_class(sdf_id)?,
+        MoleculeClass::SmallMolecule,
+    );
+    assert_eq!(
+        combined.topology().molecule_class(cif_id)?,
+        MoleculeClass::SmallMolecule,
+    );
+    mmcif::write_model_to(
         &mut File::create("combined.cif")?,
         &combined,
-        &classifications,
         MmcifWriteOptions::default(),
     )?;
 
@@ -174,8 +176,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 The combined-model example intentionally requires one connected small molecule
 per input. Multi-record SDF documents, multi-block or multi-model mmCIF
-documents, and macromolecular systems require an explicit selection and entity
-classification policy.
+documents, and macromolecular systems require explicit source selection.
 
 ## Contributing
 

@@ -8,7 +8,7 @@ use crate::io::mmcif_interpret::{
     MmcifEnsembleInterpretation, MmcifEntityKind, MmcifInterpretationReport,
 };
 use crate::structure::{Ensemble, Model, ModelView};
-use crate::topology::{AtomSite, Hierarchy, ResidueId};
+use crate::topology::{AtomSite, Hierarchy, MoleculeClass, ResidueClass, ResidueId, Topology};
 use crate::topology::{
     InstanceAtomId, InstanceBondId, MoleculeDefinition, MoleculeInstance, MoleculeInstanceId,
 };
@@ -49,6 +49,10 @@ pub enum MmcifWriteError {
     UnsupportedEntityClassification {
         molecule: MoleculeInstanceId,
         classification: String,
+    },
+    UnresolvedCanonicalEntityClassification {
+        molecule: MoleculeInstanceId,
+        classification: MoleculeClass,
     },
     ConflictingAsymEntityIds {
         asym_id: String,
@@ -150,6 +154,13 @@ impl fmt::Display for MmcifWriteError {
                 f,
                 "{molecule} has unsupported mmCIF entity classification `{classification}`"
             ),
+            Self::UnresolvedCanonicalEntityClassification {
+                molecule,
+                classification,
+            } => write!(
+                f,
+                "cannot derive an unambiguous mmCIF entity kind for {molecule} from canonical class {classification:?}"
+            ),
             Self::ConflictingAsymEntityIds {
                 asym_id,
                 entity_ids,
@@ -244,10 +255,11 @@ impl fmt::Display for MmcifWriteError {
 
 impl std::error::Error for MmcifWriteError {}
 
-/// Explicit mmCIF entity semantics for generic molecule instances.
+/// Expert mmCIF entity-kind overrides for canonical molecule instances.
 ///
-/// Generic [`Model`] and topology state intentionally do not classify
-/// molecules as polymers, branched entities, non-polymers, or water.
+/// Ordinary writing derives kinds from canonical topology classification.
+/// Entries in this collection take precedence where exact source distinctions
+/// or an expert format-specific choice is required.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MmcifEntityClassifications {
     kinds: BTreeMap<MoleculeInstanceId, MmcifEntityKind>,
@@ -1195,10 +1207,13 @@ fn normalize_entity_classifications(
     model: ModelView<'_>,
     entries: impl IntoIterator<Item = (MoleculeInstanceId, Vec<MmcifEntityKind>)>,
 ) -> Result<BTreeMap<MoleculeInstanceId, EntityKind>, MmcifWriteError> {
-    let mut classifications = BTreeMap::new();
+    let mut explicit = BTreeMap::new();
     for (molecule, source_kinds) in entries {
         if model.topology().instance(molecule).is_err() {
             return Err(MmcifWriteError::UnknownClassifiedMolecule(molecule));
+        }
+        if explicit.contains_key(&molecule) {
+            return Err(MmcifWriteError::DuplicateEntityClassification(molecule));
         }
         let kinds = source_kinds
             .into_iter()
@@ -1215,16 +1230,121 @@ fn normalize_entity_classifications(
                 });
             }
         };
-        if classifications.insert(molecule, kind).is_some() {
-            return Err(MmcifWriteError::DuplicateEntityClassification(molecule));
+        explicit.insert(molecule, kind);
+    }
+    model
+        .topology()
+        .instances()
+        .map(|(molecule, _)| {
+            explicit
+                .get(&molecule)
+                .copied()
+                .map(Ok)
+                .unwrap_or_else(|| canonical_entity_kind(model.topology(), molecule))
+                .map(|kind| (molecule, kind))
+        })
+        .collect()
+}
+
+fn canonical_entity_kind(
+    topology: &Topology,
+    molecule: MoleculeInstanceId,
+) -> Result<EntityKind, MmcifWriteError> {
+    let class = topology
+        .molecule_class(molecule)
+        .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
+    match class {
+        MoleculeClass::Protein | MoleculeClass::Dna | MoleculeClass::Rna => Ok(EntityKind::Polymer),
+        MoleculeClass::Water => Ok(EntityKind::Water),
+        MoleculeClass::Ion | MoleculeClass::SmallMolecule => Ok(EntityKind::NonPolymer),
+        MoleculeClass::Carbohydrate => carbohydrate_entity_kind(topology, molecule),
+        MoleculeClass::Other => Err(MmcifWriteError::UnresolvedCanonicalEntityClassification {
+            molecule,
+            classification: class,
+        }),
+    }
+}
+
+fn carbohydrate_entity_kind(
+    topology: &Topology,
+    molecule: MoleculeInstanceId,
+) -> Result<EntityKind, MmcifWriteError> {
+    let view = topology
+        .molecule(molecule)
+        .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
+    let residues = view
+        .residues()
+        .map(|residue| residue.id())
+        .collect::<BTreeSet<_>>();
+    if residues.is_empty()
+        || residues.iter().any(|residue| {
+            topology.residue(*residue).map_or(true, |residue| {
+                residue.class() != ResidueClass::Carbohydrate
+            })
+        })
+    {
+        return Err(MmcifWriteError::UnresolvedCanonicalEntityClassification {
+            molecule,
+            classification: MoleculeClass::Carbohydrate,
+        });
+    }
+    if residues.len() == 1 {
+        return Ok(EntityKind::NonPolymer);
+    }
+
+    let mut adjacency = residues
+        .iter()
+        .copied()
+        .map(|residue| (residue, BTreeSet::new()))
+        .collect::<BTreeMap<_, _>>();
+    for (_, bond) in view.bonds() {
+        let left = InstanceAtomId::new(molecule, bond.a());
+        let right = InstanceAtomId::new(molecule, bond.b());
+        let (Some(left), Some(right)) = (
+            topology
+                .residue_for_atom(left)
+                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
+            topology
+                .residue_for_atom(right)
+                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
+        ) else {
+            continue;
+        };
+        if left.id() != right.id() {
+            adjacency
+                .get_mut(&left.id())
+                .expect("touched residue is present")
+                .insert(right.id());
+            adjacency
+                .get_mut(&right.id())
+                .expect("touched residue is present")
+                .insert(left.id());
         }
     }
-    for (molecule, _) in model.topology().instances() {
-        if !classifications.contains_key(&molecule) {
-            return Err(MmcifWriteError::MissingEntityClassification(molecule));
+    let seed = *residues
+        .iter()
+        .next()
+        .expect("multiple residues are present");
+    let mut visited = BTreeSet::from([seed]);
+    let mut pending = vec![seed];
+    while let Some(residue) = pending.pop() {
+        for &neighbor in &adjacency[&residue] {
+            if visited.insert(neighbor) {
+                pending.push(neighbor);
+            }
         }
     }
-    Ok(classifications)
+    if visited.len() != residues.len() {
+        return Err(MmcifWriteError::UnresolvedCanonicalEntityClassification {
+            molecule,
+            classification: MoleculeClass::Carbohydrate,
+        });
+    }
+    if adjacency.values().any(|neighbors| neighbors.len() > 2) {
+        Ok(EntityKind::Branched)
+    } else {
+        Ok(EntityKind::Polymer)
+    }
 }
 
 fn validate_graph_chemistry(

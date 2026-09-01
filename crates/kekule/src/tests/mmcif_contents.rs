@@ -2252,13 +2252,10 @@ fn mmcif_writer_rejects_ambiguous_atom_identity() {
 }
 
 #[test]
-fn mmcif_writer_requires_explicit_classification_for_hierarchy() {
+fn mmcif_writer_derives_small_molecule_classification_for_hierarchy() {
     let model = hierarchical_single_atom_model("LIG", "C1", "C");
-    let molecule = model.topology().instances().next().unwrap().0;
-    assert_eq!(
-        mmcif::write(&model, MmcifWriteOptions::default()),
-        Err(MmcifWriteError::MissingEntityClassification(molecule))
-    );
+    let automatic = mmcif::write(&model, MmcifWriteOptions::default()).unwrap();
+    assert!(automatic.contains("1 non-polymer"));
 
     let classifications = classifications_for(&model, MmcifEntityKind::NonPolymer);
     let written =
@@ -2269,23 +2266,17 @@ fn mmcif_writer_requires_explicit_classification_for_hierarchy() {
 }
 
 #[test]
-fn mmcif_writer_requires_explicit_classification_without_hierarchy() {
+fn mmcif_writer_derives_small_molecule_classification_without_hierarchy() {
     let model = small_single_atom_model("C");
-    let molecule = model.topology().instances().next().unwrap().0;
-    assert_eq!(
-        mmcif::write(&model, MmcifWriteOptions::default()),
-        Err(MmcifWriteError::MissingEntityClassification(molecule))
-    );
+    let written = mmcif::write(&model, MmcifWriteOptions::default()).unwrap();
+    assert!(written.contains("1 non-polymer"));
 }
 
 #[test]
 fn mmcif_writer_does_not_infer_water_from_neutral_oxygen() {
     let model = small_single_atom_model("O");
-    let molecule = model.topology().instances().next().unwrap().0;
-    assert_eq!(
-        mmcif::write(&model, MmcifWriteOptions::default()),
-        Err(MmcifWriteError::MissingEntityClassification(molecule))
-    );
+    let written = mmcif::write(&model, MmcifWriteOptions::default()).unwrap();
+    assert!(written.contains("1 non-polymer"));
 
     let classifications = classifications_for(&model, MmcifEntityKind::NonPolymer);
     let written =
@@ -2403,20 +2394,20 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
 }
 
 #[test]
-fn mmcif_writer_requires_one_classification_for_every_instance() {
+fn mmcif_writer_partial_overrides_still_validate_shared_asymmetry_semantics() {
     let interpreted = mmcif::interpret(&parse(MIXED), MmcifInterpretOptions::default()).unwrap();
     let model = interpreted.model();
     let mut instances = model.topology().instances().map(|(id, _)| id);
     let classified = instances.next().unwrap();
-    let missing = instances.next().unwrap();
+    instances.next().unwrap();
     let mut classifications = MmcifEntityClassifications::new();
     classifications
         .insert(classified, MmcifEntityKind::Polymer)
         .unwrap();
-    assert_eq!(
+    assert!(matches!(
         mmcif::write_with_classifications(model, &classifications, MmcifWriteOptions::default()),
-        Err(MmcifWriteError::MissingEntityClassification(missing))
-    );
+        Err(MmcifWriteError::ConflictingAsymEntityClassifications { .. })
+    ));
 }
 
 fn classifications_for(model: &Model, kind: MmcifEntityKind) -> MmcifEntityClassifications {

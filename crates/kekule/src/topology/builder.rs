@@ -5,9 +5,9 @@ use crate::core::{Molecule, MoleculeConnectivityError};
 use crate::properties::{Properties, PropertyError, PropertyKey, PropertyTable, PropertyValue};
 
 use super::{
-    AtomSiteId, ChainId, Hierarchy, InstanceAtomId, MoleculeDefinition, MoleculeDefinitionId,
-    MoleculeInstance, MoleculeInstanceId, ResidueId, Topology, TopologyAtomIndex,
-    TopologyBondIndex,
+    AtomSiteId, ChainId, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinition,
+    MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, ResidueClass, ResidueId, Topology,
+    TopologyAtomIndex, TopologyBondIndex,
 };
 
 /// Linear, validate-then-commit builder for coordinate-free topology.
@@ -43,6 +43,8 @@ pub struct TopologyBuilder {
     pub(super) instances: Vec<MoleculeInstance>,
     hierarchy: Hierarchy,
     properties: Properties,
+    molecule_class_overrides: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
+    residue_class_overrides: BTreeMap<ResidueId, ResidueClass>,
 }
 
 impl TopologyBuilder {
@@ -58,11 +60,21 @@ impl TopologyBuilder {
             properties,
             ..
         } = topology;
+        let molecule_class_overrides = definitions
+            .iter()
+            .map(|definition| (definition.id(), definition.class()))
+            .collect();
+        let residue_class_overrides = hierarchy
+            .residues()
+            .map(|(id, residue)| (id, residue.class()))
+            .collect();
         Self {
             definitions,
             instances,
             hierarchy,
             properties,
+            molecule_class_overrides,
+            residue_class_overrides,
         }
     }
 
@@ -154,6 +166,34 @@ impl TopologyBuilder {
         self.definitions
             .get(id.index())
             .ok_or(TopologyBuildError::InvalidMoleculeDefinitionId(id))
+    }
+
+    /// Overrides automatic classification for one staged molecule definition.
+    ///
+    /// Explicit assignments have precedence over inference performed by
+    /// [`Self::build`]. The class remains definition-scoped and is shared by
+    /// every instance of the definition.
+    pub fn set_molecule_class(
+        &mut self,
+        definition: MoleculeDefinitionId,
+        class: MoleculeClass,
+    ) -> Result<(), TopologyBuildError> {
+        self.definition(definition)?;
+        self.molecule_class_overrides.insert(definition, class);
+        Ok(())
+    }
+
+    /// Overrides automatic classification for one staged hierarchy residue.
+    pub fn set_residue_class(
+        &mut self,
+        residue: ResidueId,
+        class: ResidueClass,
+    ) -> Result<(), TopologyBuildError> {
+        self.hierarchy
+            .residue(residue)
+            .map_err(|_| TopologyBuildError::InvalidResidueId(residue))?;
+        self.residue_class_overrides.insert(residue, class);
+        Ok(())
     }
 
     pub fn add_molecule_definition(
@@ -280,6 +320,14 @@ impl TopologyBuilder {
         validate_hierarchy(&self.hierarchy, &atom_indices)
             .map_err(TopologyBuildError::InvalidHierarchy)?;
 
+        super::classification::finalize(
+            &mut self.definitions,
+            &self.instances,
+            &mut self.hierarchy,
+            &self.molecule_class_overrides,
+            &self.residue_class_overrides,
+        );
+
         self.properties.resize_domains(
             self.instances.len(),
             atom_count,
@@ -339,7 +387,11 @@ impl TopologyBuilder {
             self.definitions.len(),
             TopologyIdKind::MoleculeDefinition,
         )?;
-        self.definitions.push(MoleculeDefinition { id, molecule });
+        self.definitions.push(MoleculeDefinition {
+            id,
+            molecule,
+            class: MoleculeClass::SmallMolecule,
+        });
         Ok(id)
     }
 
@@ -360,6 +412,7 @@ impl TopologyBuilder {
         self.definitions.push(MoleculeDefinition {
             id: definition,
             molecule,
+            class: MoleculeClass::SmallMolecule,
         });
         self.instances.push(MoleculeInstance {
             id: instance,
@@ -693,6 +746,7 @@ pub enum TopologyBuildError {
     EmptyMoleculeDefinition,
     DisconnectedMoleculeDefinition(MoleculeConnectivityError),
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
+    InvalidResidueId(ResidueId),
     /// A staged definition was not instantiated and cannot be published.
     UnusedMoleculeDefinition(MoleculeDefinitionId),
     /// The staged system hierarchy is inconsistent with itself or the topology.
@@ -716,6 +770,7 @@ impl fmt::Display for TopologyBuildError {
             Self::InvalidMoleculeDefinitionId(id) => {
                 write!(formatter, "invalid molecule definition: {id}")
             }
+            Self::InvalidResidueId(id) => write!(formatter, "invalid topology residue: {id}"),
             Self::UnusedMoleculeDefinition(id) => {
                 write!(
                     formatter,
