@@ -9,7 +9,7 @@ use crate::mmcif::{
 use crate::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
 use crate::topology::AtomSiteMetadata;
-use crate::topology::{InstanceAtomId, MoleculeInstanceId, TopologyBuildError};
+use crate::topology::{InstanceAtomId, MoleculeClass, MoleculeInstanceId, TopologyBuildError};
 use crate::units::{Quantity, DIMENSIONLESS, NANOMETER, SQUARE_NANOMETER};
 
 const MIXED: &str = r#"
@@ -47,6 +47,44 @@ loop_
 _audit_author.name
 _audit_author.pdbx_ordinal
 'Example Author' 1
+"#;
+
+const BRANCHED_CARBOHYDRATE: &str = r#"
+data_branched_carbohydrate
+loop_
+_entity.id
+_entity.type
+1 branched
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+HETATM 1 C C1 GLC A 1 1 0.0 0.0 0.0
+HETATM 2 C C1 GAL A 1 2 3.0 0.0 0.0
+HETATM 3 C C1 GLC A 1 3 6.0 0.0 0.0
+loop_
+_struct_conn.id
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.ptnr2_label_seq_id
+link-1 covale A C1 1 A C1 2
+link-2 covale A C1 2 A C1 3
 "#;
 
 const SPLIT_SOURCE_CHAIN: &str = r#"
@@ -2333,6 +2371,75 @@ fn mmcif_writer_uses_explicit_polymer_and_branched_kinds() {
 }
 
 #[test]
+fn mmcif_writer_maps_one_residue_carbohydrate_to_non_polymer() {
+    let model = carbohydrate_model(&["GLC"], &[]);
+    let written = mmcif::write(&model, MmcifWriteOptions::default()).unwrap();
+    assert!(written.contains("1 non-polymer"));
+    assert!(!written.contains("1 polymer"));
+    assert!(!written.contains("1 branched"));
+}
+
+#[test]
+fn mmcif_writer_does_not_infer_multi_residue_carbohydrate_entity_semantics() {
+    let linear = carbohydrate_model(&["GLC", "GAL", "GLC"], &[(0, 1), (1, 2)]);
+    let graph_branched =
+        carbohydrate_model(&["GLC", "GAL", "GLC", "MAN"], &[(0, 1), (0, 2), (0, 3)]);
+    for model in [&linear, &graph_branched] {
+        let molecule = model.topology().molecules().next().unwrap().id();
+        assert_eq!(
+            mmcif::write(model, MmcifWriteOptions::default()),
+            Err(MmcifWriteError::UnresolvedCanonicalEntityClassification {
+                molecule,
+                classification: MoleculeClass::Carbohydrate,
+            })
+        );
+    }
+}
+
+#[test]
+fn mmcif_writer_accepts_explicit_multi_residue_carbohydrate_semantics() {
+    let model = carbohydrate_model(&["GLC", "GAL", "GLC"], &[(0, 1), (1, 2)]);
+    for (kind, expected) in [
+        (MmcifEntityKind::Branched, "branched"),
+        (MmcifEntityKind::Polymer, "polymer"),
+    ] {
+        let classifications = classifications_for(&model, kind);
+        let written = mmcif::write_with_classifications(
+            &model,
+            &classifications,
+            MmcifWriteOptions::default(),
+        )
+        .unwrap();
+        assert!(written.contains(&format!("1 {expected}")));
+    }
+}
+
+#[test]
+fn mmcif_writer_preserves_source_branched_carbohydrate_semantics() {
+    let interpreted = mmcif::interpret(
+        &parse(BRANCHED_CARBOHYDRATE),
+        MmcifInterpretOptions::default(),
+    )
+    .unwrap();
+    let model = interpreted.model();
+    let molecule = model.topology().molecules().next().unwrap();
+    assert_eq!(molecule.class(), MoleculeClass::Carbohydrate);
+    assert_eq!(molecule.residues().count(), 3);
+    assert!(matches!(
+        mmcif::write(model, MmcifWriteOptions::default()),
+        Err(MmcifWriteError::UnresolvedCanonicalEntityClassification {
+            classification: MoleculeClass::Carbohydrate,
+            ..
+        })
+    ));
+
+    let written =
+        mmcif::write_with_report(model, interpreted.report(), MmcifWriteOptions::default())
+            .unwrap();
+    assert!(written.contains("1 branched"));
+}
+
+#[test]
 fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classifications() {
     let model = hierarchical_single_atom_model("NAG", "C1", "C");
     let molecule = model.topology().instances().next().unwrap().0;
@@ -2485,6 +2592,53 @@ fn hierarchical_single_atom_model(component: &str, atom_name: &str, element: &st
             },
         )
         .unwrap();
+    builder.build().unwrap()
+}
+
+fn carbohydrate_model(components: &[&str], bonds: &[(usize, usize)]) -> Model {
+    let mut graph = crate::core::MoleculeEditor::new();
+    let atoms = components
+        .iter()
+        .map(|_| {
+            graph
+                .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    for &(left, right) in bonds {
+        graph
+            .add_bond(atoms[left], atoms[right], BondOrder::Single)
+            .unwrap();
+    }
+    let molecule = graph.finish().unwrap();
+    let mut builder = ModelBuilder::new();
+    let instance = builder
+        .add_molecule(&molecule, &Positions::zeros(atoms.len()))
+        .unwrap();
+    let chain = builder
+        .topology_builder_mut()
+        .hierarchy_mut()
+        .add_chain("A", None)
+        .unwrap();
+    for (index, (&component, atom)) in components.iter().zip(atoms).enumerate() {
+        let residue = builder
+            .topology_builder_mut()
+            .hierarchy_mut()
+            .add_residue(chain, component, Some(index as i32 + 1), None, None)
+            .unwrap();
+        builder
+            .topology_builder_mut()
+            .hierarchy_mut()
+            .add_atom_site(
+                residue,
+                InstanceAtomId::new(instance, atom),
+                AtomSiteMetadata {
+                    label_atom_id: Some("C1".to_owned()),
+                    ..AtomSiteMetadata::default()
+                },
+            )
+            .unwrap();
+    }
     builder.build().unwrap()
 }
 
