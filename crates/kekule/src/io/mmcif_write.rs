@@ -1272,79 +1272,18 @@ fn carbohydrate_entity_kind(
     let view = topology
         .molecule(molecule)
         .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
-    let residues = view
-        .residues()
-        .map(|residue| residue.id())
-        .collect::<BTreeSet<_>>();
-    if residues.is_empty()
-        || residues.iter().any(|residue| {
-            topology.residue(*residue).map_or(true, |residue| {
-                residue.class() != ResidueClass::Carbohydrate
-            })
-        })
+    let mut residues = view.residues();
+    if residues
+        .next()
+        .is_some_and(|residue| residue.class() == ResidueClass::Carbohydrate)
+        && residues.next().is_none()
     {
-        return Err(MmcifWriteError::UnresolvedCanonicalEntityClassification {
-            molecule,
-            classification: MoleculeClass::Carbohydrate,
-        });
-    }
-    if residues.len() == 1 {
         return Ok(EntityKind::NonPolymer);
     }
-
-    let mut adjacency = residues
-        .iter()
-        .copied()
-        .map(|residue| (residue, BTreeSet::new()))
-        .collect::<BTreeMap<_, _>>();
-    for (_, bond) in view.bonds() {
-        let left = InstanceAtomId::new(molecule, bond.a());
-        let right = InstanceAtomId::new(molecule, bond.b());
-        let (Some(left), Some(right)) = (
-            topology
-                .residue_for_atom(left)
-                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
-            topology
-                .residue_for_atom(right)
-                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
-        ) else {
-            continue;
-        };
-        if left.id() != right.id() {
-            adjacency
-                .get_mut(&left.id())
-                .expect("touched residue is present")
-                .insert(right.id());
-            adjacency
-                .get_mut(&right.id())
-                .expect("touched residue is present")
-                .insert(left.id());
-        }
-    }
-    let seed = *residues
-        .iter()
-        .next()
-        .expect("multiple residues are present");
-    let mut visited = BTreeSet::from([seed]);
-    let mut pending = vec![seed];
-    while let Some(residue) = pending.pop() {
-        for &neighbor in &adjacency[&residue] {
-            if visited.insert(neighbor) {
-                pending.push(neighbor);
-            }
-        }
-    }
-    if visited.len() != residues.len() {
-        return Err(MmcifWriteError::UnresolvedCanonicalEntityClassification {
-            molecule,
-            classification: MoleculeClass::Carbohydrate,
-        });
-    }
-    if adjacency.values().any(|neighbors| neighbors.len() > 2) {
-        Ok(EntityKind::Branched)
-    } else {
-        Ok(EntityKind::Polymer)
-    }
+    Err(MmcifWriteError::UnresolvedCanonicalEntityClassification {
+        molecule,
+        classification: MoleculeClass::Carbohydrate,
+    })
 }
 
 fn validate_graph_chemistry(
