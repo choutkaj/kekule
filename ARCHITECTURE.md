@@ -39,8 +39,10 @@ Molecule
 
 Topology
   one geometry-independent system made from one or more Molecule instances
+  reusable MoleculeDefinition values with canonical MoleculeClass
   topology-wide atom/bond identity and dense ordering
   one system-level Hierarchy, which may be empty
+  canonical ResidueClass for hierarchy residues
   system-scoped Properties
 
 Model
@@ -218,6 +220,7 @@ Typical hierarchy state includes:
 ```text
 chains
 residues
+residue classification
 polymer organization
 residue/chain identifiers
 component names
@@ -253,7 +256,7 @@ Conceptually:
 ```text
 Hierarchy
   ChainId -> Chain
-    ResidueId -> Residue
+    ResidueId -> Residue + ResidueClass
       AtomSiteId -> AtomSite -> InstanceAtomId
 ```
 
@@ -895,6 +898,7 @@ _atom_site and related mmCIF categories
     -> install Molecule instances into one Topology
     -> establish source atom -> InstanceAtomId correspondence
     -> construct one Hierarchy over those InstanceAtomId values
+    -> classify residues and molecule definitions
     -> attach Positions / realization Properties
     -> publish Model or shared-topology Ensemble
 ```
@@ -907,9 +911,12 @@ Hierarchy construction must not be restricted to polymer entities. Polymer,
 branched, non-polymer, ligand/ion, and water atom-site records may all carry
 hierarchical/source organization and should participate when representable.
 
-Entity classification such as polymer/non-polymer/water must be derived from
-mmCIF entity/source semantics, not inferred from whether hierarchy happens to be
-present.
+mmCIF entity kinds such as polymer, branched, non-polymer, and water are
+format-specific source semantics. They are useful evidence during interpretation
+and may be retained in mmCIF provenance for faithful diagnostics or round trips,
+but they do not form a parallel canonical Kekule entity-role layer. The
+published topology instead carries canonical `MoleculeClass` and `ResidueClass`
+values under the ordinary topology classification rules.
 
 If one source chain/asymmetry spans several disconnected graph components, the
 result must remain one hierarchy chain referencing atoms from several molecule
@@ -996,6 +1003,11 @@ perception merely because a canonical object is being constructed. Requesting
 geometry must not silently change the installed chemical perception relative to
 a geometry-independent projection from the same interpretation.
 
+Topology classification is separate from `Molecule::Perception`. Publishing a
+`Topology` does assign the lightweight canonical `MoleculeClass` and
+`ResidueClass` values defined below; it must not use classification as a reason
+to run the molecule's general perception pipeline.
+
 If future workflows need an ergonomic way to perceive molecule definitions
 already installed in an immutable `Topology` or `Model`, that should be designed
 as an explicit perception/topology transformation. It is not part of parsing or
@@ -1009,7 +1021,8 @@ molecular system.
 Its fundamental responsibility is to answer:
 
 > Which molecular entities exist in this system, how are all of their identities
-> laid out at system scope, and how are their atoms organized hierarchically?
+> laid out at system scope, how are their atoms organized hierarchically, and
+> what broad molecular/residue classes do those entities belong to?
 
 A topology contains one or more explicit `Molecule` instances. Because every
 `Molecule` is connected and topology introduces no bonds between different
@@ -1020,12 +1033,12 @@ Conceptually:
 
 ```text
 Topology
-  molecule definitions
+  molecule definitions + MoleculeClass
   molecule instances
   topology-wide atom/bond identity
   canonical dense atom/bond ordering
   identity <-> dense-index mappings
-  Hierarchy
+  Hierarchy + ResidueClass
   Properties
 ```
 
@@ -1054,6 +1067,7 @@ may provide ergonomic access to:
 ```text
 instance identity
 underlying Molecule
+canonical MoleculeClass through the referenced definition
 qualified atoms
 qualified bonds
 filtered hierarchy nodes touching this instance
@@ -1084,6 +1098,7 @@ Topology may therefore intern reusable `Molecule` values as definitions:
 ```text
 MoleculeDefinition
   owns one Molecule
+  owns one MoleculeClass
 
 MoleculeInstance
   has one MoleculeInstanceId
@@ -1091,7 +1106,8 @@ MoleculeInstance
 ```
 
 For example, a box containing many water molecules may store one water
-`MoleculeDefinition` and many `MoleculeInstance`s.
+`MoleculeDefinition` and many `MoleculeInstance`s. All instances referencing one
+definition necessarily expose the same `MoleculeClass`.
 
 This definition/instance split is part of the storage architecture, but it is
 not the primary scientific mental model presented to ordinary callers.
@@ -1103,6 +1119,125 @@ Instance-specific generic annotations do not require a parallel
 `MoleculeInstanceMetadata` object. They belong in the molecule-instance
 `PropertyTable` of the containing `Topology`'s `Properties`. Definition-invariant
 annotations remain on the reusable `Molecule` definition instead.
+
+### Canonical molecule and residue classification
+
+Kekule has a small canonical topology classification layer for broad structural
+navigation and format projection. It is intentionally not a general biological
+role ontology. In particular, contextual concepts such as receptor, ligand,
+cofactor, substrate, counterion, or structural water are not part of this layer.
+
+The canonical molecule vocabulary is:
+
+```rust
+pub enum MoleculeClass {
+    Protein,
+    Dna,
+    Rna,
+    Carbohydrate,
+    Water,
+    Ion,
+    SmallMolecule,
+    Other,
+}
+```
+
+`SmallMolecule` is the ordinary class for connected non-polymeric molecular
+compounds that do not match one of the more specific classes. It is deliberately
+preferred over a contextual name such as `Ligand`. `Other` is reserved for
+entities for which Kekule has positive reason not to use one of the named
+classes, including irreducibly mixed/conflicting cases.
+
+`MoleculeClass` is definition-scoped state. One `MoleculeDefinition` stores one
+class and every instance of that definition shares it. The class is not stored
+inside the foundational `Molecule`, because classification may legitimately use
+system hierarchy and source component information that exist only when the
+molecule is installed in a `Topology`.
+
+Hierarchy residues have a parallel small canonical vocabulary:
+
+```rust
+pub enum ResidueClass {
+    AminoAcid,
+    DnaNucleotide,
+    RnaNucleotide,
+    Carbohydrate,
+    Water,
+    Ion,
+    Other,
+}
+```
+
+`ResidueClass` describes broad residue/component identity, not canonicality.
+Kekule does not introduce `NoncanonicalAminoAcid` or
+`NoncanonicalNucleotide` variants in this foundational taxonomy. A modified
+component may be recognized as its broad structural class when the evidence is
+strong; otherwise conservative initial recognition may leave it as `Other`.
+That does not prevent the enclosing molecule from being recognized from its
+polymer connectivity.
+
+Classification is automatic during topology publication, with explicit builder
+assignment available as an override. Classification must remain lightweight and
+deterministic; it is not a reason to run generic chemical perception, expensive
+graph isomorphism, or a large substructure-search suite while loading a
+`Topology`.
+
+The initial residue classifier should use a conservative cascade:
+
+```text
+explicit user override
+  -> exact known component/residue identity
+  -> trivial unambiguous water/monoatomic-ion recognition where applicable
+  -> Other
+```
+
+Known-component tables are fast paths, not the definition of the chemistry. The
+initial tables should be small and conservative. Non-canonical or modified
+residues that are not explicitly recognized may therefore remain `Other` in v1.
+
+Molecule classification may use the whole connected molecular graph, residue
+classes, and inter-residue connectivity. The initial precedence is:
+
+```text
+explicit user override
+  -> Water
+  -> Ion
+  -> peptide-connected polymer       -> Protein
+  -> DNA phosphodiester polymer      -> Dna
+  -> RNA phosphodiester polymer      -> Rna
+  -> recognized carbohydrate entity  -> Carbohydrate
+  -> ordinary fallback               -> SmallMolecule
+
+conflicting strong polymer identities -> Other
+```
+
+Water and monoatomic-ion recognition should use trivial graph/source evidence.
+Protein and nucleic-acid recognition should be based on actual inter-residue
+covalent linkage patterns plus recognized residues rather than require every
+residue name to be canonical. For example, an `Other` residue embedded between
+recognized amino-acid residues by peptide bonds does not break an otherwise
+unambiguous `Protein` classification. The analogous rule applies to modified
+nucleotides embedded in an otherwise unambiguous DNA or RNA backbone.
+
+The initial implementation should prefer a single pass over residue identities
+plus a linear scan of bonds between known residue atom groups. Local linkage
+predicates such as peptide-bond and phosphodiester-link recognition are preferred
+over unrestricted whole-molecule substructure matching. Classification should
+therefore remain approximately linear in topology size and negligible compared
+with structural parsing/construction.
+
+Because inference may use topology-owned hierarchy while storage is definition-
+scoped, `TopologyBuilder::build()` (or the equivalent publication boundary) is
+the natural point at which unresolved classifications are finalized. Evidence
+from every informative instance of one definition must resolve to one definition
+class. If strong instance-derived evidence conflicts and there is no explicit
+override, the conservative result is `MoleculeClass::Other`.
+
+Source formats may provide useful classification hints or exact source-level
+categories, but source-specific enums are not canonical replacements for
+`MoleculeClass` or `ResidueClass`. Format adapters translate between their source
+semantics and this canonical layer where appropriate and may retain exact source
+provenance separately for round-trip fidelity.
 
 ### Instance-qualified molecular identity
 
@@ -1161,6 +1296,7 @@ A published topology must guarantee at least:
 ```text
 every hierarchy chain/residue/site ID is valid within that Topology
 every residue references a live chain
+every residue has one canonical ResidueClass
 every atom site references a live residue
 every atom site resolves to one live InstanceAtomId
 atom-site lookup mappings are internally consistent
@@ -1200,8 +1336,9 @@ architecturally predetermined.
 ### Hierarchy-aware selections and subsets
 
 Hierarchy is a primary system-navigation mechanism. `Topology` should support
-selections over chains, residues, atom sites, and their identifiers/labels, with
-results represented as topology-bound atom selections.
+selections over chains, residues, atom sites, molecule classes, residue classes,
+and their identifiers/labels, with results represented as topology-bound atom
+selections.
 
 A hierarchy selection and a structural subset are distinct operations:
 
@@ -1244,10 +1381,14 @@ correspondence exists. Owner-level scalar properties are not automatically
 copied to a structurally changed owner unless the operation explicitly defines
 that their semantics remain valid.
 
+A subset that creates new molecular definitions or changes residue composition
+must obtain classifications valid for the resulting topology rather than blindly
+copy a source definition class onto a chemically different target definition.
+
 ### Construction and invariants
 
-A topology builder may stage definitions, instances, hierarchy, and properties
-and publish an immutable `Topology` only after validation.
+A topology builder may stage definitions, instances, hierarchy, classifications,
+and properties and publish an immutable `Topology` only after validation.
 
 A published topology must satisfy at least:
 
@@ -1255,11 +1396,13 @@ A published topology must satisfy at least:
 at least one molecule instance
 every instance references a live definition
 every definition is referenced by at least one instance
+every definition has one canonical MoleculeClass
 every referenced Molecule satisfies Molecule invariants
 instance-qualified atom/bond identities are valid
 dense atom/bond ordering is complete and deterministic
 identity/index mappings are mutually consistent
 hierarchy references and lookups are valid and complete for every stored site
+every hierarchy residue has one canonical ResidueClass
 all topology property tables match their target-domain cardinalities/orderings
 ```
 
@@ -1273,7 +1416,9 @@ Topology::from_molecules(&molecules)?
 These constructors create one explicit molecule instance per input molecule in
 input order. Explicit builder APIs remain available when callers want reusable
 definitions and repeated instances; definition interning must not make the
-ordinary constructor's scientific semantics surprising.
+ordinary constructor's scientific semantics surprising. Classification is
+automatic for these ordinary constructors; callers should not have to supply a
+parallel classification sidecar merely to build or serialize a normal topology.
 
 ### Immutability and topology changes
 
@@ -1305,10 +1450,11 @@ let topology = builder.build()?;
 
 `into_builder()` is a topology transformation boundary, not hidden mutation. For
 append-only extension it should preserve the existing definitions, instances,
-semantic IDs, authoritative dense order, hierarchy IDs, and retained static
-properties, then append new identities deterministically. A non-consuming
-clone-based convenience may be added later if justified, but direct structural
-mutation such as `topology.add_molecule(...)` is not the canonical API.
+semantic IDs, authoritative dense order, hierarchy IDs, retained
+classifications, and retained static properties, then append new identities
+deterministically. A non-consuming clone-based convenience may be added later if
+justified, but direct structural mutation such as `topology.add_molecule(...)`
+is not the canonical API.
 
 The core architecture does not provide a generic topology-remapping framework.
 If a workflow changes topology, geometry or other dense state for the new system
@@ -1324,6 +1470,7 @@ It does not introduce:
 
 ```text
 generic provenance framework
+contextual molecule-role ontology
 geometry-dependent interactions
 inter-molecule topology bonds
 generic topology remapping
@@ -1334,9 +1481,11 @@ exist across molecule, hierarchy, model, ensemble, and trajectory surfaces and
 need one coherent ownership/storage model. It is not a generic provenance
 framework and does not imply automatic ingestion of arbitrary source metadata.
 
-System-level chain/residue/atom-site hierarchy is not speculative metadata; it
-is part of the core Topology architecture because hierarchy can span molecule
-boundaries and is required for structural navigation and slicing.
+System-level chain/residue/atom-site hierarchy and broad canonical
+molecule/residue classification are not speculative metadata; they are part of
+the core Topology architecture because they support structural navigation,
+selection, slicing, and format projection without depending on a source-specific
+sidecar.
 
 Other concerns should not be added speculatively. They may be introduced later
 only as separate concepts when concrete requirements establish their semantics.
@@ -1360,8 +1509,8 @@ architectural layers. Their useful semantics are folded into this one property
 system.
 
 Properties are annotations. They do not replace strongly typed core chemistry,
-hierarchy, geometry, or trajectory fields, and they do not define molecular or
-topology identity.
+hierarchy, classification, geometry, or trajectory fields, and they do not
+define molecular or topology identity.
 
 ### `PropertyKey`
 
@@ -1457,7 +1606,9 @@ TrajectoryFrame bond PropertyTable
 
 Columnar storage is the canonical representation for per-entity properties.
 Kekule should not embed an independent map in every `Atom`, `Bond`, `Residue`,
-or other repeated entity merely to attach generic annotations.
+or other repeated entity merely to attach generic annotations. Strongly typed
+canonical fields such as `ResidueClass` are not generic properties and remain on
+the corresponding domain object.
 
 Stable deterministic iteration is preferred. `BTreeMap` is therefore a suitable
 initial implementation unless a demonstrated performance requirement justifies a
@@ -1638,6 +1789,8 @@ example:
 ```text
 Atom.element / formal_charge / represented hydrogens
 Bond.order
+MoleculeDefinition.class
+Residue.class
 Hierarchy labels and identifiers
 Positions
 PeriodicCell
@@ -1820,7 +1973,7 @@ The intended separation is:
 
 ```text
 Topology
-  defines semantic identities, Hierarchy, static Properties,
+  defines semantic identities, Hierarchy, classification, static Properties,
   and dense atom/bond ordering
 
 Positions / Velocities / Forces
@@ -2072,7 +2225,8 @@ construct the geometry belonging to each epoch.
 ## Molecular identity and equality
 
 Authoritative molecular identity is defined by represented molecular state, not
-by derived cache population, generic properties, or system hierarchy.
+by derived cache population, generic properties, topology classification, or
+system hierarchy.
 
 `Perception` must therefore not make two otherwise identical represented
 molecules unequal merely because one has different cache presence. Generic
@@ -2080,14 +2234,16 @@ properties likewise do not participate in represented-molecule equality.
 
 A `Molecule` is independent of the residue/chain context in which one of its
 instances appears. The same molecular definition may be instantiated in several
-hierarchical contexts without becoming a different `Molecule`.
+hierarchical contexts without becoming a different `Molecule`. `MoleculeClass`
+is stored by the topology's reusable definition wrapper and does not become part
+of the foundational `Molecule`'s represented chemical identity.
 
 Topology layout equality is distinct from graph isomorphism or chemical
 identity. Full topology layout equality may include molecule definitions,
-instances, hierarchy, semantic IDs, and dense ordering, but generic properties
-must not accidentally alter layout compatibility. Two independently constructed
-topologies may represent chemically equivalent systems while still having
-different hierarchy IDs or dense layouts.
+instances, canonical classifications, hierarchy, semantic IDs, and dense
+ordering, but generic properties must not accidentally alter layout
+compatibility. Two independently constructed topologies may represent chemically
+equivalent systems while still having different hierarchy IDs or dense layouts.
 
 If complete annotated-state equality is needed, it should be an explicit API
 rather than an accidental consequence of deriving `PartialEq` over storage
@@ -2095,8 +2251,9 @@ structs containing properties.
 
 ## Persistence and reconstruction
 
-Persistence consumers may store molecular graph/perception, properties, and
-topology hierarchy separately according to their ownership boundaries.
+Persistence consumers may store molecular graph/perception, properties, topology
+classification, and topology hierarchy separately according to their ownership
+boundaries.
 
 Molecule reconstruction order is conceptually:
 
@@ -2115,12 +2272,13 @@ or rejected before publication.
 
 Loading must never weaken the connectedness invariant.
 
-Topology persistence must reconstruct definitions, instances, qualified
-atom/bond identities, authoritative dense ordering, hierarchy, and topology
-property tables consistently. Hierarchy atom sites are validated against
-reconstructed `InstanceAtomId` values. Geometry and realization properties are
-restored separately and validated by the owning `Model`, `Ensemble`, or
-`Trajectory` against that topology layout.
+Topology persistence must reconstruct definitions, definition-scoped
+`MoleculeClass`, instances, qualified atom/bond identities, authoritative dense
+ordering, hierarchy with `ResidueClass`, and topology property tables
+consistently. Hierarchy atom sites are validated against reconstructed
+`InstanceAtomId` values. Geometry and realization properties are restored
+separately and validated by the owning `Model`, `Ensemble`, or `Trajectory`
+against that topology layout.
 
 Runtime domain objects are not required to be generic file-format DTOs. Source
 metadata that is not canonical represented molecular/topology state and has not
@@ -2142,6 +2300,9 @@ correspondence, as hierarchy-aware slicing does.
 
 Per-entity property columns may follow such an explicit correspondence. Generic
 owner-level properties are not blindly copied to structurally changed owners.
+Canonical molecule/residue classifications must remain valid for the transformed
+topology and are re-inferred when structural changes make direct preservation
+unsafe.
 
 Coordinate-only operations never mutate `Graph`, `Perception`, `Hierarchy`, or
 `Topology`.
@@ -2158,8 +2319,15 @@ pub struct Molecule {
 }
 ```
 
-`Topology` owns the system-level `Hierarchy` and `Properties`; the exact physical
-field/module layout is not normative.
+`Topology` owns the system-level `Hierarchy`, canonical classification, and
+`Properties`; the exact physical field/module layout is not normative.
+
+The canonical classification vocabulary is:
+
+```text
+MoleculeClass
+ResidueClass
+```
 
 The canonical property vocabulary is:
 
@@ -2194,37 +2362,40 @@ When deciding where new state belongs:
    definition, one system layout, one realization, or one collection? Put it in
    that owner's `Properties`, using an owner-level `PropertyValue` or the
    appropriate per-entity `PropertyTable`.
-4. Does it identify which connected molecules exist in one coordinate-free
+4. Is it the broad canonical class of a reusable molecule definition or topology
+   residue? Use strongly typed `MoleculeClass` / `ResidueClass` at `Topology`
+   scope rather than a generic property or source-format entity enum.
+5. Does it identify which connected molecules exist in one coordinate-free
    system or define their topology-wide atom/bond layout? Put it in `Topology`.
-5. Is it coordinate-independent residue/chain/polymer/atom-site organization of
+6. Is it coordinate-independent residue/chain/polymer/atom-site organization of
    system atoms, potentially spanning molecule instances? Put it in the
    `Hierarchy` owned by `Topology`; generic annotations about those hierarchy
    nodes belong in topology property tables.
-6. Is it a substantial task-specific analysis, typing, scoring, parameterization,
+7. Is it a substantial task-specific analysis, typing, scoring, parameterization,
    or other derived result whose own data model is meaningful? Prefer a separate
    derived object. Attach selected results as properties only deliberately and
    at the scope where their validity is defined.
-7. Is it dense coordinate/model/frame data? Store it in a topology-agnostic
+8. Is it dense coordinate/model/frame data? Store it in a topology-agnostic
    numerical container or the owning realization's property tables above
    `Topology`, according to its semantics.
-8. Does an operation need to interpret dense data or property columns by semantic
+9. Does an operation need to interpret dense data or property columns by semantic
    atom/bond/hierarchy identity? Perform it at the `Model`, `Ensemble`,
    `Trajectory`, or owning `Topology` level where the identity context exists.
-9. Does an asserted new bond connect two current molecule instances? Construct a
-   new connected `Molecule` and therefore a new `Topology`.
-10. Does a workflow change topology? Construct the new topology and its new dense
+10. Does an asserted new bond connect two current molecule instances? Construct a
+    new connected `Molecule` and therefore a new `Topology`.
+11. Does a workflow change topology? Construct the new topology and its new dense
     state explicitly; do not rely on a generic remapping layer. Narrow
     operation-specific correspondence is appropriate when required by the
     operation.
-11. Is a physical quantity stored numerically inside Kekule, including as a real
+12. Is a physical quantity stored numerically inside Kekule, including as a real
     property value/column? Accept compatible units at the boundary and normalize
     consistently rather than creating a subsystem-specific unit convention.
-12. Is an operation specific to a file or serialization format? Put it in that
+13. Is an operation specific to a file or serialization format? Put it in that
     format namespace or on a format-specific `Document`/`Record`/`Block`, not on
     `Molecule`, `Topology`, `Model`, `Ensemble`, or `Trajectory`. Ergonomic
     helpers may compose the canonical parse/interpret pipeline but must not
     create an independent conversion path.
-13. Is an arbitrary source field merely available in an input format? Do not
+14. Is an arbitrary source field merely available in an input format? Do not
     automatically turn it into a generic property. Promotion requires defined
     canonical semantics, owner scope, and target domain.
 
@@ -2236,8 +2407,14 @@ The core invariants are intentionally simple:
 
 > A Kekule `Topology` is one immutable, geometry-independent molecular system
 > composed of one or more explicit `Molecule` instances with authoritative
-> topology-wide identity, dense layout, system-level `Hierarchy`, and
-> system-scoped `Properties` that do not define layout identity.
+> topology-wide identity, dense layout, system-level `Hierarchy`, canonical
+> molecule/residue classification, and system-scoped `Properties` that do not
+> define layout identity.
+
+> Every reusable `MoleculeDefinition` has one canonical `MoleculeClass`, shared
+> by all of its instances, and every hierarchy `Residue` has one canonical
+> `ResidueClass`. Classification is assigned automatically at topology
+> publication with explicit builder overrides available for callers.
 
 > `Hierarchy` is owned exactly once by `Topology`; it may span molecule-instance
 > boundaries and maps atom sites to topology-qualified `InstanceAtomId` values.
@@ -2344,11 +2521,24 @@ Vec<Model> + mmCIF -> multiple blocks
 Ensemble   + mmCIF -> one multi-model block
 ```
 
-Generic `Topology` does not classify molecule instances as mmCIF polymer,
-branched, non-polymer, or water entities. Generic mmCIF writing therefore
-requires explicit format-specific entity classifications, while source-preserving
-round trips may reuse mmCIF interpretation reports/provenance. The writer must
-not guess entity classification from molecular structure or hierarchy presence.
+Generic `Topology` carries canonical `MoleculeClass` and `ResidueClass`, not the
+mmCIF-specific polymer/branched/non-polymer/water taxonomy. The mmCIF writer
+should normally derive the required mmCIF entity classification automatically
+from canonical topology classification plus hierarchy/structural information
+where the mmCIF distinction requires it. Typical mappings include protein/DNA/RNA
+to polymer, water to water, and ion/small-molecule to non-polymer; carbohydrate
+may require hierarchy/connectivity to distinguish polymeric, branched, and
+discrete mmCIF representations.
+
+An explicit `MmcifEntityClassifications`-style input may remain as an expert
+format-specific override or exact source-preserving aid, but it is not the
+ordinary requirement for writing a normal canonical `Model` or `Ensemble`.
+Source-preserving round trips may additionally reuse exact mmCIF interpretation
+provenance when it carries distinctions not represented by the canonical broad
+classification.
+
+The writer must not infer biological/contextual roles such as receptor or ligand,
+and it must not use the mere presence of hierarchy as a proxy for polymer status.
 
 ### Shared realization-writing path
 
@@ -2373,7 +2563,7 @@ practical, especially for multi-record SDF and multi-model mmCIF. String-returni
 helpers may wrap the same authoritative implementation for ergonomic use.
 
 Write failures are format-specific and must be explicit. Writers must reject
-unsupported selected-version chemistry, missing required mmCIF semantics,
+unsupported selected-version chemistry, unresolved required mmCIF semantics,
 invalid format metadata, incompatible realization state, or I/O failures rather
 than silently omit canonical state.
 
@@ -2382,6 +2572,7 @@ than silently omit canonical state.
 SMILES, Molfile/SDF, and mmCIF are interoperability/export formats. They are not
 the versioned native persistence representation of Kekule's complete canonical
 object graph. Exact persistence may eventually use a separate Kekule-native
-serialization format capable of preserving definitions, hierarchy, perception,
-generic properties, collection metadata, and other canonical state without
-forcing that state through an external chemistry format that cannot represent it.
+serialization format capable of preserving definitions, canonical
+classification, hierarchy, perception, generic properties, collection metadata,
+and other canonical state without forcing that state through an external
+chemistry format that cannot represent it.
