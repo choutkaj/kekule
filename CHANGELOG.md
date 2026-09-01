@@ -2,6 +2,31 @@
 
 All notable changes to Kekule are documented in this file.
 
+## [0.2.1] - 2026-09-01
+
+This compatible workspace release adds canonical molecule and residue
+classification and uses it for ordinary mmCIF entity planning.
+
+### Added
+
+- Add topology-owned `MoleculeClass` and `ResidueClass` values with automatic,
+  conservative inference during topology publication.
+- Add definition-, instance-, residue-, builder-override-, and typed-selection
+  APIs for canonical classification.
+- Preserve classification through definition reuse and append-only topology
+  transformations while re-inferring it for structural subsets.
+
+### Changed
+
+- Derive ordinary mmCIF polymer, water, and non-polymer entity kinds from
+  canonical topology classification; explicit expert classifications and
+  source interpretation reports remain authoritative overrides.
+- Keep carbohydrate projection conservative: a single carbohydrate residue is
+  written as a non-polymer, while multi-residue carbohydrates require explicit
+  or source-preserved mmCIF entity semantics.
+- Simplify the combined SDF and mmCIF README workflow so generic models no
+  longer need a manually assembled entity-classification sidecar.
+
 ## [0.2.0] - 2026-08-30
 
 This release establishes the canonical object model described in
@@ -67,5 +92,6 @@ This release establishes the canonical object model described in
 
 - Initial release of `kekule`, `kekule-traj`, and `kekule-potentials`.
 
+[0.2.1]: https://github.com/choutkaj/kekule/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/choutkaj/kekule/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/choutkaj/kekule/releases/tag/v0.1.0
