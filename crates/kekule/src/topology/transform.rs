@@ -9,7 +9,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::{
-    AtomSelection, HierarchyError, InstanceAtomId, InstanceBondId, MoleculeInstanceId,
+    AtomSelection, HierarchyError, InstanceAtomId, InstanceBondId, MoleculeInstanceId, ResidueId,
     SelectionError, Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuildError,
     TopologyBuilder,
 };
@@ -136,6 +136,7 @@ fn retain_normalized(
         .filter(|(id, _)| referenced_definitions[id.index()])
     {
         let target_id = builder.add_molecule_definition(definition.molecule())?;
+        builder.set_molecule_class(target_id, definition.class())?;
         definition_targets[source_id.index()] = Some(target_id);
     }
 
@@ -170,6 +171,14 @@ fn retain_normalized(
 
     let hierarchy_projection =
         copy_filtered_hierarchy(topology, builder.hierarchy_mut(), &atom_targets)?;
+    for (target_index, source_index) in hierarchy_projection.residues.iter().copied().enumerate() {
+        let class = topology
+            .hierarchy()
+            .residue(ResidueId::new(source_index as u32))
+            .expect("retained residue projection references a live source residue")
+            .class();
+        builder.set_residue_class(ResidueId::new(target_index as u32), class)?;
+    }
 
     let mut target = builder.build()?;
     target.properties = project_topology_properties(

@@ -16,6 +16,7 @@
 //! [`transform`] or selections for checked structural subsets.
 
 mod builder;
+mod classification;
 mod hierarchy;
 mod selection;
 pub mod transform;
@@ -39,6 +40,40 @@ fixed_u32_id!(MoleculeDefinitionId, "definition");
 fixed_u32_id!(MoleculeInstanceId, "molecule");
 fixed_u32_id!(TopologyAtomIndex, "atom-index");
 fixed_u32_id!(TopologyBondIndex, "bond-index");
+
+/// Broad intrinsic classification of one reusable topology molecule definition.
+///
+/// The class is inferred when a [`Topology`] is published, may use hierarchy
+/// context, and is shared by every instance of the definition. It is distinct
+/// from contextual roles such as ligand or receptor and from format-specific
+/// categories such as mmCIF entity kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MoleculeClass {
+    Protein,
+    Dna,
+    Rna,
+    Carbohydrate,
+    Water,
+    Ion,
+    SmallMolecule,
+    Other,
+}
+
+/// Broad canonical classification of one topology-owned hierarchy residue.
+///
+/// Residue classes are inferred during topology publication and can be
+/// explicitly overridden through [`TopologyBuilder`]. They describe component
+/// identity rather than contextual roles or source-format entity semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ResidueClass {
+    AminoAcid,
+    DnaNucleotide,
+    RnaNucleotide,
+    Carbohydrate,
+    Water,
+    Ion,
+    Other,
+}
 
 /// The local atom of one explicit molecule instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -184,6 +219,11 @@ impl<'a> ResidueView<'a> {
         self.local().name()
     }
 
+    /// Returns this topology-owned residue's canonical class.
+    pub fn class(self) -> ResidueClass {
+        self.local().class()
+    }
+
     pub fn label_comp_id(self) -> Option<&'a str> {
         self.local().label_comp_id()
     }
@@ -285,6 +325,7 @@ impl<'a> AtomSiteView<'a> {
 pub struct MoleculeDefinition {
     id: MoleculeDefinitionId,
     molecule: Molecule,
+    class: MoleculeClass,
 }
 
 impl MoleculeDefinition {
@@ -294,6 +335,11 @@ impl MoleculeDefinition {
 
     pub fn molecule(&self) -> &Molecule {
         &self.molecule
+    }
+
+    /// Returns the canonical class shared by every instance of this definition.
+    pub const fn class(&self) -> MoleculeClass {
+        self.class
     }
 }
 
@@ -372,6 +418,11 @@ impl<'a> MoleculeInstanceView<'a> {
     /// Returns the definition-owned molecular state for this occurrence.
     pub fn molecule(self) -> &'a Molecule {
         self.definition().molecule()
+    }
+
+    /// Returns the canonical class of this occurrence's reusable definition.
+    pub fn class(self) -> MoleculeClass {
+        self.definition().class()
     }
 
     pub fn property(self, key: &PropertyKey) -> Result<Option<PropertyValue>, PropertyError> {
@@ -593,6 +644,14 @@ impl Topology {
     ) -> Result<&MoleculeDefinition, TopologyError> {
         let instance = self.instance(instance)?;
         self.definition(instance.definition)
+    }
+
+    /// Returns the canonical class shared by the instance's definition.
+    pub fn molecule_class(
+        &self,
+        instance: MoleculeInstanceId,
+    ) -> Result<MoleculeClass, TopologyError> {
+        Ok(self.definition_for_instance(instance)?.class())
     }
 
     pub fn instances_for_definition(

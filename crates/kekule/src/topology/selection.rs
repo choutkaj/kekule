@@ -6,8 +6,9 @@ use crate::core::Element;
 use crate::substructure::QueryMatch;
 
 use super::{
-    AtomSiteId, AtomSiteView, ChainId, ChainView, InstanceAtomId, MoleculeDefinitionId,
-    MoleculeInstanceId, ResidueId, ResidueView, Topology, TopologyAtomIndex,
+    AtomSiteId, AtomSiteView, ChainId, ChainView, InstanceAtomId, MoleculeClass,
+    MoleculeDefinitionId, MoleculeInstanceId, ResidueClass, ResidueId, ResidueView, Topology,
+    TopologyAtomIndex,
 };
 
 /// A topology-bound, sorted, unique dense atom selection.
@@ -98,6 +99,21 @@ impl AtomSelection {
         Self::for_instances(topology, instances)
     }
 
+    /// Selects all atoms in molecule instances having one of `classes`.
+    pub fn for_molecule_classes(
+        topology: &Arc<Topology>,
+        classes: impl IntoIterator<Item = MoleculeClass>,
+    ) -> Result<Self, SelectionError> {
+        let classes = classes.into_iter().collect::<BTreeSet<_>>();
+        Self::for_instances(
+            topology,
+            topology
+                .molecules()
+                .filter(|molecule| classes.contains(&molecule.class()))
+                .map(|molecule| molecule.id()),
+        )
+    }
+
     pub fn for_elements(
         topology: &Arc<Topology>,
         elements: impl IntoIterator<Item = Element>,
@@ -144,6 +160,21 @@ impl AtomSelection {
                 .atom_sites()
                 .filter(|site| residues.contains(&site.residue().id()))
                 .map(AtomSiteView::id),
+        )
+    }
+
+    /// Selects all atoms in residues having one of `classes`.
+    pub fn for_residue_classes(
+        topology: &Arc<Topology>,
+        classes: impl IntoIterator<Item = ResidueClass>,
+    ) -> Result<Self, SelectionError> {
+        let classes = classes.into_iter().collect::<BTreeSet<_>>();
+        Self::for_residues(
+            topology,
+            topology
+                .residues()
+                .filter(|residue| classes.contains(&residue.class()))
+                .map(ResidueView::id),
         )
     }
 

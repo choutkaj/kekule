@@ -476,9 +476,10 @@ pub mod sdf {
 /// Data blocks are independent interpretation scopes. One selected coordinate
 /// model naturally produces a [`crate::structure::Model`], while compatible
 /// coordinate models from one block may produce an
-/// [`crate::structure::Ensemble`]. Generic writing requires explicit mmCIF
-/// entity classifications because a [`crate::topology::Topology`] does not
-/// invent polymer or entity semantics.
+/// [`crate::structure::Ensemble`]. Ordinary writing derives mmCIF entity kinds
+/// from canonical topology classification; source reports and explicit
+/// classifications remain available for faithful round trips and expert
+/// overrides.
 pub mod mmcif {
     pub use crate::io::{
         MmcifAltLocPolicy, MmcifAtomProvenance, MmcifBlock, MmcifConnectionResolutionReason,
@@ -544,12 +545,10 @@ pub mod mmcif {
         block.interpret_ensemble_with_options(options)
     }
 
-    /// Attempts to write a model without inventing mmCIF entity semantics.
+    /// Writes a model using entity semantics derived from canonical topology classification.
     ///
-    /// Generic topology state intentionally contains no mmCIF entity roles, so
-    /// a non-empty model returns [`MmcifWriteError::MissingEntityClassification`].
-    /// Use [`write_with_classifications`] for a generic model or
-    /// [`write_with_report`] for an interpreted mmCIF model.
+    /// Use [`write_with_classifications`] for expert format-specific overrides
+    /// or [`write_with_report`] to preserve interpreted mmCIF source semantics.
     pub fn write(
         model: &crate::structure::Model,
         options: MmcifWriteOptions,
@@ -557,12 +556,11 @@ pub mod mmcif {
         crate::io::write_mmcif_model(model, options)
     }
 
-    /// Attempts to write one model as one block without inventing entity semantics.
+    /// Writes one model as one block using canonical topology classification.
     ///
-    /// This is the canonical-object spelling of [`write()`]. A generic non-empty
-    /// model normally requires [`write_model_with_classifications`]; an
-    /// mmCIF-derived model should use [`write_model_with_report`] to preserve
-    /// source entity and asymmetry semantics.
+    /// This is the canonical-object spelling of [`write()`]. An mmCIF-derived
+    /// model may use [`write_model_with_report`] to preserve exact source entity
+    /// and asymmetry semantics.
     pub fn write_model(
         model: &crate::structure::Model,
         options: MmcifWriteOptions,
@@ -570,12 +568,11 @@ pub mod mmcif {
         write(model, options)
     }
 
-    /// Attempts to write independent models as one deterministic block per model.
+    /// Writes independent models as one deterministic block per model.
     ///
-    /// This strict entry point does not infer polymer, branched, non-polymer,
-    /// or water classifications. Generic non-empty models normally require
-    /// [`write_models_with_classifications`]; mmCIF-derived models should use
-    /// [`write_models_with_reports`] to preserve source format semantics.
+    /// Entity kinds are derived from each model's canonical topology
+    /// classification. Use [`write_models_with_reports`] when exact source
+    /// format semantics must be retained.
     pub fn write_models(
         models: &[crate::structure::Model],
         options: MmcifWriteOptions,
@@ -599,13 +596,11 @@ pub mod mmcif {
         crate::io::write_mmcif_models_with_reports(models, reports, options)
     }
 
-    /// Attempts to write one shared-topology ensemble as one multi-model block.
+    /// Writes one shared-topology ensemble as one multi-model block.
     ///
-    /// This strict entry point does not infer polymer, branched, non-polymer,
-    /// or water classifications. A generic non-empty ensemble normally requires
-    /// [`write_ensemble_with_classifications`]. For mmCIF-derived state, use
-    /// [`write_ensemble_with_reports`] or [`write_ensemble_interpretation`] to
-    /// preserve source format semantics.
+    /// Entity kinds are derived from canonical topology classification. For
+    /// mmCIF-derived state, use [`write_ensemble_with_reports`] or
+    /// [`write_ensemble_interpretation`] to preserve source format semantics.
     pub fn write_ensemble(
         ensemble: &crate::structure::Ensemble,
         options: MmcifWriteOptions,
@@ -654,7 +649,8 @@ pub mod mmcif {
 
     /// Writes a generic model with explicit format-specific entity semantics.
     ///
-    /// Every molecule instance must occur exactly once in `classifications`.
+    /// Entries override automatically derived kinds; omitted instances continue
+    /// to use canonical topology classification.
     /// Generic writing deterministically assigns one mmCIF entity to each
     /// populated topology hierarchy chain (and one to each hierarchy-free
     /// instance). Instances touched by the same chain must therefore have the
