@@ -137,12 +137,8 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         ),
         Err(MmcifWriteError::InvalidBlockName(name)) if name.is_empty()
     ));
-    assert_eq!(
-        mmcif::write(interpreted.model(), MmcifWriteOptions::default()),
-        Err(MmcifWriteError::MissingEntityClassification(
-            provenance.molecule()
-        ))
-    );
+    let automatic = mmcif::write(interpreted.model(), MmcifWriteOptions::default())?;
+    assert!(automatic.contains("1 non-polymer"));
     let mut classifications = MmcifEntityClassifications::new();
     classifications.insert(provenance.molecule(), MmcifEntityKind::Polymer)?;
     let written = mmcif::write_with_classifications(

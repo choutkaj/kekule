@@ -9,8 +9,9 @@ use crate::properties::{
 use crate::topology::transform::TopologySubsetError;
 use crate::topology::{
     AtomSelection, AtomSiteId, AtomSiteView, ChainId, ChainView, Hierarchy, InstanceAtomId,
-    InstanceBondId, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, ResidueId,
-    ResidueView, Topology, TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyError,
+    InstanceBondId, MoleculeClass, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId,
+    ResidueClass, ResidueId, ResidueView, Topology, TopologyAtomIndex, TopologyBuildError,
+    TopologyBuilder, TopologyError,
 };
 use crate::units::Quantity;
 
@@ -815,6 +816,24 @@ impl ModelBuilder {
         molecule: &Molecule,
     ) -> Result<MoleculeDefinitionId, ModelBuildError> {
         Ok(self.topology.add_molecule_definition(molecule)?)
+    }
+
+    /// Overrides automatic classification for one staged molecule definition.
+    pub fn set_molecule_class(
+        &mut self,
+        definition: MoleculeDefinitionId,
+        class: MoleculeClass,
+    ) -> Result<(), ModelBuildError> {
+        Ok(self.topology.set_molecule_class(definition, class)?)
+    }
+
+    /// Overrides automatic classification for one staged hierarchy residue.
+    pub fn set_residue_class(
+        &mut self,
+        residue: ResidueId,
+        class: ResidueClass,
+    ) -> Result<(), ModelBuildError> {
+        Ok(self.topology.set_residue_class(residue, class)?)
     }
 
     /// Adds an instance with dense positions in its definition's atom order.
