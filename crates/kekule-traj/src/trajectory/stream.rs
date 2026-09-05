@@ -141,7 +141,7 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let positions = Positions::new(frame.positions.values())?;
-        let mut owned = TrajectoryFrame::new(positions, self.trajectory.topology.bond_count());
+        let mut owned = TrajectoryFrame::new(positions);
         owned.cell = frame.cell.copied();
         owned.properties = frame.properties.clone();
         owned.velocities = frame.velocities.map(Velocities::new).transpose()?;

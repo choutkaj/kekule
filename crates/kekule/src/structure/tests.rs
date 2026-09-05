@@ -139,12 +139,12 @@ fn canonical_ensemble_constructors_accept_owned_and_shared_topology() {
 
     let owned_members = Ensemble::from_members(
         single_atom_topology(),
-        [EnsembleMember::new(single_position(1.0), 0)],
+        [EnsembleMember::new(single_position(1.0))],
     )
     .unwrap();
     let shared_members = Ensemble::from_members(
         owned_members.shared_topology(),
-        [EnsembleMember::new(single_position(2.0), 0)],
+        [EnsembleMember::new(single_position(2.0))],
     )
     .unwrap();
     assert!(owned_members
@@ -161,7 +161,7 @@ fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
     )
     .unwrap();
     let key = PropertyKey::new("score").unwrap();
-    let mut first = EnsembleMember::new(single_position(1.0), 0);
+    let mut first = EnsembleMember::new(single_position(1.0));
     first.set_cell(Some(cell));
     first
         .insert_property(
@@ -173,7 +173,7 @@ fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
         .set_atom_property(0, key.clone(), Some(PropertyValue::Int(7)))
         .unwrap();
     first.set_weight(Some(0.25)).unwrap();
-    let mut second = EnsembleMember::new(single_position(2.0), 0);
+    let mut second = EnsembleMember::new(single_position(2.0));
     second.set_weight(Some(0.75)).unwrap();
     let mut ensemble = Ensemble::from_members(Arc::clone(&topology), [first, second]).unwrap();
 
@@ -218,26 +218,77 @@ fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
 }
 
 #[test]
+fn positions_only_members_establish_empty_domains_and_keep_editors_strict() {
+    let (model, _, _) = model_fixture();
+    let mut member = EnsembleMember::new(model.positions().clone());
+    assert_eq!(member.bond_properties().len(), 0);
+    let key = PropertyKey::new("label").unwrap();
+    let mut properties = Properties::new();
+    properties
+        .insert(key.clone(), PropertyValue::Int(7))
+        .unwrap();
+    member.set_properties(properties).unwrap();
+    let mut ensemble = Ensemble::from_members(model.shared_topology(), [member]).unwrap();
+    assert_eq!(ensemble.member(0).unwrap().atom_properties().len(), 2);
+    assert_eq!(ensemble.member(0).unwrap().bond_properties().len(), 1);
+    assert_eq!(
+        ensemble.member(0).unwrap().properties().get(&key),
+        Some(&PropertyValue::Int(7))
+    );
+    let mut editor = ensemble.member_mut(0).unwrap();
+    let before = editor.properties().clone();
+    assert!(editor
+        .insert_bond_property_column(key.clone(), PropertyColumn::Int(vec![Some(8); 2]))
+        .is_err());
+    assert_eq!(editor.properties(), &before);
+    editor
+        .insert_bond_property_column(key.clone(), PropertyColumn::Int(vec![Some(8)]))
+        .unwrap();
+    assert_eq!(
+        editor.bond_property(0, &key).unwrap(),
+        Some(PropertyValue::Int(8))
+    );
+
+    let mut replacement = EnsembleMember::new(Positions::zeros(2));
+    // Empty table lengths carry no columns and therefore no correspondence data.
+    replacement
+        .set_properties(Properties::realization(usize::MAX, usize::MAX))
+        .unwrap();
+    ensemble.replace_member(0, replacement).unwrap();
+    let stored = ensemble.member(0).unwrap();
+    assert_eq!(stored.as_model().atom_properties().len(), 2);
+    assert_eq!(stored.as_model().bond_properties().len(), 1);
+}
+
+#[test]
 fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
     let (model, _, _) = model_fixture();
     let topology = model.shared_topology();
-    let mut original = EnsembleMember::new(model.positions().clone(), topology.bond_count());
+    let mut original = EnsembleMember::new(model.positions().clone());
     original.set_weight(Some(0.75)).unwrap();
     let mut ensemble = Ensemble::from_members(Arc::clone(&topology), [original.clone()]).unwrap();
+    let original = (*ensemble.member_mut(0).unwrap()).clone();
+    let mut bad_bonds = EnsembleMember::new(Positions::zeros(2));
+    bad_bonds
+        .insert_bond_property_column(
+            PropertyKey::new("bad_bonds").unwrap(),
+            PropertyColumn::Int(vec![Some(1); 2]),
+        )
+        .unwrap();
 
     for (replacement, expected) in [
         (
-            EnsembleMember::new(Positions::zeros(1), 1),
+            EnsembleMember::new(Positions::zeros(1)),
             EnsembleError::PositionCountMismatch {
                 expected: 2,
                 actual: 1,
             },
         ),
         (
-            EnsembleMember::new(Positions::zeros(2), 0),
+            bad_bonds,
             EnsembleError::BondPropertyCountMismatch {
                 expected: 1,
-                actual: 0,
+                actual: 2,
             },
         ),
     ] {
@@ -281,16 +332,17 @@ fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
 fn ensemble_replacement_preserves_order_and_publishes_complete_member_state() {
     let (model, _, _) = model_fixture();
     let topology = model.shared_topology();
-    let original = EnsembleMember::new(model.positions().clone(), topology.bond_count());
+    let original = EnsembleMember::new(model.positions().clone());
     let mut ensemble =
         Ensemble::from_members(Arc::clone(&topology), [original.clone(), original.clone()])
             .unwrap();
+    let original = (*ensemble.member_mut(0).unwrap()).clone();
     let key = PropertyKey::new("score").unwrap();
     ensemble
         .insert_property(key.clone(), PropertyValue::Int(9))
         .unwrap();
     let collection_properties = ensemble.properties().clone();
-    let mut replacement = EnsembleMember::new(Positions::zeros(2), 1);
+    let mut replacement = EnsembleMember::new(Positions::zeros(2));
     replacement.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), ANGSTROM),
@@ -306,7 +358,7 @@ fn ensemble_replacement_preserves_order_and_publishes_complete_member_state() {
         .set_atom_property(0, key.clone(), Some(PropertyValue::Int(2)))
         .unwrap();
     replacement
-        .set_bond_property(0, key, Some(PropertyValue::Int(3)))
+        .insert_bond_property_column(key, PropertyColumn::Int(vec![Some(3)]))
         .unwrap();
 
     assert_eq!(

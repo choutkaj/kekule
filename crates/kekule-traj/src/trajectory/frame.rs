@@ -178,8 +178,9 @@ pub struct TrajectoryFrame {
 }
 
 impl TrajectoryFrame {
-    pub fn new(positions: Positions, bond_count: usize) -> Self {
-        let properties = Properties::realization(positions.len(), bond_count);
+    /// Constructs a detached frame. Empty property domains are sized on insertion.
+    pub fn new(positions: Positions) -> Self {
+        let properties = Properties::realization(positions.len(), 0);
         Self {
             positions,
             cell: None,
@@ -225,22 +226,58 @@ impl TrajectoryFrame {
 
     realization_property_api!();
 
-    pub fn set_properties(&mut self, properties: Properties) -> Result<(), FrameError> {
-        if properties.realization_atom_properties().len() != self.positions.len() {
+    /// Replaces detached properties. Populated atom columns must match positions;
+    /// bond columns are checked against topology when inserted into a trajectory.
+    pub fn set_properties(&mut self, mut properties: Properties) -> Result<(), FrameError> {
+        if properties.realization_atom_properties().has_data()
+            && properties.realization_atom_properties().len() != self.positions.len()
+        {
             return Err(FrameError::AtomCountMismatch {
                 expected: self.positions.len(),
                 actual: properties.realization_atom_properties().len(),
             });
         }
-        if properties.realization_bond_properties().len() != self.bond_properties().len() {
-            return Err(FrameError::BondCountMismatch {
-                expected: self.bond_properties().len(),
-                actual: properties.realization_bond_properties().len(),
-            });
-        }
-        properties.validate_realization_canonical_properties()?;
+        properties.normalize_realization_dimensions(
+            self.positions.len(),
+            properties.realization_bond_properties().len(),
+        )?;
         self.properties = properties;
         Ok(())
+    }
+
+    fn insert_bond_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>, FrameError> {
+        if !self.bond_properties().has_data() {
+            let mut properties = self.properties.clone();
+            properties.normalize_realization_dimensions(self.positions.len(), column.len())?;
+            let previous = properties.insert_realization_bond_column(key, column)?;
+            self.properties = properties;
+            return Ok(previous);
+        }
+        Ok(self
+            .properties
+            .insert_realization_bond_column(key, column)?)
+    }
+
+    pub(super) fn prepare(&mut self, topology: &Arc<Topology>) -> Result<(), FrameError> {
+        validate_atom_count(topology.atom_count(), self.positions.len())?;
+        if self.atom_properties().has_data() {
+            validate_atom_count(topology.atom_count(), self.atom_properties().len())?;
+        }
+        if self.bond_properties().has_data()
+            && self.bond_properties().len() != topology.bond_count()
+        {
+            return Err(FrameError::BondCountMismatch {
+                expected: topology.bond_count(),
+                actual: self.bond_properties().len(),
+            });
+        }
+        self.properties
+            .normalize_realization_dimensions(topology.atom_count(), topology.bond_count())?;
+        self.validate(topology)
     }
 
     pub fn velocities(&self) -> Option<&Velocities> {
@@ -293,6 +330,8 @@ impl TrajectoryFrame {
         self.step = step;
     }
 
+    /// Validates already dimensioned state without changing empty domains.
+    /// [`super::Trajectory::push`] establishes those domains before validation.
     pub fn validate(&self, topology: &Arc<Topology>) -> Result<(), FrameError> {
         validate_atom_count(topology.atom_count(), self.positions.len())?;
         validate_atom_count(topology.atom_count(), self.atom_properties().len())?;
@@ -313,6 +352,8 @@ impl TrajectoryFrame {
         Ok(())
     }
 
+    /// Borrows already dimensioned state. Prefer [`super::Trajectory::frame`]
+    /// to obtain a view after insertion has established empty property domains.
     pub fn view<'a>(
         &'a self,
         topology: &'a Arc<Topology>,
@@ -355,10 +396,6 @@ impl<'a> TrajectoryFrameView<'a> {
 
     pub fn shared_topology(self) -> Arc<Topology> {
         Arc::clone(self.topology)
-    }
-
-    pub(crate) const fn topology_arc(self) -> &'a Arc<Topology> {
-        self.topology
     }
 
     pub const fn positions(self) -> &'a Positions {

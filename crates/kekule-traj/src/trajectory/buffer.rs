@@ -156,6 +156,16 @@ impl FrameBuffer {
 
     realization_property_api!();
 
+    fn insert_bond_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>, FrameError> {
+        Ok(self
+            .properties
+            .insert_realization_bond_column(key, column)?)
+    }
+
     pub fn set_positions<T>(&mut self, positions: Quantity<T>) -> Result<(), FrameError>
     where
         T: AsRef<[Point3]>,
