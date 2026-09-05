@@ -1,11 +1,9 @@
 use std::io;
 use std::path::Path;
-use std::sync::Arc;
 
-use kekule::topology::Topology;
 use kekule::units::Unit;
 
-use crate::{AtomOrderAssertion, AtomOrderAssertionKind, TrajectoryError, TrajectoryFormat};
+use crate::{TrajectoryError, TrajectoryFormat};
 
 use super::{dcd, detect, trr, xtc, xyz, TrajectoryIoLimits};
 
@@ -15,40 +13,6 @@ use super::{dcd, detect, trr, xtc, xyz, TrajectoryIoLimits};
 pub enum TrajectoryFormatHint {
     Auto,
     Explicit(TrajectoryFormat),
-}
-
-/// Exact topology and caller-supplied atom-order evidence for a topology-free file.
-#[derive(Debug, Clone)]
-pub struct TrajectoryTopologyBinding {
-    topology: Arc<Topology>,
-    atom_order: AtomOrderAssertion,
-}
-
-impl TrajectoryTopologyBinding {
-    pub fn new(
-        topology: Arc<Topology>,
-        atom_order: AtomOrderAssertion,
-    ) -> Result<Self, TrajectoryError> {
-        if !atom_order.is_compatible(&topology) {
-            return Err(TrajectoryError::TopologyMismatch);
-        }
-        Ok(Self {
-            topology,
-            atom_order,
-        })
-    }
-
-    pub fn topology(&self) -> &Topology {
-        &self.topology
-    }
-
-    pub fn shared_topology(&self) -> Arc<Topology> {
-        Arc::clone(&self.topology)
-    }
-
-    pub fn atom_order(&self) -> &AtomOrderAssertion {
-        &self.atom_order
-    }
 }
 
 /// Per-frame availability of one trajectory field.
@@ -377,7 +341,6 @@ pub fn detect_trajectory_format<R: io::Read + io::Seek>(
 pub struct TrajectoryOpenReport {
     pub(super) selected_format: TrajectoryFormat,
     pub(super) detection_evidence: Vec<FormatDetectionEvidence>,
-    pub(super) atom_order_evidence: AtomOrderAssertionKind,
     pub(super) notes: Vec<String>,
 }
 
@@ -390,16 +353,15 @@ impl TrajectoryOpenReport {
         &self.detection_evidence
     }
 
-    pub const fn atom_order_evidence(&self) -> AtomOrderAssertionKind {
-        self.atom_order_evidence
-    }
-
     pub fn notes(&self) -> &[String] {
         &self.notes
     }
 }
 
 /// Format-agnostic open configuration.
+///
+/// Path readers use these top-level limits and the path as their diagnostic
+/// source label, overriding limits and source labels in format-specific options.
 #[derive(Debug, Clone)]
 pub struct TrajectoryOpenOptions {
     pub(super) format_hint: TrajectoryFormatHint,

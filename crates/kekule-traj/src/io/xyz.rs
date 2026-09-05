@@ -15,26 +15,42 @@ use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
 use super::{
     codec_context, io_context, projected_index_limit, require_nonempty_writer,
-    reserve_index_for_push, TrajectoryIoLimits, TrajectoryTopologyBinding,
+    reserve_index_for_push, TrajectoryIoLimits,
 };
 
 const MAX_WRITER_COMMENT_BYTES: usize = 1_048_576;
 
 /// XYZ length-unit interpretation.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct XyzReadOptions {
     length_unit: Unit,
+    limits: TrajectoryIoLimits,
+    source_label: String,
 }
 
 impl Default for XyzReadOptions {
     fn default() -> Self {
         Self {
+            limits: TrajectoryIoLimits::default(),
+            source_label: "xyz stream".into(),
             length_unit: ANGSTROM,
         }
     }
 }
 
 impl XyzReadOptions {
+    /// Sets limits applied before allocation, scanning, and seeking.
+    pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Sets the source label used in decoding errors.
+    pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
+        self.source_label = source_label.into();
+        self
+    }
+
     pub const fn with_length_unit(mut self, length_unit: Unit) -> Self {
         self.length_unit = length_unit;
         self
@@ -83,24 +99,27 @@ impl XyzWriteOptions {
 /// Sequential XYZ reader over a caller-supplied buffered stream.
 pub struct XyzReader<R> {
     reader: R,
-    binding: TrajectoryTopologyBinding,
+    topology: Arc<Topology>,
     options: XyzReadOptions,
-    limits: TrajectoryIoLimits,
-    source_label: String,
     frame_cursor: u64,
     line: String,
     positions: Vec<Point3>,
 }
 
 impl<R: BufRead> XyzReader<R> {
+    /// Opens a stream whose coordinates follow the supplied topology's dense order.
+    ///
+    /// Accepts an owned topology or a shared `Arc<Topology>`. Counts and available
+    /// format metadata are checked automatically; matching counts alone cannot
+    /// establish atom identity. Limits and diagnostic labels are set in `options`.
     pub fn new(
         reader: R,
-        binding: TrajectoryTopologyBinding,
+        topology: impl Into<Arc<Topology>>,
         options: XyzReadOptions,
-        limits: TrajectoryIoLimits,
-        source_label: impl Into<String>,
     ) -> Result<Self, TrajectoryError> {
-        let source_label = source_label.into();
+        let topology = topology.into();
+        let source_label = &options.source_label;
+        let limits = &options.limits;
         options
             .length_unit
             .conversion_factor_to(CANONICAL_LENGTH_UNIT)
@@ -109,28 +128,26 @@ impl<R: BufRead> XyzReader<R> {
                     TrajectoryCodecErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::Open,
                     Some(TrajectoryFormat::Xyz),
-                    &source_label,
+                    source_label,
                     format!("XYZ length unit is incompatible: {error}"),
                 )
             })?;
-        let atom_count = binding.topology().atom_count();
-        validate_atom_limit(atom_count, &limits, &source_label)?;
+        let atom_count = topology.atom_count();
+        validate_atom_limit(atom_count, limits, source_label)?;
         let mut positions = Vec::new();
         positions.try_reserve_exact(atom_count).map_err(|_| {
             codec_context(
                 TrajectoryCodecErrorKind::ResourceLimitExceeded,
                 TrajectoryIoOperation::Open,
                 Some(TrajectoryFormat::Xyz),
-                &source_label,
+                source_label,
                 "could not reserve XYZ position scratch",
             )
         })?;
         Ok(Self {
             reader,
-            binding,
+            topology,
             options,
-            limits,
-            source_label,
             frame_cursor: 0,
             line: String::new(),
             positions,
@@ -138,7 +155,7 @@ impl<R: BufRead> XyzReader<R> {
     }
 
     pub fn topology(&self) -> &Topology {
-        self.binding.topology()
+        self.topology.as_ref()
     }
 
     fn parse_next(&mut self, retain_positions: bool) -> Result<bool, TrajectoryError> {
@@ -147,7 +164,7 @@ impl<R: BufRead> XyzReader<R> {
         } else {
             TrajectoryIoOperation::ReadFrame
         };
-        if self.frame_cursor >= self.limits.max_frames {
+        if self.frame_cursor >= self.options.limits.max_frames {
             if self
                 .reader
                 .fill_buf()
@@ -155,7 +172,7 @@ impl<R: BufRead> XyzReader<R> {
                     io_context(
                         operation,
                         Some(TrajectoryFormat::Xyz),
-                        &self.source_label,
+                        &self.options.source_label,
                         error,
                     )
                 })?
@@ -166,7 +183,7 @@ impl<R: BufRead> XyzReader<R> {
             return Err(frame_codec_error(
                 TrajectoryCodecErrorKind::ResourceLimitExceeded,
                 operation,
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor,
                 "XYZ frame count exceeds the configured limit",
             ));
@@ -174,8 +191,8 @@ impl<R: BufRead> XyzReader<R> {
         let Some(count_line) = read_line(
             &mut self.reader,
             &mut self.line,
-            self.limits.max_text_line_bytes,
-            &self.source_label,
+            self.options.limits.max_text_line_bytes,
+            &self.options.source_label,
             operation,
         )?
         else {
@@ -188,15 +205,15 @@ impl<R: BufRead> XyzReader<R> {
                 frame_codec_error(
                     TrajectoryCodecErrorKind::ResourceLimitExceeded,
                     operation,
-                    &self.source_label,
+                    &self.options.source_label,
                     self.frame_cursor,
                     "XYZ frame byte count overflows",
                 )
             })?;
         validate_frame_bytes(
             frame_bytes,
-            &self.limits,
-            &self.source_label,
+            &self.options.limits,
+            &self.options.source_label,
             self.frame_cursor,
             operation,
         )?;
@@ -204,7 +221,7 @@ impl<R: BufRead> XyzReader<R> {
             frame_codec_error(
                 TrajectoryCodecErrorKind::InvalidFrame,
                 operation,
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor,
                 "XYZ atom-count line is not one unsigned integer",
             )
@@ -213,19 +230,19 @@ impl<R: BufRead> XyzReader<R> {
             return Err(frame_codec_error(
                 TrajectoryCodecErrorKind::InvalidFrame,
                 operation,
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor,
                 "XYZ frames cannot contain zero atoms",
             ));
         }
-        validate_atom_limit(atom_count, &self.limits, &self.source_label)?;
+        validate_atom_limit(atom_count, &self.options.limits, &self.options.source_label)?;
         if atom_count != self.topology().atom_count() {
             return Err(TrajectoryCodecErrorContext::new(
                 TrajectoryCodecErrorKind::InconsistentAtomCount,
                 operation,
                 Some(TrajectoryFormat::Xyz),
             )
-            .with_source_label(&self.source_label)
+            .with_source_label(&self.options.source_label)
             .with_frame(self.frame_cursor)
             .with_counts(self.topology().atom_count() as u64, atom_count as u64)
             .into());
@@ -233,8 +250,8 @@ impl<R: BufRead> XyzReader<R> {
         if read_line(
             &mut self.reader,
             &mut self.line,
-            self.limits.max_comment_bytes,
-            &self.source_label,
+            self.options.limits.max_comment_bytes,
+            &self.options.source_label,
             operation,
         )?
         .is_none()
@@ -242,7 +259,7 @@ impl<R: BufRead> XyzReader<R> {
             return Err(frame_codec_error(
                 TrajectoryCodecErrorKind::TruncatedRecord,
                 operation,
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor,
                 "XYZ frame is missing its comment line",
             ));
@@ -250,14 +267,14 @@ impl<R: BufRead> XyzReader<R> {
         frame_bytes = checked_frame_add(
             frame_bytes,
             self.line.len(),
-            &self.source_label,
+            &self.options.source_label,
             self.frame_cursor,
             operation,
         )?;
         validate_frame_bytes(
             frame_bytes,
-            &self.limits,
-            &self.source_label,
+            &self.options.limits,
+            &self.options.source_label,
             self.frame_cursor,
             operation,
         )?;
@@ -272,7 +289,7 @@ impl<R: BufRead> XyzReader<R> {
                     frame_codec_error(
                         TrajectoryCodecErrorKind::InconsistentMetadata,
                         operation,
-                        &self.source_label,
+                        &self.options.source_label,
                         self.frame_cursor,
                         format!("topology atom lookup failed: {error}"),
                     )
@@ -281,15 +298,15 @@ impl<R: BufRead> XyzReader<R> {
             let Some(line) = read_line(
                 &mut self.reader,
                 &mut self.line,
-                self.limits.max_text_line_bytes,
-                &self.source_label,
+                self.options.limits.max_text_line_bytes,
+                &self.options.source_label,
                 operation,
             )?
             else {
                 return Err(frame_codec_error(
                     TrajectoryCodecErrorKind::TruncatedRecord,
                     operation,
-                    &self.source_label,
+                    &self.options.source_label,
                     self.frame_cursor,
                     format!("XYZ frame ends before atom line {atom_index}"),
                 ));
@@ -297,14 +314,14 @@ impl<R: BufRead> XyzReader<R> {
             frame_bytes = checked_frame_add(
                 frame_bytes,
                 line.len(),
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor,
                 operation,
             )?;
             validate_frame_bytes(
                 frame_bytes,
-                &self.limits,
-                &self.source_label,
+                &self.options.limits,
+                &self.options.source_label,
                 self.frame_cursor,
                 operation,
             )?;
@@ -319,7 +336,7 @@ impl<R: BufRead> XyzReader<R> {
                 return Err(frame_codec_error(
                     TrajectoryCodecErrorKind::InvalidFrame,
                     operation,
-                    &self.source_label,
+                    &self.options.source_label,
                     self.frame_cursor,
                     format!("XYZ atom line {atom_index} must contain exactly four fields"),
                 ));
@@ -328,7 +345,7 @@ impl<R: BufRead> XyzReader<R> {
                 frame_codec_error(
                     TrajectoryCodecErrorKind::InvalidFrame,
                     operation,
-                    &self.source_label,
+                    &self.options.source_label,
                     self.frame_cursor,
                     format!("XYZ atom line {atom_index} has invalid element symbol {symbol:?}"),
                 )
@@ -337,7 +354,7 @@ impl<R: BufRead> XyzReader<R> {
                 return Err(frame_codec_error(
                     TrajectoryCodecErrorKind::InconsistentMetadata,
                     operation,
-                    &self.source_label,
+                    &self.options.source_label,
                     self.frame_cursor,
                     format!(
                         "XYZ atom {atom_index} is {}, but topology order requires {}",
@@ -351,7 +368,7 @@ impl<R: BufRead> XyzReader<R> {
                     frame_codec_error(
                         TrajectoryCodecErrorKind::InvalidFrame,
                         operation,
-                        &self.source_label,
+                        &self.options.source_label,
                         self.frame_cursor,
                         format!("XYZ atom line {atom_index} has an invalid coordinate"),
                     )
@@ -364,7 +381,7 @@ impl<R: BufRead> XyzReader<R> {
                 return Err(frame_codec_error(
                     TrajectoryCodecErrorKind::InvalidFrame,
                     operation,
-                    &self.source_label,
+                    &self.options.source_label,
                     self.frame_cursor,
                     format!("XYZ atom line {atom_index} has a non-finite coordinate"),
                 ));
@@ -392,7 +409,7 @@ impl<R: BufRead> TrajectoryReader for XyzReader<R> {
     }
 
     fn shared_topology(&self) -> Arc<Topology> {
-        self.binding.shared_topology()
+        Arc::clone(&self.topology)
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
@@ -407,7 +424,7 @@ impl<R: BufRead> TrajectoryReader for XyzReader<R> {
             frame_codec_error(
                 TrajectoryCodecErrorKind::ResourceLimitExceeded,
                 TrajectoryIoOperation::ReadFrame,
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor,
                 "XYZ frame cursor overflow",
             )
@@ -422,7 +439,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Xyz),
-                &self.source_label,
+                &self.options.source_label,
                 error,
             )
         })?;
@@ -431,7 +448,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Xyz),
-                &self.source_label,
+                &self.options.source_label,
                 error,
             )
         })?;
@@ -441,7 +458,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
                 TrajectoryCodecErrorKind::InvalidHeader,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Xyz),
-                &self.source_label,
+                &self.options.source_label,
                 "XYZ trajectory contains no frame",
             ));
         }
@@ -453,14 +470,14 @@ impl<R: BufRead + Seek> XyzReader<R> {
             io_context(
                 TrajectoryIoOperation::Index,
                 Some(TrajectoryFormat::Xyz),
-                &self.source_label,
+                &self.options.source_label,
                 error,
             )
         })?;
         self.frame_cursor = 0;
         let mut offsets = Vec::new();
         loop {
-            if let Some(limit) = projected_index_limit(offsets.len(), &self.limits) {
+            if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
                 if self
                     .reader
                     .fill_buf()
@@ -468,7 +485,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
                         io_context(
                             TrajectoryIoOperation::Index,
                             Some(TrajectoryFormat::Xyz),
-                            &self.source_label,
+                            &self.options.source_label,
                             error,
                         )
                     })?
@@ -480,7 +497,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
                     TrajectoryCodecErrorKind::ResourceLimitExceeded,
                     TrajectoryIoOperation::Index,
                     Some(TrajectoryFormat::Xyz),
-                    &self.source_label,
+                    &self.options.source_label,
                     format!("XYZ index {limit} exceeds the configured limit"),
                 ));
             }
@@ -488,7 +505,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(TrajectoryFormat::Xyz),
-                    &self.source_label,
+                    &self.options.source_label,
                     error,
                 )
             })?;
@@ -497,9 +514,9 @@ impl<R: BufRead + Seek> XyzReader<R> {
             }
             reserve_index_for_push(
                 &mut offsets,
-                &self.limits,
+                &self.options.limits,
                 TrajectoryFormat::Xyz,
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor,
             )?;
             offsets.push(offset);
@@ -507,7 +524,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
                 frame_codec_error(
                     TrajectoryCodecErrorKind::ResourceLimitExceeded,
                     TrajectoryIoOperation::Index,
-                    &self.source_label,
+                    &self.options.source_label,
                     self.frame_cursor,
                     "XYZ frame cursor overflows",
                 )
@@ -518,7 +535,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
                 TrajectoryCodecErrorKind::InvalidHeader,
                 TrajectoryIoOperation::Index,
                 Some(TrajectoryFormat::Xyz),
-                &self.source_label,
+                &self.options.source_label,
                 "XYZ trajectory contains no frame",
             ));
         }
@@ -526,7 +543,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
             io_context(
                 TrajectoryIoOperation::Index,
                 Some(TrajectoryFormat::Xyz),
-                &self.source_label,
+                &self.options.source_label,
                 error,
             )
         })?;
@@ -581,7 +598,7 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
                 Some(TrajectoryFormat::Xyz),
-                &self.reader.source_label,
+                &self.reader.options.source_label,
                 error,
             )
         })?;
@@ -593,7 +610,7 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
                 io_context(
                     TrajectoryIoOperation::ReadFrame,
                     Some(TrajectoryFormat::Xyz),
-                    &self.reader.source_label,
+                    &self.reader.options.source_label,
                     error,
                 )
             })?;
@@ -607,7 +624,7 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
                 io_context(
                     TrajectoryIoOperation::ReadFrame,
                     Some(TrajectoryFormat::Xyz),
-                    &self.reader.source_label,
+                    &self.reader.options.source_label,
                     error,
                 )
             });

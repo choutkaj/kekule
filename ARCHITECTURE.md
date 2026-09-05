@@ -2214,6 +2214,14 @@ infrastructure may use reusable buffers for allocation efficiency, but those
 buffers follow the same ownership rule: topology context is owned once by the
 buffer/container rather than repeated inside every numerical/property subobject.
 
+Trajectory readers accept a topology directly, interpreting file coordinate index
+`i` as topology dense atom index `i`. They validate counts and available format
+metadata (including XYZ element order) automatically. Coordinate-only data cannot
+prove atom identity from equal counts. An independently supplied semantic atom
+sequence may be checked against topology order without creating a persistent
+assertion or binding object. A reader can create a reusable frame buffer sharing
+its exact topology; publication rejects buffers belonging to another topology.
+
 Time, step, velocities, and forces remain dedicated semantic fields/APIs rather
 than being demoted into arbitrary generic properties.
 

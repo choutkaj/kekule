@@ -123,8 +123,8 @@ pub use buffer::{FrameBuffer, FrameBufferData};
 pub use collection::Trajectory;
 pub use frame::{Forces, TrajectoryFrame, TrajectoryFrameView, Velocities};
 pub use stream::{
-    AtomOrderAssertion, AtomOrderAssertionKind, CoordinateFrameReader, MemoryTrajectoryReader,
-    MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter,
+    validate_atom_order, CoordinateFrameReader, MemoryTrajectoryReader, MemoryTrajectoryWriter,
+    SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter,
 };
 
 use std::{fmt, io};
