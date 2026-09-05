@@ -363,7 +363,8 @@ fn failed_strict_valence_perception_preserves_complete_previous_perception_state
         .with_aromaticity(AromaticityModel::RdkitLike, Vec::new(), Vec::new())
         .expect("previous aromaticity")
         .build();
-    mol.install_perception(previous.clone())
+    mol.working_mut()
+        .install_perception(previous.clone())
         .expect("previous perception");
 
     let error = valence_api::perceive_valence(mol.working_mut(), ValenceModel::RdkitLike)

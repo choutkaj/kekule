@@ -237,7 +237,7 @@ impl FrameBuffer {
                 actual: properties.realization_bond_properties().len(),
             });
         }
-        properties.validate_realization_canonical_properties()?;
+        properties.validate_realization_properties()?;
         self.properties = properties;
         Ok(())
     }
@@ -324,7 +324,7 @@ impl FrameBuffer {
                     actual: properties.realization_bond_properties().len(),
                 });
             }
-            properties.validate_realization_canonical_properties()?;
+            properties.validate_realization_properties()?;
         }
         let properties = data.properties.cloned().unwrap_or_else(|| {
             Properties::realization(self.topology.atom_count(), self.topology.bond_count())

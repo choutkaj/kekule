@@ -43,7 +43,6 @@ impl PartialEq for Molecule {
 pub struct AtomMut<'a> {
     molecule: &'a mut Molecule,
     id: AtomId,
-    original: AtomRepresentedState,
 }
 
 impl Deref for AtomMut<'_> {
@@ -58,25 +57,17 @@ impl Deref for AtomMut<'_> {
 
 impl DerefMut for AtomMut<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        self.molecule.clear_perception();
+        self.molecule.properties.clear_owner();
         self.molecule.graph.atoms[self.id.index()]
             .as_mut()
             .expect("validated atom must remain live while borrowed")
     }
 }
 
-impl Drop for AtomMut<'_> {
-    fn drop(&mut self) {
-        if AtomRepresentedState::from(&**self) != self.original {
-            self.molecule.clear_perception();
-            self.molecule.properties.clear_owner();
-        }
-    }
-}
-
 pub struct BondMut<'a> {
     molecule: &'a mut Molecule,
     id: BondId,
-    original: BondChemistry,
 }
 
 impl Deref for BondMut<'_> {
@@ -93,53 +84,15 @@ impl BondMut<'_> {
     /// Changes represented order without exposing mutable bond endpoints.
     /// Use [`MoleculeEditor::set_bond_endpoints`] to maintain adjacency when rewiring.
     pub fn set_order(&mut self, order: BondOrder) {
+        if self.order == order {
+            return;
+        }
+        self.molecule.clear_perception();
+        self.molecule.properties.clear_owner();
         self.molecule.graph.bonds[self.id.index()]
             .as_mut()
             .expect("validated bond must remain live while borrowed")
             .order = order;
-    }
-}
-
-impl Drop for BondMut<'_> {
-    fn drop(&mut self) {
-        if BondChemistry::from(&**self) != self.original {
-            self.molecule.clear_perception();
-            self.molecule.properties.clear_owner();
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct AtomRepresentedState {
-    element: Element,
-    isotope: Option<u16>,
-    formal_charge: i8,
-    radical: Option<AtomRadical>,
-    hydrogens: HydrogenDeclaration,
-    atom_map: Option<u32>,
-}
-
-impl From<&Atom> for AtomRepresentedState {
-    fn from(atom: &Atom) -> Self {
-        Self {
-            element: atom.element,
-            isotope: atom.isotope,
-            formal_charge: atom.formal_charge,
-            radical: atom.radical,
-            hydrogens: atom.hydrogens,
-            atom_map: atom.atom_map,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct BondChemistry {
-    order: BondOrder,
-}
-
-impl From<&Bond> for BondChemistry {
-    fn from(bond: &Bond) -> Self {
-        Self { order: bond.order }
     }
 }
 
@@ -220,12 +173,8 @@ impl Molecule {
     }
 
     pub(crate) fn atom_mut(&mut self, id: AtomId) -> Result<AtomMut<'_>> {
-        let original = AtomRepresentedState::from(self.atom(id)?);
-        Ok(AtomMut {
-            molecule: self,
-            id,
-            original,
-        })
+        self.atom(id)?;
+        Ok(AtomMut { molecule: self, id })
     }
 
     pub fn atoms(&self) -> impl Iterator<Item = (AtomId, &Atom)> {
@@ -306,12 +255,8 @@ impl Molecule {
     }
 
     pub(crate) fn bond_mut(&mut self, id: BondId) -> Result<BondMut<'_>> {
-        let original = BondChemistry::from(self.bond(id)?);
-        Ok(BondMut {
-            molecule: self,
-            id,
-            original,
-        })
+        self.bond(id)?;
+        Ok(BondMut { molecule: self, id })
     }
 
     pub fn bonds(&self) -> impl Iterator<Item = (BondId, &Bond)> {

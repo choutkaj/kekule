@@ -1735,7 +1735,8 @@ fn failed_cip_validation_preserves_previous_stereo_section() {
         .with_cip_descriptors(Vec::new())
         .expect("empty stereo section")
         .build();
-    mol.install_perception(present_empty.clone())
+    mol.working_mut()
+        .install_perception(present_empty.clone())
         .expect("valid empty stereo section");
     stereo_api::assign_cip_descriptors(mol.working_mut())
         .expect_err("invalid stored stereo should still reject CIP assignment");

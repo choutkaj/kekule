@@ -394,6 +394,33 @@ fn property_and_no_op_edits_preserve_perception_but_chemistry_changes_clear_it()
 }
 
 #[test]
+#[allow(clippy::forget_non_drop)] // Deliberately exercises the guard-forgetting contract.
+fn forgetting_mutation_guards_cannot_preserve_stale_annotations() {
+    for change_atom in [true, false] {
+        let mut source = molecule("CC");
+        source.perceive().unwrap();
+        source
+            .insert_property(key("identity"), PropertyValue::Int(7))
+            .unwrap();
+        let mut editor = source.to_editor();
+        if change_atom {
+            let id = editor.atom_ids().next().unwrap();
+            let mut guard = editor.atom_mut(id).unwrap();
+            guard.element = Element::from_symbol("N").unwrap();
+            std::mem::forget(guard);
+        } else {
+            let id = editor.bond_ids().next().unwrap();
+            let mut guard = editor.bond_mut(id).unwrap();
+            guard.set_order(BondOrder::Double);
+            std::mem::forget(guard);
+        }
+        assert_eq!(editor.perception(), &Perception::default());
+        assert!(editor.properties().owner_is_empty());
+        assert!(editor.finish().unwrap().properties().owner_is_empty());
+    }
+}
+
+#[test]
 fn stereo_group_replacement_preserves_identity_and_rewiring_prunes_affected_stereo() {
     let mut editor = grouped_fragment().to_editor();
     let (id, group) = editor

@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::core::{Molecule, MoleculeConnectivityError};
-use crate::properties::{Properties, PropertyError, PropertyKey, PropertyTable, PropertyValue};
+use crate::core::Molecule;
+use crate::properties::{Properties, PropertyError, PropertyKey, PropertyTableMut, PropertyValue};
 
 use super::{
     AtomSiteId, ChainId, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinition,
@@ -107,34 +107,34 @@ impl TopologyBuilder {
         self.properties.clear_owner();
     }
 
-    pub fn molecule_instance_properties_mut(&mut self) -> &mut PropertyTable {
+    pub fn molecule_instance_properties_mut(&mut self) -> PropertyTableMut<'_> {
         self.sync_property_dimensions();
-        self.properties.molecule_instances_mut()
+        PropertyTableMut::new(self.properties.molecule_instances_mut())
     }
 
-    pub fn atom_properties_mut(&mut self) -> &mut PropertyTable {
+    pub fn atom_properties_mut(&mut self) -> PropertyTableMut<'_> {
         self.sync_property_dimensions();
-        self.properties.atoms_mut()
+        PropertyTableMut::new(self.properties.atoms_mut())
     }
 
-    pub fn bond_properties_mut(&mut self) -> &mut PropertyTable {
+    pub fn bond_properties_mut(&mut self) -> PropertyTableMut<'_> {
         self.sync_property_dimensions();
-        self.properties.bonds_mut()
+        PropertyTableMut::new(self.properties.bonds_mut())
     }
 
-    pub fn chain_properties_mut(&mut self) -> &mut PropertyTable {
+    pub fn chain_properties_mut(&mut self) -> PropertyTableMut<'_> {
         self.sync_property_dimensions();
-        self.properties.chains_mut()
+        PropertyTableMut::new(self.properties.chains_mut())
     }
 
-    pub fn residue_properties_mut(&mut self) -> &mut PropertyTable {
+    pub fn residue_properties_mut(&mut self) -> PropertyTableMut<'_> {
         self.sync_property_dimensions();
-        self.properties.residues_mut()
+        PropertyTableMut::new(self.properties.residues_mut())
     }
 
-    pub fn atom_site_properties_mut(&mut self) -> &mut PropertyTable {
+    pub fn atom_site_properties_mut(&mut self) -> PropertyTableMut<'_> {
         self.sync_property_dimensions();
-        self.properties.atom_sites_mut()
+        PropertyTableMut::new(self.properties.atom_sites_mut())
     }
 
     pub fn reserve_definitions(&mut self, additional: usize) -> Result<(), TopologyBuildError> {
@@ -200,7 +200,6 @@ impl TopologyBuilder {
         &mut self,
         molecule: &Molecule,
     ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
-        validate_graph(molecule)?;
         self.commit_definition(molecule.clone())
     }
 
@@ -208,7 +207,6 @@ impl TopologyBuilder {
         &mut self,
         molecule: Molecule,
     ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
-        validate_graph(&molecule)?;
         self.commit_definition(molecule)
     }
 
@@ -231,7 +229,6 @@ impl TopologyBuilder {
         &mut self,
         molecule: &Molecule,
     ) -> Result<MoleculeInstanceId, TopologyBuildError> {
-        validate_graph(molecule)?;
         self.commit_definition_and_instance(molecule.clone())
             .map(|(_, instance)| instance)
     }
@@ -259,10 +256,6 @@ impl TopologyBuilder {
                 self.definitions[index].id,
             ));
         }
-        for definition in &self.definitions {
-            validate_graph(definition.molecule())?;
-        }
-
         let atom_count = self.instances.iter().try_fold(0usize, |count, instance| {
             count
                 .checked_add(
@@ -336,6 +329,16 @@ impl TopologyBuilder {
             self.hierarchy.residues().count(),
             self.hierarchy.atom_sites().count(),
         );
+        self.properties
+            .validate_topology_dimensions([
+                self.instances.len(),
+                atom_count,
+                bond_count,
+                self.hierarchy.chains().count(),
+                self.hierarchy.residues().count(),
+                self.hierarchy.atom_sites().count(),
+            ])
+            .map_err(|error| TopologyBuildError::Property(Box::new(error)))?;
 
         Ok(Topology {
             definitions: self.definitions,
@@ -466,20 +469,6 @@ pub(super) fn checked_future_len(
 ) -> Result<(), TopologyBuildError> {
     crate::core::checked_fixed_id_collection_len(current, additional)
         .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(kind))
-}
-
-fn validate_graph(graph: &Molecule) -> Result<(), TopologyBuildError> {
-    validate_nonempty_graph(graph)?;
-    graph
-        .validate_connected()
-        .map_err(TopologyBuildError::DisconnectedMoleculeDefinition)
-}
-
-fn validate_nonempty_graph(graph: &Molecule) -> Result<(), TopologyBuildError> {
-    if graph.atom_count() == 0 {
-        return Err(TopologyBuildError::EmptyMoleculeDefinition);
-    }
-    Ok(())
 }
 
 /// A hierarchy reference or reverse lookup that cannot be published in a topology.
@@ -743,8 +732,7 @@ impl fmt::Display for TopologyIdKind {
 #[non_exhaustive]
 pub enum TopologyBuildError {
     NoMoleculeInstances,
-    EmptyMoleculeDefinition,
-    DisconnectedMoleculeDefinition(MoleculeConnectivityError),
+    Property(Box<PropertyError>),
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
     InvalidResidueId(ResidueId),
     /// A staged definition was not instantiated and cannot be published.
@@ -761,12 +749,7 @@ impl fmt::Display for TopologyBuildError {
             Self::NoMoleculeInstances => {
                 formatter.write_str("topology must contain at least one molecule instance")
             }
-            Self::EmptyMoleculeDefinition => {
-                formatter.write_str("molecule definition must contain at least one atom")
-            }
-            Self::DisconnectedMoleculeDefinition(error) => {
-                write!(formatter, "molecule definition is disconnected: {error}")
-            }
+            Self::Property(error) => write!(formatter, "invalid topology properties: {error}"),
             Self::InvalidMoleculeDefinitionId(id) => {
                 write!(formatter, "invalid molecule definition: {id}")
             }
@@ -787,4 +770,12 @@ impl fmt::Display for TopologyBuildError {
     }
 }
 
-impl std::error::Error for TopologyBuildError {}
+impl std::error::Error for TopologyBuildError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Property(error) => Some(error),
+            Self::InvalidHierarchy(error) => Some(error),
+            _ => None,
+        }
+    }
+}

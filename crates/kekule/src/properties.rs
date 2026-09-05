@@ -287,6 +287,60 @@ pub struct PropertyTable {
     populated: BTreeMap<PropertyKey, usize>,
 }
 
+/// Mutable columns in an owner-sized table. The table itself cannot be replaced.
+///
+/// Read operations are available through `Deref`; mutations preserve the row
+/// count established by the owner. No validation depends on dropping this view.
+///
+/// ```compile_fail
+/// use kekule::{properties::PropertyTable, topology::TopologyBuilder};
+/// let mut builder = TopologyBuilder::new();
+/// *builder.atom_properties_mut() = PropertyTable::new(100);
+/// ```
+#[derive(Debug)]
+pub struct PropertyTableMut<'a> {
+    table: &'a mut PropertyTable,
+}
+
+impl std::ops::Deref for PropertyTableMut<'_> {
+    type Target = PropertyTable;
+
+    fn deref(&self) -> &Self::Target {
+        self.table
+    }
+}
+
+impl<'a> PropertyTableMut<'a> {
+    pub(crate) fn new(table: &'a mut PropertyTable) -> Self {
+        Self { table }
+    }
+
+    pub fn insert(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>, PropertyError> {
+        self.table.insert(key, column)
+    }
+
+    pub fn remove(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
+        self.table.remove(key)
+    }
+
+    pub fn set_value(
+        &mut self,
+        key: PropertyKey,
+        index: usize,
+        value: Option<PropertyValue>,
+    ) -> Result<(), PropertyError> {
+        self.table.set_value(key, index, value)
+    }
+
+    pub fn clear_value(&mut self, key: PropertyKey, index: usize) -> Result<(), PropertyError> {
+        self.table.clear_value(key, index)
+    }
+}
+
 impl PropertyTable {
     pub fn new(len: usize) -> Self {
         Self {
@@ -667,7 +721,7 @@ impl Properties {
                 });
             }
         }
-        self.validate_realization_canonical_properties()?;
+        self.validate_realization_properties()?;
         self.atoms.len = atom_count;
         self.bonds.len = bond_count;
         Ok(())
@@ -892,7 +946,7 @@ impl Properties {
         occupancies: Vec<Option<f64>>,
         b_factors: Vec<Option<f64>>,
     ) -> Result<(), PropertyError> {
-        self.validate_realization_canonical_properties()?;
+        self.validate_realization_properties()?;
         let occupancy = PropertyColumn::Real {
             unit: DIMENSIONLESS,
             values: occupancies,
@@ -914,11 +968,22 @@ impl Properties {
 
         self.atoms.insert(occupancy_key(), occupancy)?;
         self.atoms.insert(b_factor_key(), b_factor)?;
-        self.validate_realization_canonical_properties()
+        self.validate_realization_properties()
     }
 
-    /// Validates the canonical realization-level atom columns, if present.
-    pub fn validate_realization_canonical_properties(&self) -> Result<(), PropertyError> {
+    /// Validates realization scope and the canonical atom columns, if present.
+    /// Populated instance and hierarchy domains cannot be attached to a realization.
+    pub fn validate_realization_properties(&self) -> Result<(), PropertyError> {
+        for (domain, table) in [
+            ("molecule_instances", &self.molecule_instances),
+            ("chains", &self.chains),
+            ("residues", &self.residues),
+            ("atom_sites", &self.atom_sites),
+        ] {
+            if table.has_data() {
+                return Err(PropertyError::InvalidRealizationDomain(domain));
+            }
+        }
         if let Some(column) = self.atoms.get(&occupancy_key()) {
             if !matches!(column, PropertyColumn::Real { unit, .. } if *unit == DIMENSIONLESS) {
                 return Err(PropertyError::InvalidCanonicalProperty(occupancy_key()));
@@ -947,7 +1012,7 @@ impl Properties {
             residues: PropertyTable::new(0),
             atom_sites: PropertyTable::new(0),
         };
-        properties.validate_realization_canonical_properties()?;
+        properties.validate_realization_properties()?;
         Ok(properties)
     }
 
@@ -968,12 +1033,45 @@ impl Properties {
         residue_count: usize,
         atom_site_count: usize,
     ) {
-        self.molecule_instances.resize_missing(instance_count);
-        self.atoms.resize_missing(atom_count);
-        self.bonds.resize_missing(bond_count);
-        self.chains.resize_missing(chain_count);
-        self.residues.resize_missing(residue_count);
-        self.atom_sites.resize_missing(atom_site_count);
+        for (table, len) in [
+            (&mut self.molecule_instances, instance_count),
+            (&mut self.atoms, atom_count),
+            (&mut self.bonds, bond_count),
+            (&mut self.chains, chain_count),
+            (&mut self.residues, residue_count),
+            (&mut self.atom_sites, atom_site_count),
+        ] {
+            // Extension appends missing values. A shorter hierarchy replacement
+            // must not truncate populated annotations before publication checks.
+            if !table.has_data() || len >= table.len() {
+                table.resize_missing(len);
+            }
+        }
+    }
+
+    pub(crate) fn validate_topology_dimensions(
+        &self,
+        dimensions: [usize; 6],
+    ) -> Result<(), PropertyError> {
+        for (table, expected) in [
+            &self.molecule_instances,
+            &self.atoms,
+            &self.bonds,
+            &self.chains,
+            &self.residues,
+            &self.atom_sites,
+        ]
+        .into_iter()
+        .zip(dimensions)
+        {
+            if table.len() != expected {
+                return Err(PropertyError::LengthMismatch {
+                    expected,
+                    actual: table.len(),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn project_topology(
@@ -1023,6 +1121,7 @@ pub enum PropertyError {
     TypeMismatch { key: PropertyKey },
     ReservedKey(PropertyKey),
     InvalidCanonicalProperty(PropertyKey),
+    InvalidRealizationDomain(&'static str),
     NonFiniteValue { index: Option<usize> },
     Unit(UnitError),
 }
@@ -1046,6 +1145,7 @@ impl fmt::Display for PropertyError {
                 formatter,
                 "property {key:?} does not have its canonical realization atom type and unit"
             ),
+            Self::InvalidRealizationDomain(domain) => write!(formatter, "populated {domain} properties do not belong to a realization"),
             Self::NonFiniteValue { index: Some(index) } => {
                 write!(formatter, "real property value at index {index} must be finite")
             }
@@ -1508,7 +1608,7 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(
-            malformed.validate_realization_canonical_properties(),
+            malformed.validate_realization_properties(),
             Err(PropertyError::InvalidCanonicalProperty(_))
         ));
     }
