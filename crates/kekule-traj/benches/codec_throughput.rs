@@ -16,10 +16,8 @@ use kekule_traj::io::trr::{
 };
 use kekule_traj::io::xtc::{XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
 use kekule_traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
-use kekule_traj::io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
-use kekule_traj::{
-    AtomOrderAssertion, FrameBuffer, SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter,
-};
+use kekule_traj::io::TrajectoryIoLimits;
+use kekule_traj::{FrameBuffer, SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter};
 
 #[derive(Clone, Copy)]
 struct Profile {
@@ -89,20 +87,20 @@ fn benchmark_xyz(profile: Profile) -> Result<(), Box<dyn Error>> {
         || {
             XyzReader::new(
                 Cursor::new(bytes.as_slice()),
-                binding(&topology),
-                XyzReadOptions::default(),
-                TrajectoryIoLimits::default(),
-                "bench.xyz",
+                Arc::clone(&topology),
+                XyzReadOptions::default()
+                    .with_limits(TrajectoryIoLimits::default())
+                    .with_source_label("bench.xyz"),
             )
             .expect("benchmark XYZ reader")
         },
         || {
             XyzReader::new(
                 Cursor::new(bytes.as_slice()),
-                binding(&topology),
-                XyzReadOptions::default(),
-                TrajectoryIoLimits::default(),
-                "bench.xyz",
+                Arc::clone(&topology),
+                XyzReadOptions::default()
+                    .with_limits(TrajectoryIoLimits::default())
+                    .with_source_label("bench.xyz"),
             )
             .expect("benchmark XYZ reader")
             .to_indexed()
@@ -128,20 +126,20 @@ fn benchmark_dcd(profile: Profile) -> Result<(), Box<dyn Error>> {
         || {
             DcdReader::new(
                 Cursor::new(bytes.as_slice()),
-                binding(&topology),
-                DcdReadOptions::default(),
-                TrajectoryIoLimits::default(),
-                "bench.dcd",
+                Arc::clone(&topology),
+                DcdReadOptions::default()
+                    .with_limits(TrajectoryIoLimits::default())
+                    .with_source_label("bench.dcd"),
             )
             .expect("benchmark DCD reader")
         },
         || {
             DcdReader::new(
                 Cursor::new(bytes.as_slice()),
-                binding(&topology),
-                DcdReadOptions::default(),
-                TrajectoryIoLimits::default(),
-                "bench.dcd",
+                Arc::clone(&topology),
+                DcdReadOptions::default()
+                    .with_limits(TrajectoryIoLimits::default())
+                    .with_source_label("bench.dcd"),
             )
             .expect("benchmark DCD reader")
             .to_indexed()
@@ -167,20 +165,22 @@ fn benchmark_trr(profile: Profile) -> Result<(), Box<dyn Error>> {
         || {
             TrrReader::new(
                 Cursor::new(bytes.as_slice()),
-                binding(&topology),
-                TrrReadOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
-                TrajectoryIoLimits::default(),
-                "bench.trr",
+                Arc::clone(&topology),
+                TrrReadOptions::default()
+                    .with_lambda_policy(TrrLambdaPolicy::RequireZero)
+                    .with_limits(TrajectoryIoLimits::default())
+                    .with_source_label("bench.trr"),
             )
             .expect("benchmark TRR reader")
         },
         || {
             TrrReader::new(
                 Cursor::new(bytes.as_slice()),
-                binding(&topology),
-                TrrReadOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
-                TrajectoryIoLimits::default(),
-                "bench.trr",
+                Arc::clone(&topology),
+                TrrReadOptions::default()
+                    .with_lambda_policy(TrrLambdaPolicy::RequireZero)
+                    .with_limits(TrajectoryIoLimits::default())
+                    .with_source_label("bench.trr"),
             )
             .expect("benchmark TRR reader")
             .to_indexed()
@@ -206,20 +206,20 @@ fn benchmark_xtc(profile: Profile) -> Result<(), Box<dyn Error>> {
         || {
             XtcReader::new(
                 Cursor::new(bytes.as_slice()),
-                binding(&topology),
-                XtcReadOptions::default(),
-                TrajectoryIoLimits::default(),
-                "bench.xtc",
+                Arc::clone(&topology),
+                XtcReadOptions::default()
+                    .with_limits(TrajectoryIoLimits::default())
+                    .with_source_label("bench.xtc"),
             )
             .expect("benchmark XTC reader")
         },
         || {
             XtcReader::new(
                 Cursor::new(bytes.as_slice()),
-                binding(&topology),
-                XtcReadOptions::default(),
-                TrajectoryIoLimits::default(),
-                "bench.xtc",
+                Arc::clone(&topology),
+                XtcReadOptions::default()
+                    .with_limits(TrajectoryIoLimits::default())
+                    .with_source_label("bench.xtc"),
             )
             .expect("benchmark XTC reader")
             .to_indexed()
@@ -311,14 +311,6 @@ fn topology(atom_count: usize) -> Result<Arc<Topology>, Box<dyn Error>> {
     let definition = builder.add_molecule_definition(&molecule)?;
     builder.add_instance(definition)?;
     Ok(Arc::new(builder.build()?))
-}
-
-fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
-    TrajectoryTopologyBinding::new(
-        Arc::clone(topology),
-        AtomOrderAssertion::assert_file_uses_topology_order(topology),
-    )
-    .expect("benchmark binding")
 }
 
 fn positions(topology: &Topology) -> Vec<Point3> {

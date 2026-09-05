@@ -39,9 +39,10 @@
 //! # File I/O and analysis
 //!
 //! Format-agnostic path readers and writers plus pure-Rust XYZ, DCD, TRR, and
-//! XTC codecs live in [`io`]. Coordinate-only files require explicit evidence
-//! that file atom order matches the supplied topology; equal atom counts are not
-//! treated as correspondence evidence. In-memory superposition and direct or
+//! XTC codecs live in [`io`]. Readers take a topology directly and interpret file
+//! coordinates in its dense atom order. They check counts and available format
+//! metadata automatically; matching counts alone cannot establish atom identity.
+//! In-memory superposition and direct or
 //! aligned RMSD workflows live in [`analysis`]. Direct RMSD never performs an
 //! implicit fit.
 #![forbid(unsafe_code)]

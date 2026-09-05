@@ -17,8 +17,8 @@ use sha2::{Digest, Sha256};
 
 mod support;
 use support::{
-    binding, buffer_snapshot, codec_kind, topology as build_topology, x_coordinates as xs,
-    GuardedCursor, NoBackwardSeekCursor, RestoreSeekFailure,
+    buffer_snapshot, codec_kind, topology as build_topology, x_coordinates as xs, GuardedCursor,
+    NoBackwardSeekCursor, RestoreSeekFailure,
 };
 
 fn topology() -> Arc<Topology> {
@@ -104,12 +104,14 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
             .with_time_policy(DcdTimePolicy::HeaderDelta { unit: PICOSECOND });
         let mut reader = DcdReader::new(
             Cursor::new(bytes.clone()),
-            binding(&topology),
-            options,
-            TrajectoryIoLimits::default(),
-            "memory.dcd",
+            Arc::clone(&topology),
+            options
+                .clone()
+                .with_limits(TrajectoryIoLimits::default())
+                .with_source_label("memory.dcd"),
         )
         .unwrap();
+        support::assert_rejects_unrelated_buffer(&mut reader);
         let mut destination = FrameBuffer::new(Arc::clone(&topology));
         assert!(reader.read_next(&mut destination).unwrap());
         assert_xs_close(&destination, &[0.0, 0.3, 0.6]);
@@ -123,10 +125,10 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
 
         let mut indexed = DcdReader::new(
             Cursor::new(bytes),
-            binding(&topology),
-            options,
-            TrajectoryIoLimits::default(),
-            "memory.dcd",
+            Arc::clone(&topology),
+            options
+                .with_limits(TrajectoryIoLimits::default())
+                .with_source_label("memory.dcd"),
         )
         .unwrap()
         .to_indexed()
@@ -145,10 +147,10 @@ fn fixed_atom_dcd_reconstructs_complete_frames_and_random_access() {
     let bytes = fixed_atom_fixture(DcdEndian::Little);
     let reader = DcdReader::new(
         Cursor::new(bytes),
-        binding(&topology),
-        DcdReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "fixed.dcd",
+        Arc::clone(&topology),
+        DcdReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("fixed.dcd"),
     )
     .unwrap();
     let mut reader = reader.to_indexed().unwrap();
@@ -172,10 +174,10 @@ fn dcd_exact_frame_and_index_limits_still_allow_clean_eof() {
     };
     let mut reader = DcdReader::new(
         Cursor::new(bytes.clone()),
-        binding(&topology),
-        DcdReadOptions::default(),
-        limits.clone(),
-        "exact-limit.dcd",
+        Arc::clone(&topology),
+        DcdReadOptions::default()
+            .with_limits(limits.clone())
+            .with_source_label("exact-limit.dcd"),
     )
     .unwrap();
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
@@ -185,10 +187,10 @@ fn dcd_exact_frame_and_index_limits_still_allow_clean_eof() {
 
     let indexed = DcdReader::new(
         Cursor::new(bytes),
-        binding(&topology),
-        DcdReadOptions::default(),
-        limits,
-        "exact-index-limit.dcd",
+        Arc::clone(&topology),
+        DcdReadOptions::default()
+            .with_limits(limits)
+            .with_source_label("exact-index-limit.dcd"),
     )
     .unwrap()
     .to_indexed()
@@ -206,10 +208,10 @@ fn dcd_declared_frame_count_is_strict_in_sequential_and_indexed_modes() {
 
         let mut sequential = DcdReader::new(
             Cursor::new(bytes.clone()),
-            binding(&topology),
-            DcdReadOptions::default(),
-            TrajectoryIoLimits::default(),
-            "declared-sequential.dcd",
+            Arc::clone(&topology),
+            DcdReadOptions::default()
+                .with_limits(TrajectoryIoLimits::default())
+                .with_source_label("declared-sequential.dcd"),
         )
         .unwrap();
         let mut destination = FrameBuffer::new(Arc::clone(&topology));
@@ -223,10 +225,10 @@ fn dcd_declared_frame_count_is_strict_in_sequential_and_indexed_modes() {
 
         let error = DcdReader::new(
             Cursor::new(bytes),
-            binding(&topology),
-            DcdReadOptions::default(),
-            TrajectoryIoLimits::default(),
-            "declared-indexed.dcd",
+            Arc::clone(&topology),
+            DcdReadOptions::default()
+                .with_limits(TrajectoryIoLimits::default())
+                .with_source_label("declared-indexed.dcd"),
         )
         .unwrap()
         .to_indexed()
@@ -245,10 +247,10 @@ fn indexed_dcd_restoration_failure_does_not_publish_or_change_destination() {
     let (stream, control) = RestoreSeekFailure::new(fixed_atom_fixture(DcdEndian::Little));
     let mut indexed = DcdReader::new(
         stream,
-        binding(&topology),
-        DcdReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "restore-failure.dcd",
+        Arc::clone(&topology),
+        DcdReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("restore-failure.dcd"),
     )
     .unwrap()
     .to_indexed()
@@ -312,10 +314,10 @@ fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
     let mut reader = DcdReader::new(
         stream,
-        binding(&topology),
-        DcdReadOptions::default(),
-        sequential_limits,
-        "guarded-sequential.dcd",
+        Arc::clone(&topology),
+        DcdReadOptions::default()
+            .with_limits(sequential_limits)
+            .with_source_label("guarded-sequential.dcd"),
     )
     .unwrap();
     let mut destination = FrameBuffer::new(Arc::clone(&topology));
@@ -344,10 +346,10 @@ fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
         let error = DcdReader::new(
             stream,
-            binding(&topology),
-            DcdReadOptions::default(),
-            limits,
-            "guarded-index.dcd",
+            Arc::clone(&topology),
+            DcdReadOptions::default()
+                .with_limits(limits)
+                .with_source_label("guarded-index.dcd"),
         )
         .unwrap()
         .to_indexed()
@@ -382,10 +384,10 @@ fn dcd_ordinary_frames_do_not_require_backward_eof_probe_seeks() {
     let (stream, control) = NoBackwardSeekCursor::new(bytes);
     let mut reader = DcdReader::new(
         stream,
-        binding(&topology),
-        DcdReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "no-probe.dcd",
+        Arc::clone(&topology),
+        DcdReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("no-probe.dcd"),
     )
     .unwrap();
     control.arm();
@@ -421,10 +423,10 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     wrong_count[8..12].copy_from_slice(&3_i32.to_be_bytes());
     let error = DcdReader::new(
         Cursor::new(wrong_count),
-        binding(&topology),
-        DcdReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "count.dcd",
+        Arc::clone(&topology),
+        DcdReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("count.dcd"),
     )
     .unwrap()
     .to_indexed()
@@ -439,10 +441,10 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     *bad_marker.last_mut().unwrap() ^= 1;
     let mut reader = DcdReader::new(
         Cursor::new(bad_marker),
-        binding(&topology),
-        DcdReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "marker.dcd",
+        Arc::clone(&topology),
+        DcdReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("marker.dcd"),
     )
     .unwrap();
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
@@ -464,10 +466,10 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     truncated.pop();
     let error = DcdReader::new(
         Cursor::new(truncated),
-        binding(&topology),
-        DcdReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "truncated.dcd",
+        Arc::clone(&topology),
+        DcdReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("truncated.dcd"),
     )
     .unwrap()
     .to_indexed()
@@ -484,10 +486,10 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     };
     let mut reader = DcdReader::new(
         Cursor::new(valid),
-        binding(&topology),
-        DcdReadOptions::default(),
-        limits,
-        "limited.dcd",
+        Arc::clone(&topology),
+        DcdReadOptions::default()
+            .with_limits(limits)
+            .with_source_label("limited.dcd"),
     )
     .unwrap();
     let error = reader.read_next(&mut buffer).unwrap_err();
@@ -569,10 +571,10 @@ fn independently_generated_mdanalysis_fixture_is_interoperable() {
     );
     let mut reader = DcdReader::new(
         Cursor::new(fixture),
-        binding(&topology),
-        DcdReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "mdanalysis-2.9.0-three-atoms.dcd",
+        Arc::clone(&topology),
+        DcdReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("mdanalysis-2.9.0-three-atoms.dcd"),
     )
     .unwrap();
     let mut buffer = FrameBuffer::new(topology);

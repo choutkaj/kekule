@@ -4,8 +4,8 @@ use kekule::geometry::Point3;
 use kekule::topology::Topology;
 use kekule::units::{Quantity, ANGSTROM};
 use kekule_traj::{
-    AtomOrderAssertion, FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryError,
-    TrajectoryFrameView, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryError, TrajectoryFrameView,
+    TrajectoryReader, TrajectoryWriter,
 };
 
 mod support;
@@ -93,8 +93,6 @@ fn assert_writer<T: TrajectoryWriter>(_writer: &mut T) {}
 #[test]
 fn companion_crate_can_publish_frames_and_implement_all_streaming_traits() {
     let topology = topology();
-    let assertion = AtomOrderAssertion::assert_file_uses_topology_order(&topology);
-    assert!(assertion.is_compatible(&topology));
 
     let points = [Point3::new(1.0, 2.0, 3.0)];
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
@@ -105,6 +103,8 @@ fn companion_crate_can_publish_frames_and_implement_all_streaming_traits() {
     let mut sequential = CompanionSequential {
         topology: Arc::clone(&topology),
     };
+    let automatic_buffer = sequential.frame_buffer();
+    assert!(Arc::ptr_eq(&topology, &automatic_buffer.shared_topology()));
     let mut indexed = CompanionIndexed {
         topology: Arc::clone(&topology),
     };

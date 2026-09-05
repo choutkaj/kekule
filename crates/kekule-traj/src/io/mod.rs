@@ -7,8 +7,8 @@
 //! Start with [`open_trajectory`] for sequential reading,
 //! [`open_indexed_trajectory`] for verified random access, or
 //! [`create_trajectory_writer`] for atomic path-backed writing. Each operation
-//! takes explicit topology/order context and returns structured format
-//! diagnostics.
+//! takes a topology. Readers expose opening diagnostics through `open_report()`
+//! and verified format metadata through `metadata()`.
 //!
 //! # Supported profiles
 //!
@@ -19,9 +19,11 @@
 //! | TRR | GROMACS XDR frames with f32 or f64 position, box, velocity, and force blocks | one explicit f32 or f64 precision with per-frame optional blocks |
 //! | XTC | GROMACS magic 1995/2023, signed nonnegative i32 counts/steps, small uncompressed and ordinary compressed coordinates | magic 1995/2023 through the private audited encoder adapter at explicit lossy precision |
 //!
-//! Every open requires a [`TrajectoryTopologyBinding`], which couples one shared
-//! `Arc<Topology>` with caller-supplied atom-order evidence. Equal
-//! atom count is never correspondence evidence. Native units are converted once
+//! Readers accept an owned topology or a shared `Arc<Topology>`. File coordinate
+//! index `i` means topology dense atom index `i`. Counts and available metadata
+//! (including XYZ element order) are checked automatically; matching counts
+//! alone cannot establish atom identity. [`crate::validate_atom_order`] can check
+//! an independently supplied sequence of semantic atom IDs. Native units are converted once
 //! at the codec boundary: DCD and default XYZ use angstrom, while TRR/XTC use
 //! GROMACS nanometre/picosecond conventions. XTC coordinate resolution is
 //! nominally `1 / precision` nanometres.
@@ -59,8 +61,8 @@ pub mod xtc;
 pub mod xyz;
 
 pub use file_reader::{
-    open_indexed_trajectory, open_trajectory, IndexedFileTrajectoryReader,
-    SequentialFileTrajectoryReader,
+    open_indexed_trajectory, open_indexed_trajectory_with_options, open_trajectory,
+    open_trajectory_with_options, IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
 };
 pub use file_writer::{
     create_trajectory_writer, FileTrajectoryWriter, OverwritePolicy, TrajectoryWriteOptions,
@@ -70,7 +72,6 @@ pub use metadata::{
     detect_trajectory_format, CoordinateEncoding, FieldAvailability, FileTrajectoryMetadata,
     FormatDetectionEvidence, RandomAccessCapability, ScalarPrecision, TrajectoryFieldAvailability,
     TrajectoryFormatDetection, TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryOpenReport,
-    TrajectoryTopologyBinding,
 };
 
 pub(crate) use limits::{projected_index_limit, reserve_index_for_push};
