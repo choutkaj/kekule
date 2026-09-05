@@ -811,26 +811,26 @@ mod tests {
         let carbonyl_bond = mol
             .add_bond(carbonyl_carbon, oxygen, BondOrder::Double)
             .expect("carbonyl bond");
-        let membership = perceive_ring_membership(&mut mol);
+        let membership = perceive_ring_membership(mol.working_mut());
         let atom = mol.atom(carbonyl_carbon).expect("carbonyl carbon");
 
         assert!(!membership.bond_in_ring(carbonyl_bond));
         assert!(!atom_is_rdkit_aromatic_candidate_for_donor(
-            &mol,
+            mol.working(),
             carbonyl_carbon,
             atom,
             AromaticElectronDonorType::None,
             RdkitAromaticCandidateOptions::default()
         ));
         assert!(atom_is_rdkit_aromatic_candidate_for_donor(
-            &mol,
+            mol.working(),
             carbonyl_carbon,
             atom,
             AromaticElectronDonorType::One,
             RdkitAromaticCandidateOptions::default()
         ));
         assert!(!atom_is_rdkit_aromatic_candidate_for_donor(
-            &mol,
+            mol.working(),
             carbonyl_carbon,
             atom,
             AromaticElectronDonorType::One,

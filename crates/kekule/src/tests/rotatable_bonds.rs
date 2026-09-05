@@ -16,7 +16,7 @@ fn detected_with_options(smiles: &str, options: RotatableBondOptions) -> Vec<Bon
 #[test]
 fn rdkit_strict_handles_empty_single_and_linear_molecules() {
     let empty = crate::core::MoleculeEditor::new();
-    assert!(rotatable_bonds::detect(&empty, RotatableBondOptions::STRICT).is_empty());
+    assert!(rotatable_bonds::detect(empty.working(), RotatableBondOptions::STRICT).is_empty());
 
     let mut builder = crate::core::MoleculeEditor::new();
     builder.add_atom(carbon()).expect("single carbon");

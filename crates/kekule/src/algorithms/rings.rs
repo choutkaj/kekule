@@ -1213,7 +1213,7 @@ mod tests {
         let bond = mol
             .add_bond(atoms[0], atoms[1], BondOrder::Single)
             .expect("chain bond");
-        let mut membership = compute_ring_membership(&mol);
+        let mut membership = compute_ring_membership(mol.working());
         membership.atom_flags[atoms[0].index()] = true;
         membership.atom_flags[atoms[1].index()] = true;
         membership.bond_flags[bond.index()] = true;
@@ -1224,7 +1224,7 @@ mod tests {
         )
         .expect("tracker");
 
-        let error = complete_ring_coverage(&mol, &membership, Vec::new(), &mut tracker)
+        let error = complete_ring_coverage(mol.working(), &membership, Vec::new(), &mut tracker)
             .expect_err("a bridge cannot be covered by a cycle");
 
         assert!(matches!(

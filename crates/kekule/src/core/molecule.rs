@@ -89,11 +89,14 @@ impl Deref for BondMut<'_> {
     }
 }
 
-impl DerefMut for BondMut<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
+impl BondMut<'_> {
+    /// Changes represented order without exposing mutable bond endpoints.
+    /// Use [`MoleculeEditor::set_bond_endpoints`] to maintain adjacency when rewiring.
+    pub fn set_order(&mut self, order: BondOrder) {
         self.molecule.graph.bonds[self.id.index()]
             .as_mut()
             .expect("validated bond must remain live while borrowed")
+            .order = order;
     }
 }
 
@@ -1304,7 +1307,7 @@ mod capacity_tests {
         let mut molecule = crate::core::MoleculeEditor::new();
         let before = molecule.clone();
         assert_eq!(
-            molecule.add_atom_at_slot(
+            molecule.working_mut().add_atom_at_slot(
                 Atom::new(Element::from_atomic_number(6).expect("carbon")),
                 first_unsupported_slot(),
             ),
