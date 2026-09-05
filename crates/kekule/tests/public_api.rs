@@ -53,9 +53,10 @@ fn component_interpretation_types_are_nameable_through_format_facades() {
     let molfile_source = "two components\nkekule\n\n  2  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.0000    0.0000    0.0000 O   0  0  0  0  0  0\nM  END\n";
     let molfile_document = kekule::molfile::parse_str(molfile_source).expect("Molfile parses");
     let molfile_interpretation = molfile_document.interpret().expect("Molfile interprets");
-    let molfile_components: &[kekule::molfile::MolfileComponentInterpretation] =
-        molfile_interpretation.components();
-    assert_eq!(molfile_components.len(), 2);
+    let reports: &[kekule::molfile::MolfileInterpretationReport] = molfile_interpretation.reports();
+    assert_eq!(reports.len(), 2);
+    assert_eq!(molfile_interpretation.model().atom_count(), 2);
+    assert_eq!(molfile_interpretation.topology().instance_count(), 2);
 }
 
 #[test]
@@ -70,9 +71,6 @@ fn sdf_interpretation_error_kind_is_public_and_structured() {
     match kind {
         sdf::SdfInterpretErrorKind::Molfile(source) => {
             assert!(source.message().contains("unsupported element"));
-        }
-        sdf::SdfInterpretErrorKind::ModelBuild(_) => {
-            panic!("fixture should fail before model construction");
         }
         _ => panic!("unexpected future SDF interpretation error kind"),
     }

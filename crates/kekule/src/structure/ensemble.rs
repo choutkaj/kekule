@@ -28,6 +28,15 @@ pub struct EnsembleMember {
 }
 
 impl EnsembleMember {
+    pub(crate) fn from_model(model: Model) -> Self {
+        Self {
+            positions: model.positions,
+            cell: model.cell,
+            properties: model.properties,
+            weight: None,
+        }
+    }
+
     /// Constructs a detached member. Empty property domains are sized on insertion.
     pub fn new(positions: Positions) -> Self {
         let properties = Properties::realization(positions.len(), 0);

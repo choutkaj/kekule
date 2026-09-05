@@ -299,11 +299,10 @@ pub mod smiles {
 /// Molfile version cannot represent.
 pub mod molfile {
     pub use crate::io::{
-        MolWriteError, MolWriteErrorKind, MolfileAtomMapping, MolfileBondMapping,
-        MolfileComponentInterpretation, MolfileDocument, MolfileHeader, MolfileInterpretError,
-        MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning,
-        MolfileLine, MolfileModelError, MolfileParseError, MolfileParseOptions, MolfileVersion,
-        MolfileWriteOptions, MolfileWriteVersion,
+        MolWriteError, MolWriteErrorKind, MolfileAtomMapping, MolfileBondMapping, MolfileDocument,
+        MolfileHeader, MolfileInterpretError, MolfileInterpretation, MolfileInterpretationReport,
+        MolfileInterpretationWarning, MolfileLine, MolfileParseError, MolfileParseOptions,
+        MolfileVersion, MolfileWriteOptions, MolfileWriteVersion,
     };
 
     use crate::core::Molecule;
@@ -380,9 +379,8 @@ pub mod molfile {
 pub mod sdf {
     pub use crate::io::{
         MolWriteError, MolfileWriteVersion, SdfDataField, SdfDocument, SdfInterpretError,
-        SdfInterpretErrorKind, SdfInterpretation, SdfInterpretationReport, SdfParseError,
-        SdfParseOptions, SdfRecord, SdfRecordInterpretation, SdfRecordInterpretationReport,
-        SdfWriteError, SdfWriteOptions,
+        SdfInterpretErrorKind, SdfInterpretation, SdfParseError, SdfParseOptions, SdfRecord,
+        SdfRecordInterpretation, SdfRecordInterpretationReport, SdfWriteError, SdfWriteOptions,
     };
 
     use crate::structure::{Ensemble, Model};

@@ -181,7 +181,7 @@ impl BuiltMoleculeProvenance {
 impl BuiltMolecule {
     pub(super) fn complete_connectivity(
         &mut self,
-        block: &MmcifBlock,
+        catalog: &super::super::mmcif_connectivity::ConnectivityCatalog,
     ) -> Result<(), MmcifInterpretError> {
         let Self {
             editor, provenance, ..
@@ -199,7 +199,7 @@ impl BuiltMolecule {
                 occurrence: atom.occurrence,
             }
         });
-        super::super::mmcif_connectivity::complete_editor_connectivity(block, editor, atoms)
+        super::super::mmcif_connectivity::complete_editor_connectivity(catalog, editor, atoms)
     }
 
     pub(super) fn publish_components(self) -> Result<Vec<PublishedMolecule>, MmcifInterpretError> {

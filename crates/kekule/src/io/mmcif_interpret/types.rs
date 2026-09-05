@@ -552,7 +552,6 @@ pub enum MmcifEnsembleInterpretError {
         model_id: String,
     },
     Ensemble(Box<EnsembleError>),
-    Position(crate::structure::PositionError),
 }
 
 impl fmt::Display for MmcifEnsembleInterpretError {
@@ -588,9 +587,6 @@ impl fmt::Display for MmcifEnsembleInterpretError {
                 "coordinate model `{model_id}` has an inconsistent dense atom identity order"
             ),
             Self::Ensemble(error) => write!(formatter, "cannot assemble mmCIF ensemble: {error}"),
-            Self::Position(error) => {
-                write!(formatter, "cannot transfer mmCIF member positions: {error}")
-            }
         }
     }
 }

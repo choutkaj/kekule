@@ -19,16 +19,15 @@ pub(crate) struct StagedAtomProvenance<'a> {
 }
 
 pub(crate) fn complete_editor_connectivity<'a>(
-    block: &MmcifBlock,
+    catalog: &ConnectivityCatalog,
     editor: &mut MoleculeEditor,
     atoms: impl IntoIterator<Item = StagedAtomProvenance<'a>>,
 ) -> Result<(), raw::MmcifInterpretError> {
-    let catalog = ConnectivityCatalog::from_block(block)?;
     let mut source_aromatic_bonds = BTreeSet::new();
     apply_instance_connectivity(
         editor.working_mut(),
         atoms,
-        &catalog,
+        catalog,
         &mut source_aromatic_bonds,
     )?;
     localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds)
@@ -77,7 +76,7 @@ struct BranchLink {
 }
 
 #[derive(Debug, Default)]
-struct ConnectivityCatalog {
+pub(crate) struct ConnectivityCatalog {
     component_bonds: BTreeMap<String, Vec<ComponentBond>>,
     polymer_types: BTreeMap<String, String>,
     nonstandard_polymer_linkage: BTreeSet<String>,
@@ -86,7 +85,7 @@ struct ConnectivityCatalog {
 }
 
 impl ConnectivityCatalog {
-    fn from_block(block: &MmcifBlock) -> Result<Self, raw::MmcifInterpretError> {
+    pub(crate) fn from_block(block: &MmcifBlock) -> Result<Self, raw::MmcifInterpretError> {
         let mut catalog = Self::default();
         if let Some(table) = block.loop_with_tag("_chem_comp_bond.comp_id") {
             for row in 0..table.row_count() {
