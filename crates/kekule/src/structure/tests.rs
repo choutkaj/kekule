@@ -75,6 +75,62 @@ fn canonical_model_constructors_accept_owned_and_shared_topology() {
 }
 
 #[test]
+fn model_builder_rejects_instances_added_without_positions() {
+    let topology = single_atom_topology();
+    let molecule = topology.molecules().next().unwrap();
+    for staged_instances in [0, 1] {
+        let mut builder = ModelBuilder::new();
+        for _ in 0..staged_instances {
+            builder
+                .add_molecule(molecule.molecule(), &single_position(1.0))
+                .unwrap();
+        }
+        let definition = builder
+            .add_molecule_definition(molecule.molecule())
+            .unwrap();
+        builder
+            .topology_builder_mut()
+            .add_instance(definition)
+            .unwrap();
+
+        assert_eq!(
+            builder.build(),
+            Err(ModelBuildError::Model(Box::new(
+                ModelError::PositionCountMismatch {
+                    expected: staged_instances + 1,
+                    actual: staged_instances,
+                }
+            )))
+        );
+    }
+}
+
+#[test]
+fn model_builder_rejects_excess_positions_after_topology_replacement() {
+    let topology = single_atom_topology();
+    let molecule = topology.molecules().next().unwrap();
+    let mut builder = ModelBuilder::new();
+    for x in [1.0, 2.0] {
+        builder
+            .add_molecule(molecule.molecule(), &single_position(x))
+            .unwrap();
+    }
+    let mut replacement = TopologyBuilder::new();
+    replacement.add_molecule(molecule.molecule()).unwrap();
+    *builder.topology_builder_mut() = replacement;
+
+    assert_eq!(
+        builder.build(),
+        Err(ModelBuildError::Model(Box::new(
+            ModelError::PositionCountMismatch {
+                expected: 1,
+                actual: 2
+            }
+        )))
+    );
+}
+
+#[test]
 fn canonical_ensemble_constructors_accept_owned_and_shared_topology() {
     let owned_new = Ensemble::new(single_atom_topology());
     let shared = owned_new.shared_topology();
