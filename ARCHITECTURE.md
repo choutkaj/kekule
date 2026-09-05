@@ -2054,6 +2054,8 @@ The intended ordinary construction surface is:
 | --- | --- |
 | `Topology` | `Topology::from_molecule(...)`, `Topology::from_molecules(...)`, or `TopologyBuilder` |
 | `Model` | `Model::new(topology, positions)` |
+| `EnsembleMember` | `EnsembleMember::new(positions)` |
+| `TrajectoryFrame` | `TrajectoryFrame::new(positions)` |
 | `Ensemble` | `Ensemble::new(topology)` plus `push(member)`, or `Ensemble::from_members(topology, members)` |
 | `Trajectory` | `Trajectory::new(topology)` plus `push(frame)`, or `Trajectory::from_frames(topology, frames)` |
 
@@ -2081,6 +2083,14 @@ trajectory.frames() -> Iterator<Item = TrajectoryFrameView<'_>>
 The topology-free `EnsembleMember` and `TrajectoryFrame` remain the payload types
 used for construction and storage. Their corresponding views are borrowed
 navigation/projection helpers, not additional canonical owning objects.
+
+Detached member/frame construction requires only positions. Atom dimensions are
+known from positions; bond dimensions come from explicitly supplied columns or
+from the containing topology at insertion. Insertion and member replacement
+establish dimensions for property tables without retained columns and validate
+all populated tables against the topology, without resizing or discarding their
+columns. Empty table dimensions are storage metadata, not scientific input.
+Stored-member editors and frame buffers preserve their established dimensions.
 
 Projection into model semantics uses an ownership-explicit naming convention:
 

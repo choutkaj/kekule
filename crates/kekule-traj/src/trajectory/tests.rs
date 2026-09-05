@@ -75,21 +75,89 @@ fn vector_arrays_are_topology_free_unit_aware_and_equal_by_values() {
 }
 
 #[test]
+fn positions_only_frames_normalize_empty_domains_and_validate_supplied_columns() {
+    let topology = make_topology(true);
+    let mut frame = TrajectoryFrame::new(Positions::zeros(2));
+    assert_eq!(frame.bond_properties().len(), 0);
+    let mut properties = Properties::new();
+    properties
+        .insert(key("label"), PropertyValue::Int(7))
+        .unwrap();
+    frame.set_properties(properties).unwrap();
+    let mut trajectory = Trajectory::from_frames(Arc::clone(&topology), [frame]).unwrap();
+    let stored = trajectory.frame(0).unwrap();
+    assert_eq!(stored.atom_properties().len(), 2);
+    assert_eq!(stored.bond_properties().len(), 1);
+    assert_eq!(
+        stored.properties().get(&key("label")),
+        Some(&PropertyValue::Int(7))
+    );
+    assert_eq!(stored.as_model().bond_properties().len(), 1);
+
+    let mut supplied = TrajectoryFrame::new(Positions::zeros(2));
+    let before = supplied.properties().clone();
+    assert!(supplied
+        .insert_bond_property_column(
+            key("invalid"),
+            PropertyColumn::Real {
+                values: vec![Some(f64::NAN)],
+                unit: DIMENSIONLESS,
+            }
+        )
+        .is_err());
+    assert_eq!(supplied.properties(), &before);
+    supplied
+        .insert_bond_property_column(key("score"), PropertyColumn::Int(vec![Some(8); 2]))
+        .unwrap();
+    let before = trajectory.frame(0).unwrap().properties().clone();
+    assert!(
+        matches!(trajectory.push(supplied), Err(TrajectoryError::Frame(error))
+        if matches!(*error, FrameError::BondCountMismatch { expected: 1, actual: 2 }))
+    );
+    assert_eq!(trajectory.len(), 1);
+    assert_eq!(trajectory.frame(0).unwrap().properties(), &before);
+
+    let mut supplied = TrajectoryFrame::new(Positions::zeros(2));
+    supplied
+        .insert_bond_property_column(key("score"), PropertyColumn::Int(vec![Some(8)]))
+        .unwrap();
+    trajectory.push(supplied).unwrap();
+    assert_eq!(
+        trajectory
+            .frame(1)
+            .unwrap()
+            .bond_property(0, &key("score"))
+            .unwrap(),
+        Some(PropertyValue::Int(8))
+    );
+    let mut empty = TrajectoryFrame::new(Positions::zeros(2));
+    empty
+        .set_properties(Properties::realization(usize::MAX, usize::MAX))
+        .unwrap();
+    trajectory.push(empty).unwrap();
+    assert_eq!(trajectory.frame(2).unwrap().bond_properties().len(), 1);
+    let mut buffer = FrameBuffer::new(topology);
+    assert!(buffer
+        .insert_bond_property_column(key("bad"), PropertyColumn::Int(vec![Some(1); 2]))
+        .is_err());
+    assert_eq!(buffer.bond_properties().len(), 1);
+}
+
+#[test]
 fn frames_validate_all_dense_dimensions_at_the_owner_boundary() {
     let topology = make_topology(true);
     let valid_positions = positions(&[Point3::origin(), Point3::origin()]);
-    let mut frame = TrajectoryFrame::new(valid_positions, topology.bond_count());
+    let mut frame = TrajectoryFrame::new(valid_positions);
     frame
         .set_velocities(Some(Velocities::zeros(topology.atom_count())))
         .unwrap();
     frame
         .set_forces(Some(Forces::zeros(topology.atom_count())))
         .unwrap();
-    frame.validate(&topology).unwrap();
+    frame.prepare(&topology).unwrap();
 
     assert!(matches!(
-        TrajectoryFrame::new(positions(&[Point3::origin()]), topology.bond_count())
-            .validate(&topology),
+        TrajectoryFrame::new(positions(&[Point3::origin()])).validate(&topology),
         Err(FrameError::AtomCountMismatch {
             expected: 2,
             actual: 1
@@ -109,12 +177,21 @@ fn frames_validate_all_dense_dimensions_at_the_owner_boundary() {
             actual: 1
         })
     ));
+    let mut bad_atoms = Properties::realization(1, 0);
+    bad_atoms
+        .insert_realization_atom_column(key("bad_atoms"), PropertyColumn::Int(vec![Some(1)]))
+        .unwrap();
     assert!(matches!(
-        frame.set_properties(Properties::realization(1, topology.bond_count())),
+        frame.set_properties(bad_atoms),
         Err(FrameError::AtomCountMismatch { .. })
     ));
+    let mut bad_bonds = Properties::realization(topology.atom_count(), 2);
+    bad_bonds
+        .insert_realization_bond_column(key("bad_bonds"), PropertyColumn::Int(vec![Some(1); 2]))
+        .unwrap();
+    frame.set_properties(bad_bonds).unwrap();
     assert!(matches!(
-        frame.set_properties(Properties::realization(topology.atom_count(), 0)),
+        frame.prepare(&topology),
         Err(FrameError::BondCountMismatch { .. })
     ));
 }
@@ -129,10 +206,7 @@ fn frame_view_borrows_model_state_and_preserves_time_and_step() {
     )
     .unwrap();
     let score = key("score");
-    let mut frame = TrajectoryFrame::new(
-        positions(&[Point3::new(3.0, 0.0, 0.0)]),
-        topology.bond_count(),
-    );
+    let mut frame = TrajectoryFrame::new(positions(&[Point3::new(3.0, 0.0, 0.0)]));
     frame.set_cell(Some(cell));
     frame
         .insert_property(key("method"), PropertyValue::String("md".into()))
@@ -193,18 +267,16 @@ fn canonical_trajectory_constructors_accept_owned_and_shared_topology() {
     let owned_topology = Arc::try_unwrap(make_topology(false)).unwrap();
     let owned_frames = Trajectory::from_frames(
         owned_topology,
-        [TrajectoryFrame::new(
-            positions(&[Point3::new(1.0, 0.0, 0.0)]),
-            0,
-        )],
+        [TrajectoryFrame::new(positions(&[Point3::new(
+            1.0, 0.0, 0.0,
+        )]))],
     )
     .unwrap();
     let shared_frames = Trajectory::from_frames(
         owned_frames.shared_topology(),
-        [TrajectoryFrame::new(
-            positions(&[Point3::new(2.0, 0.0, 0.0)]),
-            0,
-        )],
+        [TrajectoryFrame::new(positions(&[Point3::new(
+            2.0, 0.0, 0.0,
+        )]))],
     )
     .unwrap();
     assert!(owned_frames
@@ -215,9 +287,9 @@ fn canonical_trajectory_constructors_accept_owned_and_shared_topology() {
 #[test]
 fn trajectory_frame_views_are_topology_bound_and_stably_ordered() {
     let topology = make_topology(false);
-    let mut first = TrajectoryFrame::new(positions(&[Point3::new(1.0, 0.0, 0.0)]), 0);
+    let mut first = TrajectoryFrame::new(positions(&[Point3::new(1.0, 0.0, 0.0)]));
     first.set_step(Some(10));
-    let mut second = TrajectoryFrame::new(positions(&[Point3::new(2.0, 0.0, 0.0)]), 0);
+    let mut second = TrajectoryFrame::new(positions(&[Point3::new(2.0, 0.0, 0.0)]));
     second.set_step(Some(20));
     let trajectory = Trajectory::from_frames(Arc::clone(&topology), [first, second]).unwrap();
 
@@ -244,16 +316,13 @@ fn trajectory_frame_views_are_topology_bound_and_stably_ordered() {
 fn trajectory_rejects_bad_frame_dimensions_and_keeps_one_topology() {
     let topology = make_topology(true);
     let mut trajectory = Trajectory::new(Arc::clone(&topology));
-    let mut valid = TrajectoryFrame::new(
-        positions(&[Point3::origin(), Point3::origin()]),
-        topology.bond_count(),
-    );
+    let mut valid = TrajectoryFrame::new(positions(&[Point3::origin(), Point3::origin()]));
     valid.set_step(Some(1));
     trajectory.push(valid).unwrap();
     assert!(Arc::ptr_eq(&trajectory.shared_topology(), &topology));
     assert_eq!(trajectory.frames().next().unwrap().step(), Some(1));
 
-    let wrong = TrajectoryFrame::new(positions(&[Point3::origin()]), topology.bond_count());
+    let wrong = TrajectoryFrame::new(positions(&[Point3::origin()]));
     assert!(matches!(
         trajectory.push(wrong),
         Err(TrajectoryError::Frame(error))
@@ -264,10 +333,7 @@ fn trajectory_rejects_bad_frame_dimensions_and_keeps_one_topology() {
 #[test]
 fn frame_and_buffer_scope_canonical_atom_properties_to_semantic_apis() {
     let topology = make_topology(true);
-    let mut frame = TrajectoryFrame::new(
-        positions(&[Point3::origin(), Point3::origin()]),
-        topology.bond_count(),
-    );
+    let mut frame = TrajectoryFrame::new(positions(&[Point3::origin(), Point3::origin()]));
     assert!(matches!(
         frame.set_atom_property(0, key("occupancy"), Some(PropertyValue::Int(1))),
         Err(FrameError::Property(PropertyError::ReservedKey(_)))
@@ -293,7 +359,10 @@ fn frame_and_buffer_scope_canonical_atom_properties_to_semantic_apis() {
         ),
         Err(FrameError::Property(PropertyError::ReservedKey(_)))
     ));
-    buffer.set_properties(frame.properties().clone()).unwrap();
+    let trajectory = Trajectory::from_frames(Arc::clone(&topology), [frame]).unwrap();
+    buffer
+        .set_properties(trajectory.frame(0).unwrap().properties().clone())
+        .unwrap();
     assert_eq!(buffer.occupancy_at(0).unwrap(), Some(0.8));
     assert_eq!(buffer.b_factor_at(0).unwrap(), Some(b_factor));
     buffer
@@ -314,10 +383,10 @@ fn trajectory_slice_transfers_every_per_atom_frame_field() {
     let topology = make_topology(true);
     let atoms = topology.atom_ids();
     let selection = AtomSelection::from_atoms(&topology, [atoms[1]]).unwrap();
-    let mut frame = TrajectoryFrame::new(
-        positions(&[Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)]),
-        topology.bond_count(),
-    );
+    let mut frame = TrajectoryFrame::new(positions(&[
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(2.0, 0.0, 0.0),
+    ]));
     frame
         .set_atom_property(0, key("score"), Some(real(0.25)))
         .unwrap();
@@ -325,7 +394,13 @@ fn trajectory_slice_transfers_every_per_atom_frame_field() {
         .set_atom_property(1, key("score"), Some(real(0.75)))
         .unwrap();
     frame
-        .set_bond_property(0, key("score"), Some(real(9.0)))
+        .insert_bond_property_column(
+            key("score"),
+            PropertyColumn::Real {
+                values: vec![Some(9.0)],
+                unit: DIMENSIONLESS,
+            },
+        )
         .unwrap();
     frame
         .insert_property(key("frame_energy"), real(12.0))
@@ -450,7 +525,7 @@ fn frame_buffer_publication_is_transactional_reuses_arrays_and_clears_optionals(
 fn frame_buffer_copy_requires_the_exact_frame_topology() {
     let topology = make_topology(false);
     let independent = make_topology(false);
-    let frame = TrajectoryFrame::new(positions(&[Point3::origin()]), topology.bond_count());
+    let frame = TrajectoryFrame::new(positions(&[Point3::origin()]));
     let view = frame.view(&topology).unwrap();
     let mut correct = FrameBuffer::new(Arc::clone(&topology));
     correct.copy_from(view).unwrap();
@@ -463,16 +538,22 @@ fn frame_buffer_copy_requires_the_exact_frame_topology() {
 fn memory_reader_and_writer_round_trip_validated_frames() {
     let topology = make_topology(true);
     let mut trajectory = Trajectory::new(Arc::clone(&topology));
-    let mut frame = TrajectoryFrame::new(
-        positions(&[Point3::new(5.0, 0.0, 0.0), Point3::new(6.0, 0.0, 0.0)]),
-        topology.bond_count(),
-    );
+    let mut frame = TrajectoryFrame::new(positions(&[
+        Point3::new(5.0, 0.0, 0.0),
+        Point3::new(6.0, 0.0, 0.0),
+    ]));
     frame.set_step(Some(9));
     frame
         .set_atom_property(0, key("atom_score"), Some(real(0.6)))
         .unwrap();
     frame
-        .set_bond_property(0, key("bond_score"), Some(real(4.0)))
+        .insert_bond_property_column(
+            key("bond_score"),
+            PropertyColumn::Real {
+                values: vec![Some(4.0)],
+                unit: DIMENSIONLESS,
+            },
+        )
         .unwrap();
     assert_eq!(
         frame.atom_property(0, &key("atom_score")).unwrap(),
@@ -524,13 +605,11 @@ fn memory_reader_and_writer_round_trip_validated_frames() {
     );
 
     let independent = make_topology(true);
-    let other = TrajectoryFrame::new(
-        positions(&[Point3::origin(), Point3::origin()]),
-        independent.bond_count(),
-    );
+    let other = TrajectoryFrame::new(positions(&[Point3::origin(), Point3::origin()]));
+    let other = Trajectory::from_frames(independent, [other]).unwrap();
     let mut writer = MemoryTrajectoryWriter::new(Arc::clone(&topology));
     assert!(matches!(
-        writer.write_frame(other.view(&independent).unwrap()),
+        writer.write_frame(other.frame(0).unwrap()),
         Err(TrajectoryError::TopologyMismatch)
     ));
 }

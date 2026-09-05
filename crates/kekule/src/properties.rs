@@ -648,6 +648,31 @@ impl Properties {
         Self::molecule(atom_count, bond_count)
     }
 
+    /// Establishes realization domains without resizing supplied columns.
+    ///
+    /// Tables without retained columns adopt the requested dimensions. Populated
+    /// tables must already match. All checks precede mutation; owner properties
+    /// and column values are preserved. All-missing columns are absent under the
+    /// normal [`PropertyTable::insert`] contract.
+    pub fn normalize_realization_dimensions(
+        &mut self,
+        atom_count: usize,
+        bond_count: usize,
+    ) -> Result<(), PropertyError> {
+        for (table, expected) in [(&self.atoms, atom_count), (&self.bonds, bond_count)] {
+            if table.has_data() && table.len() != expected {
+                return Err(PropertyError::LengthMismatch {
+                    expected,
+                    actual: table.len(),
+                });
+            }
+        }
+        self.validate_realization_canonical_properties()?;
+        self.atoms.len = atom_count;
+        self.bonds.len = bond_count;
+        Ok(())
+    }
+
     fn with_dimensions(
         instance_count: usize,
         atom_count: usize,
@@ -1056,6 +1081,34 @@ mod tests {
 
     fn key(value: &str) -> PropertyKey {
         PropertyKey::new(value).unwrap()
+    }
+
+    #[test]
+    fn realization_domain_normalization_preserves_columns_and_is_transactional() {
+        let key = PropertyKey::new("score").unwrap();
+        let mut properties = Properties::realization(usize::MAX, 2);
+        properties
+            .insert_realization_bond_column(key.clone(), PropertyColumn::Int(vec![Some(3), None]))
+            .unwrap();
+        properties
+            .insert(key.clone(), PropertyValue::Int(9))
+            .unwrap();
+        let before = properties.clone();
+        assert_eq!(
+            properties.normalize_realization_dimensions(3, 1),
+            Err(PropertyError::LengthMismatch {
+                expected: 1,
+                actual: 2
+            })
+        );
+        assert_eq!(properties, before);
+        properties.normalize_realization_dimensions(3, 2).unwrap();
+        assert_eq!(properties.realization_atom_properties().len(), 3);
+        assert_eq!(
+            properties.realization_bond_properties(),
+            before.realization_bond_properties()
+        );
+        assert_eq!(properties.get(&key), Some(&PropertyValue::Int(9)));
     }
 
     #[test]

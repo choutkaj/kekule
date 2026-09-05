@@ -6,7 +6,7 @@ use kekule::modeling::potential::{
 use kekule::structure::{Model, Positions};
 use kekule::topology::{InstanceBondId, MoleculeInstanceId};
 use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM};
-use kekule_traj::{FrameBuffer, TrajectoryFrame};
+use kekule_traj::{FrameBuffer, Trajectory, TrajectoryFrame};
 
 fn bonded_model() -> (Model, InstanceBondId) {
     let mut molecule = kekule::core::MoleculeEditor::new();
@@ -38,9 +38,10 @@ fn kekule_potentials_consume_trajectory_views_without_coordinate_copies() {
     )
     .unwrap();
 
-    let frame = TrajectoryFrame::new(model.positions().clone(), model.topology().bond_count());
+    let frame = TrajectoryFrame::new(model.positions().clone());
+    let trajectory = Trajectory::from_frames(model.shared_topology(), [frame]).unwrap();
     assert!(potential
-        .evaluate(frame.view(&topology).unwrap().as_model())
+        .evaluate(trajectory.frame(0).unwrap().as_model())
         .is_ok());
 
     let mut buffer = FrameBuffer::new(topology);
