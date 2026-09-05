@@ -17,7 +17,7 @@ use kekule::units::{
 
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
-    require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits, TrajectoryTopologyBinding,
+    require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits,
 };
 
 const TRR_MAGIC: i32 = 1993;
@@ -53,20 +53,36 @@ pub enum TrrLambdaPolicy {
 }
 
 /// TRR reader policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrrReadOptions {
     lambda_policy: TrrLambdaPolicy,
+    limits: TrajectoryIoLimits,
+    source_label: String,
 }
 
 impl Default for TrrReadOptions {
     fn default() -> Self {
         Self {
+            limits: TrajectoryIoLimits::default(),
+            source_label: "trr stream".into(),
             lambda_policy: TrrLambdaPolicy::FrameProperty,
         }
     }
 }
 
 impl TrrReadOptions {
+    /// Sets limits applied before allocation, scanning, and seeking.
+    pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Sets the source label used in decoding errors.
+    pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
+        self.source_label = source_label.into();
+        self
+    }
+
     pub const fn with_lambda_policy(mut self, lambda_policy: TrrLambdaPolicy) -> Self {
         self.lambda_policy = lambda_policy;
         self
@@ -140,10 +156,8 @@ impl TrrFrameHeader {
 /// Sequential TRR reader retaining one seekable stream and reusable scratch.
 pub struct TrrReader<R> {
     reader: R,
-    binding: TrajectoryTopologyBinding,
+    topology: Arc<Topology>,
     options: TrrReadOptions,
-    limits: TrajectoryIoLimits,
-    source_label: String,
     stream_start: u64,
     current_header_offset: u64,
     first_header: TrrFrameHeader,
@@ -164,69 +178,61 @@ struct TrrDecodedFrame {
 }
 
 impl<R: Read + Seek> TrrReader<R> {
+    /// Opens a stream whose coordinates follow the supplied topology's dense order.
+    ///
+    /// Accepts an owned topology or a shared `Arc<Topology>`. Counts and available
+    /// format metadata are checked automatically; matching counts alone cannot
+    /// establish atom identity. Limits and diagnostic labels are set in `options`.
     pub fn new(
         mut reader: R,
-        binding: TrajectoryTopologyBinding,
+        topology: impl Into<Arc<Topology>>,
         options: TrrReadOptions,
-        limits: TrajectoryIoLimits,
-        source_label: impl Into<String>,
     ) -> Result<Self, TrajectoryError> {
-        let source_label = source_label.into();
-        let atom_count = binding.topology().atom_count();
-        validate_atom_count(atom_count, &limits, &source_label)?;
+        let topology = topology.into();
+        let source_label = &options.source_label;
+        let limits = &options.limits;
+        let atom_count = topology.atom_count();
+        validate_atom_count(atom_count, limits, source_label)?;
         let stream_start = reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Open,
                 Some(TrajectoryFormat::Trr),
-                &source_label,
+                source_label,
                 error,
             )
         })?;
-        let first_header =
-            read_header(&mut reader, &limits, &source_label, Some(atom_count), false)?
-                .ok_or_else(|| header_error(&source_label, "TRR stream is empty"))?;
-        validate_lambda(first_header.lambda, options.lambda_policy, &source_label, 0)?;
+        let first_header = read_header(&mut reader, limits, source_label, Some(atom_count), false)?
+            .ok_or_else(|| header_error(source_label, "TRR stream is empty"))?;
+        validate_lambda(first_header.lambda, options.lambda_policy, source_label, 0)?;
         let mut positions = Vec::new();
         let mut velocities = Vec::new();
         let mut forces = Vec::new();
         let vector_bytes = atom_count
             .checked_mul(std::mem::size_of::<Vector3>())
-            .ok_or_else(|| resource_error(&source_label, None, "TRR vector scratch overflows"))?;
+            .ok_or_else(|| resource_error(source_label, None, "TRR vector scratch overflows"))?;
         let scratch_bytes = vector_bytes.checked_mul(3).ok_or_else(|| {
-            resource_error(
-                &source_label,
-                None,
-                "TRR aggregate vector scratch overflows",
-            )
+            resource_error(source_label, None, "TRR aggregate vector scratch overflows")
         })?;
         if scratch_bytes > limits.max_scratch_bytes {
             return Err(resource_error(
-                &source_label,
+                source_label,
                 None,
                 "TRR vector scratch exceeds the configured limit",
             ));
         }
         positions.try_reserve_exact(atom_count).map_err(|_| {
-            resource_error(
-                &source_label,
-                None,
-                "could not reserve TRR position scratch",
-            )
+            resource_error(source_label, None, "could not reserve TRR position scratch")
         })?;
         velocities.try_reserve_exact(atom_count).map_err(|_| {
-            resource_error(
-                &source_label,
-                None,
-                "could not reserve TRR velocity scratch",
-            )
+            resource_error(source_label, None, "could not reserve TRR velocity scratch")
         })?;
         forces.try_reserve_exact(atom_count).map_err(|_| {
-            resource_error(&source_label, None, "could not reserve TRR force scratch")
+            resource_error(source_label, None, "could not reserve TRR force scratch")
         })?;
         positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
         velocities.resize(atom_count, Vector3::zero());
         forces.resize(atom_count, Vector3::zero());
-        let mut properties = Properties::realization(atom_count, binding.topology().bond_count());
+        let mut properties = Properties::realization(atom_count, topology.bond_count());
         if options.lambda_policy == TrrLambdaPolicy::FrameProperty {
             properties
                 .insert(
@@ -240,10 +246,8 @@ impl<R: Read + Seek> TrrReader<R> {
         }
         Ok(Self {
             reader,
-            binding,
+            topology,
             options,
-            limits,
-            source_label,
             stream_start,
             current_header_offset: stream_start,
             first_header: first_header.clone(),
@@ -259,7 +263,7 @@ impl<R: Read + Seek> TrrReader<R> {
     }
 
     pub fn topology(&self) -> &Topology {
-        self.binding.topology()
+        self.topology.as_ref()
     }
 
     pub(crate) fn first_header(&self) -> &TrrFrameHeader {
@@ -278,15 +282,15 @@ impl<R: Read + Seek> TrrReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Trr),
-                &self.source_label,
+                &self.options.source_label,
                 error,
             )
         })?;
-        let atom_count = self.binding.topology().atom_count();
+        let atom_count = self.topology.as_ref().atom_count();
         read_header(
             &mut self.reader,
-            &self.limits,
-            &self.source_label,
+            &self.options.limits,
+            &self.options.source_label,
             Some(atom_count),
             true,
         )
@@ -294,7 +298,7 @@ impl<R: Read + Seek> TrrReader<R> {
     }
 
     fn parse_next(&mut self) -> Result<Option<TrrDecodedFrame>, TrajectoryError> {
-        if self.frame_cursor >= self.limits.max_frames {
+        if self.frame_cursor >= self.options.limits.max_frames {
             let clean_eof = if self.pending_header.is_some() {
                 false
             } else {
@@ -302,14 +306,14 @@ impl<R: Read + Seek> TrrReader<R> {
                     &mut self.reader,
                     TrajectoryIoOperation::ReadFrame,
                     TrajectoryFormat::Trr,
-                    &self.source_label,
+                    &self.options.source_label,
                 )?
             };
             if clean_eof {
                 return Ok(None);
             }
             return Err(resource_error(
-                &self.source_label,
+                &self.options.source_label,
                 Some(self.frame_cursor),
                 "TRR frame count exceeds the configured limit",
             ));
@@ -321,7 +325,7 @@ impl<R: Read + Seek> TrrReader<R> {
         validate_lambda(
             header.lambda,
             self.options.lambda_policy,
-            &self.source_label,
+            &self.options.source_label,
             self.frame_cursor,
         )?;
         let payload_bytes = header
@@ -331,7 +335,7 @@ impl<R: Read + Seek> TrrReader<R> {
             .and_then(|bytes| bytes.checked_add(header.f_size))
             .ok_or_else(|| {
                 resource_error(
-                    &self.source_label,
+                    &self.options.source_label,
                     Some(self.frame_cursor),
                     "TRR payload size overflows",
                 )
@@ -341,14 +345,14 @@ impl<R: Read + Seek> TrrReader<R> {
             .checked_add(payload_bytes as u64)
             .ok_or_else(|| {
                 resource_error(
-                    &self.source_label,
+                    &self.options.source_label,
                     Some(self.frame_cursor),
                     "TRR frame size overflows",
                 )
             })?;
-        if frame_bytes > self.limits.max_frame_bytes {
+        if frame_bytes > self.options.limits.max_frame_bytes {
             return Err(resource_error(
-                &self.source_label,
+                &self.options.source_label,
                 Some(self.frame_cursor),
                 "TRR frame exceeds the configured byte limit",
             ));
@@ -359,15 +363,15 @@ impl<R: Read + Seek> TrrReader<R> {
                 &mut self.reader,
                 &mut self.raw,
                 header.box_size,
-                &self.limits,
-                &self.source_label,
+                &self.options.limits,
+                &self.options.source_label,
                 self.frame_cursor,
                 "TRR box",
             )?;
             Some(decode_cell(
                 &self.raw,
                 header.precision,
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor,
             )?)
         } else {
@@ -377,8 +381,8 @@ impl<R: Read + Seek> TrrReader<R> {
             &mut self.reader,
             &mut self.raw,
             header.x_size,
-            &self.limits,
-            &self.source_label,
+            &self.options.limits,
+            &self.options.source_label,
             self.frame_cursor,
             "TRR positions",
         )?;
@@ -386,7 +390,7 @@ impl<R: Read + Seek> TrrReader<R> {
             &self.raw,
             header.precision,
             &mut self.positions,
-            &self.source_label,
+            &self.options.source_label,
             self.frame_cursor,
             "position",
         )?;
@@ -395,8 +399,8 @@ impl<R: Read + Seek> TrrReader<R> {
                 &mut self.reader,
                 &mut self.raw,
                 header.v_size,
-                &self.limits,
-                &self.source_label,
+                &self.options.limits,
+                &self.options.source_label,
                 self.frame_cursor,
                 "TRR velocities",
             )?;
@@ -404,7 +408,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 &self.raw,
                 header.precision,
                 &mut self.velocities,
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor,
                 "velocity",
             )?;
@@ -414,8 +418,8 @@ impl<R: Read + Seek> TrrReader<R> {
                 &mut self.reader,
                 &mut self.raw,
                 header.f_size,
-                &self.limits,
-                &self.source_label,
+                &self.options.limits,
+                &self.options.source_label,
                 self.frame_cursor,
                 "TRR forces",
             )?;
@@ -423,7 +427,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 &self.raw,
                 header.precision,
                 &mut self.forces,
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor,
                 "force",
             )?;
@@ -439,7 +443,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 )
                 .map_err(|_| {
                     frame_error(
-                        &self.source_label,
+                        &self.options.source_label,
                         self.frame_cursor,
                         "TRR lambda scratch property became invalid",
                     )
@@ -447,7 +451,7 @@ impl<R: Read + Seek> TrrReader<R> {
         }
         self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
             resource_error(
-                &self.source_label,
+                &self.options.source_label,
                 Some(self.frame_cursor),
                 "TRR frame cursor overflows",
             )
@@ -483,7 +487,7 @@ impl<R: Read + Seek> TrrReader<R> {
     pub fn to_indexed(mut self) -> Result<IndexedTrrReader<R>, TrajectoryError> {
         let mut offsets = Vec::new();
         loop {
-            if let Some(limit) = projected_index_limit(offsets.len(), &self.limits) {
+            if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
                 let clean_eof = if self.pending_header.is_some() {
                     false
                 } else {
@@ -491,14 +495,14 @@ impl<R: Read + Seek> TrrReader<R> {
                         &mut self.reader,
                         TrajectoryIoOperation::Index,
                         TrajectoryFormat::Trr,
-                        &self.source_label,
+                        &self.options.source_label,
                     )?
                 };
                 if clean_eof {
                     break;
                 }
                 return Err(resource_error(
-                    &self.source_label,
+                    &self.options.source_label,
                     Some(offsets.len() as u64),
                     format!("TRR index {limit} exceeds the configured limit"),
                 ));
@@ -510,7 +514,7 @@ impl<R: Read + Seek> TrrReader<R> {
                     io_context(
                         TrajectoryIoOperation::Index,
                         Some(TrajectoryFormat::Trr),
-                        &self.source_label,
+                        &self.options.source_label,
                         error,
                     )
                 })?
@@ -524,15 +528,15 @@ impl<R: Read + Seek> TrrReader<R> {
             }
             reserve_index_for_push(
                 &mut offsets,
-                &self.limits,
+                &self.options.limits,
                 TrajectoryFormat::Trr,
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor.saturating_sub(1),
             )?;
             offsets.push(offset);
         }
         self.rewind()?;
-        let atom_count = self.binding.topology().atom_count();
+        let atom_count = self.topology.as_ref().atom_count();
         let mut random_positions = Vec::new();
         let mut random_velocities = Vec::new();
         let mut random_forces = Vec::new();
@@ -540,7 +544,7 @@ impl<R: Read + Seek> TrrReader<R> {
             .try_reserve_exact(atom_count)
             .map_err(|_| {
                 resource_error(
-                    &self.source_label,
+                    &self.options.source_label,
                     None,
                     "could not reserve indexed TRR position scratch",
                 )
@@ -549,14 +553,14 @@ impl<R: Read + Seek> TrrReader<R> {
             .try_reserve_exact(atom_count)
             .map_err(|_| {
                 resource_error(
-                    &self.source_label,
+                    &self.options.source_label,
                     None,
                     "could not reserve indexed TRR velocity scratch",
                 )
             })?;
         random_forces.try_reserve_exact(atom_count).map_err(|_| {
             resource_error(
-                &self.source_label,
+                &self.options.source_label,
                 None,
                 "could not reserve indexed TRR force scratch",
             )
@@ -583,16 +587,16 @@ impl<R: Read + Seek> TrrReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(TrajectoryFormat::Trr),
-                    &self.source_label,
+                    &self.options.source_label,
                     error,
                 )
             })?;
         self.current_header_offset = self.stream_start;
-        let atom_count = self.binding.topology().atom_count();
+        let atom_count = self.topology.as_ref().atom_count();
         self.pending_header = read_header(
             &mut self.reader,
-            &self.limits,
-            &self.source_label,
+            &self.options.limits,
+            &self.options.source_label,
             Some(atom_count),
             false,
         )?;
@@ -607,7 +611,7 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
     }
 
     fn shared_topology(&self) -> Arc<Topology> {
-        self.binding.shared_topology()
+        Arc::clone(&self.topology)
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
@@ -621,7 +625,7 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
                 io_context(
                     TrajectoryIoOperation::ReadFrame,
                     Some(TrajectoryFormat::Trr),
-                    &self.source_label,
+                    &self.options.source_label,
                     error,
                 )
             })?
@@ -705,7 +709,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
             io_context(
                 TrajectoryIoOperation::Index,
                 Some(TrajectoryFormat::Trr),
-                &self.inner.source_label,
+                &self.inner.options.source_label,
                 error,
             )
         })?;
@@ -720,7 +724,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(TrajectoryFormat::Trr),
-                    &self.inner.source_label,
+                    &self.inner.options.source_label,
                     error,
                 )
             })?;
@@ -745,7 +749,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(TrajectoryFormat::Trr),
-                    &self.inner.source_label,
+                    &self.inner.options.source_label,
                     error,
                 )
             });

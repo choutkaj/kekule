@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     dcd, detect, io_context, trr, xtc, xyz, FileTrajectoryMetadata, TrajectoryOpenOptions,
-    TrajectoryOpenReport, TrajectoryTopologyBinding,
+    TrajectoryOpenReport,
 };
 
 enum SequentialReaderInner {
@@ -26,9 +26,15 @@ enum SequentialReaderInner {
 pub struct SequentialFileTrajectoryReader {
     inner: SequentialReaderInner,
     metadata: FileTrajectoryMetadata,
+    open_report: TrajectoryOpenReport,
 }
 
 impl SequentialFileTrajectoryReader {
+    /// Format detection and non-fatal facts recorded when this reader was opened.
+    pub fn open_report(&self) -> &TrajectoryOpenReport {
+        &self.open_report
+    }
+
     /// Returns metadata verified through the most recent successful read.
     ///
     /// In particular, mixed-width TRR input is reported as mixed as soon as
@@ -83,9 +89,15 @@ enum IndexedReaderInner {
 pub struct IndexedFileTrajectoryReader {
     inner: IndexedReaderInner,
     metadata: FileTrajectoryMetadata,
+    open_report: TrajectoryOpenReport,
 }
 
 impl IndexedFileTrajectoryReader {
+    /// Format detection and non-fatal facts recorded when this reader was opened.
+    pub fn open_report(&self) -> &TrajectoryOpenReport {
+        &self.open_report
+    }
+
     pub fn metadata(&self) -> &FileTrajectoryMetadata {
         &self.metadata
     }
@@ -145,11 +157,45 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
 }
 
 /// Opens one fast sequential path-backed trajectory reader.
+///
+/// Accepts an owned topology or a shared `Arc<Topology>`. File coordinates must
+/// follow its dense atom order; counts and available format metadata are checked
+/// automatically. Matching counts alone cannot establish atom identity.
+/// Use [`open_trajectory_with_options`] to customize format policies or limits.
+///
+/// ```no_run
+/// use kekule::{smiles, topology::Topology};
+/// use kekule_traj::{io::open_trajectory, TrajectoryReader};
+///
+/// let molecule = smiles::to_molecules("CC")?.pop().unwrap();
+/// let topology = Topology::from_molecule(&molecule)?;
+/// let mut reader = open_trajectory("ethane.xyz", topology)?;
+/// let mut frame = reader.frame_buffer();
+/// while reader.read_next(&mut frame)? {
+///     let model = frame.frame_view().as_model();
+///     assert_eq!(model.atom_count(), 2);
+/// }
+/// println!("{:?}", reader.open_report().selected_format());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn open_trajectory(
     path: impl AsRef<Path>,
-    binding: TrajectoryTopologyBinding,
+    topology: impl Into<Arc<Topology>>,
+) -> Result<SequentialFileTrajectoryReader, TrajectoryError> {
+    open_trajectory_with_options(path, topology, TrajectoryOpenOptions::default())
+}
+
+/// Opens a sequential trajectory reader with explicit options.
+///
+/// File coordinate index `i` is interpreted as topology dense atom index `i`.
+/// Readers check counts and available metadata, including XYZ element order;
+/// coordinate-only formats cannot establish atom identity from counts alone.
+pub fn open_trajectory_with_options(
+    path: impl AsRef<Path>,
+    topology: impl Into<Arc<Topology>>,
     options: TrajectoryOpenOptions,
-) -> Result<(SequentialFileTrajectoryReader, TrajectoryOpenReport), TrajectoryError> {
+) -> Result<SequentialFileTrajectoryReader, TrajectoryError> {
+    let topology = topology.into();
     let path = path.as_ref();
     let label = path.display().to_string();
     let file = File::open(path)
@@ -162,11 +208,16 @@ pub fn open_trajectory(
         &options.limits,
         &label,
     )?;
-    let order_kind = binding.atom_order().kind();
     let (inner, metadata, notes) = match detection.format {
         TrajectoryFormat::Xyz => {
-            let mut reader =
-                xyz::XyzReader::new(reader, binding, options.xyz, options.limits, label)?;
+            let mut reader = xyz::XyzReader::new(
+                reader,
+                topology,
+                options
+                    .xyz
+                    .with_limits(options.limits)
+                    .with_source_label(label),
+            )?;
             reader.validate_first_frame()?;
             let atom_count = reader.topology().atom_count();
             (
@@ -176,7 +227,14 @@ pub fn open_trajectory(
             )
         }
         TrajectoryFormat::Dcd => {
-            let reader = dcd::DcdReader::new(reader, binding, options.dcd, options.limits, label)?;
+            let reader = dcd::DcdReader::new(
+                reader,
+                topology,
+                options
+                    .dcd
+                    .with_limits(options.limits)
+                    .with_source_label(label),
+            )?;
             let metadata = FileTrajectoryMetadata::dcd(reader.header(), None);
             (
                 SequentialReaderInner::Dcd(reader),
@@ -188,7 +246,14 @@ pub fn open_trajectory(
             )
         }
         TrajectoryFormat::Trr => {
-            let reader = trr::TrrReader::new(reader, binding, options.trr, options.limits, label)?;
+            let reader = trr::TrrReader::new(
+                reader,
+                topology,
+                options
+                    .trr
+                    .with_limits(options.limits)
+                    .with_source_label(label),
+            )?;
             let metadata = FileTrajectoryMetadata::trr(reader.first_header(), None, false);
             (
                 SequentialReaderInner::Trr(Box::new(reader)),
@@ -200,10 +265,16 @@ pub fn open_trajectory(
             )
         }
         TrajectoryFormat::Xtc => {
+            let cell_policy = options.xtc.cell_policy();
             let xtc_options = options.xtc;
-            let reader = xtc::XtcReader::new(reader, binding, xtc_options, options.limits, label)?;
-            let metadata =
-                FileTrajectoryMetadata::xtc(reader.first_info(), xtc_options.cell_policy(), None);
+            let reader = xtc::XtcReader::new(
+                reader,
+                topology,
+                xtc_options
+                    .with_limits(options.limits)
+                    .with_source_label(label),
+            )?;
+            let metadata = FileTrajectoryMetadata::xtc(reader.first_info(), cell_policy, None);
             (
                 SequentialReaderInner::Xtc(reader),
                 metadata,
@@ -217,18 +288,39 @@ pub fn open_trajectory(
     let report = TrajectoryOpenReport {
         selected_format: detection.format,
         detection_evidence: detection.evidence,
-        atom_order_evidence: order_kind,
         notes,
     };
-    Ok((SequentialFileTrajectoryReader { inner, metadata }, report))
+    Ok(SequentialFileTrajectoryReader {
+        inner,
+        metadata,
+        open_report: report,
+    })
 }
 
 /// Opens one fully verified indexed path-backed trajectory reader.
+///
+/// Uses the topology order contract of [`open_trajectory`]. Opening scans and
+/// validates the entire file and stores bounded frame offsets for random access.
+/// Use [`open_indexed_trajectory_with_options`] to customize policies or limits.
 pub fn open_indexed_trajectory(
     path: impl AsRef<Path>,
-    binding: TrajectoryTopologyBinding,
+    topology: impl Into<Arc<Topology>>,
+) -> Result<IndexedFileTrajectoryReader, TrajectoryError> {
+    open_indexed_trajectory_with_options(path, topology, TrajectoryOpenOptions::default())
+}
+
+/// Opens a fully verified indexed trajectory reader with explicit options.
+///
+/// File coordinate index `i` is interpreted as topology dense atom index `i`.
+/// Readers check counts and available metadata, including XYZ element order;
+/// coordinate-only formats cannot establish atom identity from counts alone.
+/// Opening scans and validates the entire file before returning the reader.
+pub fn open_indexed_trajectory_with_options(
+    path: impl AsRef<Path>,
+    topology: impl Into<Arc<Topology>>,
     options: TrajectoryOpenOptions,
-) -> Result<(IndexedFileTrajectoryReader, TrajectoryOpenReport), TrajectoryError> {
+) -> Result<IndexedFileTrajectoryReader, TrajectoryError> {
+    let topology = topology.into();
     let path = path.as_ref();
     let label = path.display().to_string();
     let file = File::open(path)
@@ -241,10 +333,16 @@ pub fn open_indexed_trajectory(
         &options.limits,
         &label,
     )?;
-    let order_kind = binding.atom_order().kind();
     let (inner, metadata, notes) = match detection.format {
         TrajectoryFormat::Xyz => {
-            let reader = xyz::XyzReader::new(reader, binding, options.xyz, options.limits, label)?;
+            let reader = xyz::XyzReader::new(
+                reader,
+                topology,
+                options
+                    .xyz
+                    .with_limits(options.limits)
+                    .with_source_label(label),
+            )?;
             let reader = reader.to_indexed()?;
             let count = reader.frame_count().unwrap_or(0);
             let atom_count = reader.topology().atom_count();
@@ -255,7 +353,14 @@ pub fn open_indexed_trajectory(
             )
         }
         TrajectoryFormat::Dcd => {
-            let reader = dcd::DcdReader::new(reader, binding, options.dcd, options.limits, label)?;
+            let reader = dcd::DcdReader::new(
+                reader,
+                topology,
+                options
+                    .dcd
+                    .with_limits(options.limits)
+                    .with_source_label(label),
+            )?;
             let reader = reader.to_indexed()?;
             let count = reader.frame_count().unwrap_or(0);
             let metadata = FileTrajectoryMetadata::dcd(reader.header(), Some(count));
@@ -266,7 +371,14 @@ pub fn open_indexed_trajectory(
             )
         }
         TrajectoryFormat::Trr => {
-            let reader = trr::TrrReader::new(reader, binding, options.trr, options.limits, label)?;
+            let reader = trr::TrrReader::new(
+                reader,
+                topology,
+                options
+                    .trr
+                    .with_limits(options.limits)
+                    .with_source_label(label),
+            )?;
             let reader = reader.to_indexed()?;
             let count = reader.frame_count().unwrap_or(0);
             let metadata = FileTrajectoryMetadata::trr(
@@ -281,15 +393,19 @@ pub fn open_indexed_trajectory(
             )
         }
         TrajectoryFormat::Xtc => {
+            let cell_policy = options.xtc.cell_policy();
             let xtc_options = options.xtc;
-            let reader = xtc::XtcReader::new(reader, binding, xtc_options, options.limits, label)?;
+            let reader = xtc::XtcReader::new(
+                reader,
+                topology,
+                xtc_options
+                    .with_limits(options.limits)
+                    .with_source_label(label),
+            )?;
             let reader = reader.to_indexed()?;
             let count = reader.frame_count().unwrap_or(0);
-            let metadata = FileTrajectoryMetadata::xtc(
-                reader.first_info(),
-                xtc_options.cell_policy(),
-                Some(count),
-            );
+            let metadata =
+                FileTrajectoryMetadata::xtc(reader.first_info(), cell_policy, Some(count));
             (
                 IndexedReaderInner::Xtc(reader),
                 metadata,
@@ -300,8 +416,11 @@ pub fn open_indexed_trajectory(
     let report = TrajectoryOpenReport {
         selected_format: detection.format,
         detection_evidence: detection.evidence,
-        atom_order_evidence: order_kind,
         notes,
     };
-    Ok((IndexedFileTrajectoryReader { inner, metadata }, report))
+    Ok(IndexedFileTrajectoryReader {
+        inner,
+        metadata,
+        open_report: report,
+    })
 }

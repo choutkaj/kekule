@@ -14,7 +14,7 @@ use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_T
 
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
-    require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits, TrajectoryTopologyBinding,
+    require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits,
 };
 
 const HEADER_BYTES: usize = 84;
@@ -91,26 +91,42 @@ pub enum DcdTimePolicy {
 }
 
 /// DCD reader policy.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DcdReadOptions {
     time_policy: DcdTimePolicy,
+    limits: TrajectoryIoLimits,
+    source_label: String,
 }
 
 impl Default for DcdReadOptions {
     fn default() -> Self {
         Self {
+            limits: TrajectoryIoLimits::default(),
+            source_label: "dcd stream".into(),
             time_policy: DcdTimePolicy::Absent,
         }
     }
 }
 
 impl DcdReadOptions {
+    /// Sets limits applied before allocation, scanning, and seeking.
+    pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Sets the source label used in decoding errors.
+    pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
+        self.source_label = source_label.into();
+        self
+    }
+
     pub const fn with_time_policy(mut self, time_policy: DcdTimePolicy) -> Self {
         self.time_policy = time_policy;
         self
     }
 
-    pub const fn time_policy(self) -> DcdTimePolicy {
+    pub const fn time_policy(&self) -> DcdTimePolicy {
         self.time_policy
     }
 }
@@ -208,10 +224,8 @@ impl DcdHeader {
 /// Sequential DCD reader over one seekable stream.
 pub struct DcdReader<R> {
     reader: R,
-    binding: TrajectoryTopologyBinding,
+    topology: Arc<Topology>,
     options: DcdReadOptions,
-    limits: TrajectoryIoLimits,
-    source_label: String,
     header: DcdHeader,
     free_indices: Vec<usize>,
     fixed_indices: Vec<usize>,
@@ -229,26 +243,31 @@ struct DcdDecodedFrame {
 }
 
 impl<R: Read + Seek> DcdReader<R> {
+    /// Opens a stream whose coordinates follow the supplied topology's dense order.
+    ///
+    /// Accepts an owned topology or a shared `Arc<Topology>`. Counts and available
+    /// format metadata are checked automatically; matching counts alone cannot
+    /// establish atom identity. Limits and diagnostic labels are set in `options`.
     pub fn new(
         mut reader: R,
-        binding: TrajectoryTopologyBinding,
+        topology: impl Into<Arc<Topology>>,
         options: DcdReadOptions,
-        limits: TrajectoryIoLimits,
-        source_label: impl Into<String>,
     ) -> Result<Self, TrajectoryError> {
-        let source_label = source_label.into();
-        validate_time_policy(options.time_policy, &source_label)?;
-        let atom_count = binding.topology().atom_count();
-        validate_atom_count(atom_count, &limits, &source_label)?;
+        let topology = topology.into();
+        let source_label = &options.source_label;
+        let limits = &options.limits;
+        validate_time_policy(options.time_policy, source_label)?;
+        let atom_count = topology.atom_count();
+        validate_atom_count(atom_count, limits, source_label)?;
         let start = reader
             .stream_position()
-            .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &source_label, error))?;
+            .map_err(|error| io_context(TrajectoryIoOperation::Open, None, source_label, error))?;
         let mut marker = [0_u8; 4];
         read_exact_required(
             &mut reader,
             &mut marker,
             TrajectoryIoOperation::ReadHeader,
-            &source_label,
+            source_label,
             None,
             "DCD header marker",
         )?;
@@ -261,21 +280,21 @@ impl<R: Read + Seek> DcdReader<R> {
                 TrajectoryCodecErrorKind::InvalidHeader,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Dcd),
-                &source_label,
+                source_label,
                 "DCD first record marker is not 84 in either byte order",
             ));
         };
         reader
             .seek(SeekFrom::Start(start))
-            .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &source_label, error))?;
+            .map_err(|error| io_context(TrajectoryIoOperation::Open, None, source_label, error))?;
 
         let mut record = Vec::new();
         read_record(
             &mut reader,
             endian,
             &mut record,
-            &limits,
-            &source_label,
+            limits,
+            source_label,
             TrajectoryIoOperation::ReadHeader,
             None,
             false,
@@ -285,31 +304,31 @@ impl<R: Read + Seek> DcdReader<R> {
                 TrajectoryCodecErrorKind::InvalidHeader,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Dcd),
-                &source_label,
+                source_label,
                 "DCD header must be an 84-byte CORD record",
             ));
         }
-        let controls = parse_controls(&record[4..], endian, &source_label)?;
+        let controls = parse_controls(&record[4..], endian, source_label)?;
         if controls[11] != 0 || controls[12] != 0 {
             return Err(codec_context(
                 TrajectoryCodecErrorKind::UnsupportedVariant,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Dcd),
-                &source_label,
+                source_label,
                 "DCD 4D or charge coordinate records are not supported",
             ));
         }
-        let declared_frames = nonnegative_u64(controls[0], "NSET", &source_label)?;
-        let start_step = nonnegative_u64(controls[1], "ISTART", &source_label)?;
-        let step_interval = positive_u64(controls[2], "NSAVC", &source_label)?;
-        let fixed_count = nonnegative_usize(controls[8], "NAMNF", &source_label)?;
+        let declared_frames = nonnegative_u64(controls[0], "NSET", source_label)?;
+        let start_step = nonnegative_u64(controls[1], "ISTART", source_label)?;
+        let step_interval = positive_u64(controls[2], "NSAVC", source_label)?;
+        let fixed_count = nonnegative_usize(controls[8], "NAMNF", source_label)?;
         let delta = endian.f32(record[40..44].try_into().expect("header slice"));
         if !delta.is_finite() || delta < 0.0 {
             return Err(codec_context(
                 TrajectoryCodecErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Dcd),
-                &source_label,
+                source_label,
                 "DCD DELTA must be finite and nonnegative",
             ));
         }
@@ -320,7 +339,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 TrajectoryCodecErrorKind::UnsupportedVariant,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Dcd),
-                &source_label,
+                source_label,
                 "only the common CHARMM/NAMD/OpenMM DCD profile is supported",
             ));
         }
@@ -329,48 +348,48 @@ impl<R: Read + Seek> DcdReader<R> {
             &mut reader,
             endian,
             &mut record,
-            &limits,
-            &source_label,
+            limits,
+            source_label,
             TrajectoryIoOperation::ReadHeader,
             None,
             false,
         )?;
-        validate_title_record(&record, endian, &source_label)?;
+        validate_title_record(&record, endian, source_label)?;
         read_record(
             &mut reader,
             endian,
             &mut record,
-            &limits,
-            &source_label,
+            limits,
+            source_label,
             TrajectoryIoOperation::ReadHeader,
             None,
             false,
         )?;
         if record.len() != 4 {
             return Err(header_error(
-                &source_label,
+                source_label,
                 "DCD atom-count record is not 4 bytes",
             ));
         }
         let file_atoms = nonnegative_usize(
             endian.i32(record[..4].try_into().expect("atom-count slice")),
             "NATOM",
-            &source_label,
+            source_label,
         )?;
-        validate_atom_count(file_atoms, &limits, &source_label)?;
+        validate_atom_count(file_atoms, limits, source_label)?;
         if file_atoms != atom_count {
             return Err(TrajectoryCodecErrorContext::new(
                 TrajectoryCodecErrorKind::InconsistentAtomCount,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Dcd),
             )
-            .with_source_label(&source_label)
+            .with_source_label(source_label)
             .with_counts(atom_count as u64, file_atoms as u64)
             .into());
         }
         if fixed_count > atom_count {
             return Err(header_error(
-                &source_label,
+                source_label,
                 "DCD fixed-atom count exceeds atom count",
             ));
         }
@@ -381,23 +400,23 @@ impl<R: Read + Seek> DcdReader<R> {
                 &mut reader,
                 endian,
                 &mut record,
-                &limits,
-                &source_label,
+                limits,
+                source_label,
                 TrajectoryIoOperation::ReadHeader,
                 None,
                 false,
             )?;
-            let expected = checked_coordinate_bytes(free_count, &source_label)?;
+            let expected = checked_coordinate_bytes(free_count, source_label)?;
             if record.len() != expected {
                 return Err(header_error(
-                    &source_label,
+                    source_label,
                     "DCD free-atom index record has the wrong size",
                 ));
             }
             free_indices.try_reserve_exact(free_count).map_err(|_| {
                 resource_error(
                     TrajectoryIoOperation::ReadHeader,
-                    &source_label,
+                    source_label,
                     None,
                     "could not reserve DCD free-atom indices",
                 )
@@ -406,7 +425,7 @@ impl<R: Read + Seek> DcdReader<R> {
             seen.try_reserve_exact(atom_count).map_err(|_| {
                 resource_error(
                     TrajectoryIoOperation::ReadHeader,
-                    &source_label,
+                    source_label,
                     None,
                     "could not reserve DCD index-validation scratch",
                 )
@@ -416,16 +435,16 @@ impl<R: Read + Seek> DcdReader<R> {
                 let one_based = endian.i32(*chunk);
                 if one_based <= 0 {
                     return Err(header_error(
-                        &source_label,
+                        source_label,
                         "DCD free-atom indices must be positive and one-based",
                     ));
                 }
                 let index = usize::try_from(one_based - 1).map_err(|_| {
-                    header_error(&source_label, "DCD free-atom index does not fit usize")
+                    header_error(source_label, "DCD free-atom index does not fit usize")
                 })?;
                 if index >= atom_count || seen[index] {
                     return Err(header_error(
-                        &source_label,
+                        source_label,
                         "DCD free-atom indices are out of range or duplicated",
                     ));
                 }
@@ -436,7 +455,7 @@ impl<R: Read + Seek> DcdReader<R> {
             free_indices.try_reserve_exact(atom_count).map_err(|_| {
                 resource_error(
                     TrajectoryIoOperation::ReadHeader,
-                    &source_label,
+                    source_label,
                     None,
                     "could not reserve DCD atom indices",
                 )
@@ -447,7 +466,7 @@ impl<R: Read + Seek> DcdReader<R> {
         free_mask.try_reserve_exact(atom_count).map_err(|_| {
             resource_error(
                 TrajectoryIoOperation::ReadHeader,
-                &source_label,
+                source_label,
                 None,
                 "could not reserve DCD fixed-atom validation scratch",
             )
@@ -460,7 +479,7 @@ impl<R: Read + Seek> DcdReader<R> {
         fixed_indices.try_reserve_exact(fixed_count).map_err(|_| {
             resource_error(
                 TrajectoryIoOperation::ReadHeader,
-                &source_label,
+                source_label,
                 None,
                 "could not reserve DCD fixed-atom indices",
             )
@@ -476,7 +495,7 @@ impl<R: Read + Seek> DcdReader<R> {
             .ok_or_else(|| {
                 resource_error(
                     TrajectoryIoOperation::Open,
-                    &source_label,
+                    source_label,
                     None,
                     "DCD coordinate scratch size overflows",
                 )
@@ -484,7 +503,7 @@ impl<R: Read + Seek> DcdReader<R> {
         if scratch_bytes > limits.max_scratch_bytes {
             return Err(resource_error(
                 TrajectoryIoOperation::Open,
-                &source_label,
+                source_label,
                 None,
                 "DCD coordinate scratch exceeds the configured limit",
             ));
@@ -493,7 +512,7 @@ impl<R: Read + Seek> DcdReader<R> {
         positions.try_reserve_exact(atom_count).map_err(|_| {
             resource_error(
                 TrajectoryIoOperation::Open,
-                &source_label,
+                source_label,
                 None,
                 "could not reserve DCD coordinate scratch",
             )
@@ -503,7 +522,7 @@ impl<R: Read + Seek> DcdReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Dcd),
-                &source_label,
+                source_label,
                 error,
             )
         })?;
@@ -521,10 +540,8 @@ impl<R: Read + Seek> DcdReader<R> {
         };
         Ok(Self {
             reader,
-            binding,
+            topology,
             options,
-            limits,
-            source_label,
             header,
             free_indices,
             fixed_indices,
@@ -536,7 +553,7 @@ impl<R: Read + Seek> DcdReader<R> {
     }
 
     pub fn topology(&self) -> &Topology {
-        self.binding.topology()
+        self.topology.as_ref()
     }
 
     pub(crate) fn header(&self) -> &DcdHeader {
@@ -549,7 +566,7 @@ impl<R: Read + Seek> DcdReader<R> {
             TrajectoryIoOperation::ReadFrame,
             Some(TrajectoryFormat::Dcd),
         )
-        .with_source_label(&self.source_label)
+        .with_source_label(&self.options.source_label)
         .with_frame(self.frame_cursor)
         .with_byte_offset(frame_start)
         .with_counts(self.header.declared_frames, self.frame_cursor)
@@ -565,7 +582,7 @@ impl<R: Read + Seek> DcdReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
                 Some(TrajectoryFormat::Dcd),
-                &self.source_label,
+                &self.options.source_label,
                 error,
             )
         })?;
@@ -574,7 +591,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 &mut self.reader,
                 TrajectoryIoOperation::ReadFrame,
                 TrajectoryFormat::Dcd,
-                &self.source_label,
+                &self.options.source_label,
             )? {
                 return Ok(None);
             }
@@ -583,7 +600,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 TrajectoryIoOperation::ReadFrame,
                 Some(TrajectoryFormat::Dcd),
             )
-            .with_source_label(&self.source_label)
+            .with_source_label(&self.options.source_label)
             .with_frame(self.frame_cursor)
             .with_byte_offset(frame_start)
             .with_counts(
@@ -593,18 +610,18 @@ impl<R: Read + Seek> DcdReader<R> {
             .with_detail("DCD contains a frame beyond its declared NSET count")
             .into());
         }
-        if self.frame_cursor >= self.limits.max_frames {
+        if self.frame_cursor >= self.options.limits.max_frames {
             if probe_seekable_eof(
                 &mut self.reader,
                 TrajectoryIoOperation::ReadFrame,
                 TrajectoryFormat::Dcd,
-                &self.source_label,
+                &self.options.source_label,
             )? {
                 return Err(self.early_eof_error(frame_start));
             }
             return Err(resource_error(
                 TrajectoryIoOperation::ReadFrame,
-                &self.source_label,
+                &self.options.source_label,
                 Some(self.frame_cursor),
                 "DCD frame count exceeds the configured limit",
             ));
@@ -615,8 +632,8 @@ impl<R: Read + Seek> DcdReader<R> {
                 &mut self.reader,
                 self.header.endian,
                 &mut self.record,
-                &self.limits,
-                &self.source_label,
+                &self.options.limits,
+                &self.options.source_label,
                 TrajectoryIoOperation::ReadFrame,
                 Some(self.frame_cursor),
                 true,
@@ -626,7 +643,7 @@ impl<R: Read + Seek> DcdReader<R> {
             if self.record.len() != CELL_BYTES {
                 return Err(frame_error(
                     TrajectoryCodecErrorKind::InvalidFrame,
-                    &self.source_label,
+                    &self.options.source_label,
                     self.frame_cursor,
                     "DCD unit-cell record must contain six f64 values",
                 ));
@@ -634,7 +651,7 @@ impl<R: Read + Seek> DcdReader<R> {
             cell = Some(decode_cell(
                 &self.record,
                 self.header.endian,
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor,
             )?);
         }
@@ -645,11 +662,12 @@ impl<R: Read + Seek> DcdReader<R> {
             Some(self.free_indices.as_slice())
         };
         let coordinate_count = coordinate_indices.map_or(self.header.atom_count, <[usize]>::len);
-        let coordinate_bytes = checked_coordinate_bytes(coordinate_count, &self.source_label)?;
-        if coordinate_bytes as u64 > self.limits.max_frame_bytes {
+        let coordinate_bytes =
+            checked_coordinate_bytes(coordinate_count, &self.options.source_label)?;
+        if coordinate_bytes as u64 > self.options.limits.max_frame_bytes {
             return Err(resource_error(
                 TrajectoryIoOperation::ReadFrame,
-                &self.source_label,
+                &self.options.source_label,
                 Some(self.frame_cursor),
                 "DCD coordinate record exceeds the configured frame limit",
             ));
@@ -660,8 +678,8 @@ impl<R: Read + Seek> DcdReader<R> {
                 &mut self.reader,
                 self.header.endian,
                 &mut self.record,
-                &self.limits,
-                &self.source_label,
+                &self.options.limits,
+                &self.options.source_label,
                 TrajectoryIoOperation::ReadFrame,
                 Some(self.frame_cursor),
                 clean_frame_eof,
@@ -671,7 +689,7 @@ impl<R: Read + Seek> DcdReader<R> {
             if self.record.len() != coordinate_bytes {
                 return Err(frame_error(
                     TrajectoryCodecErrorKind::InvalidFrame,
-                    &self.source_label,
+                    &self.options.source_label,
                     self.frame_cursor,
                     "DCD coordinate record has the wrong size",
                 ));
@@ -681,7 +699,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 if !value.is_finite() {
                     return Err(frame_error(
                         TrajectoryCodecErrorKind::InvalidFrame,
-                        &self.source_label,
+                        &self.options.source_label,
                         self.frame_cursor,
                         "DCD coordinate is not finite",
                     ));
@@ -699,22 +717,22 @@ impl<R: Read + Seek> DcdReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
                 Some(TrajectoryFormat::Dcd),
-                &self.source_label,
+                &self.options.source_label,
                 error,
             )
         })?;
         let frame_bytes = frame_end.checked_sub(frame_start).ok_or_else(|| {
             frame_error(
                 TrajectoryCodecErrorKind::InvalidFrame,
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor,
                 "DCD frame end precedes its start",
             )
         })?;
-        if frame_bytes > self.limits.max_frame_bytes {
+        if frame_bytes > self.options.limits.max_frame_bytes {
             return Err(resource_error(
                 TrajectoryIoOperation::ReadFrame,
-                &self.source_label,
+                &self.options.source_label,
                 Some(self.frame_cursor),
                 "DCD frame exceeds the configured byte limit",
             ));
@@ -726,7 +744,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 .map_err(|_| {
                     resource_error(
                         TrajectoryIoOperation::ReadFrame,
-                        &self.source_label,
+                        &self.options.source_label,
                         Some(0),
                         "could not reserve DCD fixed-coordinate scratch",
                     )
@@ -746,7 +764,7 @@ impl<R: Read + Seek> DcdReader<R> {
                     .ok_or_else(|| {
                         frame_error(
                             TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep,
-                            &self.source_label,
+                            &self.options.source_label,
                             self.frame_cursor,
                             "DCD frame step multiplication overflows",
                         )
@@ -755,7 +773,7 @@ impl<R: Read + Seek> DcdReader<R> {
             .ok_or_else(|| {
                 frame_error(
                     TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep,
-                    &self.source_label,
+                    &self.options.source_label,
                     self.frame_cursor,
                     "DCD frame step addition overflows",
                 )
@@ -765,7 +783,7 @@ impl<R: Read + Seek> DcdReader<R> {
             if !time.is_finite() {
                 return Err(frame_error(
                     TrajectoryCodecErrorKind::InvalidFrame,
-                    &self.source_label,
+                    &self.options.source_label,
                     self.frame_cursor,
                     "DCD derived frame time is not finite",
                 ));
@@ -777,7 +795,7 @@ impl<R: Read + Seek> DcdReader<R> {
         self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
             resource_error(
                 TrajectoryIoOperation::ReadFrame,
-                &self.source_label,
+                &self.options.source_label,
                 Some(self.frame_cursor),
                 "DCD frame cursor overflows",
             )
@@ -812,7 +830,7 @@ impl<R: Read + Seek> DcdReader<R> {
                     &mut self.reader,
                     TrajectoryIoOperation::Index,
                     TrajectoryFormat::Dcd,
-                    &self.source_label,
+                    &self.options.source_label,
                 )? {
                     break;
                 }
@@ -821,7 +839,7 @@ impl<R: Read + Seek> DcdReader<R> {
                     TrajectoryIoOperation::Index,
                     Some(TrajectoryFormat::Dcd),
                 )
-                .with_source_label(&self.source_label)
+                .with_source_label(&self.options.source_label)
                 .with_counts(
                     self.header.declared_frames,
                     (offsets.len() as u64).saturating_add(1),
@@ -829,26 +847,26 @@ impl<R: Read + Seek> DcdReader<R> {
                 .with_detail("DCD contains frames beyond its declared NSET count")
                 .into());
             }
-            if let Some(limit) = projected_index_limit(offsets.len(), &self.limits) {
+            if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
                 if probe_seekable_eof(
                     &mut self.reader,
                     TrajectoryIoOperation::Index,
                     TrajectoryFormat::Dcd,
-                    &self.source_label,
+                    &self.options.source_label,
                 )? {
                     return Err(TrajectoryCodecErrorContext::new(
                         TrajectoryCodecErrorKind::InconsistentMetadata,
                         TrajectoryIoOperation::Index,
                         Some(TrajectoryFormat::Dcd),
                     )
-                    .with_source_label(&self.source_label)
+                    .with_source_label(&self.options.source_label)
                     .with_counts(self.header.declared_frames, offsets.len() as u64)
                     .with_detail("DCD ended before its declared NSET count")
                     .into());
                 }
                 return Err(resource_error(
                     TrajectoryIoOperation::Index,
-                    &self.source_label,
+                    &self.options.source_label,
                     Some(offsets.len() as u64),
                     format!("DCD index {limit} exceeds the configured limit"),
                 ));
@@ -857,7 +875,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(TrajectoryFormat::Dcd),
-                    &self.source_label,
+                    &self.options.source_label,
                     error,
                 )
             })?;
@@ -871,16 +889,16 @@ impl<R: Read + Seek> DcdReader<R> {
                     TrajectoryIoOperation::Index,
                     Some(TrajectoryFormat::Dcd),
                 )
-                .with_source_label(&self.source_label)
+                .with_source_label(&self.options.source_label)
                 .with_counts(self.header.declared_frames, offsets.len() as u64)
                 .with_detail("DCD ended before its declared NSET count")
                 .into());
             }
             reserve_index_for_push(
                 &mut offsets,
-                &self.limits,
+                &self.options.limits,
                 TrajectoryFormat::Dcd,
-                &self.source_label,
+                &self.options.source_label,
                 self.frame_cursor.saturating_sub(1),
             )?;
             offsets.push(offset);
@@ -891,7 +909,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(TrajectoryFormat::Dcd),
-                    &self.source_label,
+                    &self.options.source_label,
                     error,
                 )
             })?;
@@ -902,7 +920,7 @@ impl<R: Read + Seek> DcdReader<R> {
             .map_err(|_| {
                 resource_error(
                     TrajectoryIoOperation::Index,
-                    &self.source_label,
+                    &self.options.source_label,
                     None,
                     "could not reserve DCD indexed position scratch",
                 )
@@ -923,7 +941,7 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
     }
 
     fn shared_topology(&self) -> Arc<Topology> {
-        self.binding.shared_topology()
+        Arc::clone(&self.topology)
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
@@ -934,7 +952,7 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
                 Some(TrajectoryFormat::Dcd),
-                &self.source_label,
+                &self.options.source_label,
                 error,
             )
         })?;
@@ -1003,7 +1021,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
             io_context(
                 TrajectoryIoOperation::Index,
                 Some(TrajectoryFormat::Dcd),
-                &self.inner.source_label,
+                &self.inner.options.source_label,
                 error,
             )
         })?;
@@ -1015,7 +1033,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(TrajectoryFormat::Dcd),
-                    &self.inner.source_label,
+                    &self.inner.options.source_label,
                     error,
                 )
             })?;
@@ -1045,7 +1063,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(TrajectoryFormat::Dcd),
-                    &self.inner.source_label,
+                    &self.inner.options.source_label,
                     error,
                 )
             });
