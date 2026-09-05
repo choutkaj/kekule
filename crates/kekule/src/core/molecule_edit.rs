@@ -1,10 +1,11 @@
 use std::fmt;
 
-use crate::properties::Properties;
+use crate::properties::{Properties, PropertyKey, PropertyTable, PropertyValue};
 
 use super::{
-    Atom, AtomId, Bond, BondId, BondOrder, Graph, Molecule, Perception, Result, StereoElement,
-    StereoElementId, StereoGroup, StereoGroupId,
+    Atom, AtomId, Bond, BondId, BondOrder, Graph, Molecule, Perception, PerceptionInstallError,
+    Result, RingMembership, RingSet, StereoDescriptor, StereoElement, StereoElementId, StereoGroup,
+    StereoGroupId,
 };
 
 /// A connectedness violation at a public [`Molecule`] boundary.
@@ -74,6 +75,8 @@ impl std::error::Error for MoleculePublicationError {
 #[non_exhaustive]
 pub enum GraphValidationError {
     AdjacencySlotCount,
+    AtomPropertySlotCount { expected: usize, actual: usize },
+    BondPropertySlotCount { expected: usize, actual: usize },
     TombstonedAtomHasAdjacency { atom: AtomId },
     InvalidBondEndpoint { bond: BondId },
     InvalidAdjacencyBond { atom: AtomId, bond: BondId },
@@ -85,6 +88,10 @@ pub enum GraphValidationError {
 impl fmt::Display for GraphValidationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::AtomPropertySlotCount { expected, actual } => write!(formatter,
+                "atom property storage requires {expected} slots, but has {actual}"),
+            Self::BondPropertySlotCount { expected, actual } => write!(formatter,
+                "bond property storage requires {expected} slots, but has {actual}"),
             Self::AdjacencySlotCount => formatter.write_str(
                 "molecular graph adjacency has a different slot count than atom storage",
             ),
@@ -210,6 +217,11 @@ impl Molecule {
         MoleculeEditor::from_molecule(self)
     }
 
+    /// Moves this molecule into an editor without cloning its graph or properties.
+    pub fn to_editor(self) -> MoleculeEditor {
+        MoleculeEditor { working: self }
+    }
+
     #[cfg(test)]
     pub(crate) fn is_connected(&self) -> bool {
         self.validate_connected().is_ok()
@@ -231,6 +243,27 @@ impl Molecule {
 /// [`Self::finish`] validates graph references, connectedness, stereochemistry,
 /// and canonical represented chemistry before publishing a [`Molecule`]. A
 /// failed finish returns structured errors and publishes nothing.
+/// Use [`Self::try_finish`] when a failed draft must remain available for repair.
+///
+/// | Task | Operations |
+/// | --- | --- |
+/// | Start | [`Self::new`], [`Molecule::edit`], [`Molecule::to_editor`] |
+/// | Inspect | [`Self::atoms`], [`Self::bonds`], [`Self::neighbors`], [`Self::connected_components`] |
+/// | Change graph | [`Self::replace_atom`], [`Self::replace_bond`], [`Self::delete_atoms`], [`Self::retain_atoms`] |
+/// | Combine fragments | [`Self::append_molecule`] with returned ID mappings |
+/// | Annotate | [`Self::set_atom_property`], [`Self::set_atom_properties`], [`Self::set_atom_property_column`] and bond counterparts |
+/// | Edit stereo | [`Self::replace_stereo_element`], [`Self::replace_stereo_group`] |
+///
+/// Structural changes invalidate perception and clear owner properties while
+/// retaining annotations on surviving atom/bond identities. Generic property
+/// edits leave perception intact. Atom and bond IDs remain stable until
+/// [`Self::clear`]; iteration skips deleted slots.
+///
+/// An unfinished editor cannot be passed to algorithms requiring a published molecule:
+/// ```compile_fail
+/// use kekule::core::{Molecule, MoleculeEditor};
+/// fn published(editor: &MoleculeEditor) -> &Molecule { editor }
+/// ```
 ///
 /// # Example
 ///
@@ -249,23 +282,37 @@ impl Molecule {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct MoleculeEditor {
-    working: Molecule,
+    pub(super) working: Molecule,
 }
 
-// Unit tests exercise chemistry algorithms against in-progress editor state.
-#[cfg(test)]
-impl std::ops::Deref for MoleculeEditor {
-    type Target = Molecule;
+/// A failed recoverable finish, retaining the original, unmodified editing state.
+#[derive(Debug)]
+pub struct MoleculeFinishError {
+    error: MoleculePublicationError,
+    editor: Box<MoleculeEditor>,
+}
 
-    fn deref(&self) -> &Self::Target {
-        &self.working
+impl MoleculeFinishError {
+    pub const fn error(&self) -> &MoleculePublicationError {
+        &self.error
+    }
+    pub fn editor(&self) -> &MoleculeEditor {
+        &self.editor
+    }
+    pub fn to_editor(self) -> MoleculeEditor {
+        *self.editor
     }
 }
 
-#[cfg(test)]
-impl std::ops::DerefMut for MoleculeEditor {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.working
+impl fmt::Display for MoleculeFinishError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+impl std::error::Error for MoleculeFinishError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
     }
 }
 
@@ -296,6 +343,178 @@ impl MoleculeEditor {
         &self.working.graph
     }
 
+    pub fn atom_count(&self) -> usize {
+        self.working.atom_count()
+    }
+
+    pub fn bond_count(&self) -> usize {
+        self.working.bond_count()
+    }
+
+    pub fn formal_charge(&self) -> i64 {
+        self.working.formal_charge()
+    }
+
+    pub fn atom(&self, id: AtomId) -> Result<&Atom> {
+        self.working.atom(id)
+    }
+
+    pub fn atoms(&self) -> impl Iterator<Item = (AtomId, &Atom)> {
+        self.working.atoms()
+    }
+
+    pub fn atom_ids(&self) -> impl Iterator<Item = AtomId> + '_ {
+        self.working.atom_ids()
+    }
+
+    pub fn bond(&self, id: BondId) -> Result<&Bond> {
+        self.working.bond(id)
+    }
+
+    pub fn bonds(&self) -> impl Iterator<Item = (BondId, &Bond)> {
+        self.working.bonds()
+    }
+
+    pub fn bond_ids(&self) -> impl Iterator<Item = BondId> + '_ {
+        self.working.bond_ids()
+    }
+
+    pub fn neighbors(&self, id: AtomId) -> Result<impl Iterator<Item = AtomId> + '_> {
+        self.working.neighbors(id)
+    }
+
+    pub fn incident_bonds(&self, id: AtomId) -> Result<impl Iterator<Item = (BondId, &Bond)> + '_> {
+        self.working.incident_bonds(id)
+    }
+
+    pub fn bond_between(&self, a: AtomId, b: AtomId) -> Result<Option<BondId>> {
+        self.working.bond_between(a, b)
+    }
+
+    pub const fn properties(&self) -> &Properties {
+        self.working.properties()
+    }
+
+    pub const fn atom_properties(&self) -> &PropertyTable {
+        self.working.atom_properties()
+    }
+
+    pub const fn bond_properties(&self) -> &PropertyTable {
+        self.working.bond_properties()
+    }
+
+    pub fn atom_property(&self, id: AtomId, key: &PropertyKey) -> Result<Option<PropertyValue>> {
+        self.working.atom_property(id, key)
+    }
+
+    pub fn bond_property(&self, id: BondId, key: &PropertyKey) -> Result<Option<PropertyValue>> {
+        self.working.bond_property(id, key)
+    }
+
+    pub fn set_atom_property(
+        &mut self,
+        id: AtomId,
+        key: PropertyKey,
+        value: Option<PropertyValue>,
+    ) -> Result<()> {
+        self.working.set_atom_property(id, key, value)
+    }
+
+    pub fn set_bond_property(
+        &mut self,
+        id: BondId,
+        key: PropertyKey,
+        value: Option<PropertyValue>,
+    ) -> Result<()> {
+        self.working.set_bond_property(id, key, value)
+    }
+
+    pub fn insert_property(
+        &mut self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>> {
+        self.working.insert_property(key, value)
+    }
+
+    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.working.remove_property(key)
+    }
+
+    pub fn clear_properties(&mut self) {
+        self.working.clear_properties()
+    }
+
+    pub fn stereo_element(&self, id: StereoElementId) -> Result<&StereoElement> {
+        self.working.stereo_element(id)
+    }
+
+    pub fn stereo_elements(&self) -> impl Iterator<Item = (StereoElementId, &StereoElement)> {
+        self.working.stereo_elements()
+    }
+
+    pub fn stereo_element_ids(&self) -> impl Iterator<Item = StereoElementId> + '_ {
+        self.working.stereo_element_ids()
+    }
+
+    pub fn stereo_group(&self, id: StereoGroupId) -> Result<&StereoGroup> {
+        self.working.stereo_group(id)
+    }
+
+    pub fn stereo_groups(&self) -> impl Iterator<Item = (StereoGroupId, &StereoGroup)> {
+        self.working.stereo_groups()
+    }
+
+    pub fn stereo_group_slot_count(&self) -> usize {
+        self.working.stereo_group_slot_count()
+    }
+
+    pub fn stereo_group_slots(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (StereoGroupId, Option<&StereoGroup>)> + DoubleEndedIterator + '_
+    {
+        self.working.stereo_group_slots()
+    }
+
+    pub fn perception(&self) -> &Perception {
+        self.working.perception()
+    }
+
+    pub fn implicit_hydrogens(&self, atom: AtomId) -> Result<Option<u8>> {
+        self.working.implicit_hydrogens(atom)
+    }
+
+    pub fn atom_is_aromatic(&self, atom: AtomId) -> Result<Option<bool>> {
+        self.working.atom_is_aromatic(atom)
+    }
+
+    pub fn bond_is_aromatic(&self, bond: BondId) -> Result<Option<bool>> {
+        self.working.bond_is_aromatic(bond)
+    }
+
+    pub fn cip_descriptor(&self, element: StereoElementId) -> Result<Option<StereoDescriptor>> {
+        self.working.cip_descriptor(element)
+    }
+
+    pub fn ring_membership(&self) -> Option<&RingMembership> {
+        self.working.ring_membership()
+    }
+
+    pub fn ring_set(&self) -> Option<&RingSet> {
+        self.working.ring_set()
+    }
+
+    pub fn clear_perception(&mut self) {
+        self.working.clear_perception()
+    }
+
+    pub fn install_perception(
+        &mut self,
+        state: Perception,
+    ) -> std::result::Result<(), PerceptionInstallError> {
+        self.working.install_perception(state)
+    }
+
     pub(crate) fn working(&self) -> &Molecule {
         &self.working
     }
@@ -308,7 +527,15 @@ impl MoleculeEditor {
         self.working.atom_mut(atom)
     }
 
-    /// Returns mutable represented bond state in this private working copy.
+    /// Borrows a bond with checked order editing through [`super::BondMut::set_order`].
+    /// Change connectivity with [`Self::set_bond_endpoints`] or [`Self::replace_bond`].
+    ///
+    /// ```compile_fail
+    /// use kekule::core::{AtomId, Bond, BondId, BondOrder, MoleculeEditor};
+    /// fn bypass(editor: &mut MoleculeEditor, id: BondId) {
+    ///     *editor.bond_mut(id).unwrap() = Bond::new(AtomId::new(0), AtomId::new(99), BondOrder::Single);
+    /// }
+    /// ```
     pub fn bond_mut(&mut self, bond: BondId) -> Result<super::BondMut<'_>> {
         self.working.bond_mut(bond)
     }
@@ -360,6 +587,23 @@ impl MoleculeEditor {
     pub fn finish(self) -> std::result::Result<Molecule, MoleculePublicationError> {
         publish_molecule(self.working)
     }
+
+    /// Checks whether a snapshot would publish successfully, leaving this editor
+    /// unchanged. This clones the working state to check canonicalization too.
+    pub fn validate(&self) -> std::result::Result<(), MoleculePublicationError> {
+        publish_molecule(self.working.clone()).map(|_| ())
+    }
+
+    /// Publishes, or returns the original editor for repair through
+    /// [`MoleculeFinishError::to_editor`]. Keeps a cloned rollback snapshot;
+    /// use [`Self::finish`] when recovery is unnecessary.
+    pub fn try_finish(self) -> std::result::Result<Molecule, MoleculeFinishError> {
+        let snapshot = self.clone();
+        publish_molecule(self.working).map_err(|error| MoleculeFinishError {
+            error,
+            editor: Box::new(snapshot),
+        })
+    }
 }
 
 fn publish_molecule(
@@ -384,6 +628,18 @@ fn publish_molecule(
 }
 
 fn validate_graph(molecule: &Molecule) -> std::result::Result<(), GraphValidationError> {
+    if molecule.atom_properties().len() != molecule.graph.atoms.len() {
+        return Err(GraphValidationError::AtomPropertySlotCount {
+            expected: molecule.graph.atoms.len(),
+            actual: molecule.atom_properties().len(),
+        });
+    }
+    if molecule.bond_properties().len() != molecule.graph.bonds.len() {
+        return Err(GraphValidationError::BondPropertySlotCount {
+            expected: molecule.graph.bonds.len(),
+            actual: molecule.bond_properties().len(),
+        });
+    }
     if molecule.graph.adjacency.len() != molecule.graph.atoms.len() {
         return Err(GraphValidationError::AdjacencySlotCount);
     }
@@ -587,6 +843,37 @@ mod tests {
     }
 
     #[test]
+    fn publication_checks_property_domains_and_recovery_preserves_malformed_draft() {
+        for bonds in [false, true] {
+            let mut editor = MoleculeEditor::new();
+            editor.add_atom(carbon()).unwrap();
+            if bonds {
+                editor.working.properties.resize_bonds(1);
+            } else {
+                editor.working.properties.resize_atoms(0);
+            }
+            let before = format!("{editor:#?}");
+            let error = editor.try_finish().unwrap_err();
+            let expected = if bonds {
+                GraphValidationError::BondPropertySlotCount {
+                    expected: 0,
+                    actual: 1,
+                }
+            } else {
+                GraphValidationError::AtomPropertySlotCount {
+                    expected: 1,
+                    actual: 0,
+                }
+            };
+            assert_eq!(
+                error.error(),
+                &MoleculePublicationError::InvalidGraph(expected)
+            );
+            assert_eq!(format!("{:#?}", error.editor()), before);
+        }
+    }
+
+    #[test]
     fn graph_validation_errors_have_diagnostic_display_messages() {
         let error = GraphValidationError::InvalidAdjacencyBond {
             atom: AtomId::new(4),
@@ -741,7 +1028,10 @@ mod tests {
         let molecule = builder.finish().unwrap();
 
         let mut editor = molecule.edit();
-        editor.bond_mut(oxo_bond).unwrap().order = BondOrder::Double;
+        editor
+            .bond_mut(oxo_bond)
+            .unwrap()
+            .set_order(BondOrder::Double);
         let molecule = editor.finish().expect("canonical edit publication");
 
         assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);
@@ -815,8 +1105,18 @@ mod tests {
 
         let mut editor = molecule.edit();
         for bond in oxo_bonds {
-            editor.bond_mut(bond).unwrap().order = BondOrder::Double;
+            editor.bond_mut(bond).unwrap().set_order(BondOrder::Double);
         }
+        let draft = format!("{editor:#?}");
+        let failure = editor.clone().try_finish().unwrap_err();
+        assert_eq!(
+            failure.error(),
+            &MoleculePublicationError::FormalChargeOutOfRange {
+                atom: chlorine,
+                charge: 128,
+            }
+        );
+        assert_eq!(format!("{:#?}", failure.editor()), draft);
         assert_eq!(
             editor.finish(),
             Err(MoleculePublicationError::FormalChargeOutOfRange {

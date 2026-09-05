@@ -332,7 +332,7 @@ fn canonical_smiles_is_stable_across_atom_order_for_tree_roles() {
     first
         .add_bond(first_center, first_terminal_b, BondOrder::Single)
         .expect("bond should be valid");
-    perceive(&mut first).expect("propane perceives");
+    perceive(first.working_mut()).expect("propane perceives");
 
     let mut second = crate::core::MoleculeEditor::new();
     let second_center = second.add_atom(carbon()).expect("atom identifier capacity");
@@ -344,11 +344,12 @@ fn canonical_smiles_is_stable_across_atom_order_for_tree_roles() {
     second
         .add_bond(second_center, second_terminal_b, BondOrder::Single)
         .expect("bond should be valid");
-    perceive(&mut second).expect("propane perceives");
+    perceive(second.working_mut()).expect("propane perceives");
 
-    let first_written = smiles_api::write_canonical(&first).expect("canonical SMILES should write");
+    let first_written =
+        smiles_api::write_canonical(first.working()).expect("canonical SMILES should write");
     let second_written =
-        smiles_api::write_canonical(&second).expect("canonical SMILES should write");
+        smiles_api::write_canonical(second.working()).expect("canonical SMILES should write");
 
     assert_eq!(first_written, second_written);
     assert_eq!(first_written, "CCC");
@@ -2697,12 +2698,15 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let bond = molecule.add_bond(a, b, BondOrder::Dative).expect("bond");
-    assert!(smiles_api::write(&molecule)
+    assert!(smiles_api::write(molecule.working())
         .expect_err("dative bond should be rejected")
         .message
         .contains("cannot encode"));
 
-    molecule.bond_mut(bond).expect("bond").order = BondOrder::Single;
+    molecule
+        .bond_mut(bond)
+        .expect("bond")
+        .set_order(BondOrder::Single);
     molecule
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
@@ -2712,7 +2716,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
             },
         )))
         .expect("atom stereo");
-    assert!(smiles_api::write(&molecule)
+    assert!(smiles_api::write(molecule.working())
         .expect_err("atom chirality should be rejected")
         .message
         .contains("stereochemistry"));
@@ -2729,7 +2733,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         atom.radical = Some(AtomRadical::Doublet);
         atom.hydrogens = HydrogenDeclaration::Fixed(2);
     }
-    assert!(smiles_api::write(&molecule)
+    assert!(smiles_api::write(molecule.working())
         .expect_err("the supported SMILES grammar has no explicit radical token")
         .message
         .contains("explicit radical token"));
@@ -2739,7 +2743,8 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         atom.radical = None;
         atom.hydrogens = HydrogenDeclaration::Fixed(0);
     }
-    let written = smiles_api::write(&molecule).expect("no-implicit-hydrogen atom should write");
+    let written =
+        smiles_api::write(molecule.working()).expect("no-implicit-hydrogen atom should write");
     assert!(written.contains("[C]"));
     let reparsed = read_smiles(&written).expect("writer output should parse");
     assert!(reparsed
@@ -3112,11 +3117,11 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
                 },
             )))
             .expect("double-bond stereo");
-        molecule.set_implicit_hydrogens(left, 1);
-        molecule.set_implicit_hydrogens(right, 1);
+        molecule.working_mut().set_implicit_hydrogens(left, 1);
+        molecule.working_mut().set_implicit_hydrogens(right, 1);
 
-        let written =
-            smiles_api::write_isomeric(&molecule).expect("implicit-carrier stereo should write");
+        let written = smiles_api::write_isomeric(molecule.working())
+            .expect("implicit-carrier stereo should write");
         assert!(
             written.contains('/') || written.contains('\\'),
             "isomeric output should contain directional marks: {written}"
@@ -3154,7 +3159,7 @@ fn smiles_writer_rejects_more_ring_labels_than_parser_supports() {
         }
     }
 
-    assert!(smiles_api::write(&molecule)
+    assert!(smiles_api::write(molecule.working())
         .expect_err("more than 99 ring closures should be rejected")
         .message
         .contains("at most 99"));

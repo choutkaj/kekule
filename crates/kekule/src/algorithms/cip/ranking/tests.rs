@@ -321,7 +321,7 @@ fn rule6_tetrahedral_retry_resolves_two_equivalent_partitions() {
     ];
 
     let ranked = rank_tetrahedral_signatures_with_rule6(
-        &crate::core::MoleculeEditor::new(),
+        crate::core::MoleculeEditor::new().working(),
         StereoElementId::new(0),
         AtomId::new(0),
         &signatures,
@@ -381,7 +381,7 @@ fn rule6_tetrahedral_retry_rejects_parity_unstable_two_partition_rankings() {
     let element = StereoElementId::new(0);
 
     let issue = rank_tetrahedral_signatures_with_rule6(
-        &crate::core::MoleculeEditor::new(),
+        crate::core::MoleculeEditor::new().working(),
         element,
         AtomId::new(0),
         &signatures,
@@ -432,7 +432,7 @@ fn rule6_s4_retry_accepts_parity_stable_reference_rankings() {
     let signatures = s4_rule6_signatures([[0, 2, 0, 2], [2, 0, 2, 0], [1, 0, 2, 1], [0, 1, 1, 2]]);
 
     let ranked = rank_tetrahedral_signatures_with_rule6(
-        &crate::core::MoleculeEditor::new(),
+        crate::core::MoleculeEditor::new().working(),
         StereoElementId::new(0),
         AtomId::new(0),
         &signatures,
@@ -459,7 +459,7 @@ fn rule6_s4_retry_rejects_parity_unstable_reference_rankings() {
     let signatures = s4_rule6_signatures([[0, 2, 1, 1], [2, 0, 0, 2], [1, 1, 2, 0], [0, 0, 2, 2]]);
 
     let issue = rank_tetrahedral_signatures_with_rule6(
-        &crate::core::MoleculeEditor::new(),
+        crate::core::MoleculeEditor::new().working(),
         element,
         AtomId::new(0),
         &signatures,
@@ -569,8 +569,8 @@ fn duplicate_nodes_have_no_isotope_priority() {
         terminal: true,
     };
 
-    assert_eq!(normal.rule2_mass(&mol), Rule2Mass::isotope(13));
-    assert_eq!(duplicate.rule2_mass(&mol), Rule2Mass::ZERO);
+    assert_eq!(normal.rule2_mass(mol.working()), Rule2Mass::isotope(13));
+    assert_eq!(duplicate.rule2_mass(mol.working()), Rule2Mass::ZERO);
 }
 
 #[test]
@@ -595,11 +595,12 @@ fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
             .expect("ring bond");
     }
     for (index, atom) in atoms.iter().copied().enumerate() {
-        mol.set_implicit_hydrogens(atom, if index == 3 { 0 } else { 1 });
+        mol.working_mut()
+            .set_implicit_hydrogens(atom, if index == 3 { 0 } else { 1 });
     }
 
-    let cip_bond_orders = CipBondOrders::new(&mol, false);
-    let fractions = cip_atomic_number_fractions(&mol, &cip_bond_orders);
+    let cip_bond_orders = CipBondOrders::new(mol.working(), false);
+    let fractions = cip_atomic_number_fractions(mol.working(), &cip_bond_orders);
 
     assert_eq!(
         fractions[atoms[2].index()],
@@ -620,7 +621,7 @@ fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
         terminal: false,
     };
     let mut next = Vec::new();
-    node.extend(&mol, &fractions, &cip_bond_orders, &mut next);
+    node.extend(mol.working(), &fractions, &cip_bond_orders, &mut next);
 
     let normal_nitrogen = next
         .iter()
@@ -651,7 +652,7 @@ fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
     let element = StereoElementId::new(0);
     let descriptor_context = DescriptorContext::new(element, AuxiliaryDescriptorMode::Disabled);
     let build_context = LigandBuildContext {
-        mol: &mol,
+        mol: mol.working(),
         element,
         descriptor_context: &descriptor_context,
         options: CipAssignmentOptions::default(),
@@ -694,9 +695,9 @@ fn higher_order_bond_expansion_creates_terminal_duplicate_nodes() {
         terminal: false,
     };
     let mut next = Vec::new();
-    let cip_bond_orders = CipBondOrders::new(&mol, false);
-    let fractions = cip_atomic_number_fractions(&mol, &cip_bond_orders);
-    node.extend(&mol, &fractions, &cip_bond_orders, &mut next);
+    let cip_bond_orders = CipBondOrders::new(mol.working(), false);
+    let fractions = cip_atomic_number_fractions(mol.working(), &cip_bond_orders);
+    node.extend(mol.working(), &fractions, &cip_bond_orders, &mut next);
 
     assert_eq!(next.len(), 2);
     assert!(next.contains(&LigandNode::Atom {
@@ -740,12 +741,13 @@ fn negative_fractional_atoms_create_duplicate_nodes() {
             .expect("ring bond");
     }
     for atom in &atoms {
-        mol.set_implicit_hydrogens(*atom, 1);
+        mol.working_mut().set_implicit_hydrogens(*atom, 1);
     }
 
-    let mut fractions = vec![AtomicNumberFraction::element(6); mol.graph.atom_slot_count()];
+    let mut fractions =
+        vec![AtomicNumberFraction::element(6); mol.working_mut().graph.atom_slot_count()];
     fractions[atoms[2].index()] = AtomicNumberFraction::new(13, 2);
-    let cip_bond_orders = CipBondOrders::new(&mol, false);
+    let cip_bond_orders = CipBondOrders::new(mol.working(), false);
 
     let node = LigandNode::Atom {
         atom: atoms[2],
@@ -755,7 +757,7 @@ fn negative_fractional_atoms_create_duplicate_nodes() {
         terminal: false,
     };
     let mut next = Vec::new();
-    node.extend(&mol, &fractions, &cip_bond_orders, &mut next);
+    node.extend(mol.working(), &fractions, &cip_bond_orders, &mut next);
 
     assert!(next.iter().any(|child| matches!(
         child,
