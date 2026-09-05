@@ -1281,6 +1281,79 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
 }
 
 #[test]
+fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity() {
+    let input = format!("{MULTI_MODEL}\nloop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\nLIG C1 O1 DOUB\n");
+    let document = parse(&input);
+    for model_ids in [vec!["2", "1"], vec!["2"]] {
+        let interpreted = mmcif::interpret_ensemble(
+            &document,
+            mmcif::MmcifEnsembleInterpretOptions {
+                model_ids: Some(model_ids.iter().map(|id| (*id).to_owned()).collect()),
+                ..mmcif::MmcifEnsembleInterpretOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(interpreted.ensemble().len(), model_ids.len());
+        assert_eq!(interpreted.topology().bond_count(), 1);
+        assert_eq!(
+            interpreted
+                .topology()
+                .molecules()
+                .next()
+                .unwrap()
+                .molecule()
+                .bonds()
+                .next()
+                .unwrap()
+                .1
+                .order,
+            BondOrder::Double
+        );
+        for ((member, report), model_id) in interpreted
+            .ensemble()
+            .members()
+            .zip(interpreted.reports())
+            .zip(model_ids)
+        {
+            let single = mmcif::interpret(
+                &document,
+                MmcifInterpretOptions {
+                    model_selection: MmcifModelSelection::Select(model_id.to_owned()),
+                    ..MmcifInterpretOptions::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(report, single.report());
+            assert_eq!(report.coordinate_models(), 2);
+            assert_eq!(member.positions(), single.model().positions());
+            assert_eq!(member.properties(), single.model().properties());
+            assert!(interpreted.topology().same_layout(single.topology()));
+        }
+    }
+}
+
+#[test]
+fn ensemble_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
+    let changed = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 N C1");
+    assert!(
+        matches!(mmcif::interpret_ensemble(&parse(&changed), mmcif::MmcifEnsembleInterpretOptions::default()),
+        Err(mmcif::MmcifEnsembleInterpretError::InconsistentTopology { model_id }) if model_id == "2")
+    );
+    let invalid = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 Xx C1");
+    let error = mmcif::interpret_ensemble(
+        &parse(&invalid),
+        mmcif::MmcifEnsembleInterpretOptions {
+            model_ids: Some(vec!["1".into()]),
+            ..mmcif::MmcifEnsembleInterpretOptions::default()
+        },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, mmcif::MmcifEnsembleInterpretError::Model { model_id, error } if model_id == "1" && error.message().contains("unknown atom-site element"))
+    );
+}
+
+#[test]
 fn multimodel_interpretation_rejects_inconsistent_atom_sets() {
     let inconsistent = MULTI_MODEL.replace("HETATM 4 O O1 LIG A 1 6.2 0.0 0.0 0.90 21.0 2\n", "");
     assert!(matches!(

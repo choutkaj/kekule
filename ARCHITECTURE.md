@@ -644,6 +644,16 @@ state exactly equivalent to `Topology + Positions` plus realization properties)
 alongside the format-specific report/metadata. Geometry-independent outputs are
 projections from that same interpreted state.
 
+`MolfileInterpretation` owns this final `Model` and one source report per molecule
+instance. Its `model()` and `topology()` accessors borrow that state;
+`to_model()` and `to_topology()` are infallible projections. Model assembly errors
+are interpretation errors. `reports()` and `to_parts()` retain the component-local
+source mappings without a second owner of the molecular definitions or positions.
+
+`SdfInterpretation::reports()` borrows reports directly from its records. The
+document interpretation does not own duplicate copies of record diagnostics;
+consuming `to_records()` retains each record's report alongside its model.
+
 In particular, `SdfRecordInterpretation` must retain geometry. It must not eagerly
 collapse to only `Vec<Molecule>` plus SDF data fields and thereby make
 `to_model()` require a second interpretation path. Conceptually its shape is:
@@ -664,6 +674,13 @@ For a scope containing several compatible realizations of one topology, such as
 multiple coordinate models within one mmCIF block, the richest multi-realization
 result is an `Ensemble`. Multiple coordinate models are not automatically a
 `Trajectory` because the source does not necessarily assign temporal semantics.
+
+mmCIF block interpretation reads atom rows, resolves alternate locations, and
+parses the connectivity catalog once. Rows are partitioned by coordinate model;
+each candidate is published and validated against the first member's identity,
+chemistry, and dense layout before its realization payload is moved into the
+ensemble. Candidate topologies are released as interpretation proceeds. Selection
+does not skip validation of source rows or alternate locations in omitted models.
 
 ### Borrowed accessors and owned projections
 
