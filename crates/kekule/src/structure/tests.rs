@@ -162,6 +162,157 @@ fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
 }
 
 #[test]
+fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
+    let (model, _, _) = model_fixture();
+    let topology = model.shared_topology();
+    let mut original = EnsembleMember::new(model.positions().clone(), topology.bond_count());
+    original.set_weight(Some(0.75)).unwrap();
+    let mut ensemble = Ensemble::from_members(Arc::clone(&topology), [original.clone()]).unwrap();
+
+    for (replacement, expected) in [
+        (
+            EnsembleMember::new(Positions::zeros(1), 1),
+            EnsembleError::PositionCountMismatch {
+                expected: 2,
+                actual: 1,
+            },
+        ),
+        (
+            EnsembleMember::new(Positions::zeros(2), 0),
+            EnsembleError::BondPropertyCountMismatch {
+                expected: 1,
+                actual: 0,
+            },
+        ),
+    ] {
+        assert_eq!(
+            ensemble.replace_member(0, replacement.clone()),
+            Err(expected.clone())
+        );
+        assert_eq!(ensemble.push(replacement), Err(expected));
+        assert_eq!(ensemble.len(), 1);
+        let member = ensemble.member(0).unwrap();
+        assert_eq!(member.positions(), original.positions());
+        assert_eq!(member.properties(), original.properties());
+        assert_eq!(member.weight(), original.weight());
+        assert_eq!(member.as_model().positions().len(), topology.atom_count());
+        assert_eq!(
+            member.to_model().bond_properties().len(),
+            topology.bond_count()
+        );
+    }
+
+    for index in [1, usize::MAX] {
+        assert_eq!(
+            ensemble.replace_member(index, original.clone()),
+            Err(EnsembleError::MemberIndexOutOfBounds { index, len: 1 })
+        );
+        assert!(ensemble.member_mut(index).is_none());
+    }
+    let mut empty = Ensemble::new(topology);
+    assert_eq!(
+        empty.replace_member(0, original.clone()),
+        Err(EnsembleError::MemberIndexOutOfBounds { index: 0, len: 0 })
+    );
+    assert!(empty.is_empty());
+    assert_eq!(
+        ensemble.replace_member(0, original.clone()).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn ensemble_replacement_preserves_order_and_publishes_complete_member_state() {
+    let (model, _, _) = model_fixture();
+    let topology = model.shared_topology();
+    let original = EnsembleMember::new(model.positions().clone(), topology.bond_count());
+    let mut ensemble =
+        Ensemble::from_members(Arc::clone(&topology), [original.clone(), original.clone()])
+            .unwrap();
+    let key = PropertyKey::new("score").unwrap();
+    ensemble
+        .insert_property(key.clone(), PropertyValue::Int(9))
+        .unwrap();
+    let collection_properties = ensemble.properties().clone();
+    let mut replacement = EnsembleMember::new(Positions::zeros(2), 1);
+    replacement.set_cell(Some(
+        PeriodicCell::orthorhombic(
+            Quantity::new(Vector3::new(10.0, 10.0, 10.0), ANGSTROM),
+            [true; 3],
+        )
+        .unwrap(),
+    ));
+    replacement.set_weight(Some(0.5)).unwrap();
+    replacement
+        .insert_property(key.clone(), PropertyValue::Int(1))
+        .unwrap();
+    replacement
+        .set_atom_property(0, key.clone(), Some(PropertyValue::Int(2)))
+        .unwrap();
+    replacement
+        .set_bond_property(0, key, Some(PropertyValue::Int(3)))
+        .unwrap();
+
+    assert_eq!(
+        ensemble.replace_member(1, replacement.clone()).unwrap(),
+        original
+    );
+    assert_eq!(ensemble.len(), 2);
+    assert_eq!(ensemble.properties(), &collection_properties);
+    assert_eq!(
+        ensemble.member(0).unwrap().positions(),
+        original.positions()
+    );
+    assert_eq!(ensemble.member(0).unwrap().weight(), original.weight());
+    let member = ensemble.member(1).unwrap();
+    assert!(Arc::ptr_eq(&member.shared_topology(), &topology));
+    assert_eq!(member.positions(), replacement.positions());
+    assert_eq!(member.cell(), replacement.cell());
+    assert_eq!(member.properties(), replacement.properties());
+    assert_eq!(member.weight(), replacement.weight());
+    assert_eq!(member.as_model().properties(), replacement.properties());
+    assert_eq!(member.to_model().positions(), replacement.positions());
+}
+
+#[test]
+fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
+    let (model, _, _) = model_fixture();
+    let mut ensemble = Ensemble::from_models(&[model]).unwrap();
+    {
+        let mut member = ensemble.member_mut(0).unwrap();
+        member.set_weight(Some(0.5)).unwrap();
+        for weight in [f64::NAN, f64::INFINITY, -1.0] {
+            assert_eq!(
+                member.set_weight(Some(weight)),
+                Err(EnsembleError::InvalidWeight)
+            );
+            assert_eq!(member.weight(), Some(0.5));
+        }
+        let properties = member.properties().clone();
+        assert_eq!(
+            member.set_properties(Properties::realization(1, 1)),
+            Err(EnsembleError::AtomPropertyCountMismatch {
+                expected: 2,
+                actual: 1
+            })
+        );
+        assert_eq!(
+            member.set_properties(Properties::realization(2, 0)),
+            Err(EnsembleError::BondPropertyCountMismatch {
+                expected: 1,
+                actual: 0
+            })
+        );
+        assert_eq!(member.properties(), &properties);
+        assert_eq!(member.positions().len(), 2);
+    }
+    let member = ensemble.member(0).unwrap();
+    assert_eq!(member.weight(), Some(0.5));
+    assert_eq!(member.as_model().positions().len(), 2);
+    assert_eq!(member.to_model().bond_properties().len(), 1);
+}
+
+#[test]
 fn model_view_materialization_clones_realization_and_shares_topology() {
     let mut source = Model::new(single_atom_topology(), single_position(1.0)).unwrap();
     let topology = source.shared_topology();
@@ -372,7 +523,7 @@ fn ensemble_collection_and_member_properties_are_separate() {
         Some(PropertyValue::Int(2))
     );
 
-    let member = ensemble.member_mut(0).unwrap();
+    let mut member = ensemble.member_mut(0).unwrap();
     member
         .set_atom_property(
             0,

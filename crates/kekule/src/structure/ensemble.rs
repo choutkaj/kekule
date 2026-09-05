@@ -210,6 +210,116 @@ impl EnsembleMember {
     }
 }
 
+/// Restricted mutable access to a member stored in an [`Ensemble`].
+///
+/// Read access uses [`std::ops::Deref`]. Only dimension-preserving mutation is
+/// exposed: there is deliberately no `DerefMut` or mutable payload accessor.
+/// Edits take effect immediately; dropping or forgetting the editor does not
+/// perform validation. Use [`Ensemble::replace_member`] to replace the payload.
+#[derive(Debug)]
+pub struct EnsembleMemberMut<'a> {
+    member: &'a mut EnsembleMember,
+}
+
+impl std::ops::Deref for EnsembleMemberMut<'_> {
+    type Target = EnsembleMember;
+
+    fn deref(&self) -> &Self::Target {
+        self.member
+    }
+}
+
+impl EnsembleMemberMut<'_> {
+    pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
+        self.member.set_cell(cell);
+    }
+
+    pub fn insert_property(
+        &mut self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>, EnsembleError> {
+        self.member.insert_property(key, value)
+    }
+
+    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.member.remove_property(key)
+    }
+
+    pub fn clear_properties(&mut self) {
+        self.member.clear_properties();
+    }
+
+    pub fn set_atom_property(
+        &mut self,
+        index: usize,
+        key: PropertyKey,
+        value: Option<PropertyValue>,
+    ) -> Result<(), EnsembleError> {
+        self.member.set_atom_property(index, key, value)
+    }
+
+    pub fn insert_atom_property_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>, EnsembleError> {
+        self.member.insert_atom_property_column(key, column)
+    }
+
+    pub fn remove_atom_property_column(
+        &mut self,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyColumn>, EnsembleError> {
+        self.member.remove_atom_property_column(key)
+    }
+
+    pub fn set_bond_property(
+        &mut self,
+        index: usize,
+        key: PropertyKey,
+        value: Option<PropertyValue>,
+    ) -> Result<(), EnsembleError> {
+        self.member.set_bond_property(index, key, value)
+    }
+
+    pub fn insert_bond_property_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>, EnsembleError> {
+        self.member.insert_bond_property_column(key, column)
+    }
+
+    pub fn remove_bond_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
+        self.member.remove_bond_property_column(key)
+    }
+
+    pub fn set_occupancy_at(
+        &mut self,
+        index: usize,
+        value: Option<f64>,
+    ) -> Result<(), EnsembleError> {
+        self.member.set_occupancy_at(index, value)
+    }
+
+    pub fn set_b_factor_at(
+        &mut self,
+        index: usize,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), EnsembleError> {
+        self.member.set_b_factor_at(index, value)
+    }
+
+    pub fn set_properties(&mut self, properties: Properties) -> Result<(), EnsembleError> {
+        self.member.set_properties(properties)
+    }
+
+    pub fn set_weight(&mut self, weight: Option<f64>) -> Result<(), EnsembleError> {
+        self.member.set_weight(weight)
+    }
+}
+
 /// Borrowed topology-bound view of one ensemble member.
 #[derive(Debug, Clone, Copy)]
 pub struct EnsembleMemberView<'a> {
@@ -429,8 +539,43 @@ impl Ensemble {
             .map(|member| EnsembleMemberView::new(&self.topology, member))
     }
 
-    pub fn member_mut(&mut self, index: usize) -> Option<&mut EnsembleMember> {
-        self.members.get_mut(index)
+    /// Returns an editor that preserves the member's validated dimensions.
+    ///
+    /// Bind the editor with `let mut member = ensemble.member_mut(index).unwrap()`
+    /// when making several edits. Whole-member replacement must go through
+    /// [`Self::replace_member`].
+    ///
+    /// ```compile_fail,E0594
+    /// use kekule::structure::{Ensemble, EnsembleMember, Positions};
+    /// fn overwrite(ensemble: &mut Ensemble) {
+    ///     *ensemble.member_mut(0).unwrap() = EnsembleMember::new(Positions::zeros(1), 0);
+    /// }
+    /// ```
+    pub fn member_mut(&mut self, index: usize) -> Option<EnsembleMemberMut<'_>> {
+        self.members
+            .get_mut(index)
+            .map(|member| EnsembleMemberMut { member })
+    }
+
+    /// Replaces a member after validating it against this ensemble's topology.
+    ///
+    /// Returns the previous member. An invalid index or incompatible replacement
+    /// returns an error and leaves the ensemble unchanged. The index is checked
+    /// first. Positions and property columns must follow this topology's dense
+    /// atom and bond order, just as for [`Self::push`].
+    pub fn replace_member(
+        &mut self,
+        index: usize,
+        member: EnsembleMember,
+    ) -> Result<EnsembleMember, EnsembleError> {
+        if index >= self.members.len() {
+            return Err(EnsembleError::MemberIndexOutOfBounds {
+                index,
+                len: self.members.len(),
+            });
+        }
+        self.validate_member(&member)?;
+        Ok(std::mem::replace(&mut self.members[index], member))
     }
 
     pub fn len(&self) -> usize {
@@ -442,6 +587,12 @@ impl Ensemble {
     }
 
     pub fn push(&mut self, member: EnsembleMember) -> Result<(), EnsembleError> {
+        self.validate_member(&member)?;
+        self.members.push(member);
+        Ok(())
+    }
+
+    fn validate_member(&self, member: &EnsembleMember) -> Result<(), EnsembleError> {
         if member.positions.len() != self.topology.atom_count() {
             return Err(EnsembleError::PositionCountMismatch {
                 expected: self.topology.atom_count(),
@@ -463,7 +614,6 @@ impl Ensemble {
         member
             .properties
             .validate_realization_canonical_properties()?;
-        self.members.push(member);
         Ok(())
     }
 
@@ -492,6 +642,7 @@ impl Ensemble {
 #[non_exhaustive]
 pub enum EnsembleError {
     EmptySource,
+    MemberIndexOutOfBounds { index: usize, len: usize },
     TopologyMismatch,
     PositionCountMismatch { expected: usize, actual: usize },
     AtomPropertyCountMismatch { expected: usize, actual: usize },
@@ -509,6 +660,9 @@ impl fmt::Display for EnsembleError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptySource => formatter.write_str("ensemble source is empty"),
+            Self::MemberIndexOutOfBounds { index, len } => {
+                write!(formatter, "ensemble member index {index} is out of bounds for {len} members")
+            }
             Self::TopologyMismatch => {
                 formatter.write_str("ensemble member belongs to a different topology")
             }
