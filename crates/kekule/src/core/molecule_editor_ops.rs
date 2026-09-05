@@ -46,6 +46,9 @@ impl MoleculeEditor {
 
     /// Replaces represented atom state while retaining its ID and properties.
     pub fn replace_atom(&mut self, id: AtomId, atom: Atom) -> Result<Atom> {
+        if self.atom(id)? == &atom {
+            return Ok(atom);
+        }
         Ok(std::mem::replace(&mut *self.atom_mut(id)?, atom))
     }
 

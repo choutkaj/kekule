@@ -504,6 +504,11 @@ dereference to `Molecule`, including in tests. Internal algorithm fixtures that
 intentionally use unfinished state access it explicitly through crate-private
 test paths. Bond mutation cannot replace endpoints outside checked rewiring.
 
+Mutable atom access invalidates perception and owner annotations immediately;
+invalidation never depends on a guard destructor. Explicit identical atom
+replacement and unchanged bond-order setters preserve draft state. Checked
+perception installation belongs on the published `Molecule`, after `finish()`.
+
 Public unrestricted mutable access to graph internals should not bypass the
 editor and thereby bypass publication validation.
 
@@ -1453,6 +1458,10 @@ every hierarchy residue has one canonical ResidueClass
 all topology property tables match their target-domain cardinalities/orderings
 ```
 
+Builder property mutation uses fixed-length table views. Appending identities
+extends tables with missing values; replacing hierarchy cannot silently truncate
+populated columns. Publication rejects remaining dimension mismatches.
+
 High-level format-independent construction should include:
 
 ```rust
@@ -1824,6 +1833,10 @@ TrajectoryFrame Properties
 
 Additional target domains should be added only when a concrete owning identity
 space exists and the semantics justify them.
+
+Realization installation rejects populated molecule-instance and hierarchy
+domains, even when atom and bond dimensions happen to match. Cloning a generic
+property container does not implicitly promote its domains to a different scope.
 
 ### Canonical scientific state versus generic properties
 
