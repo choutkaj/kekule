@@ -324,6 +324,9 @@ impl Topology {
     /// source atom, and source bond order deterministically.
     /// Components use compact local atom and bond IDs; use the returned
     /// correspondence to translate source identities into target identities.
+    /// Instances selecting the same atoms from a shared definition reuse the
+    /// reconstructed definitions. Complete molecules and residues retain their
+    /// classifications; changed entities are reclassified.
     pub fn subset(&self, selection: &AtomSelection) -> Result<TopologySubset, TopologySubsetError> {
         if !std::ptr::eq(self, selection.topology()) {
             return Err(SelectionError::TopologyMismatch.into());
@@ -344,6 +347,7 @@ impl Topology {
         let mut atom_targets = BTreeMap::new();
         let mut bond_targets = BTreeMap::new();
         let mut instance_sources = Vec::new();
+        let mut definition_subsets = BTreeMap::new();
 
         for molecule_view in self.molecules() {
             let source_molecule = molecule_view.molecule();
@@ -355,114 +359,33 @@ impl Topology {
                 continue;
             }
             let whole_instance_selected = selected_local.len() == source_molecule.atom_count();
-            let mut visited = BTreeSet::new();
-            let mut components = Vec::new();
-            let mut local_atoms = BTreeMap::new();
-            let mut local_bonds = BTreeMap::new();
-            for seed in source_molecule.atom_ids() {
-                if !selected_local.contains(&seed) || !visited.insert(seed) {
-                    continue;
-                }
-                let mut queue = VecDeque::from([seed]);
-                let mut component = Vec::new();
-                while let Some(atom) = queue.pop_front() {
-                    component.push(atom);
-                    for neighbor in source_molecule.neighbors(atom)? {
-                        if selected_local.contains(&neighbor) && visited.insert(neighbor) {
-                            queue.push_back(neighbor);
-                        }
+            let definitions =
+                match definition_subsets.entry((molecule_view.definition_id(), selected_local)) {
+                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        let definitions = build_subset_definitions(
+                            source_molecule,
+                            &entry.key().1,
+                            molecule_view.class(),
+                            &mut builder,
+                        )?;
+                        entry.insert(definitions)
                     }
-                }
-                component.sort_unstable();
-                let mut editor = MoleculeEditor::new();
-                for &atom in &component {
-                    let target_atom = editor.add_atom(source_molecule.atom(atom)?.clone())?;
-                    local_atoms.insert(atom, (components.len(), target_atom));
-                }
-                components.push(SubsetComponent {
-                    editor,
-                    source_atoms: component,
-                    source_bonds: Vec::new(),
-                });
-            }
-
-            // Scan source bonds and stereo once for all components, rather than
-            // scanning or cloning the whole source molecule for every fragment.
-            for (source_bond, bond) in source_molecule.bonds() {
-                let (Some(&(component, a)), Some(&(other_component, b))) =
-                    (local_atoms.get(&bond.a()), local_atoms.get(&bond.b()))
-                else {
-                    continue;
                 };
-                debug_assert_eq!(component, other_component);
-                let target_bond = components[component].editor.add_bond(a, b, bond.order)?;
-                components[component].source_bonds.push(source_bond);
-                local_bonds.insert(source_bond, (component, target_bond));
-            }
-            let mut local_stereo = BTreeMap::new();
-            for (source_element, element) in source_molecule.stereo_elements() {
-                if let Some((component, element)) =
-                    remap_subset_stereo(element, &local_atoms, &local_bonds)
-                {
-                    let target_element =
-                        components[component].editor.add_stereo_element(element)?;
-                    local_stereo.insert(source_element, (component, target_element));
-                }
-            }
-            for (_, group) in source_molecule.stereo_groups() {
-                let mut members_by_component = BTreeMap::<_, Vec<_>>::new();
-                for member in &group.members {
-                    if let Some(&(component, target_element)) = local_stereo.get(member) {
-                        members_by_component
-                            .entry(component)
-                            .or_default()
-                            .push(target_element);
-                    }
-                }
-                for (component, members) in members_by_component {
-                    components[component].editor.add_stereo_group(StereoGroup {
-                        kind: group.kind,
-                        members,
-                    })?;
-                }
-            }
-
-            for mut component in components {
-                let properties = &mut component.editor.working_mut().properties;
-                *properties.atoms_mut() = source_molecule.atom_properties().select_indices(
-                    &component
-                        .source_atoms
-                        .iter()
-                        .map(|atom| atom.index())
-                        .collect::<Vec<_>>(),
-                )?;
-                *properties.bonds_mut() = source_molecule.bond_properties().select_indices(
-                    &component
-                        .source_bonds
-                        .iter()
-                        .map(|bond| bond.index())
-                        .collect::<Vec<_>>(),
-                )?;
-                if whole_instance_selected {
-                    for (key, value) in source_molecule.properties().iter() {
-                        properties.insert(key.clone(), value.clone())?;
-                    }
-                }
-                let target_molecule = component.editor.finish()?;
-                let definition = builder.add_molecule_definition_owned(target_molecule)?;
-                let target_instance = builder.add_instance(definition)?;
+            for definition in definitions.iter() {
+                let target_instance = builder.add_instance(definition.id)?;
                 instance_sources
                     .push(whole_instance_selected.then_some(molecule_view.id().index()));
-                for source_atom in component.source_atoms {
+                for (index, &source_atom) in definition.source_atoms.iter().enumerate() {
                     atom_targets.insert(
                         InstanceAtomId::new(molecule_view.id(), source_atom),
-                        InstanceAtomId::new(target_instance, local_atoms[&source_atom].1),
+                        InstanceAtomId::new(target_instance, AtomId::new(index as u32)),
                     );
                 }
-                for source_bond in component.source_bonds {
+                for (index, &source_bond) in definition.source_bonds.iter().enumerate() {
                     bond_targets.insert(
                         InstanceBondId::new(molecule_view.id(), source_bond),
-                        InstanceBondId::new(target_instance, local_bonds[&source_bond].1),
+                        InstanceBondId::new(target_instance, BondId::new(index as u32)),
                     );
                 }
             }
@@ -470,6 +393,22 @@ impl Topology {
 
         let hierarchy_projection =
             copy_filtered_hierarchy(self, builder.hierarchy_mut(), &atom_targets)?;
+        for (target_index, &source_index) in hierarchy_projection.residues.iter().enumerate() {
+            let residue = self
+                .hierarchy()
+                .residue(ResidueId::new(source_index as u32))?;
+            let complete = residue.atom_sites().iter().all(|site| {
+                let atom = self
+                    .hierarchy()
+                    .atom_site(*site)
+                    .expect("published residue references a live atom site")
+                    .atom();
+                atom_targets.contains_key(&atom)
+            });
+            if complete {
+                builder.set_residue_class(ResidueId::new(target_index as u32), residue.class())?;
+            }
+        }
         let mut target = builder.build()?;
         target.properties = project_topology_properties(
             self,
@@ -519,6 +458,125 @@ impl Topology {
             correspondence,
         })
     }
+}
+
+struct SubsetDefinition {
+    id: super::MoleculeDefinitionId,
+    source_atoms: Vec<AtomId>,
+    source_bonds: Vec<BondId>,
+}
+
+fn build_subset_definitions(
+    source_molecule: &crate::core::Molecule,
+    selected_local: &BTreeSet<AtomId>,
+    class: super::MoleculeClass,
+    builder: &mut TopologyBuilder,
+) -> Result<Vec<SubsetDefinition>, TopologySubsetError> {
+    let whole_instance_selected = selected_local.len() == source_molecule.atom_count();
+    let mut definitions = Vec::new();
+    let mut visited = BTreeSet::new();
+    let mut components = Vec::new();
+    let mut local_atoms = BTreeMap::new();
+    let mut local_bonds = BTreeMap::new();
+    for seed in source_molecule.atom_ids() {
+        if !selected_local.contains(&seed) || !visited.insert(seed) {
+            continue;
+        }
+        let mut queue = VecDeque::from([seed]);
+        let mut component = Vec::new();
+        while let Some(atom) = queue.pop_front() {
+            component.push(atom);
+            for neighbor in source_molecule.neighbors(atom)? {
+                if selected_local.contains(&neighbor) && visited.insert(neighbor) {
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+        component.sort_unstable();
+        let mut editor = MoleculeEditor::new();
+        for &atom in &component {
+            let target_atom = editor.add_atom(source_molecule.atom(atom)?.clone())?;
+            local_atoms.insert(atom, (components.len(), target_atom));
+        }
+        components.push(SubsetComponent {
+            editor,
+            source_atoms: component,
+            source_bonds: Vec::new(),
+        });
+    }
+
+    // Scan source bonds and stereo once for all components, rather than
+    // scanning or cloning the whole source molecule for every fragment.
+    for (source_bond, bond) in source_molecule.bonds() {
+        let (Some(&(component, a)), Some(&(other_component, b))) =
+            (local_atoms.get(&bond.a()), local_atoms.get(&bond.b()))
+        else {
+            continue;
+        };
+        debug_assert_eq!(component, other_component);
+        let target_bond = components[component].editor.add_bond(a, b, bond.order)?;
+        components[component].source_bonds.push(source_bond);
+        local_bonds.insert(source_bond, (component, target_bond));
+    }
+    let mut local_stereo = BTreeMap::new();
+    for (source_element, element) in source_molecule.stereo_elements() {
+        if let Some((component, element)) = remap_subset_stereo(element, &local_atoms, &local_bonds)
+        {
+            let target_element = components[component].editor.add_stereo_element(element)?;
+            local_stereo.insert(source_element, (component, target_element));
+        }
+    }
+    for (_, group) in source_molecule.stereo_groups() {
+        let mut members_by_component = BTreeMap::<_, Vec<_>>::new();
+        for member in &group.members {
+            if let Some(&(component, target_element)) = local_stereo.get(member) {
+                members_by_component
+                    .entry(component)
+                    .or_default()
+                    .push(target_element);
+            }
+        }
+        for (component, members) in members_by_component {
+            components[component].editor.add_stereo_group(StereoGroup {
+                kind: group.kind,
+                members,
+            })?;
+        }
+    }
+
+    for mut component in components {
+        let properties = &mut component.editor.working_mut().properties;
+        *properties.atoms_mut() = source_molecule.atom_properties().select_indices(
+            &component
+                .source_atoms
+                .iter()
+                .map(|atom| atom.index())
+                .collect::<Vec<_>>(),
+        )?;
+        *properties.bonds_mut() = source_molecule.bond_properties().select_indices(
+            &component
+                .source_bonds
+                .iter()
+                .map(|bond| bond.index())
+                .collect::<Vec<_>>(),
+        )?;
+        if whole_instance_selected {
+            for (key, value) in source_molecule.properties().iter() {
+                properties.insert(key.clone(), value.clone())?;
+            }
+        }
+        let target_molecule = component.editor.finish()?;
+        let definition = builder.add_molecule_definition_owned(target_molecule)?;
+        if whole_instance_selected {
+            builder.set_molecule_class(definition, class)?;
+        }
+        definitions.push(SubsetDefinition {
+            id: definition,
+            source_atoms: component.source_atoms,
+            source_bonds: component.source_bonds,
+        });
+    }
+    Ok(definitions)
 }
 
 #[derive(Debug, Default)]

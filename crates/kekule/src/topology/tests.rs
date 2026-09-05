@@ -919,6 +919,7 @@ fn compact_subset_projects_tombstoned_properties_bonds_and_model_positions() {
         subset.correspondence().source_bond_indices(),
         &[TopologyBondIndex::new(0), TopologyBondIndex::new(2)]
     );
+    assert_eq!(subset.topology().definition_count(), 1);
     for instance in instances {
         let mapped_carbon = subset
             .correspondence()

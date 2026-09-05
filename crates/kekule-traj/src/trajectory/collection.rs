@@ -157,6 +157,17 @@ impl Trajectory {
         Ok(())
     }
 
+    pub(crate) fn replace_frames(
+        &mut self,
+        mut frames: Vec<TrajectoryFrame>,
+    ) -> Result<(), TrajectoryError> {
+        for frame in &mut frames {
+            frame.prepare(&self.topology)?;
+        }
+        self.frames = frames;
+        Ok(())
+    }
+
     /// Explicitly validates that all present times are non-decreasing.
     pub fn validate_monotonic_time(&self, require_all: bool) -> Result<(), TrajectoryError> {
         let mut previous = None;
