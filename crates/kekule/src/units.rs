@@ -270,6 +270,10 @@ impl fmt::Display for UnitError {
 impl std::error::Error for UnitError {}
 
 /// A value or collection paired with one physical unit.
+///
+/// Equality and scalar ordering compare stored representations. Different units
+/// are unordered; convert with [`Self::value_in`] for physical ordering, or use
+/// [`Self::equivalent_to`] and [`Self::is_close`] for explicit physical comparisons.
 #[derive(Debug, Clone, Copy)]
 pub struct Quantity<T> {
     value: T,
@@ -396,13 +400,10 @@ impl Quantity<f64> {
 
 impl PartialOrd for Quantity<f64> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if !self.unit.is_compatible(other.unit) {
+        if self.unit != other.unit {
             return None;
         }
-        other
-            .value_in(self.unit)
-            .ok()
-            .and_then(|other_value| self.value.partial_cmp(&other_value))
+        self.value.partial_cmp(&other.value)
     }
 }
 
@@ -614,6 +615,24 @@ mod tests {
         assert!(Quantity::new(1.0, NANOMETER)
             .is_close(&Quantity::new(10.0, ANGSTROM), 1.0e-12, 0.0)
             .unwrap());
+    }
+
+    #[test]
+    fn ordering_and_equality_compare_the_same_representation() {
+        let angstroms = Quantity::new(10.0, ANGSTROM);
+        let nanometers = Quantity::new(1.0, NANOMETER);
+        assert_ne!(angstroms, nanometers);
+        assert_eq!(angstroms.partial_cmp(&nanometers), None);
+        assert_eq!(nanometers.partial_cmp(&angstroms), None);
+        assert!(angstroms.equivalent_to(&nanometers).unwrap());
+        assert_eq!(angstroms.partial_cmp(&angstroms), Some(Ordering::Equal));
+        assert!(angstroms < Quantity::new(11.0, ANGSTROM));
+        assert!(angstroms > Quantity::new(9.0, ANGSTROM));
+        assert_eq!(angstroms.partial_cmp(&Quantity::new(10.0, SECOND)), None);
+        assert_eq!(
+            angstroms.partial_cmp(&Quantity::new(f64::NAN, ANGSTROM)),
+            None
+        );
     }
 
     #[test]

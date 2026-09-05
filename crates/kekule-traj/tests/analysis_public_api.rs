@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use kekule::alignment::PeriodicAlignmentPolicy;
 use kekule::geometry::Point3;
+use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::Positions;
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{Quantity, ANGSTROM};
@@ -30,8 +31,18 @@ fn downstream_code_can_split_or_fuse_superposition_and_rmsd() {
         Point3::new(0.0, 1.0, 0.0),
     ];
     let moving = reference.map(|point| Point3::new(point.x + 4.0, point.y - 2.0, point.z + 1.0));
-    let trajectory =
-        Trajectory::from_frames(Arc::clone(&topology), [frame(reference), frame(moving)]).unwrap();
+    let key = PropertyKey::new("simulation").unwrap();
+    let mut annotated = frame(moving);
+    annotated
+        .insert_property(key.clone(), PropertyValue::Int(7))
+        .unwrap();
+    let mut trajectory =
+        Trajectory::from_frames(Arc::clone(&topology), [frame(reference), annotated]).unwrap();
+    trajectory
+        .insert_property(key.clone(), PropertyValue::String("run_1".into()))
+        .unwrap();
+    let owner_properties = trajectory.properties().clone();
+    let frame_properties = trajectory.frame(1).unwrap().properties().clone();
     let selection =
         AtomSelection::from_atoms(&topology, topology.atom_ids().iter().copied()).unwrap();
 
@@ -64,8 +75,17 @@ fn downstream_code_can_split_or_fuse_superposition_and_rmsd() {
     assert!(fused.value()[1] < 1.0e-12);
 
     let mut split = trajectory;
+    assert!(split.superpose_to_frame(99, &selection).is_err());
+    assert_eq!(split.properties(), &owner_properties);
+    assert_eq!(
+        split.frame(1).unwrap().positions().values(),
+        frame(moving).positions().values()
+    );
     let report = split.superpose_to_frame(0, &selection).unwrap();
     assert_eq!(report.alignments().len(), split.len());
+    assert!(Arc::ptr_eq(&topology, &split.shared_topology()));
+    assert_eq!(split.properties(), &owner_properties);
+    assert_eq!(split.frame(1).unwrap().properties(), &frame_properties);
     let measured = split.rmsd_to_frame(0, &selection).unwrap();
     assert!(measured.value()[1] < 1.0e-12);
 }

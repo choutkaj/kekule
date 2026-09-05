@@ -1436,6 +1436,9 @@ that their semantics remain valid.
 A subset that creates new molecular definitions or changes residue composition
 must obtain classifications valid for the resulting topology rather than blindly
 copy a source definition class onto a chemically different target definition.
+Complete retained molecules and residues preserve their source classification.
+Instances selecting the same local atoms from the same source definition reuse
+the reconstructed compact definitions.
 
 ### Construction and invariants
 
