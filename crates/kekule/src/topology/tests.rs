@@ -825,6 +825,320 @@ fn topology_global_hierarchy_crosses_molecule_boundaries() {
 }
 
 #[test]
+fn sparse_subset_retains_only_selected_component_storage() {
+    let mut editor = crate::core::MoleculeEditor::new();
+    let atoms = (0..256)
+        .map(|_| {
+            editor
+                .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    for pair in atoms.windows(2) {
+        editor
+            .add_bond(pair[0], pair[1], BondOrder::Single)
+            .unwrap();
+    }
+    let mut builder = TopologyBuilder::new();
+    let instance = builder.add_molecule(&editor.finish().unwrap()).unwrap();
+    let source = Arc::new(builder.build().unwrap());
+    let selection = AtomSelection::from_atoms(
+        &source,
+        atoms
+            .iter()
+            .step_by(2)
+            .map(|atom| InstanceAtomId::new(instance, *atom)),
+    )
+    .unwrap();
+    let subset = source.subset(&selection).unwrap();
+    assert_eq!(subset.topology().instance_count(), 128);
+    assert_eq!(subset.topology().atom_count(), 128);
+    assert_eq!(subset.topology().bond_count(), 0);
+    for molecule in subset.topology().molecules() {
+        let molecule = molecule.molecule();
+        assert_eq!(molecule.graph().atom_slot_count(), 1);
+        assert_eq!(molecule.graph().bond_slot_count(), 0);
+        assert_eq!(molecule.graph().adjacency.len(), 1);
+        assert_eq!(molecule.atom_properties().len(), 1);
+        assert_eq!(molecule.bond_properties().len(), 0);
+    }
+    assert_eq!(
+        subset.correspondence().source_atom_indices(),
+        (0..256)
+            .step_by(2)
+            .map(TopologyAtomIndex::new)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn compact_subset_projects_tombstoned_properties_bonds_and_model_positions() {
+    use crate::geometry::Point3;
+    use crate::structure::{Model, Positions};
+    use crate::units::{Quantity, NANOMETER};
+
+    let (molecule, carbon, oxygen, bond) = tombstoned_molecule();
+    let mut editor = molecule.edit();
+    let tail = editor
+        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+        .unwrap();
+    editor.add_bond(carbon, tail, BondOrder::Single).unwrap();
+    let mut molecule = editor.finish().unwrap();
+    let key = PropertyKey::new("source_id").unwrap();
+    molecule
+        .insert_property(key.clone(), PropertyValue::Int(99))
+        .unwrap();
+    for atom in [carbon, oxygen, tail] {
+        molecule
+            .set_atom_property(
+                atom,
+                key.clone(),
+                Some(PropertyValue::Int(atom.raw().into())),
+            )
+            .unwrap();
+    }
+    molecule
+        .set_bond_property(bond, key.clone(), Some(PropertyValue::Int(17)))
+        .unwrap();
+    let mut builder = TopologyBuilder::new();
+    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let instances = [
+        builder.add_instance(definition).unwrap(),
+        builder.add_instance(definition).unwrap(),
+    ];
+    let source = Arc::new(builder.build().unwrap());
+    let selection = AtomSelection::from_atoms(
+        &source,
+        instances
+            .into_iter()
+            .flat_map(|instance| [carbon, oxygen].map(|atom| InstanceAtomId::new(instance, atom))),
+    )
+    .unwrap();
+    let subset = source.subset(&selection).unwrap();
+    assert_eq!(
+        subset.correspondence().source_bond_indices(),
+        &[TopologyBondIndex::new(0), TopologyBondIndex::new(2)]
+    );
+    for instance in instances {
+        let mapped_carbon = subset
+            .correspondence()
+            .target_atom(InstanceAtomId::new(instance, carbon))
+            .unwrap();
+        let mapped_oxygen = subset
+            .correspondence()
+            .target_atom(InstanceAtomId::new(instance, oxygen))
+            .unwrap();
+        let mapped_bond = subset
+            .correspondence()
+            .target_bond(InstanceBondId::new(instance, bond))
+            .unwrap();
+        let target = subset
+            .topology()
+            .definition_for_instance(mapped_carbon.molecule())
+            .unwrap()
+            .molecule();
+        assert_eq!(target.graph().atom_slot_count(), 2);
+        assert_eq!(target.graph().bond_slot_count(), 1);
+        assert_eq!(
+            target.atom(AtomId::new(0)).unwrap(),
+            molecule.atom(carbon).unwrap()
+        );
+        assert_eq!(
+            target.atom(AtomId::new(1)).unwrap(),
+            molecule.atom(oxygen).unwrap()
+        );
+        assert_eq!(mapped_oxygen.atom(), AtomId::new(1));
+        assert_eq!(mapped_bond.bond(), BondId::new(0));
+        let target_bond = target.bond(mapped_bond.bond()).unwrap();
+        assert_eq!(
+            (target_bond.a(), target_bond.b(), target_bond.order),
+            (AtomId::new(0), AtomId::new(1), BondOrder::Double)
+        );
+        assert_eq!(
+            target.atom_property(AtomId::new(1), &key).unwrap(),
+            Some(PropertyValue::Int(oxygen.raw().into()))
+        );
+        assert_eq!(
+            target.bond_property(BondId::new(0), &key).unwrap(),
+            Some(PropertyValue::Int(17))
+        );
+        assert!(target.properties().owner_is_empty());
+    }
+    let positions = Positions::new(Quantity::new(
+        (0..6)
+            .map(|index| Point3::new(index as f64, 0.0, 0.0))
+            .collect::<Vec<_>>(),
+        NANOMETER,
+    ))
+    .unwrap();
+    let model = Model::new(source, positions).unwrap();
+    let sliced = model.slice(&selection).unwrap();
+    assert_eq!(
+        sliced
+            .positions()
+            .values()
+            .value()
+            .iter()
+            .map(|point| point.x)
+            .collect::<Vec<_>>(),
+        [0.0, 1.0, 3.0, 4.0]
+    );
+}
+
+#[test]
+fn compact_subset_remaps_stereo_and_splits_groups_while_pruning_lost_carriers() {
+    use crate::core::{
+        AxisOrientation, AxisStereo, DoubleBondOrientation, DoubleBondStereo, MoleculeEditor,
+        StereoCarrier, StereoElement, StereoElementId, StereoElementKind, StereoGroup,
+        StereoGroupId, StereoGroupKind, TetrahedralOrientation, TetrahedralStereo,
+    };
+
+    let mut editor = MoleculeEditor::new();
+    let atoms = (0..15)
+        .map(|_| {
+            editor
+                .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    for (a, b) in [(0, 1), (1, 2), (2, 3), (2, 4), (0, 5), (5, 6)] {
+        editor
+            .add_bond(atoms[a], atoms[b], BondOrder::Single)
+            .unwrap();
+    }
+    let double = editor
+        .add_bond(atoms[6], atoms[7], BondOrder::Double)
+        .unwrap();
+    for (a, b) in [(7, 8), (0, 9), (9, 10)] {
+        editor
+            .add_bond(atoms[a], atoms[b], BondOrder::Single)
+            .unwrap();
+    }
+    let axis = editor
+        .add_bond(atoms[10], atoms[11], BondOrder::Single)
+        .unwrap();
+    for (a, b) in [(11, 12), (10, 13), (11, 14)] {
+        editor
+            .add_bond(atoms[a], atoms[b], BondOrder::Single)
+            .unwrap();
+    }
+    let tetra = StereoElementKind::Tetrahedral(TetrahedralStereo {
+        center: atoms[2],
+        carriers: vec![
+            StereoCarrier::Atom(atoms[1]),
+            StereoCarrier::Atom(atoms[3]),
+            StereoCarrier::Atom(atoms[4]),
+            StereoCarrier::ImplicitHydrogen,
+        ],
+        orientation: Some(TetrahedralOrientation::Clockwise),
+    });
+    let removed = editor
+        .add_stereo_element(StereoElement::new(tetra.clone()))
+        .unwrap();
+    editor.remove_stereo_element(removed).unwrap();
+    editor.append_stereo_group_tombstone().unwrap();
+    let elements = [
+        tetra,
+        StereoElementKind::DoubleBond(DoubleBondStereo {
+            bond: double,
+            left: atoms[6],
+            right: atoms[7],
+            left_carrier: StereoCarrier::Atom(atoms[5]),
+            right_carrier: StereoCarrier::Atom(atoms[8]),
+            orientation: Some(DoubleBondOrientation::Opposite),
+        }),
+        StereoElementKind::Axis(AxisStereo {
+            axis,
+            carriers: vec![
+                StereoCarrier::Atom(atoms[9]),
+                StereoCarrier::Atom(atoms[12]),
+            ],
+            orientation: Some(AxisOrientation::Clockwise),
+        }),
+    ]
+    .into_iter()
+    .map(|kind| editor.add_stereo_element(StereoElement::new(kind)).unwrap())
+    .collect();
+    editor
+        .add_stereo_group(StereoGroup {
+            kind: StereoGroupKind::Relative,
+            members: elements,
+        })
+        .unwrap();
+    let mut builder = TopologyBuilder::new();
+    let instance = builder.add_molecule(&editor.finish().unwrap()).unwrap();
+    let source = Arc::new(builder.build().unwrap());
+    let selection = AtomSelection::from_atoms(
+        &source,
+        atoms[1..]
+            .iter()
+            .map(|atom| InstanceAtomId::new(instance, *atom)),
+    )
+    .unwrap();
+    let subset = source.subset(&selection).unwrap();
+    let carrier = |index| StereoCarrier::Atom(AtomId::new(index));
+    let expected = [
+        StereoElementKind::Tetrahedral(TetrahedralStereo {
+            center: AtomId::new(1),
+            carriers: vec![
+                carrier(0),
+                carrier(2),
+                carrier(3),
+                StereoCarrier::ImplicitHydrogen,
+            ],
+            orientation: Some(TetrahedralOrientation::Clockwise),
+        }),
+        StereoElementKind::DoubleBond(DoubleBondStereo {
+            bond: BondId::new(1),
+            left: AtomId::new(1),
+            right: AtomId::new(2),
+            left_carrier: carrier(0),
+            right_carrier: carrier(3),
+            orientation: Some(DoubleBondOrientation::Opposite),
+        }),
+        StereoElementKind::Axis(AxisStereo {
+            axis: BondId::new(1),
+            carriers: vec![carrier(0), carrier(3)],
+            orientation: Some(AxisOrientation::Clockwise),
+        }),
+    ];
+    assert_eq!(subset.topology().instance_count(), expected.len());
+    for (molecule, kind) in subset.topology().molecules().zip(expected) {
+        let molecule = molecule.molecule();
+        assert_eq!(molecule.graph().stereo_elements.len(), 1);
+        assert_eq!(
+            molecule.stereo_element(StereoElementId::new(0)).unwrap(),
+            &StereoElement {
+                kind,
+                group: Some(StereoGroupId::new(0))
+            }
+        );
+        assert_eq!(molecule.stereo_group_slot_count(), 1);
+        assert_eq!(
+            molecule.stereo_group(StereoGroupId::new(0)).unwrap(),
+            &StereoGroup {
+                kind: StereoGroupKind::Relative,
+                members: vec![StereoElementId::new(0)]
+            }
+        );
+    }
+    let selection = AtomSelection::from_atoms(
+        &source,
+        atoms
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| ![0, 3, 5, 9].contains(index))
+            .map(|(_, atom)| InstanceAtomId::new(instance, *atom)),
+    )
+    .unwrap();
+    let pruned = source.subset(&selection).unwrap();
+    for molecule in pruned.topology().molecules() {
+        assert_eq!(molecule.molecule().stereo_elements().count(), 0);
+        assert_eq!(molecule.molecule().stereo_groups().count(), 0);
+    }
+}
+
+#[test]
 fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
     let mut editor = crate::core::MoleculeEditor::new();
     let first = editor
