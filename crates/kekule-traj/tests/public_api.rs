@@ -21,6 +21,34 @@ fn topology() -> Arc<Topology> {
     build_topology(&["C"], &[])
 }
 
+#[test]
+fn trajectory_payload_and_buffer_reject_foreign_property_domains() {
+    use kekule::properties::{PropertyColumn, PropertyKey};
+    use kekule::structure::Positions;
+    use kekule_traj::{FrameBuffer, FrameBufferData, TrajectoryFrame};
+
+    let mut builder = Arc::try_unwrap(topology()).unwrap().into_builder();
+    let key = PropertyKey::new("tag").unwrap();
+    builder
+        .molecule_instance_properties_mut()
+        .insert(key, PropertyColumn::Int(vec![Some(7)]))
+        .unwrap();
+    let topology = Arc::new(builder.build().unwrap());
+    let foreign = topology.properties().clone();
+    let positions = Positions::zeros(1);
+    let mut frame = TrajectoryFrame::new(positions.clone());
+    let original = frame.properties().clone();
+    assert!(frame.set_properties(foreign.clone()).is_err());
+    assert_eq!(frame.properties(), &original);
+    let mut buffer = FrameBuffer::new(topology);
+    assert!(buffer.set_properties(foreign.clone()).is_err());
+    assert!(buffer
+        .replace_from_data(FrameBufferData::new(positions.values()).with_properties(&foreign))
+        .is_err());
+    assert_eq!(buffer.properties(), &original);
+    assert_eq!(buffer.positions(), &positions);
+}
+
 fn temporary_xyz() -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

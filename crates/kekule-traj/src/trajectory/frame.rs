@@ -347,8 +347,7 @@ impl TrajectoryFrame {
         if let Some(values) = &self.forces {
             validate_atom_count(topology.atom_count(), values.len())?;
         }
-        self.properties
-            .validate_realization_canonical_properties()?;
+        self.properties.validate_realization_properties()?;
         Ok(())
     }
 

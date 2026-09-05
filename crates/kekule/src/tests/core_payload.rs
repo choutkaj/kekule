@@ -570,7 +570,8 @@ fn stereo_element_group_membership_is_transactional_and_relation_owned() {
         .with_cip_descriptors(vec![(element, StereoDescriptor::R)])
         .expect("unique CIP assignment")
         .build();
-    mol.install_perception(perception.clone())
+    mol.working_mut()
+        .install_perception(perception.clone())
         .expect("valid perception");
 
     let mut pre_grouped = mol.stereo_element(element).expect("element").clone();
