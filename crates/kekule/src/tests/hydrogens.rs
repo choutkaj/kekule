@@ -315,9 +315,12 @@ fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
         .add_bond(second_carbon, third_carbon, BondOrder::Single)
         .expect("second carbon link");
 
-    let _ = valence_api::perceive_valence(&mut graph, ValenceModel::RdkitLike);
+    let _ = valence_api::perceive_valence(graph.working_mut(), ValenceModel::RdkitLike);
     let mut molecule = graph;
-    let report = molecule.remove_hydrogens().expect("conservative removal");
+    let report = molecule
+        .working_mut()
+        .remove_hydrogens()
+        .expect("conservative removal");
 
     assert!(report.removed.is_empty());
     assert_eq!(
@@ -347,7 +350,7 @@ fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
         .add_bond(parent, hydrogen, BondOrder::Single)
         .expect("hydrogen bond");
     valence_api::perceive_valence_with_options(
-        &mut graph,
+        graph.working_mut(),
         ValenceModel::RdkitLike,
         ValenceOptions { strict: false },
     )
@@ -356,7 +359,7 @@ fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
     let original = molecule.clone();
 
     assert_eq!(
-        molecule.remove_hydrogens(),
+        molecule.working_mut().remove_hydrogens(),
         Err(HydrogenTransformError::HydrogenCountOverflow {
             atom: parent,
             count: 256,
@@ -397,7 +400,7 @@ fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
     graph
         .add_bond(right, bromine, BondOrder::Single)
         .expect("bromine bond");
-    let _ = valence_api::perceive_valence(&mut graph, ValenceModel::RdkitLike);
+    let _ = valence_api::perceive_valence(graph.working_mut(), ValenceModel::RdkitLike);
     let stereo = graph
         .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
             DoubleBondStereo {
@@ -412,7 +415,10 @@ fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
         .expect("double-bond stereo");
     let mut molecule = graph;
 
-    let report = molecule.remove_hydrogens().expect("collapse hydrogen");
+    let report = molecule
+        .working_mut()
+        .remove_hydrogens()
+        .expect("collapse hydrogen");
 
     assert_eq!(report.removed[0].hydrogen, hydrogen);
     assert_eq!(report.adjustments[0].explicit_hydrogens, 0);

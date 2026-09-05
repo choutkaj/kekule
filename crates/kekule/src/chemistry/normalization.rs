@@ -495,14 +495,14 @@ mod tests {
                     .unwrap()
             })
             .collect::<BTreeSet<_>>();
-        let component = source_aromatic_bond_components(&molecule, &aromatic_bonds)
+        let component = source_aromatic_bond_components(molecule.working(), &aromatic_bonds)
             .into_iter()
             .next()
             .expect("imported aromatic component");
         let before = molecule.clone();
 
         let error = try_localize_aromatic_component_with_limit(
-            &mut molecule,
+            molecule.working_mut(),
             &component,
             &aromatic_bonds,
             0,

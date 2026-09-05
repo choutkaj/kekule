@@ -655,7 +655,7 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
             },
         )))
         .expect("double-bond stereo");
-    assert!(molfile::write_v2000(&molecule)
+    assert!(molfile::write_v2000(molecule.working())
         .expect_err("invalid stereo element should be rejected")
         .message
         .contains("cannot encode"));
@@ -667,8 +667,11 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
     molecule
         .remove_stereo_element(element)
         .expect("remove stereo element");
-    molecule.bond_mut(bond).expect("bond").order = BondOrder::Quadruple;
-    assert!(molfile::write_v2000(&molecule)
+    molecule
+        .bond_mut(bond)
+        .expect("bond")
+        .set_order(BondOrder::Quadruple);
+    assert!(molfile::write_v2000(molecule.working())
         .expect_err("quadruple bond should be rejected")
         .message
         .contains("quadruple"));

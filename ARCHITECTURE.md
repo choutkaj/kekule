@@ -457,6 +457,24 @@ The same editor concept may be used for construction from scratch; a separate
 public `MoleculeBuilder` is not architecturally required unless it provides
 clear ergonomic value without duplicating semantics.
 
+`MoleculeEditor` is the single public construction and editing interface. It
+exposes live atom/bond and stereo inspection, connectivity queries, represented
+state replacement, checked bond rewiring, batch deletion/retention, and owner and
+entity property editing. Complete property columns follow live entity order;
+deleted storage slots are handled internally. Fragment append returns atom,
+bond, stereo-element, and stereo-group ID correspondence and preserves entity
+annotations and represented stereo. It does not import fragment owner properties
+or perception; conflicting property data fails transactionally.
+
+`Molecule::edit()` clones into detached state; `Molecule::to_editor()` moves it.
+`finish()` consumes the draft. `validate()` checks a snapshot, and `try_finish()`
+keeps a rollback snapshot so failed publication can return an unchanged editor
+for repair. The latter operations explicitly trade a clone for recoverability.
+Published-molecule algorithms require a finished `Molecule`: editors do not
+dereference to `Molecule`, including in tests. Internal algorithm fixtures that
+intentionally use unfinished state access it explicitly through crate-private
+test paths. Bond mutation cannot replace endpoints outside checked rewiring.
+
 Public unrestricted mutable access to graph internals should not bypass the
 editor and thereby bypass publication validation.
 

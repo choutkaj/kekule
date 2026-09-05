@@ -324,27 +324,27 @@ fn adding_after_deletion_allocates_new_ids() {
 #[test]
 fn every_topology_mutation_invalidates_fresh_perception() {
     let mut mol = crate::core::MoleculeEditor::new();
-    mark_all_fresh(&mut mol);
+    mark_all_fresh(mol.working_mut());
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
-    assert_all_stale(&mol);
+    assert_all_stale(mol.working());
 
-    mark_all_fresh(&mut mol);
+    mark_all_fresh(mol.working_mut());
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
-    assert_all_stale(&mol);
+    assert_all_stale(mol.working());
 
-    mark_all_fresh(&mut mol);
+    mark_all_fresh(mol.working_mut());
     let bond = mol
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
-    assert_all_stale(&mol);
+    assert_all_stale(mol.working());
 
-    mark_all_fresh(&mut mol);
+    mark_all_fresh(mol.working_mut());
     mol.delete_bond(bond).expect("bond should delete");
-    assert_all_stale(&mol);
+    assert_all_stale(mol.working());
 
-    mark_all_fresh(&mut mol);
+    mark_all_fresh(mol.working_mut());
     mol.delete_atom(a).expect("atom should delete");
-    assert_all_stale(&mol);
+    assert_all_stale(mol.working());
 }
 
 #[test]

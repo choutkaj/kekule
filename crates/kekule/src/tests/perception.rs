@@ -26,7 +26,7 @@ fn fully_perceived_aromatic_stereo_fixture() -> Molecule {
 #[test]
 fn ring_membership_empty_and_linear_molecules_have_no_rings() {
     let mut empty = crate::core::MoleculeEditor::new();
-    let empty_membership = rings_api::perceive_ring_membership(&mut empty);
+    let empty_membership = rings_api::perceive_ring_membership(empty.working_mut());
     assert!(empty_membership.ring_atom_ids().next().is_none());
     assert!(empty_membership.ring_bond_ids().next().is_none());
 
@@ -40,7 +40,7 @@ fn ring_membership_empty_and_linear_molecules_have_no_rings() {
     let bc = chain
         .add_bond(b, c, BondOrder::Single)
         .expect("bond should be valid");
-    let chain_membership = rings_api::perceive_ring_membership(&mut chain);
+    let chain_membership = rings_api::perceive_ring_membership(chain.working_mut());
 
     assert!(!chain_membership.atom_in_ring(a));
     assert!(!chain_membership.atom_in_ring(b));
@@ -132,7 +132,7 @@ fn ring_membership_marks_triangle_atoms_and_bonds() {
     let bc = mol.add_bond(b, c, BondOrder::Single).expect("bond");
     let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
 
-    let membership = rings_api::perceive_ring_membership(&mut mol);
+    let membership = rings_api::perceive_ring_membership(mol.working_mut());
 
     assert_eq!(sorted_atom_ids(membership.ring_atom_ids()), vec![a, b, c]);
     assert_eq!(
@@ -153,7 +153,7 @@ fn ring_membership_excludes_tail_from_ring() {
     let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
     let tail_bond = mol.add_bond(c, tail, BondOrder::Single).expect("bond");
 
-    let membership = rings_api::perceive_ring_membership(&mut mol);
+    let membership = rings_api::perceive_ring_membership(mol.working_mut());
 
     assert_eq!(sorted_atom_ids(membership.ring_atom_ids()), vec![a, b, c]);
     assert_eq!(
@@ -185,7 +185,7 @@ fn ring_membership_handles_fused_rings_with_an_acyclic_tail() {
         .add_bond(tail_a, tail_b, BondOrder::Single)
         .expect("bond");
 
-    let membership = rings_api::perceive_ring_membership(&mut mol);
+    let membership = rings_api::perceive_ring_membership(mol.working_mut());
 
     assert_eq!(
         sorted_atom_ids(membership.ring_atom_ids()),
@@ -210,7 +210,7 @@ fn ring_membership_ignores_deleted_bonds_and_becomes_stale_after_mutation() {
     let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
     mol.delete_bond(ca).expect("bond should delete");
 
-    let membership = rings_api::perceive_ring_membership(&mut mol);
+    let membership = rings_api::perceive_ring_membership(mol.working_mut());
     assert!(!membership.bond_in_ring(ab));
     assert!(!membership.bond_in_ring(bc));
     assert!(!membership.bond_in_ring(ca));
@@ -361,10 +361,10 @@ fn default_perception_rolls_back_when_ring_perception_fails_after_valence() {
             )
             .expect("large ring bond");
     }
-    rings_api::perceive_ring_membership(&mut molecule);
+    rings_api::perceive_ring_membership(molecule.working_mut());
     let original = molecule.clone();
 
-    let error = perception_api::perceive(&mut molecule)
+    let error = perception_api::perceive(molecule.working_mut())
         .expect_err("default ring cycle-size limit must fail");
 
     assert!(matches!(
@@ -480,11 +480,13 @@ fn perceive_rolls_back_failure_without_rewriting_canonical_representation() {
     }
     let mut molecule = graph;
     molecule
+        .working_mut()
         .canonicalize_fixture()
         .expect("fixture canonicalization should succeed");
     let before = molecule.clone();
 
     let error = molecule
+        .working_mut()
         .perceive()
         .expect_err("default perception should reject pentavalent carbon");
 
@@ -883,14 +885,14 @@ fn aromaticity_marks_azulene_fused_perimeter_but_not_shared_bond() {
             .expect("perimeter bond"),
     );
 
-    aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
+    aromaticity_api::perceive_aromaticity(mol.working_mut(), AromaticityModel::RdkitLike)
         .expect("azulene-like fused system should be supported");
 
-    assert!(atoms.iter().all(|atom| aromatic_atom(&mol, *atom)));
+    assert!(atoms.iter().all(|atom| aromatic_atom(mol.working(), *atom)));
     assert!(perimeter_bonds
         .iter()
-        .all(|bond| aromatic_bond(&mol, *bond)));
-    assert!(!aromatic_bond(&mol, shared));
+        .all(|bond| aromatic_bond(mol.working(), *bond)));
+    assert!(!aromatic_bond(mol.working(), shared));
 }
 
 #[test]
@@ -936,18 +938,18 @@ fn aromaticity_keeps_aromatic_heteroring_bond_shared_with_saturated_ring() {
             .expect("saturated ring bond"),
     ];
 
-    aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
+    aromaticity_api::perceive_aromaticity(mol.working_mut(), AromaticityModel::RdkitLike)
         .expect("fused heteroaromatic ring should be supported");
 
     for bond_id in aromatic_bonds {
         assert!(
-            aromatic_bond(&mol, bond_id),
+            aromatic_bond(mol.working(), bond_id),
             "aromatic ring bond {bond_id} should be aromatic"
         );
     }
     for bond_id in saturated_bonds {
         assert!(
-            !aromatic_bond(&mol, bond_id),
+            !aromatic_bond(mol.working(), bond_id),
             "saturated fused-neighbor bond {bond_id} should stay aliphatic"
         );
     }
@@ -1014,11 +1016,11 @@ fn aromaticity_uses_ring_membership_not_acyclic_double_bonds() {
     mol.add_bond(a, b, BondOrder::Double).expect("bond");
     mol.add_bond(b, c, BondOrder::Single).expect("bond");
 
-    aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
+    aromaticity_api::perceive_aromaticity(mol.working_mut(), AromaticityModel::RdkitLike)
         .expect("acyclic molecule should be supported");
 
-    assert!(!aromatic_atom(&mol, a));
-    assert!(!aromatic_bond(&mol, BondId::new(0)));
+    assert!(!aromatic_atom(mol.working(), a));
+    assert!(!aromatic_bond(mol.working(), BondId::new(0)));
 }
 
 #[test]
@@ -1072,7 +1074,7 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
         .add_atom(element_atom("N"))
         .expect("atom identifier capacity");
     mol.add_bond(center, a, BondOrder::Single).expect("bond");
-    mark_all_fresh(&mut mol);
+    mark_all_fresh(mol.working_mut());
     let element = mol
         .add_stereo_element(StereoElement {
             kind: StereoElementKind::Tetrahedral(TetrahedralStereo {
@@ -1087,9 +1089,9 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
             group: None,
         })
         .expect("stereo element");
-    mark_all_fresh(&mut mol);
+    mark_all_fresh(mol.working_mut());
 
-    let error = stereo_api::validate_stereo(&mol).expect_err("invalid stored stereo");
+    let error = stereo_api::validate_stereo(mol.working()).expect_err("invalid stored stereo");
 
     assert!(mol.stereo_elements().next().is_some());
     assert!(error
@@ -1147,7 +1149,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         )))
         .expect("tetrahedral stereo element");
 
-    stereo_api::validate_stereo(&tetrahedral)
+    stereo_api::validate_stereo(tetrahedral.working())
         .expect("implicit hydrogen availability is chemically interpretive");
 
     tetrahedral
@@ -1163,7 +1165,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
             },
         )))
         .expect("tetrahedral stereo element");
-    stereo_api::validate_stereo(&tetrahedral)
+    stereo_api::validate_stereo(tetrahedral.working())
         .expect("implicit lone-pair availability is chemically interpretive");
 
     let mut double_bond = crate::core::MoleculeEditor::new();
@@ -1189,7 +1191,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         )))
         .expect("double-bond stereo element");
 
-    let error = stereo_api::validate_stereo(&double_bond)
+    let error = stereo_api::validate_stereo(double_bond.working())
         .expect_err("unavailable double-bond carriers should be reported");
     assert_eq!(
         error.issues,
@@ -1217,7 +1219,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         })))
         .expect("axis stereo element");
 
-    let error = stereo_api::validate_stereo(&axis)
+    let error = stereo_api::validate_stereo(axis.working())
         .expect_err("implicit axis carriers should be unsupported");
     assert_eq!(
         error.issues,
@@ -1587,7 +1589,7 @@ fn normalization_assembles_wedge_either_as_explicit_unknown() {
         kind: SourceStereoBondMarkKind::WedgeEither,
     }];
 
-    let report = canonicalize_molecule_for_publication(&mut mol, None, &source_stereo)
+    let report = canonicalize_molecule_for_publication(mol.working_mut(), None, &source_stereo)
         .expect("wedge/either should assemble as unknown stereo");
     assert_eq!(report.created_stereo_elements.len(), 1);
     let element = mol
@@ -1609,7 +1611,7 @@ fn alternate_tetrahedral_wedge_carriers_publish_identical_canonical_stereo() {
     let canonicalize = |kind, bond| {
         let (mut molecule, center, _, _) = tetrahedral_marked_graph();
         let report = canonicalize_molecule_for_publication(
-            &mut molecule,
+            molecule.working_mut(),
             None,
             &[SourceStereoBondMark {
                 bond,
@@ -1656,7 +1658,7 @@ fn source_stereo_rejects_an_origin_outside_the_marked_bond() {
         kind: SourceStereoBondMarkKind::WedgeUp,
     }];
 
-    let error = canonicalize_molecule_for_publication(&mut molecule, None, &source_stereo)
+    let error = canonicalize_molecule_for_publication(molecule.working_mut(), None, &source_stereo)
         .expect_err("the marked origin must be an endpoint of its bond");
 
     assert!(matches!(
@@ -1686,7 +1688,7 @@ fn normalization_reports_ambiguous_tetrahedral_wedge_marks() {
         },
     ];
 
-    let report = canonicalize_molecule_for_publication(&mut mol, None, &source_stereo)
+    let report = canonicalize_molecule_for_publication(mol.working_mut(), None, &source_stereo)
         .expect("ambiguous wedges should warn without failing");
 
     assert!(report
@@ -2100,7 +2102,7 @@ fn stereo_validation_accepts_structural_axis_elements() {
         })))
         .expect("axis element");
 
-    stereo_api::validate_stereo(&mol).expect("axis should be structurally valid");
+    stereo_api::validate_stereo(mol.working()).expect("axis should be structurally valid");
 
     mol.remove_stereo_element(valid_axis)
         .expect("remove valid axis");
@@ -2112,7 +2114,7 @@ fn stereo_validation_accepts_structural_axis_elements() {
         })))
         .expect("invalid axis element refs are still structurally present");
 
-    let error = stereo_api::validate_stereo(&mol).expect_err("axis should be invalid");
+    let error = stereo_api::validate_stereo(mol.working()).expect_err("axis should be invalid");
 
     assert_eq!(
         error.issues,
