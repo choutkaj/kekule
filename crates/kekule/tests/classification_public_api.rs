@@ -318,6 +318,116 @@ fn append_preserves_class_and_structural_subset_reinfers() {
 }
 
 #[test]
+fn subsets_reuse_compact_definitions_and_preserve_only_complete_entity_classes() {
+    let mut editor = MoleculeEditor::new();
+    let removed = editor.add_atom(atom("C")).unwrap();
+    let first = editor.add_atom(atom("C")).unwrap();
+    let second = editor.add_atom(atom("C")).unwrap();
+    editor.add_bond(removed, first, BondOrder::Single).unwrap();
+    let bond = editor.add_bond(first, second, BondOrder::Single).unwrap();
+    editor.delete_atom(removed).unwrap();
+    let molecule = editor.finish().unwrap();
+    let mut builder = TopologyBuilder::new();
+    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    builder
+        .set_molecule_class(definition, MoleculeClass::Other)
+        .unwrap();
+    let mut instances = Vec::new();
+    for name in ["A", "B", "C"] {
+        let instance = builder.add_instance(definition).unwrap();
+        instances.push(instance);
+        let chain = builder.hierarchy_mut().add_chain(name, None).unwrap();
+        let residue = builder
+            .hierarchy_mut()
+            .add_residue(chain, "UNL", None, None, None)
+            .unwrap();
+        for atom in [first, second] {
+            builder
+                .hierarchy_mut()
+                .add_atom_site(
+                    residue,
+                    InstanceAtomId::new(instance, atom),
+                    AtomSiteMetadata::default(),
+                )
+                .unwrap();
+        }
+        builder
+            .set_residue_class(residue, ResidueClass::Water)
+            .unwrap();
+    }
+    let source = Arc::new(builder.build().unwrap());
+    let selection = AtomSelection::from_atoms(
+        &source,
+        instances.iter().enumerate().flat_map(|(index, &instance)| {
+            [first, second]
+                .into_iter()
+                .take(if index == 2 { 1 } else { 2 })
+                .map(move |atom| InstanceAtomId::new(instance, atom))
+        }),
+    )
+    .unwrap();
+    let subset = source.subset(&selection).unwrap();
+    let target = subset.topology();
+    assert_eq!(target.definition_count(), 2);
+    let molecules = target.molecules().collect::<Vec<_>>();
+    assert_eq!(molecules[0].definition_id(), molecules[1].definition_id());
+    assert_ne!(molecules[0].definition_id(), molecules[2].definition_id());
+    assert_eq!(
+        molecules
+            .iter()
+            .map(|molecule| molecule.class())
+            .collect::<Vec<_>>(),
+        [
+            MoleculeClass::Other,
+            MoleculeClass::Other,
+            MoleculeClass::SmallMolecule
+        ]
+    );
+    assert_eq!(
+        target
+            .residues()
+            .map(|residue| residue.class())
+            .collect::<Vec<_>>(),
+        [
+            ResidueClass::Water,
+            ResidueClass::Water,
+            ResidueClass::Other
+        ]
+    );
+    for &instance in &instances {
+        assert_eq!(
+            subset
+                .correspondence()
+                .target_atom(InstanceAtomId::new(instance, first))
+                .unwrap()
+                .atom()
+                .raw(),
+            0
+        );
+    }
+    for &instance in &instances[..2] {
+        assert_eq!(
+            subset
+                .correspondence()
+                .target_atom(InstanceAtomId::new(instance, second))
+                .unwrap()
+                .atom()
+                .raw(),
+            1
+        );
+        assert_eq!(
+            subset
+                .correspondence()
+                .target_bond(kekule::topology::InstanceBondId::new(instance, bond))
+                .unwrap()
+                .bond()
+                .raw(),
+            0
+        );
+    }
+}
+
+#[test]
 fn typed_class_selections_select_instances_and_residues() {
     let (protein, _) = linear_residue_topology(&["ALA", "GLY"], ("N", "C"));
     let topology = Arc::new(protein);
