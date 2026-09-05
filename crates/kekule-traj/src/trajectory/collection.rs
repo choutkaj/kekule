@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use kekule::properties::{Properties, PropertyError, PropertyKey, PropertyValue};
-use kekule::topology::{AtomSelection, Topology};
+use kekule::topology::{AtomSelection, Topology, TopologyPerceptionError};
 
 use super::frame::TrajectoryFrame;
 use super::{TrajectoryError, TrajectoryFrameView, TrajectorySliceError};
@@ -45,6 +45,19 @@ impl Trajectory {
 
     pub fn shared_topology(&self) -> Arc<Topology> {
         Arc::clone(&self.topology)
+    }
+
+    /// Installs default perception through one new shared topology snapshot.
+    ///
+    /// Delegates to [`Topology::perceived`] once for the collection, independent
+    /// of frame count. All frame positions, cells, velocities, forces, time,
+    /// step, and properties, and collection properties are retained without
+    /// copying frames. Failure leaves the entire trajectory unchanged. Other
+    /// owners, readers, buffers, selections, and prepared calculations retain
+    /// their original topology bindings.
+    pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
+        self.topology = Arc::new(self.topology.perceived()?);
+        Ok(())
     }
 
     pub const fn properties(&self) -> &Properties {

@@ -7,7 +7,9 @@ use crate::properties::{
     Properties, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue,
 };
 use crate::topology::transform::TopologySubsetError;
-use crate::topology::{AtomSelection, Topology, TopologyBuildError, TopologyBuilder};
+use crate::topology::{
+    AtomSelection, Topology, TopologyBuildError, TopologyBuilder, TopologyPerceptionError,
+};
 use crate::units::Quantity;
 
 use super::{Model, ModelView, PositionError, Positions};
@@ -506,6 +508,18 @@ impl Ensemble {
 
     pub fn shared_topology(&self) -> Arc<Topology> {
         Arc::clone(&self.topology)
+    }
+
+    /// Installs default perception through one new shared topology snapshot.
+    ///
+    /// Delegates to [`Topology::perceived`] once for the collection, independent
+    /// of member count. All member positions, cells, weights, and properties,
+    /// and collection properties are retained without copying members. Failure
+    /// leaves the entire ensemble unchanged. Other owners and existing bound
+    /// selections or prepared calculations retain their original snapshot.
+    pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
+        self.topology = Arc::new(self.topology.perceived()?);
+        Ok(())
     }
 
     pub const fn properties(&self) -> &Properties {

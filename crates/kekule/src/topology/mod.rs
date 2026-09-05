@@ -13,11 +13,13 @@
 //!
 //! Topologies are immutable after publication. Use [`TopologyBuilder`] for
 //! assembly, [`Topology::into_builder`] for append-oriented transformation, and
-//! [`transform`] or selections for checked structural subsets.
+//! [`transform`] or selections for checked structural subsets. Explicit
+//! [`Topology::perceived`] derives chemistry in a new snapshot with the same layout.
 
 mod builder;
 mod classification;
 mod hierarchy;
+mod perception;
 mod selection;
 pub mod transform;
 
@@ -34,6 +36,7 @@ pub use hierarchy::{
     AtomSite, AtomSiteId, AtomSiteMetadata, Chain, ChainId, Hierarchy, HierarchyError,
     HierarchyIdKind, Residue, ResidueId,
 };
+pub use perception::TopologyPerceptionError;
 pub use selection::{AtomSelection, SelectionError};
 
 fixed_u32_id!(MoleculeDefinitionId, "definition");
@@ -566,7 +569,9 @@ impl Topology {
     /// instance partitioning, semantic identifiers,
     /// authoritative dense atom and bond order, and the corresponding index
     /// maps. Whether two values share one `Arc` allocation is deliberately
-    /// excluded.
+    /// excluded, as are installed perception and generic properties. In
+    /// particular, [`Self::perceived`] preserves layout equality without
+    /// preserving the source snapshot's shared allocation identity.
     ///
     /// This is stricter than order-independent structural equivalence. It does
     /// not perform graph isomorphism, reorder definitions or instances, or
