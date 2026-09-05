@@ -28,7 +28,7 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
         .properties()
         .get(&PropertyKey::new("sdf.field.FIELD").unwrap())
         .is_none());
-    assert_eq!(interpretation.report().records().len(), 1);
+    assert_eq!(interpretation.reports().len(), 1);
 }
 
 #[test]

@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::core::Molecule;
-use crate::structure::{Model, ModelBuildError};
+use crate::structure::Model;
 use crate::topology::Topology;
 
 use super::{
@@ -228,7 +228,6 @@ pub struct SdfInterpretError {
 #[non_exhaustive]
 pub enum SdfInterpretErrorKind {
     Molfile(super::MolfileInterpretError),
-    ModelBuild(Box<ModelBuildError>),
 }
 
 impl SdfInterpretError {
@@ -264,7 +263,6 @@ impl std::error::Error for SdfInterpretError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match &self.kind {
             SdfInterpretErrorKind::Molfile(error) => Some(error),
-            SdfInterpretErrorKind::ModelBuild(error) => Some(error.as_ref()),
         }
     }
 }
@@ -290,21 +288,9 @@ impl SdfRecordInterpretationReport {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SdfInterpretationReport {
-    records: Vec<SdfRecordInterpretationReport>,
-}
-
-impl SdfInterpretationReport {
-    pub fn records(&self) -> &[SdfRecordInterpretationReport] {
-        &self.records
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct SdfInterpretation {
     records: Vec<SdfRecordInterpretation>,
-    report: SdfInterpretationReport,
 }
 
 impl SdfInterpretation {
@@ -312,16 +298,15 @@ impl SdfInterpretation {
         &self.records
     }
 
-    pub fn report(&self) -> &SdfInterpretationReport {
-        &self.report
+    /// Borrows each record's report in source order, without duplicate ownership.
+    pub fn reports(
+        &self,
+    ) -> impl ExactSizeIterator<Item = &SdfRecordInterpretationReport> + DoubleEndedIterator {
+        self.records.iter().map(SdfRecordInterpretation::report)
     }
 
     pub fn to_records(self) -> Vec<SdfRecordInterpretation> {
         self.records
-    }
-
-    pub fn to_parts(self) -> (Vec<SdfRecordInterpretation>, SdfInterpretationReport) {
-        (self.records, self.report)
     }
 }
 
@@ -497,37 +482,20 @@ pub fn interpret_sdf_document(
     document: &SdfDocument,
 ) -> Result<SdfInterpretation, SdfInterpretError> {
     let mut records = Vec::with_capacity(document.records.len());
-    let mut reports = Vec::with_capacity(document.records.len());
     for record in &document.records {
         let interpretation = record.interpret()?;
-        reports.push(interpretation.report().clone());
         records.push(interpretation);
     }
-    Ok(SdfInterpretation {
-        records,
-        report: SdfInterpretationReport { records: reports },
-    })
+    Ok(SdfInterpretation { records })
 }
 
 fn interpret_sdf_record(record: &SdfRecord) -> Result<SdfRecordInterpretation, SdfInterpretError> {
-    let interpretation = interpret_sdf_record_molfile(record)?;
+    let (model, molfile_components) = interpret_sdf_record_molfile(record)?.to_parts();
     let report = SdfRecordInterpretationReport {
         record: record.source_record_number,
         source_start_line: record.source_start_line,
-        molfile_components: interpretation
-            .components()
-            .iter()
-            .map(|component| component.report().clone())
-            .collect(),
+        molfile_components,
     };
-    let model = interpretation
-        .to_model()
-        .map_err(|error| SdfInterpretError {
-            record: record.source_record_number,
-            line: record.source_start_line,
-            message: format!("could not build SDF record model: {error}"),
-            kind: SdfInterpretErrorKind::ModelBuild(Box::new(error)),
-        })?;
     Ok(SdfRecordInterpretation::with_report(
         record.title(),
         model,

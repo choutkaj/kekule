@@ -256,16 +256,16 @@ impl MolfileDocument {
 
     /// Interprets this source document and projects its complete static model
     /// layout, including the deterministic synthetic hierarchy.
-    pub fn to_topology(&self) -> Result<std::sync::Arc<Topology>, MolfileModelError> {
-        Ok(self.interpret()?.to_topology()?)
+    pub fn to_topology(&self) -> Result<std::sync::Arc<Topology>, MolfileInterpretError> {
+        Ok(self.interpret()?.to_topology())
     }
 
     /// Interprets this source document as one geometry-bearing model.
     ///
     /// Each disconnected source component becomes one molecule instance in
     /// the model topology. No chemical perception is run.
-    pub fn to_model(&self) -> Result<Model, MolfileModelError> {
-        Ok(self.interpret()?.to_model()?)
+    pub fn to_model(&self) -> Result<Model, MolfileInterpretError> {
+        Ok(self.interpret()?.to_model())
     }
 }
 
@@ -338,44 +338,6 @@ impl From<SdfParseError> for MolfileInterpretError {
             line: error.line,
             message: error.message,
         }
-    }
-}
-
-/// Failure to interpret a Molfile and assemble its matching model geometry.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum MolfileModelError {
-    Interpretation(MolfileInterpretError),
-    ModelBuild(Box<ModelBuildError>),
-}
-
-impl fmt::Display for MolfileModelError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Interpretation(error) => error.fmt(formatter),
-            Self::ModelBuild(error) => write!(formatter, "could not build Molfile model: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for MolfileModelError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Interpretation(error) => Some(error),
-            Self::ModelBuild(error) => Some(error.as_ref()),
-        }
-    }
-}
-
-impl From<MolfileInterpretError> for MolfileModelError {
-    fn from(error: MolfileInterpretError) -> Self {
-        Self::Interpretation(error)
-    }
-}
-
-impl From<ModelBuildError> for MolfileModelError {
-    fn from(error: ModelBuildError) -> Self {
-        Self::ModelBuild(Box::new(error))
     }
 }
 
@@ -453,110 +415,86 @@ pub enum MolfileInterpretationWarning {
     },
 }
 
+/// One final canonical model and source reports in molecule-instance order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MolfileInterpretation {
-    components: Vec<MolfileComponentInterpretation>,
+    model: Model,
+    reports: Vec<MolfileInterpretationReport>,
 }
 
 impl MolfileInterpretation {
-    pub fn components(&self) -> &[MolfileComponentInterpretation] {
-        &self.components
+    pub fn model(&self) -> &Model {
+        &self.model
+    }
+
+    pub fn topology(&self) -> &Topology {
+        self.model.topology()
+    }
+
+    /// One component report per molecule instance, in topology instance order.
+    /// Atom, bond, and stereo IDs in each report are local to that molecule.
+    pub fn reports(&self) -> &[MolfileInterpretationReport] {
+        &self.reports
     }
 
     pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
-        self.components
-            .iter()
-            .map(MolfileComponentInterpretation::molecule)
+        self.topology()
+            .molecules()
+            .map(|instance| instance.molecule())
     }
 
     pub fn to_molecules(self) -> Vec<Molecule> {
-        self.components
-            .into_iter()
-            .map(MolfileComponentInterpretation::to_molecule)
-            .collect()
+        self.molecules().cloned().collect()
     }
 
-    pub fn to_components(self) -> Vec<MolfileComponentInterpretation> {
-        self.components
+    /// Retains the exact topology allocation, including its synthetic hierarchy.
+    pub fn to_topology(self) -> std::sync::Arc<Topology> {
+        self.model.shared_topology()
     }
 
-    /// Projects the complete static layout assembled by [`Self::to_model`].
-    ///
-    /// The returned shared topology includes the same deterministic synthetic
-    /// chain/residue hierarchy as the model projection.
-    pub fn to_topology(self) -> Result<std::sync::Arc<Topology>, ModelBuildError> {
-        Ok(self.to_model()?.shared_topology())
+    pub fn to_model(self) -> Model {
+        self.model
     }
 
-    /// Assembles all interpreted components and their matching geometry into one model.
-    ///
-    /// The model receives one synthetic chain `A`, with one one-based `UNL`
-    /// residue per connected source component. Molecule definitions remain
-    /// hierarchy-free.
-    pub fn to_model(self) -> Result<Model, ModelBuildError> {
-        let mut builder = ModelBuilder::new();
-        let mut component_atoms = Vec::with_capacity(self.components.len());
-        for component in self.components {
-            let local_atoms = component.molecule.atom_ids().collect::<Vec<_>>();
-            let instance = builder.add_molecule(&component.molecule, &component.positions)?;
-            component_atoms.push((instance, local_atoms));
-        }
+    pub fn to_parts(self) -> (Model, Vec<MolfileInterpretationReport>) {
+        (self.model, self.reports)
+    }
+}
+
+fn publish_molfile_components(
+    components: Vec<(Molecule, Positions, MolfileInterpretationReport)>,
+) -> Result<MolfileInterpretation, ModelBuildError> {
+    let mut builder = ModelBuilder::new();
+    let mut reports = Vec::with_capacity(components.len());
+    let chain = builder
+        .topology_builder_mut()
+        .hierarchy_mut()
+        .add_chain("A", None)?;
+    for (index, (molecule, positions, report)) in components.into_iter().enumerate() {
+        let instance = builder.add_molecule(&molecule, &positions)?;
+        let sequence = i32::try_from(index + 1).map_err(|_| ModelBuildError::CapacityOverflow)?;
         let hierarchy = builder.topology_builder_mut().hierarchy_mut();
-        let chain = hierarchy.add_chain("A", None)?;
-        for (index, (instance, atoms)) in component_atoms.into_iter().enumerate() {
-            let sequence =
-                i32::try_from(index + 1).map_err(|_| ModelBuildError::CapacityOverflow)?;
-            let residue = hierarchy.add_residue(
-                chain,
-                "UNL",
-                Some(sequence),
-                Some(sequence.to_string()),
-                None,
+        let residue = hierarchy.add_residue(
+            chain,
+            "UNL",
+            Some(sequence),
+            Some(sequence.to_string()),
+            None,
+        )?;
+        for atom in molecule.atom_ids() {
+            hierarchy.add_atom_site(
+                residue,
+                crate::topology::InstanceAtomId::new(instance, atom),
+                crate::topology::AtomSiteMetadata::default(),
             )?;
-            for atom in atoms {
-                hierarchy.add_atom_site(
-                    residue,
-                    crate::topology::InstanceAtomId::new(instance, atom),
-                    crate::topology::AtomSiteMetadata::default(),
-                )?;
-            }
         }
-        builder.build()
+        reports.push(report);
     }
+    Ok(MolfileInterpretation {
+        model: builder.build()?,
+        reports,
+    })
 }
-
-/// One canonical Molfile component with matching dense geometry and source report.
-#[derive(Debug, Clone, PartialEq)]
-pub struct MolfileComponentInterpretation {
-    molecule: Molecule,
-    positions: Positions,
-    report: MolfileInterpretationReport,
-}
-
-impl MolfileComponentInterpretation {
-    pub fn molecule(&self) -> &Molecule {
-        &self.molecule
-    }
-
-    pub fn report(&self) -> &MolfileInterpretationReport {
-        &self.report
-    }
-
-    /// Dense geometry matched to [`Self::molecule`] atom order.
-    pub fn positions(&self) -> &Positions {
-        &self.positions
-    }
-
-    pub fn to_molecule(self) -> Molecule {
-        self.molecule
-    }
-
-    /// Consumes the component without dropping matching geometry or its report.
-    pub fn to_parts(self) -> (Molecule, Positions, MolfileInterpretationReport) {
-        (self.molecule, self.positions, self.report)
-    }
-}
-
 pub fn parse_molfile_document(input: &str) -> Result<MolfileDocument, MolfileParseError> {
     parse_molfile_document_with_options(input, MolfileParseOptions::default())
 }
@@ -817,19 +755,22 @@ pub fn interpret_molfile_document(
                 source_line: bond_lines[old.index()],
             })
             .collect();
-        components.push(MolfileComponentInterpretation {
+        components.push((
             molecule,
             positions,
-            report: MolfileInterpretationReport {
+            MolfileInterpretationReport {
                 atom_mappings,
                 bond_mappings,
                 ignored_record_lines: ignored_record_lines.clone(),
                 created_stereo_elements: publication_report.created_stereo_elements,
                 warnings,
             },
-        });
+        ));
     }
-    Ok(MolfileInterpretation { components })
+    publish_molfile_components(components).map_err(|error| MolfileInterpretError {
+        line: 4,
+        message: format!("could not build Molfile model: {error}"),
+    })
 }
 
 struct RawMolfileComponent {
