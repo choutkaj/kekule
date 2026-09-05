@@ -43,11 +43,11 @@ fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
         previous = atom;
     }
 
-    let ring_set =
-        rings_api::perceive_ring_set(&mut molecule).expect("long chain should perceive rings");
+    let ring_set = rings_api::perceive_ring_set(molecule.working_mut())
+        .expect("long chain should perceive rings");
     assert!(ring_set.is_empty());
 
-    let written = smiles_api::write(&molecule).expect("long chain should write");
+    let written = smiles_api::write(molecule.working()).expect("long chain should write");
     assert_eq!(written.matches('C').count(), 20_000);
 }
 
@@ -126,7 +126,7 @@ fn symmetric_cage_returns_named_candidate_limit_error() {
         }
     }
     let error = rings_api::perceive_ring_set_with_options(
-        &mut mol,
+        mol.working_mut(),
         RingPerceptionOptions {
             max_candidates: 2,
             ..RingPerceptionOptions::default()
@@ -164,12 +164,14 @@ fn theta_graph_with_acyclic_tail_is_deterministic() {
     mol.add_bond(tail_a, tail_b, BondOrder::Single)
         .expect("tail bond");
 
-    let first = rings_api::perceive_ring_set(&mut mol).expect("theta graph should perceive rings");
+    let first =
+        rings_api::perceive_ring_set(mol.working_mut()).expect("theta graph should perceive rings");
     let first_rings = first.rings().to_vec();
     assert_eq!(first.len(), 3);
     assert!(first.rings().iter().all(|ring| ring.atoms.len() == 4));
 
-    let second = rings_api::perceive_ring_set(&mut mol).expect("repeat should perceive rings");
+    let second =
+        rings_api::perceive_ring_set(mol.working_mut()).expect("repeat should perceive rings");
     assert_eq!(second.rings(), first_rings);
 }
 
@@ -196,7 +198,7 @@ fn decorated_theta_graph_does_not_overenumerate_equal_path_cycles() {
             .expect("decorated theta edge");
     }
 
-    let ring_set = rings_api::perceive_ring_set(&mut mol)
+    let ring_set = rings_api::perceive_ring_set(mol.working_mut())
         .expect("decorated theta graph should perceive rings");
     let mut atom_sets = ring_set
         .rings()

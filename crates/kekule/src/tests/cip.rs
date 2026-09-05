@@ -35,7 +35,7 @@ fn successful_cip_with_no_assignments_installs_empty_stereo_section() {
     mol.add_atom(carbon()).expect("single carbon");
     assert!(!mol.perception().has_stereo());
 
-    let report = assign_cip(&mut mol);
+    let report = assign_cip(mol.working_mut());
 
     assert!(report.assigned.is_empty());
     assert!(report.skipped.is_empty());
@@ -198,7 +198,7 @@ fn cip_skips_axis_with_equivalent_endpoint_ligands_as_nonstereogenic() {
         })))
         .expect("axis stereo element");
 
-    assert_cip_not_stereogenic(&mut mol, stereo);
+    assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
 #[test]
@@ -547,7 +547,7 @@ fn cip_skips_stored_nonstereogenic_small_ring_double_bond() {
         )))
         .expect("double-bond stereo element");
 
-    assert_cip_not_stereogenic(&mut mol, stereo);
+    assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
 #[test]
@@ -587,7 +587,7 @@ fn cip_skips_double_bond_with_equivalent_endpoint_ligands_as_nonstereogenic() {
         )))
         .expect("double-bond stereo element");
 
-    assert_cip_not_stereogenic(&mut mol, stereo);
+    assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
 #[test]
@@ -699,7 +699,7 @@ fn pseudoasymmetric_double_bond_graph(
     let double_bond = mol
         .add_bond(left, right, BondOrder::Double)
         .expect("double bond");
-    let (child_r, _) = add_enantiomorphic_tetrahedral_carriers(&mut mol, left);
+    let (child_r, _) = add_enantiomorphic_tetrahedral_carriers(mol.working_mut(), left);
 
     let chlorine = mol
         .add_atom(element_atom("Cl"))
@@ -736,7 +736,7 @@ fn pseudoasymmetric_axis_graph(orientation: AxisOrientation) -> (Molecule, Stere
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
-    let (child_r, _child_s) = add_enantiomorphic_tetrahedral_carriers(&mut mol, left);
+    let (child_r, _child_s) = add_enantiomorphic_tetrahedral_carriers(mol.working_mut(), left);
 
     let chlorine = mol
         .add_atom(element_atom("Cl"))
@@ -900,11 +900,11 @@ fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands
         )))
         .expect("parent pseudoasymmetric stereo element");
 
-    mol.set_implicit_hydrogens(center, 0);
-    mol.set_implicit_hydrogens(child_r, 1);
-    mol.set_implicit_hydrogens(child_s, 1);
+    mol.working_mut().set_implicit_hydrogens(center, 0);
+    mol.working_mut().set_implicit_hydrogens(child_r, 1);
+    mol.working_mut().set_implicit_hydrogens(child_s, 1);
 
-    assign_cip(&mut mol);
+    assign_cip(mol.working_mut());
 
     assert_eq!(
         mol.cip_descriptor(child_r_element).expect("R child stereo"),
@@ -1236,9 +1236,9 @@ fn cip_applies_recursive_rule1a_before_isotope_priority() {
         )))
         .expect("stereo element");
 
-    mol.set_implicit_hydrogens(center, 1);
+    mol.working_mut().set_implicit_hydrogens(center, 1);
 
-    let report = assign_cip(&mut mol);
+    let report = assign_cip(mol.working_mut());
 
     assert_eq!(
         report.assigned,
@@ -1412,7 +1412,7 @@ fn cip_skips_equivalent_ligands_as_nonstereogenic() {
         )))
         .expect("stereo element");
 
-    assert_cip_not_stereogenic(&mut mol, stereo);
+    assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
 #[test]
@@ -1457,7 +1457,7 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
         )))
         .expect("stereo element");
 
-    assert_cip_not_stereogenic(&mut mol, stereo);
+    assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
 #[test]
@@ -1485,7 +1485,7 @@ fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() 
             .expect("right carrier bond");
     }
     for chain in [chain_a, chain_b] {
-        add_carbon_chain(&mut mol, chain, 18);
+        add_carbon_chain(mol.working_mut(), chain, 18);
     }
     assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth);
 
@@ -1502,7 +1502,7 @@ fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() 
         )))
         .expect("double-bond stereo element");
 
-    assert_cip_not_stereogenic(&mut mol, stereo);
+    assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
 #[test]
@@ -1528,7 +1528,7 @@ fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
             .expect("right carrier bond");
     }
     for chain in [chain_a, chain_b] {
-        add_carbon_chain(&mut mol, chain, 18);
+        add_carbon_chain(mol.working_mut(), chain, 18);
     }
     assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth);
 
@@ -1540,7 +1540,7 @@ fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
         })))
         .expect("axis stereo element");
 
-    assert_cip_not_stereogenic(&mut mol, stereo);
+    assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
 fn add_carbon_chain(mol: &mut Molecule, start: AtomId, length: usize) {
@@ -1594,7 +1594,7 @@ fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
         )))
         .expect("stereo element");
 
-    assert_cip_not_stereogenic(&mut mol, stereo);
+    assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
 #[test]
@@ -1714,17 +1714,18 @@ fn failed_cip_validation_preserves_previous_stereo_section() {
             group: None,
         })
         .expect("stored malformed stereo element");
-    mol.install_cip_descriptor(element, StereoDescriptor::R);
-    let before = installed_cip_descriptors(&mol);
+    mol.working_mut()
+        .install_cip_descriptor(element, StereoDescriptor::R);
+    let before = installed_cip_descriptors(mol.working());
 
-    let error = stereo_api::assign_cip_descriptors(&mut mol)
+    let error = stereo_api::assign_cip_descriptors(mol.working_mut())
         .expect_err("invalid stored stereo should reject CIP assignment");
 
     assert!(error
         .issues
         .iter()
         .all(|issue| matches!(issue, CipAssignmentIssue::InvalidStereo { .. })));
-    assert_eq!(installed_cip_descriptors(&mol), before);
+    assert_eq!(installed_cip_descriptors(mol.working()), before);
     assert_eq!(
         mol.cip_descriptor(element).expect("stereo element"),
         Some(StereoDescriptor::R)
@@ -1736,7 +1737,7 @@ fn failed_cip_validation_preserves_previous_stereo_section() {
         .build();
     mol.install_perception(present_empty.clone())
         .expect("valid empty stereo section");
-    stereo_api::assign_cip_descriptors(&mut mol)
+    stereo_api::assign_cip_descriptors(mol.working_mut())
         .expect_err("invalid stored stereo should still reject CIP assignment");
     assert_eq!(mol.perception(), &present_empty);
     assert!(mol.perception().has_stereo());
@@ -1773,10 +1774,12 @@ fn successful_cip_reassignment_replaces_the_complete_descriptor_set() {
     let unknown = mol
         .add_stereo_element(StereoElement::new(unknown_kind))
         .expect("unknown stereo element");
-    mol.install_cip_descriptor(specified, StereoDescriptor::S);
-    mol.install_cip_descriptor(unknown, StereoDescriptor::R);
+    mol.working_mut()
+        .install_cip_descriptor(specified, StereoDescriptor::S);
+    mol.working_mut()
+        .install_cip_descriptor(unknown, StereoDescriptor::R);
 
-    let report = assign_cip(&mut mol);
+    let report = assign_cip(mol.working_mut());
 
     assert_eq!(report.assigned.len(), 1);
     assert_eq!(report.assigned[0].element, specified);
@@ -1788,7 +1791,7 @@ fn successful_cip_reassignment_replaces_the_complete_descriptor_set() {
         }]
     );
     assert_eq!(
-        installed_cip_descriptors(&mol),
+        installed_cip_descriptors(mol.working()),
         vec![(specified, report.assigned[0].descriptor)]
     );
     assert_eq!(mol.cip_descriptor(unknown).expect("unknown element"), None);

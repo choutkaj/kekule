@@ -485,7 +485,7 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
         .add_bond(c, o, BondOrder::Double)
         .expect("double bond");
 
-    let written = molfile::write_v3000(&molecule).expect("V3000 should write");
+    let written = molfile::write_v3000(molecule.working()).expect("V3000 should write");
     assert_eq!(written.lines().nth(1), Some("kekule"));
     assert!(written.contains("V3000"));
     assert!(written.contains("CHG=1"));
@@ -531,7 +531,7 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
             },
         )))
         .expect("stereo element");
-    assert!(molfile::write_v3000(&molecule)
+    assert!(molfile::write_v3000(molecule.working())
         .expect_err("invalid stereo element should be rejected")
         .message
         .contains("cannot encode"));
@@ -556,7 +556,7 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
             },
         )))
         .expect("double-bond stereo");
-    assert!(molfile::write_v3000(&molecule)
+    assert!(molfile::write_v3000(molecule.working())
         .expect_err("specified double-bond stereo should be rejected")
         .message
         .contains("specified double-bond stereo"));
@@ -568,8 +568,11 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
     molecule
         .remove_stereo_element(element)
         .expect("remove stereo element");
-    molecule.bond_mut(bond).expect("bond").order = BondOrder::Quadruple;
-    assert!(molfile::write_v3000(&molecule)
+    molecule
+        .bond_mut(bond)
+        .expect("bond")
+        .set_order(BondOrder::Quadruple);
+    assert!(molfile::write_v3000(molecule.working())
         .expect_err("quadruple should be rejected")
         .message
         .contains("quadruple"));

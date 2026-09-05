@@ -157,7 +157,7 @@ fn stereo_elements_and_groups_live_on_molecule() {
     mol.add_bond(center, a, BondOrder::Single).expect("bond");
     mol.add_bond(center, b, BondOrder::Single).expect("bond");
     mol.add_bond(center, c, BondOrder::Single).expect("bond");
-    mark_all_fresh(&mut mol);
+    mark_all_fresh(mol.working_mut());
 
     let element = mol
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
@@ -388,7 +388,7 @@ fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
         .expect("double-bond stereo element")
     };
     let canonical = add(
-        &mut mol,
+        mol.working_mut(),
         left,
         right,
         left_reference,
@@ -396,7 +396,7 @@ fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
         Some(DoubleBondOrientation::Together),
     );
     let alternate_left = add(
-        &mut mol,
+        mol.working_mut(),
         left,
         right,
         left_alternative,
@@ -404,7 +404,7 @@ fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
         Some(DoubleBondOrientation::Opposite),
     );
     let reversed_and_alternate = add(
-        &mut mol,
+        mol.working_mut(),
         right,
         left,
         right_alternative,
@@ -418,9 +418,16 @@ fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
         );
     }
 
-    let unknown = add(&mut mol, left, right, left_reference, right_reference, None);
+    let unknown = add(
+        mol.working_mut(),
+        left,
+        right,
+        left_reference,
+        right_reference,
+        None,
+    );
     let unknown_alternatives = add(
-        &mut mol,
+        mol.working_mut(),
         right,
         left,
         right_alternative,
@@ -472,7 +479,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
         .expect("axis stereo element")
     };
     let canonical = add(
-        &mut mol,
+        mol.working_mut(),
         vec![
             StereoCarrier::Atom(left_reference),
             StereoCarrier::Atom(right_reference),
@@ -480,7 +487,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
         Some(AxisOrientation::Clockwise),
     );
     let reversed = add(
-        &mut mol,
+        mol.working_mut(),
         vec![
             StereoCarrier::Atom(right_reference),
             StereoCarrier::Atom(left_reference),
@@ -488,7 +495,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
         Some(AxisOrientation::Clockwise),
     );
     let alternate_left = add(
-        &mut mol,
+        mol.working_mut(),
         vec![
             StereoCarrier::Atom(left_alternative),
             StereoCarrier::Atom(right_reference),
@@ -496,7 +503,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
         Some(AxisOrientation::CounterClockwise),
     );
     let both_alternatives = add(
-        &mut mol,
+        mol.working_mut(),
         vec![
             StereoCarrier::Atom(right_alternative),
             StereoCarrier::Atom(left_alternative),
@@ -511,7 +518,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
     }
 
     let unknown = add(
-        &mut mol,
+        mol.working_mut(),
         vec![
             StereoCarrier::Atom(left_reference),
             StereoCarrier::Atom(right_reference),
@@ -519,7 +526,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
         None,
     );
     let unknown_alternatives = add(
-        &mut mol,
+        mol.working_mut(),
         vec![
             StereoCarrier::Atom(right_alternative),
             StereoCarrier::Atom(left_alternative),
@@ -685,13 +692,15 @@ fn mutable_payload_access_invalidates_fresh_perception() {
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
 
-    mark_all_fresh(&mut mol);
+    mark_all_fresh(mol.working_mut());
     mol.atom_mut(a).expect("atom exists").formal_charge = 1;
-    assert_all_stale(&mol);
+    assert_all_stale(mol.working());
 
-    mark_all_fresh(&mut mol);
-    mol.bond_mut(bond).expect("bond exists").order = BondOrder::Double;
-    assert_all_stale(&mol);
+    mark_all_fresh(mol.working_mut());
+    mol.bond_mut(bond)
+        .expect("bond exists")
+        .set_order(BondOrder::Double);
+    assert_all_stale(mol.working());
 }
 
 #[test]
@@ -707,11 +716,11 @@ fn atom_map_only_mutation_invalidates_perception_and_owner_properties() {
             PropertyValue::String("before mutation".to_owned()),
         )
         .unwrap();
-    mark_all_fresh(&mut molecule);
+    mark_all_fresh(molecule.working_mut());
 
     molecule.atom_mut(atom).unwrap().atom_map = Some(7);
 
-    assert_all_stale(&molecule);
+    assert_all_stale(molecule.working());
     assert_eq!(molecule.properties().get(&owner_key), None);
 }
 
@@ -721,9 +730,9 @@ fn perception_owned_chemistry_edits_invalidate_dependent_state() {
     methane
         .add_atom(carbon())
         .expect("atom identifier capacity");
-    mark_all_fresh(&mut methane);
+    mark_all_fresh(methane.working_mut());
 
-    let report = valence_api::perceive_valence(&mut methane, ValenceModel::RdkitLike);
+    let report = valence_api::perceive_valence(methane.working_mut(), ValenceModel::RdkitLike);
 
     assert!(report.is_ok());
     assert!(methane.perception().has_valence());

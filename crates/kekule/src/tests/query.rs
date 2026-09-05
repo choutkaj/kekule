@@ -327,7 +327,7 @@ fn matcher_requires_only_the_perception_used_by_the_ir() {
     raw.add_bond(first, second, BondOrder::Single).unwrap();
     let elemental = manual_element_query("C");
     assert_eq!(
-        substructure::find_substructure_matches(&raw, &elemental)
+        substructure::find_substructure_matches(raw.working(), &elemental)
             .unwrap()
             .len(),
         2
@@ -340,7 +340,7 @@ fn matcher_requires_only_the_perception_used_by_the_ir() {
     ] {
         let query = parse_smarts(smarts).unwrap();
         assert_eq!(
-            substructure::find_substructure_matches(&raw, &query),
+            substructure::find_substructure_matches(raw.working(), &query),
             Err(SubstructureMatchError::MissingPerception(perception)),
             "{smarts}"
         );

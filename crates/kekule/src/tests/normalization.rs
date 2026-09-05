@@ -50,10 +50,12 @@ fn normalization_is_idempotent() {
     let (mut molecule, ..) = oxo_halide(2);
 
     molecule
+        .working_mut()
         .canonicalize_fixture()
         .expect("first normalization should succeed");
     let once = molecule.clone();
     molecule
+        .working_mut()
         .canonicalize_fixture()
         .expect("second normalization should succeed");
 
@@ -154,6 +156,7 @@ fn ambiguous_directional_source_marks_return_a_structured_publication_error() {
     mark_all_fresh(graph.working_mut());
     let mut molecule = graph;
     let error = molecule
+        .working_mut()
         .canonicalize_fixture_with_source_stereo(&source_stereo)
         .expect_err("same-direction marks on both left carriers are ambiguous");
 
@@ -319,6 +322,7 @@ fn failed_normalization_is_transactional() {
     let before = molecule.clone();
 
     let error = molecule
+        .working_mut()
         .canonicalize_fixture()
         .expect_err("unrepresentable formal charge should fail");
 

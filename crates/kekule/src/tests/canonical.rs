@@ -34,7 +34,7 @@ fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
     first
         .add_bond(first_center, first_terminal_b, BondOrder::Single)
         .expect("bond should be valid");
-    perceive(&mut first).expect("propane perceives");
+    perceive(first.working_mut()).expect("propane perceives");
 
     let mut second = crate::core::MoleculeEditor::new();
     let second_center = second.add_atom(carbon()).expect("atom identifier capacity");
@@ -46,10 +46,10 @@ fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
     second
         .add_bond(second_center, second_terminal_b, BondOrder::Single)
         .expect("bond should be valid");
-    perceive(&mut second).expect("propane perceives");
+    perceive(second.working_mut()).expect("propane perceives");
 
-    let first_ranking = canon::atom_ranking(&first);
-    let second_ranking = canon::atom_ranking(&second);
+    let first_ranking = canon::atom_ranking(first.working());
+    let second_ranking = canon::atom_ranking(second.working());
 
     assert_eq!(
         first_ranking.rank_of(first_center),
