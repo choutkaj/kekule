@@ -138,8 +138,8 @@ impl Trajectory {
         })
     }
 
-    pub fn push(&mut self, frame: TrajectoryFrame) -> Result<(), TrajectoryError> {
-        frame.validate(&self.topology)?;
+    pub fn push(&mut self, mut frame: TrajectoryFrame) -> Result<(), TrajectoryError> {
+        frame.prepare(&self.topology)?;
         self.frames.push(frame);
         Ok(())
     }

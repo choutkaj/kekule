@@ -24,10 +24,7 @@
 //!
 //! let molecule = smiles::to_molecules("CC")?.pop().unwrap();
 //! let topology = Arc::new(Topology::from_molecule(&molecule)?);
-//! let frame = TrajectoryFrame::new(
-//!     Positions::zeros(topology.atom_count()),
-//!     topology.bond_count(),
-//! );
+//! let frame = TrajectoryFrame::new(Positions::zeros(topology.atom_count()));
 //!
 //! let mut trajectory = Trajectory::new(Arc::clone(&topology));
 //! trajectory.push(frame)?;

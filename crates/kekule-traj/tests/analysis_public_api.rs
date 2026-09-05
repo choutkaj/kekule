@@ -17,11 +17,8 @@ fn topology() -> Arc<Topology> {
     linear_carbon_topology(3)
 }
 
-fn frame(topology: &Arc<Topology>, points: [Point3; 3]) -> TrajectoryFrame {
-    TrajectoryFrame::new(
-        Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
-        topology.bond_count(),
-    )
+fn frame(points: [Point3; 3]) -> TrajectoryFrame {
+    TrajectoryFrame::new(Positions::new(Quantity::new(points, ANGSTROM)).unwrap())
 }
 
 #[test]
@@ -33,11 +30,8 @@ fn downstream_code_can_split_or_fuse_superposition_and_rmsd() {
         Point3::new(0.0, 1.0, 0.0),
     ];
     let moving = reference.map(|point| Point3::new(point.x + 4.0, point.y - 2.0, point.z + 1.0));
-    let trajectory = Trajectory::from_frames(
-        Arc::clone(&topology),
-        [frame(&topology, reference), frame(&topology, moving)],
-    )
-    .unwrap();
+    let trajectory =
+        Trajectory::from_frames(Arc::clone(&topology), [frame(reference), frame(moving)]).unwrap();
     let selection =
         AtomSelection::from_atoms(&topology, topology.atom_ids().iter().copied()).unwrap();
 

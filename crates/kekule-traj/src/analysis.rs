@@ -327,7 +327,6 @@ fn transform_frame(
     source: crate::TrajectoryFrameView<'_>,
     transform: RigidTransform,
 ) -> Result<TrajectoryFrame, TransformFrameError> {
-    let topology = source.topology_arc();
     let positions = source.positions().values();
     let positions = positions
         .value()
@@ -344,7 +343,7 @@ fn transform_frame(
         .map(|cell| transform_cell(cell, transform))
         .transpose()
         .map_err(|source| TransformFrameError::Cell(Box::new(source)))?;
-    let mut transformed = TrajectoryFrame::new(positions, topology.bond_count());
+    let mut transformed = TrajectoryFrame::new(positions);
     transformed.set_cell(cell);
     transformed
         .set_properties(source.properties().clone())
@@ -655,11 +654,8 @@ mod tests {
         AtomSelection::from_atoms(topology, topology.atom_ids().iter().copied()).unwrap()
     }
 
-    fn frame(topology: &Arc<Topology>, points: &[Point3]) -> TrajectoryFrame {
-        TrajectoryFrame::new(
-            Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
-            topology.bond_count(),
-        )
+    fn frame(points: &[Point3]) -> TrajectoryFrame {
+        TrajectoryFrame::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap())
     }
 
     fn transformed(points: &[Point3], transform: RigidTransform) -> Vec<Point3> {
@@ -706,11 +702,9 @@ mod tests {
         let topology = make_topology(2);
         let reference = [Point3::origin(), Point3::origin()];
         let moving = [Point3::new(1.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)];
-        let trajectory = Trajectory::from_frames(
-            Arc::clone(&topology),
-            [frame(&topology, &reference), frame(&topology, &moving)],
-        )
-        .unwrap();
+        let trajectory =
+            Trajectory::from_frames(Arc::clone(&topology), [frame(&reference), frame(&moving)])
+                .unwrap();
         let selection = all(&topology);
 
         let uniform = trajectory.rmsd_to_frame(0, &selection).unwrap();
@@ -756,11 +750,9 @@ mod tests {
         let transform = quarter_turn();
         let mut reference = transformed(&moving, transform);
         reference[3].x += 2.0;
-        let trajectory = Trajectory::from_frames(
-            Arc::clone(&topology),
-            [frame(&topology, &reference), frame(&topology, &moving)],
-        )
-        .unwrap();
+        let trajectory =
+            Trajectory::from_frames(Arc::clone(&topology), [frame(&reference), frame(&moving)])
+                .unwrap();
         let fit_selection = selection(&topology, &[0, 1, 2]);
         let measurement_selection = selection(&topology, &[3]);
 
@@ -803,10 +795,8 @@ mod tests {
         )
         .unwrap();
         let reference_cell = transform_cell(moving_cell, transform).unwrap();
-        let mut reference_frame = TrajectoryFrame::new(
-            Positions::new(Quantity::new(&reference, NANOMETER)).unwrap(),
-            topology.bond_count(),
-        );
+        let mut reference_frame =
+            TrajectoryFrame::new(Positions::new(Quantity::new(&reference, NANOMETER)).unwrap());
         reference_frame.set_cell(Some(reference_cell));
         reference_frame
             .set_velocities(Some(
@@ -827,10 +817,8 @@ mod tests {
             ))
             .unwrap();
 
-        let mut moving_frame = TrajectoryFrame::new(
-            Positions::new(Quantity::new(&moving, NANOMETER)).unwrap(),
-            topology.bond_count(),
-        );
+        let mut moving_frame =
+            TrajectoryFrame::new(Positions::new(Quantity::new(&moving, NANOMETER)).unwrap());
         moving_frame.set_cell(Some(moving_cell));
         moving_frame
             .set_velocities(Some(
@@ -872,10 +860,10 @@ mod tests {
                 PropertyValue::String("moving".to_owned()),
             )
             .unwrap();
-        let expected_properties = moving_frame.properties().clone();
         let mut trajectory =
             Trajectory::from_frames(Arc::clone(&topology), [reference_frame, moving_frame])
                 .unwrap();
+        let expected_properties = trajectory.frame(1).unwrap().properties().clone();
 
         let report = trajectory
             .superpose_to_frame_with_options(
@@ -945,11 +933,7 @@ mod tests {
         ];
         let mut trajectory = Trajectory::from_frames(
             Arc::clone(&topology),
-            [
-                frame(&topology, &reference),
-                frame(&topology, &moving),
-                frame(&topology, &collinear),
-            ],
+            [frame(&reference), frame(&moving), frame(&collinear)],
         )
         .unwrap();
         let before = (0..trajectory.len())
@@ -992,10 +976,8 @@ mod tests {
             [true; 3],
         )
         .unwrap();
-        let mut periodic_frame = TrajectoryFrame::new(
-            Positions::new(Quantity::new(&points, ANGSTROM)).unwrap(),
-            topology.bond_count(),
-        );
+        let mut periodic_frame =
+            TrajectoryFrame::new(Positions::new(Quantity::new(&points, ANGSTROM)).unwrap());
         periodic_frame.set_cell(Some(cell));
         let trajectory = Trajectory::from_frames(Arc::clone(&topology), [periodic_frame]).unwrap();
 
@@ -1086,7 +1068,7 @@ mod tests {
         ];
         let trajectory = Trajectory::from_frames(
             Arc::clone(&topology),
-            [frame(&topology, &reference), frame(&topology, &collinear)],
+            [frame(&reference), frame(&collinear)],
         )
         .unwrap();
         let before = trajectory

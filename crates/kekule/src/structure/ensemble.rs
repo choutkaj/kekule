@@ -26,8 +26,9 @@ pub struct EnsembleMember {
 }
 
 impl EnsembleMember {
-    pub fn new(positions: Positions, bond_count: usize) -> Self {
-        let properties = Properties::realization(positions.len(), bond_count);
+    /// Constructs a detached member. Empty property domains are sized on insertion.
+    pub fn new(positions: Positions) -> Self {
+        let properties = Properties::realization(positions.len(), 0);
         Self {
             positions,
             cell: None,
@@ -131,11 +132,20 @@ impl EnsembleMember {
             .set_realization_bond_value(key, index, value)?)
     }
 
+    /// Supplies a complete bond column; the first retained column establishes
+    /// the detached domain size. The ensemble checks that size at insertion.
     pub fn insert_bond_property_column(
         &mut self,
         key: PropertyKey,
         column: PropertyColumn,
     ) -> Result<Option<PropertyColumn>, EnsembleError> {
+        if !self.bond_properties().has_data() {
+            let mut properties = self.properties.clone();
+            properties.normalize_realization_dimensions(self.positions.len(), column.len())?;
+            let previous = properties.insert_realization_bond_column(key, column)?;
+            self.properties = properties;
+            return Ok(previous);
+        }
         Ok(self
             .properties
             .insert_realization_bond_column(key, column)?)
@@ -169,20 +179,21 @@ impl EnsembleMember {
         Ok(self.properties.set_b_factor_at(index, value)?)
     }
 
-    pub fn set_properties(&mut self, properties: Properties) -> Result<(), EnsembleError> {
-        if properties.realization_atom_properties().len() != self.positions.len() {
+    /// Replaces detached properties. Empty atom domains adopt the position count;
+    /// populated atom columns are checked now and bond columns at insertion.
+    pub fn set_properties(&mut self, mut properties: Properties) -> Result<(), EnsembleError> {
+        if properties.realization_atom_properties().has_data()
+            && properties.realization_atom_properties().len() != self.positions.len()
+        {
             return Err(EnsembleError::AtomPropertyCountMismatch {
                 expected: self.positions.len(),
                 actual: properties.realization_atom_properties().len(),
             });
         }
-        if properties.realization_bond_properties().len() != self.bond_properties().len() {
-            return Err(EnsembleError::BondPropertyCountMismatch {
-                expected: self.bond_properties().len(),
-                actual: properties.realization_bond_properties().len(),
-            });
-        }
-        properties.validate_realization_canonical_properties()?;
+        properties.normalize_realization_dimensions(
+            self.positions.len(),
+            properties.realization_bond_properties().len(),
+        )?;
         self.properties = properties;
         Ok(())
     }
@@ -199,6 +210,8 @@ impl EnsembleMember {
         Ok(())
     }
 
+    /// Borrows already dimensioned state. Prefer [`Ensemble::member`] to obtain
+    /// a view after the collection has established empty property domains.
     pub fn view<'a>(&'a self, topology: &'a Arc<Topology>) -> Result<ModelView<'a>, EnsembleError> {
         ModelView::new(
             topology,
@@ -288,7 +301,10 @@ impl EnsembleMemberMut<'_> {
         key: PropertyKey,
         column: PropertyColumn,
     ) -> Result<Option<PropertyColumn>, EnsembleError> {
-        self.member.insert_bond_property_column(key, column)
+        Ok(self
+            .member
+            .properties
+            .insert_realization_bond_column(key, column)?)
     }
 
     pub fn remove_bond_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
@@ -311,8 +327,24 @@ impl EnsembleMemberMut<'_> {
         self.member.set_b_factor_at(index, value)
     }
 
-    pub fn set_properties(&mut self, properties: Properties) -> Result<(), EnsembleError> {
-        self.member.set_properties(properties)
+    pub fn set_properties(&mut self, mut properties: Properties) -> Result<(), EnsembleError> {
+        let atom_count = self.member.positions.len();
+        let bond_count = self.member.bond_properties().len();
+        if properties.realization_atom_properties().len() != atom_count {
+            return Err(EnsembleError::AtomPropertyCountMismatch {
+                expected: atom_count,
+                actual: properties.realization_atom_properties().len(),
+            });
+        }
+        if properties.realization_bond_properties().len() != bond_count {
+            return Err(EnsembleError::BondPropertyCountMismatch {
+                expected: bond_count,
+                actual: properties.realization_bond_properties().len(),
+            });
+        }
+        properties.normalize_realization_dimensions(atom_count, bond_count)?;
+        self.member.properties = properties;
+        Ok(())
     }
 
     pub fn set_weight(&mut self, weight: Option<f64>) -> Result<(), EnsembleError> {
@@ -463,7 +495,7 @@ impl Ensemble {
         let topology = Arc::new(topology_builder.build()?);
         let mut ensemble = Self::new(Arc::clone(&topology));
         for positions in positions {
-            ensemble.push(EnsembleMember::new(positions, topology.bond_count()))?;
+            ensemble.push(EnsembleMember::new(positions))?;
         }
         Ok(ensemble)
     }
@@ -548,7 +580,7 @@ impl Ensemble {
     /// ```compile_fail,E0594
     /// use kekule::structure::{Ensemble, EnsembleMember, Positions};
     /// fn overwrite(ensemble: &mut Ensemble) {
-    ///     *ensemble.member_mut(0).unwrap() = EnsembleMember::new(Positions::zeros(1), 0);
+    ///     *ensemble.member_mut(0).unwrap() = EnsembleMember::new(Positions::zeros(1));
     /// }
     /// ```
     pub fn member_mut(&mut self, index: usize) -> Option<EnsembleMemberMut<'_>> {
@@ -566,7 +598,7 @@ impl Ensemble {
     pub fn replace_member(
         &mut self,
         index: usize,
-        member: EnsembleMember,
+        mut member: EnsembleMember,
     ) -> Result<EnsembleMember, EnsembleError> {
         if index >= self.members.len() {
             return Err(EnsembleError::MemberIndexOutOfBounds {
@@ -574,7 +606,7 @@ impl Ensemble {
                 len: self.members.len(),
             });
         }
-        self.validate_member(&member)?;
+        self.prepare_member(&mut member)?;
         Ok(std::mem::replace(&mut self.members[index], member))
     }
 
@@ -586,34 +618,39 @@ impl Ensemble {
         self.members.is_empty()
     }
 
-    pub fn push(&mut self, member: EnsembleMember) -> Result<(), EnsembleError> {
-        self.validate_member(&member)?;
+    pub fn push(&mut self, mut member: EnsembleMember) -> Result<(), EnsembleError> {
+        self.prepare_member(&mut member)?;
         self.members.push(member);
         Ok(())
     }
 
-    fn validate_member(&self, member: &EnsembleMember) -> Result<(), EnsembleError> {
+    fn prepare_member(&self, member: &mut EnsembleMember) -> Result<(), EnsembleError> {
         if member.positions.len() != self.topology.atom_count() {
             return Err(EnsembleError::PositionCountMismatch {
                 expected: self.topology.atom_count(),
                 actual: member.positions.len(),
             });
         }
-        if member.properties.atoms().len() != self.topology.atom_count() {
+        if member.properties.atoms().has_data()
+            && member.properties.atoms().len() != self.topology.atom_count()
+        {
             return Err(EnsembleError::AtomPropertyCountMismatch {
                 expected: self.topology.atom_count(),
                 actual: member.properties.atoms().len(),
             });
         }
-        if member.properties.bonds().len() != self.topology.bond_count() {
+        if member.properties.bonds().has_data()
+            && member.properties.bonds().len() != self.topology.bond_count()
+        {
             return Err(EnsembleError::BondPropertyCountMismatch {
                 expected: self.topology.bond_count(),
                 actual: member.properties.bonds().len(),
             });
         }
-        member
-            .properties
-            .validate_realization_canonical_properties()?;
+        member.properties.normalize_realization_dimensions(
+            self.topology.atom_count(),
+            self.topology.bond_count(),
+        )?;
         Ok(())
     }
 

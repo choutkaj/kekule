@@ -4,7 +4,7 @@ use kekule::modeling::potential::{Potential, PotentialError};
 use kekule::structure::{Ensemble, Model, Positions};
 use kekule::topology::AtomSiteMetadata;
 use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
-use kekule_traj::{FrameBuffer, TrajectoryFrame};
+use kekule_traj::{FrameBuffer, Trajectory, TrajectoryFrame};
 
 use super::{DreidingPotential, DreidingPrepareError, DreidingPrepareOptions, QeqGrouping};
 
@@ -116,10 +116,7 @@ fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
         )
         .unwrap();
     let ensemble = Ensemble::from_models(&[model.clone(), displaced.clone()]).unwrap();
-    let frame = TrajectoryFrame::new(
-        displaced.positions().clone(),
-        displaced.topology().bond_count(),
-    );
+    let frame = TrajectoryFrame::new(displaced.positions().clone());
     let mut potential = DreidingPotential::prepare(
         &model.shared_topology(),
         model.view(),
@@ -139,8 +136,8 @@ fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
         .collect::<Vec<_>>();
     assert_eq!(energies.len(), 2);
     assert!(energies.iter().all(|energy| energy.is_finite()));
-    let topology = model.shared_topology();
-    let frame_view = frame.view(&topology).unwrap();
+    let trajectory = Trajectory::from_frames(model.shared_topology(), [frame]).unwrap();
+    let frame_view = trajectory.frame(0).unwrap();
     assert!(potential
         .evaluate(frame_view.as_model())
         .unwrap()
@@ -195,18 +192,11 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
         potential.evaluate(periodic_ensemble.member(0).unwrap().as_model()),
         Err(PotentialError::UnsupportedPeriodicCell)
     );
-    let mut periodic_frame = TrajectoryFrame::new(
-        periodic_model.positions().clone(),
-        periodic_model.topology().bond_count(),
-    );
+    let mut periodic_frame = TrajectoryFrame::new(periodic_model.positions().clone());
     periodic_frame.set_cell(periodic_model.cell().copied());
+    let trajectory = Trajectory::from_frames(model.shared_topology(), [periodic_frame]).unwrap();
     assert_eq!(
-        potential.evaluate(
-            periodic_frame
-                .view(&model.shared_topology())
-                .unwrap()
-                .as_model(),
-        ),
+        potential.evaluate(trajectory.frame(0).unwrap().as_model(),),
         Err(PotentialError::UnsupportedPeriodicCell)
     );
     let mut periodic_buffer = FrameBuffer::new(model.shared_topology());
