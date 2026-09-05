@@ -401,6 +401,35 @@ properties.
 Mutating generic properties does not change represented graph chemistry and must
 not invalidate perception.
 
+### Perception on canonical owning objects
+
+Explicit perception is available after canonical publication at every owning
+level. `Molecule::perceive()` installs the default valence, ring-set, and
+aromaticity profile transactionally. `Topology::perceived()` returns a new
+topology snapshot with that same profile computed once per reusable molecule
+definition, in definition order. It recomputes installed perception and clears
+dependent CIP state according to the molecular pipeline's invalidation rules.
+It does not assign CIP or add explicit hydrogen atoms.
+
+`Model::perceive()`, `Ensemble::perceive()`, and `Trajectory::perceive()` install
+that new topology snapshot only after every definition succeeds. Failure
+identifies the source molecule definition and leaves the entire receiving owner,
+including its topology allocation and previously installed perception, unchanged.
+Collection perception is independent of member/frame count; it never runs once
+per realization or once per instance of a reused definition.
+
+Perception preserves represented graphs, definition reuse, instances, semantic
+IDs, authoritative dense ordering, hierarchy, classifications, and all stored
+properties. Realization arrays, periodic cells, weights, time, step, and other
+realization/collection state remain intact without copying realization payloads.
+The operation changes no represented chemistry and needs no geometry remapping.
+
+Published shared topologies remain immutable. Successful model/collection
+perception always installs a new `Arc<Topology>` snapshot, even when the old
+allocation has no other owners. Other owners retain their old snapshot.
+Selections, prepared calculations, and trajectory readers/buffers retain their
+original topology bindings; layout equality does not implicitly transfer them.
+
 ## Editing
 
 All structural mutation of `Molecule` happens through `MoleculeEditor` or an
@@ -1026,10 +1055,10 @@ Topology classification is separate from `Molecule::Perception`. Publishing a
 `ResidueClass` values defined below; it must not use classification as a reason
 to run the molecule's general perception pipeline.
 
-If future workflows need an ergonomic way to perceive molecule definitions
-already installed in an immutable `Topology` or `Model`, that should be designed
-as an explicit perception/topology transformation. It is not part of parsing or
-interpretation semantics.
+Perception of molecule definitions already installed in a `Topology`, `Model`,
+`Ensemble`, or `Trajectory` uses the explicit owning-object operations above.
+It is not part of parsing or interpretation semantics. For example, an SDF
+workflow may call `let mut model = record.to_model()?; model.perceive()?;`.
 
 ## `Topology`
 
@@ -2277,9 +2306,12 @@ of the foundational `Molecule`'s represented chemical identity.
 Topology layout equality is distinct from graph isomorphism or chemical
 identity. Full topology layout equality may include molecule definitions,
 instances, canonical classifications, hierarchy, semantic IDs, and dense
-ordering, but generic properties must not accidentally alter layout
-compatibility. Two independently constructed topologies may represent chemically
-equivalent systems while still having different hierarchy IDs or dense layouts.
+ordering, but installed perception and generic properties do not alter layout
+compatibility. `Topology::same_layout()` therefore remains true after explicit
+perception, while exact shared snapshot identity changes. APIs requiring the
+same `Arc<Topology>` retain that requirement. Two independently constructed
+topologies may represent chemically equivalent systems while still having
+different hierarchy IDs or dense layouts.
 
 If complete annotated-state equality is needed, it should be an explicit API
 rather than an accidental consequence of deriving `PartialEq` over storage

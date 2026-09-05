@@ -11,7 +11,7 @@ use crate::topology::{
     AtomSelection, AtomSiteId, AtomSiteView, ChainId, ChainView, Hierarchy, InstanceAtomId,
     InstanceBondId, MoleculeClass, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId,
     ResidueClass, ResidueId, ResidueView, Topology, TopologyAtomIndex, TopologyBuildError,
-    TopologyBuilder, TopologyError,
+    TopologyBuilder, TopologyError, TopologyPerceptionError,
 };
 use crate::units::Quantity;
 
@@ -103,6 +103,28 @@ impl Model {
 
     pub fn shared_topology(&self) -> Arc<Topology> {
         Arc::clone(&self.topology)
+    }
+
+    /// Installs default perception through a new topology snapshot.
+    ///
+    /// Delegates to [`Topology::perceived`], perceiving each definition once.
+    /// Positions, the periodic cell, and all properties are retained without
+    /// copying realization state. Failure leaves the entire model unchanged.
+    /// Other owners keep their original topology. Existing selections and
+    /// prepared calculations remain bound to that original snapshot.
+    ///
+    /// ```
+    /// use kekule::{smiles, structure::{Model, Positions}};
+    ///
+    /// let topology = smiles::to_topology("c1ccccc1")?;
+    /// let mut model = Model::new(topology, Positions::zeros(6))?;
+    /// model.perceive()?;
+    /// assert!(model.topology().molecules().all(|m| m.molecule().perception().has_rings()));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
+        self.topology = Arc::new(self.topology.perceived()?);
+        Ok(())
     }
 
     /// Constructs an induced structural slice and transfers all dense model state.
