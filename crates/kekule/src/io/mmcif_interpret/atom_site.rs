@@ -7,7 +7,7 @@ use crate::geometry::Point3;
 use super::super::{MmcifBlock, MmcifLoopTable, MmcifValue};
 use super::types::{
     MmcifAltLocPolicy, MmcifEntityKind, MmcifInterpretError, MmcifInterpretIssue,
-    MmcifInterpretOptions, MmcifInterpretationReport, MmcifModelSelection,
+    MmcifInterpretationReport,
 };
 
 pub(super) fn coordinate_model_ids(block: &MmcifBlock) -> Result<Vec<String>, MmcifInterpretError> {
@@ -129,7 +129,7 @@ pub(super) fn read_atom_rows(
     table: &MmcifLoopTable,
     entities: &BTreeMap<String, MmcifEntityKind>,
     asym_entities: &BTreeMap<String, String>,
-    options: &MmcifInterpretOptions,
+    strict_entity_metadata: bool,
     report: &mut MmcifInterpretationReport,
 ) -> Result<Vec<AtomRow>, MmcifInterpretError> {
     let mut rows = Vec::with_capacity(table.row_count());
@@ -183,7 +183,7 @@ pub(super) fn read_atom_rows(
             .and_then(|entity| entities.get(entity))
             .is_none()
         {
-            if options.strict_entity_metadata {
+            if strict_entity_metadata {
                 return Err(row_error(
                     table,
                     row,
@@ -395,69 +395,6 @@ pub(super) fn select_alt_locations(
     }
     selected.sort_by_key(|row| row.row_index);
     Ok(selected)
-}
-
-pub(super) fn select_coordinate_model(
-    rows: Vec<AtomRow>,
-    selection: &MmcifModelSelection,
-    report: &mut MmcifInterpretationReport,
-) -> Result<Vec<AtomRow>, MmcifInterpretError> {
-    let mut model_ids = Vec::new();
-    let mut seen = BTreeSet::new();
-    for row in &rows {
-        if seen.insert(row.model_id.clone()) {
-            model_ids.push(row.model_id.clone());
-        }
-    }
-    report.coordinate_models = model_ids.len();
-    let selected = match selection {
-        MmcifModelSelection::RequireSingle if model_ids.len() == 1 => model_ids[0].clone(),
-        MmcifModelSelection::RequireSingle => {
-            return Err(MmcifInterpretError::new(
-                None,
-                format!(
-                    "coordinate data contains {} models; select one explicitly",
-                    model_ids.len()
-                ),
-            ));
-        }
-        MmcifModelSelection::Select(id) if seen.contains(id) => id.clone(),
-        MmcifModelSelection::Select(id) => {
-            return Err(MmcifInterpretError::new(
-                None,
-                format!("coordinate model `{id}` is unavailable"),
-            ));
-        }
-        MmcifModelSelection::First => model_ids
-            .first()
-            .cloned()
-            .ok_or_else(|| MmcifInterpretError::new(None, "coordinate data contains no models"))?,
-    };
-    report.selected_model = Some(selected.clone());
-    for ignored in model_ids.iter().filter(|id| **id != selected) {
-        let atom_site_rows = rows.iter().filter(|row| row.model_id == *ignored).count();
-        report.ignored_coordinate_models.push(ignored.clone());
-        report
-            .issues
-            .push(MmcifInterpretIssue::CoordinateModelIgnored {
-                model_id: ignored.clone(),
-                atom_site_rows,
-            });
-    }
-    let selected_rows = rows
-        .into_iter()
-        .filter(|row| row.model_id == selected)
-        .collect::<Vec<_>>();
-    if let Some(row) = selected_rows.iter().find(|row| row.point.is_none()) {
-        return Err(MmcifInterpretError::new(
-            Some(row.line),
-            format!(
-                "selected coordinate model `{selected}` has no complete position for atom `{}`",
-                row.atom_name
-            ),
-        ));
-    }
-    Ok(selected_rows)
 }
 
 pub(super) fn required<'a>(

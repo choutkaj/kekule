@@ -1,15 +1,15 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::structure::{Ensemble, EnsembleMember, Positions};
+use crate::structure::{Ensemble, EnsembleMember};
 
 use super::super::{MmcifBlock, MmcifDocument};
 use super::atom_site::coordinate_model_ids;
-use super::interpret_mmcif_block;
 use super::types::{
     MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
-    MmcifInterpretOptions, MmcifInterpretationReport, MmcifModelSelection,
+    MmcifInterpretationReport,
 };
+use super::PreparedBlock;
 
 /// Interprets explicitly selected or all coordinate models as one
 /// shared-topology non-temporal ensemble.
@@ -66,33 +66,39 @@ pub(crate) fn interpret_mmcif_ensemble_block(
         }
     }
 
-    let mut interpreted = Vec::with_capacity(selected.len());
-    for model_id in &selected {
-        let interpretation = interpret_mmcif_block(
-            block,
-            MmcifInterpretOptions {
-                strict_entity_metadata: options.strict_entity_metadata,
-                altloc_policy: options.altloc_policy.clone(),
-                model_selection: MmcifModelSelection::Select(model_id.clone()),
-            },
-        )
-        .map_err(|error| MmcifEnsembleInterpretError::Model {
-            model_id: model_id.clone(),
+    let mut prepared = PreparedBlock::new(
+        block,
+        options.strict_entity_metadata,
+        &options.altloc_policy,
+    )
+    .map_err(|error| MmcifEnsembleInterpretError::Model {
+        model_id: selected[0].clone(),
+        error,
+    })?;
+    let mut selected = selected.into_iter();
+    let first_id = selected.next().expect("validated nonempty model selection");
+    let first = prepared.interpret_model(&first_id).map_err(|error| {
+        MmcifEnsembleInterpretError::Model {
+            model_id: first_id,
             error,
-        })?;
-        interpreted.push(interpretation);
-    }
-
-    let first = interpreted
-        .first()
-        .ok_or(MmcifEnsembleInterpretError::EmptyModelSelection)?;
+        }
+    })?;
     let shared_topology = first.model.shared_topology();
     let shared_atom_identity = provenance_identity(&first.report);
     let mut ensemble = Ensemble::new(Arc::clone(&shared_topology));
-    let mut reports = Vec::with_capacity(interpreted.len());
-    for interpretation in interpreted {
-        let (model, report) = interpretation.to_parts();
-        let model_id = report.selected_model().unwrap_or("<unknown>").to_owned();
+    let (first_model, first_report) = first.to_parts();
+    ensemble
+        .push(EnsembleMember::from_model(first_model))
+        .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
+    let mut reports = vec![first_report];
+    for model_id in selected {
+        let (model, report) = prepared
+            .interpret_model(&model_id)
+            .map_err(|error| MmcifEnsembleInterpretError::Model {
+                model_id: model_id.clone(),
+                error,
+            })?
+            .to_parts();
         let atom_identity = provenance_identity(&report);
         if atom_identity != shared_atom_identity {
             let error = if atom_identity.sorted_atoms() != shared_atom_identity.sorted_atoms() {
@@ -110,15 +116,8 @@ pub(crate) fn interpret_mmcif_ensemble_block(
         {
             return Err(MmcifEnsembleInterpretError::InconsistentDenseAtomOrder { model_id });
         }
-        let positions = Positions::new(model.positions().values())
-            .map_err(MmcifEnsembleInterpretError::Position)?;
-        let mut member = EnsembleMember::new(positions);
-        member.set_cell(model.cell().copied());
-        member
-            .set_properties(model.properties().clone())
-            .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
         ensemble
-            .push(member)
+            .push(EnsembleMember::from_model(model))
             .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
         reports.push(report);
     }

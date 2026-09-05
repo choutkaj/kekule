@@ -114,12 +114,18 @@ pub(super) fn read_molfile_with_report(
 ) -> std::result::Result<(Molecule, molfile::MolfileInterpretationReport), Box<dyn std::error::Error>>
 {
     let document = molfile::parse_str(input)?;
-    let mut components = molfile::interpret(&document)?.to_components();
-    if components.len() != 1 {
-        return Err(format!("expected one molfile component, found {}", components.len()).into());
+    let (model, mut reports) = molfile::interpret(&document)?.to_parts();
+    if reports.len() != 1 {
+        return Err(format!("expected one molfile component, found {}", reports.len()).into());
     }
-    let (molecule, _positions, report) = components.pop().expect("length checked").to_parts();
-    Ok((molecule, report))
+    let molecule = model
+        .topology()
+        .molecules()
+        .next()
+        .expect("one component")
+        .molecule()
+        .clone();
+    Ok((molecule, reports.pop().expect("length checked")))
 }
 
 pub(super) fn read_sdf_records(
@@ -178,26 +184,26 @@ pub(super) trait MolfileInterpretationTestExt {
 impl MolfileInterpretationTestExt for molfile::MolfileInterpretation {
     fn molecule(&self) -> &Molecule {
         assert_eq!(
-            self.components().len(),
+            self.reports().len(),
             1,
             "test fixture must have one component"
         );
-        self.components()[0].molecule()
+        self.molecules().next().expect("one component")
     }
 
     fn report(&self) -> &molfile::MolfileInterpretationReport {
         assert_eq!(
-            self.components().len(),
+            self.reports().len(),
             1,
             "test fixture must have one component"
         );
-        self.components()[0].report()
+        &self.reports()[0]
     }
 
     fn to_molecule(self) -> Molecule {
-        let mut components = self.to_components();
-        assert_eq!(components.len(), 1, "test fixture must have one component");
-        components.pop().expect("length checked").to_molecule()
+        let mut molecules = self.to_molecules();
+        assert_eq!(molecules.len(), 1, "test fixture must have one component");
+        molecules.pop().expect("length checked")
     }
 }
 

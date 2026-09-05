@@ -118,7 +118,7 @@ fn molfile_model_flattens_disconnected_topology_and_preserves_coordinates() {
     assert!(text.contains("V2000"));
 
     let interpreted = molfile::interpret(&molfile::parse_str(&text).unwrap()).unwrap();
-    let round_trip_model = interpreted.to_model().unwrap();
+    let round_trip_model = interpreted.to_model();
     assert_eq!(round_trip_model.topology().instance_count(), 2);
     for (index, expected) in [
         Point3::new(1.25, 2.5, 3.75),
@@ -163,7 +163,6 @@ fn molfile_version_policy_promotes_counts_and_explicit_v2000_fails() {
         molfile::interpret(&molfile::parse_str(&promoted).unwrap())
             .unwrap()
             .to_model()
-            .unwrap()
             .topology()
             .instance_count(),
         1_000

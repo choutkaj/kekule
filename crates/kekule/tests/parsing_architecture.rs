@@ -7,6 +7,57 @@ const DISCONNECTED_MOLFILE: &str = "salt-like\nkekule\n\n  2  0  0  0  0  0     
 const INTERLEAVED_COMPONENT_MOLFILE: &str = "interleaved\nkekule\n\n  4  1  0  0  0  0            999 V2000\n   10.0000   11.0000   12.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   20.0000   21.0000   22.0000 Na  0  3  0  0  0  0  0  0  0  0  0  0\n   30.0000   31.0000   32.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n   40.0000   41.0000   42.0000 Cl  0  5  0  0  0  0  0  0  0  0  0  0\n  1  3  1  0  0  0  0\nM  END\n";
 
 #[test]
+fn molfile_projections_retain_the_interpreted_model_and_reports() {
+    let interpretation = molfile::parse_str(INTERLEAVED_COMPONENT_MOLFILE)
+        .unwrap()
+        .interpret()
+        .unwrap();
+    let topology = interpretation.model().shared_topology();
+    let positions = interpretation.model().positions().values().value().as_ptr();
+    let reports = interpretation.reports().to_vec();
+    assert!(std::ptr::eq(interpretation.topology(), topology.as_ref()));
+    assert!(std::sync::Arc::ptr_eq(
+        &interpretation.clone().to_topology(),
+        &topology
+    ));
+    assert!(std::sync::Arc::ptr_eq(
+        &interpretation.clone().to_model().shared_topology(),
+        &topology
+    ));
+    let (model, moved_reports) = interpretation.to_parts();
+    assert!(std::sync::Arc::ptr_eq(&model.shared_topology(), &topology));
+    assert_eq!(model.positions().values().value().as_ptr(), positions);
+    assert_eq!(moved_reports, reports);
+    assert_eq!(
+        moved_reports
+            .iter()
+            .map(|report| report
+                .atom_mappings()
+                .iter()
+                .map(|mapping| mapping.source_line())
+                .collect::<Vec<_>>())
+            .collect::<Vec<_>>(),
+        [vec![5, 7], vec![6], vec![8]]
+    );
+}
+
+#[test]
+fn empty_molfile_fails_at_interpretation_before_any_projection() {
+    let source = "empty\nkekule\n\n  0  0  0  0  0  0            999 V2000\nM  END\n";
+    let document = molfile::parse_str(source).unwrap();
+    assert!(document.interpret().is_err());
+    assert!(document.to_molecules().is_err());
+    assert!(document.to_model().is_err());
+    let sdf_document = sdf::parse_str(&format!("{source}$$$$\n")).unwrap();
+    let error = sdf_document.interpret().unwrap_err();
+    assert!(matches!(
+        error.kind(),
+        sdf::SdfInterpretErrorKind::Molfile(_)
+    ));
+    assert_eq!(error.record(), 1);
+}
+
+#[test]
 fn sdf_model_can_install_perception_without_losing_source_order_or_geometry() {
     let text = format!("{INTERLEAVED_COMPONENT_MOLFILE}$$$$\n");
     let document = sdf::parse_str(&text).unwrap();
@@ -99,21 +150,28 @@ fn molfile_document_model_retains_published_component_geometry() {
         Point3::new(0.125, 0.25, 0.375),
         Point3::new(-0.4, 0.55, -0.625),
     ];
-    for (component, expected) in interpretation.components().iter().zip(expected) {
-        let mapping = component
-            .report()
+    for ((instance, report), expected) in interpretation
+        .topology()
+        .molecules()
+        .zip(interpretation.reports())
+        .zip(expected)
+    {
+        let mapping = report
             .atom_mappings()
             .first()
             .expect("one source atom mapping");
-        let position_index = component
-            .molecule()
-            .atom_ids()
-            .position(|atom| atom == mapping.atom())
+        let position_index = interpretation
+            .topology()
+            .atom_index(kekule::topology::InstanceAtomId::new(
+                instance.id(),
+                mapping.atom(),
+            ))
             .expect("mapped canonical atom");
         assert_point_close(
-            component
+            interpretation
+                .model()
                 .positions()
-                .position_at(position_index)
+                .position_at(position_index.index())
                 .expect("mapped source coordinate")
                 .to_value(),
             expected,
@@ -278,7 +336,13 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
         .interpret()
         .expect("document interprets per record");
     assert_eq!(document_interpretation.records().len(), 2);
-    assert_eq!(document_interpretation.report().records().len(), 2);
+    assert_eq!(document_interpretation.reports().len(), 2);
+    for (report, record) in document_interpretation
+        .reports()
+        .zip(document_interpretation.records())
+    {
+        assert!(std::ptr::eq(report, record.report()));
+    }
     assert_eq!(document_interpretation.records()[0].report().record(), 1);
     assert_eq!(document_interpretation.records()[1].report().record(), 2);
 

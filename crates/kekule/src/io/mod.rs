@@ -30,10 +30,9 @@ pub use smiles::{
 };
 pub use structure_documents::{
     interpret_molfile_document, parse_molfile_document, parse_molfile_document_with_options,
-    MolfileAtomMapping, MolfileBondMapping, MolfileComponentInterpretation, MolfileDocument,
-    MolfileHeader, MolfileInterpretError, MolfileInterpretation, MolfileInterpretationReport,
-    MolfileInterpretationWarning, MolfileLine, MolfileModelError, MolfileParseError,
-    MolfileParseOptions, MolfileVersion,
+    MolfileAtomMapping, MolfileBondMapping, MolfileDocument, MolfileHeader, MolfileInterpretError,
+    MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning, MolfileLine,
+    MolfileParseError, MolfileParseOptions, MolfileVersion,
 };
 pub use v2000::*;
 pub use v3000::*;
