@@ -76,9 +76,7 @@ macro_rules! realization_property_api {
             key: PropertyKey,
             column: PropertyColumn,
         ) -> Result<Option<PropertyColumn>, FrameError> {
-            Ok(self
-                .properties
-                .insert_realization_bond_column(key, column)?)
+            self.insert_bond_column(key, column)
         }
 
         pub fn remove_bond_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {

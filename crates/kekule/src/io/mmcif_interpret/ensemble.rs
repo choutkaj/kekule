@@ -112,7 +112,7 @@ pub(crate) fn interpret_mmcif_ensemble_block(
         }
         let positions = Positions::new(model.positions().values())
             .map_err(MmcifEnsembleInterpretError::Position)?;
-        let mut member = EnsembleMember::new(positions, shared_topology.bond_count());
+        let mut member = EnsembleMember::new(positions);
         member.set_cell(model.cell().copied());
         member
             .set_properties(model.properties().clone())
