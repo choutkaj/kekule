@@ -807,6 +807,11 @@ impl ModelBuilder {
     }
 
     /// Returns mutable coordinate-free staging state, including hierarchy.
+    ///
+    /// This does not update the staged positions. Add molecule instances through
+    /// [`Self::add_molecule`] or [`Self::add_instance`] to stage their coordinates
+    /// together. [`Self::build`] returns an error if the final topology's atom
+    /// count does not match the staged positions.
     pub fn topology_builder_mut(&mut self) -> &mut TopologyBuilder {
         &mut self.topology
     }
@@ -876,10 +881,15 @@ impl ModelBuilder {
         Ok(instance)
     }
 
+    /// Validates and publishes the staged topology and model.
+    ///
+    /// Returns an error if topology validation fails or the final topology's
+    /// atom count differs from the number of staged positions, including after
+    /// edits through [`Self::topology_builder_mut`].
     pub fn build(self) -> Result<Model, ModelBuildError> {
         let topology = Arc::new(self.topology.build()?);
         let positions = Positions::from_canonical_values(self.positions);
-        Ok(Model::new(topology, positions).expect("builder creates dimensionally valid state"))
+        Model::new(topology, positions).map_err(ModelBuildError::from)
     }
 }
 
@@ -893,10 +903,15 @@ fn validate_position_count(expected: usize, actual: usize) -> Result<(), ModelBu
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ModelBuildError {
-    InstancePositionCountMismatch { expected: usize, actual: usize },
+    InstancePositionCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
     CapacityOverflow,
     Topology(TopologyBuildError),
     Hierarchy(crate::topology::HierarchyError),
+    /// Final model validation failed after topology publication.
+    Model(Box<ModelError>),
 }
 
 impl fmt::Display for ModelBuildError {
@@ -911,11 +926,18 @@ impl fmt::Display for ModelBuildError {
             }
             Self::Topology(error) => write!(formatter, "cannot build topology: {error}"),
             Self::Hierarchy(error) => write!(formatter, "cannot build hierarchy: {error}"),
+            Self::Model(error) => write!(formatter, "cannot build model: {error}"),
         }
     }
 }
 
 impl std::error::Error for ModelBuildError {}
+
+impl From<ModelError> for ModelBuildError {
+    fn from(error: ModelError) -> Self {
+        Self::Model(Box::new(error))
+    }
+}
 
 impl From<TopologyBuildError> for ModelBuildError {
     fn from(error: TopologyBuildError) -> Self {
