@@ -9,9 +9,10 @@ use kekule::topology::Topology;
 use kekule::units::{Quantity, ANGSTROM, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
 use kekule_traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
 use kekule_traj::io::{
-    create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory, open_trajectory,
-    FieldAvailability, FormatDetectionEvidence, RandomAccessCapability, TrajectoryFormatHint,
-    TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions,
+    create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory_with_options,
+    open_trajectory_with_options, FieldAvailability, FormatDetectionEvidence,
+    RandomAccessCapability, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
+    TrajectoryWriteOptions,
 };
 use kekule_traj::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
@@ -20,9 +21,7 @@ use kekule_traj::{
 use sha2::{Digest, Sha256};
 
 mod support;
-use support::{
-    binding, codec_kind, topology as build_topology, x_coordinates as point_xs, GuardedCursor,
-};
+use support::{codec_kind, topology as build_topology, x_coordinates as point_xs, GuardedCursor};
 
 const TWO_FRAMES: &str = "2\r\nfirst\r\nC 0.0 1.0 2.0\r\nH 3.0 4.0 5.0\r\n\
 2\nsecond\nC 1.0 2.0 3.0\nH 4.0 5.0 6.0";
@@ -80,12 +79,13 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
     let topology = topology();
     let mut reader = XyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
-        binding(&topology),
-        XyzReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "memory.xyz",
+        Arc::clone(&topology),
+        XyzReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("memory.xyz"),
     )
     .unwrap();
+    support::assert_rejects_unrelated_buffer(&mut reader);
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     let pointer = buffer.positions().values().value().as_ptr();
     buffer.set_cell(Some(
@@ -134,10 +134,11 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
     let input = "2\nnm\nC 0.1 0.2 0.3\nH 0.4 0.5 0.6\n";
     let mut reader = XyzReader::new(
         Cursor::new(input.as_bytes()),
-        binding(&topology),
-        XyzReadOptions::default().with_length_unit(NANOMETER),
-        TrajectoryIoLimits::default(),
-        "nanometers.xyz",
+        Arc::clone(&topology),
+        XyzReadOptions::default()
+            .with_length_unit(NANOMETER)
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("nanometers.xyz"),
     )
     .unwrap();
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
@@ -164,10 +165,10 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
     ] {
         let mut reader = XyzReader::new(
             Cursor::new(input.as_bytes()),
-            binding(&topology),
-            XyzReadOptions::default(),
-            TrajectoryIoLimits::default(),
-            "bad.xyz",
+            Arc::clone(&topology),
+            XyzReadOptions::default()
+                .with_limits(TrajectoryIoLimits::default())
+                .with_source_label("bad.xyz"),
         )
         .unwrap();
         let mut destination = FrameBuffer::new(Arc::clone(&topology));
@@ -189,10 +190,10 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
     };
     let mut reader = XyzReader::new(
         Cursor::new("2\ncomment\nC 000000000 0 0\nH 1 1 1\n".as_bytes()),
-        binding(&topology),
-        XyzReadOptions::default(),
-        limits,
-        "limited.xyz",
+        Arc::clone(&topology),
+        XyzReadOptions::default()
+            .with_limits(limits)
+            .with_source_label("limited.xyz"),
     )
     .unwrap();
     assert_eq!(
@@ -210,10 +211,10 @@ fn indexed_xyz_matches_sequential_and_random_reads_preserve_cursor() {
     let topology = topology();
     let reader = XyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
-        binding(&topology),
-        XyzReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "indexed.xyz",
+        Arc::clone(&topology),
+        XyzReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("indexed.xyz"),
     )
     .unwrap();
     let mut reader = reader.to_indexed().unwrap();
@@ -255,10 +256,10 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
 
     let mut reader = XyzReader::new(
         Cursor::new(bytes),
-        binding(&topology),
-        XyzReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "round-trip.xyz",
+        Arc::clone(&topology),
+        XyzReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("round-trip.xyz"),
     )
     .unwrap();
     let mut decoded = FrameBuffer::new(Arc::clone(&topology));
@@ -303,8 +304,13 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
     let topology = topology();
     let path = temporary_path(None);
     std::fs::write(&path, TWO_FRAMES).unwrap();
-    let (mut sequential, report) =
-        open_trajectory(&path, binding(&topology), TrajectoryOpenOptions::default()).unwrap();
+    let mut sequential = open_trajectory_with_options(
+        &path,
+        Arc::clone(&topology),
+        TrajectoryOpenOptions::default(),
+    )
+    .unwrap();
+    let report = sequential.open_report();
     assert_eq!(report.selected_format(), TrajectoryFormat::Xyz);
     assert!(report
         .detection_evidence()
@@ -322,9 +328,12 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
         .read_next(&mut FrameBuffer::new(Arc::clone(&topology)))
         .unwrap());
 
-    let (indexed, _) =
-        open_indexed_trajectory(&path, binding(&topology), TrajectoryOpenOptions::default())
-            .unwrap();
+    let indexed = open_indexed_trajectory_with_options(
+        &path,
+        Arc::clone(&topology),
+        TrajectoryOpenOptions::default(),
+    )
+    .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
     assert_eq!(indexed.metadata().indexed_frame_count(), Some(2));
     assert_eq!(
@@ -336,9 +345,9 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
     std::fs::write(&mismatch, TWO_FRAMES).unwrap();
     assert_eq!(
         codec_kind(
-            &open_trajectory(
+            &open_trajectory_with_options(
                 &mismatch,
-                binding(&topology),
+                Arc::clone(&topology),
                 TrajectoryOpenOptions::default()
             )
             .err()
@@ -346,9 +355,9 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
         ),
         Some(TrajectoryCodecErrorKind::FormatMismatch)
     );
-    open_trajectory(
+    open_trajectory_with_options(
         &mismatch,
-        binding(&topology),
+        Arc::clone(&topology),
         TrajectoryOpenOptions::default()
             .with_format_hint(TrajectoryFormatHint::Explicit(TrajectoryFormat::Xyz)),
     )
@@ -370,9 +379,9 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
     assert!(!output.exists());
     writer.finish().unwrap();
     assert!(output.exists());
-    open_trajectory(
+    open_trajectory_with_options(
         &output,
-        binding(&topology),
+        Arc::clone(&topology),
         TrajectoryOpenOptions::default(),
     )
     .unwrap();
@@ -516,10 +525,10 @@ fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
     };
     let mut reader = XyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
-        binding(&topology),
-        XyzReadOptions::default(),
-        limits.clone(),
-        "exact-limit.xyz",
+        Arc::clone(&topology),
+        XyzReadOptions::default()
+            .with_limits(limits.clone())
+            .with_source_label("exact-limit.xyz"),
     )
     .unwrap();
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
@@ -529,10 +538,10 @@ fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
 
     let indexed = XyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
-        binding(&topology),
-        XyzReadOptions::default(),
-        limits,
-        "exact-index-limit.xyz",
+        Arc::clone(&topology),
+        XyzReadOptions::default()
+            .with_limits(limits)
+            .with_source_label("exact-index-limit.xyz"),
     )
     .unwrap()
     .to_indexed()
@@ -551,13 +560,13 @@ fn xyz_limits_probe_but_do_not_parse_or_consume_frame_n_plus_one() {
     let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
     let mut reader = XyzReader::new(
         stream,
-        binding(&topology),
-        XyzReadOptions::default(),
-        TrajectoryIoLimits {
-            max_frames: 1,
-            ..TrajectoryIoLimits::default()
-        },
-        "guarded-sequential.xyz",
+        Arc::clone(&topology),
+        XyzReadOptions::default()
+            .with_limits(TrajectoryIoLimits {
+                max_frames: 1,
+                ..TrajectoryIoLimits::default()
+            })
+            .with_source_label("guarded-sequential.xyz"),
     )
     .unwrap();
     let mut destination = FrameBuffer::new(Arc::clone(&topology));
@@ -586,10 +595,10 @@ fn xyz_limits_probe_but_do_not_parse_or_consume_frame_n_plus_one() {
         let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
         let error = XyzReader::new(
             stream,
-            binding(&topology),
-            XyzReadOptions::default(),
-            limits,
-            "guarded-index.xyz",
+            Arc::clone(&topology),
+            XyzReadOptions::default()
+                .with_limits(limits)
+                .with_source_label("guarded-index.xyz"),
         )
         .unwrap()
         .to_indexed()
@@ -610,9 +619,13 @@ fn compressed_wrappers_and_insufficient_signatures_are_not_extension_dispatched(
     for (bytes, extension) in [(&b"\x1f\x8bgarbage"[..], "xyz"), (&b"not xyz"[..], "xyz")] {
         let path = temporary_path(Some(extension));
         std::fs::write(&path, bytes).unwrap();
-        let error = open_trajectory(&path, binding(&topology), TrajectoryOpenOptions::default())
-            .err()
-            .unwrap();
+        let error = open_trajectory_with_options(
+            &path,
+            Arc::clone(&topology),
+            TrajectoryOpenOptions::default(),
+        )
+        .err()
+        .unwrap();
         assert!(matches!(
             codec_kind(&error),
             Some(
@@ -639,10 +652,10 @@ fn independently_generated_ase_fixture_matches_expected_frames() {
     );
     let mut reader = XyzReader::new(
         Cursor::new(fixture.as_bytes()),
-        binding(&topology),
-        XyzReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "ase-3.26.0-water.xyz",
+        Arc::clone(&topology),
+        XyzReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("ase-3.26.0-water.xyz"),
     )
     .unwrap();
     let mut buffer = FrameBuffer::new(topology);

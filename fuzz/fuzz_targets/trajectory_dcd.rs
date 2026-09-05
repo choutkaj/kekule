@@ -3,12 +3,12 @@
 use std::io::Cursor;
 use std::sync::{Arc, OnceLock};
 
-use libfuzzer_sys::fuzz_target;
 use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule_traj::{AtomOrderAssertion, FrameBuffer, TrajectoryReader};
 use kekule_traj::io::dcd::{DcdReadOptions, DcdReader};
-use kekule_traj::io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
+use kekule_traj::io::TrajectoryIoLimits;
+use kekule_traj::{FrameBuffer, TrajectoryReader};
+use libfuzzer_sys::fuzz_target;
 
 fn topology() -> &'static Arc<Topology> {
     static TOPOLOGY: OnceLock<Arc<Topology>> = OnceLock::new();
@@ -31,20 +31,13 @@ fn topology() -> &'static Arc<Topology> {
         let definition = builder
             .add_molecule_definition(&molecule)
             .expect("definition");
-        builder
-            .add_instance(definition)
-            .expect("instance");
+        builder.add_instance(definition).expect("instance");
         Arc::new(builder.build().expect("topology"))
     })
 }
 
 fuzz_target!(|data: &[u8]| {
     let topology = topology();
-    let binding = TrajectoryTopologyBinding::new(
-        Arc::clone(topology),
-        AtomOrderAssertion::assert_file_uses_topology_order(topology),
-    )
-    .expect("binding");
     let limits = TrajectoryIoLimits {
         max_atoms: 8,
         max_frames: 8,
@@ -57,10 +50,10 @@ fuzz_target!(|data: &[u8]| {
     };
     if let Ok(mut reader) = DcdReader::new(
         Cursor::new(data),
-        binding,
-        DcdReadOptions::default(),
-        limits,
-        "fuzz-input.dcd",
+        Arc::clone(topology),
+        DcdReadOptions::default()
+            .with_limits(limits)
+            .with_source_label("fuzz-input.dcd"),
     ) {
         let mut buffer = FrameBuffer::new(Arc::clone(topology));
         for _ in 0..8 {

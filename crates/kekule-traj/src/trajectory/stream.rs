@@ -19,6 +19,11 @@ pub trait TrajectoryReader {
 
     fn shared_topology(&self) -> Arc<Topology>;
 
+    /// Creates reusable frame storage sharing this reader's exact topology.
+    fn frame_buffer(&self) -> FrameBuffer {
+        FrameBuffer::new(self.shared_topology())
+    }
+
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError>;
 }
 
@@ -147,79 +152,25 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
     }
 }
 
-/// Proof that a coordinate-only source order exactly matches one topology.
-#[derive(Debug, Clone)]
-pub struct AtomOrderAssertion {
-    topology: Arc<Topology>,
-    kind: AtomOrderAssertionKind,
-}
-
-impl PartialEq for AtomOrderAssertion {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.topology, &other.topology) && self.kind == other.kind
+/// Checks an independently supplied semantic atom sequence against topology order.
+///
+/// This compares the supplied IDs only; it does not inspect a coordinate file or
+/// infer atom identity from matching counts. Readers interpret coordinate index
+/// `i` as topology dense atom index `i` without requiring this optional check.
+pub fn validate_atom_order(
+    topology: &Topology,
+    atom_order: &[InstanceAtomId],
+) -> Result<(), TrajectoryError> {
+    if topology.atom_ids() != atom_order {
+        return Err(TrajectoryError::AtomOrderMismatch);
     }
-}
-
-impl Eq for AtomOrderAssertion {}
-
-/// Evidence represented by an [`AtomOrderAssertion`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum AtomOrderAssertionKind {
-    SemanticOrder,
-    DeclaredTopologyOrder,
-}
-
-impl AtomOrderAssertion {
-    /// Proves that an explicit semantic atom sequence is the topology's exact
-    /// authoritative dense order.
-    pub fn from_semantic_order(
-        topology: &Arc<Topology>,
-        atom_order: &[InstanceAtomId],
-    ) -> Result<Self, TrajectoryError> {
-        if topology.atom_ids() != atom_order {
-            return Err(TrajectoryError::AtomOrderMismatch);
-        }
-        Ok(Self {
-            topology: Arc::clone(topology),
-            kind: AtomOrderAssertionKind::SemanticOrder,
-        })
-    }
-
-    /// Records the caller's explicit assertion that a topology-free file uses
-    /// this topology's authoritative dense atom order.
-    ///
-    /// This is evidence supplied by the caller, not an inference from atom
-    /// count. Format readers must still validate all stronger file metadata.
-    pub fn assert_file_uses_topology_order(topology: &Arc<Topology>) -> Self {
-        Self {
-            topology: Arc::clone(topology),
-            kind: AtomOrderAssertionKind::DeclaredTopologyOrder,
-        }
-    }
-
-    pub fn is_compatible(&self, topology: &Arc<Topology>) -> bool {
-        Arc::ptr_eq(&self.topology, topology)
-    }
-
-    pub fn topology(&self) -> &Topology {
-        &self.topology
-    }
-
-    pub const fn kind(&self) -> AtomOrderAssertionKind {
-        self.kind
-    }
-
-    /// Backward-compatible spelling for [`Self::from_semantic_order`].
-    pub fn new(
-        topology: &Arc<Topology>,
-        atom_order: &[InstanceAtomId],
-    ) -> Result<Self, TrajectoryError> {
-        Self::from_semantic_order(topology, atom_order)
-    }
+    Ok(())
 }
 
 /// Reference reader for a topology-free coordinate source.
+///
+/// Construction collects the source and validates every frame's units and atom
+/// count. Coordinates follow the supplied topology's dense atom order.
 pub struct CoordinateFrameReader {
     topology: Arc<Topology>,
     frames: Vec<Vec<Point3>>,
@@ -228,13 +179,10 @@ pub struct CoordinateFrameReader {
 
 impl CoordinateFrameReader {
     pub fn new(
-        topology: Arc<Topology>,
-        assertion: AtomOrderAssertion,
+        topology: impl Into<Arc<Topology>>,
         frames: impl IntoIterator<Item = Quantity<Vec<Point3>>>,
     ) -> Result<Self, TrajectoryError> {
-        if !assertion.is_compatible(&topology) {
-            return Err(TrajectoryError::TopologyMismatch);
-        }
+        let topology = topology.into();
         let frames = frames
             .into_iter()
             .map(|frame| {

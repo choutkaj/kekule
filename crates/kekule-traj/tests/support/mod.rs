@@ -6,8 +6,24 @@ use std::sync::Arc;
 
 use kekule::core::{Atom, BondOrder, Element};
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule_traj::io::TrajectoryTopologyBinding;
-use kekule_traj::{AtomOrderAssertion, FrameBuffer, TrajectoryCodecErrorKind, TrajectoryError};
+use kekule_traj::{FrameBuffer, TrajectoryCodecErrorKind, TrajectoryError, TrajectoryReader};
+
+/// Reject another topology context without changing its buffer or consuming input.
+/// Call before reading and checking the first expected frame in the caller.
+pub fn assert_rejects_unrelated_buffer(reader: &mut impl TrajectoryReader) {
+    let mut wrong = FrameBuffer::new(linear_carbon_topology(reader.topology().atom_count()));
+    wrong.set_step(Some(99));
+    let before = buffer_snapshot(&wrong);
+    assert!(matches!(
+        reader.read_next(&mut wrong),
+        Err(TrajectoryError::TopologyMismatch)
+    ));
+    assert_eq!(buffer_snapshot(&wrong), before);
+    assert!(Arc::ptr_eq(
+        &reader.shared_topology(),
+        &reader.frame_buffer().shared_topology()
+    ));
+}
 
 pub fn topology(symbols: &[&str], bonds: &[(usize, usize)]) -> Arc<Topology> {
     let mut graph = kekule::core::MoleculeEditor::new();
@@ -38,14 +54,6 @@ pub fn linear_carbon_topology(atom_count: usize) -> Arc<Topology> {
         .map(|index| (index - 1, index))
         .collect::<Vec<_>>();
     topology(&symbols, &bonds)
-}
-
-pub fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
-    TrajectoryTopologyBinding::new(
-        Arc::clone(topology),
-        AtomOrderAssertion::assert_file_uses_topology_order(topology),
-    )
-    .unwrap()
 }
 
 pub fn codec_kind(error: &TrajectoryError) -> Option<TrajectoryCodecErrorKind> {

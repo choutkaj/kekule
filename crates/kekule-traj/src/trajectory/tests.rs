@@ -536,12 +536,10 @@ fn memory_reader_and_writer_round_trip_validated_frames() {
 }
 
 #[test]
-fn coordinate_reader_requires_explicit_order_and_matching_buffer_topology() {
+fn coordinate_reader_uses_topology_order_and_rejects_mismatched_buffers() {
     let topology = make_topology(false);
-    let assertion = AtomOrderAssertion::assert_file_uses_topology_order(&topology);
     let mut reader = CoordinateFrameReader::new(
         Arc::clone(&topology),
-        assertion,
         [Quantity::new(vec![Point3::new(6.0, 0.0, 0.0)], ANGSTROM)],
     )
     .unwrap();
@@ -549,10 +547,8 @@ fn coordinate_reader_requires_explicit_order_and_matching_buffer_topology() {
     assert!(reader.read_next(&mut buffer).unwrap());
     assert!((buffer.positions().values().value()[0].x - 0.6).abs() < 1.0e-15);
 
-    let assertion = AtomOrderAssertion::assert_file_uses_topology_order(&topology);
     let mut reader = CoordinateFrameReader::new(
         Arc::clone(&topology),
-        assertion,
         [Quantity::new(vec![Point3::origin()], ANGSTROM)],
     )
     .unwrap();
@@ -562,14 +558,12 @@ fn coordinate_reader_requires_explicit_order_and_matching_buffer_topology() {
         Err(TrajectoryError::TopologyMismatch)
     ));
 
-    let independent = make_topology(false);
-    let assertion = AtomOrderAssertion::assert_file_uses_topology_order(&topology);
     assert!(matches!(
         CoordinateFrameReader::new(
-            independent,
-            assertion,
-            [Quantity::new(vec![Point3::origin()], ANGSTROM)]
+            Arc::clone(&topology),
+            [Quantity::new(vec![Point3::origin(); 2], ANGSTROM)]
         ),
-        Err(TrajectoryError::TopologyMismatch)
+        Err(TrajectoryError::Frame(error))
+            if matches!(*error, FrameError::AtomCountMismatch { expected: 1, actual: 2 })
     ));
 }

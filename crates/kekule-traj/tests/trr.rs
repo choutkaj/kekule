@@ -15,8 +15,8 @@ use kekule_traj::io::trr::{
     TRR_LAMBDA_PROPERTY,
 };
 use kekule_traj::io::{
-    open_indexed_trajectory, open_trajectory, CoordinateEncoding, ScalarPrecision,
-    TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
+    open_indexed_trajectory_with_options, open_trajectory_with_options, CoordinateEncoding,
+    ScalarPrecision, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 use kekule_traj::{
     FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryError,
@@ -26,8 +26,8 @@ use sha2::{Digest, Sha256};
 
 mod support;
 use support::{
-    binding, buffer_snapshot, codec_kind, topology as build_topology, x_coordinates as xs,
-    GuardedCursor, RestoreSeekFailure,
+    buffer_snapshot, codec_kind, topology as build_topology, x_coordinates as xs, GuardedCursor,
+    RestoreSeekFailure,
 };
 
 fn topology() -> Arc<Topology> {
@@ -137,12 +137,13 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
 
         let mut reader = TrrReader::new(
             Cursor::new(bytes.clone()),
-            binding(&topology),
-            TrrReadOptions::default(),
-            TrajectoryIoLimits::default(),
-            "memory.trr",
+            Arc::clone(&topology),
+            TrrReadOptions::default()
+                .with_limits(TrajectoryIoLimits::default())
+                .with_source_label("memory.trr"),
         )
         .unwrap();
+        support::assert_rejects_unrelated_buffer(&mut reader);
         let mut destination = FrameBuffer::new(Arc::clone(&topology));
         let pointer = destination.positions().values().value().as_ptr();
         assert!(reader.read_next(&mut destination).unwrap());
@@ -196,10 +197,10 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
 
         let mut indexed = TrrReader::new(
             Cursor::new(bytes),
-            binding(&topology),
-            TrrReadOptions::default(),
-            TrajectoryIoLimits::default(),
-            "memory.trr",
+            Arc::clone(&topology),
+            TrrReadOptions::default()
+                .with_limits(TrajectoryIoLimits::default())
+                .with_source_label("memory.trr"),
         )
         .unwrap()
         .to_indexed()
@@ -237,10 +238,10 @@ fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
     };
     let mut reader = TrrReader::new(
         Cursor::new(bytes.clone()),
-        binding(&topology),
-        TrrReadOptions::default(),
-        limits.clone(),
-        "exact-limit.trr",
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(limits.clone())
+            .with_source_label("exact-limit.trr"),
     )
     .unwrap();
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
@@ -250,10 +251,10 @@ fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
 
     let indexed = TrrReader::new(
         Cursor::new(bytes),
-        binding(&topology),
-        TrrReadOptions::default(),
-        limits,
-        "exact-index-limit.trr",
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(limits)
+            .with_source_label("exact-index-limit.trr"),
     )
     .unwrap()
     .to_indexed()
@@ -280,10 +281,10 @@ fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
     let (stream, control) = RestoreSeekFailure::new(writer.finish().unwrap().into_inner());
     let mut indexed = TrrReader::new(
         stream,
-        binding(&topology),
-        TrrReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "restore-failure.trr",
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("restore-failure.trr"),
     )
     .unwrap()
     .to_indexed()
@@ -324,13 +325,13 @@ fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
     let mut reader = TrrReader::new(
         stream,
-        binding(&topology),
-        TrrReadOptions::default(),
-        TrajectoryIoLimits {
-            max_frames: 1,
-            ..TrajectoryIoLimits::default()
-        },
-        "guarded-sequential.trr",
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(TrajectoryIoLimits {
+                max_frames: 1,
+                ..TrajectoryIoLimits::default()
+            })
+            .with_source_label("guarded-sequential.trr"),
     )
     .unwrap();
     let mut destination = FrameBuffer::new(Arc::clone(&topology));
@@ -359,10 +360,10 @@ fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
         let error = TrrReader::new(
             stream,
-            binding(&topology),
-            TrrReadOptions::default(),
-            limits,
-            "guarded-index.trr",
+            Arc::clone(&topology),
+            TrrReadOptions::default()
+                .with_limits(limits)
+                .with_source_label("guarded-index.trr"),
         )
         .unwrap()
         .to_indexed()
@@ -397,10 +398,11 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
     let bytes = writer.finish().unwrap().into_inner();
     let mut reader = TrrReader::new(
         Cursor::new(bytes),
-        binding(&topology),
-        TrrReadOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
-        TrajectoryIoLimits::default(),
-        "zero.trr",
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_lambda_policy(TrrLambdaPolicy::RequireZero)
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("zero.trr"),
     )
     .unwrap();
     let mut destination = FrameBuffer::new(topology);
@@ -428,10 +430,10 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
     invalid_size[52..56].copy_from_slice(&5_i32.to_be_bytes());
     let error = TrrReader::new(
         Cursor::new(invalid_size),
-        binding(&topology),
-        TrrReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "size.trr",
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("size.trr"),
     )
     .err()
     .unwrap();
@@ -444,10 +446,10 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
     truncated.pop();
     let mut reader = TrrReader::new(
         Cursor::new(truncated),
-        binding(&topology),
-        TrrReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "truncated.trr",
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("truncated.trr"),
     )
     .unwrap();
     let mut destination = FrameBuffer::new(Arc::clone(&topology));
@@ -471,10 +473,10 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
     };
     let mut reader = TrrReader::new(
         Cursor::new(valid),
-        binding(&topology),
-        TrrReadOptions::default(),
-        limits,
-        "limited.trr",
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(limits)
+            .with_source_label("limited.trr"),
     )
     .unwrap();
     let error = reader.read_next(&mut destination).unwrap_err();
@@ -549,10 +551,10 @@ fn indexed_trr_accepts_per_frame_precision_and_verifies_both_payloads() {
     }
     let mut reader = TrrReader::new(
         Cursor::new(combined),
-        binding(&topology),
-        TrrReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "mixed.trr",
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("mixed.trr"),
     )
     .unwrap()
     .to_indexed()
@@ -596,7 +598,8 @@ fn format_agnostic_trr_metadata_tracks_mixed_precision_sequentially_and_indexed(
         TrajectoryFormatHint::Explicit(kekule_traj::TrajectoryFormat::Trr),
     );
 
-    let (mut sequential, _) = open_trajectory(&path, binding(&topology), options.clone()).unwrap();
+    let mut sequential =
+        open_trajectory_with_options(&path, Arc::clone(&topology), options.clone()).unwrap();
     assert_eq!(
         sequential.metadata().coordinate_encoding(),
         CoordinateEncoding::Lossless {
@@ -619,7 +622,8 @@ fn format_agnostic_trr_metadata_tracks_mixed_precision_sequentially_and_indexed(
         }
     );
 
-    let (indexed, _) = open_indexed_trajectory(&path, binding(&topology), options).unwrap();
+    let indexed =
+        open_indexed_trajectory_with_options(&path, Arc::clone(&topology), options).unwrap();
     assert_eq!(
         indexed.metadata().coordinate_encoding(),
         CoordinateEncoding::Lossless {
@@ -662,10 +666,10 @@ fn independently_generated_mdanalysis_trr_preserves_all_supported_fields() {
     );
     let mut reader = TrrReader::new(
         Cursor::new(fixture),
-        binding(&topology),
-        TrrReadOptions::default(),
-        TrajectoryIoLimits::default(),
-        "mdanalysis-2.9.0-three-atoms.trr",
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("mdanalysis-2.9.0-three-atoms.trr"),
     )
     .unwrap();
     let mut buffer = FrameBuffer::new(topology);
