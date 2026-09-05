@@ -103,7 +103,7 @@ impl Trajectory {
     /// The fit uses `fit_selection`, then applies the resulting proper rigid
     /// transform to every position in the frame. Velocities, forces, and cell
     /// vectors are rotated without translation. Atom data, time, step, and
-    /// frame properties are preserved. The trajectory is unchanged if any fit
+    /// frame and collection properties are preserved. The trajectory is unchanged if any fit
     /// or transformed-frame validation fails.
     pub fn superpose_to_frame(
         &mut self,
@@ -160,9 +160,8 @@ impl Trajectory {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let transformed = Trajectory::from_frames(self.shared_topology(), transformed_frames)
+        self.replace_frames(transformed_frames)
             .map_err(|source| SuperpositionError::TrajectoryPublication(Box::new(source)))?;
-        *self = transformed;
 
         Ok(SuperpositionReport {
             reference_frame,
