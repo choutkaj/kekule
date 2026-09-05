@@ -71,7 +71,7 @@ impl Model {
     ) -> Result<Self, ModelError> {
         let topology = topology.into();
         validate_dimensions(&topology, &positions, &properties)?;
-        properties.validate_realization_canonical_properties()?;
+        properties.validate_realization_properties()?;
         Ok(Self {
             topology,
             positions,
@@ -327,7 +327,7 @@ impl Model {
                 actual: properties.bonds().len(),
             });
         }
-        properties.validate_realization_canonical_properties()?;
+        properties.validate_realization_properties()?;
         self.properties = properties;
         Ok(())
     }
@@ -536,7 +536,7 @@ impl<'a> ModelView<'a> {
         properties: &'a Properties,
     ) -> Result<Self, ModelError> {
         validate_dimensions(topology, positions, properties)?;
-        properties.validate_realization_canonical_properties()?;
+        properties.validate_realization_properties()?;
         Ok(Self {
             topology,
             positions,
@@ -889,11 +889,6 @@ impl ModelBuilder {
         molecule: &Molecule,
         positions: &Positions,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        if molecule.atom_count() == 0 {
-            return Err(ModelBuildError::Topology(
-                TopologyBuildError::EmptyMoleculeDefinition,
-            ));
-        }
         validate_position_count(molecule.atom_count(), positions.len())?;
         self.positions
             .try_reserve(positions.len())

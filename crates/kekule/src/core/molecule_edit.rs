@@ -3,9 +3,8 @@ use std::fmt;
 use crate::properties::{Properties, PropertyKey, PropertyTable, PropertyValue};
 
 use super::{
-    Atom, AtomId, Bond, BondId, BondOrder, Graph, Molecule, Perception, PerceptionInstallError,
-    Result, RingMembership, RingSet, StereoDescriptor, StereoElement, StereoElementId, StereoGroup,
-    StereoGroupId,
+    Atom, AtomId, Bond, BondId, BondOrder, Graph, Molecule, Perception, Result, RingMembership,
+    RingSet, StereoDescriptor, StereoElement, StereoElementId, StereoGroup, StereoGroupId,
 };
 
 /// A connectedness violation at a public [`Molecule`] boundary.
@@ -508,13 +507,6 @@ impl MoleculeEditor {
         self.working.clear_perception()
     }
 
-    pub fn install_perception(
-        &mut self,
-        state: Perception,
-    ) -> std::result::Result<(), PerceptionInstallError> {
-        self.working.install_perception(state)
-    }
-
     pub(crate) fn working(&self) -> &Molecule {
         &self.working
     }
@@ -523,6 +515,9 @@ impl MoleculeEditor {
         &mut self.working
     }
     /// Returns mutable represented atom state in this private working copy.
+    /// Obtaining mutable atom access invalidates perception and owner properties
+    /// immediately, even if the guard is forgotten. Use [`Self::replace_atom`]
+    /// when an identical replacement should preserve cached state.
     pub fn atom_mut(&mut self, atom: AtomId) -> Result<super::AtomMut<'_>> {
         self.working.atom_mut(atom)
     }
@@ -584,6 +579,14 @@ impl MoleculeEditor {
         self.working.append_stereo_group_tombstone()
     }
 
+    /// Publishes represented chemistry, clearing draft perception. Install any
+    /// reconstructed perception on the resulting [`Molecule::install_perception`].
+    ///
+    /// ```compile_fail
+    /// use kekule::core::{MoleculeEditor, Perception};
+    /// let mut editor = MoleculeEditor::new();
+    /// editor.install_perception(Perception::default()).unwrap();
+    /// ```
     pub fn finish(self) -> std::result::Result<Molecule, MoleculePublicationError> {
         publish_molecule(self.working)
     }
