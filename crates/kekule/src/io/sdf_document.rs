@@ -92,7 +92,8 @@ impl SdfRecord {
     /// Interprets this record as one model with one instance per component.
     ///
     /// SDF data fields remain source metadata and are not copied into the
-    /// canonical model. No chemical perception is run.
+    /// canonical model. No chemical perception is run. Call [`Model::perceive`]
+    /// on the returned model to explicitly install the default perception profile.
     pub fn to_model(&self) -> Result<Model, SdfInterpretError> {
         Ok(self.interpret()?.to_model())
     }

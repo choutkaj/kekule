@@ -44,6 +44,154 @@ fn real(value: f64) -> PropertyValue {
 }
 
 #[test]
+fn trajectory_perception_preserves_all_frame_state_and_original_bindings() {
+    let topology = make_topology(true);
+    let mut frame = TrajectoryFrame::new(positions(&[
+        Point3::new(1.0, 2.0, 3.0),
+        Point3::new(2.0, 3.0, 4.0),
+    ]));
+    frame.set_cell(Some(
+        PeriodicCell::orthorhombic(
+            Quantity::new(Vector3::new(10.0, 10.0, 10.0), NANOMETER),
+            [true; 3],
+        )
+        .unwrap(),
+    ));
+    frame
+        .set_velocities(Some(
+            Velocities::new(Quantity::new(
+                [Vector3::new(1.0, 2.0, 3.0); 2],
+                CANONICAL_VELOCITY_UNIT,
+            ))
+            .unwrap(),
+        ))
+        .unwrap();
+    frame
+        .set_forces(Some(
+            Forces::new(Quantity::new(
+                [Vector3::new(4.0, 5.0, 6.0); 2],
+                CANONICAL_FORCE_UNIT,
+            ))
+            .unwrap(),
+        ))
+        .unwrap();
+    frame
+        .set_time(Some(Quantity::new(2.0, PICOSECOND)))
+        .unwrap();
+    frame.set_step(Some(20));
+    frame
+        .insert_property(key("label"), PropertyValue::Int(1))
+        .unwrap();
+    frame
+        .set_atom_property(0, key("atom"), Some(real(2.0)))
+        .unwrap();
+    frame
+        .insert_bond_property_column(key("bond"), PropertyColumn::Int(vec![Some(3)]))
+        .unwrap();
+    let mut second = frame.clone();
+    second
+        .set_time(Some(Quantity::new(3.0, PICOSECOND)))
+        .unwrap();
+    second.set_step(Some(30));
+    let mut trajectory = Trajectory::from_frames(Arc::clone(&topology), [frame, second]).unwrap();
+    trajectory
+        .insert_property(key("collection"), PropertyValue::Int(4))
+        .unwrap();
+    let original = trajectory.clone();
+    let frame_ptr = trajectory.frames.as_ptr();
+    let position_ptr = trajectory.frames[0].positions().values().value().as_ptr();
+    let mut old_buffer = FrameBuffer::new(Arc::clone(&topology));
+
+    trajectory.perceive().unwrap();
+
+    assert!(topology.same_layout(trajectory.topology()));
+    assert!(!Arc::ptr_eq(&topology, &trajectory.shared_topology()));
+    assert!(Arc::ptr_eq(&topology, &original.shared_topology()));
+    assert_eq!(trajectory.frames, original.frames);
+    assert_eq!(trajectory.properties(), original.properties());
+    assert_eq!(trajectory.frames.as_ptr(), frame_ptr);
+    assert_eq!(
+        trajectory.frames[0].positions().values().value().as_ptr(),
+        position_ptr
+    );
+    for frame in trajectory.frames() {
+        assert!(Arc::ptr_eq(
+            &frame.shared_topology(),
+            &trajectory.shared_topology()
+        ));
+        assert!(frame.topology().molecules().all(|m| {
+            let perception = m.molecule().perception();
+            perception.has_valence() && perception.has_rings() && perception.has_aromaticity()
+        }));
+    }
+    assert!(topology
+        .molecules()
+        .all(|m| m.molecule().perception() == &kekule::core::Perception::default()));
+    assert_eq!(
+        old_buffer.copy_from(trajectory.frame(0).unwrap()),
+        Err(FrameError::TopologyMismatch)
+    );
+    old_buffer.copy_from(original.frame(0).unwrap()).unwrap();
+    let mut new_buffer = FrameBuffer::new(trajectory.shared_topology());
+    new_buffer.copy_from(trajectory.frame(0).unwrap()).unwrap();
+
+    let mut empty = Trajectory::new(topology);
+    empty.perceive().unwrap();
+    assert!(empty.is_empty());
+    assert!(empty
+        .topology()
+        .molecules()
+        .all(|m| m.molecule().perception().has_aromaticity()));
+}
+
+#[test]
+fn trajectory_perception_failure_retains_snapshot_frames_and_partial_perception() {
+    let good = kekule::smiles::to_molecules("CCO").unwrap().remove(0);
+    let mut editor = MoleculeEditor::new();
+    let mut carbon = Atom::new(Element::from_symbol("C").unwrap());
+    carbon.hydrogens = kekule::core::HydrogenDeclaration::Fixed(5);
+    editor.add_atom(carbon).unwrap();
+    let mut bad = editor.finish().unwrap();
+    kekule::perception::rings::perceive_ring_membership(&mut bad);
+    let topology = Arc::new(Topology::from_molecules(&[good, bad]).unwrap());
+    let installed = topology
+        .definitions()
+        .map(|(_, d)| d.molecule().perception().clone())
+        .collect::<Vec<_>>();
+    let mut frame = TrajectoryFrame::new(Positions::zeros(topology.atom_count()));
+    frame.set_step(Some(42));
+    frame
+        .insert_property(key("frame"), PropertyValue::Int(2))
+        .unwrap();
+    let mut trajectory = Trajectory::from_frames(Arc::clone(&topology), [frame]).unwrap();
+    trajectory
+        .insert_property(key("collection"), PropertyValue::Int(3))
+        .unwrap();
+    let original = trajectory.clone();
+
+    let error = trajectory.perceive().unwrap_err();
+
+    assert_eq!(
+        error.definition,
+        kekule::topology::MoleculeDefinitionId::new(1)
+    );
+    assert!(matches!(
+        error.source,
+        kekule::perception::PerceptionError::Valence(_)
+    ));
+    assert!(Arc::ptr_eq(&topology, &trajectory.shared_topology()));
+    assert_eq!(trajectory.frames, original.frames);
+    assert_eq!(trajectory.properties(), original.properties());
+    assert_eq!(
+        topology
+            .definitions()
+            .map(|(_, d)| d.molecule().perception().clone())
+            .collect::<Vec<_>>(),
+        installed
+    );
+}
+
+#[test]
 fn vector_arrays_are_topology_free_unit_aware_and_equal_by_values() {
     let vectors = [Vector3::new(1.0, 2.0, 3.0)];
     let velocities = Velocities::new(Quantity::new(vectors, ANGSTROM / PICOSECOND)).unwrap();

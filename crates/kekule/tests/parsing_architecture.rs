@@ -6,6 +6,39 @@ const DISCONNECTED_MOLFILE: &str = "salt-like\nkekule\n\n  2  0  0  0  0  0     
 
 const INTERLEAVED_COMPONENT_MOLFILE: &str = "interleaved\nkekule\n\n  4  1  0  0  0  0            999 V2000\n   10.0000   11.0000   12.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   20.0000   21.0000   22.0000 Na  0  3  0  0  0  0  0  0  0  0  0  0\n   30.0000   31.0000   32.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n   40.0000   41.0000   42.0000 Cl  0  5  0  0  0  0  0  0  0  0  0  0\n  1  3  1  0  0  0  0\nM  END\n";
 
+#[test]
+fn sdf_model_can_install_perception_without_losing_source_order_or_geometry() {
+    let text = format!("{INTERLEAVED_COMPONENT_MOLFILE}$$$$\n");
+    let document = sdf::parse_str(&text).unwrap();
+    let mut model = document.records()[0].to_model().unwrap();
+    let original = model.clone();
+    let positions_ptr = model.positions().values().value().as_ptr();
+    assert!(model_molecules(&model)
+        .iter()
+        .all(|m| m.perception() == &Perception::default()));
+
+    model.perceive().unwrap();
+
+    assert!(model.topology().same_layout(original.topology()));
+    assert_eq!(model.topology().atom_ids(), original.topology().atom_ids());
+    assert_eq!(
+        model.topology().hierarchy(),
+        original.topology().hierarchy()
+    );
+    assert_eq!(model.positions(), original.positions());
+    assert_eq!(model.positions().values().value().as_ptr(), positions_ptr);
+    for (perceived, source) in model_molecules(&model)
+        .into_iter()
+        .zip(model_molecules(&original))
+    {
+        let mut expected = source.clone();
+        expected.perceive().unwrap();
+        assert_eq!(perceived, source);
+        assert_eq!(perceived.perception(), expected.perception());
+        assert_eq!(source.perception(), &Perception::default());
+    }
+}
+
 fn element(molecule: &Molecule) -> Element {
     molecule
         .atoms()
