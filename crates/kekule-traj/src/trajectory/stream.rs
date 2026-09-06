@@ -7,7 +7,7 @@ use kekule::units::Quantity;
 
 use super::buffer::FrameBuffer;
 use super::collection::Trajectory;
-use super::frame::{Forces, TrajectoryFrame, TrajectoryFrameView, Velocities};
+use super::frame::TrajectoryFrameView;
 use super::{validate_atom_count, TrajectoryError};
 
 /// Sequential reader that publishes complete frames into reusable storage.
@@ -81,7 +81,7 @@ impl TrajectoryReader for MemoryTrajectoryReader<'_> {
         let Some(frame) = self.trajectory.frames.get(self.cursor) else {
             return Ok(false);
         };
-        destination.copy_from(frame.view(&self.trajectory.topology)?)?;
+        destination.copy_from(frame.validated_view(&self.trajectory.topology))?;
         self.cursor += 1;
         Ok(true)
     }
@@ -104,7 +104,7 @@ impl SeekableTrajectoryReader for MemoryTrajectoryReader<'_> {
             .frames
             .get(index)
             .ok_or(TrajectoryError::FrameIndexOutOfRange(index as u64))?;
-        destination.copy_from(frame.view(&self.trajectory.topology)?)?;
+        destination.copy_from(frame.validated_view(&self.trajectory.topology))?;
         self.cursor = index.saturating_add(1);
         Ok(())
     }
@@ -143,15 +143,7 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
         if !Arc::ptr_eq(&self.trajectory.topology, frame.topology) {
             return Err(TrajectoryError::TopologyMismatch);
         }
-        let positions = Positions::new(frame.positions.values())?;
-        let mut owned = TrajectoryFrame::new(positions);
-        owned.cell = frame.cell.copied();
-        owned.properties = frame.properties.clone();
-        owned.velocities = frame.velocities.map(Velocities::new).transpose()?;
-        owned.forces = frame.forces.map(Forces::new).transpose()?;
-        owned.time = frame.time;
-        owned.step = frame.step;
-        self.trajectory.push(owned)
+        self.trajectory.push(frame.to_frame())
     }
 }
 

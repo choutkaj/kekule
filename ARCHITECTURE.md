@@ -2301,11 +2301,25 @@ Trajectory
 Frames do not own or repeat the shared topology. Their dense arrays and property
 columns are interpreted in the `Trajectory` topology's authoritative order.
 
-Insertion, decoding, and reusable frame-buffer publication validate frame
+Insertion, replacement, decoding, and reusable frame-buffer publication validate frame
 shapes and property-table dimensions against the trajectory topology. Streaming
 infrastructure may use reusable buffers for allocation efficiency, but those
 buffers follow the same ownership rule: topology context is owned once by the
 buffer/container rather than repeated inside every numerical/property subobject.
+Stored frame access and iteration borrow this validated state without rescanning
+dense fields. Public views of detached frames still validate against the supplied
+topology. `TrajectoryFrameView::to_frame` copies the complete topology-free payload,
+including velocities, forces, time, step, and all properties.
+
+`frame_mut` exposes a restricted editor with immediately validated, dimension-
+preserving setters and no mutable dereference to the payload. Invariants must hold
+even if the editor is forgotten; no validation depends on its destructor.
+`replace_frame` validates the complete replacement before publishing it and returns
+the old payload. `select_frames(indices)` copies frames in exactly the requested
+order, permits duplicates and empty selections, preserves original times and steps,
+and retains exact topology sharing and collection properties. It is distinct from
+atom `slice`, which constructs a topology subset. Temporal unwrapping precedes frame
+downsampling; selection never invents missing intermediate samples.
 
 Trajectory readers accept a topology directly, interpreting file coordinate index
 `i` as topology dense atom index `i`. They validate counts and available format
@@ -2321,12 +2335,20 @@ validated in-memory writer. It retains decoded frame state and publishes a resul
 only after clean EOF. `io::open_trajectory` and reusable buffers remain public for
 streaming workflows; opening a reader does not load an entire trajectory.
 
+`io::write_trajectory(path, &trajectory)` infers the format from the extension and
+uses the same strict, atomic path writer. Its options variant selects format,
+precision, field policies, and overwrite behavior explicitly. No format silently
+drops unsupported metadata: unrepresentable collection properties are rejected
+before creating a file, and unsupported frame state prevents publication. Writing
+an empty trajectory fails; existing destinations are preserved by default.
+
 Coordinate transformations return an owned trajectory by default. Explicit
 `_in_place` variants stage every frame before publishing any change, so failure
 leaves the original trajectory unchanged. Both forms retain exact topology
 sharing and all collection/frame properties. Superposition fits stored Cartesian
 coordinates by default, even when cells are present; it rotates cells, velocities,
-and forces consistently with positions. Diagnostic reports are opt-in.
+and forces consistently with positions. Diagnostic reports are opt-in; ordinary
+superposition does not allocate a discarded collection of frame reports.
 
 Periodic preprocessing consists of distinct operations: making each bonded
 molecule whole within a frame, imaging whole molecules around explicit anchor
@@ -2339,6 +2361,17 @@ unwrapping follows continuity in periodic fractional coordinates with each frame
 cell, leaves the first frame unchanged, and rejects ambiguous half-cell crossings.
 It requires sufficiently close sequential samples and fixed periodic-axis flags;
 its variable-cell convention must be documented rather than hidden in alignment.
+
+`FrameSuperposer`, `MoleculeImager`, and `TrajectoryUnwrapper` expose these same
+operations for streaming buffers and individual frame views. The imager retains a
+bond traversal for one exact topology; the superposer borrows a reference and fit
+selection. The unwrapper retains the previous fractional coordinates across buffer
+reuse and processing chunks. It accepts any first source index, then requires
+consecutive indices and nondecreasing available times (missing times are allowed).
+Errors identify the caller's source frame index. A failed streaming transformation
+changes neither the buffer nor temporal state, so the corrected frame can be
+retried. Explicit reset starts an independent unwrapping sequence. Loaded operations
+use the same kernels and stage the entire result before publication.
 
 Time, step, velocities, and forces remain dedicated semantic fields/APIs rather
 than being demoted into arbitrary generic properties.

@@ -21,3 +21,7 @@ sha2 = "0.11"
 [[bench]]
 name = "codec_throughput"
 harness = false
+
+[[bench]]
+name = "frame_workflow"
+harness = false

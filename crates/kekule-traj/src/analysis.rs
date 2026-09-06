@@ -14,7 +14,10 @@ use kekule::structure::Positions;
 use kekule::topology::AtomSelection;
 use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
-use crate::{Forces, FrameError, Trajectory, TrajectoryError, TrajectoryFrame, Velocities};
+use crate::{
+    Forces, FrameBuffer, FrameError, Trajectory, TrajectoryError, TrajectoryFrame,
+    TrajectoryFrameView, Velocities,
+};
 
 /// Options used to fit every trajectory frame onto one reference frame.
 ///
@@ -99,6 +102,109 @@ impl SuperpositionReport {
     }
 }
 
+/// A borrowed reference and fitting selection for processing individual frames.
+///
+/// The same kernel powers loaded-trajectory superposition. Application validates
+/// the fit and transforms positions, cells, velocities, and forces together.
+/// `frame_index` is the caller's zero-based source index used in diagnostics.
+/// A streaming caller can retain its reference with `frame_view().to_frame()`
+/// before reusing its input buffer. No per-frame report collection is retained.
+pub struct FrameSuperposer<'a> {
+    reference: kekule::structure::ModelView<'a>,
+    selection: &'a AtomSelection,
+    options: SuperpositionOptions<'a>,
+}
+
+impl<'a> FrameSuperposer<'a> {
+    pub fn new(reference: TrajectoryFrameView<'a>, selection: &'a AtomSelection) -> Self {
+        Self::with_options(reference, selection, SuperpositionOptions::default())
+    }
+
+    pub fn with_options(
+        reference: TrajectoryFrameView<'a>,
+        selection: &'a AtomSelection,
+        options: SuperpositionOptions<'a>,
+    ) -> Self {
+        Self {
+            reference: reference.as_model(),
+            selection,
+            options,
+        }
+    }
+
+    /// Returns a complete aligned frame, leaving the input unchanged.
+    pub fn superpose(
+        &self,
+        frame_index: usize,
+        moving: TrajectoryFrameView<'_>,
+    ) -> Result<TrajectoryFrame, SuperpositionError> {
+        self.superpose_with_report(frame_index, moving)
+            .map(|(frame, _)| frame)
+    }
+
+    /// Returns a complete aligned frame and its transform and post-fit RMSD.
+    pub fn superpose_with_report(
+        &self,
+        frame_index: usize,
+        moving: TrajectoryFrameView<'_>,
+    ) -> Result<(TrajectoryFrame, RigidAlignment), SuperpositionError> {
+        let alignment = kabsch_with_options(
+            moving.as_model(),
+            self.reference,
+            self.selection,
+            self.options,
+        )
+        .map_err(|source| SuperpositionError::Alignment {
+            frame: frame_index,
+            source,
+        })?;
+        let transformed =
+            transform_frame(moving, alignment.transform()).map_err(|error| match error {
+                TransformFrameError::Frame(source) => SuperpositionError::FrameTransform {
+                    frame: frame_index,
+                    source,
+                },
+                TransformFrameError::Cell(source) => SuperpositionError::CellTransform {
+                    frame: frame_index,
+                    source,
+                },
+            })?;
+        Ok((transformed, alignment))
+    }
+
+    /// Changes a reusable buffer only after the entire transformed frame succeeds.
+    pub fn superpose_in_place(
+        &self,
+        frame_index: usize,
+        moving: &mut FrameBuffer,
+    ) -> Result<(), SuperpositionError> {
+        self.superpose_in_place_with_report(frame_index, moving)
+            .map(|_| ())
+    }
+
+    /// Transactional buffer transformation with an optional diagnostic result.
+    pub fn superpose_in_place_with_report(
+        &self,
+        frame_index: usize,
+        moving: &mut FrameBuffer,
+    ) -> Result<RigidAlignment, SuperpositionError> {
+        let (frame, alignment) = self.superpose_with_report(frame_index, moving.frame_view())?;
+        let topology = moving.shared_topology();
+        moving
+            .copy_from(frame.view(&topology).map_err(|source| {
+                SuperpositionError::FrameTransform {
+                    frame: frame_index,
+                    source: Box::new(source),
+                }
+            })?)
+            .map_err(|source| SuperpositionError::FrameTransform {
+                frame: frame_index,
+                source: Box::new(source),
+            })?;
+        Ok(alignment)
+    }
+}
+
 impl Trajectory {
     /// Returns a new trajectory superposed onto `reference_frame`, leaving this one unchanged.
     ///
@@ -130,8 +236,10 @@ impl Trajectory {
         fit_selection: &AtomSelection,
         options: SuperpositionOptions<'_>,
     ) -> Result<Self, SuperpositionError> {
-        self.superpose_to_frame_with_report_and_options(reference_frame, fit_selection, options)
-            .map(|(trajectory, _)| trajectory)
+        let (frames, _) =
+            self.superposition_frames(reference_frame, fit_selection, options, false)?;
+        self.with_frames(frames)
+            .map_err(|source| SuperpositionError::TrajectoryPublication(Box::new(source)))
     }
 
     /// Returns an aligned copy and the applied transforms and post-fit RMSDs.
@@ -154,12 +262,18 @@ impl Trajectory {
         fit_selection: &AtomSelection,
         options: SuperpositionOptions<'_>,
     ) -> Result<(Self, SuperpositionReport), SuperpositionError> {
-        let (frames, report) =
-            self.superposition_frames(reference_frame, fit_selection, options)?;
+        let (frames, alignments) =
+            self.superposition_frames(reference_frame, fit_selection, options, true)?;
         let trajectory = self
             .with_frames(frames)
             .map_err(|source| SuperpositionError::TrajectoryPublication(Box::new(source)))?;
-        Ok((trajectory, report))
+        Ok((
+            trajectory,
+            SuperpositionReport {
+                reference_frame,
+                alignments,
+            },
+        ))
     }
 
     /// Superposes this trajectory transactionally, preserving it completely on failure.
@@ -182,7 +296,8 @@ impl Trajectory {
         fit_selection: &AtomSelection,
         options: SuperpositionOptions<'_>,
     ) -> Result<(), SuperpositionError> {
-        let (frames, _) = self.superposition_frames(reference_frame, fit_selection, options)?;
+        let (frames, _) =
+            self.superposition_frames(reference_frame, fit_selection, options, false)?;
         self.replace_frames(frames)
             .map_err(|source| SuperpositionError::TrajectoryPublication(Box::new(source)))
     }
@@ -192,50 +307,29 @@ impl Trajectory {
         reference_frame: usize,
         fit_selection: &AtomSelection,
         options: SuperpositionOptions<'_>,
-    ) -> Result<(Vec<TrajectoryFrame>, SuperpositionReport), SuperpositionError> {
-        let alignments = {
-            let reference = self.frames().nth(reference_frame).ok_or(
-                SuperpositionError::ReferenceFrameOutOfRange {
+        report: bool,
+    ) -> Result<(Vec<TrajectoryFrame>, Vec<RigidAlignment>), SuperpositionError> {
+        let reference =
+            self.frame(reference_frame)
+                .ok_or(SuperpositionError::ReferenceFrameOutOfRange {
                     index: reference_frame,
                     frame_count: self.len(),
-                },
-            )?;
-            self.frames()
-                .enumerate()
-                .map(|(frame, moving)| {
-                    kabsch_with_options(
-                        moving.as_model(),
-                        reference.as_model(),
-                        fit_selection,
-                        options,
-                    )
-                    .map_err(|source| SuperpositionError::Alignment { frame, source })
-                })
-                .collect::<Result<Vec<_>, _>>()?
+                })?;
+        let superposer = FrameSuperposer::with_options(reference, fit_selection, options);
+        let mut frames = Vec::with_capacity(self.len());
+        let mut alignments = if report {
+            Vec::with_capacity(self.len())
+        } else {
+            Vec::new()
         };
-
-        let transformed_frames = self
-            .frames()
-            .zip(&alignments)
-            .enumerate()
-            .map(|(frame, (source, alignment))| {
-                transform_frame(source, alignment.transform()).map_err(|error| match error {
-                    TransformFrameError::Frame(source) => {
-                        SuperpositionError::FrameTransform { frame, source }
-                    }
-                    TransformFrameError::Cell(source) => {
-                        SuperpositionError::CellTransform { frame, source }
-                    }
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok((
-            transformed_frames,
-            SuperpositionReport {
-                reference_frame,
-                alignments,
-            },
-        ))
+        for (index, source) in self.frames().enumerate() {
+            let (frame, alignment) = superposer.superpose_with_report(index, source)?;
+            frames.push(frame);
+            if report {
+                alignments.push(alignment);
+            }
+        }
+        Ok((frames, alignments))
     }
 
     /// Computes direct RMSD from every frame to `reference_frame`.

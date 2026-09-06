@@ -5,7 +5,7 @@ use kekule::structure::Positions;
 use kekule::topology::{AtomSelection, Topology, TopologyPerceptionError};
 
 use super::frame::TrajectoryFrame;
-use super::{TrajectoryError, TrajectoryFrameView, TrajectorySliceError};
+use super::{TrajectoryError, TrajectoryFrameMut, TrajectoryFrameView, TrajectorySliceError};
 
 /// A deliberately loaded finite in-memory trajectory.
 ///
@@ -126,17 +126,70 @@ impl Trajectory {
         self.frames.len()
     }
 
+    /// Copies frames in the requested index order, sharing the exact topology.
+    ///
+    /// Ranges and strides can be expressed as `(start..end).step_by(stride)`.
+    /// Empty selections, duplicates, and reordered indices are accepted. Original
+    /// time, step, frame state, and collection properties are retained; nothing is
+    /// renumbered or sorted. Call `validate_monotonic_time` when chronological
+    /// ordering matters, and unwrap before discarding intermediate frames.
+    pub fn select_frames(
+        &self,
+        indices: impl IntoIterator<Item = usize>,
+    ) -> Result<Self, TrajectoryError> {
+        let frames = indices
+            .into_iter()
+            .map(|index| {
+                self.frames
+                    .get(index)
+                    .cloned()
+                    .ok_or(TrajectoryError::FrameIndexOutOfRange(index as u64))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            topology: self.shared_topology(),
+            properties: self.properties.clone(),
+            frames,
+        })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
 
     /// Returns one topology-bound frame view by stable trajectory index.
     pub fn frame(&self, index: usize) -> Option<TrajectoryFrameView<'_>> {
-        self.frames.get(index).map(|frame| {
-            frame
-                .view(&self.topology)
-                .expect("trajectory validates frame topology on insertion")
-        })
+        self.frames
+            .get(index)
+            .map(|frame| frame.validated_view(&self.topology))
+    }
+
+    /// Borrows a restricted editor. Each edit validates before mutation; there
+    /// is no destructor-based validation and no mutable payload escape hatch.
+    ///
+    /// ```compile_fail,E0594
+    /// use kekule::{structure::Positions};
+    /// use kekule_traj::{Trajectory, TrajectoryFrame};
+    /// fn overwrite(trajectory: &mut Trajectory) {
+    ///     *trajectory.frame_mut(0).unwrap() = TrajectoryFrame::new(Positions::zeros(1));
+    /// }
+    /// ```
+    pub fn frame_mut(&mut self, index: usize) -> Option<TrajectoryFrameMut<'_>> {
+        self.frames.get_mut(index).map(TrajectoryFrameMut::new)
+    }
+
+    /// Validates and replaces one frame, returning the old payload. An invalid
+    /// index is reported first; any failure leaves the trajectory unchanged.
+    pub fn replace_frame(
+        &mut self,
+        index: usize,
+        mut frame: TrajectoryFrame,
+    ) -> Result<TrajectoryFrame, TrajectoryError> {
+        if index >= self.len() {
+            return Err(TrajectoryError::FrameIndexOutOfRange(index as u64));
+        }
+        frame.prepare(&self.topology)?;
+        Ok(std::mem::replace(&mut self.frames[index], frame))
     }
 
     #[cfg(test)]
@@ -146,11 +199,9 @@ impl Trajectory {
 
     /// Iterates topology-bound frame views in stable trajectory order.
     pub fn frames(&self) -> impl ExactSizeIterator<Item = TrajectoryFrameView<'_>> {
-        self.frames.iter().map(|frame| {
-            frame
-                .view(&self.topology)
-                .expect("trajectory validates frame topology on insertion")
-        })
+        self.frames
+            .iter()
+            .map(|frame| frame.validated_view(&self.topology))
     }
 
     pub fn push(&mut self, mut frame: TrajectoryFrame) -> Result<(), TrajectoryError> {

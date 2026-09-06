@@ -6,6 +6,19 @@ All notable changes to Kekule are documented in this file.
 
 ### Added
 
+- Add `io::write_trajectory` and `write_trajectory_with_options` for atomic saving
+  through the strict codecs, with extension inference, explicit format/precision
+  options, metadata preservation checks, and overwrite protection.
+- Add ordered `Trajectory::select_frames` for ranges, strides, reordering, and
+  repeated indices; preserve original time, step, properties, and shared topology.
+- Add complete `TrajectoryFrameView::to_frame`, validated `replace_frame`, and a
+  restricted `TrajectoryFrameMut` editor whose setters preserve dense dimensions.
+- Add reusable `analysis::FrameSuperposer`, `periodic::MoleculeImager`, and stateful
+  `periodic::TrajectoryUnwrapper` for streaming the same transformations used by
+  loaded trajectories. Unwrapping retains state across chunks, checks consecutive
+  source indices, supports explicit reset, and rolls back on failure.
+- Add an optional external-trajectory comparison against pinned MDTraj and
+  MDAnalysis versions, and an informational frame-access/superposition benchmark.
 - Add `kekule_traj::io::read_trajectory` and `read_trajectory_with_options` to load
   complete trajectories through the existing streaming codecs, preserving decoded
   frame state, topology sharing, and validation.
@@ -20,6 +33,22 @@ All notable changes to Kekule are documented in this file.
   ambiguous temporal crossings. Imaging uses explicitly selected anchor molecules.
 - Add explicit in-place superposition and opt-in superposition reports, and update
   the runnable workflow example to use ordinary alignment without policy options.
+
+### Fixed
+
+- Fix compressed XTC decoding when a frame reuses a preceding nonzero coordinate
+  run length. Valid trajectories from external GROMACS tooling no longer fail
+  mixed-radix bounds checks; existing corruption checks remain intact.
+- Retain underlying frame, property, position, unit, and model errors through
+  `std::error::Error::source`; model failures are no longer flattened into topology
+  mismatch strings.
+
+### Changed
+
+- Borrow validated stored frames without rescanning dense properties on every
+  access, and avoid allocating discarded per-frame superposition report vectors.
+- Temporal unwrapping rejects decreasing available times, including across frames
+  without timestamps. Equal times remain allowed.
 
 ### Breaking changes
 

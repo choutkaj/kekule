@@ -9,11 +9,11 @@ use std::sync::{
 use kekule::topology::Topology;
 
 use crate::{
-    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryFrameView,
+    Trajectory, TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryFrameView,
     TrajectoryIoOperation, TrajectoryWriter,
 };
 
-use super::{codec_context, dcd, io_context, trr, xtc, xyz};
+use super::{codec_context, dcd, detect, io_context, trr, xtc, xyz};
 
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -308,12 +308,58 @@ impl Drop for FileTrajectoryWriter {
     }
 }
 
+/// Writes a loaded trajectory, choosing the codec from its destination extension.
+///
+/// Recognizes `.xyz`, `.dcd`, `.trr`, and `.xtc`, case-insensitively. Unknown
+/// extensions require [`write_trajectory_with_options`] with an explicit format.
+/// Uses the codec's default precision and field policies. Existing files and
+/// unsupported metadata are rejected; no fields are silently discarded. Collection
+/// properties are unsupported by these codecs and must be explicitly cleared first.
+/// The destination is published atomically only after every frame and finalization
+/// succeeds. Empty trajectories are rejected by the writer.
+///
+/// ```no_run
+/// # use kekule_traj::Trajectory;
+/// # fn save(trajectory: &Trajectory) -> Result<(), kekule_traj::TrajectoryError> {
+/// kekule_traj::io::write_trajectory("aligned.trr", trajectory)?;
+/// # Ok(()) }
+/// ```
+pub fn write_trajectory(
+    path: impl AsRef<Path>,
+    trajectory: &Trajectory,
+) -> Result<(), TrajectoryError> {
+    let path = path.as_ref();
+    let format = detect::extension_format(path).ok_or_else(|| codec_context(
+        TrajectoryCodecErrorKind::UnknownFormat, TrajectoryIoOperation::Open, None,
+        &path.display().to_string(), "destination extension does not identify a supported format; supply explicit write options",
+    ))?;
+    write_trajectory_with_options(path, trajectory, TrajectoryWriteOptions::new(format))
+}
+
+/// Writes a loaded trajectory with explicit format, precision, and overwrite policies.
+/// The specified format takes precedence over the path extension.
+pub fn write_trajectory_with_options(
+    path: impl AsRef<Path>,
+    trajectory: &Trajectory,
+    options: TrajectoryWriteOptions,
+) -> Result<(), TrajectoryError> {
+    if !trajectory.properties().is_empty() {
+        return Err(TrajectoryError::UnsupportedField("collection properties"));
+    }
+    let mut writer = create_trajectory_writer(path, trajectory.shared_topology(), options)?;
+    for frame in trajectory.frames() {
+        writer.write_frame(frame)?;
+    }
+    writer.finish()
+}
+
 /// Creates a strict path writer backed by a temporary sibling file.
 pub fn create_trajectory_writer(
     path: impl AsRef<Path>,
-    topology: Arc<Topology>,
+    topology: impl Into<Arc<Topology>>,
     options: TrajectoryWriteOptions,
 ) -> Result<FileTrajectoryWriter, TrajectoryError> {
+    let topology = topology.into();
     let destination = path.as_ref().to_path_buf();
     let label = destination.display().to_string();
     if options.overwrite == OverwritePolicy::Forbid && destination.exists() {
