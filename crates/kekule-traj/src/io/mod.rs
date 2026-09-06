@@ -4,8 +4,9 @@
 //! contracts and depend on [`kekule`] only for topology, structural state,
 //! geometry, and units.
 //!
-//! Start with [`open_trajectory`] for sequential reading,
-//! [`open_indexed_trajectory`] for verified random access, or
+//! Start with [`read_trajectory`] to load an entire file into an in-memory
+//! [`crate::Trajectory`]. Use [`open_trajectory`] for sequential processing with
+//! a reusable frame buffer, [`open_indexed_trajectory`] for verified random access, or
 //! [`create_trajectory_writer`] for atomic path-backed writing. Each operation
 //! takes a topology. Readers expose opening diagnostics through `open_report()`
 //! and verified format metadata through `metadata()`.
@@ -62,7 +63,8 @@ pub mod xyz;
 
 pub use file_reader::{
     open_indexed_trajectory, open_indexed_trajectory_with_options, open_trajectory,
-    open_trajectory_with_options, IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
+    open_trajectory_with_options, read_trajectory, read_trajectory_with_options,
+    IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
 };
 pub use file_writer::{
     create_trajectory_writer, FileTrajectoryWriter, OverwritePolicy, TrajectoryWriteOptions,

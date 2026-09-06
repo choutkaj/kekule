@@ -358,7 +358,7 @@ impl TrajectoryOpenReport {
     }
 }
 
-/// Format-agnostic open configuration.
+/// Format-agnostic configuration for opening readers or loading entire trajectories.
 ///
 /// Path readers use these top-level limits and the path as their diagnostic
 /// source label, overriding limits and source labels in format-specific options.
