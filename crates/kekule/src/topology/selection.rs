@@ -27,6 +27,18 @@ impl PartialEq for AtomSelection {
 impl Eq for AtomSelection {}
 
 impl AtomSelection {
+    /// Selects every atom in authoritative dense order, sharing this exact topology.
+    ///
+    /// This is infallible because the topology has already validated its layout.
+    pub fn all(topology: &Arc<Topology>) -> Self {
+        Self {
+            topology: Arc::clone(topology),
+            indices: (0..topology.atom_count())
+                .map(|index| TopologyAtomIndex::new(index as u32))
+                .collect(),
+        }
+    }
+
     pub fn from_atoms(
         topology: &Arc<Topology>,
         atoms: impl IntoIterator<Item = InstanceAtomId>,
