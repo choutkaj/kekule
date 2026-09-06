@@ -2312,6 +2312,12 @@ sequence may be checked against topology order without creating a persistent
 assertion or binding object. A reader can create a reusable frame buffer sharing
 its exact topology; publication rejects buffers belonging to another topology.
 
+The format-oriented `io::read_trajectory(path, topology)` convenience deliberately
+loads all frames into a `Trajectory` through the existing sequential reader and
+validated in-memory writer. It retains decoded frame state and publishes a result
+only after clean EOF. `io::open_trajectory` and reusable buffers remain public for
+streaming workflows; opening a reader does not load an entire trajectory.
+
 Time, step, velocities, and forces remain dedicated semantic fields/APIs rather
 than being demoted into arbitrary generic properties.
 

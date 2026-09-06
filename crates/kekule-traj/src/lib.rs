@@ -35,6 +35,26 @@
 //!
 //! # File I/O and analysis
 //!
+//! Use [`io::read_trajectory`] for a fully loaded trajectory, or
+//! [`io::open_trajectory`] and a reusable [`FrameBuffer`] to process a large
+//! file one frame at a time.
+//!
+//! ```no_run
+//! use kekule::{mmcif, topology::AtomSelection};
+//! use kekule_traj::io::read_trajectory;
+//!
+//! let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
+//! let topology = document.interpret()?.to_topology();
+//! let mut trajectory = read_trajectory("trajectory.xyz", topology.clone())?;
+//! println!("{} frames, {} atoms", trajectory.len(), topology.atom_count());
+//!
+//! let fit = AtomSelection::from_atoms(&topology, topology.atom_ids().iter().copied())?;
+//! // Requires a nonempty trajectory and a non-collinear fitting selection.
+//! // Periodic frames require an explicit policy; see `SuperpositionOptions`.
+//! let report = trajectory.superpose_to_frame(0, &fit)?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
 //! Format-agnostic path readers and writers plus pure-Rust XYZ, DCD, TRR, and
 //! XTC codecs live in [`io`]. Readers take a topology directly and interpret file
 //! coordinates in its dense atom order. They check counts and available format
