@@ -2,6 +2,17 @@
 
 All notable changes to Kekule are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Add `kekule_traj::io::read_trajectory` and `read_trajectory_with_options` to load
+  complete trajectories through the existing streaming codecs, preserving decoded
+  frame state, topology sharing, and validation.
+- Add a trajectory workflow example that loads an mmCIF topology, prints frame
+  information, and aligns to the first frame. Streaming readers remain public
+  for processing files without loading every frame into memory.
+
 ## [0.2.1] - 2026-09-01
 
 This compatible workspace release adds canonical molecule and residue

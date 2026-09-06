@@ -111,6 +111,9 @@ impl SeekableTrajectoryReader for MemoryTrajectoryReader<'_> {
 }
 
 /// In-memory writer that preserves every core frame field.
+///
+/// Useful as a [`TrajectoryWriter`] destination for streaming pipelines. To load
+/// a complete file directly, use [`crate::io::read_trajectory`].
 pub struct MemoryTrajectoryWriter {
     trajectory: Trajectory,
 }
