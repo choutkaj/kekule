@@ -1,9 +1,10 @@
 //! Fixed-topology trajectory superposition and RMSD workflows.
 //!
-//! [`Trajectory::superpose_to_frame`] is an explicit transactional
-//! transformation. [`Trajectory::rmsd_to_frame`] measures coordinates exactly
-//! as stored and never centers or fits them. [`Trajectory::aligned_rmsd_to_frame`]
-//! is the allocation-light convenience for fitting and measuring in one pass.
+//! [`Trajectory::superpose_to_frame`] returns an aligned copy; its explicit
+//! in-place counterpart mutates transactionally. [`Trajectory::rmsd_to_frame`]
+//! measures coordinates exactly as stored and never centers or fits them.
+//! [`Trajectory::aligned_rmsd_to_frame`] is the allocation-light convenience
+//! for fitting and measuring in one pass.
 
 use std::fmt;
 
@@ -18,7 +19,8 @@ use crate::{Forces, FrameError, Trajectory, TrajectoryError, TrajectoryFrame, Ve
 /// Options used to fit every trajectory frame onto one reference frame.
 ///
 /// This is the same fitting contract as Kekule's single-model Kabsch kernel.
-/// In particular, periodic frames are rejected by default.
+/// By default it fits Cartesian coordinates as stored, including periodic frames.
+/// Making molecules whole, imaging, and temporal unwrapping are separate operations.
 pub type SuperpositionOptions<'a> = KabschOptions<'a>;
 
 /// Per-selected-atom weighting for direct RMSD measurement.
@@ -35,13 +37,13 @@ pub enum RmsdWeighting<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum PeriodicRmsdPolicy {
-    /// Reject either periodic input because no imaging has been performed.
-    #[default]
+    /// Explicitly reject either input that carries a periodic cell.
     RejectPeriodic,
     /// Measure the Cartesian coordinates exactly as stored and ignore cells.
     ///
     /// This performs no imaging, wrapping, unwrapping, minimum-image
     /// correction, or molecule reconstruction.
+    #[default]
     UseStoredCoordinates,
 }
 
@@ -63,7 +65,7 @@ pub struct AlignedRmsdOptions<'a> {
     pub measurement_weighting: RmsdWeighting<'a>,
 }
 
-/// Complete record of one successful in-place trajectory superposition.
+/// Complete record of one successful trajectory superposition.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SuperpositionReport {
     reference_frame: usize,
@@ -98,18 +100,22 @@ impl SuperpositionReport {
 }
 
 impl Trajectory {
-    /// Transactionally superposes every frame onto `reference_frame`.
+    /// Returns a new trajectory superposed onto `reference_frame`, leaving this one unchanged.
     ///
     /// The fit uses `fit_selection`, then applies the resulting proper rigid
     /// transform to every position in the frame. Velocities, forces, and cell
     /// vectors are rotated without translation. Atom data, time, step, and
-    /// frame and collection properties are preserved. The trajectory is unchanged if any fit
-    /// or transformed-frame validation fails.
+    /// frame and collection properties are preserved. The result shares the exact
+    /// topology and owns its transformed frame data. Periodic coordinates are fitted
+    /// as stored; no imaging or unwrapping is performed.
+    ///
+    /// Use [`Self::superpose_to_frame_in_place`] to modify this trajectory or
+    /// [`Self::superpose_to_frame_with_report`] to obtain fit diagnostics as well.
     pub fn superpose_to_frame(
-        &mut self,
+        &self,
         reference_frame: usize,
         fit_selection: &AtomSelection,
-    ) -> Result<SuperpositionReport, SuperpositionError> {
+    ) -> Result<Self, SuperpositionError> {
         self.superpose_to_frame_with_options(
             reference_frame,
             fit_selection,
@@ -117,13 +123,76 @@ impl Trajectory {
         )
     }
 
-    /// Transactionally superposes every frame with explicit fitting options.
+    /// Returns an aligned copy with explicit fitting options.
     pub fn superpose_to_frame_with_options(
+        &self,
+        reference_frame: usize,
+        fit_selection: &AtomSelection,
+        options: SuperpositionOptions<'_>,
+    ) -> Result<Self, SuperpositionError> {
+        self.superpose_to_frame_with_report_and_options(reference_frame, fit_selection, options)
+            .map(|(trajectory, _)| trajectory)
+    }
+
+    /// Returns an aligned copy and the applied transforms and post-fit RMSDs.
+    pub fn superpose_to_frame_with_report(
+        &self,
+        reference_frame: usize,
+        fit_selection: &AtomSelection,
+    ) -> Result<(Self, SuperpositionReport), SuperpositionError> {
+        self.superpose_to_frame_with_report_and_options(
+            reference_frame,
+            fit_selection,
+            SuperpositionOptions::default(),
+        )
+    }
+
+    /// Returns an aligned copy and diagnostics with explicit fitting options.
+    pub fn superpose_to_frame_with_report_and_options(
+        &self,
+        reference_frame: usize,
+        fit_selection: &AtomSelection,
+        options: SuperpositionOptions<'_>,
+    ) -> Result<(Self, SuperpositionReport), SuperpositionError> {
+        let (frames, report) =
+            self.superposition_frames(reference_frame, fit_selection, options)?;
+        let trajectory = self
+            .with_frames(frames)
+            .map_err(|source| SuperpositionError::TrajectoryPublication(Box::new(source)))?;
+        Ok((trajectory, report))
+    }
+
+    /// Superposes this trajectory transactionally, preserving it completely on failure.
+    pub fn superpose_to_frame_in_place(
+        &mut self,
+        reference_frame: usize,
+        fit_selection: &AtomSelection,
+    ) -> Result<(), SuperpositionError> {
+        self.superpose_to_frame_in_place_with_options(
+            reference_frame,
+            fit_selection,
+            SuperpositionOptions::default(),
+        )
+    }
+
+    /// Transactional in-place superposition with explicit fitting options.
+    pub fn superpose_to_frame_in_place_with_options(
         &mut self,
         reference_frame: usize,
         fit_selection: &AtomSelection,
         options: SuperpositionOptions<'_>,
-    ) -> Result<SuperpositionReport, SuperpositionError> {
+    ) -> Result<(), SuperpositionError> {
+        let (frames, _) = self.superposition_frames(reference_frame, fit_selection, options)?;
+        self.replace_frames(frames)
+            .map_err(|source| SuperpositionError::TrajectoryPublication(Box::new(source)))
+    }
+
+    fn superposition_frames(
+        &self,
+        reference_frame: usize,
+        fit_selection: &AtomSelection,
+        options: SuperpositionOptions<'_>,
+    ) -> Result<(Vec<TrajectoryFrame>, SuperpositionReport), SuperpositionError> {
         let alignments = {
             let reference = self.frames().nth(reference_frame).ok_or(
                 SuperpositionError::ReferenceFrameOutOfRange {
@@ -160,13 +229,13 @@ impl Trajectory {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        self.replace_frames(transformed_frames)
-            .map_err(|source| SuperpositionError::TrajectoryPublication(Box::new(source)))?;
-
-        Ok(SuperpositionReport {
-            reference_frame,
-            alignments,
-        })
+        Ok((
+            transformed_frames,
+            SuperpositionReport {
+                reference_frame,
+                alignments,
+            },
+        ))
     }
 
     /// Computes direct RMSD from every frame to `reference_frame`.
@@ -761,8 +830,9 @@ mod tests {
         assert_close(fused.value()[0], 0.0, 1.0e-12);
         assert_close(fused.value()[1], 2.0, 2.0e-12);
 
-        let mut split = trajectory.clone();
-        let report = split.superpose_to_frame(0, &fit_selection).unwrap();
+        let (split, report) = trajectory
+            .superpose_to_frame_with_report(0, &fit_selection)
+            .unwrap();
         assert_eq!(report.reference_frame(), 0);
         assert_eq!(report.len(), 2);
         let measured = split.rmsd_to_frame(0, &measurement_selection).unwrap();
@@ -859,13 +929,13 @@ mod tests {
                 PropertyValue::String("moving".to_owned()),
             )
             .unwrap();
-        let mut trajectory =
+        let trajectory =
             Trajectory::from_frames(Arc::clone(&topology), [reference_frame, moving_frame])
                 .unwrap();
         let expected_properties = trajectory.frame(1).unwrap().properties().clone();
 
-        let report = trajectory
-            .superpose_to_frame_with_options(
+        let (trajectory, report) = trajectory
+            .superpose_to_frame_with_report_and_options(
                 0,
                 &all(&topology),
                 SuperpositionOptions {
@@ -940,14 +1010,14 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(
-            trajectory.superpose_to_frame(3, &all(&topology)),
+            trajectory.superpose_to_frame_in_place(3, &all(&topology)),
             Err(SuperpositionError::ReferenceFrameOutOfRange {
                 index: 3,
                 frame_count: 3,
             })
         );
         assert_eq!(
-            trajectory.superpose_to_frame(0, &all(&topology)),
+            trajectory.superpose_to_frame_in_place(0, &all(&topology)),
             Err(SuperpositionError::Alignment {
                 frame: 2,
                 source: AlignmentError::DegenerateGeometry {
@@ -1030,7 +1100,14 @@ mod tests {
             );
         }
         assert_eq!(
-            trajectory.rmsd_to_frame(0, &all(&topology)),
+            trajectory.rmsd_to_frame_with_options(
+                0,
+                &all(&topology),
+                RmsdOptions {
+                    periodic_policy: PeriodicRmsdPolicy::RejectPeriodic,
+                    ..Default::default()
+                }
+            ),
             Err(RmsdError::PeriodicCoordinates {
                 frame: 0,
                 moving: true,

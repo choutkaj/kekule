@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use kekule::properties::{Properties, PropertyError, PropertyKey, PropertyValue};
+use kekule::structure::Positions;
 use kekule::topology::{AtomSelection, Topology, TopologyPerceptionError};
 
 use super::frame::TrajectoryFrame;
@@ -13,6 +14,7 @@ use super::{TrajectoryError, TrajectoryFrameView, TrajectorySliceError};
 /// Use streaming readers and [`super::FrameBuffer`] for trajectories that
 /// should not be loaded completely into memory.
 #[derive(Debug, Clone)]
+#[must_use = "use the returned trajectory; coordinate transformations return a copy unless named `_in_place`"]
 pub struct Trajectory {
     pub(super) topology: Arc<Topology>,
     properties: Properties,
@@ -165,6 +167,62 @@ impl Trajectory {
             frame.prepare(&self.topology)?;
         }
         self.frames = frames;
+        Ok(())
+    }
+
+    /// Publishes transformed frames while retaining the exact topology and owner annotations.
+    pub(crate) fn with_frames(
+        &self,
+        frames: Vec<TrajectoryFrame>,
+    ) -> Result<Self, TrajectoryError> {
+        let mut result = Self::from_frames(self.shared_topology(), frames)?;
+        result.properties = self.properties.clone();
+        Ok(result)
+    }
+
+    /// Internal coordinate-only publication; staging contains exactly one array per frame.
+    pub(crate) fn replace_positions(
+        &mut self,
+        positions: Vec<Positions>,
+    ) -> Result<(), TrajectoryError> {
+        self.validate_positions(&positions)?;
+        for (frame, positions) in self.frames.iter_mut().zip(positions) {
+            frame.positions = positions;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn with_positions(
+        &self,
+        positions: Vec<Positions>,
+    ) -> Result<Self, TrajectoryError> {
+        self.validate_positions(&positions)?;
+        let frames = self
+            .frames
+            .iter()
+            .zip(positions)
+            .map(|(source, positions)| TrajectoryFrame {
+                positions,
+                cell: source.cell,
+                properties: source.properties.clone(),
+                velocities: source.velocities.clone(),
+                forces: source.forces.clone(),
+                time: source.time,
+                step: source.step,
+            })
+            .collect();
+        self.with_frames(frames)
+    }
+
+    fn validate_positions(&self, positions: &[Positions]) -> Result<(), TrajectoryError> {
+        assert_eq!(
+            positions.len(),
+            self.len(),
+            "coordinate transformation stages every frame"
+        );
+        for values in positions {
+            super::validate_atom_count(self.topology.atom_count(), values.len())?;
+        }
         Ok(())
     }
 

@@ -1,30 +1,27 @@
 //! Load a trajectory using an mmCIF topology and align it to its first frame.
 //!
-//! Run with `SYSTEM.cif TRAJECTORY [--use-stored-coordinates]`.
+//! Run with `SYSTEM.cif TRAJECTORY [--make-whole]`.
 //! The mmCIF must contain one structural block/model, and the resulting topology
-//! must match the trajectory's atom order. The optional flag allows periodic
-//! frames to be fitted as stored; it performs no imaging or unwrapping.
+//! must match the trajectory's atom order. The optional flag reconstructs bonded
+//! molecules split across periodic boundaries before fitting.
 
 use std::{error::Error, fs};
 
 use kekule::{
-    alignment::PeriodicAlignmentPolicy,
     mmcif,
     topology::AtomSelection,
     units::{ANGSTROM, PICOSECOND},
 };
-use kekule_traj::{analysis::SuperpositionOptions, io::read_trajectory};
+use kekule_traj::io::read_trajectory;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args_os().skip(1);
-    let usage = "usage: trajectory_workflow SYSTEM.cif TRAJECTORY [--use-stored-coordinates]";
+    let usage = "usage: trajectory_workflow SYSTEM.cif TRAJECTORY [--make-whole]";
     let topology_path = args.next().ok_or(usage)?;
     let trajectory_path = args.next().ok_or(usage)?;
-    let periodic_policy = match args.next() {
-        None => PeriodicAlignmentPolicy::RejectPeriodic,
-        Some(flag) if flag == "--use-stored-coordinates" => {
-            PeriodicAlignmentPolicy::UseStoredCoordinates
-        }
+    let make_whole = match args.next() {
+        None => false,
+        Some(flag) if flag == "--make-whole" => true,
         Some(_) => return Err(usage.into()),
     };
     if args.next().is_some() {
@@ -49,18 +46,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     trajectory.validate_monotonic_time(false)?;
 
-    // Fit all atoms; substitute a protein/backbone selection for a solvated system.
-    let fit = AtomSelection::from_atoms(&topology, topology.atom_ids().iter().copied())?;
-    let report = trajectory.superpose_to_frame_with_options(
-        0,
-        &fit,
-        SuperpositionOptions {
-            periodic_policy,
-            ..Default::default()
-        },
-    )?;
+    if make_whole {
+        trajectory.make_molecules_whole_in_place()?;
+    }
 
-    for (index, (frame, alignment)) in trajectory.frames().zip(report.alignments()).enumerate() {
+    // Fit all atoms; substitute a protein/backbone selection for a solvated system.
+    let fit = AtomSelection::all(&topology);
+    let aligned = trajectory.superpose_to_frame(0, &fit)?;
+    let rmsd = aligned.rmsd_to_frame(0, &fit)?.value_in(ANGSTROM)?;
+
+    for (index, (frame, rmsd)) in aligned.frames().zip(rmsd).enumerate() {
         let time_ps = frame
             .time()
             .map(|time| time.value_in(PICOSECOND))
@@ -68,7 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!(
             "Frame {index}: time_ps={time_ps:?}, step={:?}, fitted RMSD={:.3} A",
             frame.step(),
-            alignment.rmsd().value_in(ANGSTROM)?
+            rmsd
         );
     }
     Ok(())
