@@ -112,6 +112,7 @@ macro_rules! realization_property_api {
 mod buffer;
 mod collection;
 mod frame;
+mod frame_edit;
 mod stream;
 
 #[cfg(test)]
@@ -120,6 +121,7 @@ mod tests;
 pub use buffer::{FrameBuffer, FrameBufferData};
 pub use collection::Trajectory;
 pub use frame::{Forces, TrajectoryFrame, TrajectoryFrameView, Velocities};
+pub use frame_edit::TrajectoryFrameMut;
 pub use stream::{
     validate_atom_order, CoordinateFrameReader, MemoryTrajectoryReader, MemoryTrajectoryWriter,
     SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter,
@@ -179,7 +181,16 @@ impl fmt::Display for FrameError {
     }
 }
 
-impl std::error::Error for FrameError {}
+impl std::error::Error for FrameError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Position(source) => Some(source),
+            Self::Property(source) => Some(source),
+            Self::Unit(source) => Some(source),
+            _ => None,
+        }
+    }
+}
 
 impl From<PositionError> for FrameError {
     fn from(error: PositionError) -> Self {
@@ -489,6 +500,7 @@ pub enum TrajectoryError {
     Position(PositionError),
     Io(Box<TrajectoryIoErrorContext>),
     Codec(Box<TrajectoryCodecErrorContext>),
+    Model(Box<ModelError>),
 }
 
 /// Failure to subset a trajectory topology or transfer frame state.
@@ -508,7 +520,17 @@ impl fmt::Display for TrajectorySliceError {
     }
 }
 
-impl std::error::Error for TrajectorySliceError {}
+impl std::error::Error for TrajectorySliceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Topology(source) => Some(source),
+            Self::Position(source) => Some(source),
+            Self::Property(source) => Some(source),
+            Self::Frame(source) => Some(source.as_ref()),
+            Self::Trajectory(source) => Some(source),
+        }
+    }
+}
 
 impl From<TopologySubsetError> for TrajectorySliceError {
     fn from(error: TopologySubsetError) -> Self {
@@ -564,6 +586,7 @@ impl fmt::Display for TrajectoryError {
                 write!(formatter, "trajectory writer does not support {field}")
             }
             Self::Frame(error) => write!(formatter, "invalid trajectory frame: {error}"),
+            Self::Model(error) => write!(formatter, "invalid trajectory model view: {error}"),
             Self::Position(error) => write!(formatter, "invalid trajectory positions: {error}"),
             Self::Io(context) => {
                 write!(formatter, "trajectory {} I/O failed", context.operation)?;
@@ -612,7 +635,17 @@ impl fmt::Display for TrajectoryError {
     }
 }
 
-impl std::error::Error for TrajectoryError {}
+impl std::error::Error for TrajectoryError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Frame(source) => Some(source.as_ref()),
+            Self::Position(source) => Some(source),
+            Self::Model(source) => Some(source.as_ref()),
+            // Codec and I/O contexts already hold the terminal diagnostic facts.
+            _ => None,
+        }
+    }
+}
 
 impl From<FrameError> for TrajectoryError {
     fn from(error: FrameError) -> Self {
@@ -630,8 +663,8 @@ impl From<PositionError> for TrajectoryError {
 }
 
 impl From<ModelError> for TrajectoryError {
-    fn from(_: ModelError) -> Self {
-        Self::TopologyMismatch
+    fn from(source: ModelError) -> Self {
+        Self::Model(Box::new(source))
     }
 }
 

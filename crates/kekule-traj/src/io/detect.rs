@@ -179,7 +179,7 @@ fn xyz_signature(prefix: &[u8]) -> bool {
             .all(|value| value.parse::<f64>().is_ok_and(f64::is_finite))
 }
 
-fn extension_format(path: &Path) -> Option<TrajectoryFormat> {
+pub(super) fn extension_format(path: &Path) -> Option<TrajectoryFormat> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
         "xyz" => Some(TrajectoryFormat::Xyz),

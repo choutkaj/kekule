@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kekule::geometry::{PeriodicCell, Vector3};
+use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{
     Properties, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue,
 };
@@ -196,6 +196,16 @@ impl TrajectoryFrame {
         &self.positions
     }
 
+    /// Replaces coordinates without changing the frame's atom count.
+    /// Units, dimensions, and finite values are checked before mutation.
+    pub fn set_positions<T: AsRef<[Point3]>>(
+        &mut self,
+        positions: Quantity<T>,
+    ) -> Result<(), FrameError> {
+        self.positions.set_all(positions)?;
+        Ok(())
+    }
+
     pub const fn cell(&self) -> Option<&PeriodicCell> {
         self.cell.as_ref()
     }
@@ -358,7 +368,15 @@ impl TrajectoryFrame {
         topology: &'a Arc<Topology>,
     ) -> Result<TrajectoryFrameView<'a>, FrameError> {
         self.validate(topology)?;
-        Ok(TrajectoryFrameView {
+        Ok(self.validated_view(topology))
+    }
+
+    /// Only owners that already enforce all publication invariants may use this.
+    pub(super) fn validated_view<'a>(
+        &'a self,
+        topology: &'a Arc<Topology>,
+    ) -> TrajectoryFrameView<'a> {
+        TrajectoryFrameView {
             topology,
             positions: &self.positions,
             cell: self.cell.as_ref(),
@@ -367,7 +385,7 @@ impl TrajectoryFrame {
             forces: self.forces.as_ref().map(Forces::values),
             time: self.time,
             step: self.step,
-        })
+        }
     }
 }
 
@@ -389,6 +407,40 @@ pub struct TrajectoryFrameView<'a> {
 }
 
 impl<'a> TrajectoryFrameView<'a> {
+    /// Copies the complete realization, including velocities, forces, time, step,
+    /// and every property. The detached payload carries no topology.
+    pub fn to_frame(self) -> TrajectoryFrame {
+        self.with_positions(self.positions.clone())
+    }
+
+    /// Internal publication of validated coordinate-only transformations.
+    pub(crate) fn with_positions(self, positions: Positions) -> TrajectoryFrame {
+        assert_eq!(
+            positions.len(),
+            self.positions.len(),
+            "coordinate transformation preserves atom count"
+        );
+        TrajectoryFrame {
+            positions,
+            cell: self.cell.copied(),
+            properties: self.properties.clone(),
+            velocities: self.velocities.map(|values| {
+                Velocities(DenseVectors {
+                    values: values.value().to_vec(),
+                    unit: values.unit(),
+                })
+            }),
+            forces: self.forces.map(|values| {
+                Forces(DenseVectors {
+                    values: values.value().to_vec(),
+                    unit: values.unit(),
+                })
+            }),
+            time: self.time,
+            step: self.step,
+        }
+    }
+
     pub fn topology(self) -> &'a Topology {
         self.topology
     }

@@ -5,10 +5,12 @@
 //! geometry, and units.
 //!
 //! Start with [`read_trajectory`] to load an entire file into an in-memory
-//! [`crate::Trajectory`]. Use [`open_trajectory`] for sequential processing with
+//! [`crate::Trajectory`], and [`write_trajectory`] to save it atomically. Use
+//! their `_with_options` variants for explicit codec and field policies.
+//! Use [`open_trajectory`] for sequential processing with
 //! a reusable frame buffer, [`open_indexed_trajectory`] for verified random access, or
 //! [`create_trajectory_writer`] for atomic path-backed writing. Each operation
-//! takes a topology. Readers expose opening diagnostics through `open_report()`
+//! takes a topology directly or from its trajectory. Readers expose opening diagnostics through `open_report()`
 //! and verified format metadata through `metadata()`.
 //!
 //! # Supported profiles
@@ -42,6 +44,11 @@
 //! [`FileTrajectoryWriter::finish`] flushes, synchronizes, finalizes format
 //! metadata, and publishes a nonempty trajectory. Any failed frame write or an
 //! empty finish prevents publication.
+//! The saving helpers reject unsupported collection properties before opening a
+//! writer. Format policies also reject unsupported frame fields; they never
+//! silently discard them. Defaults preserve an existing destination, use TRR f32
+//! with its lambda frame property, DCD without cells, and XTC resolution of
+//! 0.001 nm. Use explicit write options when those profiles do not fit the data.
 //!
 //! # Limits and unsupported formats
 //!
@@ -67,7 +74,8 @@ pub use file_reader::{
     IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
 };
 pub use file_writer::{
-    create_trajectory_writer, FileTrajectoryWriter, OverwritePolicy, TrajectoryWriteOptions,
+    create_trajectory_writer, write_trajectory, write_trajectory_with_options,
+    FileTrajectoryWriter, OverwritePolicy, TrajectoryWriteOptions,
 };
 pub use limits::TrajectoryIoLimits;
 pub use metadata::{
