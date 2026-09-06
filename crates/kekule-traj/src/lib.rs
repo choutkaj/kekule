@@ -8,6 +8,9 @@
 //! positions and optional cell, velocity, force, time, step, and property state;
 //! it carries no independent topology. Insertion validates every dense
 //! dimension against the trajectory topology.
+//! [`Trajectory::frame_mut`] provides a restricted editor with validated setters;
+//! [`Trajectory::replace_frame`] validates complete replacement payloads. Borrowed
+//! frames can be copied with [`TrajectoryFrameView::to_frame`] without losing state.
 //!
 //! [`TrajectoryFrameView`] and [`FrameBuffer`] expose
 //! [`kekule::structure::ModelView`] without copying coordinates, so structural
@@ -35,13 +38,13 @@
 //!
 //! # File I/O and analysis
 //!
-//! Use [`io::read_trajectory`] for a fully loaded trajectory, or
+//! Use [`io::read_trajectory`] and [`io::write_trajectory`] for loaded trajectories, or
 //! [`io::open_trajectory`] and a reusable [`FrameBuffer`] to process a large
 //! file one frame at a time.
 //!
 //! ```no_run
 //! use kekule::{mmcif, topology::AtomSelection};
-//! use kekule_traj::io::read_trajectory;
+//! use kekule_traj::io::{read_trajectory, write_trajectory};
 //!
 //! let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
 //! let topology = document.interpret()?.to_topology();
@@ -52,6 +55,8 @@
 //! // Requires a nonempty trajectory and a non-collinear fitting selection.
 //! // Coordinates are fitted as stored; repair split molecules first if needed.
 //! let aligned = trajectory.superpose_to_frame(0, &fit)?;
+//! let sampled = aligned.select_frames((0..aligned.len()).step_by(10))?;
+//! write_trajectory("aligned.xyz", &sampled)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -66,6 +71,8 @@
 //! are available through [`Trajectory::superpose_to_frame_with_report`].
 //! Molecular reconstruction, imaging, and temporal unwrapping live in [`periodic`]
 //! and are explicit preprocessing steps, independent of alignment.
+//! [`analysis::FrameSuperposer`], [`periodic::MoleculeImager`], and
+//! [`periodic::TrajectoryUnwrapper`] apply the same operations to streaming frames.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 // Kekule consistently names owned conversions `to_*`, including consuming ones.

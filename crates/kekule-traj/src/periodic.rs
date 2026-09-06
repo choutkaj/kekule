@@ -31,6 +31,30 @@
 //! let aligned = imaged.superpose_to_frame(0, &anchors)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! For a large trajectory, retain the bond plan and temporal state across reads:
+//!
+//! ```no_run
+//! use kekule::mmcif;
+//! use kekule_traj::{
+//!     io::open_trajectory, periodic::{MoleculeImager, TrajectoryUnwrapper},
+//!     TrajectoryReader,
+//! };
+//! let topology = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?
+//!     .interpret()?.to_topology();
+//! let mut reader = open_trajectory("trajectory.xtc", topology.clone())?;
+//! let mut frame = reader.frame_buffer();
+//! let imager = MoleculeImager::new(topology.clone());
+//! let mut unwrapper = TrajectoryUnwrapper::new(topology);
+//! let mut index = 0;
+//! while reader.read_next(&mut frame)? {
+//!     imager.make_whole_in_place(index, &mut frame)?;
+//!     unwrapper.unwrap_in_place(index, &mut frame)?;
+//!     // Analyze or write this frame here. Downsample only after unwrapping.
+//!     index += 1;
+//! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -44,6 +68,9 @@ use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 use crate::{Trajectory, TrajectoryError};
 
+mod stream;
+pub use stream::{MoleculeImager, TrajectoryUnwrapper};
+
 /// Failure to reconstruct or publish periodic coordinates.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -52,6 +79,18 @@ pub enum PeriodicError {
         frame: usize,
     },
     SelectionTopologyMismatch,
+    TopologyMismatch {
+        frame: usize,
+    },
+    /// Stateful unwrapping requires consecutive source-frame indices.
+    NonSequentialFrame {
+        previous: usize,
+        frame: usize,
+    },
+    /// Available time values must not decrease, including across missing values.
+    NonMonotonicTime {
+        frame: usize,
+    },
     EmptyAnchors,
     /// Selected shortest bond images do not form a consistent finite molecule (e.g. a winding ring).
     InconsistentBondImages {
@@ -86,6 +125,9 @@ impl fmt::Display for PeriodicError {
         match self {
             Self::MissingCell { frame } => write!(f, "frame {frame} has no periodic cell"),
             Self::SelectionTopologyMismatch => f.write_str("anchor selection belongs to another topology"),
+            Self::TopologyMismatch { frame } => write!(f, "frame {frame} belongs to another topology"),
+            Self::NonSequentialFrame { previous, frame } => write!(f, "frame {frame} must immediately follow frame {previous} for temporal unwrapping"),
+            Self::NonMonotonicTime { frame } => write!(f, "time decreases at frame {frame} during temporal unwrapping"),
             Self::EmptyAnchors => f.write_str("imaging requires at least one anchor atom"),
             Self::InconsistentBondImages { frame, bond } => write!(f, "frame {frame} has inconsistent periodic images around bond {bond}"),
             Self::PeriodicAxesChanged { frame } => write!(f, "periodic axes change at frame {frame}"),
@@ -162,9 +204,9 @@ impl Trajectory {
     /// fractional coordinate relative to the previous unwrapped frame. For changing
     /// cells, previous fractional coordinates are retained and the current cell maps
     /// the new fractional coordinates back to Cartesian space. This is the lattice
-    /// convention in Kulke & Verma (2022), equation B6, DOI: 10.1021/acs.jctc.2c00327.
+    /// convention in Kulke & Vermaas (2022), equation B6, DOI: 10.1021/acs.jctc.2c00327.
     ///
-    /// Requires fixed periodic-axis flags and sequential, sufficiently closely
+    /// Available times must not decrease. Requires fixed periodic-axis flags and sequential, sufficiently closely
     /// sampled frames. Multiple crossings between saved frames cannot be inferred;
     /// exact half-cell displacements are rejected as ambiguous. Initial split
     /// molecules are not repaired: use `make_molecules_whole` first when necessary.
@@ -187,83 +229,22 @@ impl Trajectory {
         &self,
         anchors: Option<&AtomSelection>,
     ) -> Result<Vec<Positions>, PeriodicError> {
-        if let Some(anchors) = anchors {
-            if !std::ptr::eq(self.topology(), anchors.topology()) {
-                return Err(PeriodicError::SelectionTopologyMismatch);
-            }
-            if anchors.indices().is_empty() {
-                return Err(PeriodicError::EmptyAnchors);
-            }
-        }
-        let plan = MoleculePlan::new(self.topology());
-        let anchor_groups = anchors.map(|selection| {
-            let mut selected = vec![false; plan.groups.len()];
-            for index in selection.indices() {
-                selected[plan.atom_group[index.index()]] = true;
-            }
-            selected
-        });
+        let imager = MoleculeImager::new(self.shared_topology());
+        let anchors = anchors
+            .map(|selection| imager.anchor_groups(selection))
+            .transpose()?;
         self.frames()
             .enumerate()
-            .map(|(frame, source)| {
-                let lattice = Lattice::new(source.cell().copied(), frame)?;
-                let values = source.positions().values();
-                let mut points = plan.make_whole(values.value(), &lattice)?;
-                if let Some(anchors) = &anchor_groups {
-                    plan.image(&mut points, &lattice, anchors)?;
-                }
-                positions(points, frame)
-            })
+            .map(|(index, frame)| imager.frame_positions(index, frame, anchors.as_deref()))
             .collect()
     }
 
     fn unwrapped_positions(&self) -> Result<Vec<Positions>, PeriodicError> {
-        let mut result = Vec::with_capacity(self.len());
-        let mut previous: Option<Vec<[f64; 3]>> = None;
-        let mut periodic_axes = None;
-        for (frame, source) in self.frames().enumerate() {
-            let lattice = Lattice::new(source.cell().copied(), frame)?;
-            if periodic_axes.is_some_and(|axes| axes != lattice.periodic) {
-                return Err(PeriodicError::PeriodicAxesChanged { frame });
-            }
-            periodic_axes = Some(lattice.periodic);
-            let mut fractional = Vec::with_capacity(self.topology().atom_count());
-            let mut points = Vec::with_capacity(self.topology().atom_count());
-            for (atom, point) in source
-                .positions()
-                .values()
-                .value()
-                .iter()
-                .copied()
-                .enumerate()
-            {
-                let mut current = lattice.fractional(point - Point3::origin())?;
-                let mut images = [0.0; 3];
-                if let Some(previous) = &previous {
-                    for axis in 0..3 {
-                        if lattice.periodic[axis] {
-                            let delta = current[axis] - previous[atom][axis];
-                            let image = checked_image(delta, frame)?;
-                            if ((delta - image).abs() - 0.5).abs() <= 32.0 * f64::EPSILON {
-                                return Err(PeriodicError::AmbiguousDisplacement {
-                                    frame,
-                                    atom: TopologyAtomIndex::new(atom as u32),
-                                    axis,
-                                });
-                            }
-                            images[axis] = image;
-                            current[axis] -= image;
-                        }
-                    }
-                }
-                // Avoid an inverse/forward round trip and preserve frame zero exactly.
-                points.push(point - lattice.cartesian(images));
-                fractional.push(current);
-            }
-            result.push(positions(points, frame)?);
-            previous = Some(fractional);
-        }
-        Ok(result)
+        let mut unwrapper = TrajectoryUnwrapper::new(self.shared_topology());
+        self.frames()
+            .enumerate()
+            .map(|(index, frame)| unwrapper.next_positions(index, frame))
+            .collect()
     }
 }
 
