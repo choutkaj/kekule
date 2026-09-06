@@ -6,8 +6,8 @@ use std::sync::Arc;
 use kekule::topology::Topology;
 
 use crate::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryError, TrajectoryFormat,
-    TrajectoryIoOperation, TrajectoryReader,
+    FrameBuffer, MemoryTrajectoryWriter, SeekableTrajectoryReader, Trajectory, TrajectoryError,
+    TrajectoryFormat, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 
 use super::{
@@ -156,12 +156,64 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
     }
 }
 
-/// Opens one fast sequential path-backed trajectory reader.
+/// Reads an entire trajectory file into memory in file frame order.
+///
+/// Accepts an owned topology or a shared `Arc<Topology>` and detects the format
+/// automatically. File coordinates must follow the topology's dense atom order;
+/// counts and available format metadata are checked, but matching counts alone
+/// cannot establish atom identity. All decoded frame fields are retained, and
+/// a supplied shared topology retains its exact allocation.
+///
+/// This consumes the sequential reader through clean EOF. Any open or decoding
+/// error is returned without publishing a partial trajectory. Memory usage grows
+/// with the number of frames and atoms; use [`open_trajectory`] to process large
+/// files one frame at a time or inspect file metadata and opening diagnostics.
+/// Use [`read_trajectory_with_options`] to customize format policies or limits.
+///
+/// ```no_run
+/// use kekule::mmcif;
+/// use kekule_traj::io::read_trajectory;
+///
+/// let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
+/// let topology = document.interpret()?.to_topology();
+/// let trajectory = read_trajectory("trajectory.xtc", topology)?;
+/// println!("{} frames, {} atoms", trajectory.len(), trajectory.topology().atom_count());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn read_trajectory(
+    path: impl AsRef<Path>,
+    topology: impl Into<Arc<Topology>>,
+) -> Result<Trajectory, TrajectoryError> {
+    read_trajectory_with_options(path, topology, TrajectoryOpenOptions::default())
+}
+
+/// Reads an entire trajectory into memory with explicit format policies and limits.
+///
+/// Uses the same options, validation, unit conversion, and errors as
+/// [`open_trajectory_with_options`]. Frame limits cause an error rather than
+/// truncating the result. These codec limits do not impose a total resident-memory
+/// budget for the loaded trajectory. No random-access index is built.
+pub fn read_trajectory_with_options(
+    path: impl AsRef<Path>,
+    topology: impl Into<Arc<Topology>>,
+    options: TrajectoryOpenOptions,
+) -> Result<Trajectory, TrajectoryError> {
+    let mut reader = open_trajectory_with_options(path, topology, options)?;
+    let mut buffer = reader.frame_buffer();
+    let mut writer = MemoryTrajectoryWriter::new(reader.shared_topology());
+    while reader.read_next(&mut buffer)? {
+        writer.write_frame(buffer.frame_view())?;
+    }
+    Ok(writer.to_trajectory())
+}
+
+/// Opens one fast sequential path-backed trajectory reader without loading all frames.
 ///
 /// Accepts an owned topology or a shared `Arc<Topology>`. File coordinates must
 /// follow its dense atom order; counts and available format metadata are checked
 /// automatically. Matching counts alone cannot establish atom identity.
 /// Use [`open_trajectory_with_options`] to customize format policies or limits.
+/// For a fully loaded in-memory trajectory, use [`read_trajectory`] instead.
 ///
 /// ```no_run
 /// use kekule::{smiles, topology::Topology};
