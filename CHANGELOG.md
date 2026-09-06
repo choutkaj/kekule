@@ -12,6 +12,25 @@ All notable changes to Kekule are documented in this file.
 - Add a trajectory workflow example that loads an mmCIF topology, prints frame
   information, and aligns to the first frame. Streaming readers remain public
   for processing files without loading every frame into memory.
+- Add infallible `AtomSelection::all(&topology)` with authoritative dense order
+  and exact topology sharing.
+- Add `Trajectory::make_molecules_whole`, `image_molecules`, and temporal `unwrap`,
+  with copy-returning and transactional `_in_place` variants. Support triclinic,
+  rotated, and partially periodic cells; validate bonded ring closure and reject
+  ambiguous temporal crossings. Imaging uses explicitly selected anchor molecules.
+- Add explicit in-place superposition and opt-in superposition reports, and update
+  the runnable workflow example to use ordinary alignment without policy options.
+
+### Breaking changes
+
+- `superpose_to_frame` and `superpose_to_frame_with_options` now return a new
+  trajectory, leaving their source unchanged. Use the corresponding `_in_place`
+  methods for mutation or `_with_report` methods for `(trajectory, report)` results.
+  `Trajectory` is marked `must_use` to diagnose accidentally discarded copies.
+- Kabsch fitting, trajectory superposition, and RMSD now use stored Cartesian
+  coordinates by default, including periodic frames. Strict periodic rejection is
+  still available through explicit options. Molecular reconstruction, imaging, and
+  temporal unwrapping are separate preprocessing operations.
 
 ## [0.2.1] - 2026-09-01
 

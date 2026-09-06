@@ -1409,6 +1409,9 @@ selections over chains, residues, atom sites, molecule classes, residue classes,
 and their identifiers/labels, with results represented as topology-bound atom
 selections.
 
+`AtomSelection::all(&topology)` infallibly selects every atom in authoritative
+dense order and retains the exact shared topology allocation.
+
 A hierarchy selection and a structural subset are distinct operations:
 
 ```text
@@ -2317,6 +2320,25 @@ loads all frames into a `Trajectory` through the existing sequential reader and
 validated in-memory writer. It retains decoded frame state and publishes a result
 only after clean EOF. `io::open_trajectory` and reusable buffers remain public for
 streaming workflows; opening a reader does not load an entire trajectory.
+
+Coordinate transformations return an owned trajectory by default. Explicit
+`_in_place` variants stage every frame before publishing any change, so failure
+leaves the original trajectory unchanged. Both forms retain exact topology
+sharing and all collection/frame properties. Superposition fits stored Cartesian
+coordinates by default, even when cells are present; it rotates cells, velocities,
+and forces consistently with positions. Diagnostic reports are opt-in.
+
+Periodic preprocessing consists of distinct operations: making each bonded
+molecule whole within a frame, imaging whole molecules around explicit anchor
+selections, and temporally unwrapping atom paths across successive frames. These
+operations require cells and change positions only, preserving other frame state.
+Molecular reconstruction uses asserted topology bonds and shortest Cartesian bond
+images, checking ring closure without inferring bonds or changing topology.
+Imaging expands selected anchor atoms to complete molecule instances. Temporal
+unwrapping follows continuity in periodic fractional coordinates with each frame's
+cell, leaves the first frame unchanged, and rejects ambiguous half-cell crossings.
+It requires sufficiently close sequential samples and fixed periodic-axis flags;
+its variable-cell convention must be documented rather than hidden in alignment.
 
 Time, step, velocities, and forces remain dedicated semantic fields/APIs rather
 than being demoted into arbitrary generic properties.
