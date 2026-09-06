@@ -8,7 +8,9 @@
 //! ```
 //!
 //! Alignment is read-only. It does not image periodic coordinates or
-//! materialize transformed canonical coordinates.
+//! materialize transformed canonical coordinates. The default fit uses stored
+//! Cartesian coordinates, including when a cell is present. Use an explicit
+//! [`PeriodicAlignmentPolicy::RejectPeriodic`] option to reject periodic inputs.
 //!
 //! # Examples
 //!
@@ -53,10 +55,7 @@
 //!     Arc::clone(&topology),
 //!     Positions::new(Quantity::new(reference_points, ANGSTROM))?,
 //! )?;
-//! let selection = AtomSelection::from_atoms(
-//!     &topology,
-//!     topology.atom_ids().iter().copied(),
-//! )?;
+//! let selection = AtomSelection::all(&topology);
 //!
 //! let result = kabsch(moving.view(), reference.view(), &selection)?;
 //! let canonical_moving = moving.positions().position_at(1)?.to_value();
@@ -210,13 +209,13 @@ pub enum AlignmentWeighting<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum PeriodicAlignmentPolicy {
-    /// Reject either input when it carries a periodic cell.
-    #[default]
+    /// Explicitly reject either input when it carries a periodic cell.
     RejectPeriodic,
     /// Ignore cells and fit the stored Cartesian coordinates directly.
     ///
     /// This performs no imaging, wrapping, unwrapping, minimum-image
     /// correction, or molecule reconstruction.
+    #[default]
     UseStoredCoordinates,
 }
 
@@ -1407,7 +1406,7 @@ mod tests {
     }
 
     #[test]
-    fn periodic_policy_rejects_by_default_and_can_use_stored_coordinates() {
+    fn periodic_policy_fits_stored_coordinates_by_default_and_can_reject() {
         let moving_points = fixture_points();
         let expected = non_axis_transform();
         let reference_points = transform_points(&moving_points, expected);
@@ -1423,22 +1422,21 @@ mod tests {
         let moving_before = moving.positions().values().value().to_vec();
 
         assert_eq!(
-            kabsch(moving.view(), reference.view(), &selection),
+            kabsch_with_options(
+                moving.view(),
+                reference.view(),
+                &selection,
+                KabschOptions {
+                    periodic_policy: PeriodicAlignmentPolicy::RejectPeriodic,
+                    ..Default::default()
+                }
+            ),
             Err(AlignmentError::PeriodicCoordinates {
                 moving: true,
                 reference: true,
             })
         );
-        let result = kabsch_with_options(
-            moving.view(),
-            reference.view(),
-            &selection,
-            KabschOptions {
-                periodic_policy: PeriodicAlignmentPolicy::UseStoredCoordinates,
-                ..KabschOptions::default()
-            },
-        )
-        .unwrap();
+        let result = kabsch(moving.view(), reference.view(), &selection).unwrap();
         assert_transform_close(result.transform(), expected, 3.0e-12);
         assert_eq!(moving.cell(), Some(&cell));
         assert_eq!(reference.cell(), Some(&cell));

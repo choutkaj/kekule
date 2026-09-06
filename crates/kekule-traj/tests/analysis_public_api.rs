@@ -43,8 +43,7 @@ fn downstream_code_can_split_or_fuse_superposition_and_rmsd() {
         .unwrap();
     let owner_properties = trajectory.properties().clone();
     let frame_properties = trajectory.frame(1).unwrap().properties().clone();
-    let selection =
-        AtomSelection::from_atoms(&topology, topology.atom_ids().iter().copied()).unwrap();
+    let selection = AtomSelection::all(&topology);
 
     let direct = trajectory
         .rmsd_to_frame_with_options(
@@ -75,17 +74,94 @@ fn downstream_code_can_split_or_fuse_superposition_and_rmsd() {
     assert!(fused.value()[1] < 1.0e-12);
 
     let mut split = trajectory;
-    assert!(split.superpose_to_frame(99, &selection).is_err());
+    assert!(split.superpose_to_frame_in_place(99, &selection).is_err());
     assert_eq!(split.properties(), &owner_properties);
     assert_eq!(
         split.frame(1).unwrap().positions().values(),
         frame(moving).positions().values()
     );
-    let report = split.superpose_to_frame(0, &selection).unwrap();
+    let (aligned, report) = split.superpose_to_frame_with_report(0, &selection).unwrap();
+    assert_eq!(
+        split.frame(1).unwrap().positions().values(),
+        frame(moving).positions().values()
+    );
+    split.superpose_to_frame_in_place(0, &selection).unwrap();
+    assert_eq!(
+        split.frame(1).unwrap().positions(),
+        aligned.frame(1).unwrap().positions()
+    );
     assert_eq!(report.alignments().len(), split.len());
     assert!(Arc::ptr_eq(&topology, &split.shared_topology()));
     assert_eq!(split.properties(), &owner_properties);
     assert_eq!(split.frame(1).unwrap().properties(), &frame_properties);
     let measured = split.rmsd_to_frame(0, &selection).unwrap();
     assert!(measured.value()[1] < 1.0e-12);
+}
+
+#[test]
+fn ordinary_superposition_returns_a_copy_and_accepts_periodic_coordinates() {
+    use kekule::alignment::AlignmentWeighting;
+    use kekule::geometry::{PeriodicCell, Vector3};
+    let topology = topology();
+    let points = [
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+    ];
+    let mut reference = frame(points);
+    let mut moving = frame(points.map(|p| Point3::new(p.x + 3.0, p.y - 2.0, p.z + 1.0)));
+    let cell = PeriodicCell::orthorhombic(
+        Quantity::new(Vector3::new(10.0, 10.0, 10.0), ANGSTROM),
+        [true; 3],
+    )
+    .unwrap();
+    reference.set_cell(Some(cell));
+    moving.set_cell(Some(cell));
+    let mut original = Trajectory::from_frames(topology.clone(), [reference, moving]).unwrap();
+    original
+        .insert_property(PropertyKey::new("run").unwrap(), PropertyValue::Int(42))
+        .unwrap();
+    let before = format!("{original:?}");
+    let fit = AtomSelection::all(&topology);
+    assert!(original.rmsd_to_frame(0, &fit).unwrap().value()[1] > 0.3);
+    let aligned = original.superpose_to_frame(0, &fit).unwrap();
+    assert_eq!(format!("{original:?}"), before);
+    assert_eq!(aligned.properties(), original.properties());
+    assert!(Arc::ptr_eq(&topology, &aligned.shared_topology()));
+    assert!(aligned.rmsd_to_frame(0, &fit).unwrap().value()[1] < 1.0e-12);
+    assert!(
+        original
+            .aligned_rmsd_to_frame(0, &fit, &fit)
+            .unwrap()
+            .value()[1]
+            < 1.0e-12
+    );
+    let weighted = original
+        .superpose_to_frame_with_options(
+            0,
+            &fit,
+            SuperpositionOptions {
+                weighting: AlignmentWeighting::Explicit(&[1.0, 2.0, 3.0]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(weighted.rmsd_to_frame(0, &fit).unwrap().value()[1] < 1.0e-12);
+    assert!(original
+        .superpose_to_frame_in_place_with_options(
+            0,
+            &fit,
+            SuperpositionOptions {
+                periodic_policy: PeriodicAlignmentPolicy::RejectPeriodic,
+                ..Default::default()
+            }
+        )
+        .is_err());
+    assert_eq!(format!("{original:?}"), before);
+    original.superpose_to_frame_in_place(0, &fit).unwrap();
+    for (actual, expected) in original.frames().zip(aligned.frames()) {
+        assert_eq!(actual.positions(), expected.positions());
+        assert_eq!(actual.cell(), expected.cell());
+        assert_eq!(actual.properties(), expected.properties());
+    }
 }

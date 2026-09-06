@@ -45,13 +45,13 @@
 //!
 //! let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
 //! let topology = document.interpret()?.to_topology();
-//! let mut trajectory = read_trajectory("trajectory.xyz", topology.clone())?;
+//! let trajectory = read_trajectory("trajectory.xyz", topology.clone())?;
 //! println!("{} frames, {} atoms", trajectory.len(), topology.atom_count());
 //!
-//! let fit = AtomSelection::from_atoms(&topology, topology.atom_ids().iter().copied())?;
+//! let fit = AtomSelection::all(&topology);
 //! // Requires a nonempty trajectory and a non-collinear fitting selection.
-//! // Periodic frames require an explicit policy; see `SuperpositionOptions`.
-//! let report = trajectory.superpose_to_frame(0, &fit)?;
+//! // Coordinates are fitted as stored; repair split molecules first if needed.
+//! let aligned = trajectory.superpose_to_frame(0, &fit)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -61,7 +61,11 @@
 //! metadata automatically; matching counts alone cannot establish atom identity.
 //! In-memory superposition and direct or
 //! aligned RMSD workflows live in [`analysis`]. Direct RMSD never performs an
-//! implicit fit.
+//! implicit fit. Coordinate transformations return a new trajectory by default;
+//! explicit `_in_place` methods mutate transactionally. Superposition reports
+//! are available through [`Trajectory::superpose_to_frame_with_report`].
+//! Molecular reconstruction, imaging, and temporal unwrapping live in [`periodic`]
+//! and are explicit preprocessing steps, independent of alignment.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 // Kekule consistently names owned conversions `to_*`, including consuming ones.
@@ -71,5 +75,6 @@ mod trajectory;
 
 pub mod analysis;
 pub mod io;
+pub mod periodic;
 
 pub use trajectory::*;
