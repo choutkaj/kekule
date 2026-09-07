@@ -36,7 +36,7 @@ impl AtomPositionSource for MoleculePositions<'_> {
         self.positions
             .position_at(index)
             .ok()
-            .map(|point| point.to_value())
+            .map(|point| point.into_value())
     }
 }
 

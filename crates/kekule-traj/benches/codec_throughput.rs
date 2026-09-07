@@ -103,7 +103,7 @@ fn benchmark_xyz(profile: Profile) -> Result<(), Box<dyn Error>> {
                     .with_source_label("bench.xyz"),
             )
             .expect("benchmark XYZ reader")
-            .to_indexed()
+            .into_indexed()
             .expect("benchmark XYZ index")
         },
     )
@@ -142,7 +142,7 @@ fn benchmark_dcd(profile: Profile) -> Result<(), Box<dyn Error>> {
                     .with_source_label("bench.dcd"),
             )
             .expect("benchmark DCD reader")
-            .to_indexed()
+            .into_indexed()
             .expect("benchmark DCD index")
         },
     )
@@ -183,7 +183,7 @@ fn benchmark_trr(profile: Profile) -> Result<(), Box<dyn Error>> {
                     .with_source_label("bench.trr"),
             )
             .expect("benchmark TRR reader")
-            .to_indexed()
+            .into_indexed()
             .expect("benchmark TRR index")
         },
     )
@@ -222,7 +222,7 @@ fn benchmark_xtc(profile: Profile) -> Result<(), Box<dyn Error>> {
                     .with_source_label("bench.xtc"),
             )
             .expect("benchmark XTC reader")
-            .to_indexed()
+            .into_indexed()
             .expect("benchmark XTC index")
         },
     )

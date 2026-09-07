@@ -25,14 +25,14 @@ pub(super) fn read_smiles(
     input: &str,
 ) -> std::result::Result<Molecule, Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input)?;
-    Ok(smiles_api::interpret(&document)?.to_molecule()?)
+    Ok(smiles_api::interpret(&document)?.into_molecule()?)
 }
 
 pub(super) fn read_smiles_components(
     input: &str,
 ) -> std::result::Result<Vec<Molecule>, Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input)?;
-    Ok(smiles_api::interpret(&document)?.to_molecules())
+    Ok(smiles_api::interpret(&document)?.into_molecules())
 }
 
 pub(super) fn read_smiles_component(
@@ -72,7 +72,7 @@ pub(super) fn read_smiles_with_report(
     input: &str,
 ) -> std::result::Result<(Molecule, SmilesInterpretationReport), Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input)?;
-    Ok(smiles_api::interpret(&document)?.to_parts()?)
+    Ok(smiles_api::interpret(&document)?.into_parts()?)
 }
 
 pub(super) trait CanonicalizeFixture {
@@ -105,7 +105,7 @@ pub(super) fn read_molfile(
     input: &str,
 ) -> std::result::Result<Molecule, Box<dyn std::error::Error>> {
     let document = molfile::parse_str(input)?;
-    let molecules = molfile::interpret(&document)?.to_molecules();
+    let molecules = molfile::interpret(&document)?.into_molecules();
     exactly_one(molecules, "molfile")
 }
 
@@ -114,7 +114,7 @@ pub(super) fn read_molfile_with_report(
 ) -> std::result::Result<(Molecule, molfile::MolfileInterpretationReport), Box<dyn std::error::Error>>
 {
     let document = molfile::parse_str(input)?;
-    let (model, mut reports) = molfile::interpret(&document)?.to_parts();
+    let (model, mut reports) = molfile::interpret(&document)?.into_parts();
     if reports.len() != 1 {
         return Err(format!("expected one molfile component, found {}", reports.len()).into());
     }
@@ -139,7 +139,7 @@ pub(super) fn read_sdf_records_with_options(
     options: SdfParseOptions,
 ) -> std::result::Result<Vec<SdfRecordInterpretation>, Box<dyn std::error::Error>> {
     let document = sdf::parse_str_with_options(input, options)?;
-    Ok(sdf::interpret(&document)?.to_records())
+    Ok(sdf::interpret(&document)?.into_records())
 }
 
 pub(super) fn read_sdf_molecules(
@@ -147,7 +147,7 @@ pub(super) fn read_sdf_molecules(
 ) -> std::result::Result<Vec<Molecule>, Box<dyn std::error::Error>> {
     read_sdf_records(input)?
         .into_iter()
-        .map(|record| exactly_one(record.to_molecules(), "SDF record"))
+        .map(|record| exactly_one(record.into_molecules(), "SDF record"))
         .collect::<std::result::Result<Vec<_>, _>>()
 }
 
@@ -157,7 +157,7 @@ pub(super) fn read_sdf_molecules_with_options(
 ) -> std::result::Result<Vec<Molecule>, Box<dyn std::error::Error>> {
     read_sdf_records_with_options(input, options)?
         .into_iter()
-        .map(|record| exactly_one(record.to_molecules(), "SDF record"))
+        .map(|record| exactly_one(record.into_molecules(), "SDF record"))
         .collect::<std::result::Result<Vec<_>, _>>()
 }
 
@@ -178,7 +178,7 @@ fn exactly_one(
 pub(super) trait MolfileInterpretationTestExt {
     fn molecule(&self) -> &Molecule;
     fn report(&self) -> &molfile::MolfileInterpretationReport;
-    fn to_molecule(self) -> Molecule;
+    fn into_molecule(self) -> Molecule;
 }
 
 impl MolfileInterpretationTestExt for molfile::MolfileInterpretation {
@@ -200,8 +200,8 @@ impl MolfileInterpretationTestExt for molfile::MolfileInterpretation {
         &self.reports()[0]
     }
 
-    fn to_molecule(self) -> Molecule {
-        let mut molecules = self.to_molecules();
+    fn into_molecule(self) -> Molecule {
+        let mut molecules = self.into_molecules();
         assert_eq!(molecules.len(), 1, "test fixture must have one component");
         molecules.pop().expect("length checked")
     }

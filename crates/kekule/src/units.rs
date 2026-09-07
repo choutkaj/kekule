@@ -293,7 +293,8 @@ impl<T> Quantity<T> {
         &mut self.value
     }
 
-    pub fn to_value(self) -> T {
+    /// Consumes the quantity and returns its stored value without converting units.
+    pub fn into_value(self) -> T {
         self.value
     }
 
@@ -328,13 +329,14 @@ impl<T> Quantity<T>
 where
     T: Clone + ScaleValue,
 {
-    pub fn to(&self, unit: Unit) -> Result<Self, UnitError> {
+    /// Converts a cloned value, leaving the source quantity available and unchanged.
+    pub fn to_unit(&self, unit: Unit) -> Result<Self, UnitError> {
         let factor = self.unit.conversion_factor_to(unit)?;
         Ok(Self::new(self.value.clone().scaled(factor), unit))
     }
 
     pub fn value_in(&self, unit: Unit) -> Result<T, UnitError> {
-        self.to(unit).map(Self::to_value)
+        self.to_unit(unit).map(Self::into_value)
     }
 }
 
@@ -342,7 +344,8 @@ impl<T> Quantity<T>
 where
     T: ScaleValue,
 {
-    pub fn to_unit(self, unit: Unit) -> Result<Self, UnitError> {
+    /// Consumes the quantity and converts its value without requiring a clone.
+    pub fn into_unit(self, unit: Unit) -> Result<Self, UnitError> {
         let factor = self.unit.conversion_factor_to(unit)?;
         Ok(Self::new(self.value.scaled(factor), unit))
     }

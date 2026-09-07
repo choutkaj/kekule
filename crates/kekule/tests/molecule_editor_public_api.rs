@@ -47,13 +47,13 @@ fn public_editor_builds_inspects_and_edits_without_a_molecule_view() {
     assert_eq!(published.atom(a).unwrap().formal_charge, 0);
     assert!(edited.properties().get(&key("label")).is_none());
     let atom_pointer = published.atom(a).unwrap() as *const Atom;
-    let moved = published.to_editor();
+    let moved = published.into_editor();
     assert_eq!(moved.atom(a).unwrap() as *const Atom, atom_pointer);
 }
 
 #[test]
 fn rewiring_retains_ids_properties_and_checks_every_endpoint_before_mutation() {
-    let mut editor = molecule("CCCC").to_editor();
+    let mut editor = molecule("CCCC").into_editor();
     let ids = editor.atom_ids().collect::<Vec<_>>();
     let bonds = editor.bond_ids().collect::<Vec<_>>();
     editor
@@ -93,7 +93,7 @@ fn rewiring_retains_ids_properties_and_checks_every_endpoint_before_mutation() {
 
 #[test]
 fn batch_deletion_is_atomic_and_retains_surviving_identity() {
-    let mut editor = molecule("CCCC").to_editor();
+    let mut editor = molecule("CCCC").into_editor();
     let ids = editor.atom_ids().collect::<Vec<_>>();
     let bonds = editor.bond_ids().collect::<Vec<_>>();
     let before = snapshot(&editor);
@@ -115,7 +115,7 @@ fn batch_deletion_is_atomic_and_retains_surviving_identity() {
 
 #[test]
 fn property_columns_use_live_order_and_batches_preserve_state_on_error() {
-    let mut editor = molecule("CCC").to_editor();
+    let mut editor = molecule("CCC").into_editor();
     let ids = editor.atom_ids().collect::<Vec<_>>();
     let bond = editor.bond_ids().last().unwrap();
     editor.delete_atom(ids[0]).unwrap();
@@ -201,7 +201,7 @@ fn property_columns_use_live_order_and_batches_preserve_state_on_error() {
 }
 
 fn grouped_fragment() -> Molecule {
-    let mut editor = molecule("F[C@](Cl)(Br)I").to_editor();
+    let mut editor = molecule("F[C@](Cl)(Br)I").into_editor();
     let stereo = editor.stereo_element_ids().next().unwrap();
     editor
         .add_stereo_group(StereoGroup {
@@ -226,7 +226,7 @@ fn grouped_fragment() -> Molecule {
 #[test]
 fn append_preserves_fragment_stereo_groups_and_entity_properties() {
     let source = grouped_fragment();
-    let mut editor = molecule("C").to_editor();
+    let mut editor = molecule("C").into_editor();
     let existing = editor.atom_ids().next().unwrap();
     let map = editor.append_molecule(&source).unwrap();
     assert_eq!(editor.connected_components().len(), 2);
@@ -284,7 +284,7 @@ fn append_preserves_fragment_stereo_groups_and_entity_properties() {
 
 #[test]
 fn append_conflicts_roll_back_graph_properties_and_id_allocation() {
-    let mut editor = molecule("C").to_editor();
+    let mut editor = molecule("C").into_editor();
     let id = editor.atom_ids().next().unwrap();
     editor
         .set_atom_property(id, key("tag"), Some(PropertyValue::String("text".into())))
@@ -300,7 +300,7 @@ fn append_conflicts_roll_back_graph_properties_and_id_allocation() {
 
 #[test]
 fn append_remaps_double_bond_and_axis_stereo_across_sparse_ids() {
-    let mut source = molecule("F/C=C/F").to_editor();
+    let mut source = molecule("F/C=C/F").into_editor();
     let atoms = source.atom_ids().collect::<Vec<_>>();
     let focus = source.bond_between(atoms[1], atoms[2]).unwrap().unwrap();
     let double = source.stereo_element_ids().next().unwrap();
@@ -314,7 +314,7 @@ fn append_remaps_double_bond_and_axis_stereo_across_sparse_ids() {
     let removed = source.add_atom(atom("H")).unwrap();
     source.delete_atom(removed).unwrap();
     let source = source.finish().unwrap();
-    let mut target = molecule("CC").to_editor();
+    let mut target = molecule("CC").into_editor();
     target.delete_atom(AtomId::new(0)).unwrap();
     let map = target.append_molecule(&source).unwrap();
     assert!(!map.atoms().contains_key(&removed));
@@ -366,7 +366,7 @@ fn property_and_no_op_edits_preserve_perception_but_chemistry_changes_clear_it()
     source.perceive().unwrap();
     let cached = source.perception().clone();
     assert_ne!(cached, Perception::default());
-    let mut editor = source.to_editor();
+    let mut editor = source.into_editor();
     let id = editor.atom_ids().next().unwrap();
     let bond = editor.bond_ids().next().unwrap();
     editor
@@ -402,7 +402,7 @@ fn forgetting_mutation_guards_cannot_preserve_stale_annotations() {
         source
             .insert_property(key("identity"), PropertyValue::Int(7))
             .unwrap();
-        let mut editor = source.to_editor();
+        let mut editor = source.into_editor();
         if change_atom {
             let id = editor.atom_ids().next().unwrap();
             let mut guard = editor.atom_mut(id).unwrap();
@@ -422,7 +422,7 @@ fn forgetting_mutation_guards_cannot_preserve_stale_annotations() {
 
 #[test]
 fn stereo_group_replacement_preserves_identity_and_rewiring_prunes_affected_stereo() {
-    let mut editor = grouped_fragment().to_editor();
+    let mut editor = grouped_fragment().into_editor();
     let (id, group) = editor
         .stereo_groups()
         .next()
@@ -503,7 +503,7 @@ fn failed_finish_returns_exact_draft_for_repair() {
         MoleculePublicationError::DisconnectedGraph(_)
     ));
     assert_eq!(snapshot(error.editor()), before);
-    let mut editor = error.to_editor();
+    let mut editor = error.into_editor();
     editor.add_bond(a, b, BondOrder::Single).unwrap();
     assert_eq!(editor.try_finish().unwrap().atom_count(), 2);
 }

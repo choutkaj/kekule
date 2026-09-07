@@ -736,7 +736,7 @@ impl ModelEditor {
 }
 
 fn checked_point(position: Quantity<Point3>) -> Result<Point3, PositionError> {
-    let point = position.to_unit(CANONICAL_LENGTH_UNIT)?.to_value();
+    let point = position.into_unit(CANONICAL_LENGTH_UNIT)?.into_value();
     if !point.is_finite() {
         return Err(PositionError::NonFinitePosition { index: 0 });
     }

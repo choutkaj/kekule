@@ -36,7 +36,7 @@ impl StagedCoordinates {
         atom: AtomId,
         point: Quantity<Point3>,
     ) -> Result<(), StagedCoordinateError> {
-        let point = point.to_unit(self.unit)?.to_value();
+        let point = point.into_unit(self.unit)?.into_value();
         if !point.is_finite() {
             return Err(StagedCoordinateError::NonFinitePosition { atom });
         }

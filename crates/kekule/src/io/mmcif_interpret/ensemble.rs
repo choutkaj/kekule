@@ -86,7 +86,7 @@ pub(crate) fn interpret_mmcif_ensemble_block(
     let shared_topology = first.model.shared_topology();
     let shared_atom_identity = provenance_identity(&first.report);
     let mut ensemble = Ensemble::new(Arc::clone(&shared_topology));
-    let (first_model, first_report) = first.to_parts();
+    let (first_model, first_report) = first.into_parts();
     ensemble
         .push(EnsembleMember::from_model(first_model))
         .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
@@ -98,7 +98,7 @@ pub(crate) fn interpret_mmcif_ensemble_block(
                 model_id: model_id.clone(),
                 error,
             })?
-            .to_parts();
+            .into_parts();
         let atom_identity = provenance_identity(&report);
         if atom_identity != shared_atom_identity {
             let error = if atom_identity.sorted_atoms() != shared_atom_identity.sorted_atoms() {

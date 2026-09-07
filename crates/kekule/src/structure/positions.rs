@@ -103,7 +103,7 @@ impl Positions {
         index: usize,
         position: Quantity<Point3>,
     ) -> Result<(), PositionError> {
-        let point = position.to_unit(CANONICAL_LENGTH_UNIT)?.to_value();
+        let point = position.into_unit(CANONICAL_LENGTH_UNIT)?.into_value();
         if !point.is_finite() {
             return Err(PositionError::NonFinitePosition { index });
         }

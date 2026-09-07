@@ -127,7 +127,7 @@ pub(crate) fn read_small_records_by_suffix(
     ) {
         let document = molfile::parse_str(&input)?;
         let title = document.header().title().to_owned();
-        let molecule = exactly_one_molecule(molfile::interpret(&document)?.to_molecules())?;
+        let molecule = exactly_one_molecule(molfile::interpret(&document)?.into_molecules())?;
         return Ok(vec![IndexedSmallRecord {
             record_index: 0,
             title,
@@ -152,7 +152,7 @@ pub(crate) fn small_record(index: usize, record: SdfRecordInterpretation) -> Ind
     IndexedSmallRecord {
         record_index: index,
         title,
-        molecule: exactly_one_molecule(record.to_molecules())
+        molecule: exactly_one_molecule(record.into_molecules())
             .expect("small-record benchmark requires one connected component"),
         sdf_fields,
     }
@@ -160,12 +160,12 @@ pub(crate) fn small_record(index: usize, record: SdfRecordInterpretation) -> Ind
 
 pub(super) fn interpret_molfile(input: &str) -> Result<Molecule, Box<dyn Error>> {
     let document = molfile::parse_str(input)?;
-    exactly_one_molecule(molfile::interpret(&document)?.to_molecules())
+    exactly_one_molecule(molfile::interpret(&document)?.into_molecules())
 }
 
 pub(super) fn interpret_sdf(input: &str) -> Result<Vec<SdfRecordInterpretation>, Box<dyn Error>> {
     let document = sdf::parse_str(input)?;
-    Ok(sdf::interpret(&document)?.to_records())
+    Ok(sdf::interpret(&document)?.into_records())
 }
 
 pub(super) fn zero_coordinate_model(
@@ -182,7 +182,7 @@ pub(super) fn zero_coordinate_model(
 
 pub(super) fn interpret_smiles(input: &str) -> Result<Molecule, Box<dyn Error>> {
     let document = smiles::parse_str(input)?;
-    exactly_one_molecule(smiles::interpret(&document)?.to_molecules())
+    exactly_one_molecule(smiles::interpret(&document)?.into_molecules())
 }
 
 fn exactly_one_molecule(mut molecules: Vec<Molecule>) -> Result<Molecule, Box<dyn Error>> {
@@ -198,7 +198,7 @@ fn exactly_one_molecule(mut molecules: Vec<Molecule>) -> Result<Molecule, Box<dy
 
 fn interpret_smiles_components(input: &str) -> Result<Vec<Molecule>, Box<dyn Error>> {
     let document = smiles::parse_str(input)?;
-    Ok(smiles::interpret(&document)?.to_molecules())
+    Ok(smiles::interpret(&document)?.into_molecules())
 }
 
 pub(crate) fn read_smiles_records(path: &Path) -> Result<Vec<IndexedSmilesRecord>, Box<dyn Error>> {
@@ -310,7 +310,7 @@ pub(crate) fn read_stereo_records_by_suffix(
     }
     let document = molfile::parse_str(&input)?;
     let title = document.header().title().to_owned();
-    let molecule = exactly_one_molecule(molfile::interpret(&document)?.to_molecules())?;
+    let molecule = exactly_one_molecule(molfile::interpret(&document)?.into_molecules())?;
     Ok(vec![IndexedSmallRecord {
         record_index: 0,
         title,

@@ -145,11 +145,11 @@ impl SmilesComponentInterpretation {
         &self.report
     }
 
-    pub fn to_molecule(self) -> Molecule {
+    pub fn into_molecule(self) -> Molecule {
         self.molecule
     }
 
-    pub fn to_parts(self) -> (Molecule, SmilesInterpretationReport) {
+    pub fn into_parts(self) -> (Molecule, SmilesInterpretationReport) {
         (self.molecule, self.report)
     }
 }
@@ -171,10 +171,10 @@ impl SmilesInterpretation {
             .map(SmilesComponentInterpretation::molecule)
     }
 
-    pub fn to_molecules(self) -> Vec<Molecule> {
+    pub fn into_molecules(self) -> Vec<Molecule> {
         self.components
             .into_iter()
-            .map(SmilesComponentInterpretation::to_molecule)
+            .map(SmilesComponentInterpretation::into_molecule)
             .collect()
     }
 
@@ -182,8 +182,8 @@ impl SmilesInterpretation {
     ///
     /// Component order becomes authoritative topology instance order. The
     /// projection fabricates no hierarchy and runs no perception.
-    pub fn to_topology(self) -> Result<Topology, TopologyBuildError> {
-        Topology::from_molecules(&self.to_molecules())
+    pub fn into_topology(self) -> Result<Topology, TopologyBuildError> {
+        Topology::from_molecules(&self.into_molecules())
     }
 
     /// Convenience access for callers that require exactly one component.
@@ -201,15 +201,15 @@ impl SmilesInterpretation {
     }
 
     /// Consumes an interpretation known to contain exactly one component.
-    pub fn to_molecule(self) -> Result<Molecule, SmilesComponentCountError> {
-        Ok(self.to_single_component()?.to_molecule())
+    pub fn into_molecule(self) -> Result<Molecule, SmilesComponentCountError> {
+        Ok(self.into_single_component()?.into_molecule())
     }
 
     /// Consumes an interpretation known to contain exactly one component and its report.
-    pub fn to_parts(
+    pub fn into_parts(
         self,
     ) -> Result<(Molecule, SmilesInterpretationReport), SmilesComponentCountError> {
-        Ok(self.to_single_component()?.to_parts())
+        Ok(self.into_single_component()?.into_parts())
     }
 
     fn single_component(
@@ -223,7 +223,7 @@ impl SmilesInterpretation {
         }
     }
 
-    fn to_single_component(
+    fn into_single_component(
         mut self,
     ) -> Result<SmilesComponentInterpretation, SmilesComponentCountError> {
         if self.components.len() != 1 {
@@ -256,7 +256,7 @@ pub fn interpret_smiles_document(
                 message: error.message().to_owned(),
             }
         })?;
-        let (molecule, report) = local.to_parts();
+        let (molecule, report) = local.into_parts();
         let atom_mappings = report
             .atom_mappings()
             .iter()
@@ -322,7 +322,7 @@ struct SmilesProgramInterpretation {
 }
 
 impl SmilesProgramInterpretation {
-    fn to_parts(self) -> (Molecule, SmilesInterpretationReport) {
+    fn into_parts(self) -> (Molecule, SmilesInterpretationReport) {
         (self.molecule, self.report)
     }
 }
@@ -722,7 +722,7 @@ mod tests {
         let document = parse_smiles_document("C.O").expect("valid components");
         let error = interpret_smiles_document(&document)
             .expect("interpret components")
-            .to_molecule()
+            .into_molecule()
             .expect_err("single-component access must reject two components");
         assert_eq!(error.actual(), 2);
     }

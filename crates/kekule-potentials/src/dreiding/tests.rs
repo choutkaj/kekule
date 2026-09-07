@@ -91,7 +91,7 @@ fn qeq_is_prepared_per_molecule_instance() {
                 potential
                     .partial_charge(InstanceAtomId::new(instance, AtomId::new(atom)))
                     .unwrap()
-                    .to_value()
+                    .into_value()
             })
             .sum::<f64>();
         assert!(total.abs() < 1.0e-8);
@@ -131,7 +131,7 @@ fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
                 .evaluate(member.as_model())
                 .unwrap()
                 .energy()
-                .to_value()
+                .into_value()
         })
         .collect::<Vec<_>>();
     assert_eq!(energies.len(), 2);

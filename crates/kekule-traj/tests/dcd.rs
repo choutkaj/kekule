@@ -131,7 +131,7 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
                 .with_source_label("memory.dcd"),
         )
         .unwrap()
-        .to_indexed()
+        .into_indexed()
         .unwrap();
         assert_eq!(indexed.frame_count(), Some(2));
         indexed.read_frame(1, &mut destination).unwrap();
@@ -153,7 +153,7 @@ fn fixed_atom_dcd_reconstructs_complete_frames_and_random_access() {
             .with_source_label("fixed.dcd"),
     )
     .unwrap();
-    let mut reader = reader.to_indexed().unwrap();
+    let mut reader = reader.into_indexed().unwrap();
     let mut buffer = FrameBuffer::new(topology);
     reader.read_frame(1, &mut buffer).unwrap();
     assert_xs_close(&buffer, &[0.0, 1.0, 0.2]);
@@ -193,7 +193,7 @@ fn dcd_exact_frame_and_index_limits_still_allow_clean_eof() {
             .with_source_label("exact-index-limit.dcd"),
     )
     .unwrap()
-    .to_indexed()
+    .into_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
 }
@@ -231,7 +231,7 @@ fn dcd_declared_frame_count_is_strict_in_sequential_and_indexed_modes() {
                 .with_source_label("declared-indexed.dcd"),
         )
         .unwrap()
-        .to_indexed()
+        .into_indexed()
         .err()
         .unwrap();
         assert_eq!(
@@ -253,7 +253,7 @@ fn indexed_dcd_restoration_failure_does_not_publish_or_change_destination() {
             .with_source_label("restore-failure.dcd"),
     )
     .unwrap()
-    .to_indexed()
+    .into_indexed()
     .unwrap();
     let mut destination = FrameBuffer::new(topology);
     set_frame(
@@ -352,7 +352,7 @@ fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
                 .with_source_label("guarded-index.dcd"),
         )
         .unwrap()
-        .to_indexed()
+        .into_indexed()
         .err()
         .unwrap();
         assert_eq!(
@@ -429,7 +429,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
             .with_source_label("count.dcd"),
     )
     .unwrap()
-    .to_indexed()
+    .into_indexed()
     .err()
     .unwrap();
     assert_eq!(
@@ -472,7 +472,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
             .with_source_label("truncated.dcd"),
     )
     .unwrap()
-    .to_indexed()
+    .into_indexed()
     .err()
     .unwrap();
     assert_eq!(
