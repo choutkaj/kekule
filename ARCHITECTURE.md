@@ -495,7 +495,7 @@ bond, stereo-element, and stereo-group ID correspondence and preserves entity
 annotations and represented stereo. It does not import fragment owner properties
 or perception; conflicting property data fails transactionally.
 
-`Molecule::edit()` clones into detached state; `Molecule::to_editor()` moves it.
+`Molecule::edit()` clones into detached state; `Molecule::into_editor()` moves it.
 `finish()` consumes the draft. `validate()` checks a snapshot, and `try_finish()`
 keeps a rollback snapshot so failed publication can return an unchanged editor
 for repair. The latter operations explicitly trade a clone for recoverability.
@@ -511,6 +511,68 @@ perception installation belongs on the published `Molecule`, after `finish()`.
 
 Public unrestricted mutable access to graph internals should not bypass the
 editor and thereby bypass publication validation.
+
+### Coherent system construction and editing
+
+`TopologyBuilder` assembles complete connected molecules, reusable definitions,
+instances, hierarchy, classifications, and static properties. `ModelBuilder`
+coordinates that assembly with explicit positions and realization properties.
+Builders expose inspection, non-consuming `validate()`, consuming `build()`, and
+recoverable `try_build()`. A model builder never exposes unrestricted mutable
+topology staging: instance changes and coordinates are staged together.
+
+`TopologyEditor` changes chemistry, composition, hierarchy, and static properties
+of a coordinate-free system. `ModelEditor` coordinates the same structural editor
+with one realization's positions, cell, and properties. Direct `Model` setters
+remain the ordinary interface for changes that preserve topology. All editors
+support detached drafts, `validate()`, `finish()`, and recoverable `try_finish()`.
+Publication with edit correspondence is available when final identities are needed.
+
+System edits target individual occurrences. Editing one occurrence of a reused
+definition must not change other occurrences. Untouched definitions retain their
+reuse, properties, perception, and classification; mutable molecular drafts are
+created only for affected occurrences. Graph operations and molecular publication
+use the same checked chemical machinery as `MoleculeEditor`.
+
+Deleting a bond may split an occurrence into several connected molecules; adding
+a bond may merge occurrences. System publication partitions final asserted
+connectivity into non-empty connected molecules. An isolated new atom is a valid
+single-atom occurrence. An empty system cannot be published. No inter-instance
+bond survives into a published topology. A `MoleculeEditor` still publishes
+exactly one connected molecule and rejects a disconnected final draft.
+
+Opaque editing handles remain stable within a draft through splitting, merging,
+deletion of other entities, and dense reordering. Deleted and foreign handles are
+rejected. Source identity is resolved explicitly to these handles. Correspondence
+records source/draft-to-published atom, bond, and hierarchy identity; occurrence
+correspondence accommodates splits and merges. It is specific to the transaction,
+not an inferred mapping between arbitrary topologies. Append-only extension
+preserves existing semantic IDs and dense order. Other edits publish deterministic
+ordering and explicit correspondence.
+
+Model atom insertion requires a finite, unit-aware coordinate. Deletion removes
+the corresponding coordinate and incident bonds. Surviving atoms keep their
+coordinates unless explicitly moved. Bond edits do not generate or optimize
+geometry. The model editor does not expose mutable structural staging that can
+bypass this coordination. Geometry-only edits retain the exact shared topology;
+topology edits publish a new immutable snapshot. Existing owners and bound
+selections remain attached to the original snapshot.
+
+Hierarchy remains independent of molecular partitioning. Merging molecules does
+not merge residues/chains; splitting molecules does not duplicate them. Removing
+atoms removes their sites and prunes residues/chains emptied by that removal.
+New atoms may remain outside hierarchy until explicitly assigned. Changed residue
+composition and changed molecular definitions are reclassified unless a fresh
+explicit override is supplied.
+
+Surviving entity annotations follow explicit correspondence; new rows are missing.
+Changed owner and instance annotations are not inherited ambiguously across edits,
+splits, or merges. Incompatible property types or units fail transactionally.
+Transferring an annotation does not assert that an arbitrary derived value remains
+scientifically valid. Generic properties never trigger implicit recomputation.
+No-op publication preserves installed perception and annotations. Complete editor
+property-column getters, insertion, and removal all use live entity order; explicit
+stable-slot tables remain lower-level inspection surfaces.
 
 ## Parsing and interpretation
 
@@ -1530,10 +1592,14 @@ let topology = builder.build()?;
 `into_builder()` is a topology transformation boundary, not hidden mutation. For
 append-only extension it should preserve the existing definitions, instances,
 semantic IDs, authoritative dense order, hierarchy IDs, retained
-classifications, and retained static properties, then append new identities
+classifications, and retained entity properties, then append new identities
 deterministically. A non-consuming clone-based convenience may be added later if
 justified, but direct structural mutation such as `topology.add_molecule(...)`
 is not the canonical API.
+
+Appending to a builder resumed from a published owner clears inherited owner
+annotations. Fresh construction may stage owner annotations for the final object;
+retained per-entity annotations extend with missing rows for appended entities.
 
 The core architecture does not provide a generic topology-remapping framework.
 If a workflow changes topology, geometry or other dense state for the new system

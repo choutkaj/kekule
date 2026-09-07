@@ -360,10 +360,7 @@ fn into_builder_appends_after_preserved_layout_hierarchy_and_properties() {
     assert_eq!(extended.chain_properties(), old_properties.chains());
     assert_eq!(extended.residue_properties(), old_properties.residues());
     assert_eq!(extended.atom_site_properties(), old_properties.atom_sites());
-    assert_eq!(
-        extended.properties().get(&owner_key),
-        Some(&PropertyValue::String("annotated".into()))
-    );
+    assert_eq!(extended.properties().get(&owner_key), None);
     assert_eq!(
         extended.molecule_instance_properties().get(&value_key),
         Some(&PropertyColumn::Int(vec![Some(10), Some(20), None]))

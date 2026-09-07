@@ -217,8 +217,13 @@ impl Molecule {
     }
 
     /// Moves this molecule into an editor without cloning its graph or properties.
-    pub fn to_editor(self) -> MoleculeEditor {
+    pub fn into_editor(self) -> MoleculeEditor {
         MoleculeEditor { working: self }
+    }
+
+    /// Compatibility spelling for [`Self::into_editor`]. This consumes the molecule.
+    pub fn to_editor(self) -> MoleculeEditor {
+        self.into_editor()
     }
 
     #[cfg(test)]
@@ -246,7 +251,7 @@ impl Molecule {
 ///
 /// | Task | Operations |
 /// | --- | --- |
-/// | Start | [`Self::new`], [`Molecule::edit`], [`Molecule::to_editor`] |
+/// | Start | [`Self::new`], [`Molecule::edit`], [`Molecule::into_editor`] |
 /// | Inspect | [`Self::atoms`], [`Self::bonds`], [`Self::neighbors`], [`Self::connected_components`] |
 /// | Change graph | [`Self::replace_atom`], [`Self::replace_bond`], [`Self::delete_atoms`], [`Self::retain_atoms`] |
 /// | Combine fragments | [`Self::append_molecule`] with returned ID mappings |
@@ -299,6 +304,9 @@ impl MoleculeFinishError {
         &self.editor
     }
     pub fn to_editor(self) -> MoleculeEditor {
+        self.into_editor()
+    }
+    pub fn into_editor(self) -> MoleculeEditor {
         *self.editor
     }
 }
@@ -394,10 +402,13 @@ impl MoleculeEditor {
         self.working.properties()
     }
 
+    /// Inspects storage-slot rows, including deleted slots. Complete column
+    /// round trips should use [`Self::atom_property_column`] in live atom order.
     pub const fn atom_properties(&self) -> &PropertyTable {
         self.working.atom_properties()
     }
 
+    /// Inspects storage-slot rows. Use [`Self::bond_property_column`] for live order.
     pub const fn bond_properties(&self) -> &PropertyTable {
         self.working.bond_properties()
     }
@@ -579,8 +590,9 @@ impl MoleculeEditor {
         self.working.append_stereo_group_tombstone()
     }
 
-    /// Publishes represented chemistry, clearing draft perception. Install any
-    /// reconstructed perception on the resulting [`Molecule::install_perception`].
+    /// Publishes represented chemistry. Unchanged chemistry retains its installed
+    /// perception; graph edits invalidate affected perception when they occur.
+    /// Install reconstructed perception on the resulting [`Molecule::install_perception`].
     ///
     /// ```compile_fail
     /// use kekule::core::{MoleculeEditor, Perception};
@@ -620,13 +632,17 @@ fn publish_molecule(
         .validate_connected()
         .map_err(MoleculePublicationError::DisconnectedGraph)?;
     validate_stereo(&molecule).map_err(MoleculePublicationError::InvalidStereo)?;
+    let perceived_graph =
+        (molecule.perception != Perception::default()).then(|| molecule.graph.clone());
     canonicalize_represented_chemistry(&mut molecule).map_err(|error| {
         MoleculePublicationError::FormalChargeOutOfRange {
             atom: error.atom,
             charge: error.charge,
         }
     })?;
-    molecule.clear_perception();
+    if perceived_graph.is_some_and(|graph| graph != molecule.graph) {
+        molecule.clear_perception();
+    }
     Ok(molecule)
 }
 

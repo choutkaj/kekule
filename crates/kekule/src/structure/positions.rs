@@ -10,12 +10,24 @@ use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 /// Construction accepts any compatible length [`crate::units::Unit`] and
 /// converts values once to the library-wide canonical unit. Non-finite values
 /// are rejected.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Positions {
     values: Vec<Point3>,
 }
 
 impl Positions {
+    pub(crate) fn into_canonical_values(self) -> Vec<Point3> {
+        self.values
+    }
+    pub(crate) fn try_reserve(
+        &mut self,
+        additional: usize,
+    ) -> Result<(), std::collections::TryReserveError> {
+        self.values.try_reserve(additional)
+    }
+    pub(crate) fn extend_canonical(&mut self, positions: &Positions) {
+        self.values.extend_from_slice(&positions.values);
+    }
     pub(super) fn from_canonical_values(values: Vec<Point3>) -> Self {
         debug_assert!(values.iter().all(|point| point.is_finite()));
         Self { values }
