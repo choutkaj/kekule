@@ -61,6 +61,22 @@
 //! transactional builders or editors so published values retain their
 //! invariants.
 //!
+//! | Task | Interface | Publication |
+//! | --- | --- | --- |
+//! | Construct or edit one connected molecule | [`core::MoleculeEditor`] | `finish()` |
+//! | Assemble complete molecules and reusable instances | [`topology::TopologyBuilder`] | `build()` |
+//! | Assemble a system with explicit geometry | [`structure::ModelBuilder`] | `build()` |
+//! | Edit system atoms, bonds, components, and hierarchy | [`topology::TopologyEditor`] | `finish()` |
+//! | Edit structure while coordinating one realization | [`structure::ModelEditor`] | `finish()` |
+//! | Change geometry or realization annotations | [`structure::Model`] setters | Immediate checked update |
+//!
+//! Builders and editors offer non-consuming `validate()` and recoverable
+//! `try_build()` / `try_finish()`. Use `edit()` for a detached draft or
+//! `into_editor()` to move an owner into one. System editors resolve source IDs
+//! to stable editing handles and can return publication correspondence through
+//! `finish_with_correspondence()`. A bond deletion can split a system molecule;
+//! a bond addition can join two occurrences. New model atoms require coordinates.
+//!
 //! Coordinate-dependent algorithms consume [`structure::ModelView`]. A model,
 //! ensemble member, trajectory frame, or reusable trajectory buffer can
 //! therefore share kernels without copying coordinates. APIs that require an

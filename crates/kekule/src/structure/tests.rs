@@ -75,59 +75,48 @@ fn canonical_model_constructors_accept_owned_and_shared_topology() {
 }
 
 #[test]
-fn model_builder_rejects_instances_added_without_positions() {
-    let topology = single_atom_topology();
-    let molecule = topology.molecules().next().unwrap();
-    for staged_instances in [0, 1] {
-        let mut builder = ModelBuilder::new();
-        for _ in 0..staged_instances {
-            builder
-                .add_molecule(molecule.molecule(), &single_position(1.0))
-                .unwrap();
-        }
-        let definition = builder
-            .add_molecule_definition(molecule.molecule())
-            .unwrap();
-        builder
-            .topology_builder_mut()
-            .add_instance(definition)
-            .unwrap();
-
-        assert_eq!(
-            builder.build(),
-            Err(ModelBuildError::Model(Box::new(
-                ModelError::PositionCountMismatch {
-                    expected: staged_instances + 1,
-                    actual: staged_instances,
-                }
-            )))
-        );
-    }
-}
-
-#[test]
-fn model_builder_rejects_excess_positions_after_topology_replacement() {
+fn model_builder_rejects_instance_position_mismatch_before_mutation() {
     let topology = single_atom_topology();
     let molecule = topology.molecules().next().unwrap();
     let mut builder = ModelBuilder::new();
-    for x in [1.0, 2.0] {
-        builder
-            .add_molecule(molecule.molecule(), &single_position(x))
-            .unwrap();
-    }
-    let mut replacement = TopologyBuilder::new();
-    replacement.add_molecule(molecule.molecule()).unwrap();
-    *builder.topology_builder_mut() = replacement;
-
+    let definition = builder
+        .add_molecule_definition(molecule.molecule())
+        .unwrap();
+    let before = builder.clone();
     assert_eq!(
-        builder.build(),
-        Err(ModelBuildError::Model(Box::new(
-            ModelError::PositionCountMismatch {
+        builder.add_instance(definition, &Positions::zeros(0)),
+        Err(ModelBuildError::InstancePositionCountMismatch {
+            expected: 1,
+            actual: 0
+        })
+    );
+    assert_eq!(builder, before);
+    builder
+        .add_instance(definition, &single_position(1.0))
+        .unwrap();
+    assert_eq!(builder.build().unwrap().atom_count(), 1);
+}
+
+#[test]
+fn model_builder_rejects_excess_replacement_positions_before_mutation() {
+    let topology = single_atom_topology();
+    let molecule = topology.molecules().next().unwrap();
+    let mut builder = ModelBuilder::new();
+    builder
+        .add_molecule(molecule.molecule(), &single_position(1.0))
+        .unwrap();
+    let before = builder.clone();
+    assert_eq!(
+        builder.set_positions(Quantity::new(vec![Point3::origin(); 2], NANOMETER)),
+        Err(ModelBuildError::Model(Box::new(ModelError::Position(
+            PositionError::PositionCountMismatch {
                 expected: 1,
                 actual: 2
             }
-        )))
+        ))))
     );
+    assert_eq!(builder, before);
+    assert_eq!(builder.build().unwrap().positions(), &single_position(1.0));
 }
 
 #[test]

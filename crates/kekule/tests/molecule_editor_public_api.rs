@@ -192,7 +192,7 @@ fn property_columns_use_live_order_and_batches_preserve_state_on_error() {
         editor
             .remove_bond_property_column(&key("score"))
             .unwrap()
-            .value(bond.index())
+            .value(0)
             .unwrap(),
         Some(PropertyValue::Int(7))
     );
