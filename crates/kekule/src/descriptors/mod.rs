@@ -454,7 +454,7 @@ mod tests {
         let document = crate::smiles::parse_str("[NH4+].[Cl-]").expect("salt parses");
         let components = crate::smiles::interpret(&document)
             .expect("salt interprets")
-            .to_molecules();
+            .into_molecules();
         let formulas = components
             .iter()
             .map(|component| {

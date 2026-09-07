@@ -21,7 +21,7 @@ use kekule_traj::io::{read_trajectory, write_trajectory};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
-    let topology = document.interpret()?.to_topology();
+    let topology = document.interpret()?.into_topology();
     let trajectory = read_trajectory("trajectory.xtc", topology.clone())?;
 
     println!("Frames: {}", trajectory.len());

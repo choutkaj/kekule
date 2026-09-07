@@ -41,7 +41,7 @@ impl SmilesDocument {
     pub fn to_molecules(
         &self,
     ) -> Result<Vec<crate::core::Molecule>, super::interpret::SmilesInterpretError> {
-        Ok(self.interpret()?.to_molecules())
+        Ok(self.interpret()?.into_molecules())
     }
 }
 

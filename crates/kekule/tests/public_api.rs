@@ -34,7 +34,7 @@ fn smiles_convenience_preserves_cardinality_and_matches_explicit_pipeline() {
     let document = smiles::parse_str("[Na+].[Cl-]").expect("salt parses");
     let explicit = smiles::interpret(&document)
         .expect("salt interprets explicitly")
-        .to_molecules();
+        .into_molecules();
     assert_eq!(salt, explicit);
 }
 
@@ -94,7 +94,7 @@ fn smiles_default_options_and_topology_projection_are_consistent() {
         .molecules()
         .all(|molecule| molecule.perception() == &kekule::core::Perception::default()));
 
-    let topology = interpretation.to_topology().expect("topology builds");
+    let topology = interpretation.into_topology().expect("topology builds");
     assert_eq!(topology.instance_count(), 2);
     assert_eq!(topology.atom_count(), 4);
     assert_eq!(
@@ -136,7 +136,7 @@ fn smiles_writers_remain_available_through_the_format_namespace() {
 fn sdf_preserves_record_boundaries_and_component_order() {
     let input = "first\nkekule\n\n  2  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\nM  END\n$$$$\nsecond\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0\nM  END\n$$$$\n";
     let document = sdf::parse_str(input).unwrap();
-    let records = sdf::interpret(&document).unwrap().to_records();
+    let records = sdf::interpret(&document).unwrap().into_records();
     assert_eq!(records.len(), 2);
     assert_eq!(records[0].title(), "first");
     assert_eq!(records[0].molecules().len(), 2);

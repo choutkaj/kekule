@@ -234,14 +234,14 @@ fn position_updates_are_complete_finite_and_transactional() {
         model.set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
         Err(PositionError::PositionCountMismatch { .. })
     ));
-    assert_eq!(model.positions().values().to_value(), original.as_slice());
+    assert_eq!(model.positions().values().into_value(), original.as_slice());
     let mut invalid = original.clone();
     invalid[0] = Point3::new(f64::INFINITY, 0.0, 0.0);
     assert!(matches!(
         model.set_positions(Quantity::new(&invalid, ANGSTROM)),
         Err(PositionError::NonFinitePosition { index: 0 })
     ));
-    assert_eq!(model.positions().values().to_value(), original.as_slice());
+    assert_eq!(model.positions().values().into_value(), original.as_slice());
 }
 
 #[test]
@@ -259,7 +259,7 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
     )
     .unwrap();
     let initial = potential.evaluate(model.view()).unwrap();
-    assert!((initial.energy().to_value() - 50.0).abs() < 1.0e-10);
+    assert!((initial.energy().into_value() - 50.0).abs() < 1.0e-10);
     let result = minimize(&model, &mut potential, MinimizeOptions::default()).unwrap();
     assert!(result.final_energy < result.initial_energy);
     assert!((model.positions().values().value()[1].x - 0.2).abs() < 1.0e-15);

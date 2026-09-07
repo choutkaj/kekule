@@ -557,7 +557,7 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
             let document = molfile::parse_str(&input).expect("source syntax parses");
             let interpreted = molfile::interpret(&document).expect("source declaration interprets");
             assert_eq!(interpreted.report().created_stereo_elements().len(), 1);
-            let molecule = interpreted.to_molecule();
+            let molecule = interpreted.into_molecule();
             let center = molecule.atom(AtomId::new(0)).expect("stereo center");
             assert_eq!(
                 center.hydrogens,

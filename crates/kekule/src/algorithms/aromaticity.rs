@@ -650,7 +650,7 @@ mod tests {
         let (mut molecule, report) = document
             .interpret()
             .expect("interprets")
-            .to_parts()
+            .into_parts()
             .expect("one component");
         let explicit_single_offset = source.find('-').expect("explicit single marker") + 1;
         let protected_single = report

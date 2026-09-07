@@ -80,9 +80,9 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     assert!(interpreted
         .topology()
         .same_layout(interpreted.model().topology()));
-    let owned_topology = method_default.clone().to_topology();
-    let owned_model = method_default.clone().to_model();
-    let owned_molecules = method_default.to_molecules();
+    let owned_topology = method_default.clone().into_topology();
+    let owned_model = method_default.clone().into_model();
+    let owned_molecules = method_default.into_molecules();
     assert!(owned_topology.same_layout(owned_model.topology()));
     assert_eq!(
         owned_topology
@@ -147,7 +147,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         MmcifWriteOptions::default(),
     )?;
     assert!(written.contains("1 polymer"));
-    let model = interpreted.to_model();
+    let model = interpreted.into_model();
     assert_eq!(model.topology().instance_count(), 1);
     assert_eq!(model.positions().len(), 2);
 

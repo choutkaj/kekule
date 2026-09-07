@@ -209,7 +209,7 @@ impl FrameBuffer {
     pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), FrameError> {
         self.time = match time {
             Some(time) => {
-                let time = time.to_unit(CANONICAL_TIME_UNIT)?;
+                let time = time.into_unit(CANONICAL_TIME_UNIT)?;
                 if !time.value().is_finite() {
                     return Err(FrameError::NonFiniteTime);
                 }
@@ -306,7 +306,7 @@ impl FrameBuffer {
         let time = data
             .time
             .map(|time| {
-                let time = time.to_unit(CANONICAL_TIME_UNIT)?;
+                let time = time.into_unit(CANONICAL_TIME_UNIT)?;
                 if !time.value().is_finite() {
                     return Err(FrameError::NonFiniteTime);
                 }

@@ -18,7 +18,7 @@
 //! use kekule_traj::io::read_trajectory;
 //!
 //! let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
-//! let topology = document.interpret()?.to_topology();
+//! let topology = document.interpret()?.into_topology();
 //! let mut trajectory = read_trajectory("trajectory.xtc", topology.clone())?;
 //! trajectory.make_molecules_whole_in_place()?;
 //!
@@ -41,7 +41,7 @@
 //!     TrajectoryReader,
 //! };
 //! let topology = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?
-//!     .interpret()?.to_topology();
+//!     .interpret()?.into_topology();
 //! let mut reader = open_trajectory("trajectory.xtc", topology.clone())?;
 //! let mut frame = reader.frame_buffer();
 //! let imager = MoleculeImager::new(topology.clone());
@@ -432,7 +432,7 @@ struct Lattice {
 impl Lattice {
     fn new(cell: Option<PeriodicCell>, frame: usize) -> Result<Self, PeriodicError> {
         let cell = cell.ok_or(PeriodicError::MissingCell { frame })?;
-        let [a, b, c] = cell.vectors().to_value();
+        let [a, b, c] = cell.vectors().into_value();
         let inverse_volume = 1.0 / a.dot(b.cross(c));
         let reciprocal = [
             b.cross(c) * inverse_volume,

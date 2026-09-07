@@ -124,7 +124,7 @@ pub fn minimize(
             .map(|(gradient, direction)| gradient.dot(*direction))
             .sum::<f64>();
         let current_positions = working.positions().values().value().to_vec();
-        let current_energy = evaluation.energy().to_value();
+        let current_energy = evaluation.energy().into_value();
         let mut step = validated.initial_step;
         let mut accepted = None;
 
@@ -152,7 +152,7 @@ pub fn minimize(
             };
             let armijo_limit =
                 current_energy + options.armijo_coefficient * step * directional_derivative;
-            if trial.energy().to_value() <= armijo_limit {
+            if trial.energy().into_value() <= armijo_limit {
                 accepted = Some(trial);
                 break;
             }

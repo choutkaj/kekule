@@ -421,7 +421,7 @@ impl MmcifInterpretation {
             .map(|occurrence| occurrence.molecule())
     }
 
-    pub fn to_molecules(self) -> Vec<Molecule> {
+    pub fn into_molecules(self) -> Vec<Molecule> {
         self.model
             .topology()
             .molecules()
@@ -430,15 +430,15 @@ impl MmcifInterpretation {
     }
 
     /// Retains shared ownership of the model's exact topology allocation.
-    pub fn to_topology(self) -> Arc<Topology> {
+    pub fn into_topology(self) -> Arc<Topology> {
         self.model.shared_topology()
     }
 
-    pub fn to_model(self) -> Model {
+    pub fn into_model(self) -> Model {
         self.model
     }
 
-    pub fn to_parts(self) -> (Model, MmcifInterpretationReport) {
+    pub fn into_parts(self) -> (Model, MmcifInterpretationReport) {
         (self.model, self.report)
     }
 }
@@ -520,11 +520,11 @@ impl MmcifEnsembleInterpretation {
         self.ensemble.topology()
     }
 
-    pub fn to_ensemble(self) -> Ensemble {
+    pub fn into_ensemble(self) -> Ensemble {
         self.ensemble
     }
 
-    pub fn to_parts(self) -> (Ensemble, Vec<MmcifInterpretationReport>) {
+    pub fn into_parts(self) -> (Ensemble, Vec<MmcifInterpretationReport>) {
         (self.ensemble, self.reports)
     }
 }

@@ -1211,7 +1211,7 @@ fn ensemble_block_interpretation_matches_exactly_one_document_helper() {
         .same_layout(method_default.ensemble().topology()));
     assert!(method_default
         .clone()
-        .to_ensemble()
+        .into_ensemble()
         .topology()
         .same_layout(method_default.topology()));
     assert!(from_document
@@ -2045,7 +2045,7 @@ covale A N 1 A CA 1 doub
         MmcifInterpretOptions::default(),
     )
     .unwrap()
-    .to_parts();
+    .into_parts();
     let topology = original.shared_topology();
     let first_atom = topology.atom_ids()[0];
     original.set_occupancy(first_atom, Some(0.625)).unwrap();

@@ -6,6 +6,28 @@ This document is the normative architecture contract for `kekule`. It defines
 the ownership, semantic boundaries, and invariants of the core molecular data
 model. Detailed API behavior belongs in Rustdoc and tests.
 
+## Conversion naming and ownership
+
+Conversion names follow Rust ownership conventions throughout all crates:
+
+| Form | Contract |
+| --- | --- |
+| `as_*` | Produces a cheap borrowed view without copying the underlying data. |
+| `to_*` | Produces a converted or owned result while leaving the source available. |
+| `into_*` | Takes ownership of the source and transfers or converts its data. |
+
+`into_*` does not promise zero allocation: validation, transformation, or shared
+storage may still require work. Small `Copy` views may take `self` by value and
+still use `as_*` or `to_*`, since their underlying owner remains borrowed.
+Ordinary getters keep their semantic names (`model()`, `topology()`, `value()`).
+Operations keep their verbs (`edit()`, `build()`, `finish()`, `interpret()`).
+
+For editing, `edit()` creates a detached draft and `into_editor()` consumes the
+owner. A clone-based `to_builder()` and consuming `into_builder()` have distinct
+ownership contracts. Compatibility aliases are not retained when a conversion is
+renamed. Public API tests and Clippy's `wrong_self_convention` check enforce this
+convention; crates must not suppress that lint globally.
+
 `kekule` is a pure-Rust foundation for cheminformatics, structural
 bioinformatics, molecular structure handling, and molecular modelling.
 
@@ -495,7 +517,7 @@ bond, stereo-element, and stereo-group ID correspondence and preserves entity
 annotations and represented stereo. It does not import fragment owner properties
 or perception; conflicting property data fails transactionally.
 
-`Molecule::edit()` clones into detached state; `Molecule::to_editor()` moves it.
+`Molecule::edit()` clones into detached state; `Molecule::into_editor()` moves it.
 `finish()` consumes the draft. `validate()` checks a snapshot, and `try_finish()`
 keeps a rollback snapshot so failed publication can return an unchanged editor
 for repair. The latter operations explicitly trade a clone for recoverability.
@@ -511,6 +533,68 @@ perception installation belongs on the published `Molecule`, after `finish()`.
 
 Public unrestricted mutable access to graph internals should not bypass the
 editor and thereby bypass publication validation.
+
+### Coherent system construction and editing
+
+`TopologyBuilder` assembles complete connected molecules, reusable definitions,
+instances, hierarchy, classifications, and static properties. `ModelBuilder`
+coordinates that assembly with explicit positions and realization properties.
+Builders expose inspection, non-consuming `validate()`, consuming `build()`, and
+recoverable `try_build()`. A model builder never exposes unrestricted mutable
+topology staging: instance changes and coordinates are staged together.
+
+`TopologyEditor` changes chemistry, composition, hierarchy, and static properties
+of a coordinate-free system. `ModelEditor` coordinates the same structural editor
+with one realization's positions, cell, and properties. Direct `Model` setters
+remain the ordinary interface for changes that preserve topology. All editors
+support detached drafts, `validate()`, `finish()`, and recoverable `try_finish()`.
+Publication with edit correspondence is available when final identities are needed.
+
+System edits target individual occurrences. Editing one occurrence of a reused
+definition must not change other occurrences. Untouched definitions retain their
+reuse, properties, perception, and classification; mutable molecular drafts are
+created only for affected occurrences. Graph operations and molecular publication
+use the same checked chemical machinery as `MoleculeEditor`.
+
+Deleting a bond may split an occurrence into several connected molecules; adding
+a bond may merge occurrences. System publication partitions final asserted
+connectivity into non-empty connected molecules. An isolated new atom is a valid
+single-atom occurrence. An empty system cannot be published. No inter-instance
+bond survives into a published topology. A `MoleculeEditor` still publishes
+exactly one connected molecule and rejects a disconnected final draft.
+
+Opaque editing handles remain stable within a draft through splitting, merging,
+deletion of other entities, and dense reordering. Deleted and foreign handles are
+rejected. Source identity is resolved explicitly to these handles. Correspondence
+records source/draft-to-published atom, bond, and hierarchy identity; occurrence
+correspondence accommodates splits and merges. It is specific to the transaction,
+not an inferred mapping between arbitrary topologies. Append-only extension
+preserves existing semantic IDs and dense order. Other edits publish deterministic
+ordering and explicit correspondence.
+
+Model atom insertion requires a finite, unit-aware coordinate. Deletion removes
+the corresponding coordinate and incident bonds. Surviving atoms keep their
+coordinates unless explicitly moved. Bond edits do not generate or optimize
+geometry. The model editor does not expose mutable structural staging that can
+bypass this coordination. Geometry-only edits retain the exact shared topology;
+topology edits publish a new immutable snapshot. Existing owners and bound
+selections remain attached to the original snapshot.
+
+Hierarchy remains independent of molecular partitioning. Merging molecules does
+not merge residues/chains; splitting molecules does not duplicate them. Removing
+atoms removes their sites and prunes residues/chains emptied by that removal.
+New atoms may remain outside hierarchy until explicitly assigned. Changed residue
+composition and changed molecular definitions are reclassified unless a fresh
+explicit override is supplied.
+
+Surviving entity annotations follow explicit correspondence; new rows are missing.
+Changed owner and instance annotations are not inherited ambiguously across edits,
+splits, or merges. Incompatible property types or units fail transactionally.
+Transferring an annotation does not assert that an arbitrary derived value remains
+scientifically valid. Generic properties never trigger implicit recomputation.
+No-op publication preserves installed perception and annotations. Complete editor
+property-column getters, insertion, and removal all use live entity order; explicit
+stable-slot tables remain lower-level inspection surfaces.
 
 ## Parsing and interpretation
 
@@ -646,17 +730,17 @@ projections from that same interpreted state.
 
 `MolfileInterpretation` owns this final `Model` and one source report per molecule
 instance. Its `model()` and `topology()` accessors borrow that state;
-`to_model()` and `to_topology()` are infallible projections. Model assembly errors
-are interpretation errors. `reports()` and `to_parts()` retain the component-local
+`into_model()` and `into_topology()` are infallible consuming projections. Model assembly errors
+are interpretation errors. `reports()` and `into_parts()` retain the component-local
 source mappings without a second owner of the molecular definitions or positions.
 
 `SdfInterpretation::reports()` borrows reports directly from its records. The
 document interpretation does not own duplicate copies of record diagnostics;
-consuming `to_records()` retains each record's report alongside its model.
+consuming `into_records()` retains each record's report alongside its model.
 
 In particular, `SdfRecordInterpretation` must retain geometry. It must not eagerly
 collapse to only `Vec<Molecule>` plus SDF data fields and thereby make
-`to_model()` require a second interpretation path. Conceptually its shape is:
+`into_model()` require a second interpretation path. Conceptually its shape is:
 
 ```text
 SdfRecordInterpretation
@@ -684,21 +768,20 @@ does not skip validation of source rows or alternate locations in omitted models
 
 ### Borrowed accessors and owned projections
 
-Interpretation APIs should consistently distinguish non-consuming access from
-owned projection using Kekule's established naming convention:
+Interpretation APIs distinguish borrowed access from consuming projection:
 
 ```text
 interpretation.model()        -> borrowed Model access
 interpretation.topology()     -> borrowed Topology access
 interpretation.molecules()    -> borrowed/iterated Molecule access
 
-interpretation.to_model()     -> consume/project to owned Model
-interpretation.to_topology()  -> consume/project to shared-owned/owned Topology
-interpretation.to_molecules() -> consume/project to owned Vec<Molecule>
+interpretation.into_model()     -> consume/project to owned Model
+interpretation.into_topology()  -> consume/project to shared-owned/owned Topology
+interpretation.into_molecules() -> consume/project to owned Vec<Molecule>
 ```
 
-The non-`to_` family leaves the interpretation available so callers may continue
-to inspect reports, mappings, provenance, and metadata. The consuming `to_*`
+The getters leave the interpretation available so callers may continue
+to inspect reports, mappings, provenance, and metadata. The consuming `into_*`
 family is for callers that are finished with the format-specific interpretation
 wrapper and want to retain only a canonical Kekule object.
 
@@ -724,7 +807,7 @@ The explicit path remains available:
 ```rust
 let document = smiles::parse_str("CCO.[Na+]")?;
 let interpretation = document.interpret()?;
-let molecules = interpretation.to_molecules();
+let molecules = interpretation.into_molecules();
 ```
 
 For SDF:
@@ -799,8 +882,9 @@ not carry a semantic guarantee that it is the chemically "main" component. A
 caller may choose the first component if that is its desired policy, or apply an
 explicit largest/organic/main-component policy separately.
 
-An owned conversion should therefore be named `to_molecules()` whenever the
-source can produce several components. A strict `to_molecule()` convenience is
+An owned conversion uses the plural `to_molecules()` or `into_molecules()` whenever
+the source can produce several components, according to its ownership contract.
+A strict `to_molecule()` or `into_molecule()` convenience is
 appropriate only when the operation either guarantees one connected molecule or
 fails loudly unless exactly one component exists. No convenience may silently
 select the first component.
@@ -814,15 +898,15 @@ is:
 Interpretation
   richest state: Model + format report/metadata
 
-  -> molecules() / to_molecules()
+  -> molecules() / into_molecules()
        discard geometry and system organization
        retain the same canonical connected chemistry
 
-  -> topology() / to_topology()
+  -> topology() / into_topology()
        discard realization-dependent state
        retain system molecule instances, hierarchy, static properties, and order
 
-  -> model() / to_model()
+  -> model() / into_model()
        retain the full one-realization canonical state
 ```
 
@@ -834,8 +918,9 @@ resolution, atom correspondence, or other format semantics before being
 discarded.
 
 The chemistry and geometry paths must share one publication pipeline. An
-implementation must not independently reinterpret chemistry for `to_molecules()`,
-`to_topology()`, and `to_model()`.
+implementation must not independently reinterpret chemistry for `into_molecules()`,
+`into_topology()`, and `into_model()`. Borrowed document conveniences (`to_*`)
+interpret once and delegate to these same consuming projections.
 
 Detached `Positions` access is not a headline parsing workflow. `Positions` is
 deliberately topology-agnostic dense storage whose semantic meaning depends on
@@ -856,9 +941,9 @@ interpretation.model().topology()
     has the same complete static layout as
 interpretation.topology()
 
-interpretation.to_model().topology()
+interpretation.into_model().topology()
     has the same complete static layout as
-interpretation.to_topology()
+interpretation.into_topology()
 
 interpretation.molecules()
     corresponds exactly to the molecule instances of interpretation.topology()
@@ -872,7 +957,7 @@ perception policy.
 
 If a format constructs or preserves hierarchy, the topology obtained directly
 from the interpretation and the topology inside its model must carry the same
-hierarchy. `to_topology()` must not construct a bare topology while `to_model()`
+hierarchy. `into_topology()` must not construct a bare topology while `into_model()`
 secretly adds hierarchy.
 
 ### Multi-record and multi-block containers
@@ -1530,10 +1615,14 @@ let topology = builder.build()?;
 `into_builder()` is a topology transformation boundary, not hidden mutation. For
 append-only extension it should preserve the existing definitions, instances,
 semantic IDs, authoritative dense order, hierarchy IDs, retained
-classifications, and retained static properties, then append new identities
+classifications, and retained entity properties, then append new identities
 deterministically. A non-consuming clone-based convenience may be added later if
 justified, but direct structural mutation such as `topology.add_molecule(...)`
 is not the canonical API.
+
+Appending to a builder resumed from a published owner clears inherited owner
+annotations. Fresh construction may stage owner annotations for the final object;
+retained per-entity annotations extend with missing rows for appended entities.
 
 The core architecture does not provide a generic topology-remapping framework.
 If a workflow changes topology, geometry or other dense state for the new system

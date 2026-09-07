@@ -287,7 +287,7 @@ impl Trajectory {
                 }
                 continue;
             };
-            let value = time.to_value();
+            let value = time.into_value();
             if previous.is_some_and(|previous| value < previous) {
                 return Err(TrajectoryError::NonMonotonicTime { frame: index });
             }
