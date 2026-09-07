@@ -124,6 +124,29 @@ pub enum PropertyColumn {
 }
 
 impl PropertyColumn {
+    /// Checked expansion from live entity order into a private editor slot space.
+    pub(crate) fn into_editor_slots(
+        self,
+        live_slots: &[usize],
+        slot_count: usize,
+    ) -> Result<Self, PropertyError> {
+        if self.len() != live_slots.len() {
+            return Err(PropertyError::LengthMismatch {
+                expected: live_slots.len(),
+                actual: self.len(),
+            });
+        }
+        self.validate()?;
+        let mut indices = vec![None; slot_count];
+        for (index, &slot) in live_slots.iter().enumerate() {
+            let destination = indices.get_mut(slot).ok_or(PropertyError::InvalidIndex {
+                len: slot_count,
+                index: slot,
+            })?;
+            *destination = Some(index);
+        }
+        Ok(self.select_optional_indices(&indices))
+    }
     pub fn len(&self) -> usize {
         match self {
             Self::Bool(values) => values.len(),
@@ -932,7 +955,7 @@ impl Properties {
     ) -> Result<(), PropertyError> {
         let value = value
             .map(|value| {
-                let value = value.to_unit(SQUARE_NANOMETER)?.to_value();
+                let value = value.into_unit(SQUARE_NANOMETER)?.into_value();
                 PropertyValue::real(value, SQUARE_NANOMETER)
             })
             .transpose()?;

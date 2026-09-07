@@ -730,7 +730,7 @@ fn memory_reader_and_writer_round_trip_validated_frames() {
 
     let mut writer = MemoryTrajectoryWriter::new(Arc::clone(&topology));
     writer.write_frame(buffer.frame_view()).unwrap();
-    let written = writer.to_trajectory();
+    let written = writer.into_trajectory();
     assert_eq!(written.len(), 1);
     assert_eq!(written.frames().next().unwrap().step(), Some(9));
     assert_eq!(

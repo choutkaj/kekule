@@ -217,7 +217,7 @@ fn indexed_xyz_matches_sequential_and_random_reads_preserve_cursor() {
             .with_source_label("indexed.xyz"),
     )
     .unwrap();
-    let mut reader = reader.to_indexed().unwrap();
+    let mut reader = reader.into_indexed().unwrap();
     assert_eq!(reader.frame_count(), Some(2));
     let mut buffer = FrameBuffer::new(topology);
 
@@ -544,7 +544,7 @@ fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
             .with_source_label("exact-index-limit.xyz"),
     )
     .unwrap()
-    .to_indexed()
+    .into_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
 }
@@ -601,7 +601,7 @@ fn xyz_limits_probe_but_do_not_parse_or_consume_frame_n_plus_one() {
                 .with_source_label("guarded-index.xyz"),
         )
         .unwrap()
-        .to_indexed()
+        .into_indexed()
         .err()
         .unwrap();
         assert_eq!(

@@ -125,7 +125,7 @@ impl MemoryTrajectoryWriter {
         }
     }
 
-    pub fn to_trajectory(self) -> Trajectory {
+    pub fn into_trajectory(self) -> Trajectory {
         self.trajectory
     }
 }

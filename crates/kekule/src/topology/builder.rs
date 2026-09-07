@@ -45,11 +45,107 @@ pub struct TopologyBuilder {
     properties: Properties,
     molecule_class_overrides: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
     residue_class_overrides: BTreeMap<ResidueId, ResidueClass>,
+    extending_topology: bool,
 }
 
 impl TopologyBuilder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(super) fn install_properties(&mut self, properties: Properties) {
+        self.properties = properties;
+    }
+
+    pub(crate) fn from_shared(topology: std::sync::Arc<Topology>) -> Self {
+        match std::sync::Arc::try_unwrap(topology) {
+            Ok(topology) => Self::from_topology(topology),
+            Err(topology) => Self {
+                definitions: topology.definitions.clone(),
+                instances: topology.instances.clone(),
+                hierarchy: topology.hierarchy.clone(),
+                properties: topology.properties.clone(),
+                molecule_class_overrides: topology
+                    .definitions
+                    .iter()
+                    .map(|d| (d.id(), d.class()))
+                    .collect(),
+                residue_class_overrides: topology
+                    .hierarchy
+                    .residues()
+                    .map(|(id, r)| (id, r.class()))
+                    .collect(),
+                extending_topology: true,
+            },
+        }
+    }
+
+    pub fn definition_count(&self) -> usize {
+        self.definitions.len()
+    }
+    pub fn instance_count(&self) -> usize {
+        self.instances.len()
+    }
+    pub fn atom_count(&self) -> usize {
+        self.instances
+            .iter()
+            .map(|i| {
+                self.definitions[i.definition.index()]
+                    .molecule()
+                    .atom_count()
+            })
+            .sum()
+    }
+    pub fn bond_count(&self) -> usize {
+        self.instances
+            .iter()
+            .map(|i| {
+                self.definitions[i.definition.index()]
+                    .molecule()
+                    .bond_count()
+            })
+            .sum()
+    }
+    pub fn definitions(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (MoleculeDefinitionId, &MoleculeDefinition)> {
+        self.definitions.iter().map(|d| (d.id(), d))
+    }
+    pub fn instances(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &MoleculeInstance)> {
+        self.instances.iter().map(|i| (i.id(), i))
+    }
+    pub fn atom_ids(&self) -> impl Iterator<Item = InstanceAtomId> + '_ {
+        self.instances.iter().flat_map(|i| {
+            self.definitions[i.definition.index()]
+                .molecule()
+                .atom_ids()
+                .map(|a| i.qualify_atom(a))
+        })
+    }
+    pub fn bond_ids(&self) -> impl Iterator<Item = super::InstanceBondId> + '_ {
+        self.instances.iter().flat_map(|i| {
+            self.definitions[i.definition.index()]
+                .molecule()
+                .bond_ids()
+                .map(|b| i.qualify_bond(b))
+        })
+    }
+    /// Inspects stored annotations; hierarchy-domain dimensions synchronize at
+    /// mutable table access or publication after raw hierarchy staging.
+    pub fn properties(&self) -> &Properties {
+        &self.properties
+    }
+    /// Validates a cloned snapshot without consuming staged state.
+    pub fn validate(&self) -> Result<(), TopologyBuildError> {
+        self.clone().build().map(|_| ())
+    }
+    pub fn try_build(self) -> Result<Topology, TopologyBuilderError> {
+        self.clone().build().map_err(|error| TopologyBuilderError {
+            error,
+            builder: Box::new(self),
+        })
     }
 
     pub(super) fn from_topology(topology: Topology) -> Self {
@@ -75,6 +171,7 @@ impl TopologyBuilder {
             properties,
             molecule_class_overrides,
             residue_class_overrides,
+            extending_topology: true,
         }
     }
 
@@ -221,6 +318,9 @@ impl TopologyBuilder {
             TopologyIdKind::MoleculeInstance,
         )?;
         self.instances.push(MoleculeInstance { id, definition });
+        if self.extending_topology {
+            self.properties.clear_owner();
+        }
         Ok(id)
     }
 
@@ -421,7 +521,38 @@ impl TopologyBuilder {
             id: instance,
             definition,
         });
+        if self.extending_topology {
+            self.properties.clear_owner();
+        }
         Ok((definition, instance))
+    }
+}
+
+/// Failed topology construction retaining the original builder for repair.
+#[derive(Debug)]
+pub struct TopologyBuilderError {
+    error: TopologyBuildError,
+    builder: Box<TopologyBuilder>,
+}
+impl TopologyBuilderError {
+    pub fn error(&self) -> &TopologyBuildError {
+        &self.error
+    }
+    pub fn builder(&self) -> &TopologyBuilder {
+        &self.builder
+    }
+    pub fn into_builder(self) -> TopologyBuilder {
+        *self.builder
+    }
+}
+impl fmt::Display for TopologyBuilderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(f)
+    }
+}
+impl std::error::Error for TopologyBuilderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
     }
 }
 

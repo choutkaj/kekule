@@ -99,6 +99,9 @@ impl MoleculeEditor {
     }
 
     pub fn set_bond_order(&mut self, id: BondId, order: BondOrder) -> Result<()> {
+        if self.bond(id)?.order == order {
+            return Ok(());
+        }
         self.bond_mut(id)?.set_order(order);
         Ok(())
     }
@@ -197,11 +200,57 @@ impl MoleculeEditor {
     }
 
     pub fn remove_atom_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
-        self.working.properties.atoms_mut().remove(key)
+        let previous = self.atom_property_column(key).expect("live atom slots");
+        self.working.properties.atoms_mut().remove(key);
+        previous
     }
 
     pub fn remove_bond_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
-        self.working.properties.bonds_mut().remove(key)
+        let previous = self.bond_property_column(key).expect("live bond slots");
+        self.working.properties.bonds_mut().remove(key);
+        previous
+    }
+
+    /// Copies a column in live atom order, matching insertion and removal.
+    pub fn atom_property_column(&self, key: &PropertyKey) -> Result<Option<PropertyColumn>> {
+        live_column(
+            self.atom_properties(),
+            key,
+            self.atom_ids().map(AtomId::index),
+        )
+    }
+
+    /// Copies a column in live bond order, matching insertion and removal.
+    pub fn bond_property_column(&self, key: &PropertyKey) -> Result<Option<PropertyColumn>> {
+        live_column(
+            self.bond_properties(),
+            key,
+            self.bond_ids().map(BondId::index),
+        )
+    }
+
+    /// Inserts a live-order column, returning the previous column in live order.
+    pub fn insert_atom_property_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>> {
+        let previous = self.atom_property_column(&key)?;
+        let slots = live_column_slots(self.working.graph.atoms.iter().map(Option::is_some));
+        set_live_column(self.working.properties.atoms_mut(), key, column, &slots)?;
+        Ok(previous)
+    }
+
+    /// Bond counterpart of [`Self::insert_atom_property_column`].
+    pub fn insert_bond_property_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>> {
+        let previous = self.bond_property_column(&key)?;
+        let slots = live_column_slots(self.working.graph.bonds.iter().map(Option::is_some));
+        set_live_column(self.working.properties.bonds_mut(), key, column, &slots)?;
+        Ok(previous)
     }
 
     /// Replaces a complete column in current live [`Self::atom_ids`] order.
@@ -212,8 +261,7 @@ impl MoleculeEditor {
         key: PropertyKey,
         column: PropertyColumn,
     ) -> Result<()> {
-        let slots = live_column_slots(self.working.graph.atoms.iter().map(Option::is_some));
-        set_live_column(self.working.properties.atoms_mut(), key, column, &slots)
+        self.insert_atom_property_column(key, column).map(|_| ())
     }
 
     /// Bond counterpart of [`Self::set_atom_property_column`], in live bond order.
@@ -222,8 +270,7 @@ impl MoleculeEditor {
         key: PropertyKey,
         column: PropertyColumn,
     ) -> Result<()> {
-        let slots = live_column_slots(self.working.graph.bonds.iter().map(Option::is_some));
-        set_live_column(self.working.properties.bonds_mut(), key, column, &slots)
+        self.insert_bond_property_column(key, column).map(|_| ())
     }
 
     /// Replaces a relation group without changing its ID. All membership checks
@@ -281,6 +328,11 @@ impl MoleculeEditor {
     /// A temporary disconnected result is allowed; connect it before finishing.
     /// This compound operation stages a clone of the target for rollback on error.
     pub fn append_molecule(&mut self, source: &Molecule) -> Result<MoleculeAppendMapping> {
+        self.append_working(source)
+    }
+
+    // System edits may combine disconnected private drafts before partitioning.
+    pub(crate) fn append_working(&mut self, source: &Molecule) -> Result<MoleculeAppendMapping> {
         let mut staged = self.clone();
         let mut map = MoleculeAppendMapping::default();
         for (id, atom) in source.atoms() {
@@ -345,6 +397,20 @@ impl MoleculeEditor {
         *self = staged;
         Ok(map)
     }
+}
+
+fn live_column(
+    table: &PropertyTable,
+    key: &PropertyKey,
+    indices: impl Iterator<Item = usize>,
+) -> Result<Option<PropertyColumn>> {
+    if table.get(key).is_none() {
+        return Ok(None);
+    }
+    let mut projected = table
+        .select_indices(&indices.collect::<Vec<_>>())
+        .map_err(|e| MoleculeError::Property(Box::new(e)))?;
+    Ok(projected.remove(key))
 }
 
 fn live_column_slots(live: impl Iterator<Item = bool>) -> Vec<Option<usize>> {

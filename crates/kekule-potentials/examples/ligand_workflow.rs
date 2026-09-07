@@ -13,14 +13,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Parse and canonically interpret one SDF record without perceiving it.
     let input = fs::read_to_string("examples/ligand.sdf")?;
     let document = sdf::parse_str(&input)?;
-    let mut records = sdf::interpret(&document)?.to_records();
+    let mut records = sdf::interpret(&document)?.into_records();
     assert_eq!(records.len(), 1, "expected one ligand record");
 
     // Preserve the record metadata while working on its molecule.
     let record = records.pop().expect("record count was checked");
     let title = record.title().to_owned();
     let data_fields = record.data_fields().to_vec();
-    let mut molecules = record.to_molecules();
+    let mut molecules = record.into_molecules();
     assert_eq!(
         molecules.len(),
         1,

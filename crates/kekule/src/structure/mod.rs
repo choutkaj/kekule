@@ -13,10 +13,12 @@
 
 mod ensemble;
 mod model;
+mod model_editor;
 mod positions;
 
 pub use ensemble::*;
 pub use model::*;
+pub use model_editor::*;
 pub use positions::*;
 
 #[cfg(test)]

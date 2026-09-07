@@ -206,7 +206,7 @@ impl TrajectoryUnwrapper {
             }
         }
         let lattice = Lattice::new(source.cell().copied(), frame_index)?;
-        let time = source.time().map(|time| time.to_value());
+        let time = source.time().map(|time| time.into_value());
         let mut last_time = time;
         if let Some(previous) = &self.previous {
             if previous.periodic != lattice.periodic {

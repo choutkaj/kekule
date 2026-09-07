@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let topology = mmcif::parse_str(&fs::read_to_string(topology_path)?)?
         .interpret()?
-        .to_topology();
+        .into_topology();
     let mut reader = open_trajectory(input, topology.clone())?;
     let mut buffer = reader.frame_buffer();
     if !reader.read_next(&mut buffer)? {

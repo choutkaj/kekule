@@ -175,7 +175,7 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
 /// use kekule_traj::io::read_trajectory;
 ///
 /// let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
-/// let topology = document.interpret()?.to_topology();
+/// let topology = document.interpret()?.into_topology();
 /// let trajectory = read_trajectory("trajectory.xtc", topology)?;
 /// println!("{} frames, {} atoms", trajectory.len(), trajectory.topology().atom_count());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -204,7 +204,7 @@ pub fn read_trajectory_with_options(
     while reader.read_next(&mut buffer)? {
         writer.write_frame(buffer.frame_view())?;
     }
-    Ok(writer.to_trajectory())
+    Ok(writer.into_trajectory())
 }
 
 /// Opens one fast sequential path-backed trajectory reader without loading all frames.
@@ -395,7 +395,7 @@ pub fn open_indexed_trajectory_with_options(
                     .with_limits(options.limits)
                     .with_source_label(label),
             )?;
-            let reader = reader.to_indexed()?;
+            let reader = reader.into_indexed()?;
             let count = reader.frame_count().unwrap_or(0);
             let atom_count = reader.topology().atom_count();
             (
@@ -413,7 +413,7 @@ pub fn open_indexed_trajectory_with_options(
                     .with_limits(options.limits)
                     .with_source_label(label),
             )?;
-            let reader = reader.to_indexed()?;
+            let reader = reader.into_indexed()?;
             let count = reader.frame_count().unwrap_or(0);
             let metadata = FileTrajectoryMetadata::dcd(reader.header(), Some(count));
             (
@@ -431,7 +431,7 @@ pub fn open_indexed_trajectory_with_options(
                     .with_limits(options.limits)
                     .with_source_label(label),
             )?;
-            let reader = reader.to_indexed()?;
+            let reader = reader.into_indexed()?;
             let count = reader.frame_count().unwrap_or(0);
             let metadata = FileTrajectoryMetadata::trr(
                 reader.first_header(),
@@ -454,7 +454,7 @@ pub fn open_indexed_trajectory_with_options(
                     .with_limits(options.limits)
                     .with_source_label(label),
             )?;
-            let reader = reader.to_indexed()?;
+            let reader = reader.into_indexed()?;
             let count = reader.frame_count().unwrap_or(0);
             let metadata =
                 FileTrajectoryMetadata::xtc(reader.first_info(), cell_policy, Some(count));

@@ -398,7 +398,7 @@ fn default_perceive_installs_only_valence_rings_and_aromaticity() {
 fn interpretation_canonicalizes_source_stereo_before_perception() {
     let document = smiles_api::parse_str("F/C=C/c1ccccc1").expect("SMILES parses");
     let interpretation = smiles_api::interpret(&document).expect("SMILES interprets");
-    let (mut molecule, report) = interpretation.to_parts().expect("one component");
+    let (mut molecule, report) = interpretation.into_parts().expect("one component");
 
     assert_eq!(report.created_stereo_elements().len(), 1);
     assert!(molecule

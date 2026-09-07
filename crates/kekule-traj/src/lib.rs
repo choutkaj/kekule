@@ -47,7 +47,7 @@
 //! use kekule_traj::io::{read_trajectory, write_trajectory};
 //!
 //! let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
-//! let topology = document.interpret()?.to_topology();
+//! let topology = document.interpret()?.into_topology();
 //! let trajectory = read_trajectory("trajectory.xyz", topology.clone())?;
 //! println!("{} frames, {} atoms", trajectory.len(), topology.atom_count());
 //!
@@ -75,8 +75,6 @@
 //! [`periodic::TrajectoryUnwrapper`] apply the same operations to streaming frames.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
-// Kekule consistently names owned conversions `to_*`, including consuming ones.
-#![allow(clippy::wrong_self_convention)]
 
 mod trajectory;
 

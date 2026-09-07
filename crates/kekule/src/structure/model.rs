@@ -84,6 +84,21 @@ impl Model {
         ModelBuilder::new()
     }
 
+    /// Moves a model into coordinated append-oriented construction state.
+    pub fn into_builder(self) -> ModelBuilder {
+        ModelBuilder {
+            topology: TopologyBuilder::from_shared(self.topology),
+            positions: self.positions,
+            properties: self.properties,
+            cell: self.cell,
+            extending_model: true,
+        }
+    }
+
+    pub fn to_builder(&self) -> ModelBuilder {
+        self.clone().into_builder()
+    }
+
     /// Builds a single-molecule model from dense positions in molecule atom order.
     ///
     /// Position construction performs unit conversion and finite-value
@@ -276,6 +291,31 @@ impl Model {
         T: AsRef<[Point3]>,
     {
         self.positions.set_all(positions)
+    }
+
+    pub fn set_position_at(
+        &mut self,
+        index: TopologyAtomIndex,
+        position: Quantity<Point3>,
+    ) -> Result<(), PositionError> {
+        self.positions.set_position_at(index.index(), position)
+    }
+
+    /// Applies a sparse coordinate batch atomically; duplicates follow input order.
+    pub fn set_atom_positions(
+        &mut self,
+        values: impl IntoIterator<Item = (InstanceAtomId, Quantity<Point3>)>,
+    ) -> Result<(), ModelError> {
+        let mut positions = self.positions.clone();
+        for (id, value) in values {
+            let index = self
+                .topology
+                .atom_index(id)
+                .ok_or(ModelError::InvalidAtomId(id))?;
+            positions.set_position_at(index.index(), value)?;
+        }
+        self.positions = positions;
+        Ok(())
     }
 
     pub const fn cell(&self) -> Option<&PeriodicCell> {
@@ -471,6 +511,54 @@ impl Model {
 
     pub fn atom_count(&self) -> usize {
         self.topology.atom_count()
+    }
+
+    pub fn bond_count(&self) -> usize {
+        self.topology.bond_count()
+    }
+    pub fn atom_ids(&self) -> &[InstanceAtomId] {
+        self.topology.atom_ids()
+    }
+    pub fn bond_ids(&self) -> &[InstanceBondId] {
+        self.topology.bond_ids()
+    }
+    pub fn atom_property_column(&self, key: &PropertyKey) -> Option<&PropertyColumn> {
+        self.atom_properties().get(key)
+    }
+    pub fn bond_property_column(&self, key: &PropertyKey) -> Option<&PropertyColumn> {
+        self.bond_properties().get(key)
+    }
+    pub fn set_atom_properties(
+        &mut self,
+        key: PropertyKey,
+        values: impl IntoIterator<Item = (InstanceAtomId, Option<PropertyValue>)>,
+    ) -> Result<(), ModelError> {
+        let mut properties = self.properties.clone();
+        for (id, value) in values {
+            let index = self
+                .topology
+                .atom_index(id)
+                .ok_or(ModelError::InvalidAtomId(id))?;
+            properties.set_realization_atom_value(key.clone(), index.index(), value)?;
+        }
+        self.properties = properties;
+        Ok(())
+    }
+    pub fn set_bond_properties(
+        &mut self,
+        key: PropertyKey,
+        values: impl IntoIterator<Item = (InstanceBondId, Option<PropertyValue>)>,
+    ) -> Result<(), ModelError> {
+        let mut properties = self.properties.clone();
+        for (id, value) in values {
+            let index = self
+                .topology
+                .bond_index(id)
+                .ok_or(ModelError::InvalidBondId(id))?;
+            properties.set_realization_bond_value(key.clone(), index.index(), value)?;
+        }
+        self.properties = properties;
+        Ok(())
     }
 
     pub fn view(&self) -> ModelView<'_> {
@@ -762,7 +850,15 @@ impl fmt::Display for ModelError {
     }
 }
 
-impl std::error::Error for ModelError {}
+impl std::error::Error for ModelError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Position(e) => Some(e),
+            Self::Property(e) => Some(e),
+            _ => None,
+        }
+    }
+}
 
 /// Failure to subset topology or transfer one model's dense state.
 #[derive(Debug, Clone, PartialEq)]
@@ -816,7 +912,10 @@ impl From<PropertyError> for ModelError {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ModelBuilder {
     topology: TopologyBuilder,
-    positions: Vec<Point3>,
+    positions: Positions,
+    properties: Properties,
+    cell: Option<PeriodicCell>,
+    extending_model: bool,
 }
 
 impl ModelBuilder {
@@ -828,14 +927,264 @@ impl ModelBuilder {
         &self.topology
     }
 
-    /// Returns mutable coordinate-free staging state, including hierarchy.
+    /// A restricted static-annotation view. It cannot replace topology or add
+    /// instances independently of their coordinates.
     ///
-    /// This does not update the staged positions. Add molecule instances through
-    /// [`Self::add_molecule`] or [`Self::add_instance`] to stage their coordinates
-    /// together. [`Self::build`] returns an error if the final topology's atom
-    /// count does not match the staged positions.
-    pub fn topology_builder_mut(&mut self) -> &mut TopologyBuilder {
-        &mut self.topology
+    /// ```compile_fail
+    /// use kekule::{structure::ModelBuilder, topology::TopologyBuilder};
+    /// let mut builder = ModelBuilder::new();
+    /// *builder.topology_builder_mut() = TopologyBuilder::new();
+    /// ```
+    /// ```compile_fail
+    /// use kekule::{structure::ModelBuilder, topology::MoleculeDefinitionId};
+    /// let mut builder = ModelBuilder::new();
+    /// builder.topology_builder_mut().add_instance(MoleculeDefinitionId::new(0));
+    /// ```
+    pub fn topology_builder_mut(&mut self) -> ModelTopologyMut<'_> {
+        ModelTopologyMut {
+            topology: &mut self.topology,
+        }
+    }
+
+    pub fn hierarchy(&self) -> &Hierarchy {
+        self.topology.hierarchy()
+    }
+    pub fn hierarchy_mut(&mut self) -> &mut Hierarchy {
+        self.topology.hierarchy_mut()
+    }
+    pub fn atom_count(&self) -> usize {
+        self.topology.atom_count()
+    }
+    pub fn bond_count(&self) -> usize {
+        self.topology.bond_count()
+    }
+    pub fn positions(&self) -> &Positions {
+        &self.positions
+    }
+    pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelBuildError> {
+        Ok(self.positions.position_at(self.atom_index(atom)?)?)
+    }
+    pub fn set_position(
+        &mut self,
+        atom: InstanceAtomId,
+        position: Quantity<Point3>,
+    ) -> Result<(), ModelBuildError> {
+        let index = self.atom_index(atom)?;
+        Ok(self.positions.set_position_at(index, position)?)
+    }
+    pub fn set_positions<T: AsRef<[Point3]>>(
+        &mut self,
+        positions: Quantity<T>,
+    ) -> Result<(), ModelBuildError> {
+        Ok(self.positions.set_all(positions)?)
+    }
+    pub fn cell(&self) -> Option<&PeriodicCell> {
+        self.cell.as_ref()
+    }
+    pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
+        self.cell = cell;
+    }
+    pub fn properties(&self) -> &Properties {
+        &self.properties
+    }
+    pub fn insert_property(
+        &mut self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>, ModelBuildError> {
+        Ok(self.properties.insert(key, value)?)
+    }
+    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.properties.remove(key)
+    }
+    pub fn clear_properties(&mut self) {
+        self.properties.clear_owner();
+    }
+    pub fn set_properties(&mut self, properties: Properties) -> Result<(), ModelBuildError> {
+        if properties.atoms().len() != self.atom_count() {
+            return Err(ModelError::AtomPropertyCountMismatch {
+                expected: self.atom_count(),
+                actual: properties.atoms().len(),
+            }
+            .into());
+        }
+        if properties.bonds().len() != self.bond_count() {
+            return Err(ModelError::BondPropertyCountMismatch {
+                expected: self.bond_count(),
+                actual: properties.bonds().len(),
+            }
+            .into());
+        }
+        properties.validate_realization_properties()?;
+        self.properties = properties;
+        Ok(())
+    }
+    pub fn set_atom_property(
+        &mut self,
+        atom: InstanceAtomId,
+        key: PropertyKey,
+        value: Option<PropertyValue>,
+    ) -> Result<(), ModelBuildError> {
+        let index = self.atom_index(atom)?;
+        Ok(self
+            .properties
+            .set_realization_atom_value(key, index, value)?)
+    }
+    pub fn set_bond_property(
+        &mut self,
+        bond: InstanceBondId,
+        key: PropertyKey,
+        value: Option<PropertyValue>,
+    ) -> Result<(), ModelBuildError> {
+        let index = self.bond_index(bond)?;
+        Ok(self
+            .properties
+            .set_realization_bond_value(key, index, value)?)
+    }
+    pub fn set_occupancy(
+        &mut self,
+        atom: InstanceAtomId,
+        value: Option<f64>,
+    ) -> Result<(), ModelBuildError> {
+        let index = self.atom_index(atom)?;
+        Ok(self.properties.set_occupancy_at(index, value)?)
+    }
+    pub fn set_b_factor(
+        &mut self,
+        atom: InstanceAtomId,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), ModelBuildError> {
+        let index = self.atom_index(atom)?;
+        Ok(self.properties.set_b_factor_at(index, value)?)
+    }
+    pub fn insert_atom_property_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>, ModelBuildError> {
+        Ok(self
+            .properties
+            .insert_realization_atom_column(key, column)?)
+    }
+    pub fn insert_bond_property_column(
+        &mut self,
+        key: PropertyKey,
+        column: PropertyColumn,
+    ) -> Result<Option<PropertyColumn>, ModelBuildError> {
+        Ok(self
+            .properties
+            .insert_realization_bond_column(key, column)?)
+    }
+    pub fn validate(&self) -> Result<(), ModelBuildError> {
+        self.clone().build().map(|_| ())
+    }
+    pub fn try_build(self) -> Result<Model, ModelBuilderError> {
+        self.clone().build().map_err(|error| ModelBuilderError {
+            error,
+            builder: Box::new(self),
+        })
+    }
+
+    pub fn atom_ids(&self) -> impl Iterator<Item = InstanceAtomId> + '_ {
+        self.topology.atom_ids()
+    }
+    pub fn bond_ids(&self) -> impl Iterator<Item = InstanceBondId> + '_ {
+        self.topology.bond_ids()
+    }
+    pub fn atom_property(
+        &self,
+        atom: InstanceAtomId,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyValue>, ModelBuildError> {
+        Ok(self.properties.atoms().value(key, self.atom_index(atom)?)?)
+    }
+    pub fn bond_property(
+        &self,
+        bond: InstanceBondId,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyValue>, ModelBuildError> {
+        Ok(self.properties.bonds().value(key, self.bond_index(bond)?)?)
+    }
+    pub fn occupancy(&self, atom: InstanceAtomId) -> Result<Option<f64>, ModelBuildError> {
+        Ok(self.properties.occupancy_at(self.atom_index(atom)?)?)
+    }
+    pub fn b_factor(&self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, ModelBuildError> {
+        Ok(self.properties.b_factor_at(self.atom_index(atom)?)?)
+    }
+    pub fn atom_property_column(&self, key: &PropertyKey) -> Option<&PropertyColumn> {
+        self.properties.atoms().get(key)
+    }
+    pub fn bond_property_column(&self, key: &PropertyKey) -> Option<&PropertyColumn> {
+        self.properties.bonds().get(key)
+    }
+    pub fn remove_atom_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
+        self.properties.atoms_mut().remove(key)
+    }
+    pub fn remove_bond_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
+        self.properties.bonds_mut().remove(key)
+    }
+    /// Applies a checked sparse coordinate batch in input order, committing only on success.
+    pub fn set_atom_positions(
+        &mut self,
+        values: impl IntoIterator<Item = (InstanceAtomId, Quantity<Point3>)>,
+    ) -> Result<(), ModelBuildError> {
+        let mut staged = self.positions.clone();
+        for (atom, value) in values {
+            staged.set_position_at(self.atom_index(atom)?, value)?;
+        }
+        self.positions = staged;
+        Ok(())
+    }
+    /// Applies one property batch transactionally; repeated IDs use the last value.
+    pub fn set_atom_properties(
+        &mut self,
+        key: PropertyKey,
+        values: impl IntoIterator<Item = (InstanceAtomId, Option<PropertyValue>)>,
+    ) -> Result<(), ModelBuildError> {
+        let mut staged = self.properties.clone();
+        for (atom, value) in values {
+            staged.set_realization_atom_value(key.clone(), self.atom_index(atom)?, value)?;
+        }
+        self.properties = staged;
+        Ok(())
+    }
+    pub fn set_bond_properties(
+        &mut self,
+        key: PropertyKey,
+        values: impl IntoIterator<Item = (InstanceBondId, Option<PropertyValue>)>,
+    ) -> Result<(), ModelBuildError> {
+        let mut staged = self.properties.clone();
+        for (bond, value) in values {
+            staged.set_realization_bond_value(key.clone(), self.bond_index(bond)?, value)?;
+        }
+        self.properties = staged;
+        Ok(())
+    }
+    pub fn add_molecule_definition_owned(
+        &mut self,
+        molecule: Molecule,
+    ) -> Result<MoleculeDefinitionId, ModelBuildError> {
+        Ok(self.topology.add_molecule_definition_owned(molecule)?)
+    }
+    fn atom_index(&self, atom: InstanceAtomId) -> Result<usize, ModelBuildError> {
+        self.topology
+            .atom_ids()
+            .position(|id| id == atom)
+            .ok_or_else(|| ModelError::InvalidAtomId(atom).into())
+    }
+    fn bond_index(&self, bond: InstanceBondId) -> Result<usize, ModelBuildError> {
+        self.topology
+            .bond_ids()
+            .position(|id| id == bond)
+            .ok_or_else(|| ModelError::InvalidBondId(bond).into())
+    }
+    fn extend_properties(&mut self, added_bonds: usize) {
+        self.properties.resize_atoms(self.positions.len());
+        self.properties
+            .resize_bonds(self.properties.bonds().len() + added_bonds);
+        if self.extending_model {
+            self.properties.clear_owner();
+        }
     }
 
     pub fn add_molecule_definition(
@@ -869,17 +1218,15 @@ impl ModelBuilder {
         definition: MoleculeDefinitionId,
         positions: &Positions,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        let expected = self
-            .topology
-            .definition(definition)?
-            .molecule()
-            .atom_count();
-        validate_position_count(expected, positions.len())?;
+        let molecule = self.topology.definition(definition)?.molecule();
+        let added_bonds = molecule.bond_count();
+        validate_position_count(molecule.atom_count(), positions.len())?;
         self.positions
             .try_reserve(positions.len())
             .map_err(|_| ModelBuildError::CapacityOverflow)?;
         let instance = self.topology.add_instance(definition)?;
-        self.positions.extend_from_slice(positions.values().value());
+        self.positions.extend_canonical(positions);
+        self.extend_properties(added_bonds);
         Ok(instance)
     }
 
@@ -894,19 +1241,18 @@ impl ModelBuilder {
             .try_reserve(positions.len())
             .map_err(|_| ModelBuildError::CapacityOverflow)?;
         let instance = self.topology.add_molecule(molecule)?;
-        self.positions.extend_from_slice(positions.values().value());
+        self.positions.extend_canonical(positions);
+        self.extend_properties(molecule.bond_count());
         Ok(instance)
     }
 
     /// Validates and publishes the staged topology and model.
     ///
-    /// Returns an error if topology validation fails or the final topology's
-    /// atom count differs from the number of staged positions, including after
-    /// edits through [`Self::topology_builder_mut`].
+    /// Checks topology, hierarchy, coordinates, and realization properties together.
     pub fn build(self) -> Result<Model, ModelBuildError> {
         let topology = Arc::new(self.topology.build()?);
-        let positions = Positions::from_canonical_values(self.positions);
-        Model::new(topology, positions).map_err(ModelBuildError::from)
+        Model::with_properties(topology, self.positions, self.cell, self.properties)
+            .map_err(ModelBuildError::from)
     }
 }
 
@@ -948,7 +1294,95 @@ impl fmt::Display for ModelBuildError {
     }
 }
 
-impl std::error::Error for ModelBuildError {}
+impl std::error::Error for ModelBuildError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Topology(e) => Some(e),
+            Self::Hierarchy(e) => Some(e),
+            Self::Model(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<PositionError> for ModelBuildError {
+    fn from(error: PositionError) -> Self {
+        ModelError::from(error).into()
+    }
+}
+impl From<PropertyError> for ModelBuildError {
+    fn from(error: PropertyError) -> Self {
+        ModelError::from(error).into()
+    }
+}
+
+/// Failed model construction retaining its complete original builder for repair.
+#[derive(Debug)]
+pub struct ModelBuilderError {
+    error: ModelBuildError,
+    builder: Box<ModelBuilder>,
+}
+impl ModelBuilderError {
+    pub fn error(&self) -> &ModelBuildError {
+        &self.error
+    }
+    pub fn builder(&self) -> &ModelBuilder {
+        &self.builder
+    }
+    pub fn into_builder(self) -> ModelBuilder {
+        *self.builder
+    }
+}
+impl fmt::Display for ModelBuilderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(f)
+    }
+}
+impl std::error::Error for ModelBuilderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+/// Restricted mutable access to static model-builder annotations. Each method
+/// consumes the view, so references remain bound to the original builder borrow.
+#[derive(Debug)]
+pub struct ModelTopologyMut<'a> {
+    topology: &'a mut TopologyBuilder,
+}
+impl<'a> ModelTopologyMut<'a> {
+    pub fn hierarchy_mut(self) -> &'a mut Hierarchy {
+        self.topology.hierarchy_mut()
+    }
+    pub fn insert_property(
+        self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>, PropertyError> {
+        self.topology.insert_property(key, value)
+    }
+    pub fn remove_property(self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.topology.remove_property(key)
+    }
+    pub fn atom_properties_mut(self) -> crate::properties::PropertyTableMut<'a> {
+        self.topology.atom_properties_mut()
+    }
+    pub fn bond_properties_mut(self) -> crate::properties::PropertyTableMut<'a> {
+        self.topology.bond_properties_mut()
+    }
+    pub fn molecule_instance_properties_mut(self) -> crate::properties::PropertyTableMut<'a> {
+        self.topology.molecule_instance_properties_mut()
+    }
+    pub fn chain_properties_mut(self) -> crate::properties::PropertyTableMut<'a> {
+        self.topology.chain_properties_mut()
+    }
+    pub fn residue_properties_mut(self) -> crate::properties::PropertyTableMut<'a> {
+        self.topology.residue_properties_mut()
+    }
+    pub fn atom_site_properties_mut(self) -> crate::properties::PropertyTableMut<'a> {
+        self.topology.atom_site_properties_mut()
+    }
+}
 
 impl From<ModelError> for ModelBuildError {
     fn from(error: ModelError) -> Self {

@@ -61,6 +61,22 @@
 //! transactional builders or editors so published values retain their
 //! invariants.
 //!
+//! | Task | Interface | Publication |
+//! | --- | --- | --- |
+//! | Construct or edit one connected molecule | [`core::MoleculeEditor`] | `finish()` |
+//! | Assemble complete molecules and reusable instances | [`topology::TopologyBuilder`] | `build()` |
+//! | Assemble a system with explicit geometry | [`structure::ModelBuilder`] | `build()` |
+//! | Edit system atoms, bonds, components, and hierarchy | [`topology::TopologyEditor`] | `finish()` |
+//! | Edit structure while coordinating one realization | [`structure::ModelEditor`] | `finish()` |
+//! | Change geometry or realization annotations | [`structure::Model`] setters | Immediate checked update |
+//!
+//! Builders and editors offer non-consuming `validate()` and recoverable
+//! `try_build()` / `try_finish()`. Use `edit()` for a detached draft or
+//! `into_editor()` to move an owner into one. System editors resolve source IDs
+//! to stable editing handles and can return publication correspondence through
+//! `finish_with_correspondence()`. A bond deletion can split a system molecule;
+//! a bond addition can join two occurrences. New model atoms require coordinates.
+//!
 //! Coordinate-dependent algorithms consume [`structure::ModelView`]. A model,
 //! ensemble member, trajectory frame, or reusable trajectory buffer can
 //! therefore share kernels without copying coordinates. APIs that require an
@@ -69,8 +85,6 @@
 //! rather than shared identity is intended.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
-// Kekule consistently names owned conversions `to_*`, including consuming ones.
-#![allow(clippy::wrong_self_convention)]
 
 macro_rules! fixed_u32_id {
     ($name:ident) => {
@@ -237,7 +251,7 @@ pub mod smiles {
     /// Dot-delimited components remain separate, and no perception is run implicitly.
     pub fn to_molecules(input: &str) -> Result<Vec<Molecule>, SmilesReadError> {
         let document = parse_str(input)?;
-        Ok(document.interpret()?.to_molecules())
+        Ok(document.interpret()?.into_molecules())
     }
 
     /// Parses and interprets one SMILES record as a coordinate-free topology.
@@ -246,7 +260,7 @@ pub mod smiles {
     /// occurrence in source order. No hierarchy or perception is fabricated.
     pub fn to_topology(input: &str) -> Result<Topology, SmilesReadError> {
         let document = parse_str(input)?;
-        Ok(document.interpret()?.to_topology()?)
+        Ok(document.interpret()?.into_topology()?)
     }
 
     /// Writes one connected molecule using ordinary non-canonical SMILES.

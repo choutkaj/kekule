@@ -18,6 +18,8 @@
 
 mod builder;
 mod classification;
+mod components;
+mod editor;
 mod hierarchy;
 mod perception;
 mod selection;
@@ -31,7 +33,11 @@ use std::fmt;
 
 use crate::core::{Atom, AtomId, Bond, BondId, Molecule};
 use crate::properties::{Properties, PropertyError, PropertyKey, PropertyTable, PropertyValue};
-pub use builder::{TopologyBuildError, TopologyBuilder, TopologyHierarchyError, TopologyIdKind};
+pub use builder::{
+    TopologyBuildError, TopologyBuilder, TopologyBuilderError, TopologyHierarchyError,
+    TopologyIdKind,
+};
+pub use editor::*;
 pub use hierarchy::{
     AtomSite, AtomSiteId, AtomSiteMetadata, Chain, ChainId, Hierarchy, HierarchyError,
     HierarchyIdKind, Residue, ResidueId,
@@ -531,7 +537,8 @@ impl Topology {
     /// Consumes this published topology and stages a topology transformation.
     ///
     /// Existing definitions, instances, semantic identifiers, dense order,
-    /// hierarchy, and static properties are retained. Appending through the
+    /// hierarchy, and entity properties are retained. Appending clears inherited
+    /// owner annotations because the system has changed. Appending through the
     /// returned builder assigns new identifiers after the retained identity
     /// spaces, and [`TopologyBuilder::build`] reconstructs derived lookups.
     pub fn into_builder(self) -> TopologyBuilder {

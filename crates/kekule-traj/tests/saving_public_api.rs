@@ -71,9 +71,9 @@ fn same_frame(actual: TrajectoryFrameView<'_>, expected: TrajectoryFrameView<'_>
         assert_eq!(a.periodic_axes(), b.periodic_axes());
         for (a, b) in a
             .vectors()
-            .to_value()
+            .into_value()
             .into_iter()
-            .zip(b.vectors().to_value())
+            .zip(b.vectors().into_value())
         {
             close(a.x, b.x);
             close(a.y, b.y);
@@ -98,7 +98,7 @@ fn same_frame(actual: TrajectoryFrameView<'_>, expected: TrajectoryFrameView<'_>
     assert_eq!(actual.time().is_some(), expected.time().is_some());
     if let (Some(a), Some(b)) = (actual.time(), expected.time()) {
         assert_eq!(a.unit(), b.unit());
-        close(a.to_value(), b.to_value());
+        close(a.into_value(), b.into_value());
     }
     assert_eq!(actual.step(), expected.step());
     assert_eq!(actual.properties(), expected.properties());
