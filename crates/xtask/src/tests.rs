@@ -815,7 +815,7 @@ fn smiles_component_benchmarks_preserve_source_record_cardinality() {
             let document = smiles::parse_str(&text).expect("written component should parse");
             smiles::interpret(&document)
                 .expect("written component should interpret")
-                .to_molecule()
+                .into_molecule()
                 .expect("written component should remain connected")
         })
         .collect::<Vec<_>>();
@@ -834,7 +834,7 @@ fn smiles_component_benchmarks_preserve_source_record_cardinality() {
         smiles::parse_str(&connected_written).expect("written component should parse");
     let connected_reparsed = smiles::interpret(&connected_document)
         .expect("written component should interpret")
-        .to_molecule()
+        .into_molecule()
         .expect("written component should remain connected");
     assert_eq!(
         written["records"][1]["normalized_perceived"],
@@ -1001,7 +1001,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .expect("anionic macrocycle mixture parses");
     let mut anionic_macrocycle = kekule::smiles::interpret(&document)
         .expect("anionic macrocycle mixture interprets")
-        .to_molecules()
+        .into_molecules()
         .swap_remove(1);
     perceive(&mut anionic_macrocycle);
     let anionic_nitrogen = anionic_macrocycle

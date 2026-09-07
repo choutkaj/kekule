@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let document = mmcif::parse_str(&fs::read_to_string(topology_path)?)?;
-    let topology = document.interpret()?.to_topology();
+    let topology = document.interpret()?.into_topology();
     let mut trajectory = read_trajectory(trajectory_path, topology.clone())?;
 
     println!("Frames: {}", trajectory.len());

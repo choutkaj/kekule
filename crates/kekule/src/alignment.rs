@@ -58,11 +58,11 @@
 //! let selection = AtomSelection::all(&topology);
 //!
 //! let result = kabsch(moving.view(), reference.view(), &selection)?;
-//! let canonical_moving = moving.positions().position_at(1)?.to_value();
-//! let canonical_reference = reference.positions().position_at(1)?.to_value();
+//! let canonical_moving = moving.positions().position_at(1)?.into_value();
+//! let canonical_reference = reference.positions().position_at(1)?.into_value();
 //! let aligned = result.transform().transform_point(canonical_moving);
 //! assert!((aligned.x - canonical_reference.x).abs() < 1.0e-12);
-//! assert!(result.rmsd().to_value() < 1.0e-12);
+//! assert!(result.rmsd().into_value() < 1.0e-12);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
@@ -943,15 +943,15 @@ mod tests {
         let result = kabsch(moving.view(), reference.view(), &selection).unwrap();
 
         assert_transform_close(result.transform(), RigidTransform::identity(), 1.0e-12);
-        assert_close(result.rmsd().to_value(), 0.0, 1.0e-14);
+        assert_close(result.rmsd().into_value(), 0.0, 1.0e-14);
         assert_eq!(result.rmsd().unit(), CANONICAL_LENGTH_UNIT);
         assert_eq!(result.selected_atom_count(), points.len());
         assert_eq!(
-            moving.positions().values().to_value(),
+            moving.positions().values().into_value(),
             moving_before.as_slice()
         );
         assert_eq!(
-            reference.positions().values().to_value(),
+            reference.positions().values().into_value(),
             reference_before.as_slice()
         );
         assert_eq!(selection, selection_before);
@@ -988,7 +988,7 @@ mod tests {
         let result = kabsch(moving.view(), reference_model.view(), &all(&topology)).unwrap();
 
         assert_transform_close(result.transform(), expected, 2.0e-12);
-        assert!(result.rmsd().to_value() < 2.0e-12);
+        assert!(result.rmsd().into_value() < 2.0e-12);
     }
 
     #[test]
@@ -1033,9 +1033,9 @@ mod tests {
             / moving.len() as f64;
         let unaligned = unaligned.sqrt();
 
-        assert!(result.rmsd().to_value() > 0.01);
-        assert!(result.rmsd().to_value() < 0.08);
-        assert!(result.rmsd().to_value() < unaligned);
+        assert!(result.rmsd().into_value() > 0.01);
+        assert!(result.rmsd().into_value() < 0.08);
+        assert!(result.rmsd().into_value() < unaligned);
     }
 
     #[test]
@@ -1077,8 +1077,8 @@ mod tests {
         assert!(weighted_error < uniform_error);
         assert_transform_close(weighted.transform(), scaled.transform(), 2.0e-12);
         assert_close(
-            weighted.rmsd().to_value(),
-            scaled.rmsd().to_value(),
+            weighted.rmsd().into_value(),
+            scaled.rmsd().into_value(),
             2.0e-12,
         );
     }
@@ -1201,7 +1201,7 @@ mod tests {
         .unwrap();
 
         assert_transform_close(result.transform(), expected, 3.0e-12);
-        assert_close(result.rmsd().to_value(), expected_rmsd, 5.0e-14);
+        assert_close(result.rmsd().into_value(), expected_rmsd, 5.0e-14);
         assert_close(result.transform().rotation().determinant(), 1.0, 1.0e-12);
     }
 
@@ -1214,7 +1214,7 @@ mod tests {
         let result = kabsch(moving.view(), reference.view(), &all(&topology)).unwrap();
 
         assert_close(result.transform().rotation().determinant(), 1.0, 1.0e-12);
-        assert!(result.rmsd().to_value() > 0.1);
+        assert!(result.rmsd().into_value() > 0.1);
         RigidTransform::new(
             result.transform().rotation(),
             result.transform().translation(),
@@ -1237,7 +1237,7 @@ mod tests {
         let result = kabsch(moving.view(), reference.view(), &all(&topology)).unwrap();
 
         assert_transform_close(result.transform(), expected, 3.0e-12);
-        assert!(result.rmsd().to_value() < 2.0e-12);
+        assert!(result.rmsd().into_value() < 2.0e-12);
     }
 
     #[test]
@@ -1441,7 +1441,7 @@ mod tests {
         assert_eq!(moving.cell(), Some(&cell));
         assert_eq!(reference.cell(), Some(&cell));
         assert_eq!(
-            moving.positions().values().to_value(),
+            moving.positions().values().into_value(),
             moving_before.as_slice()
         );
     }
@@ -1466,6 +1466,6 @@ mod tests {
                 2.0e-3,
             );
         }
-        assert!(result.rmsd().to_value() < 1.0e-3);
+        assert!(result.rmsd().into_value() < 1.0e-3);
     }
 }

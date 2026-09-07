@@ -221,11 +221,6 @@ impl Molecule {
         MoleculeEditor { working: self }
     }
 
-    /// Compatibility spelling for [`Self::into_editor`]. This consumes the molecule.
-    pub fn to_editor(self) -> MoleculeEditor {
-        self.into_editor()
-    }
-
     #[cfg(test)]
     pub(crate) fn is_connected(&self) -> bool {
         self.validate_connected().is_ok()
@@ -302,9 +297,6 @@ impl MoleculeFinishError {
     }
     pub fn editor(&self) -> &MoleculeEditor {
         &self.editor
-    }
-    pub fn to_editor(self) -> MoleculeEditor {
-        self.into_editor()
     }
     pub fn into_editor(self) -> MoleculeEditor {
         *self.editor
@@ -610,7 +602,7 @@ impl MoleculeEditor {
     }
 
     /// Publishes, or returns the original editor for repair through
-    /// [`MoleculeFinishError::to_editor`]. Keeps a cloned rollback snapshot;
+    /// [`MoleculeFinishError::into_editor`]. Keeps a cloned rollback snapshot;
     /// use [`Self::finish`] when recovery is unnecessary.
     pub fn try_finish(self) -> std::result::Result<Molecule, MoleculeFinishError> {
         let snapshot = self.clone();

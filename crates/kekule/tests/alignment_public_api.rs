@@ -71,7 +71,7 @@ fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::er
             periodic_policy: PeriodicAlignmentPolicy::RejectPeriodic,
         },
     )?;
-    assert!(weighted.rmsd().to_value() < 1.0e-12);
+    assert!(weighted.rmsd().into_value() < 1.0e-12);
 
     let error = kabsch_with_options(
         moving.view(),

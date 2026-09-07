@@ -1057,9 +1057,9 @@ mod tests {
         );
         for (actual, expected) in transformed_cell
             .vectors()
-            .to_value()
+            .into_value()
             .into_iter()
-            .zip(reference_cell.vectors().to_value())
+            .zip(reference_cell.vectors().into_value())
         {
             assert_vector_close(actual, expected, 1.0e-12);
         }
@@ -1259,7 +1259,12 @@ mod tests {
             })
         );
         assert_eq!(
-            trajectory.frame(1).unwrap().positions().values().to_value(),
+            trajectory
+                .frame(1)
+                .unwrap()
+                .positions()
+                .values()
+                .into_value(),
             before.as_slice()
         );
     }

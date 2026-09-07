@@ -955,7 +955,7 @@ impl Properties {
     ) -> Result<(), PropertyError> {
         let value = value
             .map(|value| {
-                let value = value.to_unit(SQUARE_NANOMETER)?.to_value();
+                let value = value.into_unit(SQUARE_NANOMETER)?.into_value();
                 PropertyValue::real(value, SQUARE_NANOMETER)
             })
             .transpose()?;

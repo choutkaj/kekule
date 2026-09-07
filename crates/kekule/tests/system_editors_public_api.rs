@@ -629,7 +629,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
         builder
             .position(id)
             .unwrap()
-            .to_unit(ANGSTROM)
+            .into_unit(ANGSTROM)
             .unwrap()
             .value()
             .x,

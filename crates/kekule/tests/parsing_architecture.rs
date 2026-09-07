@@ -17,14 +17,14 @@ fn molfile_projections_retain_the_interpreted_model_and_reports() {
     let reports = interpretation.reports().to_vec();
     assert!(std::ptr::eq(interpretation.topology(), topology.as_ref()));
     assert!(std::sync::Arc::ptr_eq(
-        &interpretation.clone().to_topology(),
+        &interpretation.clone().into_topology(),
         &topology
     ));
     assert!(std::sync::Arc::ptr_eq(
-        &interpretation.clone().to_model().shared_topology(),
+        &interpretation.clone().into_model().shared_topology(),
         &topology
     ));
-    let (model, moved_reports) = interpretation.to_parts();
+    let (model, moved_reports) = interpretation.into_parts();
     assert!(std::sync::Arc::ptr_eq(&model.shared_topology(), &topology));
     assert_eq!(model.positions().values().value().as_ptr(), positions);
     assert_eq!(moved_reports, reports);
@@ -173,7 +173,7 @@ fn molfile_document_model_retains_published_component_geometry() {
                 .positions()
                 .position_at(position_index.index())
                 .expect("mapped source coordinate")
-                .to_value(),
+                .into_value(),
             expected,
         );
     }
@@ -284,9 +284,9 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
             Point3::new(-0.4, 0.55, -0.625),
         ],
     );
-    let projected_topology = first_interpretation.clone().to_topology();
-    let projected_model = first_interpretation.clone().to_model();
-    let projected_molecules = first_interpretation.to_molecules();
+    let projected_topology = first_interpretation.clone().into_topology();
+    let projected_model = first_interpretation.clone().into_model();
+    let projected_molecules = first_interpretation.into_molecules();
     assert!(projected_topology.same_layout(projected_model.topology()));
     assert_eq!(
         projected_topology

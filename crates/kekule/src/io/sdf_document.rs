@@ -80,13 +80,13 @@ impl SdfRecord {
     /// Source coordinates may assist stereo normalization, but are not
     /// retained. No chemical perception is run.
     pub fn to_molecules(&self) -> Result<Vec<Molecule>, SdfInterpretError> {
-        Ok(self.interpret()?.to_molecules())
+        Ok(self.interpret()?.into_molecules())
     }
 
     /// Projects this record's complete static model layout, including the
     /// deterministic synthetic Molfile hierarchy.
     pub fn to_topology(&self) -> Result<Arc<Topology>, SdfInterpretError> {
-        Ok(self.interpret()?.to_topology())
+        Ok(self.interpret()?.into_topology())
     }
 
     /// Interprets this record as one model with one instance per component.
@@ -95,7 +95,7 @@ impl SdfRecord {
     /// canonical model. No chemical perception is run. Call [`Model::perceive`]
     /// on the returned model to explicitly install the default perception profile.
     pub fn to_model(&self) -> Result<Model, SdfInterpretError> {
-        Ok(self.interpret()?.to_model())
+        Ok(self.interpret()?.into_model())
     }
 }
 
@@ -169,7 +169,7 @@ impl SdfRecordInterpretation {
             .map(|occurrence| occurrence.molecule())
     }
 
-    pub fn to_molecules(self) -> Vec<Molecule> {
+    pub fn into_molecules(self) -> Vec<Molecule> {
         self.model
             .topology()
             .molecules()
@@ -185,13 +185,13 @@ impl SdfRecordInterpretation {
         self.model.topology()
     }
 
-    pub fn to_model(self) -> Model {
+    pub fn into_model(self) -> Model {
         self.model
     }
 
     /// Consumes the format wrapper and retains shared ownership of its exact
     /// model topology.
-    pub fn to_topology(self) -> Arc<Topology> {
+    pub fn into_topology(self) -> Arc<Topology> {
         self.model.shared_topology()
     }
 
@@ -203,7 +203,7 @@ impl SdfRecordInterpretation {
         &self.report
     }
 
-    pub fn to_parts(
+    pub fn into_parts(
         self,
     ) -> (
         String,
@@ -305,7 +305,7 @@ impl SdfInterpretation {
         self.records.iter().map(SdfRecordInterpretation::report)
     }
 
-    pub fn to_records(self) -> Vec<SdfRecordInterpretation> {
+    pub fn into_records(self) -> Vec<SdfRecordInterpretation> {
         self.records
     }
 }
@@ -490,7 +490,7 @@ pub fn interpret_sdf_document(
 }
 
 fn interpret_sdf_record(record: &SdfRecord) -> Result<SdfRecordInterpretation, SdfInterpretError> {
-    let (model, molfile_components) = interpret_sdf_record_molfile(record)?.to_parts();
+    let (model, molfile_components) = interpret_sdf_record_molfile(record)?.into_parts();
     let report = SdfRecordInterpretationReport {
         record: record.source_record_number,
         source_start_line: record.source_start_line,

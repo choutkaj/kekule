@@ -85,8 +85,6 @@
 //! rather than shared identity is intended.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
-// Kekule consistently names owned conversions `to_*`, including consuming ones.
-#![allow(clippy::wrong_self_convention)]
 
 macro_rules! fixed_u32_id {
     ($name:ident) => {
@@ -253,7 +251,7 @@ pub mod smiles {
     /// Dot-delimited components remain separate, and no perception is run implicitly.
     pub fn to_molecules(input: &str) -> Result<Vec<Molecule>, SmilesReadError> {
         let document = parse_str(input)?;
-        Ok(document.interpret()?.to_molecules())
+        Ok(document.interpret()?.into_molecules())
     }
 
     /// Parses and interprets one SMILES record as a coordinate-free topology.
@@ -262,7 +260,7 @@ pub mod smiles {
     /// occurrence in source order. No hierarchy or perception is fabricated.
     pub fn to_topology(input: &str) -> Result<Topology, SmilesReadError> {
         let document = parse_str(input)?;
-        Ok(document.interpret()?.to_topology()?)
+        Ok(document.interpret()?.into_topology()?)
     }
 
     /// Writes one connected molecule using ordinary non-canonical SMILES.

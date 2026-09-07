@@ -212,7 +212,7 @@ M  END
     let document = molfile::parse_str(valence).expect("VAL is valid V3000 syntax");
     let molecule = molfile::interpret(&document)
         .expect("VAL can be interpreted from source semantics")
-        .to_molecule();
+        .into_molecule();
     let carbon = molecule.atom(AtomId::new(0)).expect("carbon");
     assert_eq!(carbon.hydrogens, HydrogenDeclaration::Fixed(4));
     assert!(!molecule.perception().has_valence());
@@ -222,7 +222,7 @@ M  END
         molfile::parse_str(&zero_declarations).expect("zero-count sentinels are valid syntax");
     let molecule = molfile::interpret(&document)
         .expect("zero-count sentinels have exact source semantics")
-        .to_molecule();
+        .into_molecule();
     let carbon = molecule.atom(AtomId::new(0)).expect("carbon");
     assert_eq!(carbon.hydrogens, HydrogenDeclaration::Fixed(0));
 
@@ -230,7 +230,7 @@ M  END
     let document = molfile::parse_str(&undeclared).expect("undeclared atom is valid syntax");
     let molecule = molfile::interpret(&document)
         .expect("undeclared hydrogen policy interprets")
-        .to_molecule();
+        .into_molecule();
     assert_eq!(
         molecule.atom(AtomId::new(0)).expect("carbon").hydrogens,
         HydrogenDeclaration::Infer { explicit: 0 }

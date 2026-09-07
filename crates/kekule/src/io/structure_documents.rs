@@ -251,13 +251,13 @@ impl MolfileDocument {
     /// Coordinates may participate in source-stereo normalization, but are not
     /// retained in the returned molecules. No chemical perception is run.
     pub fn to_molecules(&self) -> Result<Vec<Molecule>, MolfileInterpretError> {
-        Ok(self.interpret()?.to_molecules())
+        Ok(self.interpret()?.into_molecules())
     }
 
     /// Interprets this source document and projects its complete static model
     /// layout, including the deterministic synthetic hierarchy.
     pub fn to_topology(&self) -> Result<std::sync::Arc<Topology>, MolfileInterpretError> {
-        Ok(self.interpret()?.to_topology())
+        Ok(self.interpret()?.into_topology())
     }
 
     /// Interprets this source document as one geometry-bearing model.
@@ -265,7 +265,7 @@ impl MolfileDocument {
     /// Each disconnected source component becomes one molecule instance in
     /// the model topology. No chemical perception is run.
     pub fn to_model(&self) -> Result<Model, MolfileInterpretError> {
-        Ok(self.interpret()?.to_model())
+        Ok(self.interpret()?.into_model())
     }
 }
 
@@ -443,20 +443,20 @@ impl MolfileInterpretation {
             .map(|instance| instance.molecule())
     }
 
-    pub fn to_molecules(self) -> Vec<Molecule> {
+    pub fn into_molecules(self) -> Vec<Molecule> {
         self.molecules().cloned().collect()
     }
 
     /// Retains the exact topology allocation, including its synthetic hierarchy.
-    pub fn to_topology(self) -> std::sync::Arc<Topology> {
+    pub fn into_topology(self) -> std::sync::Arc<Topology> {
         self.model.shared_topology()
     }
 
-    pub fn to_model(self) -> Model {
+    pub fn into_model(self) -> Model {
         self.model
     }
 
-    pub fn to_parts(self) -> (Model, Vec<MolfileInterpretationReport>) {
+    pub fn into_parts(self) -> (Model, Vec<MolfileInterpretationReport>) {
         (self.model, self.reports)
     }
 }
