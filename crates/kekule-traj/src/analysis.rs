@@ -8,16 +8,23 @@
 
 use std::fmt;
 
-use kekule::alignment::{kabsch_with_options, AlignmentError, KabschOptions, RigidAlignment};
+use kekule::alignment::{
+    kabsch_with_correspondence_and_options, kabsch_with_options, AlignmentError,
+    AtomCorrespondence, AtomCorrespondenceError, KabschOptions, RigidAlignment,
+};
 use kekule::geometry::{PeriodicCell, PeriodicCellError, RigidTransform};
-use kekule::structure::Positions;
-use kekule::topology::AtomSelection;
+use kekule::structure::{ModelView, Positions};
+use kekule::topology::{AtomSelection, TopologyAtomIndex};
 use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 use crate::{
     Forces, FrameBuffer, FrameError, Trajectory, TrajectoryError, TrajectoryFrame,
     TrajectoryFrameView, Velocities,
 };
+
+mod correspondence;
+#[cfg(test)]
+mod correspondence_tests;
 
 /// Options used to fit every trajectory frame onto one reference frame.
 ///
@@ -32,7 +39,7 @@ pub enum RmsdWeighting<'a> {
     /// Give every selected atom equal weight.
     #[default]
     Uniform,
-    /// Use positive finite weights in sorted selection order.
+    /// Use positive finite weights in sorted selection order or correspondence pair order.
     Explicit(&'a [f64]),
 }
 
@@ -102,7 +109,7 @@ impl SuperpositionReport {
     }
 }
 
-/// A borrowed reference and fitting selection for processing individual frames.
+/// A borrowed reference and fitting selection or correspondence for individual frames.
 ///
 /// The same kernel powers loaded-trajectory superposition. Application validates
 /// the fit and transforms positions, cells, velocities, and forces together.
@@ -111,8 +118,13 @@ impl SuperpositionReport {
 /// before reusing its input buffer. No per-frame report collection is retained.
 pub struct FrameSuperposer<'a> {
     reference: kekule::structure::ModelView<'a>,
-    selection: &'a AtomSelection,
+    atoms: FitAtoms<'a>,
     options: SuperpositionOptions<'a>,
+}
+
+enum FitAtoms<'a> {
+    Selection(&'a AtomSelection),
+    Correspondence(&'a AtomCorrespondence),
 }
 
 impl<'a> FrameSuperposer<'a> {
@@ -127,7 +139,36 @@ impl<'a> FrameSuperposer<'a> {
     ) -> Self {
         Self {
             reference: reference.as_model(),
-            selection,
+            atoms: FitAtoms::Selection(selection),
+            options,
+        }
+    }
+
+    /// Fits frames onto an independent model through ordered atom correspondence.
+    ///
+    /// The reference must be the correspondence's reference topology. Each frame
+    /// must use its moving topology. Validation occurs on application; the output
+    /// retains the moving topology, atom order, hierarchy, and annotations.
+    pub fn with_correspondence(
+        reference: ModelView<'a>,
+        correspondence: &'a AtomCorrespondence,
+    ) -> Self {
+        Self::with_correspondence_and_options(
+            reference,
+            correspondence,
+            SuperpositionOptions::default(),
+        )
+    }
+
+    /// Fits explicit pairs with weights in pair order and an explicit periodic policy.
+    pub fn with_correspondence_and_options(
+        reference: ModelView<'a>,
+        correspondence: &'a AtomCorrespondence,
+        options: SuperpositionOptions<'a>,
+    ) -> Self {
+        Self {
+            reference,
+            atoms: FitAtoms::Correspondence(correspondence),
             options,
         }
     }
@@ -148,12 +189,17 @@ impl<'a> FrameSuperposer<'a> {
         frame_index: usize,
         moving: TrajectoryFrameView<'_>,
     ) -> Result<(TrajectoryFrame, RigidAlignment), SuperpositionError> {
-        let alignment = kabsch_with_options(
-            moving.as_model(),
-            self.reference,
-            self.selection,
-            self.options,
-        )
+        let alignment = match self.atoms {
+            FitAtoms::Selection(selection) => {
+                kabsch_with_options(moving.as_model(), self.reference, selection, self.options)
+            }
+            FitAtoms::Correspondence(correspondence) => kabsch_with_correspondence_and_options(
+                moving.as_model(),
+                self.reference,
+                correspondence,
+                self.options,
+            ),
+        }
         .map_err(|source| SuperpositionError::Alignment {
             frame: frame_index,
             source,
@@ -374,7 +420,16 @@ impl Trajectory {
                 });
             }
             values.push(measure_rmsd(
-                moving, reference, selection, weights, None, frame,
+                moving.as_model(),
+                reference.as_model(),
+                selection
+                    .indices()
+                    .iter()
+                    .copied()
+                    .map(|index| (index, index)),
+                weights,
+                None,
+                frame,
             )?);
         }
         Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
@@ -429,9 +484,13 @@ impl Trajectory {
             )
             .map_err(|source| RmsdError::Alignment { frame, source })?;
             values.push(measure_rmsd(
-                moving,
-                reference,
-                measurement_selection,
+                moving.as_model(),
+                reference.as_model(),
+                measurement_selection
+                    .indices()
+                    .iter()
+                    .copied()
+                    .map(|index| (index, index)),
                 weights,
                 Some(alignment.transform()),
                 frame,
@@ -455,9 +514,9 @@ fn validate_measurement_selection(
 }
 
 fn measure_rmsd(
-    moving: crate::TrajectoryFrameView<'_>,
-    reference: crate::TrajectoryFrameView<'_>,
-    selection: &AtomSelection,
+    moving: ModelView<'_>,
+    reference: ModelView<'_>,
+    pairs: impl Iterator<Item = (TopologyAtomIndex, TopologyAtomIndex)>,
     weights: NormalizedRmsdWeights<'_>,
     transform: Option<RigidTransform>,
     frame: usize,
@@ -468,12 +527,12 @@ fn measure_rmsd(
     let reference_positions = reference_positions.value();
     let mut squared_residual = CompensatedSum::default();
     let mut weight_sum = CompensatedSum::default();
-    for (selection_index, dense_index) in selection.indices().iter().copied().enumerate() {
-        let mut point = moving_positions[dense_index.index()];
+    for (selection_index, (moving_index, reference_index)) in pairs.enumerate() {
+        let mut point = moving_positions[moving_index.index()];
         if let Some(transform) = transform {
             point = transform.transform_point(point);
         }
-        let residual = point - reference_positions[dense_index.index()];
+        let residual = point - reference_positions[reference_index.index()];
         let weight = weights.at(selection_index);
         squared_residual.add(weight * residual.norm_squared());
         weight_sum.add(weight);
@@ -625,6 +684,8 @@ impl CompensatedSum {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum SuperpositionError {
+    /// Explicit atom correspondence belongs to different topology snapshots.
+    Correspondence(AtomCorrespondenceError),
     /// The requested reference frame does not exist.
     ReferenceFrameOutOfRange { index: usize, frame_count: usize },
     /// One frame could not be fitted to the reference.
@@ -649,6 +710,7 @@ pub enum SuperpositionError {
 impl fmt::Display for SuperpositionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Correspondence(error) => error.fmt(formatter),
             Self::ReferenceFrameOutOfRange { index, frame_count } => write!(
                 formatter,
                 "trajectory reference frame {index} is out of range for {frame_count} frames"
@@ -677,6 +739,7 @@ impl fmt::Display for SuperpositionError {
 impl std::error::Error for SuperpositionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Correspondence(error) => Some(error),
             Self::Alignment { source, .. } => Some(source),
             Self::FrameTransform { source, .. } => Some(source.as_ref()),
             Self::CellTransform { source, .. } => Some(source.as_ref()),
@@ -690,6 +753,8 @@ impl std::error::Error for SuperpositionError {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum RmsdError {
+    /// Explicit atom correspondence belongs to different topology snapshots.
+    Correspondence(AtomCorrespondenceError),
     /// The requested reference frame does not exist.
     ReferenceFrameOutOfRange { index: usize, frame_count: usize },
     /// The measurement selection belongs to another exact topology.
@@ -720,6 +785,7 @@ pub enum RmsdError {
 impl fmt::Display for RmsdError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Correspondence(error) => error.fmt(formatter),
             Self::ReferenceFrameOutOfRange { index, frame_count } => write!(
                 formatter,
                 "trajectory reference frame {index} is out of range for {frame_count} frames"
@@ -761,6 +827,7 @@ impl fmt::Display for RmsdError {
 impl std::error::Error for RmsdError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Correspondence(error) => Some(error),
             Self::Alignment { source, .. } => Some(source),
             _ => None,
         }
