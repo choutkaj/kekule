@@ -1,4 +1,8 @@
-//! Same-topology, selection-based rigid molecular alignment.
+//! Rigid molecular alignment through selections or explicit atom correspondence.
+//!
+//! [`kabsch`] requires one shared topology. For independent models, construct
+//! [`AtomCorrespondence`] and use [`kabsch_with_correspondence`]. Both paths
+//! use the same numerical kernel and return the same moving-to-reference transform.
 //!
 //! The returned transform always maps moving coordinates into reference
 //! coordinates:
@@ -71,8 +75,14 @@ use std::sync::Arc;
 
 use crate::geometry::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
 use crate::structure::ModelView;
-use crate::topology::AtomSelection;
+use crate::topology::{AtomSelection, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
+
+mod correspondence;
+pub use correspondence::{AtomCorrespondence, AtomCorrespondenceError, CorrespondenceSide};
+
+#[cfg(test)]
+mod correspondence_tests;
 
 const MIN_SELECTED_ATOMS: usize = 3;
 
@@ -119,7 +129,76 @@ pub fn kabsch_with_options(
         .ensure_compatible(moving.topology_arc())
         .map_err(|_| AlignmentError::SelectionTopologyMismatch)?;
 
-    let selected_atom_count = selection.indices().len();
+    kabsch_pairs(
+        moving,
+        reference,
+        selection
+            .indices()
+            .iter()
+            .copied()
+            .map(|index| (index, index)),
+        options,
+    )
+}
+
+/// Fits independent models using explicitly paired atoms and uniform weights.
+///
+/// The correspondence retains both exact topology snapshots. Neither input is
+/// mutated or rebound, and no reordered copy of either coordinate array is made.
+///
+/// ```no_run
+/// use kekule::{alignment::{self, AtomCorrespondence}, sdf};
+/// let document = sdf::parse_str(&std::fs::read_to_string("compound.sdf")?)?;
+/// let moving = document.records()[0].to_model()?;
+/// let reference = document.records()[0].to_model()?;
+/// let pairs = AtomCorrespondence::from_same_layout(
+///     &moving.shared_topology(), &reference.shared_topology(),
+/// )?;
+/// let fit = alignment::kabsch_with_correspondence(moving.view(), reference.view(), &pairs)?;
+/// println!("{:?}", fit.rmsd());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn kabsch_with_correspondence(
+    moving: ModelView<'_>,
+    reference: ModelView<'_>,
+    correspondence: &AtomCorrespondence,
+) -> Result<RigidAlignment, AlignmentError> {
+    kabsch_with_correspondence_and_options(
+        moving,
+        reference,
+        correspondence,
+        KabschOptions::default(),
+    )
+}
+
+/// Fits paired atoms with explicit weighting and periodic policy.
+///
+/// Weights follow correspondence pair order. Both sides must span at least two
+/// dimensions and contain at least three pairs, as in [`kabsch_with_options`].
+pub fn kabsch_with_correspondence_and_options(
+    moving: ModelView<'_>,
+    reference: ModelView<'_>,
+    correspondence: &AtomCorrespondence,
+    options: KabschOptions<'_>,
+) -> Result<RigidAlignment, AlignmentError> {
+    correspondence
+        .ensure_compatible(moving.topology(), reference.topology())
+        .map_err(AlignmentError::Correspondence)?;
+    kabsch_pairs(
+        moving,
+        reference,
+        correspondence.index_pairs().iter().copied(),
+        options,
+    )
+}
+
+fn kabsch_pairs(
+    moving: ModelView<'_>,
+    reference: ModelView<'_>,
+    pairs: impl ExactSizeIterator<Item = (TopologyAtomIndex, TopologyAtomIndex)> + Clone,
+    options: KabschOptions<'_>,
+) -> Result<RigidAlignment, AlignmentError> {
+    let selected_atom_count = pairs.len();
     if selected_atom_count < MIN_SELECTED_ATOMS {
         return Err(AlignmentError::InsufficientSelectedAtoms {
             selected: selected_atom_count,
@@ -145,10 +224,10 @@ pub fn kabsch_with_options(
     let reference_positions = reference_positions.value();
 
     let mut moments = AlignmentMoments::default();
-    for (selection_index, dense_index) in selection.indices().iter().copied().enumerate() {
+    for (selection_index, (moving_index, reference_index)) in pairs.clone().enumerate() {
         moments.add(
-            point_components(moving_positions[dense_index.index()]),
-            point_components(reference_positions[dense_index.index()]),
+            point_components(moving_positions[moving_index.index()]),
+            point_components(reference_positions[reference_index.index()]),
             weights.at(selection_index),
         );
     }
@@ -165,9 +244,9 @@ pub fn kabsch_with_options(
         .map_err(AlignmentError::InvalidRigidTransform)?;
 
     let mut weighted_squared_residual = CompensatedSum::default();
-    for (selection_index, dense_index) in selection.indices().iter().copied().enumerate() {
-        let moving_centered = point_components(moving_positions[dense_index.index()]);
-        let reference_centered = point_components(reference_positions[dense_index.index()]);
+    for (selection_index, (moving_index, reference_index)) in pairs.enumerate() {
+        let moving_centered = point_components(moving_positions[moving_index.index()]);
+        let reference_centered = point_components(reference_positions[reference_index.index()]);
         let moving_centered = subtract(moving_centered, moments.moving_centroid);
         let reference_centered = subtract(reference_centered, moments.reference_centroid);
         let residual = rotation.transform_vector(components_vector(moving_centered))
@@ -189,7 +268,7 @@ pub fn kabsch_with_options(
 /// Options for [`kabsch_with_options`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct KabschOptions<'a> {
-    /// Per-selected-atom weighting policy.
+    /// Per-selected-atom or per-correspondence-pair weighting policy.
     pub weighting: AlignmentWeighting<'a>,
     /// Handling of models carrying periodic cells.
     pub periodic_policy: PeriodicAlignmentPolicy,
@@ -201,7 +280,7 @@ pub enum AlignmentWeighting<'a> {
     /// Give every selected atom equal weight.
     #[default]
     Uniform,
-    /// Use positive finite weights in selection order.
+    /// Use positive finite weights in selection order or correspondence pair order.
     Explicit(&'a [f64]),
 }
 
@@ -265,6 +344,8 @@ pub enum AlignmentError {
     TopologyMismatch,
     /// The atom selection belongs to another topology allocation.
     SelectionTopologyMismatch,
+    /// An explicit correspondence belongs to a different topology snapshot.
+    Correspondence(AtomCorrespondenceError),
     /// Fewer than three atoms were selected.
     InsufficientSelectedAtoms {
         /// Actual selected atom count.
@@ -318,6 +399,7 @@ impl fmt::Display for AlignmentError {
             Self::SelectionTopologyMismatch => {
                 formatter.write_str("atom selection belongs to a different topology allocation")
             }
+            Self::Correspondence(error) => error.fmt(formatter),
             Self::InsufficientSelectedAtoms { selected, minimum } => write!(
                 formatter,
                 "rigid alignment requires at least {minimum} selected atoms, but received {selected}"
@@ -367,6 +449,7 @@ impl fmt::Display for AlignmentGeometry {
 impl std::error::Error for AlignmentError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Correspondence(error) => Some(error),
             Self::InvalidRigidTransform(error) => Some(error),
             _ => None,
         }
