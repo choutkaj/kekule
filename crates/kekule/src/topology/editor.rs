@@ -1,4 +1,5 @@
 //! Transactional system edits, with molecular chemistry staged per affected occurrence.
+mod append;
 mod error;
 mod hierarchy;
 mod identity;
@@ -17,11 +18,11 @@ use crate::core::{
 use crate::properties::{
     Properties, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue,
 };
+pub(crate) use append::AppendMapping;
 pub use error::*;
 use hierarchy::EditHierarchy;
 pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
 pub use identity::*;
-pub use publication::{TopologyEdit, TopologyEditCorrespondence};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
@@ -37,7 +38,7 @@ struct Group {
     chemistry: GroupChemistry,
     atoms: BTreeMap<AtomId, EditAtomId>,
     bonds: BTreeMap<BondId, EditBondId>,
-    source: Option<MoleculeInstanceId>,
+    instance_slot: Option<usize>,
     changed: bool,
     class: Option<MoleculeClass>,
 }
@@ -53,8 +54,9 @@ struct Location<Id> {
 /// Chemical edits affect individual occurrences, even when definitions are reused.
 /// Deleting bonds can split molecules; adding bonds can merge them. Publication
 /// constructs valid connected definitions and one immutable topology snapshot.
-/// Stable opaque handles survive these changes. Use `*_handle` to resolve source
-/// IDs and [`Self::finish_with_correspondence`] to obtain published IDs.
+/// Stable opaque handles survive these changes within the draft. Use `*_handle`
+/// to resolve source IDs. [`Self::finish`] returns the completed topology; editing
+/// handles do not identify entities in the published result.
 ///
 /// Graph edits clear changed owner annotations. Surviving entity annotations are
 /// transferred explicitly; newly added entities have missing property values.
@@ -266,7 +268,7 @@ impl TopologyEditor {
             chemistry: GroupChemistry::Draft(Box::new(draft)),
             atoms: BTreeMap::from([(local, id)]),
             bonds: BTreeMap::new(),
-            source: None,
+            instance_slot: None,
             changed: true,
             class: None,
         }));
@@ -703,7 +705,7 @@ impl TopologyEditor {
             chemistry,
             atoms: result.atoms.clone(),
             bonds: result.bonds.clone(),
-            source,
+            instance_slot: source.map(MoleculeInstanceId::index),
             changed: false,
             class,
         }));
