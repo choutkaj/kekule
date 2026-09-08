@@ -532,6 +532,7 @@ mod graph;
 mod hierarchy;
 mod hydrogens;
 mod mmcif_contents;
+pub(crate) mod mmcif_syntax;
 mod normalization;
 mod perception;
 mod public_api;

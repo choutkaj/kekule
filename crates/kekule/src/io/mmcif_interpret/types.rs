@@ -450,7 +450,7 @@ pub struct MmcifInterpretError {
 }
 
 impl MmcifInterpretError {
-    pub(super) fn new(line: Option<usize>, message: impl Into<String>) -> Self {
+    pub(in crate::io) fn new(line: Option<usize>, message: impl Into<String>) -> Self {
         Self {
             line,
             message: message.into(),

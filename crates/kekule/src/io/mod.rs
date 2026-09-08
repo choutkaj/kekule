@@ -1,3 +1,4 @@
+mod mmcif_category;
 mod mmcif_connectivity;
 mod mmcif_document;
 mod mmcif_interpret;
