@@ -596,6 +596,46 @@ No-op publication preserves installed perception and annotations. Complete edito
 property-column getters, insertion, and removal all use live entity order; explicit
 stable-slot tables remain lower-level inspection surfaces.
 
+### Complete model append
+
+`ModelEditor::append_model` accepts a borrowed `Model` or `ModelView` and imports
+the complete canonical model state under the existing edit rules. Coordinates are
+included automatically and used as supplied in the destination coordinate system.
+Placement is the caller's responsibility; append does not fit, image, infer bonds,
+or generate geometry. Ordinary `add_atom`, `delete_atom`, and bond operations
+remain the editing interface for all elements, including hydrogen.
+
+The structural editor imports connected definitions, their explicit reuse within
+each append, occurrence annotations, represented stereo, perception, classification,
+hierarchy, and entity property columns. Independent definitions and independent
+appends are not deduplicated by chemical equality. The model editor coordinates
+this import with positions and realization properties, including occupancy and B
+factors. Equal hierarchy labels remain on distinct nodes with fresh identities;
+append does not infer that chains or residues from separate inputs should merge.
+
+Compatible entity properties follow their source-to-draft correspondence, with
+missing values on unrelated rows. Conflicting property types or physical dimensions
+reject the entire append. Source topology/model owner annotations are not imported,
+and changed destination topology/model owner annotations are cleared. An append
+report lists those keys. Unchanged molecular definitions keep their own annotations;
+subsequent chemistry edits follow the existing invalidation and propagation rules.
+
+A source without a periodic cell uses the destination cell. An empty editor with
+no cell adopts the source cell. Otherwise a periodic source must have the same
+periodic-axis flags and canonical cell vectors as the destination, allowing only
+floating-point conversion roundoff (16 machine epsilons times the largest vector
+component). A mismatch rejects without mutation so the caller can set the intended cell and
+retry. Every complete append is transactional, including late property failures.
+
+Each append returns a separate source-to-draft mapping, even for repeated imports
+of one source. It retains the source topology and can be resolved against a
+publication containing that exact import, including publications of cloned drafts.
+Deleted entities have no final identity; occurrence mappings accommodate splits
+and merges. Unrelated publications reject even when layouts match. This is narrow
+edit correspondence and does not rebind selections or other topology-bound objects.
+`finish()` remains the ordinary result-only publication path; callers request
+`finish_with_correspondence()` when final identities are needed.
+
 ## Parsing and interpretation
 
 ### Canonical parsing pipeline

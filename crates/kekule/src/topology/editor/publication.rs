@@ -46,8 +46,15 @@ pub struct TopologyEditCorrespondence {
     source_bond_indices: Vec<Option<TopologyBondIndex>>,
     pub(crate) atom_slots: Vec<usize>,
     pub(crate) bond_slots: Vec<usize>,
+    append_tokens: Vec<Arc<()>>,
 }
 impl TopologyEditCorrespondence {
+    pub(crate) fn contains_append(&self, token: &Arc<()>) -> bool {
+        self.append_tokens
+            .iter()
+            .any(|known| Arc::ptr_eq(known, token))
+    }
+
     pub fn source_topology(&self) -> Option<&Topology> {
         self.source.as_deref()
     }
@@ -174,6 +181,7 @@ impl TopologyEditor {
         let mut builder = TopologyBuilder::new();
         let mut targets = Targets::default();
         let mut source_definitions = BTreeMap::new();
+        let mut added_definitions = BTreeMap::new();
         // Preserve definition order/reuse for untouched source occurrences.
         let retained = self
             .groups
@@ -206,7 +214,7 @@ impl TopologyEditor {
             match &group.chemistry {
                 GroupChemistry::Source(id) => {
                     let instance = builder.add_instance(source_definitions[id])?;
-                    instance_sources.push(group.source.map(MoleculeInstanceId::index));
+                    instance_sources.push(group.instance_slot);
                     self.record_component(
                         group,
                         molecule.atom_ids().map(|a| (a, a)),
@@ -215,15 +223,20 @@ impl TopologyEditor {
                         &mut targets,
                     );
                 }
-                GroupChemistry::Added(_) => {
-                    let definition = builder.add_molecule_definition(molecule)?;
-                    if let Some(class) =
-                        self.component_class(&group.atoms.values().copied().collect(), group.class)
-                    {
-                        builder.set_molecule_class(definition, class)?;
-                    }
+                GroupChemistry::Added(owned) => {
+                    // Only explicit shared definitions are reused, never chemical guesses.
+                    let definition = if let Some(&id) = added_definitions.get(&Arc::as_ptr(owned)) {
+                        id
+                    } else {
+                        let id = builder.add_molecule_definition(molecule)?;
+                        if let Some(class) = group.class {
+                            builder.set_molecule_class(id, class)?;
+                        }
+                        added_definitions.insert(Arc::as_ptr(owned), id);
+                        id
+                    };
                     let instance = builder.add_instance(definition)?;
-                    instance_sources.push(None);
+                    instance_sources.push(group.instance_slot);
                     self.record_component(
                         group,
                         molecule.atom_ids().map(|a| (a, a)),
@@ -241,12 +254,8 @@ impl TopologyEditor {
                         builder.set_molecule_class(definition, class)?;
                     }
                     let instance = builder.add_instance(definition)?;
-                    instance_sources.push(
-                        (!group.changed)
-                            .then_some(group.source)
-                            .flatten()
-                            .map(MoleculeInstanceId::index),
-                    );
+                    instance_sources
+                        .push((!group.changed).then_some(group.instance_slot).flatten());
                     self.record_component(
                         group,
                         molecule.atom_ids().map(|a| (a, a)),
@@ -460,6 +469,7 @@ impl TopologyEditor {
             source_bond_indices,
             atom_slots: targets.atom_slots,
             bond_slots: targets.bond_slots,
+            append_tokens: self.append_tokens.clone(),
         };
         TopologyEdit {
             topology: target,

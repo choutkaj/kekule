@@ -1,4 +1,7 @@
 //! One-realization coordination over the coordinate-free structural editor.
+mod append;
+pub use append::*;
+
 use super::{Model, ModelError, PositionError, Positions};
 use crate::core::{Atom, BondOrder, Molecule};
 use crate::geometry::{PeriodicCell, Point3};
@@ -767,6 +770,15 @@ pub enum ModelEditError {
     Property(PropertyError),
     Model(Box<ModelError>),
     CapacityOverflow,
+    /// A periodic source cannot be imported under the destination's cell.
+    IncompatibleAppendCell,
+    /// The published edit does not contain this particular append transaction.
+    ForeignAppend,
+    /// An imported realization property cannot be combined with its destination table.
+    AppendProperty {
+        domain: &'static str,
+        error: Box<PropertyError>,
+    },
 }
 impl fmt::Display for ModelEditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -776,6 +788,11 @@ impl fmt::Display for ModelEditError {
             Self::Property(e) => e.fmt(f),
             Self::Model(e) => e.fmt(f),
             Self::CapacityOverflow => f.write_str("model editing exceeds coordinate capacity"),
+            Self::IncompatibleAppendCell => f.write_str(
+                "appended model has a different periodic cell; set the intended destination cell or explicitly remove the source cell before appending",
+            ),
+            Self::ForeignAppend => f.write_str("published edit does not contain this model append"),
+            Self::AppendProperty { domain, error } => write!(f, "cannot append {domain} properties: {error}"),
         }
     }
 }
@@ -786,7 +803,8 @@ impl std::error::Error for ModelEditError {
             Self::Position(e) => Some(e),
             Self::Property(e) => Some(e),
             Self::Model(e) => Some(e.as_ref()),
-            Self::CapacityOverflow => None,
+            Self::AppendProperty { error, .. } => Some(error.as_ref()),
+            Self::CapacityOverflow | Self::IncompatibleAppendCell | Self::ForeignAppend => None,
         }
     }
 }

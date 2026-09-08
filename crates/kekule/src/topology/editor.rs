@@ -1,4 +1,5 @@
 //! Transactional system edits, with molecular chemistry staged per affected occurrence.
+mod append;
 mod error;
 mod hierarchy;
 mod identity;
@@ -17,6 +18,7 @@ use crate::core::{
 use crate::properties::{
     Properties, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue,
 };
+pub(crate) use append::AppendMapping;
 pub use error::*;
 use hierarchy::EditHierarchy;
 pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
@@ -37,7 +39,7 @@ struct Group {
     chemistry: GroupChemistry,
     atoms: BTreeMap<AtomId, EditAtomId>,
     bonds: BTreeMap<BondId, EditBondId>,
-    source: Option<MoleculeInstanceId>,
+    instance_slot: Option<usize>,
     changed: bool,
     class: Option<MoleculeClass>,
 }
@@ -85,6 +87,7 @@ pub struct TopologyEditor {
     properties: Properties,
     revision: u64,
     pub(crate) structural_revision: u64,
+    append_tokens: Vec<Arc<()>>,
 }
 
 impl Topology {
@@ -266,7 +269,7 @@ impl TopologyEditor {
             chemistry: GroupChemistry::Draft(Box::new(draft)),
             atoms: BTreeMap::from([(local, id)]),
             bonds: BTreeMap::new(),
-            source: None,
+            instance_slot: None,
             changed: true,
             class: None,
         }));
@@ -703,7 +706,7 @@ impl TopologyEditor {
             chemistry,
             atoms: result.atoms.clone(),
             bonds: result.bonds.clone(),
-            source,
+            instance_slot: source.map(MoleculeInstanceId::index),
             changed: false,
             class,
         }));

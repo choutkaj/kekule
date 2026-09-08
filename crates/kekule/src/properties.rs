@@ -604,6 +604,32 @@ impl PropertyTable {
         });
     }
 
+    /// Copies source rows into explicitly allocated destination slots. The caller
+    /// stages the containing operation, so errors may leave this private draft changed.
+    pub(crate) fn copy_rows_from(
+        &mut self,
+        source: &Self,
+        rows: &[usize],
+    ) -> Result<(), PropertyError> {
+        if rows.len() != source.len() {
+            return Err(PropertyError::LengthMismatch {
+                expected: source.len(),
+                actual: rows.len(),
+            });
+        }
+        for &row in rows {
+            self.validate_index(row)?;
+        }
+        for (key, column) in source.iter() {
+            for (index, &row) in rows.iter().enumerate() {
+                if let Some(value) = column.value(index)? {
+                    self.set_value(key.clone(), row, Some(value))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn clear_index(&mut self, index: usize) {
         if index >= self.len {
             return;

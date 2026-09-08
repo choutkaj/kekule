@@ -22,6 +22,10 @@ pub enum TopologyEditError {
     Topology(TopologyBuildError),
     Hierarchy(HierarchyError),
     Property(PropertyError),
+    AppendProperty {
+        domain: &'static str,
+        error: Box<PropertyError>,
+    },
 }
 
 impl fmt::Display for TopologyEditError {
@@ -57,6 +61,9 @@ impl fmt::Display for TopologyEditError {
             Self::Topology(e) => write!(f, "cannot publish edited topology: {e}"),
             Self::Hierarchy(e) => write!(f, "cannot edit hierarchy: {e}"),
             Self::Property(e) => write!(f, "cannot edit properties: {e}"),
+            Self::AppendProperty { domain, error } => {
+                write!(f, "cannot append {domain} properties: {error}")
+            }
         }
     }
 }
@@ -68,6 +75,7 @@ impl std::error::Error for TopologyEditError {
             Self::Topology(e) => Some(e),
             Self::Hierarchy(e) => Some(e),
             Self::Property(e) => Some(e),
+            Self::AppendProperty { error, .. } => Some(error.as_ref()),
             _ => None,
         }
     }
