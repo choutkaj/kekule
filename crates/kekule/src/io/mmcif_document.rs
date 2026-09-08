@@ -380,6 +380,23 @@ fn parse_tokens(
                 ));
             }
         }
+        // Scalar atom-site fields describe one row, subject to the same bound
+        // as a one-row loop. Other category semantics belong to interpretation.
+        if max_atom_site_rows == 0 {
+            if let Some(item) = entries.iter().find_map(|entry| match entry {
+                MmcifEntry::Item(item)
+                    if super::mmcif_category::in_category(item.tag(), "_atom_site") =>
+                {
+                    Some(item)
+                }
+                _ => None,
+            }) {
+                return Err(MmcifParseError::new(
+                    item.value().line(),
+                    "atom-site row count exceeds configured limit",
+                ));
+            }
+        }
         blocks.push(MmcifBlock { name, entries });
     }
     if blocks.is_empty() {

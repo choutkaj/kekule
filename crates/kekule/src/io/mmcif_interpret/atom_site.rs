@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::core::Element;
 use crate::geometry::Point3;
 
-use super::super::{MmcifBlock, MmcifLoopTable, MmcifValue};
+use super::super::mmcif_category::MmcifCategory;
+use super::super::{MmcifBlock, MmcifValue};
 use super::types::{
     MmcifAltLocPolicy, MmcifEntityKind, MmcifInterpretError, MmcifInterpretIssue,
     MmcifInterpretationReport,
@@ -12,8 +13,9 @@ use super::types::{
 
 pub(super) fn coordinate_model_ids(block: &MmcifBlock) -> Result<Vec<String>, MmcifInterpretError> {
     let table = block
-        .loop_with_tag("_atom_site.type_symbol")
-        .ok_or_else(|| MmcifInterpretError::new(None, "data block has no atom-site loop"))?;
+        .category("_atom_site")?
+        .ok_or_else(|| MmcifInterpretError::new(None, "data block has no atom-site category"))?;
+    let table = &table;
     let mut seen = BTreeSet::new();
     let mut models = Vec::new();
     for row in 0..table.row_count() {
@@ -31,7 +33,8 @@ pub(super) fn read_entity_types(
     block: &MmcifBlock,
 ) -> Result<BTreeMap<String, MmcifEntityKind>, MmcifInterpretError> {
     let mut entities = BTreeMap::new();
-    if let Some(table) = block.loop_with_tag("_entity.id") {
+    if let Some(table) = block.category("_entity")? {
+        let table = &table;
         for row in 0..table.row_count() {
             let id = required(table, row, "_entity.id")?;
             let kind = required(table, row, "_entity.type")?;
@@ -42,13 +45,6 @@ pub(super) fn read_entity_types(
                 return Err(row_error(table, row, format!("duplicate entity `{id}`")));
             }
         }
-    } else if let (Some(id), Some(kind)) = (
-        block.item("_entity.id").and_then(MmcifValue::optional_text),
-        block
-            .item("_entity.type")
-            .and_then(MmcifValue::optional_text),
-    ) {
-        entities.insert(id.to_owned(), MmcifEntityKind::from_mmcif(kind));
     }
     Ok(entities)
 }
@@ -57,7 +53,8 @@ pub(super) fn read_asym_entities(
     block: &MmcifBlock,
 ) -> Result<BTreeMap<String, String>, MmcifInterpretError> {
     let mut instances = BTreeMap::new();
-    if let Some(table) = block.loop_with_tag("_struct_asym.id") {
+    if let Some(table) = block.category("_struct_asym")? {
+        let table = &table;
         for row in 0..table.row_count() {
             let id = required(table, row, "_struct_asym.id")?;
             let entity = required(table, row, "_struct_asym.entity_id")?;
@@ -69,15 +66,6 @@ pub(super) fn read_asym_entities(
                 ));
             }
         }
-    } else if let (Some(id), Some(entity)) = (
-        block
-            .item("_struct_asym.id")
-            .and_then(MmcifValue::optional_text),
-        block
-            .item("_struct_asym.entity_id")
-            .and_then(MmcifValue::optional_text),
-    ) {
-        instances.insert(id.to_owned(), entity.to_owned());
     }
     Ok(instances)
 }
@@ -126,7 +114,7 @@ struct OccurrenceState {
 }
 
 pub(super) fn read_atom_rows(
-    table: &MmcifLoopTable,
+    table: &MmcifCategory<'_>,
     entities: &BTreeMap<String, MmcifEntityKind>,
     asym_entities: &BTreeMap<String, String>,
     strict_entity_metadata: bool,
@@ -398,7 +386,7 @@ pub(super) fn select_alt_locations(
 }
 
 pub(super) fn required<'a>(
-    table: &'a MmcifLoopTable,
+    table: &'a MmcifCategory<'_>,
     row: usize,
     tag: &str,
 ) -> Result<&'a str, MmcifInterpretError> {
@@ -410,12 +398,12 @@ pub(super) fn required<'a>(
     })
 }
 
-pub(super) fn optional<'a>(table: &'a MmcifLoopTable, row: usize, tag: &str) -> Option<&'a str> {
+pub(super) fn optional<'a>(table: &'a MmcifCategory<'_>, row: usize, tag: &str) -> Option<&'a str> {
     table.value(row, tag).and_then(MmcifValue::optional_text)
 }
 
 fn optional_f64(
-    table: &MmcifLoopTable,
+    table: &MmcifCategory<'_>,
     row: usize,
     tag: &str,
 ) -> Result<Option<f64>, MmcifInterpretError> {
@@ -433,7 +421,7 @@ fn optional_f64(
 }
 
 pub(super) fn optional_i32(
-    table: &MmcifLoopTable,
+    table: &MmcifCategory<'_>,
     row: usize,
     tag: &str,
 ) -> Result<Option<i32>, MmcifInterpretError> {
@@ -447,7 +435,7 @@ pub(super) fn optional_i32(
 }
 
 fn optional_i8(
-    table: &MmcifLoopTable,
+    table: &MmcifCategory<'_>,
     row: usize,
     tag: &str,
 ) -> Result<Option<i8>, MmcifInterpretError> {
@@ -461,7 +449,7 @@ fn optional_i8(
 }
 
 fn optional_point(
-    table: &MmcifLoopTable,
+    table: &MmcifCategory<'_>,
     row: usize,
 ) -> Result<Option<Point3>, MmcifInterpretError> {
     let x = optional_f64(table, row, "_atom_site.Cartn_x")?;
@@ -479,15 +467,9 @@ fn optional_point(
 }
 
 pub(super) fn row_error(
-    table: &MmcifLoopTable,
+    table: &MmcifCategory<'_>,
     row: usize,
     message: impl Into<String>,
 ) -> MmcifInterpretError {
-    MmcifInterpretError::new(
-        table
-            .row(row)
-            .and_then(|row| row.first())
-            .map(MmcifValue::line),
-        message,
-    )
+    MmcifInterpretError::new(table.row_line(row), message)
 }
