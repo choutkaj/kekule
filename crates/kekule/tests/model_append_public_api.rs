@@ -1,12 +1,10 @@
 use kekule::core::{Atom, AtomId, BondOrder, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyValue};
-use kekule::structure::{
-    Ensemble, Model, ModelAppendCorrespondence, ModelEditError, ModelEditor, Positions,
-};
+use kekule::structure::{Ensemble, Model, ModelEditError, ModelEditor, Positions};
 use kekule::topology::{
-    AtomSiteMetadata, InstanceAtomId, MoleculeClass, MoleculeInstanceId, ResidueClass,
-    TopologyBuilder,
+    AtomSiteMetadata, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId,
+    ResidueClass, TopologyBuilder,
 };
 use kekule::units::{Quantity, ANGSTROM, KELVIN, NANOMETER, SQUARE_ANGSTROM};
 use std::sync::Arc;
@@ -204,15 +202,18 @@ fn assert_rows(source: &PropertyTable, target: &PropertyTable, pairs: &[(usize, 
     }
 }
 
-fn assert_import(source: &Model, target: &Model, mapping: ModelAppendCorrespondence<'_>) {
-    assert!(std::ptr::eq(mapping.source_topology(), source.topology()));
-    assert!(std::ptr::eq(mapping.target_topology(), target.topology()));
+// Append-only fixture checks: occurrences retain their local chemistry IDs and
+// appear after the destination occurrences. This is an expected layout, not an
+// editor-supplied correspondence; every row, endpoint and hierarchy link is checked.
+fn assert_import(source: &Model, target: &Model, first_instance: usize) {
+    let instance =
+        |id: MoleculeInstanceId| MoleculeInstanceId::new((first_instance + id.index()) as u32);
+    let atom = |id: InstanceAtomId| InstanceAtomId::new(instance(id.molecule()), id.atom());
     let atoms = source
-        .topology()
         .atom_ids()
         .iter()
         .map(|&id| {
-            let other = mapping.atom(id).unwrap();
+            let other = atom(id);
             assert_eq!(source.atom(id).unwrap(), target.atom(other).unwrap());
             assert_eq!(
                 source.position(id).unwrap(),
@@ -226,6 +227,42 @@ fn assert_import(source: &Model, target: &Model, mapping: ModelAppendCorresponde
                 source.b_factor(id).unwrap(),
                 target.b_factor(other).unwrap()
             );
+            let before = source.hierarchy().atom_site_for_atom(id);
+            let after = target.hierarchy().atom_site_for_atom(other);
+            assert_eq!(before.is_some(), after.is_some());
+            if let (Some(before), Some(after)) = (before, after) {
+                assert_eq!(before.metadata(), after.metadata());
+                assert_rows(
+                    source.topology().atom_site_properties(),
+                    target.topology().atom_site_properties(),
+                    &[(before.id().index(), after.id().index())],
+                );
+                let before = source.hierarchy().residue(before.residue()).unwrap();
+                let after = target.hierarchy().residue(after.residue()).unwrap();
+                assert_eq!(before.atom_sites().len(), after.atom_sites().len());
+                assert_eq!(before.name(), after.name());
+                assert_eq!(before.label_seq_id(), after.label_seq_id());
+                assert_eq!(before.author_seq_id(), after.author_seq_id());
+                assert_eq!(before.insertion_code(), after.insertion_code());
+                assert_eq!(before.label_comp_id(), after.label_comp_id());
+                assert_eq!(before.author_comp_id(), after.author_comp_id());
+                assert_eq!(before.class(), after.class());
+                assert_rows(
+                    source.topology().residue_properties(),
+                    target.topology().residue_properties(),
+                    &[(before.id().index(), after.id().index())],
+                );
+                let before = source.hierarchy().chain(before.chain()).unwrap();
+                let after = target.hierarchy().chain(after.chain()).unwrap();
+                assert_eq!(before.residues().len(), after.residues().len());
+                assert_eq!(before.label_id(), after.label_id());
+                assert_eq!(before.author_id(), after.author_id());
+                assert_rows(
+                    source.topology().chain_properties(),
+                    target.topology().chain_properties(),
+                    &[(before.id().index(), after.id().index())],
+                );
+            }
             (
                 source.topology().atom_index(id).unwrap().index(),
                 target.topology().atom_index(other).unwrap().index(),
@@ -239,24 +276,19 @@ fn assert_import(source: &Model, target: &Model, mapping: ModelAppendCorresponde
         &atoms,
     );
     let bonds = source
-        .topology()
         .bond_ids()
         .iter()
         .map(|&id| {
-            let other = mapping.bond(id).unwrap();
+            let other = InstanceBondId::new(instance(id.molecule()), id.bond());
             let before = source.bond(id).unwrap();
             let after = target.bond(other).unwrap();
             assert_eq!(before.order, after.order);
             assert_eq!(
-                mapping
-                    .atom(InstanceAtomId::new(id.molecule(), before.a()))
-                    .unwrap(),
+                atom(InstanceAtomId::new(id.molecule(), before.a())),
                 InstanceAtomId::new(other.molecule(), after.a())
             );
             assert_eq!(
-                mapping
-                    .atom(InstanceAtomId::new(id.molecule(), before.b()))
-                    .unwrap(),
+                atom(InstanceAtomId::new(id.molecule(), before.b())),
                 InstanceAtomId::new(other.molecule(), after.b())
             );
             (
@@ -271,14 +303,10 @@ fn assert_import(source: &Model, target: &Model, mapping: ModelAppendCorresponde
         target.topology().bond_properties(),
         &bonds,
     );
-    for (id, instance) in source.topology().instances() {
-        let other = mapping.instances(id).unwrap();
-        assert_eq!(other.len(), 1);
-        let before = source.topology().definition(instance.definition()).unwrap();
-        let after = target
-            .topology()
-            .definition(target.topology().instance(other[0]).unwrap().definition())
-            .unwrap();
+    for (id, value) in source.topology().instances() {
+        let other = instance(id);
+        let before = source.topology().definition(value.definition()).unwrap();
+        let after = target.topology().definition_for_instance(other).unwrap();
         assert_eq!(before.class(), after.class());
         assert_eq!(before.molecule(), after.molecule());
         assert_eq!(
@@ -292,46 +320,6 @@ fn assert_import(source: &Model, target: &Model, mapping: ModelAppendCorresponde
         assert_rows(
             source.topology().molecule_instance_properties(),
             target.topology().molecule_instance_properties(),
-            &[(id.index(), other[0].index())],
-        );
-    }
-    for (id, before) in source.hierarchy().chains() {
-        let other = mapping.chain(id).unwrap();
-        let after = target.hierarchy().chain(other).unwrap();
-        assert_eq!(before.label_id(), after.label_id());
-        assert_eq!(before.author_id(), after.author_id());
-        assert_rows(
-            source.topology().chain_properties(),
-            target.topology().chain_properties(),
-            &[(id.index(), other.index())],
-        );
-    }
-    for (id, before) in source.hierarchy().residues() {
-        let other = mapping.residue(id).unwrap();
-        let after = target.hierarchy().residue(other).unwrap();
-        assert_eq!(mapping.chain(before.chain()), Some(after.chain()));
-        assert_eq!(before.name(), after.name());
-        assert_eq!(before.label_seq_id(), after.label_seq_id());
-        assert_eq!(before.author_seq_id(), after.author_seq_id());
-        assert_eq!(before.insertion_code(), after.insertion_code());
-        assert_eq!(before.label_comp_id(), after.label_comp_id());
-        assert_eq!(before.author_comp_id(), after.author_comp_id());
-        assert_eq!(before.class(), after.class());
-        assert_rows(
-            source.topology().residue_properties(),
-            target.topology().residue_properties(),
-            &[(id.index(), other.index())],
-        );
-    }
-    for (id, before) in source.hierarchy().atom_sites() {
-        let other = mapping.atom_site(id).unwrap();
-        let after = target.hierarchy().atom_site(other).unwrap();
-        assert_eq!(mapping.atom(before.atom()), Some(after.atom()));
-        assert_eq!(mapping.residue(before.residue()), Some(after.residue()));
-        assert_eq!(before.metadata(), after.metadata());
-        assert_rows(
-            source.topology().atom_site_properties(),
-            target.topology().atom_site_properties(),
             &[(id.index(), other.index())],
         );
     }
@@ -356,8 +344,8 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
     let second = editor.append_model(source.view()).unwrap();
     assert!(second.report().cleared_model_properties.is_empty());
     assert!(second.report().cleared_topology_properties.is_empty());
-    let result = editor.finish_with_correspondence().unwrap();
-    let target = result.model();
+    let result = editor.finish().unwrap();
+    let target = &result;
     assert_eq!(target.atom_count(), source.atom_count() * 3);
     assert_eq!(target.topology().instance_count(), 9);
     assert_eq!(target.topology().definition_count(), 6);
@@ -366,8 +354,8 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
     assert_eq!(target.atom_sites().count(), source.atom_sites().count() * 3);
     assert!(target.properties().owner_is_empty());
     assert!(target.topology().properties().owner_is_empty());
-    assert_import(&source, target, first.published(&result).unwrap());
-    assert_import(&source, target, second.published(&result).unwrap());
+    assert_import(&source, target, 3);
+    assert_import(&source, target, 6);
     for (before, after) in [
         (source.atom_properties(), target.atom_properties()),
         (source.bond_properties(), target.bond_properties()),
@@ -403,25 +391,18 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
         );
     }
     for &id in source.topology().atom_ids() {
-        assert_eq!(result.correspondence().target_atom(id), Some(id));
         assert_eq!(target.position(id).unwrap(), source.position(id).unwrap());
-        assert_ne!(
-            first.published(&result).unwrap().atom(id),
-            second.published(&result).unwrap().atom(id)
-        );
+        assert_ne!(first.atom(id).unwrap(), second.atom(id).unwrap());
     }
     // Explicitly reused occurrences share a definition; equal independent ones do not.
-    for mapping in [
-        first.published(&result).unwrap(),
-        second.published(&result).unwrap(),
-    ] {
+    for first_instance in [3, 6] {
         let defs = source
             .topology()
             .instances()
             .map(|(id, _)| {
                 target
                     .topology()
-                    .instance(mapping.instances(id).unwrap()[0])
+                    .instance(MoleculeInstanceId::new(first_instance + id.index() as u32))
                     .unwrap()
                     .definition()
             })
@@ -437,7 +418,7 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
 }
 
 #[test]
-fn append_composes_with_generic_atom_bond_edits_and_tracks_splits_and_merges() {
+fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_splits_and_merges() {
     let receptor = model("CC");
     let ligand = model("CO");
     let receptor_atom = receptor.topology().atom_ids()[0];
@@ -469,73 +450,108 @@ fn append_composes_with_generic_atom_bond_edits_and_tracks_splits_and_merges() {
             BondOrder::Single,
         )
         .unwrap();
-    let linked = editor.clone().finish_with_correspondence().unwrap();
-    assert_eq!(linked.model().topology().instance_count(), 1);
-    let linked_mapping = imported.published(&linked).unwrap();
+    let linked = editor.clone().finish().unwrap();
+    assert_eq!(linked.topology().instance_count(), 1);
+    assert_eq!(linked.atom_count(), 4);
+    assert_eq!(linked.bond_ids().len(), 3);
+    let oxygen = linked
+        .atoms()
+        .find(|(_, a)| a.element.symbol() == "O")
+        .unwrap()
+        .0;
     assert_eq!(
-        linked_mapping
-            .instances(ligand_atoms[0].molecule())
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        linked
-            .model()
-            .position(linked_mapping.atom(ligand_atoms[1]).unwrap())
-            .unwrap(),
+        linked.position(oxygen).unwrap(),
         ligand.position(ligand_atoms[1]).unwrap()
     );
-    editor
-        .delete_bond(imported.bond(source_bond).unwrap())
-        .unwrap();
-    let split = editor.clone().finish_with_correspondence().unwrap();
-    let mapping = imported.published(&split).unwrap();
+    let h = linked
+        .atoms()
+        .find(|(_, a)| a.element.symbol() == "H")
+        .unwrap()
+        .0;
     assert_eq!(
-        mapping.instances(ligand_atoms[0].molecule()).unwrap().len(),
-        2
+        linked.position(h).unwrap(),
+        Quantity::new(Point3::new(9.0, 1.0, 2.0), ANGSTROM)
+            .into_unit(NANOMETER)
+            .unwrap()
     );
-    assert!(mapping.bond(source_bond).is_none());
+    let removed = imported.bond(source_bond).unwrap();
+    editor.delete_bond(removed).unwrap();
+    assert!(editor.bond(removed).is_err());
+    let split = editor.clone().finish().unwrap();
+    assert_eq!(split.topology().instance_count(), 2);
+    assert_eq!(split.atom_count(), 4);
+    assert_eq!(split.bond_ids().len(), 2);
+    let oxygen = split
+        .atoms()
+        .find(|(_, a)| a.element.symbol() == "O")
+        .unwrap()
+        .0;
+    let oxygen_molecule = split
+        .topology()
+        .definition_for_instance(oxygen.molecule())
+        .unwrap()
+        .molecule();
+    assert_eq!(oxygen_molecule.atom_count(), 1);
+    assert_eq!(
+        split.position(oxygen).unwrap(),
+        ligand.position(ligand_atoms[1]).unwrap()
+    );
     editor.delete_atom(left).unwrap();
     editor.delete_atom(right).unwrap();
-    let deleted = editor.finish_with_correspondence().unwrap();
-    let mapping = imported.published(&deleted).unwrap();
-    assert!(mapping.atom(ligand_atoms[0]).is_none());
-    assert!(mapping.atom(ligand_atoms[1]).is_none());
-    assert!(mapping
-        .instances(ligand_atoms[0].molecule())
-        .unwrap()
-        .is_empty());
+    assert!(editor.atom(left).is_err());
+    assert!(editor.atom(right).is_err());
+    let deleted = editor.finish().unwrap();
+    assert_eq!(deleted.atom_count(), 2);
+    assert_eq!(deleted.topology().instance_count(), 2);
+    assert_eq!(deleted.bond_ids().len(), 0);
+    assert_eq!(
+        deleted
+            .atoms()
+            .map(|(_, a)| a.element.symbol())
+            .collect::<Vec<_>>(),
+        ["C", "H"]
+    );
+    assert_eq!(
+        deleted.position(deleted.atom_ids()[0]).unwrap(),
+        receptor.position(receptor_atom).unwrap()
+    );
+    assert_eq!(
+        deleted.position(deleted.atom_ids()[1]).unwrap(),
+        linked.position(h).unwrap()
+    );
 }
 
 #[test]
-fn import_mapping_rejects_foreign_publications_and_survives_clear_and_recovery() {
+fn import_handles_reject_foreign_drafts_and_remain_invalid_after_clear_and_recovery() {
     let source = model("CO");
     let mut editor = source.edit();
     let imported = editor.append_model(&source).unwrap();
     let mut foreign = source.edit();
     foreign.append_model(&source).unwrap();
-    let foreign = foreign.finish_with_correspondence().unwrap();
-    assert!(matches!(
-        imported.published(&foreign),
-        Err(ModelEditError::ForeignAppend)
-    ));
+    let imported_atom = imported.atom(source.atom_ids()[0]).unwrap();
+    assert!(foreign.position(imported_atom).is_err());
+    assert!(foreign.delete_atom(imported_atom).is_err());
     let invalid = InstanceAtomId::new(MoleculeInstanceId::new(999), AtomId::new(0));
     assert!(imported.atom(invalid).is_err());
     editor.clear();
-    let failure = editor.try_finish_with_correspondence().unwrap_err();
+    let failure = editor.try_finish().unwrap_err();
     let mut editor = failure.into_editor();
     editor
         .add_atom(atom("Na"), Quantity::new(Point3::origin(), NANOMETER))
         .unwrap();
-    let result = editor.finish_with_correspondence().unwrap();
-    let mapping = imported.published(&result).unwrap();
-    assert!(mapping.atom(source.topology().atom_ids()[0]).is_none());
-    assert!(mapping
-        .instances(source.topology().atom_ids()[0].molecule())
-        .unwrap()
-        .is_empty());
-    assert!(mapping.instances(MoleculeInstanceId::new(999)).is_err());
+    assert!(editor.position(imported_atom).is_err());
+    assert!(editor.delete_atom(imported_atom).is_err());
+    let result = editor.finish().unwrap();
+    assert_eq!(result.atom_count(), 1);
+    assert_eq!(result.topology().instance_count(), 1);
+    assert_eq!(
+        result.atom(result.atom_ids()[0]).unwrap().element.symbol(),
+        "Na"
+    );
+    assert_eq!(
+        result.position(result.atom_ids()[0]).unwrap().into_value(),
+        Point3::origin()
+    );
 }
 
 #[test]
@@ -553,24 +569,16 @@ fn all_property_domain_conflicts_roll_back_and_can_be_retried() {
         let destination = annotated(None);
         let incompatible = annotated(Some(domain));
         let mut editor = destination.edit();
-        let previous = editor.append_model(&destination).unwrap();
+        editor.append_model(&destination).unwrap();
         let before = format!("{editor:?}");
         let error = editor.append_model(&incompatible).unwrap_err();
         assert!(error.to_string().contains(domain), "{error}");
         assert!(error.to_string().contains("tag"), "{error}");
         assert_eq!(format!("{editor:?}"), before, "rollback for {domain}");
-        let imported = editor.append_model(&destination).unwrap();
-        let result = editor.finish_with_correspondence().unwrap();
-        assert_import(
-            &destination,
-            result.model(),
-            previous.published(&result).unwrap(),
-        );
-        assert_import(
-            &destination,
-            result.model(),
-            imported.published(&result).unwrap(),
-        );
+        editor.append_model(&destination).unwrap();
+        let result = editor.finish().unwrap();
+        assert_import(&destination, &result, 3);
+        assert_import(&destination, &result, 6);
     }
 }
 
@@ -615,11 +623,10 @@ fn coordinates_and_property_units_are_preserved_with_missing_rows() {
         ))
         .unwrap();
     let mut editor = destination.edit();
-    let imported = editor.append_model(&source).unwrap();
-    let result = editor.finish_with_correspondence().unwrap();
-    let mapping = imported.published(&result).unwrap();
-    let target = result.model();
-    let new_atom = mapping.atom(source_atom).unwrap();
+    editor.append_model(&source).unwrap();
+    let result = editor.finish().unwrap();
+    let target = &result;
+    let new_atom = target.atom_ids()[2];
     assert_eq!(
         target.position(new_atom).unwrap(),
         source.position(source_atom).unwrap()
@@ -654,10 +661,7 @@ fn coordinates_and_property_units_are_preserved_with_missing_rows() {
     );
     assert_eq!(
         target
-            .atom_property(
-                mapping.atom(source.topology().atom_ids()[1]).unwrap(),
-                &key("distance")
-            )
+            .atom_property(target.atom_ids()[3], &key("distance"))
             .unwrap(),
         None
     );
@@ -767,33 +771,25 @@ fn editing_one_imported_occurrence_preserves_others_and_their_instance_annotatio
     editor
         .replace_atom(imported.atom(source_atom).unwrap(), replacement)
         .unwrap();
-    let result = editor.finish_with_correspondence().unwrap();
-    let mapping = imported.published(&result).unwrap();
-    assert_eq!(result.model().topology().definition_count(), 3);
+    let result = editor.finish().unwrap();
+    assert_eq!(result.topology().definition_count(), 3);
+    assert_eq!(result.positions(), source.positions());
+    assert_eq!(result.atom(source_atom).unwrap().formal_charge, 1);
     for (id, instance) in source.topology().instances() {
-        let target = mapping.instances(id).unwrap()[0];
+        let target = id; // No membership change: occurrences retain their input order.
         let before = source
             .topology()
             .definition(instance.definition())
             .unwrap()
             .molecule();
         let after = result
-            .model()
             .topology()
-            .definition(
-                result
-                    .model()
-                    .topology()
-                    .instance(target)
-                    .unwrap()
-                    .definition(),
-            )
+            .definition(result.topology().instance(target).unwrap().definition())
             .unwrap()
             .molecule();
         if id == source_atom.molecule() {
             assert_eq!(
                 result
-                    .model()
                     .topology()
                     .molecule_instance_properties()
                     .value(&key("tag"), target.index())
@@ -806,7 +802,7 @@ fn editing_one_imported_occurrence_preserves_others_and_their_instance_annotatio
             assert_eq!(before.perception(), after.perception());
             assert_rows(
                 source.topology().molecule_instance_properties(),
-                result.model().topology().molecule_instance_properties(),
+                result.topology().molecule_instance_properties(),
                 &[(id.index(), target.index())],
             );
         }
@@ -848,12 +844,8 @@ fn sparse_source_ids_and_reordered_definition_occurrences_keep_dense_state_assoc
     let mut destination = model("CCC").into_editor();
     let deleted = destination.atom_ids().next().unwrap();
     destination.delete_atom(deleted).unwrap();
-    let imported = destination.append_model(&source).unwrap();
-    let result = destination.finish_with_correspondence().unwrap();
-    assert_import(
-        &source,
-        result.model(),
-        imported.published(&result).unwrap(),
-    );
-    assert_eq!(result.model().topology().definition_count(), 3);
+    destination.append_model(&source).unwrap();
+    let result = destination.finish().unwrap();
+    assert_import(&source, &result, 1);
+    assert_eq!(result.topology().definition_count(), 3);
 }

@@ -4,7 +4,6 @@ use super::*;
 #[derive(Debug, Clone)]
 pub(crate) struct AppendMapping {
     pub source: Arc<Topology>,
-    pub token: Arc<()>,
     pub atoms: BTreeMap<InstanceAtomId, EditAtomId>,
     pub bonds: BTreeMap<InstanceBondId, EditBondId>,
     pub chains: BTreeMap<ChainId, EditChainId>,
@@ -21,7 +20,6 @@ impl TopologyEditor {
     ) -> Result<AppendMapping, TopologyEditError> {
         let mut mapping = AppendMapping {
             source: Arc::clone(&source),
-            token: Arc::new(()),
             atoms: BTreeMap::new(),
             bonds: BTreeMap::new(),
             chains: BTreeMap::new(),
@@ -168,7 +166,6 @@ impl TopologyEditor {
                 domain: "atom site",
                 error: Box::new(error),
             })?;
-        self.append_tokens.push(Arc::clone(&mapping.token));
         self.changed();
         Ok(mapping)
     }
