@@ -2496,6 +2496,17 @@ same `Arc<Topology>` retain that requirement. Two independently constructed
 topologies may represent chemically equivalent systems while still having
 different hierarchy IDs or dense layouts.
 
+Alignment and geometric comparison may accept an explicit, ordered atom
+correspondence between two exact topology snapshots. Each side validates its
+own atom identities; pairing is one-to-one within the selected subsets and need
+not cover either complete system. A checked same-layout constructor may pair
+matching dense indices, while explicit pairs permit different atom orders and
+system sizes. This is an operation-specific geometric relation, not a claim of
+chemical equivalence or a generic topology/metadata remapping framework.
+Correspondence retains both snapshot identities and never rebinds either model.
+Pair-based and same-topology calculations share numerical kernels; existing
+selection and shared-identity contracts remain intact.
+
 If complete annotated-state equality is needed, it should be an explicit API
 rather than an accidental consequence of deriving `PartialEq` over storage
 structs containing properties.

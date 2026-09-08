@@ -69,6 +69,13 @@
 //! implicit fit. Coordinate transformations return a new trajectory by default;
 //! explicit `_in_place` methods mutate transactionally. Superposition reports
 //! are available through [`Trajectory::superpose_to_frame_with_report`].
+//!
+//! Independently loaded references use [`kekule::alignment::AtomCorrespondence`]
+//! with [`Trajectory::superpose_to_model`], [`Trajectory::rmsd_to_model`], or
+//! [`Trajectory::aligned_rmsd_to_model`]. Streaming fitting uses
+//! [`analysis::FrameSuperposer::with_correspondence`]. Each path retains the
+//! moving topology and atom order; correspondence does not assert chemical equality.
+//!
 //! Molecular reconstruction, imaging, and temporal unwrapping live in [`periodic`]
 //! and are explicit preprocessing steps, independent of alignment.
 //! [`analysis::FrameSuperposer`], [`periodic::MoleculeImager`], and
