@@ -351,6 +351,18 @@ fn parse(input: &str) -> mmcif::MmcifDocument {
     mmcif::parse_str(input).expect("mmCIF parses")
 }
 
+#[test]
+fn scalar_struct_conn_preserves_resolved_connection_and_coordinates() {
+    let looped = parse(AUTH_ONLY_CONNECTION_FUZZ_SEED).interpret().unwrap();
+    let source = super::mmcif_syntax::singleton_loops_as_scalars(AUTH_ONLY_CONNECTION_FUZZ_SEED);
+    let scalar = parse(&source).interpret().unwrap();
+    assert_eq!(scalar.report().applied_connections(), 1);
+    assert_eq!(scalar.topology().bond_count(), 1);
+    assert_eq!(scalar.topology().instance_count(), 1);
+    assert!(looped.topology().same_layout(scalar.topology()));
+    assert_eq!(looped.model().positions(), scalar.model().positions());
+}
+
 fn connection_input(atom_sites: &str, tags: &str, values: &str) -> String {
     format!("{atom_sites}\nloop_\n_struct_conn.id\n_struct_conn.conn_type_id\n{tags}\n{values}\n")
 }
@@ -514,7 +526,7 @@ fn block_interpreters_reject_a_block_without_atom_site_data() {
 
     let model_error = mmcif::interpret_block(block, MmcifInterpretOptions::default())
         .expect_err("metadata block has no model");
-    assert!(model_error.message().contains("no atom-site loop"));
+    assert!(model_error.message().contains("no atom-site category"));
     assert!(matches!(
         mmcif::interpret_ensemble_block(block, mmcif::MmcifEnsembleInterpretOptions::default()),
         Err(mmcif::MmcifEnsembleInterpretError::NoCoordinateModels)

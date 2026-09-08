@@ -11,7 +11,7 @@ use crate::units::{Quantity, ANGSTROM};
 
 use super::super::staged_coordinates::StagedCoordinates;
 use super::super::MmcifBlock;
-use super::atom_site::{optional, AtomRow};
+use super::atom_site::{required, AtomRow};
 use super::struct_conn::{DeclaredConnection, InstanceUnion};
 use super::types::{
     MmcifAtomProvenance, MmcifEntityKind, MmcifInstanceProvenance, MmcifInterpretError,
@@ -25,18 +25,19 @@ pub(super) struct MoleculeGroup {
     instance_keys: BTreeSet<String>,
 }
 
-pub(super) fn polymer_asym_order(block: &MmcifBlock) -> BTreeMap<String, usize> {
+pub(super) fn polymer_asym_order(
+    block: &MmcifBlock,
+) -> Result<BTreeMap<String, usize>, MmcifInterpretError> {
     let mut order = BTreeMap::new();
-    let Some(table) = block.loop_with_tag("_pdbx_poly_seq_scheme.asym_id") else {
-        return order;
+    let Some(table) = block.category("_pdbx_poly_seq_scheme")? else {
+        return Ok(order);
     };
     for row in 0..table.row_count() {
-        if let Some(asym_id) = optional(table, row, "_pdbx_poly_seq_scheme.asym_id") {
-            let next = order.len();
-            order.entry(asym_id.to_owned()).or_insert(next);
-        }
+        let asym_id = required(&table, row, "_pdbx_poly_seq_scheme.asym_id")?;
+        let next = order.len();
+        order.entry(asym_id.to_owned()).or_insert(next);
     }
-    order
+    Ok(order)
 }
 
 pub(super) fn group_rows(
@@ -751,4 +752,22 @@ pub(super) fn graph_error(error: impl fmt::Display) -> MmcifInterpretError {
 
 fn hierarchy_error(error: impl fmt::Display) -> MmcifInterpretError {
     MmcifInterpretError::new(None, error.to_string())
+}
+
+#[cfg(test)]
+mod syntax_tests {
+    #[test]
+    fn singleton_polymer_scheme_retains_declared_chain_order() {
+        let looped =
+            "data_x\nloop_\n_pdbx_poly_seq_scheme.asym_id\n_pdbx_poly_seq_scheme.seq_id\nZ 1\n";
+        for input in [
+            looped.to_owned(),
+            crate::tests::mmcif_syntax::singleton_loops_as_scalars(looped),
+        ] {
+            let doc = crate::mmcif::parse_str(&input).unwrap();
+            let order = super::polymer_asym_order(&doc.blocks()[0]).unwrap();
+            assert_eq!(order.len(), 1);
+            assert_eq!(order["Z"], 0);
+        }
+    }
 }

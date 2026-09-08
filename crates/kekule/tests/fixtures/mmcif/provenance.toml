@@ -1,0 +1,10 @@
+schema_version = 1
+
+[[fixture]]
+path = "1AKE.cif"
+source = "RCSB PDB / wwPDB entry 1AKE"
+url = "https://files.rcsb.org/download/1AKE.cif"
+retrieved = "2026-09-07"
+sha256 = "01f41b1b42318a1a5df7f650dbab881677aa0e8d825f7c42dd26ae16a94c0948"
+preprocessing = "None; original downloaded bytes, reused from the API ergonomics audit"
+purpose = "Regression for scalar polymer categories and opening-line semicolon text; not a scientific benchmark"

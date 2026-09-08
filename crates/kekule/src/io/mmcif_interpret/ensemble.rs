@@ -20,7 +20,7 @@ pub(crate) fn interpret_mmcif_ensemble(
     let blocks = document
         .blocks()
         .iter()
-        .filter(|block| block.loop_with_tag("_atom_site.type_symbol").is_some())
+        .filter(|block| block.has_category("_atom_site"))
         .collect::<Vec<_>>();
     if blocks.is_empty() {
         return Err(MmcifEnsembleInterpretError::NoCoordinateModels);
@@ -40,7 +40,7 @@ pub(crate) fn interpret_mmcif_ensemble_block(
     if options.model_ids.as_ref().is_some_and(Vec::is_empty) {
         return Err(MmcifEnsembleInterpretError::EmptyModelSelection);
     }
-    if block.loop_with_tag("_atom_site.type_symbol").is_none() {
+    if !block.has_category("_atom_site") {
         return Err(MmcifEnsembleInterpretError::NoCoordinateModels);
     }
     let available =

@@ -29,12 +29,12 @@ pub(crate) fn interpret_mmcif(
     let blocks = document
         .blocks()
         .iter()
-        .filter(|block| block.loop_with_tag("_atom_site.type_symbol").is_some())
+        .filter(|block| block.has_category("_atom_site"))
         .collect::<Vec<_>>();
     if blocks.is_empty() {
         return Err(MmcifInterpretError::new(
             None,
-            "document has no atom-site loop",
+            "document has no atom-site category",
         ));
     }
     if blocks.len() > 1 {
@@ -99,12 +99,12 @@ impl<'a> PreparedBlock<'a> {
         let entities = read_entity_types(block)?;
         let asym_entities = read_asym_entities(block)?;
         let atom_table = block
-            .loop_with_tag("_atom_site.type_symbol")
-            .ok_or_else(|| MmcifInterpretError::new(None, "block has no atom-site loop"))?;
+            .category("_atom_site")?
+            .ok_or_else(|| MmcifInterpretError::new(None, "block has no atom-site category"))?;
         if atom_table.row_count() == 0 {
             return Err(MmcifInterpretError::new(
                 None,
-                "atom-site loop contains no rows",
+                "atom-site category contains no rows",
             ));
         }
         let mut report = MmcifInterpretationReport {
@@ -113,7 +113,7 @@ impl<'a> PreparedBlock<'a> {
             ..MmcifInterpretationReport::default()
         };
         let rows = read_atom_rows(
-            atom_table,
+            &atom_table,
             &entities,
             &asym_entities,
             strict_entity_metadata,
@@ -150,7 +150,7 @@ impl<'a> PreparedBlock<'a> {
             models,
             model_sizes,
             report,
-            polymer_order: polymer_asym_order(block),
+            polymer_order: polymer_asym_order(block)?,
             connectivity: super::mmcif_connectivity::ConnectivityCatalog::from_block(block)?,
         })
     }

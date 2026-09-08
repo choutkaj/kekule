@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::core::BondOrder;
 
-use super::super::{MmcifBlock, MmcifLoopTable, MmcifValue};
+use super::super::mmcif_category::MmcifCategory;
+use super::super::MmcifBlock;
 use super::atom_site::{optional, optional_i32, required, row_error, AtomRow};
 use super::types::{
     MmcifConnectionResolutionReason, MmcifInterpretError, MmcifInterpretIssue,
@@ -24,17 +25,15 @@ pub(super) fn read_connections(
     union: &mut InstanceUnion,
     report: &mut MmcifInterpretationReport,
 ) -> Result<Vec<DeclaredConnection>, MmcifInterpretError> {
-    let Some(table) = block.loop_with_tag("_struct_conn.conn_type_id") else {
+    let Some(table) = block.category("_struct_conn")? else {
         return Ok(Vec::new());
     };
+    let table = &table;
     let mut connections = Vec::new();
     for row in 0..table.row_count() {
         let kind = required(table, row, "_struct_conn.conn_type_id")?.to_owned();
         let connection_id = optional(table, row, "_struct_conn.id").map(str::to_owned);
-        let source_line = table
-            .row(row)
-            .and_then(|values| values.first())
-            .map(MmcifValue::line);
+        let source_line = table.row_line(row);
         if !is_covalent_connection(&kind) {
             report.issues.push(MmcifInterpretIssue::ConnectionIgnored {
                 connection_type: kind,
@@ -113,7 +112,7 @@ fn report_connection_partner_resolution<'a>(
 }
 
 fn connection_bond_order(
-    table: &MmcifLoopTable,
+    table: &MmcifCategory<'_>,
     row: usize,
 ) -> Result<BondOrder, MmcifInterpretError> {
     let Some(order) = optional(table, row, "_struct_conn.pdbx_value_order") else {
@@ -259,7 +258,7 @@ enum ConnectionPartnerResolution<'a> {
 }
 
 fn connection_partner<'a>(
-    table: &MmcifLoopTable,
+    table: &MmcifCategory<'_>,
     row: usize,
     partner: u8,
     selected_rows: &'a [AtomRow],

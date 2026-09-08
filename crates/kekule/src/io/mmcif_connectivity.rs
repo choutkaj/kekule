@@ -3,8 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::chemistry::localize_source_aromatic_bonds;
 use crate::core::{AtomId, BondOrder, Molecule, MoleculeEditor};
 
+use super::mmcif_category::MmcifCategory;
 use super::mmcif_interpret as raw;
-use super::{MmcifBlock, MmcifLoopTable, MmcifValue};
+use super::{MmcifBlock, MmcifValue};
 
 pub(crate) struct StagedAtomProvenance<'a> {
     pub(crate) atom: AtomId,
@@ -87,7 +88,8 @@ pub(crate) struct ConnectivityCatalog {
 impl ConnectivityCatalog {
     pub(crate) fn from_block(block: &MmcifBlock) -> Result<Self, raw::MmcifInterpretError> {
         let mut catalog = Self::default();
-        if let Some(table) = block.loop_with_tag("_chem_comp_bond.comp_id") {
+        if let Some(table) = block.category("_chem_comp_bond")? {
+            let table = &table;
             for row in 0..table.row_count() {
                 let comp_id = required(table, row, "_chem_comp_bond.comp_id")?;
                 let atom_1 = required(table, row, "_chem_comp_bond.atom_id_1")?;
@@ -108,7 +110,8 @@ impl ConnectivityCatalog {
                     });
             }
         }
-        if let Some(table) = block.loop_with_tag("_entity_poly.entity_id") {
+        if let Some(table) = block.category("_entity_poly")? {
+            let table = &table;
             for row in 0..table.row_count() {
                 let entity = required(table, row, "_entity_poly.entity_id")?;
                 let kind = required(table, row, "_entity_poly.type")?;
@@ -122,7 +125,8 @@ impl ConnectivityCatalog {
                 }
             }
         }
-        if let Some(table) = block.loop_with_tag("_pdbx_branch_scheme.entity_id") {
+        if let Some(table) = block.category("_pdbx_branch_scheme")? {
+            let table = &table;
             for row in 0..table.row_count() {
                 let entity_id = required(table, row, "_pdbx_branch_scheme.entity_id")?;
                 let asym_id = required(table, row, "_pdbx_branch_scheme.asym_id")?;
@@ -140,7 +144,8 @@ impl ConnectivityCatalog {
                 });
             }
         }
-        if let Some(table) = block.loop_with_tag("_pdbx_entity_branch_link.entity_id") {
+        if let Some(table) = block.category("_pdbx_entity_branch_link")? {
+            let table = &table;
             for row in 0..table.row_count() {
                 let entity_id = required(table, row, "_pdbx_entity_branch_link.entity_id")?;
                 let number_1 = required_i32(
@@ -417,7 +422,7 @@ fn is_nucleic_acid(value: &str) -> bool {
 
 fn component_bond_order(
     value: &str,
-    table: &MmcifLoopTable,
+    table: &MmcifCategory<'_>,
     row: usize,
 ) -> Result<ComponentBondOrder, raw::MmcifInterpretError> {
     match value.to_ascii_lowercase().as_str() {
@@ -439,7 +444,7 @@ fn normalized(value: &str) -> String {
 }
 
 fn required<'a>(
-    table: &'a MmcifLoopTable,
+    table: &'a MmcifCategory<'_>,
     row: usize,
     tag: &str,
 ) -> Result<&'a str, raw::MmcifInterpretError> {
@@ -452,7 +457,7 @@ fn required<'a>(
 }
 
 fn required_i32(
-    table: &MmcifLoopTable,
+    table: &MmcifCategory<'_>,
     row: usize,
     tag: &str,
 ) -> Result<i32, raw::MmcifInterpretError> {
@@ -461,20 +466,17 @@ fn required_i32(
         .map_err(|_| row_error(table, row, format!("invalid integer {tag}")))
 }
 
-fn optional<'a>(table: &'a MmcifLoopTable, row: usize, tag: &str) -> Option<&'a str> {
+fn optional<'a>(table: &'a MmcifCategory<'_>, row: usize, tag: &str) -> Option<&'a str> {
     table.value(row, tag).and_then(MmcifValue::optional_text)
 }
 
 fn row_error(
-    table: &MmcifLoopTable,
+    table: &MmcifCategory<'_>,
     row: usize,
     message: impl Into<String>,
 ) -> raw::MmcifInterpretError {
     raw::MmcifInterpretError {
-        line: table
-            .row(row)
-            .and_then(|values| values.first())
-            .map(MmcifValue::line),
+        line: table.row_line(row),
         message: message.into(),
     }
 }
@@ -604,6 +606,52 @@ HETATM 2 O O4 NAG B 2 . 10 1.4 0.0 0.0
 HETATM 3 C C1 GAL B 2 . 11 2.8 0.0 0.0
 HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
 "#;
+
+    #[test]
+    fn singleton_connectivity_categories_are_syntax_independent() {
+        for (input, bonds) in [(PEPTIDE, 7), (BRANCH, 3)] {
+            let scalar = crate::tests::mmcif_syntax::singleton_loops_as_scalars(input);
+            let a = crate::mmcif::parse_str(input).unwrap().interpret().unwrap();
+            let b = crate::mmcif::parse_str(&scalar)
+                .unwrap()
+                .interpret()
+                .unwrap();
+            assert_eq!(b.topology().bond_count(), bonds);
+            assert_eq!(b.topology().instance_count(), 1);
+            assert!(a.topology().same_layout(b.topology()));
+            assert_eq!(a.model().positions(), b.model().positions());
+        }
+    }
+
+    #[test]
+    fn singleton_component_bond_and_branch_site_are_read_as_scalars() {
+        let source = "data_x\nloop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\nGLY C O doub\nloop_\n_pdbx_branch_scheme.entity_id\n_pdbx_branch_scheme.asym_id\n_pdbx_branch_scheme.num\n_pdbx_branch_scheme.mon_id\n_pdbx_branch_scheme.auth_seq_num\n2 B 1 NAG 10\n";
+        for input in [
+            source.to_owned(),
+            crate::tests::mmcif_syntax::singleton_loops_as_scalars(source),
+        ] {
+            let doc = crate::mmcif::parse_str(&input).unwrap();
+            let catalog = ConnectivityCatalog::from_block(&doc.blocks()[0]).unwrap();
+            let bond = &catalog.component_bonds["GLY"][0];
+            assert_eq!((&*bond.atom_1, &*bond.atom_2), ("C", "O"));
+            assert!(matches!(
+                bond.order,
+                ComponentBondOrder::Localized(BondOrder::Double)
+            ));
+            assert_eq!(catalog.branch_sites.len(), 1);
+            let site = &catalog.branch_sites[0];
+            assert_eq!(
+                (
+                    &*site.entity_id,
+                    &*site.asym_id,
+                    site.number,
+                    &*site.component_id
+                ),
+                ("2", "B", 1, "NAG")
+            );
+            assert_eq!(site.author_sequence_id.as_deref(), Some("10"));
+        }
+    }
 
     #[test]
     fn component_templates_and_polymer_links_complete_peptide_graph() {
