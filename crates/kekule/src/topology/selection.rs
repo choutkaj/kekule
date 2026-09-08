@@ -27,6 +27,139 @@ impl PartialEq for AtomSelection {
 impl Eq for AtomSelection {}
 
 impl AtomSelection {
+    /// Combines two selections from the exact same topology snapshot.
+    pub fn union(&self, other: &Self) -> Result<Self, SelectionError> {
+        self.combine(other, true, true, true)
+    }
+
+    /// Keeps atoms present in both selections, in topology order.
+    pub fn intersection(&self, other: &Self) -> Result<Self, SelectionError> {
+        self.combine(other, false, true, false)
+    }
+
+    /// Keeps atoms in this selection that are absent from `other`.
+    pub fn difference(&self, other: &Self) -> Result<Self, SelectionError> {
+        self.combine(other, true, false, false)
+    }
+
+    fn combine(
+        &self,
+        other: &Self,
+        left_only: bool,
+        both: bool,
+        right_only: bool,
+    ) -> Result<Self, SelectionError> {
+        self.ensure_compatible(&other.topology)?;
+        let mut left = self.indices.iter().copied().peekable();
+        let mut right = other.indices.iter().copied().peekable();
+        let mut indices = Vec::new();
+        while let (Some(&a), Some(&b)) = (left.peek(), right.peek()) {
+            match a.cmp(&b) {
+                std::cmp::Ordering::Less => {
+                    left.next();
+                    if left_only {
+                        indices.push(a);
+                    }
+                }
+                std::cmp::Ordering::Equal => {
+                    left.next();
+                    right.next();
+                    if both {
+                        indices.push(a);
+                    }
+                }
+                std::cmp::Ordering::Greater => {
+                    right.next();
+                    if right_only {
+                        indices.push(b);
+                    }
+                }
+            }
+        }
+        if left_only {
+            indices.extend(left);
+        }
+        if right_only {
+            indices.extend(right);
+        }
+        Ok(Self {
+            topology: Arc::clone(&self.topology),
+            indices,
+        })
+    }
+
+    /// Iterates semantic atom IDs in topology order without allocating.
+    pub fn atom_ids(&self) -> impl ExactSizeIterator<Item = InstanceAtomId> + '_ {
+        self.indices.iter().map(|index| {
+            self.topology
+                .atom_id(*index)
+                .expect("validated selection index")
+        })
+    }
+
+    /// Adds every atom in each touched residue. Selected atoms without a
+    /// hierarchy assignment remain selected. This never removes an atom.
+    pub fn expand_to_residues(&self) -> Self {
+        let residues = self
+            .atom_ids()
+            .filter_map(|atom| {
+                self.topology
+                    .hierarchy()
+                    .atom_site_for_atom(atom)
+                    .map(|site| site.residue())
+            })
+            .collect::<BTreeSet<_>>();
+        let added = self
+            .topology
+            .atom_sites()
+            .filter(|site| residues.contains(&site.residue().id()))
+            .map(|site| site.atom());
+        Self::from_atoms(&self.topology, self.atom_ids().chain(added))
+            .expect("residue expansion uses validated topology atoms")
+    }
+
+    /// Selects sites with one of these exact label atom names. Missing names
+    /// do not match. Compose with residue-class selections for biological roles.
+    pub fn for_label_atom_names<'a>(
+        topology: &Arc<Topology>,
+        names: impl IntoIterator<Item = &'a str>,
+    ) -> Result<Self, SelectionError> {
+        let names = names.into_iter().collect::<BTreeSet<_>>();
+        Self::from_atoms(
+            topology,
+            topology
+                .atom_sites()
+                .filter(|site| {
+                    site.metadata()
+                        .label_atom_id
+                        .as_deref()
+                        .is_some_and(|name| names.contains(name))
+                })
+                .map(AtomSiteView::atom),
+        )
+    }
+
+    /// Selects sites with one of these exact author atom names; never falls
+    /// back to label names. Missing names do not match.
+    pub fn for_author_atom_names<'a>(
+        topology: &Arc<Topology>,
+        names: impl IntoIterator<Item = &'a str>,
+    ) -> Result<Self, SelectionError> {
+        let names = names.into_iter().collect::<BTreeSet<_>>();
+        Self::from_atoms(
+            topology,
+            topology
+                .atom_sites()
+                .filter(|site| {
+                    site.metadata()
+                        .auth_atom_id
+                        .as_deref()
+                        .is_some_and(|name| names.contains(name))
+                })
+                .map(AtomSiteView::atom),
+        )
+    }
+
     /// Selects every atom in authoritative dense order, sharing this exact topology.
     ///
     /// This is infallible because the topology has already validated its layout.

@@ -1,4 +1,4 @@
-//! Fixed-topology trajectory superposition and RMSD workflows.
+//! Fixed-topology trajectory superposition, measurements, and reductions.
 //!
 //! [`Trajectory::superpose_to_frame`] returns an aligned copy; its explicit
 //! in-place counterpart mutates transactionally. [`Trajectory::rmsd_to_frame`]
@@ -23,6 +23,8 @@ use crate::{
 };
 
 mod correspondence;
+mod reductions;
+pub use reductions::*;
 #[cfg(test)]
 mod correspondence_tests;
 

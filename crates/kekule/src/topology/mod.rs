@@ -21,6 +21,7 @@ mod classification;
 mod components;
 mod editor;
 mod hierarchy;
+mod lookup;
 mod perception;
 mod selection;
 pub mod transform;
@@ -42,6 +43,7 @@ pub use hierarchy::{
     AtomSite, AtomSiteId, AtomSiteMetadata, Chain, ChainId, Hierarchy, HierarchyError,
     HierarchyIdKind, Residue, ResidueId,
 };
+pub use lookup::HierarchyLookupError;
 pub use perception::TopologyPerceptionError;
 pub use selection::{AtomSelection, SelectionError};
 
