@@ -548,7 +548,6 @@ of a coordinate-free system. `ModelEditor` coordinates the same structural edito
 with one realization's positions, cell, and properties. Direct `Model` setters
 remain the ordinary interface for changes that preserve topology. All editors
 support detached drafts, `validate()`, `finish()`, and recoverable `try_finish()`.
-Publication with edit correspondence is available when final identities are needed.
 
 System edits target individual occurrences. Editing one occurrence of a reused
 definition must not change other occurrences. Untouched definitions retain their
@@ -565,12 +564,11 @@ exactly one connected molecule and rejects a disconnected final draft.
 
 Opaque editing handles remain stable within a draft through splitting, merging,
 deletion of other entities, and dense reordering. Deleted and foreign handles are
-rejected. Source identity is resolved explicitly to these handles. Correspondence
-records source/draft-to-published atom, bond, and hierarchy identity; occurrence
-correspondence accommodates splits and merges. It is specific to the transaction,
-not an inferred mapping between arbitrary topologies. Append-only extension
-preserves existing semantic IDs and dense order. Other edits publish deterministic
-ordering and explicit correspondence.
+rejected. Source identity is resolved explicitly to these handles. Editing handles
+are draft-only; `finish()` returns the completed owner without a correspondence
+wrapper. Append-only extension preserves existing semantic IDs and dense order.
+Other edits publish deterministic ordering. Internal row projection keeps entity
+properties and coordinates aligned with the final topology.
 
 Model atom insertion requires a finite, unit-aware coordinate. Deletion removes
 the corresponding coordinate and incident bonds. Surviving atoms keep their
@@ -587,7 +585,7 @@ New atoms may remain outside hierarchy until explicitly assigned. Changed residu
 composition and changed molecular definitions are reclassified unless a fresh
 explicit override is supplied.
 
-Surviving entity annotations follow explicit correspondence; new rows are missing.
+Surviving entity annotations follow internal identity bookkeeping; new rows are missing.
 Changed owner and instance annotations are not inherited ambiguously across edits,
 splits, or merges. Incompatible property types or units fail transactionally.
 Transferring an annotation does not assert that an arbitrary derived value remains
@@ -595,6 +593,44 @@ scientifically valid. Generic properties never trigger implicit recomputation.
 No-op publication preserves installed perception and annotations. Complete editor
 property-column getters, insertion, and removal all use live entity order; explicit
 stable-slot tables remain lower-level inspection surfaces.
+
+### Complete model append
+
+`ModelEditor::append_model` accepts a borrowed `Model` or `ModelView` and imports
+the complete canonical model state under the existing edit rules. Coordinates are
+included automatically and used as supplied in the destination coordinate system.
+Placement is the caller's responsibility; append does not fit, image, infer bonds,
+or generate geometry. Ordinary `add_atom`, `delete_atom`, and bond operations
+remain the editing interface for all elements, including hydrogen.
+
+The structural editor imports connected definitions, their explicit reuse within
+each append, occurrence annotations, represented stereo, perception, classification,
+hierarchy, and entity property columns. Independent definitions and independent
+appends are not deduplicated by chemical equality. The model editor coordinates
+this import with positions and realization properties, including occupancy and B
+factors. Equal hierarchy labels remain on distinct nodes with fresh identities;
+append does not infer that chains or residues from separate inputs should merge.
+
+Compatible entity properties follow their source-to-draft correspondence, with
+missing values on unrelated rows. Conflicting property types or physical dimensions
+reject the entire append. Source topology/model owner annotations are not imported,
+and changed destination topology/model owner annotations are cleared. An append
+report lists those keys. Unchanged molecular definitions keep their own annotations;
+subsequent chemistry edits follow the existing invalidation and propagation rules.
+
+A source without a periodic cell uses the destination cell. An empty editor with
+no cell adopts the source cell. Otherwise a periodic source must have the same
+periodic-axis flags and canonical cell vectors as the destination, allowing only
+floating-point conversion roundoff (16 machine epsilons times the largest vector
+component). A mismatch rejects without mutation so the caller can set the intended cell and
+retry. Every complete append is transactional, including late property failures.
+
+Each append returns a separate source-to-draft mapping, even for repeated imports
+of one source. It retains the source topology and supplies stable editing handles
+for subsequent operations in that draft, including adding or removing bonds.
+Deleted and foreign handles reject. `finish()` returns the completed model;
+`try_finish()` also retains the draft on failure. Neither returns a mapping of
+draft handles into the published result or rebinds topology-bound objects.
 
 ## Parsing and interpretation
 

@@ -73,8 +73,8 @@
 //! Builders and editors offer non-consuming `validate()` and recoverable
 //! `try_build()` / `try_finish()`. Use `edit()` for a detached draft or
 //! `into_editor()` to move an owner into one. System editors resolve source IDs
-//! to stable editing handles and can return publication correspondence through
-//! `finish_with_correspondence()`. A bond deletion can split a system molecule;
+//! to stable draft-only editing handles and publish completed values through
+//! `finish()`. A bond deletion can split a system molecule;
 //! a bond addition can join two occurrences. New model atoms require coordinates.
 //!
 //! Coordinate-dependent algorithms consume [`structure::ModelView`]. A model,
