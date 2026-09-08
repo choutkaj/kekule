@@ -380,6 +380,23 @@ fn parse_tokens(
                 ));
             }
         }
+        // Scalar atom-site fields describe one row, subject to the same bound
+        // as a one-row loop. Other category semantics belong to interpretation.
+        if max_atom_site_rows == 0 {
+            if let Some(item) = entries.iter().find_map(|entry| match entry {
+                MmcifEntry::Item(item)
+                    if super::mmcif_category::in_category(item.tag(), "_atom_site") =>
+                {
+                    Some(item)
+                }
+                _ => None,
+            }) {
+                return Err(MmcifParseError::new(
+                    item.value().line(),
+                    "atom-site row count exceeds configured limit",
+                ));
+            }
+        }
         blocks.push(MmcifBlock { name, entries });
     }
     if blocks.is_empty() {
@@ -477,17 +494,23 @@ fn tokenize_mmcif(
 
     while line_index < lines.len() {
         let line_number = line_index + 1;
-        let line = lines[line_index];
-        if line.starts_with(';') {
-            let mut text = String::new();
+        let mut column = 0usize;
+        if let Some(opening) = lines[line_index].strip_prefix(';') {
+            if opening.len() > options.max_token_bytes {
+                return Err(MmcifParseError::new(
+                    line_number,
+                    "semicolon value exceeds configured token limit",
+                ));
+            }
+            // CIF text starts immediately after the opening semicolon. Only
+            // the newline introducing the closing semicolon is excluded.
+            let mut text = opening.to_owned();
             line_index += 1;
             while line_index < lines.len() && !lines[line_index].starts_with(';') {
-                if !text.is_empty() {
-                    text.push('\n');
-                }
                 let next_len = text
                     .len()
-                    .checked_add(lines[line_index].len())
+                    .checked_add(1)
+                    .and_then(|len| len.checked_add(lines[line_index].len()))
                     .ok_or_else(|| MmcifParseError::new(line_number, "token length overflow"))?;
                 if next_len > options.max_token_bytes {
                     return Err(MmcifParseError::new(
@@ -495,6 +518,7 @@ fn tokenize_mmcif(
                         "semicolon value exceeds configured token limit",
                     ));
                 }
+                text.push('\n');
                 text.push_str(lines[line_index]);
                 line_index += 1;
             }
@@ -505,12 +529,23 @@ fn tokenize_mmcif(
                 ));
             }
             push_mmcif_token(&mut tokens, text, line_number, false, options)?;
-            line_index += 1;
-            continue;
+            // A closing delimiter can be followed by more tokens on its line.
+            if lines[line_index]
+                .as_bytes()
+                .get(1)
+                .is_some_and(|byte| !byte.is_ascii_whitespace())
+            {
+                return Err(MmcifParseError::new(
+                    line_index + 1,
+                    "closing semicolon must be followed by whitespace or end of line",
+                ));
+            }
+            column = 1;
         }
 
+        let line_number = line_index + 1;
+        let line = lines[line_index];
         let bytes = line.as_bytes();
-        let mut column = 0usize;
         while column < bytes.len() {
             while column < bytes.len() && bytes[column].is_ascii_whitespace() {
                 column += 1;
