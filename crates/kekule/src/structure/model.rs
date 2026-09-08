@@ -616,6 +616,12 @@ pub struct ModelView<'a> {
     properties: &'a Properties,
 }
 
+impl<'a> From<&'a Model> for ModelView<'a> {
+    fn from(model: &'a Model) -> Self {
+        model.view()
+    }
+}
+
 impl<'a> ModelView<'a> {
     pub fn new(
         topology: &'a Arc<Topology>,
