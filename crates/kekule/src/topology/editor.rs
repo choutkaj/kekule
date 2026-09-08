@@ -23,7 +23,6 @@ pub use error::*;
 use hierarchy::EditHierarchy;
 pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
 pub use identity::*;
-pub use publication::{TopologyEdit, TopologyEditCorrespondence};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
@@ -55,8 +54,9 @@ struct Location<Id> {
 /// Chemical edits affect individual occurrences, even when definitions are reused.
 /// Deleting bonds can split molecules; adding bonds can merge them. Publication
 /// constructs valid connected definitions and one immutable topology snapshot.
-/// Stable opaque handles survive these changes. Use `*_handle` to resolve source
-/// IDs and [`Self::finish_with_correspondence`] to obtain published IDs.
+/// Stable opaque handles survive these changes within the draft. Use `*_handle`
+/// to resolve source IDs. [`Self::finish`] returns the completed topology; editing
+/// handles do not identify entities in the published result.
 ///
 /// Graph edits clear changed owner annotations. Surviving entity annotations are
 /// transferred explicitly; newly added entities have missing property values.
@@ -87,7 +87,6 @@ pub struct TopologyEditor {
     properties: Properties,
     revision: u64,
     pub(crate) structural_revision: u64,
-    append_tokens: Vec<Arc<()>>,
 }
 
 impl Topology {

@@ -11,8 +11,8 @@ use crate::properties::{
 use crate::topology::{
     AtomSiteId, AtomSiteMetadata, ChainId, EditAtomId, EditAtomSite, EditAtomSiteId, EditBond,
     EditBondId, EditChain, EditChainId, EditMolecule, EditResidue, EditResidueId, InstanceAtomId,
-    InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass, ResidueId,
-    TopologyEditCorrespondence, TopologyEditError, TopologyEditor,
+    InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass, ResidueId, TopologyEditError,
+    TopologyEditor,
 };
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 use std::fmt;
@@ -35,9 +35,9 @@ use std::fmt;
 /// let o = editor.add_atom(Atom::new(Element::from_symbol("O").unwrap()),
 ///     Quantity::new(Point3::new(1.4, 0.0, 0.0), ANGSTROM))?;
 /// editor.add_bond(c, o, BondOrder::Single)?;
-/// let result = editor.finish_with_correspondence()?;
-/// assert_eq!(result.model().topology().instance_count(), 1);
-/// assert!(result.correspondence().atom(o).is_some());
+/// let model = editor.finish()?;
+/// assert_eq!(model.topology().instance_count(), 1);
+/// assert_eq!(model.atom_count(), 2);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, Default)]
@@ -651,13 +651,12 @@ impl ModelEditor {
     pub fn validate(&self) -> Result<(), ModelEditError> {
         self.clone().finish().map(|_| ())
     }
+    /// Publishes the completed model, preserving coordinates and entity properties.
+    /// Editing handles are draft-only; inspect the returned model for its final IDs.
     pub fn finish(self) -> Result<Model, ModelEditError> {
-        self.finish_with_correspondence().map(|r| r.model)
-    }
-    pub fn finish_with_correspondence(self) -> Result<ModelEdit, ModelEditError> {
-        let (topology, correspondence) = self.topology.finish_with_correspondence()?.into_parts();
+        let published = self.topology.publish()?;
         let positions = Positions::from_canonical_values(
-            correspondence
+            published
                 .atom_slots
                 .iter()
                 .map(|&slot| self.positions[slot])
@@ -665,26 +664,24 @@ impl ModelEditor {
         );
         let mut properties = self
             .properties
-            .project_realization(&correspondence.atom_slots, &correspondence.bond_slots)?;
+            .project_realization(&published.atom_slots, &published.bond_slots)?;
         for (key, value) in self.properties.iter() {
             properties.insert(key.clone(), value.clone())?;
         }
-        let model = Model::with_properties(topology, positions, self.cell, properties)?;
-        Ok(ModelEdit {
-            model,
-            correspondence,
-        })
+        Ok(Model::with_properties(
+            published.topology,
+            positions,
+            self.cell,
+            properties,
+        )?)
     }
+    /// Publishes a model, returning the draft with any publication error.
     pub fn try_finish(self) -> Result<Model, ModelFinishError> {
-        self.try_finish_with_correspondence().map(|r| r.model)
-    }
-    pub fn try_finish_with_correspondence(self) -> Result<ModelEdit, ModelFinishError> {
         let snapshot = self.clone();
-        self.finish_with_correspondence()
-            .map_err(|error| ModelFinishError {
-                error: Box::new(error),
-                editor: Box::new(snapshot),
-            })
+        self.finish().map_err(|error| ModelFinishError {
+            error: Box::new(error),
+            editor: Box::new(snapshot),
+        })
     }
 
     fn structural<T>(
@@ -746,22 +743,6 @@ fn checked_point(position: Quantity<Point3>) -> Result<Point3, PositionError> {
     Ok(point)
 }
 
-#[derive(Debug, Clone)]
-pub struct ModelEdit {
-    model: Model,
-    correspondence: TopologyEditCorrespondence,
-}
-impl ModelEdit {
-    pub fn model(&self) -> &Model {
-        &self.model
-    }
-    pub fn correspondence(&self) -> &TopologyEditCorrespondence {
-        &self.correspondence
-    }
-    pub fn into_parts(self) -> (Model, TopologyEditCorrespondence) {
-        (self.model, self.correspondence)
-    }
-}
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ModelEditError {
@@ -772,8 +753,6 @@ pub enum ModelEditError {
     CapacityOverflow,
     /// A periodic source cannot be imported under the destination's cell.
     IncompatibleAppendCell,
-    /// The published edit does not contain this particular append transaction.
-    ForeignAppend,
     /// An imported realization property cannot be combined with its destination table.
     AppendProperty {
         domain: &'static str,
@@ -791,7 +770,6 @@ impl fmt::Display for ModelEditError {
             Self::IncompatibleAppendCell => f.write_str(
                 "appended model has a different periodic cell; set the intended destination cell or explicitly remove the source cell before appending",
             ),
-            Self::ForeignAppend => f.write_str("published edit does not contain this model append"),
             Self::AppendProperty { domain, error } => write!(f, "cannot append {domain} properties: {error}"),
         }
     }
@@ -804,7 +782,7 @@ impl std::error::Error for ModelEditError {
             Self::Property(e) => Some(e),
             Self::Model(e) => Some(e.as_ref()),
             Self::AppendProperty { error, .. } => Some(error.as_ref()),
-            Self::CapacityOverflow | Self::IncompatibleAppendCell | Self::ForeignAppend => None,
+            Self::CapacityOverflow | Self::IncompatibleAppendCell => None,
         }
     }
 }

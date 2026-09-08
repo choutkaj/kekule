@@ -548,7 +548,6 @@ of a coordinate-free system. `ModelEditor` coordinates the same structural edito
 with one realization's positions, cell, and properties. Direct `Model` setters
 remain the ordinary interface for changes that preserve topology. All editors
 support detached drafts, `validate()`, `finish()`, and recoverable `try_finish()`.
-Publication with edit correspondence is available when final identities are needed.
 
 System edits target individual occurrences. Editing one occurrence of a reused
 definition must not change other occurrences. Untouched definitions retain their
@@ -565,12 +564,11 @@ exactly one connected molecule and rejects a disconnected final draft.
 
 Opaque editing handles remain stable within a draft through splitting, merging,
 deletion of other entities, and dense reordering. Deleted and foreign handles are
-rejected. Source identity is resolved explicitly to these handles. Correspondence
-records source/draft-to-published atom, bond, and hierarchy identity; occurrence
-correspondence accommodates splits and merges. It is specific to the transaction,
-not an inferred mapping between arbitrary topologies. Append-only extension
-preserves existing semantic IDs and dense order. Other edits publish deterministic
-ordering and explicit correspondence.
+rejected. Source identity is resolved explicitly to these handles. Editing handles
+are draft-only; `finish()` returns the completed owner without a correspondence
+wrapper. Append-only extension preserves existing semantic IDs and dense order.
+Other edits publish deterministic ordering. Internal row projection keeps entity
+properties and coordinates aligned with the final topology.
 
 Model atom insertion requires a finite, unit-aware coordinate. Deletion removes
 the corresponding coordinate and incident bonds. Surviving atoms keep their
@@ -587,7 +585,7 @@ New atoms may remain outside hierarchy until explicitly assigned. Changed residu
 composition and changed molecular definitions are reclassified unless a fresh
 explicit override is supplied.
 
-Surviving entity annotations follow explicit correspondence; new rows are missing.
+Surviving entity annotations follow internal identity bookkeeping; new rows are missing.
 Changed owner and instance annotations are not inherited ambiguously across edits,
 splits, or merges. Incompatible property types or units fail transactionally.
 Transferring an annotation does not assert that an arbitrary derived value remains
@@ -628,13 +626,11 @@ component). A mismatch rejects without mutation so the caller can set the intend
 retry. Every complete append is transactional, including late property failures.
 
 Each append returns a separate source-to-draft mapping, even for repeated imports
-of one source. It retains the source topology and can be resolved against a
-publication containing that exact import, including publications of cloned drafts.
-Deleted entities have no final identity; occurrence mappings accommodate splits
-and merges. Unrelated publications reject even when layouts match. This is narrow
-edit correspondence and does not rebind selections or other topology-bound objects.
-`finish()` remains the ordinary result-only publication path; callers request
-`finish_with_correspondence()` when final identities are needed.
+of one source. It retains the source topology and supplies stable editing handles
+for subsequent operations in that draft, including adding or removing bonds.
+Deleted and foreign handles reject. `finish()` returns the completed model;
+`try_finish()` also retains the draft on failure. Neither returns a mapping of
+draft handles into the published result or rebinds topology-bound objects.
 
 ## Parsing and interpretation
 

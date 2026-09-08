@@ -1,7 +1,6 @@
 use super::*;
 use crate::structure::ModelView;
 use crate::topology::{AppendMapping, Topology};
-use std::collections::BTreeSet;
 
 impl ModelEditor {
     /// Appends a complete borrowed model, including its existing coordinates.
@@ -42,11 +41,8 @@ impl ModelEditor {
     /// let source_atom = ligand.topology().atom_ids()[0];
     /// let draft_atom = appended.atom(source_atom)?;
     /// assert_eq!(editor.position(draft_atom)?, ligand.position(source_atom)?);
-    /// let result = editor.finish_with_correspondence()?;
-    /// let mapping = appended.published(&result)?;
-    /// assert!(mapping.atom(source_atom).is_some());
-    /// assert_eq!(result.model().atom_count(), 4);
-    /// // Use editor.finish() instead when only the completed Model is needed.
+    /// let model = editor.finish()?;
+    /// assert_eq!(model.atom_count(), 4);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn append_model<'a>(
@@ -158,8 +154,8 @@ pub struct ModelAppendReport {
 /// Each append has a separate context, even when the same source is appended
 /// repeatedly. The source topology is retained; IDs supplied to this mapping are
 /// interpreted only in that source. Handles remain stable through later edits;
-/// a deleted handle will be rejected by the editor. Use [`Self::published`] to
-/// resolve surviving entities after publication, including splits and merges.
+/// a deleted handle will be rejected by the editor. These handles are only for
+/// use within the draft, before [`ModelEditor::finish`].
 #[derive(Debug, Clone)]
 pub struct ModelAppend {
     mapping: AppendMapping,
@@ -207,88 +203,5 @@ impl ModelAppend {
             .get(&source)
             .copied()
             .ok_or_else(|| TopologyEditError::InvalidSourceAtomSite(source).into())
-    }
-    /// Borrows the mapping into a publication containing this exact import.
-    /// Unrelated publications reject, even if they have equal layouts. Publications
-    /// of a cloned draft containing this import are valid, including after all
-    /// imported entities have been deleted. No topology bindings are transferred.
-    pub fn published<'a>(
-        &'a self,
-        result: &'a ModelEdit,
-    ) -> Result<ModelAppendCorrespondence<'a>, ModelEditError> {
-        if !result.correspondence().contains_append(&self.mapping.token) {
-            return Err(ModelEditError::ForeignAppend);
-        }
-        Ok(ModelAppendCorrespondence {
-            mapping: &self.mapping,
-            published: result.correspondence(),
-        })
-    }
-}
-
-/// Borrowed, transaction-specific correspondence for one published model import.
-/// Missing/deleted entity IDs return `None`. An original molecular occurrence can
-/// map to zero, one or several final occurrences after deletion, merging or splitting.
-#[derive(Debug, Clone, Copy)]
-pub struct ModelAppendCorrespondence<'a> {
-    mapping: &'a AppendMapping,
-    published: &'a TopologyEditCorrespondence,
-}
-
-impl ModelAppendCorrespondence<'_> {
-    pub fn source_topology(&self) -> &Topology {
-        &self.mapping.source
-    }
-    pub fn target_topology(&self) -> &Topology {
-        self.published.target_topology()
-    }
-    pub fn atom(&self, source: InstanceAtomId) -> Option<InstanceAtomId> {
-        self.mapping
-            .atoms
-            .get(&source)
-            .and_then(|&id| self.published.atom(id))
-    }
-    pub fn bond(&self, source: InstanceBondId) -> Option<InstanceBondId> {
-        self.mapping
-            .bonds
-            .get(&source)
-            .and_then(|&id| self.published.bond(id))
-    }
-    pub fn chain(&self, source: ChainId) -> Option<ChainId> {
-        self.mapping
-            .chains
-            .get(&source)
-            .and_then(|&id| self.published.chain(id))
-    }
-    pub fn residue(&self, source: ResidueId) -> Option<ResidueId> {
-        self.mapping
-            .residues
-            .get(&source)
-            .and_then(|&id| self.published.residue(id))
-    }
-    pub fn atom_site(&self, source: AtomSiteId) -> Option<AtomSiteId> {
-        self.mapping
-            .sites
-            .get(&source)
-            .and_then(|&id| self.published.atom_site(id))
-    }
-    /// Returns distinct surviving occurrences in published instance order.
-    /// An invalid source instance rejects; a fully deleted instance returns an empty list.
-    pub fn instances(
-        &self,
-        source: MoleculeInstanceId,
-    ) -> Result<Vec<MoleculeInstanceId>, ModelEditError> {
-        if self.mapping.source.instance(source).is_err() {
-            return Err(TopologyEditError::InvalidSourceInstance(source).into());
-        }
-        Ok(self
-            .mapping
-            .atoms
-            .iter()
-            .filter(|(id, _)| id.molecule() == source)
-            .filter_map(|(_, &id)| self.published.atom(id).map(|atom| atom.molecule()))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect())
     }
 }
