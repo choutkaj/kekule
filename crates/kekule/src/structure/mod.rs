@@ -12,6 +12,7 @@
 //! kernels without copying coordinates.
 
 mod ensemble;
+pub mod measure;
 mod model;
 mod model_editor;
 mod positions;

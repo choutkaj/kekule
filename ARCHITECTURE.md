@@ -1533,6 +1533,19 @@ selections.
 `AtomSelection::all(&topology)` infallibly selects every atom in authoritative
 dense order and retains the exact shared topology allocation.
 
+Selection union, intersection, and difference preserve sorted unique dense
+ordering and require the exact same topology snapshot, including for empty
+sets. `atom_ids()` borrows the selection's topology context without allocating.
+Whole-residue expansion adds all atoms of touched residues and preserves
+selected atoms without hierarchy assignments; it never removes selected atoms.
+Atom-name selections explicitly distinguish label and author namespaces.
+
+Single-result hierarchy lookups reject missing and ambiguous matches. Label and
+author identifiers never substitute for one another, and author residue
+addresses include the insertion code. An author chain ID may span several label
+chains; topology-level author-residue lookup checks uniqueness of the complete
+address rather than requiring the author chain ID alone to be unique.
+
 A hierarchy selection and a structural subset are distinct operations:
 
 ```text
@@ -2326,6 +2339,14 @@ secondary to the native `EnsembleMember`/`TrajectoryFrame` construction model.
 
 ## `Model`
 
+Checked distance, angle, dihedral, and spatial-selection helpers in
+`structure::measure` consume borrowed `ModelView` values. They measure stored
+Cartesian coordinates, ignore cells, and perform no automatic preprocessing.
+Distances and angles use the existing physical quantity system. Spatial
+selection returns a static topology-bound atom set for one view; frame-dependent
+membership requires reevaluation on each frame. Candidate selection, geometric
+cutoff, whole-residue expansion, and structural slicing remain separate steps.
+
 `Model` is one concrete geometry-dependent realization of one topology.
 
 Conceptually:
@@ -2505,6 +2526,21 @@ A trajectory represents one fixed-topology epoch. Topology-changing chemistry or
 hierarchy is not represented by silently mutating one shared topology. A workflow
 with changing topology should use separate topology epochs/objects and explicitly
 construct the geometry belonging to each epoch.
+
+RMSF and contact-occupancy accumulators consume borrowed frames from the exact
+source topology and retain memory proportional to selected atoms or specified
+pairs, independent of frame count. Loaded trajectory methods use those same
+accumulators. Each successful observation has equal statistical weight; failed
+observations leave counts and moments unchanged. Frame indices are diagnostic
+labels, not inferred sampling intervals or statistical weights.
+
+RMSF is per atom about its mean stored position, with population normalization.
+Contact occupancy counts frames at Cartesian pair distance less than or equal
+to the explicit cutoff. Neither operation aligns, images, or unwraps input;
+preprocessing is an explicit preceding operation. Results retain source topology
+and atom/pair associations. A CA result is a CA measurement, not an implicit
+average over a residue. These are concrete derived analysis results, not new
+state owned by topology or a generic reduction framework.
 
 ## Molecular identity and equality
 
