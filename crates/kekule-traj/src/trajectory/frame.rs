@@ -19,6 +19,19 @@ pub(super) struct DenseVectors {
 }
 
 impl DenseVectors {
+    fn from_vec(values: Quantity<Vec<Vector3>>, unit: Unit) -> Result<Self, FrameError> {
+        let factor = values.unit().conversion_factor_to(unit)?;
+        let mut values = values.into_value();
+        for (index, vector) in values.iter_mut().enumerate() {
+            let converted = Vector3::new(vector.x * factor, vector.y * factor, vector.z * factor);
+            if !converted.is_finite() {
+                return Err(FrameError::NonFiniteVector { index });
+            }
+            *vector = converted;
+        }
+        Ok(Self { values, unit })
+    }
+
     fn new<T>(values: Quantity<T>, unit: Unit) -> Result<Self, FrameError>
     where
         T: AsRef<[Vector3]>,
@@ -76,8 +89,10 @@ impl DenseVectors {
     where
         T: AsRef<[Vector3]>,
     {
+        // AsRef may use interior state. Validate and copy the same borrowed slice.
+        let values = Quantity::new(values.value().as_ref(), values.unit());
         let factor = self.validate_replacement(&values)?;
-        self.copy_from_validated(values.value().as_ref(), factor);
+        self.copy_from_validated(values.value(), factor);
         Ok(())
     }
 
@@ -116,11 +131,18 @@ macro_rules! vector_array {
         pub struct $name(pub(super) DenseVectors);
 
         impl $name {
+            /// Copies dense vectors and converts them to canonical units.
             pub fn new<T>(values: Quantity<T>) -> Result<Self, FrameError>
             where
                 T: AsRef<[Vector3]>,
             {
                 Ok(Self(DenseVectors::new(values, $unit)?))
+            }
+
+            /// Takes ownership of dense vectors, converting and validating in place.
+            /// The input vector's allocation is retained on success.
+            pub fn from_vec(values: Quantity<Vec<Vector3>>) -> Result<Self, FrameError> {
+                Ok(Self(DenseVectors::from_vec(values, $unit)?))
             }
 
             pub fn zeros(len: usize) -> Self {
@@ -137,6 +159,11 @@ macro_rules! vector_array {
 
             pub fn values(&self) -> Quantity<&[Vector3]> {
                 self.0.values()
+            }
+
+            /// Consumes the container, returning its canonical-unit vector without copying.
+            pub fn into_values(self) -> Quantity<Vec<Vector3>> {
+                Quantity::new(self.0.values, self.0.unit)
             }
 
             /// Copies a dense projection in the requested index order.

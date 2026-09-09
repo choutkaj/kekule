@@ -16,6 +16,10 @@ mod kernel;
 ///
 /// The returned value is a snapshot. Updating the model coordinates does not
 /// update an existing result; callers must run assignment again explicitly.
+/// Amino-acid residues and otherwise unclassified residues with a complete
+/// backbone are eligible without source sequence labels. Each chain uses label
+/// numbering when complete, otherwise numeric author numbering when complete,
+/// otherwise its topology hierarchy order. Insertion codes break numbered ties.
 pub fn assign(model: ModelView<'_>, options: DsspOptions) -> Result<DsspResult, DsspError> {
     kernel::assign(model, options)
 }

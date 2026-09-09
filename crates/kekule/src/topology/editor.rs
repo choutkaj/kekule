@@ -41,6 +41,7 @@ struct Group {
     instance_slot: Option<usize>,
     changed: bool,
     class: Option<MoleculeClass>,
+    class_explicit: bool,
 }
 #[derive(Debug, Clone, Copy)]
 struct Location<Id> {
@@ -60,7 +61,12 @@ struct Location<Id> {
 ///
 /// Graph edits clear changed owner annotations. Surviving entity annotations are
 /// transferred explicitly; newly added entities have missing property values.
-/// Untouched definitions retain perception and classification. No-op publication
+/// Untouched definitions retain perception and classification. Hierarchy changes
+/// affecting their atoms invalidate inferred classifications; explicit assignments
+/// survive metadata changes. Changes to represented chemistry or residue
+/// composition require a fresh override. Unchanged inferred classes, including
+/// classes retained by a prior subset, are preserved without reclassification.
+/// No-op publication
 /// retains the exact input `Arc<Topology>` supplied to [`Self::from_topology`].
 ///
 /// ```
@@ -91,9 +97,17 @@ pub struct TopologyEditor {
 
 impl Topology {
     /// Starts a detached draft from a shared topology, retaining its exact snapshot.
+    ///
+    /// This method borrows an `Arc<Topology>` so no-op publication can return
+    /// that same allocation. For an owned `Topology`, use [`Self::into_editor`]
+    /// to transfer ownership, or [`TopologyEditor::from_topology`] with either
+    /// an owned value or an `Arc`. Clone the `Arc` when another owner must retain
+    /// the original snapshot; molecular data is copied only when edited.
     pub fn edit(self: &Arc<Self>) -> TopologyEditor {
         TopologyEditor::from_topology(Arc::clone(self))
     }
+    /// Transfers an owned topology into a structural draft. Successful consuming
+    /// publication can move its unchanged molecular definitions into the result.
     pub fn into_editor(self) -> TopologyEditor {
         TopologyEditor::from_topology(self)
     }
@@ -115,6 +129,7 @@ impl TopologyEditor {
         self.hierarchy.residues.clear();
         self.hierarchy.sites.clear();
         self.hierarchy.atom_sites.clear();
+        self.hierarchy.residue_atoms.clear();
         self.properties = Properties::new();
         self.changed();
     }
@@ -137,6 +152,9 @@ impl TopologyEditor {
                 molecule,
                 Some(instance),
                 Some(source.definition(value.definition()).unwrap().class()),
+                source
+                    .molecule_class_overrides
+                    .contains_key(&value.definition()),
             );
         }
         editor.import_hierarchy(&source);
@@ -271,6 +289,7 @@ impl TopologyEditor {
             instance_slot: None,
             changed: true,
             class: None,
+            class_explicit: false,
         }));
         self.properties.resize_atoms(slot + 1);
         self.changed();
@@ -285,6 +304,7 @@ impl TopologyEditor {
             &owned,
             None,
             None,
+            false,
         );
         self.properties.resize_atoms(
             self.atoms
@@ -546,6 +566,9 @@ impl TopologyEditor {
         Ok(previous)
     }
 
+    /// Explicitly assigns the current connected component's class. Assigning its
+    /// existing inferred class still records an override for subsequent metadata
+    /// edits. A later chemical change invalidates this component's override.
     pub fn set_molecule_class(
         &mut self,
         atom: EditAtomId,
@@ -564,6 +587,11 @@ impl TopologyEditor {
             .map(|id| group.atoms[&id])
             .collect::<BTreeSet<_>>();
         if component.len() == group.atoms.len()
+            && (group.class_explicit
+                || self
+                    .molecule_classes
+                    .keys()
+                    .any(|id| component.contains(id)))
             && self.component_class(&component, group.class) == Some(class)
         {
             return Ok(());
@@ -644,6 +672,7 @@ impl TopologyEditor {
             .retain(|id, _| !group.atoms.values().any(|handle| handle == id));
         group.changed = true;
         group.class = None;
+        group.class_explicit = false;
     }
     fn changed(&mut self) {
         self.revision += 1;
@@ -656,6 +685,7 @@ impl TopologyEditor {
         molecule: &Molecule,
         source: Option<MoleculeInstanceId>,
         class: Option<MoleculeClass>,
+        class_explicit: bool,
     ) -> EditMolecule {
         let group = self.groups.len();
         let mut result = EditMolecule::default();
@@ -708,6 +738,7 @@ impl TopologyEditor {
             instance_slot: source.map(MoleculeInstanceId::index),
             changed: false,
             class,
+            class_explicit,
         }));
         result
     }
@@ -741,6 +772,7 @@ impl TopologyEditor {
         group.chemistry = GroupChemistry::Draft(Box::new(draft));
         group.changed = true;
         group.class = None;
+        group.class_explicit = false;
         for (old, handle) in removed.atoms {
             let local = map.atoms()[&old];
             group.atoms.insert(local, handle);

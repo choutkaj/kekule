@@ -1,8 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::{
-    allowed_valences, canonical_atom_ranking, ordered_atom_pair, rdkit_default_valence,
-    CanonicalAtomRanking,
+    allowed_valences, canonical_atom_ranking, rdkit_default_valence, CanonicalAtomRanking,
 };
 use crate::core::Molecule;
 use crate::core::*;
@@ -15,6 +14,9 @@ use super::write::{
     StereoWriteMode,
 };
 
+mod labeling;
+use labeling::CanonicalOrder;
+
 pub fn write_canonical_smiles(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
     validate_smiles_writeable(molecule, StereoWriteMode::Ignore)?;
     let normalized = canonical_nonisomeric_graph(molecule)?;
@@ -23,6 +25,7 @@ pub fn write_canonical_smiles(molecule: &Molecule) -> std::result::Result<String
     let mut components = Vec::new();
     for component in smiles_connected_components(mol)? {
         let atom_style = canonical_component_atom_style(mol, &component)?;
+        let order = CanonicalOrder::new(mol, &ranking, atom_style)?;
         let mut candidates = Vec::new();
         for preference in [
             CanonicalBondTraversal::HighOrderFirst,
@@ -32,9 +35,7 @@ pub fn write_canonical_smiles(molecule: &Molecule) -> std::result::Result<String
                 component
                     .iter()
                     .map(|root| {
-                        write_canonical_smiles_component(
-                            mol, *root, &ranking, preference, atom_style,
-                        )
+                        write_canonical_smiles_component(mol, *root, &order, preference, atom_style)
                     })
                     .collect::<std::result::Result<Vec<_>, _>>()?,
             );
@@ -55,7 +56,13 @@ fn canonical_nonisomeric_graph(mol: &Molecule) -> std::result::Result<Molecule, 
     let collapsible_hydrogens = mol
         .atoms()
         .filter_map(|(atom_id, atom)| {
-            if atom.element.symbol() != "H" || atom.isotope.is_some() {
+            if atom.element.symbol() != "H"
+                || atom.isotope.is_some()
+                || atom.formal_charge != 0
+                || atom.atom_map.is_some()
+                || atom.radical.is_some()
+                || atom.hydrogens.explicit_count() != 0
+            {
                 return None;
             }
             let bonds = mol.incident_bonds(atom_id).ok()?.collect::<Vec<_>>();
@@ -278,7 +285,7 @@ fn explicit_ring_bond_marker_count(candidate: &str) -> usize {
 fn write_canonical_smiles_component(
     mol: &Molecule,
     root: AtomId,
-    ranking: &CanonicalAtomRanking,
+    ranking: &CanonicalOrder,
     preference: CanonicalBondTraversal,
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<String, MolWriteError> {
@@ -289,7 +296,7 @@ fn write_canonical_smiles_component(
 fn plan_canonical_smiles_component(
     mol: &Molecule,
     root: AtomId,
-    ranking: &CanonicalAtomRanking,
+    ranking: &CanonicalOrder,
     preference: CanonicalBondTraversal,
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<SmilesWritePlan, MolWriteError> {
@@ -309,28 +316,30 @@ fn plan_canonical_smiles_component(
     let mut ring_bonds = ring_bonds
         .into_iter()
         .map(|(bond_id, (a, b, order))| {
-            let (first, second) = ordered_atom_pair(a, b);
+            let (first, second) = if ranking.rank(a) < ranking.rank(b) {
+                (a, b)
+            } else {
+                (b, a)
+            };
             (bond_id, first, second, order)
         })
         .collect::<Vec<_>>();
-    ring_bonds.sort_by_key(|(bond_id, first, second, order)| {
+    ring_bonds.sort_by_key(|(_, first, second, order)| {
         (
             canonical_rank(ranking, *first),
             canonical_rank(ranking, *second),
             bond_order_code(*order),
-            *first,
-            *second,
-            *bond_id,
+            canonical_label(ranking, *first),
+            canonical_label(ranking, *second),
         )
     });
     let mut closures = smiles_ring_closures(ring_bonds)?;
-    for (atom, closures) in &mut closures {
+    for closures in closures.values_mut() {
         closures.sort_by_key(|closure| {
             (
                 canonical_rank(ranking, closure.other),
                 bond_order_code(closure.order),
-                closure.other,
-                *atom,
+                canonical_label(ranking, closure.other),
             )
         });
     }
@@ -347,7 +356,7 @@ fn write_canonical_smiles_component_with_plan(
     mol: &Molecule,
     root: AtomId,
     plan: &SmilesWritePlan,
-    ranking: &CanonicalAtomRanking,
+    ranking: &CanonicalOrder,
     preference: CanonicalBondTraversal,
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<String, MolWriteError> {
@@ -401,14 +410,13 @@ fn write_canonical_smiles_component_with_plan(
                             plan.tree_bonds.contains(bond_id) && Some(*neighbor) != parent
                         })
                         .collect::<Vec<_>>();
-                children.sort_by_key(|(bond_id, order, child)| {
+                children.sort_by_key(|(_, order, child)| {
                     (
                         !canonical_smiles_aromatic_continuation(mol, atom, *child, *order),
                         canonical_rank(ranking, *child),
                         canonical_smiles_atom_for_sort(mol, *child, atom_style),
                         preference.order_key(*order),
-                        *child,
-                        *bond_id,
+                        canonical_label(ranking, *child),
                     )
                 });
                 let main_child = children.first().copied();
@@ -459,27 +467,28 @@ fn canonical_smiles_aromatic_continuation(
 fn canonical_smiles_incident_bonds(
     mol: &Molecule,
     atom_id: AtomId,
-    ranking: &CanonicalAtomRanking,
+    ranking: &CanonicalOrder,
     preference: CanonicalBondTraversal,
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<Vec<(BondId, SmilesBondOrder, AtomId)>, MolWriteError> {
     let mut incident = smiles_incident_bonds_for_style(mol, atom_id, atom_style)?;
-    incident.sort_by_key(|(bond_id, order, atom)| {
+    incident.sort_by_key(|(_, order, atom)| {
         (
             canonical_rank(ranking, *atom),
             canonical_smiles_atom_for_sort(mol, *atom, atom_style),
             preference.order_key(*order),
-            *atom,
-            *bond_id,
+            canonical_label(ranking, *atom),
         )
     });
     Ok(incident)
 }
 
-fn canonical_rank(ranking: &CanonicalAtomRanking, atom: AtomId) -> u32 {
-    ranking
-        .rank_of(atom)
-        .expect("canonical ranking should cover every live atom")
+fn canonical_rank(ranking: &CanonicalOrder, atom: AtomId) -> u32 {
+    ranking.rank(atom).0
+}
+
+fn canonical_label(ranking: &CanonicalOrder, atom: AtomId) -> usize {
+    ranking.rank(atom).1
 }
 
 fn bond_order_code(order: SmilesBondOrder) -> u8 {

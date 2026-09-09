@@ -213,3 +213,46 @@ fn errors_retain_nested_causes_and_model_validation_is_not_misreported_as_topolo
         .source()
         .is_some());
 }
+
+#[test]
+fn consuming_extraction_moves_complete_frames_and_preserves_collection_context() {
+    let trajectory = annotated();
+    let topology = trajectory.shared_topology();
+    let properties = trajectory.properties().clone();
+    let expected: Vec<_> = trajectory.frames().map(|frame| frame.to_frame()).collect();
+    let pointers: Vec<_> = trajectory
+        .frames()
+        .map(|frame| {
+            (
+                frame.positions().values().value().as_ptr(),
+                frame.velocities().unwrap().value().as_ptr(),
+                frame.forces().unwrap().value().as_ptr(),
+            )
+        })
+        .collect();
+    let (actual_topology, actual_properties, frames) = trajectory.into_parts();
+    assert!(Arc::ptr_eq(&actual_topology, &topology));
+    assert_eq!(actual_properties, properties);
+    assert_eq!(frames, expected);
+    for (frame, (positions, velocities, forces)) in frames.iter().zip(pointers) {
+        assert_eq!(frame.positions().values().value().as_ptr(), positions);
+        assert_eq!(
+            frame.velocities().unwrap().values().value().as_ptr(),
+            velocities
+        );
+        assert_eq!(frame.forces().unwrap().values().value().as_ptr(), forces);
+    }
+    let trajectory = Trajectory::from_frames(actual_topology, frames).unwrap();
+    let pointer = trajectory
+        .frame(0)
+        .unwrap()
+        .positions()
+        .values()
+        .value()
+        .as_ptr();
+    let frames = trajectory.into_frames();
+    assert_eq!(frames, expected);
+    assert_eq!(frames[0].positions().values().value().as_ptr(), pointer);
+    let empty = Trajectory::new(topology);
+    assert!(empty.into_frames().is_empty());
+}

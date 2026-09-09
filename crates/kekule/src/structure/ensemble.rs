@@ -755,7 +755,17 @@ impl fmt::Display for EnsembleError {
     }
 }
 
-impl std::error::Error for EnsembleError {}
+impl std::error::Error for EnsembleError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::TopologyBuild(error) => Some(error),
+            Self::Position(error) => Some(error),
+            Self::Model(error) => Some(error.as_ref()),
+            Self::Property(error) => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 impl From<TopologyBuildError> for EnsembleError {
     fn from(error: TopologyBuildError) -> Self {
@@ -791,7 +801,16 @@ impl fmt::Display for EnsembleSliceError {
     }
 }
 
-impl std::error::Error for EnsembleSliceError {}
+impl std::error::Error for EnsembleSliceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Topology(error) => Some(error),
+            Self::Position(error) => Some(error),
+            Self::Property(error) => Some(error),
+            Self::Ensemble(error) => Some(error),
+        }
+    }
+}
 
 impl From<TopologySubsetError> for EnsembleSliceError {
     fn from(error: TopologySubsetError) -> Self {
