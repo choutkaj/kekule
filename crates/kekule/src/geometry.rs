@@ -71,8 +71,9 @@ impl Vector3 {
         self.dot(self)
     }
 
+    /// Euclidean magnitude without intermediate squaring overflow or underflow.
     pub fn norm(self) -> f64 {
-        self.norm_squared().sqrt()
+        self.x.hypot(self.y).hypot(self.z)
     }
 
     pub(crate) fn add_scaled(&mut self, other: Self, scale: f64) {

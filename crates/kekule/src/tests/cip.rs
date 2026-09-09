@@ -1707,13 +1707,22 @@ fn failed_cip_validation_preserves_previous_stereo_section() {
                 carriers: vec![
                     StereoCarrier::Atom(adjacent),
                     StereoCarrier::Atom(adjacent),
-                    StereoCarrier::Atom(nonadjacent),
+                    StereoCarrier::Atom(adjacent),
                 ],
                 orientation: None,
             }),
             group: None,
         })
-        .expect("stored malformed stereo element");
+        .expect("stored stereo element with valid graph references");
+    // Inject nonadjacency through internal storage to test defensive CIP
+    // validation; checked editing now rejects this malformed reference.
+    let stored = mol.working_mut().graph.stereo_elements[element.index()]
+        .as_mut()
+        .expect("stored stereo element");
+    let StereoElementKind::Tetrahedral(stereo) = &mut stored.kind else {
+        unreachable!("test element is tetrahedral");
+    };
+    stereo.carriers[2] = StereoCarrier::Atom(nonadjacent);
     mol.working_mut()
         .install_cip_descriptor(element, StereoDescriptor::R);
     let before = installed_cip_descriptors(mol.working());

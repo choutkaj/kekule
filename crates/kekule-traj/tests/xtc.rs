@@ -111,6 +111,200 @@ fn encoded_frame(
 }
 
 #[test]
+fn xtc_rejects_cells_degenerate_after_f32_rounding_before_appending_bytes() {
+    let topology = topology(4);
+    let mut writer = XtcWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        XtcWriteOptions::default(),
+        "box-rounding.xtc",
+    )
+    .unwrap();
+    let mut frame = source_frame(&topology, 0.0, 0);
+    let valid_cell = frame.cell().copied();
+    writer.write_frame(frame.frame_view()).unwrap();
+    let before = writer.writer().clone();
+    frame.set_cell(Some(
+        PeriodicCell::new(
+            Quantity::new(
+                [
+                    Vector3::new(1.0, 1.0, 0.0),
+                    Vector3::new(1.0, 1.0 + 1e-8, 0.0),
+                    Vector3::new(0.0, 0.0, 1.0),
+                ],
+                NANOMETER,
+            ),
+            [true; 3],
+        )
+        .unwrap(),
+    ));
+    assert_eq!(
+        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::InvalidFrame)
+    );
+    assert_eq!(writer.writer(), &before);
+    frame.set_cell(valid_cell);
+    frame.set_step(Some(1));
+    writer.write_frame(frame.frame_view()).unwrap();
+    let mut reader = XtcReader::new(
+        Cursor::new(writer.finish().unwrap().into_inner()),
+        topology,
+        XtcReadOptions::default(),
+    )
+    .unwrap();
+    let mut destination = reader.frame_buffer();
+    for step in [0, 1] {
+        assert!(reader.read_next(&mut destination).unwrap());
+        assert_eq!(destination.frame_view().step(), Some(step));
+        assert!(destination.cell().is_some());
+    }
+    assert!(!reader.read_next(&mut destination).unwrap());
+}
+
+#[test]
+fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
+    for atom_count in [4, 12] {
+        for magic in [XtcMagic::Xtc1995, XtcMagic::Xtc2023] {
+            let topology = topology(atom_count);
+            let mut combined = Vec::new();
+            let mut raw_sizes = Vec::new();
+            for step in 0..3 {
+                let mut frame = source_frame(&topology, step as f64 * 0.01, step);
+                if step == 1 {
+                    frame
+                        .set_positions(Quantity::new(
+                            (0..atom_count)
+                                .map(|i| {
+                                    Point3::new(
+                                        (i * 37 % 101) as f64,
+                                        (i * 53 % 97) as f64,
+                                        (i * 71 % 89) as f64,
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                            NANOMETER,
+                        ))
+                        .unwrap();
+                }
+                let mut writer = XtcWriter::new(
+                    Cursor::new(Vec::new()),
+                    Arc::clone(&topology),
+                    XtcWriteOptions::default().with_magic(magic),
+                    "scratch.xtc",
+                )
+                .unwrap();
+                writer.write_frame(frame.frame_view()).unwrap();
+                let bytes = writer.finish().unwrap().into_inner();
+                let raw_size = if atom_count <= 9 {
+                    atom_count * 12
+                } else {
+                    match magic {
+                        XtcMagic::Xtc1995 => {
+                            u32::from_be_bytes(bytes[88..92].try_into().unwrap()) as usize
+                        }
+                        XtcMagic::Xtc2023 => {
+                            usize::try_from(u64::from_be_bytes(bytes[88..96].try_into().unwrap()))
+                                .unwrap()
+                        }
+                        _ => unreachable!("covered XTC magic variants"),
+                    }
+                };
+                raw_sizes.push(raw_size);
+                combined.extend(bytes);
+            }
+            let dense_bytes =
+                atom_count * (std::mem::size_of::<Point3>() + 3 * std::mem::size_of::<f32>());
+            let first_total = dense_bytes + raw_sizes[0];
+            let total = dense_bytes + raw_sizes.iter().max().unwrap();
+            let options = |limit| {
+                XtcReadOptions::default().with_limits(TrajectoryIoLimits {
+                    max_scratch_bytes: limit,
+                    ..TrajectoryIoLimits::default()
+                })
+            };
+            let open = |limit| {
+                XtcReader::new(
+                    Cursor::new(combined.clone()),
+                    Arc::clone(&topology),
+                    options(limit),
+                )
+            };
+            let payload_start = if atom_count <= 9 {
+                56
+            } else if magic == XtcMagic::Xtc1995 {
+                92
+            } else {
+                96
+            };
+            let (stream, control) = GuardedCursor::new(combined.clone(), payload_start);
+            let error = XtcReader::new(stream, Arc::clone(&topology), options(first_total - 1))
+                .err()
+                .unwrap();
+            assert_eq!(
+                codec_kind(&error),
+                Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+            );
+            assert!(!control.violated(), "over-budget payload must not be read");
+
+            let mut sequential = open(total).unwrap();
+            let mut destination = sequential.frame_buffer();
+            let mut expected = Vec::new();
+            while sequential.read_next(&mut destination).unwrap() {
+                expected.push(destination.frame_view().to_frame());
+            }
+            if atom_count > 9 {
+                assert!(
+                    raw_sizes[1] > raw_sizes[0],
+                    "the second compressed payload exercises capacity growth"
+                );
+                let mut bounded = open(total - 1).unwrap();
+                assert!(bounded.read_next(&mut destination).unwrap());
+                let before = buffer_snapshot(&destination);
+                assert_eq!(
+                    codec_kind(&bounded.read_next(&mut destination).unwrap_err()),
+                    Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+                );
+                assert_eq!(buffer_snapshot(&destination), before);
+                assert_eq!(
+                    codec_kind(&open(total - 1).unwrap().into_indexed().err().unwrap()),
+                    Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+                );
+            }
+            let mut indexed = open(total).unwrap().into_indexed().unwrap();
+            // A smaller frame follows the largest payload, so its retained raw
+            // capacity still counts. Random reads must not duplicate any array
+            // or reuse cached coordinates for the wrong pending frame.
+            for (random, next) in [(1, 0), (0, 1), (1, 2)] {
+                indexed.read_frame(random as u64, &mut destination).unwrap();
+                assert_eq!(destination.frame_view().to_frame(), expected[random]);
+                assert!(indexed.read_next(&mut destination).unwrap());
+                assert_eq!(destination.frame_view().to_frame(), expected[next]);
+            }
+            indexed.read_frame(0, &mut destination).unwrap();
+            assert!(!indexed.read_next(&mut destination).unwrap());
+        }
+    }
+}
+
+#[test]
+fn indexed_xtc_rejects_changed_metadata_when_refreshing_a_pending_frame() {
+    let (topology, bytes) = encoded(4, XtcMagic::Xtc1995);
+    let stream = support::SharedCursor::new(bytes);
+    let mut reader = XtcReader::new(stream.clone(), topology, XtcReadOptions::default())
+        .unwrap()
+        .into_indexed()
+        .unwrap();
+    let mut destination = reader.frame_buffer();
+    // Indexing cached the first frame's original box. Random access replaces
+    // its coordinate cache; the pending sequential frame must be revalidated.
+    reader.read_frame(1, &mut destination).unwrap();
+    stream.overwrite(16, &3.0_f32.to_be_bytes());
+    let before = buffer_snapshot(&destination);
+    assert!(reader.read_next(&mut destination).is_err());
+    assert_eq!(buffer_snapshot(&destination), before);
+}
+
+#[test]
 fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
     for (atom_count, magic) in [
         (3, XtcMagic::Xtc1995),

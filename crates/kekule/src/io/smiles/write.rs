@@ -454,7 +454,7 @@ fn compute_smiles_subtree_sizes(
 #[derive(Debug, Clone)]
 struct SmilesStereoWriteContext {
     tetrahedral: BTreeMap<AtomId, TetrahedralSmilesState>,
-    directional: BTreeMap<BondId, Vec<DirectionalSmilesConstraint>>,
+    directional: BTreeMap<BondId, DirectionalSmilesConstraint>,
 }
 
 #[derive(Debug, Clone)]
@@ -475,10 +475,17 @@ struct DirectionalSmilesConstraint {
     direction_at_endpoint: SmilesDirectionToken,
 }
 
+struct DirectionalBondConstraints {
+    preferred: DirectionalSmilesConstraint,
+    // The Boolean records whether the two canonically directed bonds must
+    // carry opposite marks. Flipping both marks preserves the stereo assertion.
+    neighbors: Vec<(BondId, bool)>,
+}
+
 impl SmilesStereoWriteContext {
     fn new(mol: &Molecule) -> std::result::Result<Self, MolWriteError> {
         let mut tetrahedral = BTreeMap::new();
-        let mut directional = BTreeMap::<BondId, Vec<DirectionalSmilesConstraint>>::new();
+        let mut constraints = BTreeMap::new();
         for (_, element) in mol.stereo_elements() {
             match &element.kind {
                 StereoElementKind::Tetrahedral(stereo) => {
@@ -503,14 +510,14 @@ impl SmilesStereoWriteContext {
                     }
                 }
                 StereoElementKind::DoubleBond(stereo) => {
-                    add_double_bond_directional_constraints(mol, stereo, &mut directional)?;
+                    add_double_bond_directional_constraints(mol, stereo, &mut constraints)?;
                 }
                 StereoElementKind::Axis(_) => {}
             }
         }
         Ok(Self {
             tetrahedral,
-            directional,
+            directional: solve_directional_constraints(constraints)?,
         })
     }
 
@@ -538,35 +545,23 @@ impl SmilesStereoWriteContext {
         left: AtomId,
         right: AtomId,
     ) -> std::result::Result<Option<SmilesDirectionToken>, MolWriteError> {
-        let Some(constraints) = self.directional.get(&bond) else {
+        let Some(constraint) = self.directional.get(&bond) else {
             return Ok(None);
         };
-        let mut concrete = None;
-        for constraint in constraints {
-            let mark = directional_mark_for_emitted_bond(
-                constraint.direction_at_endpoint,
-                constraint.endpoint,
-                left,
-                right,
-            )?;
-            if let Some(previous) = concrete {
-                if previous != mark {
-                    return Err(MolWriteError::new(
-                        "isomeric SMILES writer cannot encode conflicting double-bond stereo constraints",
-                    ));
-                }
-            } else {
-                concrete = Some(mark);
-            }
-        }
-        Ok(concrete)
+        directional_mark_for_emitted_bond(
+            constraint.direction_at_endpoint,
+            constraint.endpoint,
+            left,
+            right,
+        )
+        .map(Some)
     }
 }
 
 fn add_double_bond_directional_constraints(
     mol: &Molecule,
     stereo: &DoubleBondStereo,
-    directional: &mut BTreeMap<BondId, Vec<DirectionalSmilesConstraint>>,
+    constraints: &mut BTreeMap<BondId, DirectionalBondConstraints>,
 ) -> std::result::Result<(), MolWriteError> {
     let Some(orientation) = stereo.orientation else {
         return Err(MolWriteError::new(
@@ -592,29 +587,86 @@ fn add_double_bond_directional_constraints(
         DoubleBondOrientation::Together => left_direction,
         DoubleBondOrientation::Opposite => invert_directional_mark(left_direction),
     };
-    directional
-        .entry(left_carrier_bond.bond)
-        .or_default()
-        .push(DirectionalSmilesConstraint {
-            endpoint: stereo.left,
-            direction_at_endpoint: if left_carrier_bond.invert_direction {
-                invert_directional_mark(left_direction)
-            } else {
-                left_direction
-            },
-        });
-    directional
-        .entry(right_carrier_bond.bond)
-        .or_default()
-        .push(DirectionalSmilesConstraint {
-            endpoint: stereo.right,
-            direction_at_endpoint: if right_carrier_bond.invert_direction {
-                invert_directional_mark(right_direction)
-            } else {
-                right_direction
-            },
-        });
+    let left =
+        canonical_directional_constraint(mol, left_carrier_bond, stereo.left, left_direction)?;
+    let right =
+        canonical_directional_constraint(mol, right_carrier_bond, stereo.right, right_direction)?;
+    let opposite = left.direction_at_endpoint != right.direction_at_endpoint;
+    for (bond, preferred, neighbor) in [
+        (left_carrier_bond.bond, left, right_carrier_bond.bond),
+        (right_carrier_bond.bond, right, left_carrier_bond.bond),
+    ] {
+        constraints
+            .entry(bond)
+            .or_insert_with(|| DirectionalBondConstraints {
+                preferred,
+                neighbors: Vec::new(),
+            })
+            .neighbors
+            .push((neighbor, opposite));
+    }
     Ok(())
+}
+
+fn canonical_directional_constraint(
+    mol: &Molecule,
+    carrier: DoubleBondPrintableCarrierBond,
+    endpoint: AtomId,
+    direction: SmilesDirectionToken,
+) -> std::result::Result<DirectionalSmilesConstraint, MolWriteError> {
+    let bond = mol
+        .bond(carrier.bond)
+        .map_err(|error| MolWriteError::new(error.to_string()))?;
+    let (left, right) = ordered_atom_pair(bond.a(), bond.b());
+    let direction = if carrier.invert_direction {
+        invert_directional_mark(direction)
+    } else {
+        direction
+    };
+    Ok(DirectionalSmilesConstraint {
+        endpoint: left,
+        direction_at_endpoint: directional_mark_for_emitted_bond(direction, endpoint, left, right)?,
+    })
+}
+
+fn solve_directional_constraints(
+    constraints: BTreeMap<BondId, DirectionalBondConstraints>,
+) -> std::result::Result<BTreeMap<BondId, DirectionalSmilesConstraint>, MolWriteError> {
+    let mut assigned = BTreeMap::new();
+    for (&seed, initial) in &constraints {
+        if assigned.contains_key(&seed) {
+            continue;
+        }
+        assigned.insert(seed, initial.preferred);
+        let mut pending = vec![seed];
+        while let Some(bond) = pending.pop() {
+            let direction = assigned[&bond].direction_at_endpoint;
+            for &(neighbor, opposite) in &constraints[&bond].neighbors {
+                let expected = if opposite {
+                    invert_directional_mark(direction)
+                } else {
+                    direction
+                };
+                if let Some(previous) = assigned.get(&neighbor) {
+                    if previous.direction_at_endpoint != expected {
+                        return Err(MolWriteError::new(
+                            "isomeric SMILES writer cannot encode conflicting double-bond stereo constraints",
+                        ));
+                    }
+                } else {
+                    assigned.insert(
+                        neighbor,
+                        DirectionalSmilesConstraint {
+                            endpoint: constraints[&neighbor].preferred.endpoint,
+                            direction_at_endpoint: expected,
+                        },
+                    );
+                    pending.push(neighbor);
+                }
+            }
+        }
+    }
+    Ok(assigned)
 }
 
 #[derive(Debug, Clone, Copy)]

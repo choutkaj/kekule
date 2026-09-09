@@ -115,10 +115,13 @@ pub(super) fn render_mol_v3000(
                 if explicit > 0 {
                     out.push_str(&format!(" HCOUNT={explicit}"));
                 } else {
-                    out.push_str(&format!(
-                        " VAL={}",
-                        explicit_valence(record_atom.molecule, record_atom.id)
-                    ));
+                    let valence = explicit_valence(record_atom.molecule, record_atom.id);
+                    // VAL=0 means unspecified, whereas -1 explicitly means zero.
+                    if valence == 0 {
+                        out.push_str(" VAL=-1");
+                    } else {
+                        out.push_str(&format!(" VAL={valence}"));
+                    }
                 }
             }
         }
