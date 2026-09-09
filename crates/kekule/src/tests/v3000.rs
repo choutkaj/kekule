@@ -544,14 +544,26 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let bond = molecule.add_bond(a, b, BondOrder::Double).expect("bond");
+    let left_carrier = molecule
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let right_carrier = molecule
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    molecule
+        .add_bond(a, left_carrier, BondOrder::Single)
+        .expect("bond");
+    molecule
+        .add_bond(b, right_carrier, BondOrder::Single)
+        .expect("bond");
     molecule
         .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
             DoubleBondStereo {
                 bond,
                 left: a,
                 right: b,
-                left_carrier: StereoCarrier::Atom(a),
-                right_carrier: StereoCarrier::Atom(b),
+                left_carrier: StereoCarrier::Atom(left_carrier),
+                right_carrier: StereoCarrier::Atom(right_carrier),
                 orientation: Some(DoubleBondOrientation::Together),
             },
         )))

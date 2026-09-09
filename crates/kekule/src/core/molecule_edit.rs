@@ -968,6 +968,32 @@ mod tests {
     }
 
     #[test]
+    fn publication_rejects_nonadjacent_stereo_carriers_from_internal_graph_code() {
+        let molecule = crate::smiles::to_molecules("F[C@]1(Cl)CCNC1")
+            .unwrap()
+            .pop()
+            .unwrap();
+        let (element, original) = molecule.stereo_elements().next().unwrap();
+        let mut invalid = original.clone();
+        let StereoElementKind::Tetrahedral(stereo) = &mut invalid.kind else {
+            panic!("expected tetrahedral stereo");
+        };
+        stereo.carriers[0] = StereoCarrier::Atom(stereo.center);
+        let mut editor = molecule.into_editor();
+        editor.working.graph.stereo_elements[element.index()] = Some(invalid);
+        let failure = editor.try_finish().unwrap_err();
+        assert_eq!(
+            failure.error(),
+            &MoleculePublicationError::InvalidStereo(
+                StereoPublicationError::InvalidElementReference { element }
+            )
+        );
+        let mut repaired = failure.into_editor();
+        repaired.remove_stereo_element(element).unwrap();
+        repaired.finish().unwrap();
+    }
+
+    #[test]
     fn canonical_bond_order_rewriting_prunes_obsolete_stereo_focus() {
         let mut editor = MoleculeEditor::new();
         let chlorine = editor.add_atom(atom("Cl")).unwrap();

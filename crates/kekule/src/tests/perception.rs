@@ -1082,13 +1082,22 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
                 carriers: vec![
                     StereoCarrier::Atom(a),
                     StereoCarrier::Atom(a),
-                    StereoCarrier::Atom(b),
+                    StereoCarrier::Atom(a),
                 ],
                 orientation: None,
             }),
             group: None,
         })
         .expect("stereo element");
+    // Inject nonadjacency through internal storage to test the diagnostic;
+    // checked editing now rejects this malformed reference.
+    let stored = mol.working_mut().graph.stereo_elements[element.index()]
+        .as_mut()
+        .expect("stored stereo element");
+    let StereoElementKind::Tetrahedral(stereo) = &mut stored.kind else {
+        unreachable!("test element is tetrahedral");
+    };
+    stereo.carriers[2] = StereoCarrier::Atom(b);
     mark_all_fresh(mol.working_mut());
 
     let error = stereo_api::validate_stereo(mol.working()).expect_err("invalid stored stereo");

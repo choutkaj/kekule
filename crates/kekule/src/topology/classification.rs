@@ -12,6 +12,8 @@ pub(super) fn finalize(
     instances: &[MoleculeInstance],
     hierarchy: &mut Hierarchy,
     molecule_overrides: &BTreeMap<MoleculeDefinitionId, MoleculeClass>,
+    preserved_molecule_classes: &BTreeMap<MoleculeDefinitionId, MoleculeClass>,
+    appended_instances_start: Option<usize>,
     residue_overrides: &BTreeMap<ResidueId, ResidueClass>,
 ) {
     let atom_residues = hierarchy
@@ -51,7 +53,8 @@ pub(super) fn finalize(
         .map(|(id, residue)| (id, residue.class()))
         .collect::<BTreeMap<_, _>>();
     let mut evidence = vec![BTreeSet::new(); definitions.len()];
-    for instance in instances {
+    let mut has_new_evidence = vec![false; definitions.len()];
+    for (index, instance) in instances.iter().enumerate() {
         let molecule = definitions[instance.definition().index()].molecule();
         if let Some(class) = infer_instance_class(
             instance,
@@ -61,12 +64,23 @@ pub(super) fn finalize(
             &residue_classes,
         ) {
             evidence[instance.definition().index()].insert(class);
+            if appended_instances_start.is_some_and(|start| index >= start) {
+                has_new_evidence[instance.definition().index()] = true;
+            }
         }
     }
 
     for definition in definitions {
         definition.class = molecule_overrides
             .get(&definition.id())
+            .or_else(|| {
+                // A resumed builder's new informative occurrence can change or
+                // conflict with the evidence for a reused definition. Explicit
+                // assignments still win; ordinary appends preserve cached classes.
+                preserved_molecule_classes
+                    .get(&definition.id())
+                    .filter(|_| !has_new_evidence[definition.id().index()])
+            })
             .copied()
             .unwrap_or_else(|| {
                 let classes = &evidence[definition.id().index()];
