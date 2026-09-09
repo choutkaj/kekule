@@ -31,6 +31,11 @@ pub trait TrajectoryReader {
 ///
 /// Implementations may build an index eagerly; callers should inspect
 /// format-specific metadata when index construction cost matters.
+/// Random reads preserve the sequential cursor: the next `read_next` call reads
+/// the same frame it would have read before `read_frame`. Invalid indices,
+/// topology mismatches, and recoverable decoding errors also preserve the cursor.
+/// An I/O failure while seeking or restoring the stream can leave its position
+/// unspecified; callers should reopen the reader before continuing in that case.
 pub trait SeekableTrajectoryReader: TrajectoryReader {
     fn frame_count(&self) -> Option<u64>;
 
@@ -105,7 +110,6 @@ impl SeekableTrajectoryReader for MemoryTrajectoryReader<'_> {
             .get(index)
             .ok_or(TrajectoryError::FrameIndexOutOfRange(index as u64))?;
         destination.copy_from(frame.validated_view(&self.trajectory.topology))?;
-        self.cursor = index.saturating_add(1);
         Ok(())
     }
 }

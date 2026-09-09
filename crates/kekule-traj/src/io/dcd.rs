@@ -161,6 +161,10 @@ impl DcdWriteOptions {
         self
     }
 
+    /// Includes cells in the canonical DCD orientation: `a` along positive x,
+    /// `b` in the xy plane with positive y, and `c` with positive z.
+    /// Other orientations are rejected because DCD lengths and angles cannot
+    /// preserve their relation to the stored Cartesian coordinates.
     pub const fn with_cells(mut self, write_cell: bool) -> Self {
         self.write_cell = write_cell;
         self
@@ -1667,6 +1671,15 @@ fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], Traje
             format!("DCD cell unit is incompatible: {error}"),
         )
     })?;
+    if a.x <= 0.0 || a.y != 0.0 || a.z != 0.0 || b.y <= 0.0 || b.z != 0.0 || c.z <= 0.0 {
+        return Err(codec_context(
+            TrajectoryCodecErrorKind::UnsupportedVariant,
+            TrajectoryIoOperation::WriteFrame,
+            Some(TrajectoryFormat::Dcd),
+            source_label,
+            "DCD cells require a along positive x, b in the xy plane with positive y, and c with positive z",
+        ));
+    }
     let length =
         |vector: Vector3| (vector.x * vector.x + vector.y * vector.y + vector.z * vector.z).sqrt();
     let dot =

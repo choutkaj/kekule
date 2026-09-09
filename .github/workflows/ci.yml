@@ -17,6 +17,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  msrv:
+    name: Minimum supported Rust (1.89)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - run: cargo check --workspace --all-targets --all-features --locked
+
   checks:
     name: Linux checks
     runs-on: ubuntu-latest

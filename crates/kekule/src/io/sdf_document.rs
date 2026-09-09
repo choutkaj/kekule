@@ -398,7 +398,9 @@ fn parse_record_document(
 ) -> Result<SdfRecord, SdfParseError> {
     let end = lines
         .iter()
-        .position(|(_, line)| line.trim() == "M  END")
+        .enumerate()
+        .skip(4)
+        .find_map(|(index, (_, line))| (line.trim() == "M  END").then_some(index))
         .ok_or_else(|| {
             SdfParseError::new(
                 record,

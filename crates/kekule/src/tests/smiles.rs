@@ -415,9 +415,22 @@ fn canonical_smiles_ignores_stereo_for_non_isomeric_output() {
     perceive(&mut explicit_hydrogens).expect("explicit hydrogen isotopologue perceives");
     let written = smiles_api::write_canonical(&explicit_hydrogens)
         .expect("explicit hydrogen isotopologue canonicalizes");
-    assert_eq!(written.matches("[H]").count(), 1, "{written}");
-    let reparsed = read_smiles(&written).expect("normalized explicit hydrogen output reparses");
-    assert_eq!(reparsed.atom_count(), 4, "{written}");
+    // Isotope-free projection collapses both neutral hydrogen vertices. Keeping
+    // an unlabeled vertex only because it used to carry an isotope would make
+    // the next canonical export choose a different representation.
+    assert_eq!(written.matches("[H]").count(), 0, "{written}");
+    let mut reparsed = read_smiles(&written).expect("normalized explicit hydrogen output reparses");
+    perceive(&mut reparsed).expect("normalized explicit hydrogen output perceives");
+    assert_eq!(reparsed.atom_count(), 3, "{written}");
+    assert_eq!(smiles_api::write_canonical(&reparsed).unwrap(), written);
+    assert_eq!(
+        reparsed
+            .atoms()
+            .map(|(id, atom)| usize::from(atom.hydrogens.explicit_count())
+                + usize::from(reparsed.implicit_hydrogens(id).unwrap().unwrap_or(0)))
+            .sum::<usize>(),
+        2
+    );
 }
 
 #[test]

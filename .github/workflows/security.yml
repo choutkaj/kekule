@@ -1,6 +1,22 @@
 name: Dependency security audit
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '.github/workflows/security.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '.github/workflows/security.yml'
+  schedule:
+    - cron: '23 3 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -9,9 +25,17 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      # Use the CLI so audits require no issue/check write permissions and
+      # scheduled runs behave exactly like pull-request runs.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      # Vulnerability advisories fail the job. Informational warnings remain
+      # visible for review; see SECURITY.md for the maintenance policy.
+      - name: Audit workspace dependencies
+        run: cargo audit --file Cargo.lock
+      - name: Audit fuzz dependencies against the same database
+        run: cargo audit --file fuzz/Cargo.lock --no-fetch

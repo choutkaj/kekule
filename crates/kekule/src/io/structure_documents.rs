@@ -529,7 +529,9 @@ pub fn parse_molfile_document_with_options(
     };
     let end = lines
         .iter()
-        .position(|line| line.trim() == "M  END")
+        .enumerate()
+        .skip(4)
+        .find_map(|(index, line)| (line.trim() == "M  END").then_some(index))
         .ok_or_else(|| MolfileParseError::new(lines.len(), "missing M  END"))?;
     let header = MolfileHeader {
         title: lines[0].to_owned(),
