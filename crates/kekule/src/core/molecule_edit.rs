@@ -786,6 +786,7 @@ pub(crate) fn canonicalize_represented_chemistry(
             if let Some(bond) = molecule.graph.bonds[bond_id.index()].as_mut() {
                 bond.order = BondOrder::Single;
             }
+            molecule.prune_stereo_for_bond(bond_id);
         }
     }
     if rewritten {
@@ -934,6 +935,63 @@ mod tests {
             .add_bond(a, b, BondOrder::Single)
             .expect("connecting bond");
         assert!(builder.finish().expect("connected molecule").is_connected());
+    }
+
+    #[test]
+    fn publication_rejects_a_stereo_focus_changed_by_internal_graph_code() {
+        let molecule = crate::smiles::to_molecules("F/C=C/F")
+            .unwrap()
+            .pop()
+            .unwrap();
+        let (element, stereo) = molecule.stereo_elements().next().unwrap();
+        let StereoElementKind::DoubleBond(stereo) = &stereo.kind else {
+            panic!("expected double-bond stereo");
+        };
+        let bond = stereo.bond;
+        let mut editor = molecule.into_editor();
+        // Internal algorithms can touch graph storage directly; publication
+        // must still reject an assertion invalidated outside the public setter.
+        editor.working.graph.bonds[bond.index()]
+            .as_mut()
+            .unwrap()
+            .order = BondOrder::Single;
+        let error = editor.try_finish().unwrap_err();
+        assert_eq!(
+            error.error(),
+            &MoleculePublicationError::InvalidStereo(
+                StereoPublicationError::InvalidElementReference { element }
+            )
+        );
+        let mut repaired = error.into_editor();
+        repaired.remove_stereo_element(element).unwrap();
+        assert_eq!(repaired.finish().unwrap().stereo_elements().count(), 0);
+    }
+
+    #[test]
+    fn canonical_bond_order_rewriting_prunes_obsolete_stereo_focus() {
+        let mut editor = MoleculeEditor::new();
+        let chlorine = editor.add_atom(atom("Cl")).unwrap();
+        let oxo = editor.add_atom(atom("O")).unwrap();
+        let hydroxyl = editor.add_atom(atom("O")).unwrap();
+        let bond = editor.add_bond(chlorine, oxo, BondOrder::Double).unwrap();
+        editor
+            .add_bond(chlorine, hydroxyl, BondOrder::Single)
+            .unwrap();
+        editor
+            .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+                DoubleBondStereo {
+                    bond,
+                    left: chlorine,
+                    right: oxo,
+                    left_carrier: StereoCarrier::Atom(hydroxyl),
+                    right_carrier: StereoCarrier::ImplicitLonePair,
+                    orientation: None,
+                },
+            )))
+            .unwrap();
+        let molecule = editor.finish().unwrap();
+        assert_eq!(molecule.bond(bond).unwrap().order, BondOrder::Single);
+        assert_eq!(molecule.stereo_elements().count(), 0);
     }
 
     #[test]

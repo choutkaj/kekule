@@ -7,8 +7,8 @@ use kekule::structure::{Model, Positions};
 use kekule::topology::AtomSelection;
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use kekule_traj::{
-    Forces, FrameError, Trajectory, TrajectoryError, TrajectoryFrame, TrajectorySliceError,
-    Velocities,
+    Forces, FrameError, MemoryTrajectoryReader, SeekableTrajectoryReader, Trajectory,
+    TrajectoryError, TrajectoryFrame, TrajectoryReader, TrajectorySliceError, Velocities,
 };
 
 mod support;
@@ -66,6 +66,48 @@ fn annotated() -> Trajectory {
         trajectory.push(frame).unwrap();
     }
     trajectory
+}
+
+#[test]
+fn memory_random_reads_preserve_sequential_cursor_and_error_destinations() {
+    let trajectory = annotated();
+    let mut reader = MemoryTrajectoryReader::new(&trajectory);
+    let mut destination = reader.frame_buffer();
+    reader.read_frame(3, &mut destination).unwrap();
+    assert_eq!(
+        destination.frame_view().to_frame(),
+        trajectory.frame(3).unwrap().to_frame()
+    );
+    assert!(reader.read_next(&mut destination).unwrap());
+    assert_eq!(
+        destination.frame_view().to_frame(),
+        trajectory.frame(0).unwrap().to_frame()
+    );
+
+    reader.read_frame(2, &mut destination).unwrap();
+    let before = destination.frame_view().to_frame();
+    assert_eq!(
+        reader.read_frame(99, &mut destination),
+        Err(TrajectoryError::FrameIndexOutOfRange(99))
+    );
+    assert_eq!(destination.frame_view().to_frame(), before);
+    let unrelated = annotated();
+    let mut unrelated_buffer = MemoryTrajectoryReader::new(&unrelated).frame_buffer();
+    let unrelated_before = unrelated_buffer.frame_view().to_frame();
+    assert_eq!(
+        reader.read_frame(0, &mut unrelated_buffer),
+        Err(TrajectoryError::TopologyMismatch)
+    );
+    assert_eq!(unrelated_buffer.frame_view().to_frame(), unrelated_before);
+    for index in 1..4 {
+        assert!(reader.read_next(&mut destination).unwrap());
+        assert_eq!(
+            destination.frame_view().to_frame(),
+            trajectory.frame(index).unwrap().to_frame()
+        );
+    }
+    reader.read_frame(0, &mut destination).unwrap();
+    assert!(!reader.read_next(&mut destination).unwrap());
 }
 
 #[test]

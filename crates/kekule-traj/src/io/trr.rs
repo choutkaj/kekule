@@ -72,6 +72,9 @@ impl Default for TrrReadOptions {
 
 impl TrrReadOptions {
     /// Sets limits applied before allocation, scanning, and seeking.
+    /// `max_scratch_bytes` bounds the combined capacities of the three dense
+    /// decode arrays and the reusable raw record buffer, in both sequential and
+    /// indexed modes. The frame index has its own `max_index_bytes` limit.
     pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
         self.limits = limits;
         self
@@ -358,6 +361,40 @@ impl<R: Read + Seek> TrrReader<R> {
             ));
         }
 
+        // The reusable raw record and all three dense arrays coexist. Account
+        // for retained capacity as well as any growth needed by this frame.
+        let raw_bytes = self
+            .raw
+            .capacity()
+            .max(header.box_size)
+            .max(header.x_size)
+            .max(header.v_size)
+            .max(header.f_size);
+        let scratch_bytes = self
+            .positions
+            .capacity()
+            .checked_mul(std::mem::size_of::<Point3>())
+            .and_then(|bytes| {
+                self.velocities
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<Vector3>())
+                    .and_then(|vectors| bytes.checked_add(vectors))
+            })
+            .and_then(|bytes| {
+                self.forces
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<Vector3>())
+                    .and_then(|vectors| bytes.checked_add(vectors))
+            })
+            .and_then(|bytes| bytes.checked_add(raw_bytes));
+        if scratch_bytes.is_none_or(|bytes| bytes > self.options.limits.max_scratch_bytes) {
+            return Err(resource_error(
+                &self.options.source_label,
+                Some(self.frame_cursor),
+                "TRR aggregate decode scratch exceeds the configured limit",
+            ));
+        }
+
         let cell = if header.has_cell() {
             read_raw(
                 &mut self.reader,
@@ -536,47 +573,9 @@ impl<R: Read + Seek> TrrReader<R> {
             offsets.push(offset);
         }
         self.rewind()?;
-        let atom_count = self.topology.as_ref().atom_count();
-        let mut random_positions = Vec::new();
-        let mut random_velocities = Vec::new();
-        let mut random_forces = Vec::new();
-        random_positions
-            .try_reserve_exact(atom_count)
-            .map_err(|_| {
-                resource_error(
-                    &self.options.source_label,
-                    None,
-                    "could not reserve indexed TRR position scratch",
-                )
-            })?;
-        random_velocities
-            .try_reserve_exact(atom_count)
-            .map_err(|_| {
-                resource_error(
-                    &self.options.source_label,
-                    None,
-                    "could not reserve indexed TRR velocity scratch",
-                )
-            })?;
-        random_forces.try_reserve_exact(atom_count).map_err(|_| {
-            resource_error(
-                &self.options.source_label,
-                None,
-                "could not reserve indexed TRR force scratch",
-            )
-        })?;
-        random_positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
-        random_velocities.resize(atom_count, Vector3::zero());
-        random_forces.resize(atom_count, Vector3::zero());
-        let random_properties = self.properties.clone();
         Ok(IndexedTrrReader {
             inner: self,
             offsets,
-            random_positions,
-            random_velocities,
-            random_forces,
-            random_raw: Vec::new(),
-            random_properties,
         })
     }
 
@@ -649,14 +648,12 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
 }
 
 /// Fully verified indexed TRR reader.
+///
+/// Sequential and random reads share one set of decode scratch arrays. Random
+/// reads restore stream position and header state before publishing a frame.
 pub struct IndexedTrrReader<R> {
     inner: TrrReader<R>,
     offsets: Vec<u64>,
-    random_positions: Vec<Point3>,
-    random_velocities: Vec<Vector3>,
-    random_forces: Vec<Vector3>,
-    random_raw: Vec<u8>,
-    random_properties: Properties,
 }
 
 impl<R: Read + Seek> IndexedTrrReader<R> {
@@ -729,11 +726,6 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
                 )
             })?;
         self.inner.pending_header = None;
-        std::mem::swap(&mut self.inner.positions, &mut self.random_positions);
-        std::mem::swap(&mut self.inner.velocities, &mut self.random_velocities);
-        std::mem::swap(&mut self.inner.forces, &mut self.random_forces);
-        std::mem::swap(&mut self.inner.raw, &mut self.random_raw);
-        std::mem::swap(&mut self.inner.properties, &mut self.random_properties);
         self.inner.current_header_offset = offset;
         self.inner.frame_cursor = index;
         let result = self
@@ -757,18 +749,13 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
         self.inner.pending_header = saved_pending;
         self.inner.current_header_offset = saved_header_offset;
         self.inner.precision_mixed = saved_precision_mixed;
-        std::mem::swap(&mut self.inner.positions, &mut self.random_positions);
-        std::mem::swap(&mut self.inner.velocities, &mut self.random_velocities);
-        std::mem::swap(&mut self.inner.forces, &mut self.random_forces);
-        std::mem::swap(&mut self.inner.raw, &mut self.random_raw);
-        std::mem::swap(&mut self.inner.properties, &mut self.random_properties);
         let decoded = result?;
         restore?;
         self.inner.publish(
-            &self.random_positions,
-            &self.random_velocities,
-            &self.random_forces,
-            &self.random_properties,
+            &self.inner.positions,
+            &self.inner.velocities,
+            &self.inner.forces,
+            &self.inner.properties,
             &decoded,
             destination,
         )

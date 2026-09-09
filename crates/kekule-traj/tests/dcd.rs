@@ -54,6 +54,102 @@ fn set_frame(
 }
 
 #[test]
+fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
+    let topology = topology();
+    let mut writer = DcdWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        DcdWriteOptions::default().with_cells(true),
+        "oriented.dcd",
+    )
+    .unwrap();
+    let canonical = PeriodicCell::new(
+        Quantity::new(
+            [
+                Vector3::new(10.0, 0.0, 0.0),
+                Vector3::new(-2.0, 20.0, 0.0),
+                Vector3::new(1.0, -3.0, 30.0),
+            ],
+            ANGSTROM,
+        ),
+        [true; 3],
+    )
+    .unwrap();
+    let mut frame = FrameBuffer::new(Arc::clone(&topology));
+    set_frame(
+        &mut frame,
+        [[0.0, 9.0, 0.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]],
+        0,
+        None,
+        Some(canonical),
+    );
+    writer.write_frame(frame.frame_view()).unwrap();
+    frame.set_step(Some(1));
+    let before = writer.writer().clone();
+    for vectors in [
+        // Rotated noncubic cell from the corruption regression.
+        [
+            Vector3::new(0.0, 10.0, 0.0),
+            Vector3::new(-20.0, 0.0, 0.0),
+            Vector3::new(0.0, 0.0, 30.0),
+        ],
+        // Triangular bases with reversed axes also lose their orientation.
+        [
+            Vector3::new(-10.0, 0.0, 0.0),
+            Vector3::new(0.0, 20.0, 0.0),
+            Vector3::new(0.0, 0.0, 30.0),
+        ],
+        [
+            Vector3::new(10.0, 0.0, 0.0),
+            Vector3::new(0.0, -20.0, 0.0),
+            Vector3::new(0.0, 0.0, 30.0),
+        ],
+        [
+            Vector3::new(10.0, 0.0, 0.0),
+            Vector3::new(0.0, 20.0, 0.0),
+            Vector3::new(0.0, 0.0, -30.0),
+        ],
+    ] {
+        frame.set_cell(Some(
+            PeriodicCell::new(Quantity::new(vectors, ANGSTROM), [true; 3]).unwrap(),
+        ));
+        assert_eq!(
+            codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+            Some(TrajectoryCodecErrorKind::UnsupportedVariant)
+        );
+        assert_eq!(writer.writer(), &before);
+    }
+    frame.set_cell(Some(canonical));
+    writer.write_frame(frame.frame_view()).unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+    let mut reader = DcdReader::new(
+        Cursor::new(bytes),
+        Arc::clone(&topology),
+        DcdReadOptions::default(),
+    )
+    .unwrap();
+    let mut destination = reader.frame_buffer();
+    for step in [0, 1] {
+        assert!(reader.read_next(&mut destination).unwrap());
+        assert_eq!(destination.frame_view().step(), Some(step));
+        for (actual, expected) in destination
+            .cell()
+            .unwrap()
+            .vectors()
+            .value()
+            .iter()
+            .zip(canonical.vectors().value())
+        {
+            assert!((actual.x - expected.x).abs() < 1.0e-12);
+            assert!((actual.y - expected.y).abs() < 1.0e-12);
+            assert!((actual.z - expected.z).abs() < 1.0e-12);
+        }
+        assert_eq!(destination.positions(), frame.positions());
+    }
+    assert!(!reader.read_next(&mut destination).unwrap());
+}
+
+#[test]
 fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
     for endian in [DcdEndian::Little, DcdEndian::Big] {
         let topology = topology();

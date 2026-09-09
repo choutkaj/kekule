@@ -916,6 +916,11 @@ pub(super) fn validate_sdf_title(title: &str) -> std::result::Result<(), MolWrit
             "SDF record titles cannot contain line breaks",
         ));
     }
+    if title.trim() == "$$$$" {
+        return Err(MolWriteError::invalid_metadata(
+            "SDF record titles cannot be a record delimiter",
+        ));
+    }
     Ok(())
 }
 

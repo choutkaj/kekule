@@ -83,6 +83,8 @@ impl Deref for BondMut<'_> {
 impl BondMut<'_> {
     /// Changes represented order without exposing mutable bond endpoints.
     /// Use [`MoleculeEditor::set_bond_endpoints`] to maintain adjacency when rewiring.
+    /// A changed order removes stereo assertions focused on this bond, including
+    /// their relation-group memberships. Assigning the current order is a no-op.
     pub fn set_order(&mut self, order: BondOrder) {
         if self.order == order {
             return;
@@ -93,6 +95,7 @@ impl BondMut<'_> {
             .as_mut()
             .expect("validated bond must remain live while borrowed")
             .order = order;
+        self.molecule.prune_stereo_for_bond(self.id);
     }
 }
 
@@ -779,6 +782,11 @@ impl Molecule {
             }
             StereoElementKind::DoubleBond(stereo) => {
                 let bond = self.bond(stereo.bond)?;
+                if bond.order != BondOrder::Double {
+                    return Err(MoleculeError::InvalidStereoReference(
+                        "double-bond stereo focus must have double bond order",
+                    ));
+                }
                 if !bond.connects(stereo.left, stereo.right) {
                     return Err(MoleculeError::InvalidStereoReference(
                         "double-bond stereo focus does not match bond endpoints",
@@ -1005,7 +1013,7 @@ impl Molecule {
         self.invalidate_stereo();
     }
 
-    fn prune_stereo_for_bond(&mut self, bond: BondId) {
+    pub(super) fn prune_stereo_for_bond(&mut self, bond: BondId) {
         let removed = self
             .stereo_elements()
             .filter_map(|(id, element)| element.references_bond(bond).then_some(id))

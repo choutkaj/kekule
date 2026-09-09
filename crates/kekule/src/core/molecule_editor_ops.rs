@@ -56,6 +56,7 @@ impl MoleculeEditor {
     /// Invalid endpoints, self-bonds, and duplicate bonds leave state unchanged.
     /// Rewiring removes stereo assertions referencing the bond or changed
     /// endpoints, whose chemical neighborhoods have changed.
+    /// Changing only the order removes assertions focused on this bond.
     pub fn replace_bond(&mut self, id: BondId, replacement: Bond) -> Result<Bond> {
         let previous = self.bond(id)?.clone();
         let (a, b) = replacement.endpoints();
@@ -98,6 +99,8 @@ impl MoleculeEditor {
         Ok(previous)
     }
 
+    /// Changes represented order, removing stereo assertions focused on this bond.
+    /// Assigning the current order leaves chemistry, stereo, and annotations intact.
     pub fn set_bond_order(&mut self, id: BondId, order: BondOrder) -> Result<()> {
         if self.bond(id)?.order == order {
             return Ok(());
