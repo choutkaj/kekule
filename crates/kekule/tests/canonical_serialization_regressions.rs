@@ -1,5 +1,5 @@
 use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
-use kekule::smiles;
+use kekule::smiles::{self, MolWriteErrorKind};
 
 #[test]
 fn canonical_smiles_retains_charged_and_mapped_hydrogen_atoms() {
@@ -156,4 +156,77 @@ fn canonical_smiles_is_invariant_under_atom_bond_and_endpoint_permutations() {
             );
         }
     }
+}
+
+#[test]
+fn canonical_smiles_ranks_the_emitted_hydrogen_and_isotope_projection() {
+    let canonical = |source: &str| {
+        let mut molecule = smiles::to_molecules(source).unwrap().pop().unwrap();
+        molecule.perceive().unwrap();
+        smiles::write_canonical(&molecule).unwrap()
+    };
+    for equivalents in [
+        ["CC(C)CC", "CC(C)[CH2]C", "CC(C)[13CH2]C"],
+        ["CC(=O)OC(C)CN", "CC(=[18O])OC(C)CN", "CC(=O)O[CH](C)CN"],
+        ["C1CC2CCC1C2", "[13CH2]1CC2CCC1C2", "[CH2]1CC2CCC1C2"],
+        ["c1ccccc1", "[H]c1ccccc1", "[2H]c1ccccc1"],
+        ["N1C=CC=C1", "[NH]1C=CC=C1", "[15NH]1C=CC=C1"],
+        [
+            "CC1=CC(C)=CC=C1O",
+            "C[13C]1=CC(C)=CC=C1O",
+            "CC1=CC(C)=CC=[13C]1O",
+        ],
+    ] {
+        let expected = canonical(equivalents[0]);
+        for source in equivalents {
+            let written = canonical(source);
+            assert_eq!(written, expected, "{source}");
+            assert_eq!(canonical(&written), written, "{source} -> {written}");
+        }
+    }
+}
+
+#[test]
+fn canonical_isotope_free_hydrogen_projection_is_stable() {
+    let mut original = smiles::to_molecules("[H]C([3H])(F)Cl")
+        .unwrap()
+        .pop()
+        .unwrap();
+    original.perceive().unwrap();
+    let written = smiles::write_canonical(&original).unwrap();
+    let mut restored = smiles::to_molecules(&written).unwrap().pop().unwrap();
+    restored.perceive().unwrap();
+    assert_eq!(restored.atom_count(), 3);
+    assert_eq!(smiles::write_canonical(&restored).unwrap(), written);
+    let hydrogen_count = |molecule: &Molecule| {
+        molecule
+            .atoms()
+            .map(|(id, atom)| {
+                usize::from(atom.element.symbol() == "H")
+                    + usize::from(atom.hydrogens.explicit_count())
+                    + usize::from(molecule.implicit_hydrogens(id).unwrap().unwrap_or(0))
+            })
+            .sum::<usize>()
+    };
+    assert_eq!(hydrogen_count(&original), 2);
+    assert_eq!(hydrogen_count(&restored), hydrogen_count(&original));
+}
+
+#[test]
+fn canonical_candidate_work_is_bounded_before_export() {
+    let mut editor = MoleculeEditor::new();
+    let mut previous = None;
+    for index in 0..4096 {
+        let mut atom = Atom::new(Element::from_symbol("C").unwrap());
+        atom.atom_map = Some(index + 1);
+        let atom = editor.add_atom(atom).unwrap();
+        if let Some(previous) = previous {
+            editor.add_bond(previous, atom, BondOrder::Single).unwrap();
+        }
+        previous = Some(atom);
+    }
+    let molecule = editor.finish().unwrap();
+    let error = smiles::write_canonical(&molecule).unwrap_err();
+    assert_eq!(error.kind(), MolWriteErrorKind::ResourceLimit);
+    assert!(error.to_string().contains("candidate traversal"));
 }

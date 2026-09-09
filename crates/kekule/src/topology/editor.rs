@@ -333,6 +333,7 @@ impl TopologyEditor {
         }
         let previous = self.draft_mut(loc.group).replace_atom(loc.local, atom)?;
         self.mark_group_changed(loc.group);
+        self.invalidate_component_classes([id]);
         self.invalidate_residue_for_atom(id);
         self.changed();
         Ok(previous)
@@ -341,6 +342,7 @@ impl TopologyEditor {
     pub fn delete_atom(&mut self, id: EditAtomId) -> Result<Atom, TopologyEditError> {
         let loc = self.atom_location(id)?;
         let bonds = self.incident_bonds(id)?.collect::<Vec<_>>();
+        let neighbors = self.neighbors(id)?.collect::<Vec<_>>();
         let previous = self.draft_mut(loc.group).delete_atom(loc.local)?;
         for bond in bonds {
             let bond_loc = self.bonds.remove(&bond).unwrap();
@@ -360,6 +362,8 @@ impl TopologyEditor {
         self.properties.atoms_mut().clear_index(loc.slot);
         self.remove_site_for_atom(id);
         self.mark_group_changed(loc.group);
+        self.molecule_classes.remove(&id);
+        self.invalidate_component_classes(neighbors);
         self.changed();
         Ok(previous)
     }
@@ -473,6 +477,7 @@ impl TopologyEditor {
             .remove(&loc.local);
         self.properties.bonds_mut().clear_index(loc.slot);
         self.mark_group_changed(loc.group);
+        self.invalidate_component_classes([previous.a, previous.b]);
         self.invalidate_residue_for_atom(previous.a);
         self.invalidate_residue_for_atom(previous.b);
         self.changed();
@@ -490,6 +495,8 @@ impl TopologyEditor {
             .map(|id| self.delete_bond(id).map(|b| (id, b)))
             .collect()
     }
+    /// Changes represented order, removing stereo assertions focused on this bond.
+    /// Assigning the current order leaves the draft unchanged.
     pub fn set_bond_order(
         &mut self,
         id: EditBondId,
@@ -502,6 +509,7 @@ impl TopologyEditor {
         let loc = self.bond_location(id)?;
         self.draft_mut(loc.group).set_bond_order(loc.local, order)?;
         self.mark_group_changed(loc.group);
+        self.invalidate_component_classes([previous.a]);
         self.invalidate_residue_for_atom(previous.a);
         self.invalidate_residue_for_atom(previous.b);
         self.changed();
@@ -545,6 +553,7 @@ impl TopologyEditor {
             .set_bond_endpoints(loc.local, aa, bb)?;
         debug_assert_eq!(old_loc.slot, loc.slot);
         staged.mark_group_changed(loc.group);
+        staged.invalidate_component_classes([old.a, old.b, a, b]);
         for atom in [old.a, old.b, a, b] {
             staged.invalidate_residue_for_atom(atom);
         }
@@ -668,11 +677,35 @@ impl TopologyEditor {
     }
     fn mark_group_changed(&mut self, group: usize) {
         let group = self.groups[group].as_mut().unwrap();
-        self.molecule_classes
-            .retain(|id, _| !group.atoms.values().any(|handle| handle == id));
         group.changed = true;
         group.class = None;
         group.class_explicit = false;
+    }
+
+    // Historical staging groups can contain several disconnected components.
+    // Invalidate overrides only in the components touched by a successful edit.
+    // After a split, callers supply seeds on each side; after an atom deletion,
+    // they supply the deleted atom's surviving neighbors.
+    fn invalidate_component_classes(&mut self, atoms: impl IntoIterator<Item = EditAtomId>) {
+        if self.molecule_classes.is_empty() {
+            return;
+        }
+        let mut visited = BTreeSet::new();
+        let mut pending = atoms.into_iter().collect::<Vec<_>>();
+        while let Some(atom) = pending.pop() {
+            if !visited.insert(atom) {
+                continue;
+            }
+            self.molecule_classes.remove(&atom);
+            if self.molecule_classes.is_empty() {
+                return;
+            }
+            pending.extend(
+                self.neighbors(atom)
+                    .expect("affected component contains live atoms")
+                    .filter(|neighbor| !visited.contains(neighbor)),
+            );
+        }
     }
     fn changed(&mut self) {
         self.revision += 1;
@@ -755,6 +788,7 @@ impl TopologyEditor {
         self.bonds.insert(id, Location { group, local, slot });
         self.groups[group].as_mut().unwrap().bonds.insert(local, id);
         self.mark_group_changed(group);
+        self.invalidate_component_classes([a]);
         self.invalidate_residue_for_atom(a);
         self.invalidate_residue_for_atom(b);
         self.changed();

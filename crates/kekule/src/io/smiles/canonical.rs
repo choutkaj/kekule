@@ -8,41 +8,74 @@ use crate::core::*;
 use crate::io::MolWriteError;
 
 use super::write::{
-    collect_smiles_tree, smiles_atom, smiles_bond_between, smiles_connected_components,
-    smiles_incident_bonds_for_style, smiles_ring_closures, smiles_ring_number,
-    validate_smiles_writeable, CanonicalAtomStyle, SmilesBondOrder, SmilesWritePlan,
-    StereoWriteMode,
+    collect_smiles_tree, smiles_atom, smiles_atom_requires_brackets, smiles_bond_between,
+    smiles_connected_components, smiles_incident_bonds_for_style, smiles_ring_closures,
+    smiles_ring_number, validate_smiles_writeable, CanonicalAtomStyle, SmilesBondOrder,
+    SmilesWritePlan, StereoWriteMode,
 };
 
 mod labeling;
 use labeling::CanonicalOrder;
 
+const MAX_CANDIDATE_VISITS: usize = 50_000_000;
+const MAX_GRAPH_SLOTS: usize = 2_000_000;
+
 pub fn write_canonical_smiles(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
+    write_canonical_smiles_with_limits(molecule, MAX_CANDIDATE_VISITS, MAX_GRAPH_SLOTS)
+}
+
+fn write_canonical_smiles_with_limits(
+    molecule: &Molecule,
+    max_candidate_visits: usize,
+    max_graph_slots: usize,
+) -> std::result::Result<String, MolWriteError> {
+    // Check before cloning, ranking or constructing any candidate. A sparse
+    // graph can have many deleted slots, so live atom counts alone do not bound
+    // the dense scratch arrays used by ranking and labeling.
+    let slots = molecule
+        .graph
+        .atom_slot_count()
+        .checked_add(molecule.graph.bond_slot_count());
+    if slots.is_none_or(|slots| slots > max_graph_slots) {
+        return Err(MolWriteError::resource_limit(format!(
+            "canonical SMILES exceeds the graph storage limit ({max_graph_slots} atom/bond slots)"
+        )));
+    }
+    let atoms = molecule.atom_count();
+    let candidate_visits = molecule
+        .bond_count()
+        .checked_mul(2)
+        .and_then(|edges| edges.checked_add(atoms))
+        .and_then(|visits| visits.checked_mul(atoms))
+        .and_then(|visits| visits.checked_mul(2));
+    if candidate_visits.is_none_or(|visits| visits > max_candidate_visits) {
+        return Err(MolWriteError::resource_limit(format!(
+            "canonical SMILES exceeds the candidate traversal limit ({max_candidate_visits} atom/edge visits)"
+        )));
+    }
     validate_smiles_writeable(molecule, StereoWriteMode::Ignore)?;
     let normalized = canonical_nonisomeric_graph(molecule)?;
     let mol = &normalized;
-    let ranking = canonical_atom_ranking(mol);
     let mut components = Vec::new();
     for component in smiles_connected_components(mol)? {
         let atom_style = canonical_component_atom_style(mol, &component)?;
+        let ranking = canonical_projection_ranking(mol, atom_style)?;
         let order = CanonicalOrder::new(mol, &ranking, atom_style)?;
-        let mut candidates = Vec::new();
+        let mut best = None;
         for preference in [
             CanonicalBondTraversal::HighOrderFirst,
             CanonicalBondTraversal::LowOrderFirst,
         ] {
-            candidates.extend(
-                component
-                    .iter()
-                    .map(|root| {
-                        write_canonical_smiles_component(mol, *root, &order, preference, atom_style)
-                    })
-                    .collect::<std::result::Result<Vec<_>, _>>()?,
-            );
+            for root in &component {
+                let candidate =
+                    write_canonical_smiles_component(mol, *root, &order, preference, atom_style)?;
+                let key = canonical_smiles_candidate_key(candidate);
+                if best.as_ref().is_none_or(|best| key < *best) {
+                    best = Some(key);
+                }
+            }
         }
-        candidates.sort_by_key(|candidate| canonical_smiles_candidate_key(candidate));
-        candidates.dedup();
-        if let Some(candidate) = candidates.into_iter().next() {
+        if let Some((_, _, _, candidate)) = best {
             components.push(candidate);
         }
     }
@@ -57,7 +90,6 @@ fn canonical_nonisomeric_graph(mol: &Molecule) -> std::result::Result<Molecule, 
         .atoms()
         .filter_map(|(atom_id, atom)| {
             if atom.element.symbol() != "H"
-                || atom.isotope.is_some()
                 || atom.formal_charge != 0
                 || atom.atom_map.is_some()
                 || atom.radical.is_some()
@@ -80,10 +112,21 @@ fn canonical_nonisomeric_graph(mol: &Molecule) -> std::result::Result<Molecule, 
     for (hydrogen, parent) in collapsible_hydrogens {
         let implicit = mol
             .implicit_hydrogens(parent)
-            .map_err(|error| MolWriteError::new(error.to_string()))?
-            .unwrap_or(0);
+            .map_err(|error| MolWriteError::new(error.to_string()))?;
+        if implicit.is_none()
+            && mol
+                .atom(parent)
+                .is_ok_and(|atom| atom.hydrogens.allows_implicit())
+        {
+            return Err(MolWriteError::new(format!(
+                "canonical SMILES hydrogen collapse at {parent} requires installed hydrogen perception; perceive the molecule before writing"
+            )));
+        }
+        let implicit = implicit.unwrap_or(0);
         let count = implicit_by_parent.entry(parent).or_insert(implicit);
-        *count = count.saturating_add(1);
+        *count = count.checked_add(1).ok_or_else(|| {
+            MolWriteError::new("collapsed hydrogen count exceeds the SMILES representation limit")
+        })?;
         let parent_atom = normalized
             .graph
             .atoms
@@ -101,7 +144,46 @@ fn canonical_nonisomeric_graph(mol: &Molecule) -> std::result::Result<Molecule, 
     for (parent, implicit) in implicit_by_parent {
         normalized.set_implicit_hydrogens(parent, implicit);
     }
+    restore_projection_aromaticity(&mut normalized, mol.perception());
     Ok(normalized)
+}
+
+fn canonical_projection_ranking(
+    mol: &Molecule,
+    atom_style: CanonicalAtomStyle,
+) -> std::result::Result<CanonicalAtomRanking, MolWriteError> {
+    // Ranking must see the same isotope and hydrogen projection as the output.
+    // Keep the general atom-ranking API sensitive to authoritative chemistry;
+    // only this private copy adopts the exported atom representation.
+    let mut projected = mol.clone();
+    for (atom_id, atom) in mol.atoms() {
+        let (payload, _, implicit_hydrogens) =
+            canonical_smiles_atom_representation(mol, atom_id, atom, atom_style)?;
+        projected.graph.atoms[atom_id.index()] = Some(payload);
+        projected.set_implicit_hydrogens(atom_id, implicit_hydrogens);
+    }
+    restore_projection_aromaticity(&mut projected, mol.perception());
+    Ok(canonical_atom_ranking(&projected))
+}
+
+fn restore_projection_aromaticity(projected: &mut Molecule, original: &Perception) {
+    // Changing the storage location of an unchanged hydrogen count invalidates
+    // aromaticity through the ordinary edit helper. This private export copy
+    // retains the original perceived aromatic system: isotope/H projection
+    // neither changes its valence nor selects another aromaticity model.
+    if let Some(aromaticity) = original.aromaticity_state() {
+        projected.begin_aromaticity(aromaticity.model());
+        for atom in aromaticity.atoms() {
+            if projected.atom(atom).is_ok() {
+                projected.set_atom_aromatic(atom, true);
+            }
+        }
+        for bond in aromaticity.bonds() {
+            if projected.bond(bond).is_ok() {
+                projected.set_bond_aromatic(bond, true);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,12 +309,12 @@ fn atom_has_exocyclic_hetero_multiple_bond(
     Ok(false)
 }
 
-fn canonical_smiles_candidate_key(candidate: &str) -> (usize, usize, usize, String) {
+fn canonical_smiles_candidate_key(candidate: String) -> (usize, usize, usize, String) {
     (
         candidate.matches('(').count(),
-        explicit_ring_bond_marker_count(candidate),
-        leading_ring_label_count(candidate),
-        candidate.to_owned(),
+        explicit_ring_bond_marker_count(&candidate),
+        leading_ring_label_count(&candidate),
+        candidate,
     )
 }
 
@@ -510,26 +592,59 @@ fn canonical_smiles_atom(
     atom: &Atom,
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<String, MolWriteError> {
+    let (atom, aromatic, implicit_hydrogens) =
+        canonical_smiles_atom_representation(mol, atom_id, atom, atom_style)?;
+    Ok(smiles_atom(&atom, aromatic, implicit_hydrogens))
+}
+
+fn canonical_smiles_atom_representation(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+    atom_style: CanonicalAtomStyle,
+) -> std::result::Result<(Atom, bool, u8), MolWriteError> {
     let mut normalized = atom.clone();
     let aromatic = mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true);
-    let mut implicit_hydrogens = mol
+    let perceived_hydrogens = mol
         .implicit_hydrogens(atom_id)
-        .map_err(|error| MolWriteError::new(error.to_string()))?
-        .unwrap_or(0);
+        .map_err(|error| MolWriteError::new(error.to_string()))?;
+    let mut implicit_hydrogens = perceived_hydrogens.unwrap_or(0);
+    atom.hydrogens
+        .explicit_count()
+        .checked_add(implicit_hydrogens)
+        .ok_or_else(|| {
+            MolWriteError::new("hydrogen count exceeds the SMILES representation limit")
+        })?;
     normalized.isotope = None;
     let represented_hydrogens = atom.hydrogens.explicit_count();
     if atom.isotope.is_some() && represented_hydrogens > 0 {
         implicit_hydrogens = represented_hydrogens.saturating_add(implicit_hydrogens);
         normalized.hydrogens = HydrogenDeclaration::Infer { explicit: 0 };
     }
-    canonical_smiles_atom_normalized(
+    let aromatic = aromatic && !matches!(atom_style, CanonicalAtomStyle::StoredKekule);
+    let (mut payload, mut implicit_hydrogens) = canonical_smiles_atom_normalized(
         mol,
         atom_id,
         &normalized,
-        aromatic && !matches!(atom_style, CanonicalAtomStyle::StoredKekule),
+        aromatic,
         implicit_hydrogens,
         matches!(atom_style, CanonicalAtomStyle::StoredKekule),
-    )
+    )?;
+    if smiles_atom_requires_brackets(&payload, aromatic, implicit_hydrogens) {
+        if atom.hydrogens.allows_implicit() && perceived_hydrogens.is_none() {
+            return Err(MolWriteError::new(format!(
+                "canonical SMILES bracket atom {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
+            )));
+        }
+        payload.hydrogens = HydrogenDeclaration::Fixed(
+            payload
+                .hydrogens
+                .explicit_count()
+                .saturating_add(implicit_hydrogens),
+        );
+        implicit_hydrogens = 0;
+    }
+    Ok((payload, aromatic, implicit_hydrogens))
 }
 
 fn canonical_smiles_atom_normalized(
@@ -539,7 +654,7 @@ fn canonical_smiles_atom_normalized(
     aromatic: bool,
     implicit_hydrogens: u8,
     stored_kekule: bool,
-) -> std::result::Result<String, MolWriteError> {
+) -> std::result::Result<(Atom, u8), MolWriteError> {
     if canonical_smiles_should_bracket_metal_bound_hydrogens(
         mol,
         atom_id,
@@ -553,7 +668,7 @@ fn canonical_smiles_atom_normalized(
                 .explicit_count()
                 .saturating_add(implicit_hydrogens),
         );
-        return Ok(smiles_atom(&normalized, aromatic, 0));
+        return Ok((normalized, 0));
     }
     if canonical_smiles_should_bracket_metal_bound_zero_hydrogens(
         mol,
@@ -563,7 +678,7 @@ fn canonical_smiles_atom_normalized(
     )? {
         let mut normalized = atom.clone();
         normalized.hydrogens = HydrogenDeclaration::Fixed(atom.hydrogens.explicit_count());
-        return Ok(smiles_atom(&normalized, aromatic, 0));
+        return Ok((normalized, 0));
     }
     if canonical_smiles_can_use_organic_form(
         mol,
@@ -575,7 +690,12 @@ fn canonical_smiles_atom_normalized(
     )? {
         let mut normalized = atom.clone();
         normalized.hydrogens = HydrogenDeclaration::Infer { explicit: 0 };
-        return Ok(smiles_atom(&normalized, aromatic, implicit_hydrogens));
+        return Ok((
+            normalized,
+            atom.hydrogens
+                .explicit_count()
+                .saturating_add(implicit_hydrogens),
+        ));
     }
     let mut normalized = atom.clone();
     if implicit_hydrogens > 0 {
@@ -585,7 +705,7 @@ fn canonical_smiles_atom_normalized(
                 .saturating_add(implicit_hydrogens),
         );
     }
-    Ok(smiles_atom(&normalized, aromatic, 0))
+    Ok((normalized, 0))
 }
 
 fn canonical_smiles_should_bracket_metal_bound_hydrogens(
@@ -823,4 +943,26 @@ fn smiles_bond_valence_sum(
         .try_fold(0u8, |sum, value: std::result::Result<u8, MolWriteError>| {
             Ok(sum.saturating_add(value?))
         })
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+    use crate::io::MolWriteErrorKind;
+
+    #[test]
+    fn canonical_export_checks_deleted_slots_before_dense_scratch_allocation() {
+        let mut editor = MoleculeEditor::new();
+        let carbon = Atom::new(Element::from_symbol("C").unwrap());
+        editor.add_atom(carbon.clone()).unwrap();
+        for _ in 0..8 {
+            let deleted = editor.add_atom(carbon.clone()).unwrap();
+            editor.delete_atom(deleted).unwrap();
+        }
+        let molecule = editor.finish().unwrap();
+        assert_eq!(molecule.atom_count(), 1);
+        let error = write_canonical_smiles_with_limits(&molecule, usize::MAX, 4).unwrap_err();
+        assert_eq!(error.kind(), MolWriteErrorKind::ResourceLimit);
+        assert!(error.to_string().contains("graph storage"));
+    }
 }

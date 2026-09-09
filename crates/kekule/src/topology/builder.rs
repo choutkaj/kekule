@@ -297,6 +297,7 @@ impl TopologyBuilder {
     }
 
     /// Overrides automatic classification for one staged hierarchy residue.
+    /// Publication discards assignments to residues absent from the final hierarchy.
     pub fn set_residue_class(
         &mut self,
         residue: ResidueId,
@@ -464,6 +465,8 @@ impl TopologyBuilder {
             .map_err(TopologyBuildError::InvalidHierarchy)?;
 
         self.invalidate_changed_hierarchy_classes();
+        self.residue_class_overrides
+            .retain(|id, _| self.hierarchy.residue(*id).is_ok());
         self.preserved_molecule_classes.extend(
             self.molecule_class_overrides
                 .iter()
