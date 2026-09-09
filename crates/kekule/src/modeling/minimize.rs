@@ -67,6 +67,9 @@ pub struct MinimizationResult {
 /// Uses normalized steepest descent with an Armijo backtracking line search.
 /// Trial evaluations with [`PotentialError::InvalidGeometry`] are rejected and
 /// backtracked; other potential failures abort the minimization.
+/// Unrepresentable gradient norms or search derivatives return
+/// [`MinimizationError::NumericalFailure`]. If the displacement rounds away at
+/// every coordinate, the line search stops with [`MinimizationStatus::LineSearchStalled`].
 pub fn minimize(
     model: &Model,
     potential: &mut dyn Potential,
@@ -81,6 +84,11 @@ pub fn minimize(
 
     loop {
         let max_gradient = maximum_gradient(evaluation.gradient().value());
+        if !max_gradient.is_finite() {
+            return Err(MinimizationError::NumericalFailure(
+                "maximum gradient norm is not representable",
+            ));
+        }
         if max_gradient <= validated.gradient_tolerance {
             return Ok(result(
                 working,
@@ -123,6 +131,11 @@ pub fn minimize(
             .zip(&direction)
             .map(|(gradient, direction)| gradient.dot(*direction))
             .sum::<f64>();
+        if !directional_derivative.is_finite() || directional_derivative >= 0.0 {
+            return Err(MinimizationError::NumericalFailure(
+                "directional derivative must be finite and negative",
+            ));
+        }
         let current_positions = working.positions().values().value().to_vec();
         let current_energy = evaluation.energy().into_value();
         let mut step = validated.initial_step;
@@ -133,6 +146,10 @@ pub fn minimize(
                 break;
             }
             let trial_positions = displaced_positions(&current_positions, &direction, step);
+            // Smaller steps cannot recover a displacement that already rounded away.
+            if trial_positions == current_positions {
+                break;
+            }
             working.set_positions(Quantity::new(trial_positions, CANONICAL_LENGTH_UNIT))?;
             let trial_result = potential.evaluate(working.view());
             evaluations += 1;
@@ -277,6 +294,8 @@ fn result(
 #[derive(Debug, Clone, PartialEq)]
 pub enum MinimizationError {
     InvalidOptions(&'static str),
+    /// Finite evaluation components cannot produce a representable descent step.
+    NumericalFailure(&'static str),
     Potential(PotentialError),
     Position(PositionError),
     Unit(UnitError),
@@ -286,6 +305,9 @@ impl fmt::Display for MinimizationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidOptions(message) => write!(f, "invalid minimization options: {message}"),
+            Self::NumericalFailure(message) => {
+                write!(f, "minimization numerical failure: {message}")
+            }
             Self::Potential(error) => write!(f, "potential evaluation failed: {error}"),
             Self::Position(error) => write!(f, "cannot update model positions: {error}"),
             Self::Unit(error) => write!(f, "invalid minimization quantity unit: {error}"),
@@ -296,7 +318,7 @@ impl fmt::Display for MinimizationError {
 impl std::error::Error for MinimizationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::InvalidOptions(_) => None,
+            Self::InvalidOptions(_) | Self::NumericalFailure(_) => None,
             Self::Potential(error) => Some(error),
             Self::Position(error) => Some(error),
             Self::Unit(error) => Some(error),
