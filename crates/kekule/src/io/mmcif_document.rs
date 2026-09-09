@@ -255,11 +255,16 @@ impl MmcifLoopTable {
 
     pub fn value(&self, row: usize, tag: &str) -> Option<&MmcifValue> {
         let column = self.column_index(tag)?;
-        self.values.get(row.checked_mul(self.tags.len())? + column)
+        self.row(row)?.get(column)
     }
 
     pub fn row(&self, row: usize) -> Option<&[MmcifValue]> {
-        let start = row.checked_mul(self.tags.len())?;
+        if row >= self.row_count() {
+            return None;
+        }
+        // Parsed loops contain complete rows, so both offsets are bounded by
+        // values.len() after checking the row index.
+        let start = row * self.tags.len();
         self.values.get(start..start + self.tags.len())
     }
 }

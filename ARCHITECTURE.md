@@ -224,6 +224,11 @@ A represented double-bond stereo focus must reference a bond whose order is
 their group memberships; assigning the existing order is a no-op. Publication
 and checked stereo insertion/replacement also enforce the focus-order invariant.
 
+Explicit atom carriers must be bonded to their stereo focus endpoint. Deleting a
+carrier bond removes affected stereo assertions and their group memberships,
+even when an alternate ring path keeps the carrier and focus connected.
+Publication and checked stereo insertion/replacement enforce this adjacency.
+
 CIP labels are derived and therefore belong to `Perception`, not `Graph`.
 
 ### Aromaticity
@@ -1382,6 +1387,8 @@ changes, while preserving explicit overrides through metadata changes. Changes
 to composition or chemistry still follow the editor's fresh-override rule. No-op
 rebuilds and ordinary appends retain cached classes, including complete-entity
 classes intentionally preserved by subsets and transforms.
+New informative instances of a reused definition contribute to classification
+and invalidate its cached inference; explicit molecule-class overrides still win.
 Classification must remain lightweight and
 deterministic; it is not a reason to run generic chemical perception, expensive
 graph isomorphism, or a large substructure-search suite while loading a

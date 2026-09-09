@@ -242,7 +242,10 @@ impl Molecule {
             .ok_or(MoleculeError::InvalidBondId(id))?;
         self.remove_incident_bond(bond.a, id);
         self.remove_incident_bond(bond.b, id);
-        self.prune_stereo_for_bond(id);
+        // A deleted bond may connect a focus to a carrier even when it is not
+        // itself a stereo focus. Ring opening can leave both atoms alive and
+        // connected through another path, so live IDs alone are insufficient.
+        self.prune_invalid_stereo();
         self.properties.bonds_mut().clear_index(id.index());
         self.properties.clear_owner();
         self.clear_perception();
@@ -779,6 +782,9 @@ impl Molecule {
             StereoElementKind::Tetrahedral(stereo) => {
                 self.atom(stereo.center)?;
                 self.validate_stereo_carriers(&stereo.carriers)?;
+                for &carrier in &stereo.carriers {
+                    self.validate_stereo_carrier_adjacency(stereo.center, None, carrier)?;
+                }
             }
             StereoElementKind::DoubleBond(stereo) => {
                 let bond = self.bond(stereo.bond)?;
@@ -793,10 +799,28 @@ impl Molecule {
                     ));
                 }
                 self.validate_stereo_carriers(&[stereo.left_carrier, stereo.right_carrier])?;
+                self.validate_stereo_carrier_adjacency(
+                    stereo.left,
+                    Some(stereo.right),
+                    stereo.left_carrier,
+                )?;
+                self.validate_stereo_carrier_adjacency(
+                    stereo.right,
+                    Some(stereo.left),
+                    stereo.right_carrier,
+                )?;
             }
             StereoElementKind::Axis(stereo) => {
-                self.bond(stereo.axis)?;
+                let axis = self.bond(stereo.axis)?;
                 self.validate_stereo_carriers(&stereo.carriers)?;
+                for &carrier in &stereo.carriers {
+                    if self
+                        .validate_stereo_carrier_adjacency(axis.a(), Some(axis.b()), carrier)
+                        .is_err()
+                    {
+                        self.validate_stereo_carrier_adjacency(axis.b(), Some(axis.a()), carrier)?;
+                    }
+                }
             }
         }
         Ok(())
@@ -999,6 +1023,38 @@ impl Molecule {
             }
         }
         Ok(())
+    }
+
+    fn validate_stereo_carrier_adjacency(
+        &self,
+        center: AtomId,
+        excluded: Option<AtomId>,
+        carrier: StereoCarrier,
+    ) -> Result<()> {
+        if let StereoCarrier::Atom(atom) = carrier {
+            if Some(atom) == excluded || self.bond_between(center, atom)?.is_none() {
+                return Err(MoleculeError::InvalidStereoReference(
+                    "stereo atom carrier must be bonded to its focus endpoint",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn prune_invalid_stereo(&mut self) {
+        let removed = self
+            .stereo_elements()
+            .filter_map(|(id, element)| {
+                self.validate_stereo_element_refs(element)
+                    .is_err()
+                    .then_some(id)
+            })
+            .collect::<Vec<_>>();
+        for id in removed {
+            self.graph.stereo_elements[id.index()] = None;
+            self.remove_stereo_element_from_groups(id);
+        }
+        self.invalidate_stereo();
     }
 
     fn prune_stereo_for_atom(&mut self, atom: AtomId) {

@@ -201,6 +201,10 @@ fn stereo_replacement_and_group_creation_preserve_graph_references() {
     let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(carbon()).expect("atom identifier capacity");
+    for carrier in [a, b, c] {
+        mol.add_bond(center, carrier, BondOrder::Single)
+            .expect("carrier bond");
+    }
     let element = mol
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
@@ -546,6 +550,10 @@ fn stereo_element_group_membership_is_transactional_and_relation_owned() {
     let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(carbon()).expect("atom identifier capacity");
+    for carrier in [a, b, c] {
+        mol.add_bond(center, carrier, BondOrder::Single)
+            .expect("carrier bond");
+    }
     let element = mol
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
