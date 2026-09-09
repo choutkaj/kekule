@@ -42,6 +42,9 @@ impl TopologyEditor {
                 molecule,
                 None,
                 Some(source.definition(value.definition()).unwrap().class()),
+                source
+                    .molecule_class_overrides
+                    .contains_key(&value.definition()),
             );
             self.groups[group_index].as_mut().unwrap().instance_slot =
                 Some(instance_start + instance.index());
@@ -93,7 +96,23 @@ impl TopologyEditor {
         }
         // Insertion invalidates classification while the residue is incomplete.
         for (id, residue) in source.hierarchy().residues() {
-            self.set_residue_class(mapping.residues[&id], residue.class())?;
+            let target = self
+                .hierarchy
+                .residues
+                .get_mut(&mapping.residues[&id])
+                .unwrap();
+            target.class = Some(residue.class());
+            target.class_explicit = source.residue_class_overrides.contains_key(&id);
+        }
+        for (instance, value) in source.instances() {
+            let definition = source.definition(value.definition()).unwrap();
+            let local = definition.molecule().atom_ids().next().unwrap();
+            let handle = mapping.atoms[&InstanceAtomId::new(instance, local)];
+            let group = self.groups[self.atoms[&handle].group].as_mut().unwrap();
+            group.class = Some(definition.class());
+            group.class_explicit = source
+                .molecule_class_overrides
+                .contains_key(&value.definition());
         }
 
         let atom_rows = source

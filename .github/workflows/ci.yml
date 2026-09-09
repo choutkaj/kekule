@@ -31,6 +31,8 @@ jobs:
       - run: cargo test --workspace --all-features --locked
       - run: cargo test --workspace --all-features --doc --locked
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
+      - run: cargo test -p kekule-potentials --no-default-features --locked
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc -p kekule-potentials --no-default-features --no-deps --locked
       - name: Check packaged license copies
         run: |
           for package in kekule kekule-potentials kekule-traj; do

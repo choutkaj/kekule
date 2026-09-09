@@ -49,6 +49,20 @@ impl Trajectory {
         Arc::clone(&self.topology)
     }
 
+    /// Consumes the trajectory and transfers its complete frame payloads without copying.
+    ///
+    /// The shared topology handle and collection properties are dropped. Use
+    /// [`Self::into_parts`] to retain that context together with the frames.
+    pub fn into_frames(self) -> Vec<TrajectoryFrame> {
+        self.frames
+    }
+
+    /// Consumes the trajectory, transferring its topology, collection properties,
+    /// and frames in temporal order without cloning any payloads.
+    pub fn into_parts(self) -> (Arc<Topology>, Properties, Vec<TrajectoryFrame>) {
+        (self.topology, self.properties, self.frames)
+    }
+
     /// Installs default perception through one new shared topology snapshot.
     ///
     /// Delegates to [`Topology::perceived`] once for the collection, independent

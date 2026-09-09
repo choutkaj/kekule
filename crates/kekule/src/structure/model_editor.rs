@@ -654,7 +654,7 @@ impl ModelEditor {
     /// Publishes the completed model, preserving coordinates and entity properties.
     /// Editing handles are draft-only; inspect the returned model for its final IDs.
     pub fn finish(self) -> Result<Model, ModelEditError> {
-        let published = self.topology.publish()?;
+        let published = self.topology.into_publication()?;
         let positions = Positions::from_canonical_values(
             published
                 .atom_slots

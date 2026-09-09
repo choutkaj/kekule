@@ -529,6 +529,10 @@ pub struct Topology {
     bond_indices: BTreeMap<InstanceBondId, TopologyBondIndex>,
     hierarchy: Hierarchy,
     properties: Properties,
+    // Retain explicit assignment intent separately from inferred class values.
+    // It affects future editing policy, not current topology layout equality.
+    molecule_class_overrides: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
+    residue_class_overrides: BTreeMap<ResidueId, ResidueClass>,
 }
 
 impl Topology {
@@ -543,6 +547,9 @@ impl Topology {
     /// owner annotations because the system has changed. Appending through the
     /// returned builder assigns new identifiers after the retained identity
     /// spaces, and [`TopologyBuilder::build`] reconstructs derived lookups.
+    /// Explicit class assignments survive rebuilding. Automatically inferred
+    /// classes are reevaluated when hierarchy evidence for retained atoms or
+    /// residues changes; unrelated append-only extension preserves them.
     pub fn into_builder(self) -> TopologyBuilder {
         TopologyBuilder::from_topology(self)
     }

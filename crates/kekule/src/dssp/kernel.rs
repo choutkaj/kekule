@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::geometry::Point3;
 use crate::structure::ModelView;
-use crate::topology::{Chain, Hierarchy, Residue, ResidueId};
+use crate::topology::{Chain, Hierarchy, Residue, ResidueClass, ResidueId};
 use crate::units::ANGSTROM;
 
 use super::*;
@@ -269,11 +269,12 @@ fn extract_backbones(
     let mut fragments = Vec::new();
 
     let hierarchy = model.topology().hierarchy();
+    let represented_instances = hierarchy
+        .atom_sites()
+        .map(|(_, site)| site.atom().molecule())
+        .collect::<BTreeSet<_>>();
     for (molecule_id, _) in model.topology().instances() {
-        if !hierarchy
-            .atom_sites()
-            .any(|(_, site)| site.atom().molecule() == molecule_id)
-        {
+        if !represented_instances.contains(&molecule_id) {
             report.ignored_instances.push(molecule_id);
         }
     }
@@ -320,6 +321,43 @@ fn extract_backbones(
             .then_with(|| left.discovery_order.cmp(&right.discovery_order))
     });
     for (chain_index, logical) in logical_chains.iter_mut().enumerate() {
+        // Choose one ordering convention for the complete chain. Mixing label
+        // and author numbering in a pairwise comparator can be non-transitive.
+        // Native hierarchies need not carry either source numbering convention.
+        let ordering_residues = logical
+            .residues
+            .iter()
+            .filter(|entry| {
+                entry.hierarchy.residue(entry.residue).is_ok_and(|residue| {
+                    residue.class() == ResidueClass::AminoAcid
+                        || residue.class() == ResidueClass::Other
+                            && residue.atom_sites().iter().any(|site| {
+                                entry.hierarchy.atom_site(*site).is_ok_and(|site| {
+                                    site.metadata()
+                                        .label_atom_id
+                                        .as_deref()
+                                        .or(site.metadata().auth_atom_id.as_deref())
+                                        .and_then(|name| backbone_index(name.trim()))
+                                        .is_some()
+                                })
+                            })
+                })
+            })
+            .collect::<Vec<_>>();
+        let label_numbered = ordering_residues.iter().all(|entry| {
+            entry
+                .hierarchy
+                .residue(entry.residue)
+                .is_ok_and(|residue| residue.label_seq_id().is_some())
+        });
+        let author_numbered = ordering_residues.iter().all(|entry| {
+            entry.hierarchy.residue(entry.residue).is_ok_and(|residue| {
+                residue
+                    .author_seq_id()
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .is_some()
+            })
+        });
         logical.residues.sort_by(|left, right| {
             let left_residue = left
                 .hierarchy
@@ -329,19 +367,27 @@ fn extract_backbones(
                 .hierarchy
                 .residue(right.residue)
                 .expect("validated logical chain residue");
-            match (left_residue.label_seq_id(), right_residue.label_seq_id()) {
-                (Some(left_sequence), Some(right_sequence)) => left_sequence
-                    .cmp(&right_sequence)
-                    .then_with(|| {
-                        left_residue
-                            .insertion_code()
-                            .cmp(&right_residue.insertion_code())
-                    })
-                    .then_with(|| left.discovery_order.cmp(&right.discovery_order)),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => left.discovery_order.cmp(&right.discovery_order),
-            }
+            let sequence_order = if label_numbered {
+                left_residue
+                    .label_seq_id()
+                    .cmp(&right_residue.label_seq_id())
+            } else if author_numbered {
+                let number = |residue: &Residue| {
+                    residue
+                        .author_seq_id()
+                        .and_then(|value| value.parse::<i64>().ok())
+                };
+                number(left_residue).cmp(&number(right_residue))
+            } else {
+                return left.discovery_order.cmp(&right.discovery_order);
+            };
+            sequence_order
+                .then_with(|| {
+                    left_residue
+                        .insertion_code()
+                        .cmp(&right_residue.insertion_code())
+                })
+                .then_with(|| left.discovery_order.cmp(&right.discovery_order))
         });
         extract_chain(
             model,
@@ -380,7 +426,10 @@ fn extract_chain(
                     message: error.to_string(),
                 })?;
         let key = residue_id;
-        if residue.label_seq_id.is_none() {
+        if !matches!(
+            residue.class(),
+            ResidueClass::AminoAcid | ResidueClass::Other
+        ) {
             report.non_peptide_residues += 1;
             forced_break = true;
             continue;
@@ -432,7 +481,7 @@ fn extract_chain(
             .filter_map(|(index, name)| backbone[index].is_none().then_some(*name))
             .collect::<Vec<_>>();
         if !missing.is_empty() {
-            if seen_backbone == 0 && !is_standard_amino_acid(&residue.name) {
+            if seen_backbone == 0 && residue.class() != ResidueClass::AminoAcid {
                 report.non_peptide_residues += 1;
             } else {
                 report.skipped_residues.push(DsspSkippedResidue {
@@ -535,32 +584,6 @@ fn residue_source(chain: &Chain, residue: &Residue) -> DsspResidueSource {
         author_sequence_id: residue.author_seq_id.clone(),
         insertion_code: residue.insertion_code.clone(),
     }
-}
-
-fn is_standard_amino_acid(name: &str) -> bool {
-    matches!(
-        name.to_ascii_uppercase().as_str(),
-        "ALA"
-            | "ARG"
-            | "ASN"
-            | "ASP"
-            | "CYS"
-            | "GLN"
-            | "GLU"
-            | "GLY"
-            | "HIS"
-            | "ILE"
-            | "LEU"
-            | "LYS"
-            | "MET"
-            | "PHE"
-            | "PRO"
-            | "SER"
-            | "THR"
-            | "TRP"
-            | "TYR"
-            | "VAL"
-    )
 }
 
 fn calculate_geometry(

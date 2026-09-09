@@ -33,7 +33,10 @@ impl Positions {
         Self { values }
     }
 
-    /// Constructs positions from numerical coordinates alone.
+    /// Copies numerical coordinates into canonical storage.
+    ///
+    /// Use [`Self::from_vec`] to transfer an owned vector without allocating a
+    /// second coordinate array.
     pub fn new<T>(positions: Quantity<T>) -> Result<Self, PositionError>
     where
         T: AsRef<[Point3]>,
@@ -55,6 +58,29 @@ impl Positions {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self { values })
+    }
+
+    /// Consumes a coordinate vector, converting and validating it in place.
+    ///
+    /// The vector's allocation and capacity are retained. An incompatible unit
+    /// or non-finite converted coordinate returns an error.
+    pub fn from_vec(positions: Quantity<Vec<Point3>>) -> Result<Self, PositionError> {
+        let factor = positions
+            .unit()
+            .conversion_factor_to(CANONICAL_LENGTH_UNIT)?;
+        let mut values = positions.into_value();
+        for (index, point) in values.iter_mut().enumerate() {
+            *point = Point3::new(point.x * factor, point.y * factor, point.z * factor);
+            if !point.is_finite() {
+                return Err(PositionError::NonFinitePosition { index });
+            }
+        }
+        Ok(Self { values })
+    }
+
+    /// Transfers the coordinate vector in its canonical length unit.
+    pub fn into_values(self) -> Quantity<Vec<Point3>> {
+        Quantity::new(self.values, CANONICAL_LENGTH_UNIT)
     }
 
     /// Constructs a zero-filled coordinate array with `len` entries.
@@ -121,8 +147,11 @@ impl Positions {
     where
         T: AsRef<[Point3]>,
     {
-        let factor = self.validate_replacement(&positions)?;
-        self.copy_from_validated(positions.value().as_ref(), factor);
+        // AsRef is user-implementable and can return a different slice on each
+        // call. Validate and copy the same borrow, not two separate conversions.
+        let source = positions.value().as_ref();
+        let factor = self.validate_replacement(&Quantity::new(source, positions.unit()))?;
+        self.copy_from_validated(source, factor);
         Ok(())
     }
 
@@ -189,7 +218,14 @@ impl fmt::Display for PositionError {
     }
 }
 
-impl std::error::Error for PositionError {}
+impl std::error::Error for PositionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unit(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<UnitError> for PositionError {
     fn from(error: UnitError) -> Self {
