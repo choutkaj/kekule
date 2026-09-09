@@ -551,7 +551,9 @@ support detached drafts, `validate()`, `finish()`, and recoverable `try_finish()
 
 System edits target individual occurrences. Editing one occurrence of a reused
 definition must not change other occurrences. Untouched definitions retain their
-reuse, properties, perception, and classification; mutable molecular drafts are
+reuse, properties, and perception; their inferred classification also remains
+unchanged unless hierarchy evidence used for inference changes. Explicit class
+assignments retain precedence. Mutable molecular drafts are
 created only for affected occurrences. Graph operations and molecular publication
 use the same checked chemical machinery as `MoleculeEditor`.
 
@@ -1367,7 +1369,15 @@ That does not prevent the enclosing molecule from being recognized from its
 polymer connectivity.
 
 Classification is automatic during topology publication, with explicit builder
-assignment available as an override. Classification must remain lightweight and
+assignment available as an override. Published topologies retain explicit
+assignment intent separately from inferred class values; this intent does not
+participate in layout equality. Resumed builders and editors refresh inferred
+classes when an existing entity's component identity or hierarchy evidence
+changes, while preserving explicit overrides through metadata changes. Changes
+to composition or chemistry still follow the editor's fresh-override rule. No-op
+rebuilds and ordinary appends retain cached classes, including complete-entity
+classes intentionally preserved by subsets and transforms.
+Classification must remain lightweight and
 deterministic; it is not a reason to run generic chemical perception, expensive
 graph isomorphism, or a large substructure-search suite while loading a
 `Topology`.
@@ -1765,6 +1775,11 @@ pub enum PropertyValue {
 Real-valued properties are always unit-aware. A dimensionless real uses
 `DIMENSIONLESS`; there is no parallel untyped floating-point property concept.
 Stored real values must be finite.
+
+`PropertyValueRef` is a borrowed scalar view. Strings borrow their owner or
+column storage, while numerical values and units are copied. `value_ref()` on
+columns and tables exposes this view without allocation; `to_value()` explicitly
+materializes an owned `PropertyValue`.
 
 `PropertyValue` is intended for scalar/object-level annotations such as a model
 energy, method label, boolean status, or integer generation number. Large arrays
@@ -2234,6 +2249,11 @@ cell, occupancies, B-factors, and other model/frame state do not belong in
 library-wide canonical units. They validate numerical shape, units, and finite
 values as appropriate, but are otherwise topology-agnostic.
 
+Their generic `new()` constructors copy from borrowed numerical input.
+`from_vec()` converts and validates an owned vector in place, and `into_values()`
+transfers its allocation together with the canonical unit. Bulk setters validate
+and copy the same borrowed slice, including for user-defined `AsRef` inputs.
+
 `PropertyTable` and `PropertyColumn` provide the corresponding generic columnar
 storage for extensible per-entity data. The former `AtomData` and `BondData`
 public concepts are folded into this property layer rather than maintained as a
@@ -2456,6 +2476,11 @@ Stored frame access and iteration borrow this validated state without rescanning
 dense fields. Public views of detached frames still validate against the supplied
 topology. `TrajectoryFrameView::to_frame` copies the complete topology-free payload,
 including velocities, forces, time, step, and all properties.
+
+Consuming `Trajectory::into_frames()` transfers all frame payloads without copying
+dense arrays and discards the collection context. `into_parts()` transfers the
+shared topology, collection properties, and frame vector together when that context
+must also be retained.
 
 `frame_mut` exposes a restricted editor with immediately validated, dimension-
 preserving setters and no mutable dereference to the payload. Invariants must hold
@@ -2797,6 +2822,12 @@ A `Molecule` writes as one connected SMILES. A `Topology` writes as one
 authoritative topology instance order. Reused definitions do not collapse
 repeated instances. This projection intentionally discards hierarchy, topology
 properties, definition reuse, and all geometry.
+
+Canonical SMILES traversal uses complete canonical labeling, including tied
+symmetry classes, so atom numbering and adjacency insertion order cannot choose
+the result. Labeling has explicit work and storage bounds; exceeding a bound
+returns a write error instead of an unproved canonical candidate. Hydrogen
+normalization must retain charged and atom-mapped hydrogen vertices.
 
 `Model` and `Ensemble` should not gain direct SMILES writers merely to discard
 geometry implicitly. Callers that want that projection write their topology

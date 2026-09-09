@@ -176,3 +176,166 @@ fn dssp_codes_cover_the_complete_dssp4_alphabet() {
         'X'
     );
 }
+
+#[test]
+fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
+    let reference = dssp::assign(crambin_model().view(), DsspOptions::default()).unwrap();
+    let source = CRAMBIN_MMCIF.replace("_atom_site.label_seq_id", "_atom_site.audit_sequence");
+    let document = mmcif::parse_str(&source).unwrap();
+    let model = mmcif::interpret(
+        &document,
+        MmcifInterpretOptions {
+            model_selection: MmcifModelSelection::First,
+            ..MmcifInterpretOptions::default()
+        },
+    )
+    .unwrap()
+    .into_model();
+    assert!(model
+        .topology()
+        .hierarchy()
+        .residues()
+        .all(|(_, residue)| residue.label_seq_id().is_none()));
+    let assigned = dssp::assign(model.view(), DsspOptions::default()).unwrap();
+    assert_eq!(assigned.statistics(), reference.statistics());
+    for (actual, expected) in assigned.residues().zip(reference.residues()) {
+        assert_eq!(
+            actual.source().author_sequence_id,
+            expected.source().author_sequence_id
+        );
+        assert_eq!(actual.secondary_structure(), expected.secondary_structure());
+        assert_eq!(actual.phi_degrees(), expected.phi_degrees());
+        assert_eq!(actual.psi_degrees(), expected.psi_degrees());
+        assert_eq!(actual.kappa_degrees(), expected.kappa_degrees());
+    }
+}
+
+#[test]
+fn dssp_instance_membership_handles_many_reused_solvent_instances() {
+    use kekule::core::AtomId;
+    use kekule::geometry::Point3;
+    use kekule::structure::Positions;
+    use kekule::topology::{AtomSiteMetadata, InstanceAtomId};
+    use kekule::units::{Quantity, ANGSTROM};
+
+    let mut model = crambin_model().into_builder();
+    let water = kekule::smiles::to_molecules("O").unwrap().pop().unwrap();
+    let definition = model.add_molecule_definition(&water).unwrap();
+    let water_position =
+        Positions::new(Quantity::new(vec![Point3::new(100., 100., 100.)], ANGSTROM)).unwrap();
+    let chain = model.hierarchy_mut().add_chain("water", None).unwrap();
+    let mut ignored = Vec::new();
+    let count = 10_000;
+    for index in 0..count {
+        let instance = model.add_instance(definition, &water_position).unwrap();
+        if index % 11 == 0 {
+            ignored.push(instance);
+        } else {
+            let residue = model
+                .hierarchy_mut()
+                .add_residue(chain, "HOH", None, None, None)
+                .unwrap();
+            model
+                .hierarchy_mut()
+                .add_atom_site(
+                    residue,
+                    InstanceAtomId::new(instance, AtomId::new(0)),
+                    AtomSiteMetadata::default(),
+                )
+                .unwrap();
+        }
+    }
+    let model = model.build().unwrap();
+    let result = dssp::assign(model.view(), DsspOptions::default()).unwrap();
+    assert_eq!(result.report().ignored_instances(), ignored);
+    assert_eq!(result.statistics().analyzed_residues(), 46);
+    assert_eq!(
+        result.report().non_peptide_residues(),
+        count - ignored.len()
+    );
+}
+
+#[test]
+fn dssp_numbering_fallback_is_independent_of_unlabeled_solvent_in_the_chain() {
+    use kekule::core::AtomId;
+    use kekule::geometry::Point3;
+    use kekule::structure::{Model, Positions};
+    use kekule::topology::{AtomSiteMetadata, InstanceAtomId, TopologyBuilder};
+    use kekule::units::{Quantity, ANGSTROM};
+
+    for (labels, authors) in [(true, false), (false, true), (false, false)] {
+        let mut builder = TopologyBuilder::new();
+        let molecule = kekule::smiles::to_molecules("NCC=O")
+            .unwrap()
+            .pop()
+            .unwrap();
+        let definition = builder.add_molecule_definition(&molecule).unwrap();
+        let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
+        let mut points = Vec::new();
+        let mut keys = Vec::new();
+        for sequence in [2, 1] {
+            let instance = builder.add_instance(definition).unwrap();
+            let residue = builder
+                .hierarchy_mut()
+                .add_residue(
+                    chain,
+                    "GLY",
+                    labels.then_some(sequence),
+                    authors.then(|| sequence.to_string()),
+                    None,
+                )
+                .unwrap();
+            keys.push(residue);
+            for (atom, name) in molecule.atom_ids().zip(["N", "CA", "C", "O"]) {
+                builder
+                    .hierarchy_mut()
+                    .add_atom_site(
+                        residue,
+                        InstanceAtomId::new(instance, atom),
+                        AtomSiteMetadata {
+                            label_atom_id: Some(name.to_owned()),
+                            ..AtomSiteMetadata::default()
+                        },
+                    )
+                    .unwrap();
+            }
+            let shift = f64::from(sequence - 1) * 3.;
+            points.extend(
+                [(0., 0.), (1.4, 0.), (2., 1.2), (3.1, 1.3)]
+                    .map(|(x, y)| Point3::new(x + shift, y, 0.)),
+            );
+        }
+        let water = kekule::smiles::to_molecules("O").unwrap().pop().unwrap();
+        let instance = builder.add_molecule(&water).unwrap();
+        let residue = builder
+            .hierarchy_mut()
+            .add_residue(chain, "HOH", None, None, None)
+            .unwrap();
+        builder
+            .hierarchy_mut()
+            .add_atom_site(
+                residue,
+                InstanceAtomId::new(instance, AtomId::new(0)),
+                AtomSiteMetadata::default(),
+            )
+            .unwrap();
+        points.push(Point3::new(100., 0., 0.));
+        let model = Model::new(
+            builder.build().unwrap(),
+            Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
+        )
+        .unwrap();
+        let result = dssp::assign(model.view(), DsspOptions::default()).unwrap();
+        if labels || authors {
+            keys.reverse();
+        }
+        assert_eq!(
+            result
+                .residues()
+                .map(|residue| residue.key())
+                .collect::<Vec<_>>(),
+            keys
+        );
+        assert_eq!(result.report().non_peptide_residues(), 1);
+    }
+}

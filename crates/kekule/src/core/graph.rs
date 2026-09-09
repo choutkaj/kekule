@@ -5,13 +5,24 @@ use super::{Atom, Bond, BondId, StereoElement, StereoGroup};
 /// `Graph` owns stable local atom and bond slots, adjacency, represented
 /// stereochemistry. Structural mutation is kept
 /// crate-private and is published only through `MoleculeEditor::finish`.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct Graph {
     pub(crate) atoms: Vec<Option<Atom>>,
     pub(crate) bonds: Vec<Option<Bond>>,
     pub(crate) adjacency: Vec<Vec<BondId>>,
     pub(crate) stereo_elements: Vec<Option<StereoElement>>,
     pub(crate) stereo_groups: Vec<Option<StereoGroup>>,
+}
+
+impl PartialEq for Graph {
+    fn eq(&self, other: &Self) -> bool {
+        // Adjacency is an index over represented bonds. Rewiring can change its
+        // traversal order without changing any asserted atom, bond, or stereo.
+        self.atoms == other.atoms
+            && self.bonds == other.bonds
+            && self.stereo_elements == other.stereo_elements
+            && self.stereo_groups == other.stereo_groups
+    }
 }
 
 impl Graph {

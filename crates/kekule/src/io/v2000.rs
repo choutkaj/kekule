@@ -710,6 +710,8 @@ where
 #[non_exhaustive]
 pub enum MolWriteErrorKind {
     UnsupportedRepresentation,
+    /// A bounded writer calculation could not complete within its work limit.
+    ResourceLimit,
     InvalidModel,
     InvalidMetadata,
     Io(std::io::ErrorKind),
@@ -722,6 +724,13 @@ pub struct MolWriteError {
 }
 
 impl MolWriteError {
+    pub(crate) fn resource_limit(message: impl Into<String>) -> Self {
+        Self {
+            kind: MolWriteErrorKind::ResourceLimit,
+            message: message.into(),
+        }
+    }
+
     pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             kind: MolWriteErrorKind::UnsupportedRepresentation,

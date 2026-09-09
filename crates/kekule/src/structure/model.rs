@@ -127,6 +127,9 @@ impl Model {
     /// copying realization state. Failure leaves the entire model unchanged.
     /// Other owners keep their original topology. Existing selections and
     /// prepared calculations remain bound to that original snapshot.
+    /// Perform perception before creating selections or preparing potentials;
+    /// bind those values to the topology returned by [`Self::shared_topology`]
+    /// after this operation.
     ///
     /// ```
     /// use kekule::{smiles, structure::{Model, Positions}};
@@ -883,7 +886,14 @@ impl fmt::Display for ModelSliceError {
     }
 }
 
-impl std::error::Error for ModelSliceError {}
+impl std::error::Error for ModelSliceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Topology(error) => Some(error),
+            Self::Model(error) => Some(error.as_ref()),
+        }
+    }
+}
 
 impl From<TopologySubsetError> for ModelSliceError {
     fn from(error: TopologySubsetError) -> Self {

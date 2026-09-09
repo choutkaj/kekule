@@ -44,7 +44,7 @@ pub(super) struct ComponentDefinition {
 pub(super) fn build_component_definitions(
     source_molecule: &crate::core::Molecule,
     selected_local: &BTreeSet<AtomId>,
-    class: Option<super::MoleculeClass>,
+    class: Option<(super::MoleculeClass, bool)>,
     builder: &mut TopologyBuilder,
 ) -> Result<Vec<ComponentDefinition>, ComponentBuildError> {
     let whole_instance_selected = selected_local.len() == source_molecule.atom_count()
@@ -144,8 +144,8 @@ pub(super) fn build_component_definitions(
         let target_molecule = component.editor.finish()?;
         let definition = builder.add_molecule_definition_owned(target_molecule)?;
         if whole_instance_selected {
-            if let Some(class) = class {
-                builder.set_molecule_class(definition, class)?;
+            if let Some((class, explicit)) = class {
+                builder.preserve_molecule_class(definition, class, explicit)?;
             }
         }
         definitions.push(ComponentDefinition {
