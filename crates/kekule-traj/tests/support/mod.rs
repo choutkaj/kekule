@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
+use std::cell::RefCell;
 use std::io::{self, BufRead, Cursor, Read, Seek, SeekFrom};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -75,6 +77,32 @@ pub fn x_coordinates(buffer: &FrameBuffer) -> Vec<f64> {
 
 pub fn buffer_snapshot(buffer: &FrameBuffer) -> String {
     format!("{buffer:#?}")
+}
+
+/// A seekable test stream whose backing bytes can change between reader calls.
+#[derive(Clone)]
+pub struct SharedCursor(Rc<RefCell<Cursor<Vec<u8>>>>);
+
+impl SharedCursor {
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(Rc::new(RefCell::new(Cursor::new(bytes))))
+    }
+
+    pub fn overwrite(&self, offset: usize, bytes: &[u8]) {
+        self.0.borrow_mut().get_mut()[offset..offset + bytes.len()].copy_from_slice(bytes);
+    }
+}
+
+impl Read for SharedCursor {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.0.borrow_mut().read(buffer)
+    }
+}
+
+impl Seek for SharedCursor {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        self.0.borrow_mut().seek(position)
+    }
 }
 
 #[derive(Clone)]
