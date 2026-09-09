@@ -467,11 +467,6 @@ impl TopologyBuilder {
         self.invalidate_changed_hierarchy_classes();
         self.residue_class_overrides
             .retain(|id, _| self.hierarchy.residue(*id).is_ok());
-        self.preserved_molecule_classes.extend(
-            self.molecule_class_overrides
-                .iter()
-                .map(|(&id, &class)| (id, class)),
-        );
         self.preserved_residue_classes.extend(
             self.residue_class_overrides
                 .iter()
@@ -481,7 +476,11 @@ impl TopologyBuilder {
             &mut self.definitions,
             &self.instances,
             &mut self.hierarchy,
+            &self.molecule_class_overrides,
             &self.preserved_molecule_classes,
+            self.source_hierarchy
+                .as_ref()
+                .map(|_| self.source_instance_count),
             &self.preserved_residue_classes,
         );
 
