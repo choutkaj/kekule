@@ -10,12 +10,55 @@ pub struct TrajectoryIoLimits {
     pub max_frames: u64,
     pub max_frame_bytes: u64,
     pub max_record_bytes: u64,
+    /// Combined retained capacities of private decode and validation buffers.
+    /// Sequential and indexed access share this budget; index offsets are
+    /// bounded separately by `max_index_entries` and `max_index_bytes`.
     pub max_scratch_bytes: usize,
     pub max_index_entries: usize,
     pub max_index_bytes: usize,
     pub max_text_line_bytes: usize,
     pub max_comment_bytes: usize,
     pub max_detection_bytes: usize,
+}
+
+/// Retained vector storage, including spare capacity.
+pub(super) fn scratch_bytes<T>(values: &Vec<T>) -> Option<usize> {
+    values.capacity().checked_mul(std::mem::size_of::<T>())
+}
+
+/// Reserves only after accounting for every other simultaneously live buffer.
+/// The error factory keeps format-specific context out of the allocation logic.
+pub(super) fn reserve_scratch<T>(
+    values: &mut Vec<T>,
+    required_capacity: usize,
+    other_bytes: Option<usize>,
+    limit: usize,
+    error: impl Fn(&str) -> TrajectoryError,
+) -> Result<(), TrajectoryError> {
+    let fits = |capacity: usize| {
+        capacity
+            .checked_mul(std::mem::size_of::<T>())
+            .and_then(|bytes| other_bytes.and_then(|other| bytes.checked_add(other)))
+            .is_some_and(|bytes| bytes <= limit)
+    };
+    if !fits(values.capacity().max(required_capacity)) {
+        return Err(error(
+            "aggregate decode scratch exceeds the configured limit",
+        ));
+    }
+    if values.capacity() < required_capacity {
+        values
+            .try_reserve_exact(required_capacity - values.len())
+            .map_err(|_| error("could not reserve decode scratch"))?;
+        // Vec permits an allocator to provide more capacity than requested.
+        if !fits(values.capacity()) {
+            *values = Vec::new();
+            return Err(error(
+                "allocated decode scratch exceeds the configured limit",
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl Default for TrajectoryIoLimits {
@@ -125,4 +168,37 @@ pub(crate) fn reserve_index_for_push(
             ))
             .into()
         })
+}
+
+#[cfg(test)]
+mod scratch_tests {
+    use super::*;
+
+    fn error(detail: &str) -> TrajectoryError {
+        TrajectoryCodecErrorContext::new(
+            TrajectoryCodecErrorKind::ResourceLimitExceeded,
+            TrajectoryIoOperation::ReadFrame,
+            Some(TrajectoryFormat::Xtc),
+        )
+        .with_detail(detail)
+        .into()
+    }
+
+    #[test]
+    fn spare_capacity_counts_and_over_budget_reservations_allocate_nothing() {
+        let mut retained = vec![0_u64; 16];
+        retained.truncate(1);
+        let required = scratch_bytes(&retained).unwrap() + 64;
+        assert!(reserve_scratch(&mut retained, 1, Some(64), required - 1, error).is_err());
+        reserve_scratch(&mut retained, 1, Some(64), required, error).unwrap();
+        assert_eq!(retained, [0]);
+
+        let mut empty = Vec::<u64>::new();
+        assert!(reserve_scratch(&mut empty, 32, Some(64), 319, error).is_err());
+        assert_eq!(empty.capacity(), 0);
+        assert!(reserve_scratch(&mut empty, usize::MAX, Some(0), usize::MAX, error).is_err());
+        assert_eq!(empty.capacity(), 0);
+        assert!(reserve_scratch(&mut empty, 1, None, usize::MAX, error).is_err());
+        assert_eq!(empty.capacity(), 0);
+    }
 }

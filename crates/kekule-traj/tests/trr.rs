@@ -111,6 +111,62 @@ fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuff
 }
 
 #[test]
+fn trr_cell_validation_uses_the_encoded_precision_before_appending_bytes() {
+    let topology = topology();
+    let cell = PeriodicCell::new(
+        Quantity::new(
+            [
+                Vector3::new(1.0, 1.0, 0.0),
+                Vector3::new(1.0, 1.0 + 1e-8, 0.0),
+                Vector3::new(0.0, 0.0, 1.0),
+            ],
+            NANOMETER,
+        ),
+        [true; 3],
+    )
+    .unwrap();
+    for precision in [TrrScalarPrecision::Float32, TrrScalarPrecision::Float64] {
+        let mut writer = TrrWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            TrrWriteOptions::default().with_precision(precision),
+            "box-rounding.trr",
+        )
+        .unwrap();
+        let mut frame = populated_frame(&topology, 0.0, 0);
+        let ordinary_cell = frame.cell().copied();
+        writer.write_frame(frame.frame_view()).unwrap();
+        frame.set_step(Some(1));
+        frame.set_cell(Some(cell));
+        let before = writer.writer().clone();
+        if precision == TrrScalarPrecision::Float32 {
+            assert_eq!(
+                codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+                Some(TrajectoryCodecErrorKind::InvalidFrame)
+            );
+            assert_eq!(writer.writer(), &before);
+            frame.set_cell(ordinary_cell);
+        }
+        writer.write_frame(frame.frame_view()).unwrap();
+        let mut reader = TrrReader::new(
+            Cursor::new(writer.finish().unwrap().into_inner()),
+            Arc::clone(&topology),
+            TrrReadOptions::default(),
+        )
+        .unwrap();
+        let mut destination = reader.frame_buffer();
+        for step in [0, 1] {
+            assert!(reader.read_next(&mut destination).unwrap());
+            assert_eq!(destination.frame_view().step(), Some(step));
+        }
+        if precision == TrrScalarPrecision::Float64 {
+            assert_eq!(destination.cell(), Some(&cell));
+        }
+        assert!(!reader.read_next(&mut destination).unwrap());
+    }
+}
+
+#[test]
 fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
     let topology = topology();
     let mut combined = Vec::new();

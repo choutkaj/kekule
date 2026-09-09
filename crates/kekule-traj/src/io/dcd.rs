@@ -12,6 +12,7 @@ use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::topology::Topology;
 use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_TIME_UNIT};
 
+use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
     require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits,
@@ -110,6 +111,10 @@ impl Default for DcdReadOptions {
 
 impl DcdReadOptions {
     /// Sets limits applied before allocation, scanning, and seeking.
+    ///
+    /// The scratch limit covers the combined retained capacities of coordinates,
+    /// record bytes, and fixed-atom reconstruction/validation buffers. Indexed
+    /// and sequential reads share those buffers; index offsets have a separate limit.
     pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
         self.limits = limits;
         self
@@ -165,6 +170,7 @@ impl DcdWriteOptions {
     /// `b` in the xy plane with positive y, and `c` with positive z.
     /// Other orientations are rejected because DCD lengths and angles cannot
     /// preserve their relation to the stored Cartesian coordinates.
+    /// Angles are written using the unambiguous supported cosine convention.
     pub const fn with_cells(mut self, write_cell: bool) -> Self {
         self.write_cell = write_cell;
         self
@@ -297,6 +303,7 @@ impl<R: Read + Seek> DcdReader<R> {
             &mut reader,
             endian,
             &mut record,
+            Some(0),
             limits,
             source_label,
             TrajectoryIoOperation::ReadHeader,
@@ -352,6 +359,7 @@ impl<R: Read + Seek> DcdReader<R> {
             &mut reader,
             endian,
             &mut record,
+            Some(0),
             limits,
             source_label,
             TrajectoryIoOperation::ReadHeader,
@@ -363,6 +371,7 @@ impl<R: Read + Seek> DcdReader<R> {
             &mut reader,
             endian,
             &mut record,
+            Some(0),
             limits,
             source_label,
             TrajectoryIoOperation::ReadHeader,
@@ -399,11 +408,15 @@ impl<R: Read + Seek> DcdReader<R> {
         }
         let free_count = atom_count - fixed_count;
         let mut free_indices = Vec::new();
+        let mut fixed_indices = Vec::new();
+        let reserve_error =
+            |detail: &str| resource_error(TrajectoryIoOperation::Open, source_label, None, detail);
         if fixed_count > 0 {
             read_record(
                 &mut reader,
                 endian,
                 &mut record,
+                Some(0),
                 limits,
                 source_label,
                 TrajectoryIoOperation::ReadHeader,
@@ -417,23 +430,22 @@ impl<R: Read + Seek> DcdReader<R> {
                     "DCD free-atom index record has the wrong size",
                 ));
             }
-            free_indices.try_reserve_exact(free_count).map_err(|_| {
-                resource_error(
-                    TrajectoryIoOperation::ReadHeader,
-                    source_label,
-                    None,
-                    "could not reserve DCD free-atom indices",
-                )
-            })?;
+            reserve_scratch(
+                &mut free_indices,
+                free_count,
+                scratch_bytes(&record),
+                limits.max_scratch_bytes,
+                reserve_error,
+            )?;
             let mut seen = Vec::new();
-            seen.try_reserve_exact(atom_count).map_err(|_| {
-                resource_error(
-                    TrajectoryIoOperation::ReadHeader,
-                    source_label,
-                    None,
-                    "could not reserve DCD index-validation scratch",
-                )
-            })?;
+            reserve_scratch(
+                &mut seen,
+                atom_count,
+                scratch_bytes(&record)
+                    .and_then(|bytes| bytes.checked_add(scratch_bytes(&free_indices)?)),
+                limits.max_scratch_bytes,
+                reserve_error,
+            )?;
             seen.resize(atom_count, false);
             for chunk in record.as_chunks::<4>().0 {
                 let one_based = endian.i32(*chunk);
@@ -455,72 +467,41 @@ impl<R: Read + Seek> DcdReader<R> {
                 seen[index] = true;
                 free_indices.push(index);
             }
-        } else {
-            free_indices.try_reserve_exact(atom_count).map_err(|_| {
-                resource_error(
-                    TrajectoryIoOperation::ReadHeader,
-                    source_label,
-                    None,
-                    "could not reserve DCD atom indices",
-                )
-            })?;
-            free_indices.extend(0..atom_count);
+            reserve_scratch(
+                &mut fixed_indices,
+                fixed_count,
+                scratch_bytes(&record)
+                    .and_then(|bytes| bytes.checked_add(scratch_bytes(&free_indices)?))
+                    .and_then(|bytes| bytes.checked_add(scratch_bytes(&seen)?)),
+                limits.max_scratch_bytes,
+                reserve_error,
+            )?;
+            fixed_indices.extend(
+                seen.iter()
+                    .enumerate()
+                    .filter_map(|(index, free)| (!free).then_some(index)),
+            );
         }
-        let mut free_mask = Vec::new();
-        free_mask.try_reserve_exact(atom_count).map_err(|_| {
-            resource_error(
-                TrajectoryIoOperation::ReadHeader,
-                source_label,
-                None,
-                "could not reserve DCD fixed-atom validation scratch",
-            )
-        })?;
-        free_mask.resize(atom_count, false);
-        for &index in &free_indices {
-            free_mask[index] = true;
-        }
-        let mut fixed_indices = Vec::new();
-        fixed_indices.try_reserve_exact(fixed_count).map_err(|_| {
-            resource_error(
-                TrajectoryIoOperation::ReadHeader,
-                source_label,
-                None,
-                "could not reserve DCD fixed-atom indices",
-            )
-        })?;
-        fixed_indices.extend(
-            free_mask
-                .iter()
-                .enumerate()
-                .filter_map(|(index, free)| (!free).then_some(index)),
-        );
-        let scratch_bytes = atom_count
-            .checked_mul(std::mem::size_of::<Point3>())
-            .ok_or_else(|| {
-                resource_error(
-                    TrajectoryIoOperation::Open,
-                    source_label,
-                    None,
-                    "DCD coordinate scratch size overflows",
-                )
-            })?;
-        if scratch_bytes > limits.max_scratch_bytes {
-            return Err(resource_error(
-                TrajectoryIoOperation::Open,
-                source_label,
-                None,
-                "DCD coordinate scratch exceeds the configured limit",
-            ));
-        }
+        let index_bytes = scratch_bytes(&free_indices)
+            .and_then(|bytes| bytes.checked_add(scratch_bytes(&fixed_indices)?));
+        let mut fixed_reference = Vec::new();
+        reserve_scratch(
+            &mut fixed_reference,
+            fixed_count,
+            index_bytes.and_then(|bytes| bytes.checked_add(scratch_bytes(&record)?)),
+            limits.max_scratch_bytes,
+            reserve_error,
+        )?;
         let mut positions = Vec::new();
-        positions.try_reserve_exact(atom_count).map_err(|_| {
-            resource_error(
-                TrajectoryIoOperation::Open,
-                source_label,
-                None,
-                "could not reserve DCD coordinate scratch",
-            )
-        })?;
+        reserve_scratch(
+            &mut positions,
+            atom_count,
+            index_bytes
+                .and_then(|bytes| bytes.checked_add(scratch_bytes(&fixed_reference)?))
+                .and_then(|bytes| bytes.checked_add(scratch_bytes(&record)?)),
+            limits.max_scratch_bytes,
+            reserve_error,
+        )?;
         positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
         let data_start = reader.stream_position().map_err(|error| {
             io_context(
@@ -549,7 +530,7 @@ impl<R: Read + Seek> DcdReader<R> {
             header,
             free_indices,
             fixed_indices,
-            fixed_reference: Vec::new(),
+            fixed_reference,
             positions,
             record,
             frame_cursor: 0,
@@ -582,6 +563,10 @@ impl<R: Read + Seek> DcdReader<R> {
         &mut self,
         capture_fixed_reference: bool,
     ) -> Result<Option<DcdDecodedFrame>, TrajectoryError> {
+        let other_scratch_bytes = scratch_bytes(&self.positions)
+            .and_then(|bytes| bytes.checked_add(scratch_bytes(&self.free_indices)?))
+            .and_then(|bytes| bytes.checked_add(scratch_bytes(&self.fixed_indices)?))
+            .and_then(|bytes| bytes.checked_add(scratch_bytes(&self.fixed_reference)?));
         let frame_start = self.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
@@ -636,6 +621,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 &mut self.reader,
                 self.header.endian,
                 &mut self.record,
+                other_scratch_bytes,
                 &self.options.limits,
                 &self.options.source_label,
                 TrajectoryIoOperation::ReadFrame,
@@ -663,6 +649,11 @@ impl<R: Read + Seek> DcdReader<R> {
         let coordinate_indices = if self.frame_cursor == 0 || self.header.fixed_count == 0 {
             None
         } else {
+            // A prior random read may have overwritten the shared position
+            // scratch. Every partial frame restores its immutable fixed atoms.
+            for (&index, &point) in self.fixed_indices.iter().zip(&self.fixed_reference) {
+                self.positions[index] = point;
+            }
             Some(self.free_indices.as_slice())
         };
         let coordinate_count = coordinate_indices.map_or(self.header.atom_count, <[usize]>::len);
@@ -682,6 +673,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 &mut self.reader,
                 self.header.endian,
                 &mut self.record,
+                other_scratch_bytes,
                 &self.options.limits,
                 &self.options.source_label,
                 TrajectoryIoOperation::ReadFrame,
@@ -743,16 +735,6 @@ impl<R: Read + Seek> DcdReader<R> {
         }
         if capture_fixed_reference && self.frame_cursor == 0 && self.header.fixed_count > 0 {
             self.fixed_reference.clear();
-            self.fixed_reference
-                .try_reserve_exact(self.fixed_indices.len())
-                .map_err(|_| {
-                    resource_error(
-                        TrajectoryIoOperation::ReadFrame,
-                        &self.options.source_label,
-                        Some(0),
-                        "could not reserve DCD fixed-coordinate scratch",
-                    )
-                })?;
             self.fixed_reference.extend(
                 self.fixed_indices
                     .iter()
@@ -918,23 +900,9 @@ impl<R: Read + Seek> DcdReader<R> {
                 )
             })?;
         self.frame_cursor = 0;
-        let mut random_positions = Vec::new();
-        random_positions
-            .try_reserve_exact(self.header.atom_count)
-            .map_err(|_| {
-                resource_error(
-                    TrajectoryIoOperation::Index,
-                    &self.options.source_label,
-                    None,
-                    "could not reserve DCD indexed position scratch",
-                )
-            })?;
-        random_positions.resize(self.header.atom_count, Point3::new(0.0, 0.0, 0.0));
         Ok(IndexedDcdReader {
             inner: self,
             offsets,
-            random_positions,
-            random_record: Vec::new(),
         })
     }
 }
@@ -972,11 +940,12 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
 }
 
 /// Fully verified DCD indexed reader.
+///
+/// Random and sequential reads share one set of decode scratch. Fixed-atom
+/// reference coordinates remain immutable during random reads.
 pub struct IndexedDcdReader<R> {
     inner: DcdReader<R>,
     offsets: Vec<u64>,
-    random_positions: Vec<Point3>,
-    random_record: Vec<u8>,
 }
 
 impl<R: Read + Seek> IndexedDcdReader<R> {
@@ -1041,19 +1010,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
                     error,
                 )
             })?;
-        std::mem::swap(&mut self.inner.positions, &mut self.random_positions);
-        std::mem::swap(&mut self.inner.record, &mut self.random_record);
         self.inner.frame_cursor = index;
-        if index > 0 && self.inner.header.fixed_count > 0 {
-            for (&atom_index, &position) in self
-                .inner
-                .fixed_indices
-                .iter()
-                .zip(&self.inner.fixed_reference)
-            {
-                self.inner.positions[atom_index] = position;
-            }
-        }
         let result = self
             .inner
             .parse_next(false)
@@ -1072,12 +1029,10 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
                 )
             });
         self.inner.frame_cursor = saved_cursor;
-        std::mem::swap(&mut self.inner.positions, &mut self.random_positions);
-        std::mem::swap(&mut self.inner.record, &mut self.random_record);
         let decoded = result?;
         restore?;
         self.inner
-            .publish(&self.random_positions, decoded, destination)
+            .publish(&self.inner.positions, decoded, destination)
     }
 }
 
@@ -1687,15 +1642,12 @@ fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], Traje
     let la = length(a);
     let lb = length(b);
     let lc = length(c);
-    let degrees = |left: Vector3, right: Vector3, ll: f64, lr: f64| {
-        (dot(left, right) / (ll * lr))
-            .clamp(-1.0, 1.0)
-            .acos()
-            .to_degrees()
+    let cosine = |left: Vector3, right: Vector3, ll: f64, lr: f64| {
+        (dot(left, right) / (ll * lr)).clamp(-1.0, 1.0)
     };
-    let alpha = degrees(b, c, lb, lc);
-    let beta = degrees(a, c, la, lc);
-    let gamma = degrees(a, b, la, lb);
+    let alpha = cosine(b, c, lb, lc);
+    let beta = cosine(a, c, la, lc);
+    let gamma = cosine(a, b, la, lb);
     let values = [la, gamma, lb, beta, alpha, lc];
     if values.iter().any(|value| !value.is_finite()) {
         return Err(codec_context(
@@ -1706,6 +1658,19 @@ fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], Traje
             "DCD cell cannot be represented as finite lengths and angles",
         ));
     }
+    let mut record = [0; CELL_BYTES];
+    for (chunk, value) in record.as_chunks_mut::<8>().0.iter_mut().zip(values) {
+        *chunk = value.to_le_bytes();
+    }
+    decode_cell(&record, DcdEndian::Little, source_label, 0).map_err(|error| {
+        codec_context(
+            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoOperation::WriteFrame,
+            Some(TrajectoryFormat::Dcd),
+            source_label,
+            format!("DCD cell becomes degenerate in its lengths/cosines representation: {error}"),
+        )
+    })?;
     Ok(values)
 }
 
@@ -1714,6 +1679,7 @@ fn read_record<R: Read>(
     reader: &mut R,
     endian: DcdEndian,
     scratch: &mut Vec<u8>,
+    other_scratch_bytes: Option<usize>,
     limits: &TrajectoryIoLimits,
     source_label: &str,
     operation: TrajectoryIoOperation,
@@ -1765,18 +1731,13 @@ fn read_record<R: Read>(
             "DCD record exceeds configured record or scratch limit",
         ));
     }
-    if scratch.capacity() < size {
-        scratch
-            .try_reserve_exact(size.saturating_sub(scratch.len()))
-            .map_err(|_| {
-                resource_error(
-                    operation,
-                    source_label,
-                    frame,
-                    "could not reserve DCD record scratch",
-                )
-            })?;
-    }
+    reserve_scratch(
+        scratch,
+        size,
+        other_scratch_bytes,
+        limits.max_scratch_bytes,
+        |detail| resource_error(operation, source_label, frame, detail),
+    )?;
     scratch.resize(size, 0);
     read_exact_required(
         reader,

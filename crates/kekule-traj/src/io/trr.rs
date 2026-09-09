@@ -109,6 +109,9 @@ impl Default for TrrWriteOptions {
 }
 
 impl TrrWriteOptions {
+    /// Selects the precision for every scalar, including periodic-cell vectors.
+    /// Cells that become degenerate at that precision are rejected before any
+    /// frame bytes are written; use Float64 when Float32 cannot preserve a cell.
     pub const fn with_precision(mut self, precision: TrrScalarPrecision) -> Self {
         self.precision = precision;
         self
@@ -980,6 +983,21 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 &self.source_label,
                 "cell",
             )?;
+            decode_cell(
+                &self.raw,
+                self.options.precision,
+                &self.source_label,
+                self.frame_count,
+            )
+            .map_err(|error| {
+                codec_context(
+                    TrajectoryCodecErrorKind::InvalidFrame,
+                    TrajectoryIoOperation::WriteFrame,
+                    Some(TrajectoryFormat::Trr),
+                    &self.source_label,
+                    format!("TRR cell is not representable at the selected precision: {error}"),
+                )
+            })?;
         }
         encode_points_to_raw(
             &mut self.raw,

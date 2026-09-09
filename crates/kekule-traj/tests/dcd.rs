@@ -54,6 +54,238 @@ fn set_frame(
 }
 
 #[test]
+fn dcd_acute_cell_angles_round_trip_without_degree_cosine_ambiguity() {
+    for endian in [DcdEndian::Little, DcdEndian::Big] {
+        let topology = topology();
+        let mut writer = DcdWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            DcdWriteOptions::default()
+                .with_endian(endian)
+                .with_cells(true),
+            "acute.dcd",
+        )
+        .unwrap();
+        let mut cells = Vec::new();
+        let mut frame = FrameBuffer::new(Arc::clone(&topology));
+        for (step, angle) in [0.5_f64, 1.0, 1.5, 90.0].into_iter().enumerate() {
+            let cosine = angle.to_radians().cos();
+            let sine = angle.to_radians().sin();
+            let cy = (cosine - cosine * cosine) / sine;
+            let cz = (1.0 - cosine * cosine - cy * cy).sqrt();
+            let cell = PeriodicCell::new(
+                Quantity::new(
+                    [
+                        Vector3::new(10.0, 0.0, 0.0),
+                        Vector3::new(10.0 * cosine, 10.0 * sine, 0.0),
+                        Vector3::new(10.0 * cosine, 10.0 * cy, 10.0 * cz),
+                    ],
+                    ANGSTROM,
+                ),
+                [true; 3],
+            )
+            .unwrap();
+            cells.push(cell);
+            set_frame(&mut frame, [[0.0; 3]; 3], step as u64, None, Some(cell));
+            writer.write_frame(frame.frame_view()).unwrap();
+        }
+        // Even a valid input cell can lose its nonzero angle in f64 cosine
+        // storage. That representation must fail before appending frame bytes.
+        let before = writer.writer().clone();
+        let unrepresentable = PeriodicCell::new(
+            Quantity::new(
+                [
+                    Vector3::new(1.0, 0.0, 0.0),
+                    Vector3::new(1.0, 1e-10, 0.0),
+                    Vector3::new(0.0, 0.0, 1.0),
+                ],
+                ANGSTROM,
+            ),
+            [true; 3],
+        )
+        .unwrap();
+        frame.set_step(Some(4));
+        frame.set_cell(Some(unrepresentable));
+        assert_eq!(
+            codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+            Some(TrajectoryCodecErrorKind::InvalidFrame)
+        );
+        assert_eq!(writer.writer(), &before);
+        let mut reader = DcdReader::new(
+            Cursor::new(writer.finish().unwrap().into_inner()),
+            topology,
+            DcdReadOptions::default(),
+        )
+        .unwrap();
+        let mut destination = reader.frame_buffer();
+        for (step, expected) in cells.into_iter().enumerate() {
+            assert!(reader.read_next(&mut destination).unwrap());
+            assert_eq!(destination.frame_view().step(), Some(step as u64));
+            for (actual, expected) in destination
+                .cell()
+                .unwrap()
+                .vectors()
+                .value()
+                .iter()
+                .zip(expected.vectors().value())
+            {
+                assert!((actual.x - expected.x).abs() < 1e-11);
+                assert!((actual.y - expected.y).abs() < 1e-11);
+                assert!((actual.z - expected.z).abs() < 1e-11);
+            }
+            assert_eq!(destination.positions(), frame.positions());
+        }
+        assert!(!reader.read_next(&mut destination).unwrap());
+    }
+}
+
+#[test]
+fn dcd_scratch_limit_includes_records_fixed_atoms_and_indexed_reuse() {
+    let topology = topology();
+    for fixed in [false, true] {
+        let bytes = if fixed {
+            fixed_atom_fixture(DcdEndian::Little)
+        } else {
+            let mut writer = DcdWriter::new(
+                Cursor::new(Vec::new()),
+                Arc::clone(&topology),
+                DcdWriteOptions::default(),
+                "scratch.dcd",
+            )
+            .unwrap();
+            let mut frame = FrameBuffer::new(Arc::clone(&topology));
+            for step in 0..2 {
+                set_frame(&mut frame, [[step as f64, 1.0, 2.0]; 3], step, None, None);
+                writer.write_frame(frame.frame_view()).unwrap();
+            }
+            writer.finish().unwrap().into_inner()
+        };
+        // The 84-byte header/title record capacity remains retained even though
+        // coordinate records are smaller. Fixed files also retain both index
+        // lists and the immutable coordinates of their two fixed atoms.
+        let required = 84
+            + 3 * std::mem::size_of::<Point3>()
+            + if fixed {
+                3 * std::mem::size_of::<usize>() + 2 * std::mem::size_of::<Point3>()
+            } else {
+                0
+            };
+        let open = |limit| {
+            DcdReader::new(
+                Cursor::new(bytes.clone()),
+                Arc::clone(&topology),
+                DcdReadOptions::default().with_limits(TrajectoryIoLimits {
+                    max_scratch_bytes: limit,
+                    ..TrajectoryIoLimits::default()
+                }),
+            )
+        };
+        assert_eq!(
+            codec_kind(&open(required - 1).err().unwrap()),
+            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        );
+        let mut sequential = open(required).unwrap();
+        let mut destination = sequential.frame_buffer();
+        let mut expected = Vec::new();
+        while sequential.read_next(&mut destination).unwrap() {
+            expected.push(destination.frame_view().to_frame());
+        }
+        let mut indexed = open(required).unwrap().into_indexed().unwrap();
+        for (random, next) in [(1, 0), (0, 1)] {
+            indexed.read_frame(random as u64, &mut destination).unwrap();
+            assert_eq!(destination.frame_view().to_frame(), expected[random]);
+            assert!(indexed.read_next(&mut destination).unwrap());
+            assert_eq!(destination.frame_view().to_frame(), expected[next]);
+        }
+        indexed.read_frame(0, &mut destination).unwrap();
+        assert!(!indexed.read_next(&mut destination).unwrap());
+    }
+}
+
+#[test]
+fn dcd_record_growth_is_bounded_before_reading_or_publishing_coordinates() {
+    let topology = support::linear_carbon_topology(30);
+    let mut writer = DcdWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        DcdWriteOptions::default(),
+        "growth.dcd",
+    )
+    .unwrap();
+    let mut frame = FrameBuffer::new(Arc::clone(&topology));
+    frame.set_step(Some(0));
+    writer.write_frame(frame.frame_view()).unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+    let dense_bytes = topology.atom_count() * std::mem::size_of::<Point3>();
+    let required = dense_bytes + topology.atom_count() * std::mem::size_of::<f32>();
+    let (stream, control) = GuardedCursor::new(bytes.clone(), 200);
+    let mut reader = DcdReader::new(
+        stream,
+        Arc::clone(&topology),
+        DcdReadOptions::default().with_limits(TrajectoryIoLimits {
+            max_scratch_bytes: required - 1,
+            ..TrajectoryIoLimits::default()
+        }),
+    )
+    .unwrap();
+    let mut destination = reader.frame_buffer();
+    destination.set_step(Some(99));
+    let before = buffer_snapshot(&destination);
+    assert_eq!(
+        codec_kind(&reader.read_next(&mut destination).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+    );
+    assert!(
+        !control.violated(),
+        "the oversized coordinate payload was read"
+    );
+    assert_eq!(buffer_snapshot(&destination), before);
+    let mut reader = DcdReader::new(
+        Cursor::new(bytes),
+        topology,
+        DcdReadOptions::default().with_limits(TrajectoryIoLimits {
+            max_scratch_bytes: required,
+            ..TrajectoryIoLimits::default()
+        }),
+    )
+    .unwrap()
+    .into_indexed()
+    .unwrap();
+    reader.read_frame(0, &mut destination).unwrap();
+    assert_eq!(destination.frame_view().step(), Some(0));
+}
+
+#[test]
+fn failed_random_dcd_read_cannot_poison_sequential_fixed_atom_reconstruction() {
+    let topology = topology();
+    let stream = support::SharedCursor::new(fixed_atom_fixture(DcdEndian::Little));
+    let mut reader = DcdReader::new(
+        stream.clone(),
+        Arc::clone(&topology),
+        DcdReadOptions::default(),
+    )
+    .unwrap()
+    .into_indexed()
+    .unwrap();
+    let mut destination = reader.frame_buffer();
+    assert!(reader.read_next(&mut destination).unwrap());
+    let before = buffer_snapshot(&destination);
+    // The first full frame begins at 208. Alter a fixed atom's x, then fail
+    // the y record; random decoding will have partially overwritten scratch.
+    stream.overwrite(212, &99.0_f32.to_le_bytes());
+    stream.overwrite(232, &f32::NAN.to_le_bytes());
+    assert_eq!(
+        codec_kind(&reader.read_frame(0, &mut destination).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::InvalidFrame)
+    );
+    assert_eq!(buffer_snapshot(&destination), before);
+    assert!(reader.read_next(&mut destination).unwrap());
+    assert_eq!(destination.frame_view().step(), Some(1));
+    assert_xs_close(&destination, &[0.0, 1.0, 0.2]);
+    assert!(!reader.read_next(&mut destination).unwrap());
+}
+
+#[test]
 fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
     let topology = topology();
     let mut writer = DcdWriter::new(

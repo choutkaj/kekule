@@ -13,6 +13,7 @@ use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::topology::Topology;
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
+use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
     require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits,
@@ -83,6 +84,10 @@ impl Default for XtcReadOptions {
 
 impl XtcReadOptions {
     /// Sets limits applied before allocation, scanning, and seeking.
+    ///
+    /// The scratch limit covers the combined retained capacities of encoded
+    /// bytes, decoded scalar coordinates, and dense positions. Indexed and
+    /// sequential access share these buffers; index offsets have a separate limit.
     pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
         self.limits = limits;
         self
@@ -105,6 +110,9 @@ impl XtcReadOptions {
 }
 
 /// XTC writer policy with explicit lossy coordinate precision.
+///
+/// Box components always use f32. Cells that become degenerate at that precision
+/// are rejected before writing the frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct XtcWriteOptions {
     magic: XtcMagic,
@@ -144,7 +152,7 @@ impl XtcWriteOptions {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct XtcFrameInfo {
     start: u64,
     end: u64,
@@ -196,11 +204,12 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         &mut self,
         topology: &Topology,
         options: &XtcReadOptions,
-        limits: &TrajectoryIoLimits,
-        source_label: &str,
         frame_index: u64,
         clean_eof: bool,
+        positions_capacity: usize,
     ) -> Result<Option<XtcFrameInfo>, TrajectoryError> {
+        let limits = &options.limits;
+        let source_label = &options.source_label;
         self.decoded_start = None;
         let start = self.reader.stream_position().map_err(|error| {
             io_context(
@@ -305,36 +314,21 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             *value = f64::from(f32::from_be_bytes(*chunk));
         }
         let cell = decode_cell(box_values, options.cell_policy, source_label, frame_index)?;
-        let base_scratch = atom_count
-            .checked_mul(3 * std::mem::size_of::<f32>() + std::mem::size_of::<Point3>())
-            .ok_or_else(|| resource_error(source_label, None, "XTC scratch size overflows"))?;
         let coordinate_scalars = atom_count
             .checked_mul(3)
             .ok_or_else(|| resource_error(source_label, None, "XTC coordinate count overflows"))?;
-        self.decoded_positions.clear();
-        self.decoded_positions
-            .try_reserve_exact(coordinate_scalars)
-            .map_err(|_| {
-                resource_error(
-                    source_label,
-                    Some(frame_index),
-                    "could not reserve XTC decoded coordinate scratch",
-                )
-            })?;
         let (precision, compressed_bytes, end) = if atom_count <= 9 {
             let coordinate_bytes = atom_count
                 .checked_mul(12)
                 .ok_or_else(|| resource_error(source_label, None, "XTC small frame overflows"))?;
-            self.scratch.clear();
-            self.scratch
-                .try_reserve_exact(coordinate_bytes)
-                .map_err(|_| {
-                    resource_error(
-                        source_label,
-                        Some(frame_index),
-                        "could not reserve XTC small-frame scratch",
-                    )
-                })?;
+            self.reserve_decode_scratch(
+                coordinate_scalars,
+                coordinate_bytes,
+                positions_capacity,
+                limits,
+                source_label,
+                frame_index,
+            )?;
             self.scratch.resize(coordinate_bytes, 0);
             read_exact(
                 &mut self.reader,
@@ -420,26 +414,14 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                     "XTC compressed payload is zero or exceeds configured limits",
                 ));
             }
-            if base_scratch
-                .checked_add(compressed_bytes)
-                .is_none_or(|bytes| bytes > limits.max_scratch_bytes)
-            {
-                return Err(resource_error(
-                    source_label,
-                    Some(frame_index),
-                    "XTC aggregate decode scratch exceeds the configured limit",
-                ));
-            }
-            self.scratch.clear();
-            self.scratch
-                .try_reserve_exact(compressed_bytes)
-                .map_err(|_| {
-                    resource_error(
-                        source_label,
-                        Some(frame_index),
-                        "could not reserve XTC compressed validation scratch",
-                    )
-                })?;
+            self.reserve_decode_scratch(
+                coordinate_scalars,
+                compressed_bytes,
+                positions_capacity,
+                limits,
+                source_label,
+                frame_index,
+            )?;
             self.scratch.resize(compressed_bytes, 0);
             read_exact(
                 &mut self.reader,
@@ -480,16 +462,6 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 source_label,
                 Some(frame_index),
                 "XTC frame exceeds the configured byte limit",
-            ));
-        }
-        if base_scratch
-            .checked_add(compressed_bytes)
-            .is_none_or(|bytes| bytes > limits.max_scratch_bytes)
-        {
-            return Err(resource_error(
-                source_label,
-                Some(frame_index),
-                "XTC aggregate decode scratch exceeds the configured limit",
             ));
         }
         let file_end = self.reader.seek(SeekFrom::End(0)).map_err(|error| {
@@ -566,6 +538,40 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             precision,
             compressed_bytes,
         }))
+    }
+
+    fn reserve_decode_scratch(
+        &mut self,
+        coordinate_scalars: usize,
+        raw_bytes: usize,
+        positions_capacity: usize,
+        limits: &TrajectoryIoLimits,
+        source_label: &str,
+        frame: u64,
+    ) -> Result<(), TrajectoryError> {
+        let position_bytes = positions_capacity.checked_mul(std::mem::size_of::<Point3>());
+        let error = |detail: &str| resource_error(source_label, Some(frame), detail);
+        // Include the forthcoming byte buffer before reserving scalar storage;
+        // neither allocation may temporarily escape the aggregate limit.
+        reserve_scratch(
+            &mut self.decoded_positions,
+            coordinate_scalars,
+            position_bytes
+                .and_then(|bytes| bytes.checked_add(self.scratch.capacity().max(raw_bytes))),
+            limits.max_scratch_bytes,
+            error,
+        )?;
+        reserve_scratch(
+            &mut self.scratch,
+            raw_bytes,
+            position_bytes
+                .and_then(|bytes| bytes.checked_add(scratch_bytes(&self.decoded_positions)?)),
+            limits.max_scratch_bytes,
+            error,
+        )?;
+        self.decoded_positions.clear();
+        self.scratch.clear();
+        Ok(())
     }
 
     fn decode(
@@ -650,6 +656,16 @@ impl<R: Read + Seek> XtcReader<R> {
         let source_label = &options.source_label;
         let limits = &options.limits;
         validate_atom_count(topology.atom_count(), limits, source_label)?;
+        let atom_count = topology.atom_count();
+        let mut positions = Vec::new();
+        reserve_scratch(
+            &mut positions,
+            atom_count,
+            Some(0),
+            limits.max_scratch_bytes,
+            |detail| resource_error(source_label, None, detail),
+        )?;
+        positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
         let mut adapter = CheckedXtcReaderAdapter::new(reader);
         let stream_start = adapter.reader.stream_position().map_err(|error| {
             io_context(
@@ -660,15 +676,9 @@ impl<R: Read + Seek> XtcReader<R> {
             )
         })?;
         let first_info = adapter
-            .preflight(&topology, &options, limits, source_label, 0, false)
+            .preflight(&topology, &options, 0, false, positions.capacity())
             .map_err(|error| frame_offset_context(error, 0, stream_start))?
             .ok_or_else(|| header_error(source_label, "XTC stream is empty"))?;
-        let atom_count = topology.atom_count();
-        let mut positions = Vec::new();
-        positions.try_reserve_exact(atom_count).map_err(|_| {
-            resource_error(source_label, None, "could not reserve XTC position scratch")
-        })?;
-        positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
         Ok(Self {
             adapter,
             topology,
@@ -705,10 +715,9 @@ impl<R: Read + Seek> XtcReader<R> {
             .preflight(
                 &self.topology,
                 &self.options,
-                &self.options.limits,
-                &self.options.source_label,
                 self.frame_cursor,
                 true,
+                self.positions.capacity(),
             )
             .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))
     }
@@ -766,10 +775,9 @@ impl<R: Read + Seek> XtcReader<R> {
                 .preflight(
                     &self.topology,
                     &self.options,
-                    &self.options.limits,
-                    &self.options.source_label,
                     self.frame_cursor,
                     false,
+                    self.positions.capacity(),
                 )?
                 .ok_or_else(|| {
                     truncated_error(
@@ -778,13 +786,7 @@ impl<R: Read + Seek> XtcReader<R> {
                         "XTC indexed frame disappeared during preflight",
                     )
                 })?;
-            if refreshed.start != info.start
-                || refreshed.end != info.end
-                || refreshed.magic != info.magic
-                || refreshed.atom_count != info.atom_count
-                || refreshed.step != info.step
-                || refreshed.time != info.time
-            {
+            if refreshed != info {
                 return Err(corrupt_error(
                     &self.options.source_label,
                     self.frame_cursor,
@@ -883,24 +885,9 @@ impl<R: Read + Seek> XtcReader<R> {
             offsets.push(offset);
         }
         self.rewind()?;
-        let atom_count = self.topology.as_ref().atom_count();
-        let mut random_positions = Vec::new();
-        random_positions
-            .try_reserve_exact(atom_count)
-            .map_err(|_| {
-                resource_error(
-                    &self.options.source_label,
-                    None,
-                    "could not reserve indexed XTC position scratch",
-                )
-            })?;
-        random_positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
         Ok(IndexedXtcReader {
             inner: self,
             offsets,
-            random_positions,
-            random_adapter_scratch: Vec::new(),
-            random_decoded_positions: Vec::new(),
         })
     }
 
@@ -920,10 +907,9 @@ impl<R: Read + Seek> XtcReader<R> {
         self.pending_info = self.adapter.preflight(
             &self.topology,
             &self.options,
-            &self.options.limits,
-            &self.options.source_label,
             0,
             false,
+            self.positions.capacity(),
         )?;
         Ok(())
     }
@@ -967,12 +953,13 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
 }
 
 /// Fully decoded-and-verified indexed XTC reader.
+///
+/// Random and sequential reads share decode scratch. A random read restores
+/// stream/header state and invalidates cached coordinates, so the next sequential
+/// frame is decoded again when it was already pending.
 pub struct IndexedXtcReader<R> {
     inner: XtcReader<R>,
     offsets: Vec<u64>,
-    random_positions: Vec<Point3>,
-    random_adapter_scratch: Vec<u8>,
-    random_decoded_positions: Vec<f32>,
 }
 
 impl<R: Read + Seek> IndexedXtcReader<R> {
@@ -1032,7 +1019,6 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
             })?;
         let saved_cursor = self.inner.frame_cursor;
         let saved_pending = self.inner.pending_info.clone();
-        let saved_decoded_start = self.inner.adapter.decoded_start;
         self.inner
             .adapter
             .reader
@@ -1047,15 +1033,6 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
             })?;
         self.inner.pending_info = None;
         self.inner.adapter.decoded_start = None;
-        std::mem::swap(
-            &mut self.inner.adapter.scratch,
-            &mut self.random_adapter_scratch,
-        );
-        std::mem::swap(
-            &mut self.inner.adapter.decoded_positions,
-            &mut self.random_decoded_positions,
-        );
-        std::mem::swap(&mut self.inner.positions, &mut self.random_positions);
         self.inner.frame_cursor = index;
         let result = self
             .inner
@@ -1077,20 +1054,11 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
             });
         self.inner.frame_cursor = saved_cursor;
         self.inner.pending_info = saved_pending;
-        self.inner.adapter.decoded_start = saved_decoded_start;
-        std::mem::swap(
-            &mut self.inner.adapter.scratch,
-            &mut self.random_adapter_scratch,
-        );
-        std::mem::swap(
-            &mut self.inner.adapter.decoded_positions,
-            &mut self.random_decoded_positions,
-        );
-        std::mem::swap(&mut self.inner.positions, &mut self.random_positions);
+        self.inner.adapter.decoded_start = None;
         let info = result?;
         restore?;
         self.inner
-            .publish(&self.random_positions, &info, destination)
+            .publish(&self.inner.positions, &info, destination)
     }
 }
 
@@ -1312,6 +1280,23 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         ) {
             *target = finite_f32(value, &self.source_label, "box")?;
         }
+        // Scalar finiteness alone cannot ensure the narrowed matrix still spans
+        // three dimensions. Validate the representation the reader will receive.
+        decode_cell(
+            self.adapter.frame.boxvec.map(f64::from),
+            XtcCellPolicy::RequirePeriodic,
+            &self.source_label,
+            self.frame_count,
+        )
+        .map_err(|error| {
+            codec_context(
+                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Xtc),
+                &self.source_label,
+                format!("XTC cell is not representable as a valid f32 box: {error}"),
+            )
+        })?;
         let positions = frame.positions().values();
         let factor = positions
             .unit()
