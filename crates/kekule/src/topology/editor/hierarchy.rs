@@ -26,6 +26,7 @@ pub struct EditResidue {
     pub(super) author_seq: Option<String>,
     pub(super) insertion: Option<String>,
     pub(super) class: Option<ResidueClass>,
+    pub(super) class_explicit: bool,
     pub(super) slot: usize,
 }
 impl EditResidue {
@@ -50,9 +51,10 @@ impl EditResidue {
     pub fn insertion_code(&self) -> Option<&str> {
         self.insertion.as_deref()
     }
-    /// `None` requests automatic classification at publication.
+    /// Returns an explicit assignment, if present. `None` retains an unchanged
+    /// inferred class or requests inference when its evidence has changed.
     pub fn class_override(&self) -> Option<ResidueClass> {
-        self.class
+        self.class.filter(|_| self.class_explicit)
     }
 }
 /// Atom-site organization referring to a stable editing atom handle.
@@ -81,6 +83,7 @@ pub(super) struct EditHierarchy {
     pub(super) residues: BTreeMap<EditResidueId, EditResidue>,
     pub(super) sites: BTreeMap<EditAtomSiteId, EditAtomSite>,
     pub(super) atom_sites: BTreeMap<EditAtomId, EditAtomSiteId>,
+    pub(super) residue_atoms: BTreeMap<EditResidueId, BTreeSet<EditAtomId>>,
     pub(super) source_chains: BTreeMap<ChainId, EditChainId>,
     pub(super) source_residues: BTreeMap<ResidueId, EditResidueId>,
     pub(super) source_sites: BTreeMap<AtomSiteId, EditAtomSiteId>,
@@ -190,9 +193,11 @@ impl TopologyEditor {
                 author_seq,
                 insertion,
                 class: None,
+                class_explicit: false,
                 slot,
             },
         );
+        self.hierarchy.residue_atoms.insert(id, BTreeSet::new());
         self.properties.residues_mut().resize_missing(slot + 1);
         self.changed();
         Ok(id)
@@ -220,7 +225,13 @@ impl TopologyEditor {
             },
         );
         self.hierarchy.atom_sites.insert(atom, id);
-        self.hierarchy.residues.get_mut(&residue).unwrap().class = None;
+        self.hierarchy
+            .residue_atoms
+            .get_mut(&residue)
+            .unwrap()
+            .insert(atom);
+        self.invalidate_molecule_class_for_atom(atom);
+        self.invalidate_residue_class(residue, true);
         self.properties.atom_sites_mut().resize_missing(slot + 1);
         self.changed();
         Ok(id)
@@ -255,7 +266,7 @@ impl TopologyEditor {
         }
         residue.label_comp = label;
         residue.author_comp = author;
-        residue.class = None;
+        self.invalidate_residue_class(id, false);
         self.changed();
         Ok(())
     }
@@ -264,10 +275,15 @@ impl TopologyEditor {
         id: EditResidueId,
         class: ResidueClass,
     ) -> Result<(), TopologyEditError> {
-        if self.residue(id)?.class == Some(class) {
+        let previous = self.residue(id)?.class;
+        if self.residue(id)?.class == Some(class) && self.residue(id)?.class_explicit {
             return Ok(());
         }
         self.hierarchy.residues.get_mut(&id).unwrap().class = Some(class);
+        self.hierarchy.residues.get_mut(&id).unwrap().class_explicit = true;
+        if previous != Some(class) {
+            self.invalidate_molecule_classes_for_residue(id);
+        }
         self.revision += 1;
         Ok(())
     }
@@ -279,7 +295,13 @@ impl TopologyEditor {
         if self.atom_site(id)?.metadata == metadata {
             return Ok(());
         }
+        let previous = &self.atom_site(id)?.metadata;
+        let names_changed = previous.label_atom_id != metadata.label_atom_id
+            || previous.auth_atom_id != metadata.auth_atom_id;
         self.hierarchy.sites.get_mut(&id).unwrap().metadata = metadata;
+        if names_changed {
+            self.invalidate_molecule_class_for_atom(self.hierarchy.sites[&id].atom);
+        }
         self.changed();
         Ok(())
     }
@@ -294,8 +316,20 @@ impl TopologyEditor {
             return Ok(());
         }
         self.hierarchy.sites.get_mut(&id).unwrap().residue = residue;
-        self.hierarchy.residues.get_mut(&residue).unwrap().class = None;
-        self.hierarchy.residues.get_mut(&previous).unwrap().class = None;
+        let atom = self.hierarchy.sites[&id].atom;
+        self.hierarchy
+            .residue_atoms
+            .get_mut(&previous)
+            .unwrap()
+            .remove(&atom);
+        self.hierarchy
+            .residue_atoms
+            .get_mut(&residue)
+            .unwrap()
+            .insert(atom);
+        self.invalidate_molecule_class_for_atom(atom);
+        self.invalidate_residue_class(residue, true);
+        self.invalidate_residue_class(previous, true);
         self.prune_empty_residue(previous);
         self.changed();
         Ok(())
@@ -308,12 +342,14 @@ impl TopologyEditor {
         self.atom_site(id)?;
         let site = self.hierarchy.sites.remove(&id).unwrap();
         self.hierarchy.atom_sites.remove(&site.atom);
-        self.properties.atom_sites_mut().clear_index(site.slot);
         self.hierarchy
-            .residues
+            .residue_atoms
             .get_mut(&site.residue)
             .unwrap()
-            .class = None;
+            .remove(&site.atom);
+        self.properties.atom_sites_mut().clear_index(site.slot);
+        self.invalidate_residue_class(site.residue, true);
+        self.invalidate_molecule_class_for_atom(site.atom);
         self.prune_empty_residue(site.residue);
         self.changed();
         Ok(site)
@@ -355,17 +391,48 @@ impl TopologyEditor {
     }
 
     pub(super) fn invalidate_residue_for_atom(&mut self, atom: EditAtomId) {
-        if let Some(site) = self
+        if let Some(residue) = self
             .hierarchy
             .atom_sites
             .get(&atom)
             .and_then(|id| self.hierarchy.sites.get(id))
+            .map(|site| site.residue)
         {
-            self.hierarchy
-                .residues
-                .get_mut(&site.residue)
-                .unwrap()
-                .class = None;
+            self.invalidate_residue_class(residue, true);
+        }
+    }
+
+    fn invalidate_residue_class(&mut self, id: EditResidueId, composition_changed: bool) {
+        let residue = self.hierarchy.residues.get_mut(&id).unwrap();
+        let had_class = residue.class.is_some();
+        if composition_changed || !residue.class_explicit {
+            residue.class = None;
+            residue.class_explicit = false;
+        }
+        // Previously attached atoms were invalidated when this residue first
+        // lost its cached class. Newly attached/detached atoms are handled by
+        // the site operation, so assembly does not repeatedly scan a growing residue.
+        if had_class {
+            self.invalidate_molecule_classes_for_residue(id);
+        }
+    }
+
+    fn invalidate_molecule_classes_for_residue(&mut self, residue: EditResidueId) {
+        let atoms = self.hierarchy.residue_atoms[&residue]
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        for atom in atoms {
+            self.invalidate_molecule_class_for_atom(atom);
+        }
+    }
+
+    fn invalidate_molecule_class_for_atom(&mut self, atom: EditAtomId) {
+        if let Some(loc) = self.atoms.get(&atom) {
+            let group = self.groups[loc.group].as_mut().unwrap();
+            if !group.class_explicit {
+                group.class = None;
+            }
         }
     }
     pub(super) fn remove_site_for_atom(&mut self, atom: EditAtomId) {
@@ -374,9 +441,10 @@ impl TopologyEditor {
         }
     }
     fn prune_empty_residue(&mut self, residue: EditResidueId) {
-        if self.hierarchy.sites.values().any(|s| s.residue == residue) {
+        if !self.hierarchy.residue_atoms[&residue].is_empty() {
             return;
         }
+        self.hierarchy.residue_atoms.remove(&residue);
         let removed = self.hierarchy.residues.remove(&residue).unwrap();
         self.properties.residues_mut().clear_index(removed.slot);
         if !self
@@ -415,10 +483,12 @@ impl TopologyEditor {
                     author_seq: residue.author_seq_id().map(str::to_owned),
                     insertion: residue.insertion_code().map(str::to_owned),
                     class: Some(residue.class()),
+                    class_explicit: source.residue_class_overrides.contains_key(&source_id),
                     slot: source_id.index(),
                 },
             );
             self.hierarchy.source_residues.insert(source_id, id);
+            self.hierarchy.residue_atoms.insert(id, BTreeSet::new());
         }
         for (source_id, site) in source.hierarchy().atom_sites() {
             let id = EditAtomSiteId::new();
@@ -434,6 +504,11 @@ impl TopologyEditor {
             );
             self.hierarchy.source_sites.insert(source_id, id);
             self.hierarchy.atom_sites.insert(atom, id);
+            self.hierarchy
+                .residue_atoms
+                .get_mut(&self.hierarchy.source_residues[&site.residue()])
+                .unwrap()
+                .insert(atom);
         }
     }
 }

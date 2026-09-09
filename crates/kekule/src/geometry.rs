@@ -406,7 +406,14 @@ impl fmt::Display for PeriodicCellError {
     }
 }
 
-impl std::error::Error for PeriodicCellError {}
+impl std::error::Error for PeriodicCellError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unit(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<UnitError> for PeriodicCellError {
     fn from(error: UnitError) -> Self {

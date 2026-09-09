@@ -70,7 +70,7 @@ impl StagedCoordinates {
                     .ok_or(StagedCoordinateError::MissingPosition { atom })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Positions::new(Quantity::new(values, self.unit))?)
+        Ok(Positions::from_vec(Quantity::new(values, self.unit))?)
     }
 }
 

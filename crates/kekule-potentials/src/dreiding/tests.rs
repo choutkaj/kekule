@@ -104,6 +104,119 @@ fn qeq_is_prepared_per_molecule_instance() {
 }
 
 #[test]
+fn molecule_qeq_does_not_solve_or_depend_on_interinstance_coordinates() {
+    let (water, positions) = water(0.0);
+    let isolated = Model::from_molecule(&water, &positions).unwrap();
+    let isolated = DreidingPotential::prepare(
+        &isolated.shared_topology(),
+        isolated.view(),
+        DreidingPrepareOptions::default(),
+    )
+    .unwrap();
+    // This close translated pair causes the irrelevant global hydrogen SCF
+    // calculation to fail; each selected charge group has ordinary water geometry.
+    let (_, translated) = self::water(0.01);
+    let mut builder = Model::builder();
+    let first = builder.add_molecule(&water, &positions).unwrap();
+    let second = builder.add_molecule(&water, &translated).unwrap();
+    let model = builder.build().unwrap();
+    let potential = DreidingPotential::prepare(
+        &model.shared_topology(),
+        model.view(),
+        DreidingPrepareOptions::default(),
+    )
+    .unwrap();
+    for instance in [first, second] {
+        for atom in 0..3 {
+            let expected = isolated
+                .partial_charge(InstanceAtomId::new(
+                    MoleculeInstanceId::new(0),
+                    AtomId::new(atom),
+                ))
+                .unwrap()
+                .into_value();
+            let actual = potential
+                .partial_charge(InstanceAtomId::new(instance, AtomId::new(atom)))
+                .unwrap()
+                .into_value();
+            assert!((actual - expected).abs() < 1.0e-10);
+        }
+    }
+}
+
+#[test]
+fn grouped_preparation_preserves_upstream_charged_hydrogen_bond_parameters() {
+    use dreid_forge::{Atom as ForgeAtom, Bond as ForgeBond, ChargeMethod, ForgeConfig, System};
+    use kekule::units::{
+        Quantity, ANGSTROM, CANONICAL_ENERGY_UNIT, CANONICAL_LENGTH_UNIT, KILOCALORIE_PER_MOLE,
+    };
+
+    let mut builder = Model::builder();
+    let mut upstream = System::new();
+    for offset in [0.0, 5.0] {
+        let (water, positions) = water(offset);
+        builder.add_molecule(&water, &positions).unwrap();
+        let start = upstream.atoms.len();
+        for (element, point) in ["O", "H", "H"]
+            .into_iter()
+            .zip(positions.values().value().iter().copied())
+        {
+            let point = Quantity::new(point, CANONICAL_LENGTH_UNIT)
+                .value_in(ANGSTROM)
+                .unwrap();
+            upstream.atoms.push(ForgeAtom::new(
+                element.parse().unwrap(),
+                [point.x, point.y, point.z],
+            ));
+        }
+        upstream.bonds.push(ForgeBond::new(
+            start,
+            start + 1,
+            dreid_forge::BondOrder::Single,
+        ));
+        upstream.bonds.push(ForgeBond::new(
+            start,
+            start + 2,
+            dreid_forge::BondOrder::Single,
+        ));
+    }
+    let upstream = dreid_forge::forge(
+        &upstream,
+        &ForgeConfig {
+            charge_method: ChargeMethod::Qeq(Default::default()),
+            ..ForgeConfig::default()
+        },
+    )
+    .unwrap();
+    let expected = &upstream.potentials.h_bonds[0];
+    let model = builder.build().unwrap();
+    for qeq_grouping in [QeqGrouping::MoleculeInstances, QeqGrouping::WholeTopology] {
+        let potential = DreidingPotential::prepare(
+            &model.shared_topology(),
+            model.view(),
+            DreidingPrepareOptions { qeq_grouping },
+        )
+        .unwrap();
+        assert_eq!(potential.hydrogen_bonds.len(), 4);
+        for term in &potential.hydrogen_bonds {
+            assert_eq!(
+                term.d_hb,
+                Quantity::new(expected.d_hb, KILOCALORIE_PER_MOLE)
+                    .value_in(CANONICAL_ENERGY_UNIT)
+                    .unwrap()
+            );
+            let length_factor = ANGSTROM
+                .conversion_factor_to(CANONICAL_LENGTH_UNIT)
+                .unwrap();
+            assert_eq!(
+                term.r_hb_sq,
+                expected.r_hb_sq * (length_factor * length_factor)
+            );
+        }
+    }
+}
+
+#[test]
 fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
     let (water, positions) = water(0.0);
     let model = Model::from_molecule(&water, &positions).unwrap();

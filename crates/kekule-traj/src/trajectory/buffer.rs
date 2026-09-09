@@ -178,6 +178,8 @@ impl FrameBuffer {
         self.cell = cell;
     }
 
+    /// Copies velocities into reusable storage. Use [`Self::clear_velocities`]
+    /// to clear them without specifying a generic container type for `None`.
     pub fn set_velocities<T>(&mut self, velocities: Option<Quantity<T>>) -> Result<(), FrameError>
     where
         T: AsRef<[Vector3]>,
@@ -192,6 +194,8 @@ impl FrameBuffer {
         Ok(())
     }
 
+    /// Copies forces into reusable storage. Use [`Self::clear_forces`] to clear
+    /// them without specifying a generic container type for `None`.
     pub fn set_forces<T>(&mut self, forces: Option<Quantity<T>>) -> Result<(), FrameError>
     where
         T: AsRef<[Vector3]>,
@@ -204,6 +208,16 @@ impl FrameBuffer {
             None => self.has_forces = false,
         }
         Ok(())
+    }
+
+    /// Clears velocities while retaining the reusable backing allocation.
+    pub fn clear_velocities(&mut self) {
+        self.has_velocities = false;
+    }
+
+    /// Clears forces while retaining the reusable backing allocation.
+    pub fn clear_forces(&mut self) {
+        self.has_forces = false;
     }
 
     pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), FrameError> {

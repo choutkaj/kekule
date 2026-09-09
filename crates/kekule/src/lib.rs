@@ -155,9 +155,9 @@ pub mod smiles {
 
     use crate::core::Molecule;
     pub use crate::io::{
-        MolWriteError, SmilesAtomMapping, SmilesBondMapping, SmilesComponentCountError,
-        SmilesComponentInterpretation, SmilesDocument, SmilesDocumentToken,
-        SmilesDocumentTokenKind, SmilesInterpretError, SmilesInterpretation,
+        MolWriteError, MolWriteErrorKind, SmilesAtomMapping, SmilesBondMapping,
+        SmilesComponentCountError, SmilesComponentInterpretation, SmilesDocument,
+        SmilesDocumentToken, SmilesDocumentTokenKind, SmilesInterpretError, SmilesInterpretation,
         SmilesInterpretationReport, SmilesParseError, SmilesParseOptions,
     };
     use crate::topology::{Topology, TopologyBuildError};
@@ -300,6 +300,13 @@ pub mod smiles {
     }
 
     /// Writes deterministic canonical connectivity SMILES.
+    ///
+    /// Successful output is invariant under atom numbering. Isotopes and stereo
+    /// are omitted, while formal charges and atom maps are retained. Complete
+    /// canonical labeling is bounded by 100,000 search states, 50,000,000
+    /// atom/edge/twin visits, and 2,000,000 pending atom labels. If a bound is
+    /// exhausted, returns [`MolWriteErrorKind::ResourceLimit`] without publishing
+    /// a partial canonical result.
     pub fn write_canonical(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_canonical_smiles(molecule)
     }

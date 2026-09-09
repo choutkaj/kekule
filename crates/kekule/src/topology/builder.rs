@@ -45,6 +45,10 @@ pub struct TopologyBuilder {
     properties: Properties,
     molecule_class_overrides: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
     residue_class_overrides: BTreeMap<ResidueId, ResidueClass>,
+    preserved_molecule_classes: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
+    preserved_residue_classes: BTreeMap<ResidueId, ResidueClass>,
+    source_hierarchy: Option<Hierarchy>,
+    source_instance_count: usize,
     extending_topology: bool,
 }
 
@@ -65,16 +69,19 @@ impl TopologyBuilder {
                 instances: topology.instances.clone(),
                 hierarchy: topology.hierarchy.clone(),
                 properties: topology.properties.clone(),
-                molecule_class_overrides: topology
-                    .definitions
-                    .iter()
-                    .map(|d| (d.id(), d.class()))
+                molecule_class_overrides: topology.molecule_class_overrides.clone(),
+                residue_class_overrides: topology.residue_class_overrides.clone(),
+                preserved_molecule_classes: topology
+                    .definitions()
+                    .map(|(id, d)| (id, d.class()))
                     .collect(),
-                residue_class_overrides: topology
+                preserved_residue_classes: topology
                     .hierarchy
                     .residues()
                     .map(|(id, r)| (id, r.class()))
                     .collect(),
+                source_hierarchy: Some(topology.hierarchy.clone()),
+                source_instance_count: topology.instance_count(),
                 extending_topology: true,
             },
         }
@@ -154,16 +161,17 @@ impl TopologyBuilder {
             instances,
             hierarchy,
             properties,
+            molecule_class_overrides,
+            residue_class_overrides,
             ..
         } = topology;
-        let molecule_class_overrides = definitions
-            .iter()
-            .map(|definition| (definition.id(), definition.class()))
-            .collect();
-        let residue_class_overrides = hierarchy
+        let preserved_molecule_classes = definitions.iter().map(|d| (d.id(), d.class())).collect();
+        let preserved_residue_classes = hierarchy
             .residues()
-            .map(|(id, residue)| (id, residue.class()))
+            .map(|(id, r)| (id, r.class()))
             .collect();
+        let source_hierarchy = Some(hierarchy.clone());
+        let source_instance_count = instances.len();
         Self {
             definitions,
             instances,
@@ -171,6 +179,10 @@ impl TopologyBuilder {
             properties,
             molecule_class_overrides,
             residue_class_overrides,
+            preserved_molecule_classes,
+            preserved_residue_classes,
+            source_hierarchy,
+            source_instance_count,
             extending_topology: true,
         }
     }
@@ -184,6 +196,10 @@ impl TopologyBuilder {
     ///
     /// References are checked transactionally by [`Self::build`]; published
     /// topologies never expose mutable hierarchy access.
+    /// Inferred classes follow the resulting component identities and atom sites;
+    /// explicit builder class assignments retain precedence over changed
+    /// evidence, including changed residue membership. In contrast, structural
+    /// editor composition changes require fresh class overrides.
     pub fn hierarchy_mut(&mut self) -> &mut Hierarchy {
         &mut self.hierarchy
     }
@@ -290,6 +306,40 @@ impl TopologyBuilder {
             .residue(residue)
             .map_err(|_| TopologyBuildError::InvalidResidueId(residue))?;
         self.residue_class_overrides.insert(residue, class);
+        Ok(())
+    }
+
+    // Transformations may preserve a complete entity's current class without
+    // turning an inferred value into a permanent user override.
+    pub(super) fn preserve_molecule_class(
+        &mut self,
+        definition: MoleculeDefinitionId,
+        class: MoleculeClass,
+        explicit: bool,
+    ) -> Result<(), TopologyBuildError> {
+        self.definition(definition)?;
+        if explicit {
+            self.molecule_class_overrides.insert(definition, class);
+        } else {
+            self.preserved_molecule_classes.insert(definition, class);
+        }
+        Ok(())
+    }
+
+    pub(super) fn preserve_residue_class(
+        &mut self,
+        residue: ResidueId,
+        class: ResidueClass,
+        explicit: bool,
+    ) -> Result<(), TopologyBuildError> {
+        self.hierarchy
+            .residue(residue)
+            .map_err(|_| TopologyBuildError::InvalidResidueId(residue))?;
+        if explicit {
+            self.residue_class_overrides.insert(residue, class);
+        } else {
+            self.preserved_residue_classes.insert(residue, class);
+        }
         Ok(())
     }
 
@@ -413,12 +463,23 @@ impl TopologyBuilder {
         validate_hierarchy(&self.hierarchy, &atom_indices)
             .map_err(TopologyBuildError::InvalidHierarchy)?;
 
+        self.invalidate_changed_hierarchy_classes();
+        self.preserved_molecule_classes.extend(
+            self.molecule_class_overrides
+                .iter()
+                .map(|(&id, &class)| (id, class)),
+        );
+        self.preserved_residue_classes.extend(
+            self.residue_class_overrides
+                .iter()
+                .map(|(&id, &class)| (id, class)),
+        );
         super::classification::finalize(
             &mut self.definitions,
             &self.instances,
             &mut self.hierarchy,
-            &self.molecule_class_overrides,
-            &self.residue_class_overrides,
+            &self.preserved_molecule_classes,
+            &self.preserved_residue_classes,
         );
 
         self.properties.resize_domains(
@@ -449,6 +510,8 @@ impl TopologyBuilder {
             bond_indices,
             hierarchy: self.hierarchy,
             properties: self.properties,
+            molecule_class_overrides: self.molecule_class_overrides,
+            residue_class_overrides: self.residue_class_overrides,
         })
     }
 
@@ -479,6 +542,64 @@ impl TopologyBuilder {
             self.hierarchy.residues().count(),
             self.hierarchy.atom_sites().count(),
         );
+    }
+
+    fn invalidate_changed_hierarchy_classes(&mut self) {
+        let Some(source) = &self.source_hierarchy else {
+            return;
+        };
+        let unchanged_residues = source
+            .residues()
+            .filter_map(|(id, before)| {
+                let after = self.hierarchy.residue(id).ok()?;
+                let same_component = before.name() == after.name()
+                    && before.label_comp_id() == after.label_comp_id()
+                    && before.author_comp_id() == after.author_comp_id();
+                let atoms = |hierarchy: &Hierarchy, residue: &super::Residue| {
+                    residue
+                        .atom_sites()
+                        .iter()
+                        .map(|&id| {
+                            hierarchy
+                                .atom_site(id)
+                                .expect("validated residue site")
+                                .atom()
+                        })
+                        .collect::<std::collections::BTreeSet<_>>()
+                };
+                let same_atoms = atoms(source, before) == atoms(&self.hierarchy, after);
+                let same_class = self
+                    .residue_class_overrides
+                    .get(&id)
+                    .is_none_or(|&class| class == before.class());
+                (same_component && same_atoms && same_class).then_some(id)
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        self.preserved_residue_classes
+            .retain(|id, _| unchanged_residues.contains(id));
+        for instance in self.instances.iter().take(self.source_instance_count) {
+            let definition = &self.definitions[instance.definition().index()];
+            let unchanged = definition.molecule().atom_ids().all(|atom| {
+                let atom = instance.qualify_atom(atom);
+                match (
+                    source.atom_site_for_atom(atom),
+                    self.hierarchy.atom_site_for_atom(atom),
+                ) {
+                    (None, None) => true,
+                    (Some(before), Some(after)) => {
+                        before.residue() == after.residue()
+                            && unchanged_residues.contains(&before.residue())
+                            && before.metadata().label_atom_id == after.metadata().label_atom_id
+                            && before.metadata().auth_atom_id == after.metadata().auth_atom_id
+                    }
+                    _ => false,
+                }
+            });
+            if !unchanged {
+                self.preserved_molecule_classes
+                    .remove(&instance.definition());
+            }
+        }
     }
 
     fn commit_definition(

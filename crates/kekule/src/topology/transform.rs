@@ -136,7 +136,11 @@ fn retain_normalized(
         .filter(|(id, _)| referenced_definitions[id.index()])
     {
         let target_id = builder.add_molecule_definition(definition.molecule())?;
-        builder.set_molecule_class(target_id, definition.class())?;
+        builder.preserve_molecule_class(
+            target_id,
+            definition.class(),
+            topology.molecule_class_overrides.contains_key(&source_id),
+        )?;
         definition_targets[source_id.index()] = Some(target_id);
     }
 
@@ -177,7 +181,13 @@ fn retain_normalized(
             .residue(ResidueId::new(source_index as u32))
             .expect("retained residue projection references a live source residue")
             .class();
-        builder.set_residue_class(ResidueId::new(target_index as u32), class)?;
+        builder.preserve_residue_class(
+            ResidueId::new(target_index as u32),
+            class,
+            topology
+                .residue_class_overrides
+                .contains_key(&ResidueId::new(source_index as u32)),
+        )?;
     }
 
     let mut target = builder.build()?;
@@ -229,7 +239,16 @@ impl fmt::Display for TopologyTransformError {
     }
 }
 
-impl std::error::Error for TopologyTransformError {}
+impl std::error::Error for TopologyTransformError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::TopologyBuild(error) => Some(error),
+            Self::Hierarchy(error) => Some(error),
+            Self::Property(error) => Some(error),
+            Self::InvalidSourceInstance(_) | Self::EmptyTargetTopology => None,
+        }
+    }
+}
 
 impl From<TopologyBuildError> for TopologyTransformError {
     fn from(error: TopologyBuildError) -> Self {
@@ -363,7 +382,11 @@ impl Topology {
                         let definitions = super::components::build_component_definitions(
                             source_molecule,
                             &entry.key().1,
-                            Some(molecule_view.class()),
+                            Some((
+                                molecule_view.class(),
+                                self.molecule_class_overrides
+                                    .contains_key(&molecule_view.definition_id()),
+                            )),
                             &mut builder,
                         )?;
                         entry.insert(definitions)
@@ -403,7 +426,11 @@ impl Topology {
                 atom_targets.contains_key(&atom)
             });
             if complete {
-                builder.set_residue_class(ResidueId::new(target_index as u32), residue.class())?;
+                builder.preserve_residue_class(
+                    ResidueId::new(target_index as u32),
+                    residue.class(),
+                    self.residue_class_overrides.contains_key(&residue.id()),
+                )?;
             }
         }
         let mut target = builder.build()?;
@@ -602,7 +629,19 @@ impl fmt::Display for TopologySubsetError {
     }
 }
 
-impl std::error::Error for TopologySubsetError {}
+impl std::error::Error for TopologySubsetError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Selection(error) => Some(error),
+            Self::Molecule(error) => Some(error),
+            Self::Publication(error) => Some(error),
+            Self::Hierarchy(error) => Some(error),
+            Self::TopologyBuild(error) => Some(error),
+            Self::Property(error) => Some(error),
+            Self::EmptySelection => None,
+        }
+    }
+}
 
 impl From<SelectionError> for TopologySubsetError {
     fn from(error: SelectionError) -> Self {

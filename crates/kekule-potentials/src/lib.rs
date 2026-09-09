@@ -7,13 +7,15 @@
 //! preparation and parameters so the foundational `kekule` crate remains
 //! independent of any particular potential model.
 //!
-//! The default `dreiding` feature provides [`dreiding::DreidingPotential`].
+//! The default `dreiding` feature provides `dreiding::DreidingPotential`.
 //! Preparation is explicit and bound to one exact shared topology. It does not
 //! parse, perceive, add hydrogens, or otherwise alter input chemistry.
 //!
 //! # Typical workflow
 //!
 //! ```no_run
+//! # #[cfg(feature = "dreiding")]
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use kekule::{modeling::potential::Potential, structure::Model};
 //! use kekule_potentials::dreiding::{
 //!     DreidingPotential, DreidingPrepareOptions,
@@ -29,7 +31,10 @@
 //! )?;
 //! let evaluation = potential.evaluate(model.view())?;
 //! assert!(evaluation.energy().is_finite());
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # Ok(())
+//! # }
+//! # #[cfg(not(feature = "dreiding"))]
+//! # fn main() {}
 //! ```
 
 #[cfg(feature = "dreiding")]

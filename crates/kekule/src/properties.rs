@@ -95,6 +95,19 @@ pub enum PropertyValue {
 }
 
 impl PropertyValue {
+    /// Borrows this scalar without copying its string storage.
+    pub fn as_ref(&self) -> PropertyValueRef<'_> {
+        match self {
+            Self::Bool(value) => PropertyValueRef::Bool(*value),
+            Self::Int(value) => PropertyValueRef::Int(*value),
+            Self::Real { value, unit } => PropertyValueRef::Real {
+                value: *value,
+                unit: *unit,
+            },
+            Self::String(value) => PropertyValueRef::String(value),
+        }
+    }
+
     pub fn real(value: f64, unit: Unit) -> Result<Self, PropertyError> {
         let value = Self::Real { value, unit };
         value.validate()?;
@@ -108,6 +121,30 @@ impl PropertyValue {
             }
         }
         Ok(())
+    }
+}
+
+/// A scalar property view that borrows string storage from its owner or column.
+///
+/// Numerical values and units are copied; strings remain borrowed. Use
+/// [`Self::to_value`] when an independently owned value is needed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PropertyValueRef<'a> {
+    Bool(bool),
+    Int(i64),
+    Real { value: f64, unit: Unit },
+    String(&'a str),
+}
+
+impl PropertyValueRef<'_> {
+    /// Materializes an owned scalar, copying string storage when present.
+    pub fn to_value(self) -> PropertyValue {
+        match self {
+            Self::Bool(value) => PropertyValue::Bool(value),
+            Self::Int(value) => PropertyValue::Int(value),
+            Self::Real { value, unit } => PropertyValue::Real { value, unit },
+            Self::String(value) => PropertyValue::String(value.to_owned()),
+        }
     }
 }
 
@@ -169,7 +206,14 @@ impl PropertyColumn {
         }
     }
 
+    /// Reads a scalar, copying string storage. See [`Self::value_ref`] to borrow.
     pub fn value(&self, index: usize) -> Result<Option<PropertyValue>, PropertyError> {
+        self.value_ref(index)
+            .map(|value| value.map(PropertyValueRef::to_value))
+    }
+
+    /// Borrows one cell without allocating, preserving missing-value semantics.
+    pub fn value_ref(&self, index: usize) -> Result<Option<PropertyValueRef<'_>>, PropertyError> {
         if index >= self.len() {
             return Err(PropertyError::InvalidIndex {
                 len: self.len(),
@@ -177,12 +221,12 @@ impl PropertyColumn {
             });
         }
         Ok(match self {
-            Self::Bool(values) => values[index].map(PropertyValue::Bool),
-            Self::Int(values) => values[index].map(PropertyValue::Int),
+            Self::Bool(values) => values[index].map(PropertyValueRef::Bool),
+            Self::Int(values) => values[index].map(PropertyValueRef::Int),
             Self::Real { unit, values } => {
-                values[index].map(|value| PropertyValue::Real { value, unit: *unit })
+                values[index].map(|value| PropertyValueRef::Real { value, unit: *unit })
             }
-            Self::String(values) => values[index].clone().map(PropertyValue::String),
+            Self::String(values) => values[index].as_deref().map(PropertyValueRef::String),
         })
     }
 
@@ -456,10 +500,23 @@ impl PropertyTable {
         key: &PropertyKey,
         index: usize,
     ) -> Result<Option<PropertyValue>, PropertyError> {
+        self.value_ref(key, index)
+            .map(|value| value.map(PropertyValueRef::to_value))
+    }
+
+    /// Borrows one property cell without allocating.
+    ///
+    /// Missing keys and missing cells return `None`; an invalid row is an error
+    /// even when the key is absent.
+    pub fn value_ref(
+        &self,
+        key: &PropertyKey,
+        index: usize,
+    ) -> Result<Option<PropertyValueRef<'_>>, PropertyError> {
         self.validate_index(index)?;
         self.columns
             .get(key)
-            .map(|column| column.value(index))
+            .map(|column| column.value_ref(index))
             .transpose()
             .map(Option::flatten)
     }

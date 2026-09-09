@@ -93,17 +93,33 @@ impl DreidingPotential {
             return Err(DreidingPrepareError::UnsupportedPeriodicCell);
         }
         let prepared = PreparedInput::new(topology, reference, options.qeq_grouping)?;
-        let total_charge = prepared
-            .groups
-            .iter()
-            .map(|group| group.formal_charge)
-            .sum();
-        let whole = forge_system(&prepared.whole, total_charge, None)?;
+        // Static parameters need the complete set of atom types, including
+        // intermolecular hydrogen-bond combinations, but no global QEq solve.
+        let mut whole = forge_system(&prepared.whole, ChargeMethod::None, None)?;
         let whole_types = per_atom_types(&whole)?;
 
         let mut partial_charges = vec![0.0; topology.atom_count()];
+        let mut charged_hydrogen_bond = None;
         for group in &prepared.groups {
-            let forged = forge_system(&group.system, group.formal_charge, group.instance)?;
+            let forged = forge_system(
+                &group.system,
+                ChargeMethod::Qeq(QeqConfig {
+                    total_charge: group.formal_charge,
+                    ..QeqConfig::default()
+                }),
+                group.instance,
+            )?;
+            for term in &forged.potentials.h_bonds {
+                let parameters = (term.d_hb, term.r_hb_sq);
+                require_finite("hydrogen bond", &[parameters.0, parameters.1])?;
+                if charged_hydrogen_bond.is_some_and(|previous| previous != parameters) {
+                    return Err(DreidingPrepareError::InvalidPreparedData {
+                        interaction: "hydrogen bond",
+                        detail: "charged hydrogen-bond parameters differ between atom types or charge groups".into(),
+                    });
+                }
+                charged_hydrogen_bond = Some(parameters);
+            }
             let local_types = per_atom_types(&forged)?;
             for (local, &global) in group.global_atoms.iter().enumerate() {
                 let whole_type = &whole_types[global];
@@ -120,6 +136,24 @@ impl DreidingPotential {
             }
         }
         require_finite_slice("partial charge", &partial_charges)?;
+
+        // dreid-forge selects a different hydrogen-bond well depth when charges
+        // are enabled. Its standard parameters are common to all HB type
+        // triplets. Obtain that charged pair from the actual group calculation,
+        // rather than retaining the uncharged depth or duplicating constants.
+        // Every donor group contains its N/O/F donor as a possible acceptor in
+        // forge's type-level table, even if intramolecular exclusions remove it
+        // from the final interactions. Thus a whole-system HB table always has
+        // a corresponding charged group parameter.
+        for term in &mut whole.potentials.h_bonds {
+            let (d_hb, r_hb_sq) =
+                charged_hydrogen_bond.ok_or_else(|| DreidingPrepareError::InvalidPreparedData {
+                    interaction: "hydrogen bond",
+                    detail: "charged hydrogen-bond parameters are unavailable".into(),
+                })?;
+            term.d_hb = d_hb;
+            term.r_hb_sq = r_hb_sq;
+        }
 
         let adjacency = adjacency(topology);
         let exclusions = nonbonded_exclusions(&adjacency);
@@ -347,14 +381,11 @@ fn forge_bond_order(
 
 fn forge_system(
     system: &System,
-    total_charge: f64,
+    charge_method: ChargeMethod,
     molecule: Option<MoleculeInstanceId>,
 ) -> Result<ForgedSystem, DreidingPrepareError> {
     let config = ForgeConfig {
-        charge_method: ChargeMethod::Qeq(QeqConfig {
-            total_charge,
-            ..QeqConfig::default()
-        }),
+        charge_method,
         bond_potential: BondPotentialType::Harmonic,
         angle_potential: AnglePotentialType::Cosine,
         vdw_potential: VdwPotentialType::LennardJones,

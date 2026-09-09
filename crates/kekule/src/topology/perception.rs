@@ -84,6 +84,8 @@ impl Topology {
             bond_indices: self.bond_indices.clone(),
             hierarchy: self.hierarchy.clone(),
             properties: self.properties.clone(),
+            molecule_class_overrides: self.molecule_class_overrides.clone(),
+            residue_class_overrides: self.residue_class_overrides.clone(),
         })
     }
 }
