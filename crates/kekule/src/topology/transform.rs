@@ -176,18 +176,27 @@ fn retain_normalized(
     let hierarchy_projection =
         copy_filtered_hierarchy(topology, builder.hierarchy_mut(), &atom_targets)?;
     for (target_index, source_index) in hierarchy_projection.residues.iter().copied().enumerate() {
-        let class = topology
+        let residue = topology
             .hierarchy()
             .residue(ResidueId::new(source_index as u32))
-            .expect("retained residue projection references a live source residue")
-            .class();
-        builder.preserve_residue_class(
-            ResidueId::new(target_index as u32),
-            class,
-            topology
-                .residue_class_overrides
-                .contains_key(&ResidueId::new(source_index as u32)),
-        )?;
+            .expect("retained residue projection references a live source residue");
+        // A residue can span instances, so retaining complete molecules can
+        // still change its composition and invalidate either kind of class.
+        let complete = residue.atom_sites().iter().all(|site| {
+            let atom = topology
+                .hierarchy()
+                .atom_site(*site)
+                .expect("published residue references a live atom site")
+                .atom();
+            atom_targets.contains_key(&atom)
+        });
+        if complete {
+            builder.preserve_residue_class(
+                ResidueId::new(target_index as u32),
+                residue.class(),
+                topology.residue_class_overrides.contains_key(&residue.id()),
+            )?;
+        }
     }
 
     let mut target = builder.build()?;

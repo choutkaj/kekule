@@ -68,28 +68,32 @@ impl Dimension {
         true
     }
 
-    const fn multiply(self, other: Self) -> Self {
+    fn checked_multiply(self, other: Self) -> Option<Self> {
         let mut result = [0; DIMENSION_COUNT];
         let mut index = 0;
         while index < DIMENSION_COUNT {
-            result[index] = self.exponents[index] + other.exponents[index];
+            result[index] = self.exponents[index].checked_add(other.exponents[index])?;
             index += 1;
         }
-        Self::new(result)
+        Some(Self::new(result))
     }
 
-    const fn divide(self, other: Self) -> Self {
+    fn checked_divide(self, other: Self) -> Option<Self> {
         let mut result = [0; DIMENSION_COUNT];
         let mut index = 0;
         while index < DIMENSION_COUNT {
-            result[index] = self.exponents[index] - other.exponents[index];
+            result[index] = self.exponents[index].checked_sub(other.exponents[index])?;
             index += 1;
         }
-        Self::new(result)
+        Some(Self::new(result))
     }
 
-    fn powi(self, power: i32) -> Self {
-        Self::new(self.exponents.map(|exponent| exponent * power))
+    fn checked_powi(self, power: i32) -> Option<Self> {
+        let mut result = [0; DIMENSION_COUNT];
+        for (result, exponent) in result.iter_mut().zip(self.exponents) {
+            *result = exponent.checked_mul(power)?;
+        }
+        Some(Self::new(result))
     }
 }
 
@@ -123,6 +127,11 @@ impl fmt::Display for Dimension {
 /// `scale` converts a magnitude in this unit to the reference SI-scale unit for
 /// its dimensions. Quantity values are not normalized eagerly; the scale is
 /// used only for explicit conversions.
+///
+/// Every unit has a finite, strictly positive scale. Use [`Self::try_mul`],
+/// [`Self::try_div`], and [`Self::try_powi`] for fallible composition of dynamic
+/// units. The `*`, `/`, and [`Self::powi`] conveniences panic if the scale or
+/// dimension exponents cannot be represented.
 #[derive(Debug, Clone, Copy)]
 pub struct Unit {
     dimension: Dimension,
@@ -158,14 +167,6 @@ impl Unit {
         }
     }
 
-    const fn derived(dimension: Dimension, scale: f64) -> Self {
-        Self {
-            dimension,
-            scale,
-            symbol: None,
-        }
-    }
-
     pub const fn dimension(self) -> Dimension {
         self.dimension
     }
@@ -187,6 +188,11 @@ impl Unit {
         self.symbol
     }
 
+    /// Returns a finite, strictly positive factor for a compatible unit.
+    ///
+    /// A ratio that overflows or underflows to zero returns
+    /// [`UnitError::UnrepresentableConversion`], even if a particular quantity
+    /// could be converted using a different order of arithmetic operations.
     pub fn conversion_factor_to(self, other: Self) -> Result<f64, UnitError> {
         if !self.is_compatible(other) {
             return Err(UnitError::IncompatibleUnits {
@@ -194,11 +200,52 @@ impl Unit {
                 to: other,
             });
         }
-        Ok(self.scale / other.scale)
+        let factor = self.scale / other.scale;
+        if !factor.is_finite() || factor <= 0.0 {
+            return Err(UnitError::UnrepresentableConversion {
+                from: self,
+                to: other,
+            });
+        }
+        Ok(factor)
     }
 
+    /// Multiplies units, rejecting scale underflow/overflow or exponent overflow.
+    pub fn try_mul(self, other: Self) -> Result<Self, UnitError> {
+        let dimension = self
+            .dimension
+            .checked_multiply(other.dimension)
+            .ok_or(UnitError::DimensionOverflow)?;
+        Self::new(dimension, self.scale * other.scale, None)
+    }
+
+    /// Divides units, rejecting scale underflow/overflow or exponent overflow.
+    pub fn try_div(self, other: Self) -> Result<Self, UnitError> {
+        let dimension = self
+            .dimension
+            .checked_divide(other.dimension)
+            .ok_or(UnitError::DimensionOverflow)?;
+        Self::new(dimension, self.scale / other.scale, None)
+    }
+
+    /// Raises a unit to an integer power, rejecting an unrepresentable result.
+    pub fn try_powi(self, power: i32) -> Result<Self, UnitError> {
+        let dimension = self
+            .dimension
+            .checked_powi(power)
+            .ok_or(UnitError::DimensionOverflow)?;
+        Self::new(dimension, self.scale.powi(power), None)
+    }
+
+    /// Raises a unit to an integer power.
+    ///
+    /// # Panics
+    ///
+    /// Panics on scale underflow/overflow or dimension exponent overflow. Use
+    /// [`Self::try_powi`] to handle these errors explicitly.
     pub fn powi(self, power: i32) -> Self {
-        Self::derived(self.dimension.powi(power), self.scale.powi(power))
+        self.try_powi(power)
+            .expect("unit power is not representable")
     }
 }
 
@@ -223,22 +270,26 @@ impl fmt::Display for Unit {
 impl Mul for Unit {
     type Output = Self;
 
+    /// # Panics
+    ///
+    /// Panics if the result is unrepresentable; use [`Unit::try_mul`] for
+    /// fallible unit composition.
     fn mul(self, other: Self) -> Self::Output {
-        Self::derived(
-            self.dimension.multiply(other.dimension),
-            self.scale * other.scale,
-        )
+        self.try_mul(other)
+            .expect("unit product is not representable")
     }
 }
 
 impl Div for Unit {
     type Output = Self;
 
+    /// # Panics
+    ///
+    /// Panics if the result is unrepresentable; use [`Unit::try_div`] for
+    /// fallible unit composition.
     fn div(self, other: Self) -> Self::Output {
-        Self::derived(
-            self.dimension.divide(other.dimension),
-            self.scale / other.scale,
-        )
+        self.try_div(other)
+            .expect("unit quotient is not representable")
     }
 }
 
@@ -246,7 +297,17 @@ impl Div for Unit {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnitError {
     InvalidScale(f64),
-    IncompatibleUnits { from: Unit, to: Unit },
+    IncompatibleUnits {
+        from: Unit,
+        to: Unit,
+    },
+    /// The conversion ratio overflowed or underflowed to zero.
+    UnrepresentableConversion {
+        from: Unit,
+        to: Unit,
+    },
+    /// A composed dimension exponent does not fit in an `i32`.
+    DimensionOverflow,
 }
 
 impl fmt::Display for UnitError {
@@ -263,6 +324,13 @@ impl fmt::Display for UnitError {
                 "unit {from} with dimension {} is incompatible with unit {to} with dimension {}",
                 from.dimension, to.dimension
             ),
+            Self::UnrepresentableConversion { from, to } => write!(
+                formatter,
+                "conversion factor from {from} to {to} is not finite and positive"
+            ),
+            Self::DimensionOverflow => {
+                formatter.write_str("composed unit dimension exponent exceeds the i32 range")
+            }
         }
     }
 }
@@ -368,6 +436,28 @@ where
 }
 
 impl Quantity<f64> {
+    /// Multiplies scalar quantities with checked unit composition.
+    ///
+    /// Magnitudes follow ordinary floating-point arithmetic, including its
+    /// non-finite results; errors describe unrepresentable units.
+    pub fn try_mul(self, other: Self) -> Result<Self, UnitError> {
+        Ok(Self::new(
+            self.value * other.value,
+            self.unit.try_mul(other.unit)?,
+        ))
+    }
+
+    /// Divides scalar quantities with checked unit composition.
+    ///
+    /// Magnitudes follow ordinary floating-point arithmetic, including its
+    /// non-finite results; errors describe unrepresentable units.
+    pub fn try_div(self, other: Self) -> Result<Self, UnitError> {
+        Ok(Self::new(
+            self.value / other.value,
+            self.unit.try_div(other.unit)?,
+        ))
+    }
+
     pub fn try_add(self, other: Self) -> Result<Self, UnitError> {
         let other_value = other.value_in(self.unit)?;
         Ok(Self::new(self.value + other_value, self.unit))
@@ -381,6 +471,8 @@ impl Quantity<f64> {
     /// Compares compatible scalar quantities with explicit numeric tolerances.
     ///
     /// `absolute_tolerance` is expressed in this quantity's unit.
+    /// Invalid tolerances and non-finite values (including values made
+    /// non-finite by conversion) are never close, even to themselves.
     pub fn is_close(
         &self,
         other: &Self,
@@ -395,9 +487,22 @@ impl Quantity<f64> {
             return Ok(false);
         }
         let other_value = other.value_in(self.unit)?;
+        if !self.value.is_finite() || !other_value.is_finite() {
+            return Ok(false);
+        }
+        let scale = self.value.abs().max(other_value.abs());
+        if scale == 0.0 {
+            return Ok(true);
+        }
         let difference = (self.value - other_value).abs();
-        Ok(difference
-            <= absolute_tolerance + relative_tolerance * self.value.abs().max(other_value.abs()))
+        // Normalize the comparison so finite opposite-sign extremes do not
+        // turn both sides into infinity and pass regardless of tolerance.
+        let relative_difference = if difference.is_finite() {
+            difference / scale
+        } else {
+            (self.value / scale - other_value / scale).abs()
+        };
+        Ok(relative_difference <= relative_tolerance + absolute_tolerance / scale)
     }
 }
 
@@ -429,16 +534,26 @@ impl Div<f64> for Quantity<f64> {
 impl Mul for Quantity<f64> {
     type Output = Self;
 
+    /// # Panics
+    ///
+    /// Panics if the composed unit is unrepresentable; use
+    /// [`Quantity::try_mul`] for fallible unit composition.
     fn mul(self, other: Self) -> Self::Output {
-        Self::new(self.value * other.value, self.unit * other.unit)
+        self.try_mul(other)
+            .expect("quantity product unit is not representable")
     }
 }
 
 impl Div for Quantity<f64> {
     type Output = Self;
 
+    /// # Panics
+    ///
+    /// Panics if the composed unit is unrepresentable; use
+    /// [`Quantity::try_div`] for fallible unit composition.
     fn div(self, other: Self) -> Self::Output {
-        Self::new(self.value / other.value, self.unit / other.unit)
+        self.try_div(other)
+            .expect("quantity quotient unit is not representable")
     }
 }
 

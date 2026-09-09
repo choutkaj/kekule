@@ -264,6 +264,11 @@ pub mod smiles {
     }
 
     /// Writes one connected molecule using ordinary non-canonical SMILES.
+    ///
+    /// Preserves isotope labels and hydrogen counts. An atom that permits
+    /// inferred hydrogens and requires bracket syntax must have hydrogen
+    /// perception installed; otherwise writing returns an error. Call
+    /// [`Molecule::perceive`] explicitly before exporting such atoms.
     pub fn write(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_smiles(molecule)
     }
@@ -295,6 +300,9 @@ pub mod smiles {
     }
 
     /// Writes one connected molecule while preserving represented stereo.
+    ///
+    /// Isotope labels, including those on aromatic atoms, are retained. The
+    /// bracketed-atom hydrogen perception requirement of [`write()`] also applies.
     pub fn write_isomeric(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_isomeric_smiles(molecule)
     }
@@ -302,11 +310,19 @@ pub mod smiles {
     /// Writes deterministic canonical connectivity SMILES.
     ///
     /// Successful output is invariant under atom numbering. Isotopes and stereo
-    /// are omitted, while formal charges and atom maps are retained. Complete
-    /// canonical labeling is bounded by 100,000 search states, 50,000,000
-    /// atom/edge/twin visits, and 2,000,000 pending atom labels. If a bound is
-    /// exhausted, returns [`MolWriteErrorKind::ResourceLimit`] without publishing
-    /// a partial canonical result.
+    /// are omitted, while formal charges and atom maps are retained. Neutral
+    /// unmapped terminal hydrogen vertices may collapse into hydrogen counts,
+    /// including isotope-labelled hydrogens after the isotope projection.
+    /// Ranking uses the emitted projection so parse/perceive/write is stable.
+    /// Inferred hydrogen counts must be installed when the projection requires
+    /// brackets or collapses a hydrogen vertex into an atom that permits
+    /// inference; writing otherwise returns an error rather than assuming zero.
+    /// Complete canonical labeling is bounded by 100,000 search states,
+    /// 50,000,000 atom/edge/twin visits, and 2,000,000 pending atom labels.
+    /// Serialization additionally bounds the input to 2,000,000 combined
+    /// atom/bond slots and 50,000,000 prospective candidate atom/edge visits,
+    /// retaining only the best candidate. Exceeding a bound returns
+    /// [`MolWriteErrorKind::ResourceLimit`] without a partial canonical result.
     pub fn write_canonical(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_canonical_smiles(molecule)
     }

@@ -111,6 +111,97 @@ fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuff
 }
 
 #[test]
+fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
+    let topology = topology();
+    let mut combined = Vec::new();
+    for (precision, step) in [
+        (TrrScalarPrecision::Float32, 0),
+        (TrrScalarPrecision::Float64, 1),
+        (TrrScalarPrecision::Float32, 2),
+    ] {
+        let mut writer = TrrWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            TrrWriteOptions::default().with_precision(precision),
+            "scratch.trr",
+        )
+        .unwrap();
+        let mut frame = populated_frame(&topology, step as f64, step);
+        if step == 1 {
+            frame.set_cell(None);
+            frame.clear_velocities();
+            frame.clear_forces();
+        }
+        frame
+            .insert_property(lambda_key(), lambda(step as f64 * 0.125))
+            .unwrap();
+        writer.write_frame(frame.frame_view()).unwrap();
+        combined.extend(writer.finish().unwrap().into_inner());
+    }
+    let open = |limit| {
+        TrrReader::new(
+            Cursor::new(combined.clone()),
+            Arc::clone(&topology),
+            TrrReadOptions::default().with_limits(TrajectoryIoLimits {
+                max_scratch_bytes: limit,
+                ..TrajectoryIoLimits::default()
+            }),
+        )
+    };
+    let dense_bytes = topology.atom_count() * std::mem::size_of::<Vector3>() * 3;
+    let f32_total = dense_bytes + topology.atom_count() * 3 * std::mem::size_of::<f32>();
+    let f64_total = dense_bytes + topology.atom_count() * 3 * std::mem::size_of::<f64>();
+
+    assert_eq!(
+        codec_kind(&open(dense_bytes - 1).err().unwrap()),
+        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+    );
+    let mut too_small = open(f32_total - 1).unwrap();
+    let mut destination = populated_frame(&topology, 99.0, 99);
+    let before = buffer_snapshot(&destination);
+    assert_eq!(
+        codec_kind(&too_small.read_next(&mut destination).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+    );
+    assert_eq!(buffer_snapshot(&destination), before);
+
+    // The first frame fits exactly; a wider later record must be rejected
+    // before replacing any field of the published destination.
+    for limit in [f32_total, f64_total - 1] {
+        let mut reader = open(limit).unwrap();
+        assert!(reader.read_next(&mut destination).unwrap());
+        let before = buffer_snapshot(&destination);
+        assert_eq!(
+            codec_kind(&reader.read_next(&mut destination).unwrap_err()),
+            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        );
+        assert_eq!(buffer_snapshot(&destination), before);
+        assert_eq!(
+            codec_kind(&open(limit).unwrap().into_indexed().err().unwrap()),
+            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        );
+    }
+
+    let mut sequential = open(f64_total).unwrap();
+    let mut expected = Vec::new();
+    while sequential.read_next(&mut destination).unwrap() {
+        expected.push(destination.frame_view().to_frame());
+    }
+    let mut indexed = open(f64_total).unwrap().into_indexed().unwrap();
+    assert_eq!(indexed.frame_count(), Some(3));
+    // Indexing retained the largest raw capacity. Mixing reads must not need
+    // duplicate scratch, nor publish fields left over from the last read.
+    for (random, next) in [(1, 0), (0, 1), (1, 2)] {
+        indexed.read_frame(random as u64, &mut destination).unwrap();
+        assert_eq!(destination.frame_view().to_frame(), expected[random]);
+        assert!(indexed.read_next(&mut destination).unwrap());
+        assert_eq!(destination.frame_view().to_frame(), expected[next]);
+    }
+    indexed.read_frame(0, &mut destination).unwrap();
+    assert!(!indexed.read_next(&mut destination).unwrap());
+}
+
+#[test]
 fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
     for precision in [TrrScalarPrecision::Float32, TrrScalarPrecision::Float64] {
         let topology = topology();

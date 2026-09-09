@@ -219,6 +219,11 @@ Source-format marks such as SMILES directional syntax or molfile wedges are
 format/interpreter state. They must be resolved into Kekule's canonical stereo
 representation before a molecule is published.
 
+A represented double-bond stereo focus must reference a bond whose order is
+`Double`. Changing a bond's order removes assertions focused on that bond and
+their group memberships; assigning the existing order is a no-op. Publication
+and checked stereo insertion/replacement also enforce the focus-order invariant.
+
 CIP labels are derived and therefore belong to `Perception`, not `Graph`.
 
 ### Aromaticity
@@ -1433,6 +1438,13 @@ from every informative instance of one definition must resolve to one definition
 class. If strong instance-derived evidence conflicts and there is no explicit
 override, the conservative result is `MoleculeClass::Other`.
 
+Builder publication discards residue overrides whose IDs are absent from the
+final hierarchy. Such orphan assignments must not persist across publication
+and attach to a later residue that reuses a numeric ID. Within a system editor,
+fresh molecule-class assignments apply to current connected components;
+chemical edits invalidate only affected components, including after splitting
+a historical staging group.
+
 Source formats may provide useful classification hints or exact source-level
 categories, but source-specific enums are not canonical replacements for
 `MoleculeClass` or `ResidueClass`. Format adapters translate between their source
@@ -2122,6 +2134,16 @@ value + Unit
 `Unit` represents one linear unit by its dimension, conversion scale, and
 optional symbol. `Quantity<T>` pairs an arbitrary supported value/container with
 one runtime `Unit`.
+
+Every published `Unit` has a finite, strictly positive scale. Dynamic composition
+uses fallible `try_mul`, `try_div`, and `try_powi` methods to reject scale
+underflow/overflow and dimension-exponent overflow. The existing arithmetic
+operators and `powi` remain conveniences that panic on an unrepresentable unit;
+they cannot construct invalid units. Scalar quantities offer matching fallible
+unit-composition methods. Conversion rejects scale ratios that overflow or
+underflow to zero before applying them to any scalar or collection. Approximate
+scalar comparison accepts only finite values, including after conversion, and
+avoids overflow in its tolerance calculation.
 
 Runtime units are intentional. Kekule should not replace this architecture with
 a compile-time type-level quantity system merely to encode dimensions in Rust
@@ -2825,9 +2847,21 @@ properties, definition reuse, and all geometry.
 
 Canonical SMILES traversal uses complete canonical labeling, including tied
 symmetry classes, so atom numbering and adjacency insertion order cannot choose
-the result. Labeling has explicit work and storage bounds; exceeding a bound
-returns a write error instead of an unproved canonical candidate. Hydrogen
-normalization must retain charged and atom-mapped hydrogen vertices.
+the result. Ranking uses the same isotope and hydrogen projection as emission,
+so repeating parse/perceive/canonical-write preserves the output. Labeling and
+candidate serialization have explicit work and storage bounds; exceeding a
+bound returns a write error instead of an unproved canonical candidate. The
+serializer retains only the best candidate, and checks graph-slot and total
+candidate-visit limits before cloning or ranking. Hydrogen normalization must
+retain charged and atom-mapped hydrogen vertices; neutral terminal isotope-H
+vertices may collapse when the canonical nonisomeric projection removes isotope
+labels.
+
+Ordinary and isomeric SMILES retain isotope labels and hydrogen counts, including
+on aromatic atoms. Bracket syntax disables SMILES hydrogen inference, so writers
+materialize the required hydrogen count there. If an atom permits inference but
+has no installed hydrogen perception and requires brackets, writing fails with
+an explicit error instead of assuming zero hydrogens.
 
 `Model` and `Ensemble` should not gain direct SMILES writers merely to discard
 geometry implicitly. Callers that want that projection write their topology

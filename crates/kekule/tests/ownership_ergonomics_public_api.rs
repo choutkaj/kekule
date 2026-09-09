@@ -101,7 +101,7 @@ fn owned_positions_reject_invalid_units_and_nonfinite_conversions() {
         Err(PositionError::NonFinitePosition { index: 0 })
     ));
     let huge_unit =
-        kekule::units::Unit::new(CANONICAL_LENGTH_UNIT.dimension(), 1.0e300, None).unwrap();
+        kekule::units::Unit::new(CANONICAL_LENGTH_UNIT.dimension(), 1.0e200, None).unwrap();
     assert!(matches!(
         Positions::from_vec(Quantity::new(
             vec![Point3::new(1.0e300, 0.0, 0.0)],
