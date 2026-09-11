@@ -219,6 +219,12 @@ Source-format marks such as SMILES directional syntax or molfile wedges are
 format/interpreter state. They must be resolved into Kekule's canonical stereo
 representation before a molecule is published.
 
+Format interpretation may decode geometry when the format itself defines stereo
+through that geometry, including Molfile drawn double-bond configuration. This is
+source interpretation, not general coordinate perception, and does not install
+perception. V3000 atom CFG uses CTfile carrier order, including hydrogen last;
+enhanced atropisomer groups use unambiguous axis endpoints in atom collections.
+
 A represented double-bond stereo focus must reference a bond whose order is
 `Double`. Changing a bond's order removes assertions focused on that bond and
 their group memberships; assigning the existing order is a no-op. Publication
@@ -230,6 +236,24 @@ even when an alternate ring path keeps the carrier and focus connected.
 Publication and checked stereo insertion/replacement enforce this adjacency.
 
 CIP labels are derived and therefore belong to `Perception`, not `Graph`.
+
+A stereo focus has at most one represented assertion. Checked insertion,
+replacement, and publication reject duplicate atom or bond focuses, incomplete
+tetrahedral carriers, repeated carriers, and axis references that do not identify
+opposite endpoints. Validation precedes carrier canonicalization so that
+canonicalization cannot conceal an invalid assertion.
+
+CIP assignment is transactional: all descriptors are computed from the represented
+graph and installed together after successful assignment. Auxiliary descriptors
+belong to occurrences in the focus-rooted CIP digraph, not to a global atom rank
+or a previously installed CIP label. Exhausting a ranking resource bound reports
+failure and preserves the previous perception; a truncated ligand comparison is
+not evidence of equivalence. Checked perception installation also validates that
+each descriptor belongs to its stereo element's geometry.
+
+CIP ranks explicit represented configurations. Rules for detecting plausible
+stereo candidates, such as small-ring restrictions, belong to source or coordinate
+perception and must not silently suppress an explicit assertion during ranking.
 
 ### Aromaticity
 
@@ -2896,6 +2920,14 @@ Molfile version selection is format policy. An automatic policy should prefer
 V2000 when the complete record is faithfully representable and promote to V3000
 when required by representational limits. An explicitly requested version must
 fail rather than silently discard canonical chemistry that it cannot encode.
+
+Specified double-bond output requires a Model whose emitted, rounded coordinates
+encode the asserted configuration. Conflicting or degenerate geometry is an error;
+the writer does not invent coordinates. If an unasserted double bond would become
+specified solely from its drawing, the writer emits either/crossed syntax instead.
+Rereading that projection may introduce an explicit unknown element, but must not
+invent a specified configuration. All projected stereo is validated using the same
+format-local decoding path as input interpretation.
 
 ### mmCIF projection
 

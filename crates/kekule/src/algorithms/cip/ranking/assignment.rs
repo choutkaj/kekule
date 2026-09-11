@@ -1,13 +1,9 @@
 use super::*;
 
-pub(super) fn descriptor_is_absolute_tetrahedral(descriptor: StereoDescriptor) -> bool {
-    matches!(descriptor, StereoDescriptor::R | StereoDescriptor::S)
-}
-
 pub(super) enum CipElementAssignment {
     Assigned(StereoDescriptor),
     Skipped(CipSkippedReason),
-    Deferred,
+    Unresolved,
     Issue(CipAssignmentIssue),
 }
 
@@ -24,36 +20,16 @@ pub(super) fn assign_cip_element(
         StereoElementKind::Tetrahedral(stereo) => {
             assign_tetrahedral_descriptor(mol, id, stereo, options)
         }
-        StereoElementKind::DoubleBond(stereo) => match double_bond_cip_stereogenic(mol, stereo) {
-            Some(false) => return CipElementAssignment::Skipped(CipSkippedReason::NotStereogenic),
-            Some(true) | None => assign_double_bond_descriptor(mol, id, stereo, options),
-        },
+        StereoElementKind::DoubleBond(stereo) => {
+            assign_double_bond_descriptor(mol, id, stereo, options)
+        }
         StereoElementKind::Axis(stereo) => assign_axis_descriptor(mol, id, stereo, options),
     };
     match assignment {
         Ok(descriptor) => CipElementAssignment::Assigned(descriptor),
-        Err(CipAssignmentIssue::UnresolvedPriority { .. }) => CipElementAssignment::Deferred,
+        Err(CipAssignmentIssue::UnresolvedPriority { .. }) => CipElementAssignment::Unresolved,
         Err(issue) => CipElementAssignment::Issue(issue),
     }
-}
-
-fn double_bond_cip_stereogenic(mol: &Molecule, stereo: &DoubleBondStereo) -> Option<bool> {
-    let bond = mol.bond(stereo.bond).ok()?;
-    if bond.order != BondOrder::Double {
-        return None;
-    }
-    if mol.bond_is_aromatic(stereo.bond).ok().flatten() == Some(true)
-        || double_bond_between_aromatic_atoms(mol, bond)
-    {
-        return Some(false);
-    }
-    if bond_in_ring_smaller_than(mol, stereo.bond, 8) {
-        return Some(false);
-    }
-    if double_bond_is_in_ring(mol, stereo.bond) && double_bond_has_noncarbon_endpoint(mol, bond) {
-        return Some(false);
-    }
-    Some(true)
 }
 
 pub(super) fn set_stereo_descriptor(
@@ -70,27 +46,28 @@ fn assign_tetrahedral_descriptor(
     stereo: &TetrahedralStereo,
     options: CipAssignmentOptions,
 ) -> CipResult<StereoDescriptor> {
-    assign_tetrahedral_descriptor_with_deferred_rule6(mol, element, stereo, options, false)
+    match assign_tetrahedral_descriptor_with_auxiliary(mol, element, stereo, options, false) {
+        Err(CipAssignmentIssue::UnresolvedPriority { .. }) => {
+            assign_tetrahedral_descriptor_with_auxiliary(mol, element, stereo, options, true)
+        }
+        result => result,
+    }
 }
 
-fn assign_tetrahedral_descriptor_with_deferred_rule6(
+fn assign_tetrahedral_descriptor_with_auxiliary(
     mol: &Molecule,
     element: StereoElementId,
     stereo: &TetrahedralStereo,
     options: CipAssignmentOptions,
-    allow_single_ring_tied_pair_rule6: bool,
+    allow_auxiliary_descriptors: bool,
 ) -> CipResult<StereoDescriptor> {
-    let orientation = stereo
-        .orientation
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let ranked = ranked_tetrahedral_carriers(
         mol,
         element,
         stereo.center,
         &stereo.carriers,
-        orientation,
         options,
-        allow_single_ring_tied_pair_rule6,
+        allow_auxiliary_descriptors,
     )?;
     tetrahedral_descriptor_from_ranked(element, stereo, &ranked)
 }
@@ -134,9 +111,6 @@ fn assign_double_bond_descriptor(
     let orientation = stereo
         .orientation
         .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
-    if bond_in_ring_smaller_than(mol, stereo.bond, 8) {
-        return Err(CipAssignmentIssue::UnresolvedPriority { element });
-    }
     let left_carriers = double_bond_endpoint_carriers(mol, stereo.left, stereo.right, stereo.bond);
     let right_carriers = double_bond_endpoint_carriers(mol, stereo.right, stereo.left, stereo.bond);
     let left_ranked = ranked_carriers(
@@ -236,7 +210,7 @@ fn assign_axis_descriptor(
         top_orientation = top_orientation.inverted();
     }
     let pseudo_axis =
-        left_ranked.pseudo_asymmetric_ordering || right_ranked.pseudo_asymmetric_ordering;
+        left_ranked.pseudo_asymmetric_ordering != right_ranked.pseudo_asymmetric_ordering;
     Ok(match (top_orientation, pseudo_axis) {
         (AxisOrientation::CounterClockwise, true) => StereoDescriptor::LowerM,
         (AxisOrientation::Clockwise, true) => StereoDescriptor::LowerP,
@@ -245,7 +219,7 @@ fn assign_axis_descriptor(
     })
 }
 
-fn axis_reference_carriers(
+pub(super) fn axis_reference_carriers(
     mol: &Molecule,
     element: StereoElementId,
     stereo: &AxisStereo,
@@ -275,7 +249,7 @@ fn axis_reference_carriers(
     }
 }
 
-fn axis_endpoint_carriers(
+pub(super) fn axis_endpoint_carriers(
     mol: &Molecule,
     endpoint: AtomId,
     other_endpoint: AtomId,
@@ -308,8 +282,22 @@ fn ranked_carriers(
     carriers: &[StereoCarrier],
     options: CipAssignmentOptions,
     allow_auxiliary_descriptors: bool,
-    normalize_all_carbon_aromatic: bool,
+    atropisomer_mode: bool,
 ) -> CipResult<RankedCarriers> {
+    if allow_auxiliary_descriptors {
+        let constitutional = carrier_signatures(
+            mol,
+            element,
+            root,
+            carriers,
+            options,
+            false,
+            atropisomer_mode,
+        )?;
+        if let Ok(ranked) = rank_carrier_signatures(element, &constitutional, None) {
+            return Ok(ranked);
+        }
+    }
     let signatures = carrier_signatures(
         mol,
         element,
@@ -317,7 +305,7 @@ fn ranked_carriers(
         carriers,
         options,
         allow_auxiliary_descriptors,
-        normalize_all_carbon_aromatic,
+        atropisomer_mode,
     )?;
     rank_carrier_signatures(element, &signatures, None)
 }
@@ -327,9 +315,8 @@ fn ranked_tetrahedral_carriers(
     element: StereoElementId,
     root: AtomId,
     carriers: &[StereoCarrier],
-    orientation: TetrahedralOrientation,
     options: CipAssignmentOptions,
-    allow_single_ring_tied_pair_rule6: bool,
+    allow_auxiliary_descriptors: bool,
 ) -> CipResult<RankedCarriers> {
     let signatures = carrier_signatures(
         mol,
@@ -337,45 +324,18 @@ fn ranked_tetrahedral_carriers(
         root,
         carriers,
         options,
-        allow_single_ring_tied_pair_rule6,
+        allow_auxiliary_descriptors,
         false,
     )?;
     match rank_carrier_signatures(element, &signatures, None) {
         Ok(ranked) => Ok(ranked),
-        Err(CipAssignmentIssue::UnresolvedPriority { .. }) if carriers.len() == 4 => {
-            rank_tetrahedral_signatures_with_rule6(
-                mol,
-                element,
-                root,
-                &signatures,
-                orientation,
-                allow_single_ring_tied_pair_rule6,
-            )
+        Err(CipAssignmentIssue::UnresolvedPriority { .. })
+            if allow_auxiliary_descriptors && carriers.len() == 4 =>
+        {
+            rank_tetrahedral_signatures_with_rule6(element, &signatures)
         }
         Err(issue) => Err(issue),
     }
-}
-
-pub(super) fn assign_deferred_tetrahedral_rule6(
-    mol: &Molecule,
-    pending: &[(StereoElementId, StereoElement)],
-    options: CipAssignmentOptions,
-) -> CipResult<Vec<(StereoElementId, StereoDescriptor)>> {
-    let mut assignments = Vec::new();
-    for (id, element) in pending {
-        let StereoElementKind::Tetrahedral(stereo) = &element.kind else {
-            continue;
-        };
-        if !element.is_specified() {
-            continue;
-        }
-        match assign_tetrahedral_descriptor_with_deferred_rule6(mol, *id, stereo, options, true) {
-            Ok(descriptor) => assignments.push((*id, descriptor)),
-            Err(CipAssignmentIssue::UnresolvedPriority { .. }) => {}
-            Err(issue) => return Err(issue),
-        }
-    }
-    Ok(assignments)
 }
 
 pub(super) fn element_is_finally_nonstereogenic(
@@ -406,10 +366,6 @@ fn tetrahedral_final_tie_is_nonstereogenic(
     stereo: &TetrahedralStereo,
     options: CipAssignmentOptions,
 ) -> CipResult<bool> {
-    let orientation = stereo
-        .orientation
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
-    let options = complete_final_tie_options(mol, stereo.center, options);
     let signatures = carrier_signatures(
         mol,
         element,
@@ -419,14 +375,7 @@ fn tetrahedral_final_tie_is_nonstereogenic(
         true,
         false,
     )?;
-    match rank_tetrahedral_signatures_with_rule6(
-        mol,
-        element,
-        stereo.center,
-        &signatures,
-        orientation,
-        true,
-    ) {
+    match rank_tetrahedral_signatures_with_rule6(element, &signatures) {
         Ok(_) => Ok(false),
         Err(CipAssignmentIssue::UnresolvedPriority { .. }) => {
             Ok(grouped_signature_indices(&signatures)
@@ -494,12 +443,11 @@ fn endpoint_final_tie_is_nonstereogenic(
     root: AtomId,
     carriers: &[StereoCarrier],
     options: CipAssignmentOptions,
-    normalize_all_carbon_aromatic: bool,
+    atropisomer_mode: bool,
 ) -> CipResult<bool> {
     if carriers.len() < 2 {
         return Ok(false);
     }
-    let options = complete_final_tie_options(mol, root, options);
     let signatures = carrier_signatures(
         mol,
         element,
@@ -507,7 +455,7 @@ fn endpoint_final_tie_is_nonstereogenic(
         carriers,
         options,
         true,
-        normalize_all_carbon_aromatic,
+        atropisomer_mode,
     )?;
     match rank_carrier_signatures(element, &signatures, None) {
         Ok(_) => Ok(false),
@@ -520,37 +468,6 @@ fn endpoint_final_tie_is_nonstereogenic(
     }
 }
 
-fn complete_final_tie_options(
-    mol: &Molecule,
-    root: AtomId,
-    mut options: CipAssignmentOptions,
-) -> CipAssignmentOptions {
-    options.max_depth = options.max_depth.max(connected_atom_count(mol, root));
-    options
-}
-
-fn connected_atom_count(mol: &Molecule, root: AtomId) -> usize {
-    if mol.atom(root).is_err() {
-        return 0;
-    }
-    let mut seen = HashSet::new();
-    let mut queue = VecDeque::from([root]);
-    while let Some(atom) = queue.pop_front() {
-        if !seen.insert(atom) {
-            continue;
-        }
-        if let Ok(incident) = mol.incident_bonds(atom) {
-            for (_, bond) in incident {
-                let neighbor = bond.other_atom(atom);
-                if !seen.contains(&neighbor) {
-                    queue.push_back(neighbor);
-                }
-            }
-        }
-    }
-    seen.len()
-}
-
 fn carrier_signatures(
     mol: &Molecule,
     element: StereoElementId,
@@ -558,12 +475,16 @@ fn carrier_signatures(
     carriers: &[StereoCarrier],
     options: CipAssignmentOptions,
     allow_auxiliary_descriptors: bool,
-    normalize_all_carbon_aromatic: bool,
+    atropisomer_mode: bool,
 ) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
-    let cip_bond_orders = CipBondOrders::new(mol, normalize_all_carbon_aromatic);
+    let cip_bond_orders = CipBondOrders::new(mol, atropisomer_mode);
     let atomic_number_fractions = cip_atomic_number_fractions(mol, &cip_bond_orders);
-    if allow_auxiliary_descriptors {
-        let descriptor_context = DescriptorContext::new(element, AuxiliaryDescriptorMode::Collect);
+    if allow_auxiliary_descriptors
+        && mol
+            .stereo_elements()
+            .any(|(id, stereo)| id != element && stereo.is_specified())
+    {
+        let mut descriptor_context = DescriptorContext::new(element);
         let aux_graph = build_auxiliary_graph(
             mol,
             element,
@@ -572,16 +493,14 @@ fn carrier_signatures(
             &atomic_number_fractions,
             &cip_bond_orders,
         )?;
-        collect_auxiliary_occurrences_from_molecule(mol, &descriptor_context, &aux_graph);
         precompute_auxiliary_descriptors(
             mol,
-            &descriptor_context,
+            &mut descriptor_context,
             &aux_graph,
             options,
             &atomic_number_fractions,
             &cip_bond_orders,
         );
-        let descriptor_context = descriptor_context.with_mode(AuxiliaryDescriptorMode::Precomputed);
         let build_context = LigandBuildContext {
             mol,
             element,
@@ -593,8 +512,8 @@ fn carrier_signatures(
         let signatures = build_carrier_signatures(&build_context, root, carriers)?;
         return Ok(signatures);
     }
-    let descriptor_context = DescriptorContext::new(element, AuxiliaryDescriptorMode::Disabled);
-    let build_context = LigandBuildContext {
+    let descriptor_context = DescriptorContext::new(element);
+    let mut build_context = LigandBuildContext {
         mol,
         element,
         descriptor_context: &descriptor_context,
@@ -602,7 +521,23 @@ fn carrier_signatures(
         atomic_number_fractions: &atomic_number_fractions,
         cip_bond_orders: &cip_bond_orders,
     };
-    build_carrier_signatures(&build_context, root, carriers)
+    let mut depth = 0;
+    loop {
+        build_context.options.max_depth = depth;
+        let signatures = build_carrier_signatures(&build_context, root, carriers)?;
+        if signatures.iter().all(|(_, signature)| !signature.truncated)
+            || rank_carrier_signatures(element, &signatures, None).is_ok()
+        {
+            return Ok(signatures);
+        }
+        if depth == options.max_depth {
+            return Err(CipAssignmentIssue::DepthLimitExceeded {
+                element,
+                max_depth: options.max_depth,
+            });
+        }
+        depth = depth.saturating_mul(2).max(1).min(options.max_depth);
+    }
 }
 
 fn build_carrier_signatures(
@@ -652,12 +587,8 @@ pub(super) fn rank_carrier_signatures(
 }
 
 pub(super) fn rank_tetrahedral_signatures_with_rule6(
-    mol: &Molecule,
     element: StereoElementId,
-    root: AtomId,
     signatures: &[(StereoCarrier, LigandSignature)],
-    orientation: TetrahedralOrientation,
-    allow_single_ring_tied_pair_rule6: bool,
 ) -> CipResult<RankedCarriers> {
     let groups = grouped_signature_indices(signatures);
     match groups.len() {
@@ -673,203 +604,8 @@ pub(super) fn rank_tetrahedral_signatures_with_rule6(
             Ok(ranked)
         }
         1 => rank_s4_tetrahedral_signatures_with_rule6(element, signatures, &groups[0]),
-        _ if allow_single_ring_tied_pair_rule6 => rank_single_ring_tied_pair_with_rule6(
-            mol,
-            element,
-            root,
-            orientation,
-            signatures,
-            &groups,
-        ),
         _ => Err(CipAssignmentIssue::UnresolvedPriority { element }),
     }
-}
-
-fn rank_single_ring_tied_pair_with_rule6(
-    mol: &Molecule,
-    element: StereoElementId,
-    root: AtomId,
-    orientation: TetrahedralOrientation,
-    signatures: &[(StereoCarrier, LigandSignature)],
-    groups: &[Vec<usize>],
-) -> CipResult<RankedCarriers> {
-    let tied_groups = groups
-        .iter()
-        .filter(|group| group.len() > 1)
-        .collect::<Vec<_>>();
-    if tied_groups.len() != 1 || tied_groups[0].len() != 2 {
-        return Err(CipAssignmentIssue::UnresolvedPriority { element });
-    }
-    let left = carrier_rule6_atom(signatures[tied_groups[0][0]].0)
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
-    let right = carrier_rule6_atom(signatures[tied_groups[0][1]].0)
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
-    let Some(path) = shortest_path_excluding_root(mol, left, right, root) else {
-        return Err(CipAssignmentIssue::UnresolvedPriority { element });
-    };
-    let path_length = path.len().saturating_sub(1);
-    let tied_pair_descriptor_class = tied_groups[0]
-        .iter()
-        .filter_map(|index| tree_descriptor_class(&signatures[*index].1.root))
-        .max();
-    let outside_tied_pair_descriptor_class = groups
-        .iter()
-        .filter(|group| !std::ptr::eq(*group, tied_groups[0]))
-        .flatten()
-        .filter_map(|index| tree_descriptor_class(&signatures[*index].1.root))
-        .max();
-    let tied_pair_descriptor_refs_match =
-        descriptor_ref_counts(&signatures[tied_groups[0][0]].1.root)
-            == descriptor_ref_counts(&signatures[tied_groups[0][1]].1.root);
-    let reference = if tied_pair_descriptor_class.is_some() {
-        if tied_pair_descriptor_refs_match {
-            return Err(CipAssignmentIssue::UnresolvedPriority { element });
-        }
-        if left.raw() >= right.raw() {
-            left
-        } else {
-            right
-        }
-    } else {
-        match outside_tied_pair_descriptor_class {
-            Some(DescriptorClass::Absolute) => {
-                if left.raw() >= right.raw() {
-                    left
-                } else {
-                    right
-                }
-            }
-            Some(DescriptorClass::Pseudo) => {
-                if left.raw() <= right.raw() {
-                    left
-                } else {
-                    right
-                }
-            }
-            None if path_length == 2 => {
-                match path
-                    .get(1)
-                    .and_then(|center| tetrahedral_orientation_for_center(mol, *center))
-                {
-                    Some(other_orientation) if other_orientation != orientation => right,
-                    _ => left,
-                }
-            }
-            None if mol.stereo_elements().all(|(id, _)| id == element)
-                && ring_path_is_unsubstituted_bridge(mol, &path, root) =>
-            {
-                return Err(CipAssignmentIssue::UnresolvedPriority { element });
-            }
-            None if left.raw() >= right.raw() => left,
-            None => right,
-        }
-    };
-    let mut ranked = rank_carrier_signatures(element, signatures, Some(reference))?;
-    ranked.pseudo_asymmetric_ordering = !matches!(
-        (
-            tied_pair_descriptor_class,
-            outside_tied_pair_descriptor_class,
-        ),
-        (Some(DescriptorClass::Absolute), _) | (None, Some(DescriptorClass::Absolute))
-    );
-    Ok(ranked)
-}
-
-fn descriptor_ref_counts(tree: &LigandTree) -> (usize, usize) {
-    let own = match tree.priority.descriptor.and_then(descriptor_ref) {
-        Some(DescriptorRef::R) => (1, 0),
-        Some(DescriptorRef::S) => (0, 1),
-        None => (0, 0),
-    };
-    tree.children
-        .iter()
-        .map(descriptor_ref_counts)
-        .fold(own, |left, right| (left.0 + right.0, left.1 + right.1))
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum DescriptorClass {
-    Pseudo,
-    Absolute,
-}
-
-fn tree_descriptor_class(tree: &LigandTree) -> Option<DescriptorClass> {
-    let own = tree.priority.descriptor.and_then(descriptor_class);
-    tree.children
-        .iter()
-        .filter_map(tree_descriptor_class)
-        .chain(own)
-        .max()
-}
-
-fn descriptor_class(descriptor: StereoDescriptor) -> Option<DescriptorClass> {
-    match descriptor {
-        StereoDescriptor::R
-        | StereoDescriptor::S
-        | StereoDescriptor::M
-        | StereoDescriptor::P
-        | StereoDescriptor::SeqCis
-        | StereoDescriptor::SeqTrans => Some(DescriptorClass::Absolute),
-        StereoDescriptor::LowerR
-        | StereoDescriptor::LowerS
-        | StereoDescriptor::LowerM
-        | StereoDescriptor::LowerP => Some(DescriptorClass::Pseudo),
-        StereoDescriptor::E | StereoDescriptor::Z => None,
-    }
-}
-
-fn tetrahedral_orientation_for_center(
-    mol: &Molecule,
-    center: AtomId,
-) -> Option<TetrahedralOrientation> {
-    mol.stereo_elements()
-        .find_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) if stereo.center == center => stereo.orientation,
-            _ => None,
-        })
-}
-
-fn shortest_path_excluding_root(
-    mol: &Molecule,
-    left: AtomId,
-    right: AtomId,
-    root: AtomId,
-) -> Option<Vec<AtomId>> {
-    let mut seen = Vec::new();
-    let mut queue = VecDeque::from([(left, vec![left])]);
-    while let Some((atom, path)) = queue.pop_front() {
-        if atom == right {
-            return Some(path);
-        }
-        if atom == root || seen.contains(&atom) {
-            continue;
-        }
-        seen.push(atom);
-        if let Ok(incident) = mol.incident_bonds(atom) {
-            for (_, bond) in incident {
-                let neighbor = bond.other_atom(atom);
-                if neighbor != root && !seen.contains(&neighbor) {
-                    let mut next_path = path.clone();
-                    next_path.push(neighbor);
-                    queue.push_back((neighbor, next_path));
-                }
-            }
-        }
-    }
-    None
-}
-
-fn ring_path_is_unsubstituted_bridge(mol: &Molecule, path: &[AtomId], root: AtomId) -> bool {
-    path.iter().all(|atom| {
-        mol.incident_bonds(*atom)
-            .map(|incident| {
-                incident.into_iter().all(|(_, bond)| {
-                    let neighbor = bond.other_atom(*atom);
-                    neighbor == root || path.contains(&neighbor)
-                })
-            })
-            .unwrap_or(false)
-    })
 }
 
 fn rank_s4_tetrahedral_signatures_with_rule6(

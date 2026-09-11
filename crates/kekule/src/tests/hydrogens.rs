@@ -11,6 +11,85 @@ fn perceived_smiles(input: &str) -> Molecule {
 }
 
 #[test]
+fn hydrogen_collapse_preserves_a_double_bond_with_only_hydrogen_references() {
+    let mut molecule = perceived_smiles("[H]/N=N/[H]");
+    let id = molecule.stereo_element_ids().next().unwrap();
+    let mut editor = molecule.into_editor();
+    let group = editor
+        .add_stereo_group(StereoGroup {
+            kind: StereoGroupKind::Relative,
+            members: vec![id],
+        })
+        .unwrap();
+    molecule = editor.finish().unwrap();
+    perceive(&mut molecule).unwrap();
+    let before = molecule.stereo_elements().next().unwrap().1.clone();
+    assert_eq!(molecule.remove_hydrogens().unwrap().removed.len(), 2);
+    let element = molecule
+        .stereo_elements()
+        .next()
+        .expect("diazene stereo survives hydrogen collapse")
+        .1;
+    let StereoElementKind::DoubleBond(stereo) = &element.kind else {
+        unreachable!()
+    };
+    assert_eq!(stereo.left_carrier, StereoCarrier::ImplicitHydrogen);
+    assert_eq!(stereo.right_carrier, StereoCarrier::ImplicitHydrogen);
+    let StereoElementKind::DoubleBond(original) = &before.kind else {
+        unreachable!()
+    };
+    assert_eq!(stereo.orientation, original.orientation);
+    assert_eq!(element.group, Some(group));
+    assert_eq!(molecule.stereo_group(group).unwrap().members, vec![id]);
+
+    perceive(&mut molecule).unwrap();
+    molecule.add_hydrogens().unwrap();
+    let restored = molecule.stereo_elements().next().unwrap().1;
+    let StereoElementKind::DoubleBond(stereo) = &restored.kind else {
+        unreachable!()
+    };
+    assert!(matches!(stereo.left_carrier, StereoCarrier::Atom(_)));
+    assert!(matches!(stereo.right_carrier, StereoCarrier::Atom(_)));
+    assert_eq!(stereo.orientation, original.orientation);
+}
+
+#[test]
+fn hydrogen_collapse_keeps_all_tetrahedral_centers_complete_during_remapping() {
+    let mut molecule = perceived_smiles("F[C@H](Cl)[C@H](F)Cl");
+    let expected = stereo_api::assign_cip_descriptors(&mut molecule)
+        .unwrap()
+        .assigned;
+    molecule.add_hydrogens().unwrap();
+    let ids = molecule.stereo_element_ids().collect::<Vec<_>>();
+    assert_eq!(ids.len(), 2);
+    let mut editor = molecule.into_editor();
+    let group = editor
+        .add_stereo_group(StereoGroup {
+            kind: StereoGroupKind::Relative,
+            members: ids.clone(),
+        })
+        .unwrap();
+    molecule = editor.finish().unwrap();
+    perceive(&mut molecule).unwrap();
+    assert_eq!(molecule.remove_hydrogens().unwrap().removed.len(), 2);
+    assert_eq!(molecule.stereo_element_ids().collect::<Vec<_>>(), ids);
+    assert_eq!(molecule.stereo_group(group).unwrap().members, ids);
+    for (_, element) in molecule.stereo_elements() {
+        let StereoElementKind::Tetrahedral(stereo) = &element.kind else {
+            unreachable!()
+        };
+        assert!(stereo.carriers.contains(&StereoCarrier::ImplicitHydrogen));
+    }
+    perceive(&mut molecule).unwrap();
+    assert_eq!(
+        stereo_api::assign_cip_descriptors(&mut molecule)
+            .unwrap()
+            .assigned,
+        expected
+    );
+}
+
+#[test]
 fn add_hydrogens_materializes_perceived_counts_and_invalidates_perception() {
     let mut molecule = perceived_smiles("C");
     let carbon = molecule.atom_ids().next().expect("carbon");

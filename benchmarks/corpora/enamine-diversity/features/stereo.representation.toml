@@ -1,7 +1,7 @@
 feature_id = "stereo.representation"
 corpus_id = "enamine-diversity"
-reference_tool = "enamine-manual-semantic"
-reference_version = "Enamine Discovery Diversity Set 2026-07-05"
+reference_tool = "reviewed-stereo-schema"
+reference_version = "v2 + RDKit 2026.03.6"
 comparison_mode = "implementation-golden"
 
 fixtures = [
@@ -60,5 +60,5 @@ fixtures = [
 
 notes = [
   "Externally supplied Enamine Discovery Diversity Set SMILES packs provide broad drug-like small-molecule stereo representation regression coverage beyond PubChem.",
-  "Goldens compare semantic stereo elements, stereo groups, and source bond marks, not bytewise SMILES spelling.",
+  "Schema 2 asserts canonical stereo elements and groups plus separately retained source-document evidence; schema 1 bytes and hashes are archived.",
 ]

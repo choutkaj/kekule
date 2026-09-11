@@ -1,5 +1,32 @@
 use super::*;
 
+#[test]
+fn phosphine_smiles_preserve_bracket_hydrogen_and_lone_pair() {
+    for (source, expected) in [
+        ("C[P@H]C1CCCCC1", StereoDescriptor::R),
+        ("C[P@@H]C1CCCCC1", StereoDescriptor::S),
+        ("[P@H](C)C1CCCCC1", StereoDescriptor::R),
+        ("[P@@H](C)C1CCCCC1", StereoDescriptor::S),
+    ] {
+        let mut molecule = read_smiles(source).expect("bracket-H phosphine interprets");
+        let element = molecule.stereo_elements().next().unwrap().1;
+        let StereoElementKind::Tetrahedral(stereo) = &element.kind else {
+            panic!("expected tetrahedral phosphine")
+        };
+        assert!(stereo.carriers.contains(&StereoCarrier::ImplicitHydrogen));
+        assert!(stereo.carriers.contains(&StereoCarrier::ImplicitLonePair));
+        perceive(&mut molecule).unwrap();
+        let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+        assert_eq!(assigned.assigned[0].descriptor, expected, "{source}");
+
+        let written = smiles_api::write_isomeric(&molecule).expect("phosphine writes");
+        let mut reparsed = read_smiles(&written).expect("phosphine output interprets");
+        perceive(&mut reparsed).unwrap();
+        let assigned = stereo_api::assign_cip_descriptors(&mut reparsed).unwrap();
+        assert_eq!(assigned.assigned[0].descriptor, expected, "{written}");
+    }
+}
+
 fn aromatic_atom(molecule: &Molecule, atom: AtomId) -> bool {
     molecule.atom_is_aromatic(atom).expect("atom exists") == Some(true)
 }
@@ -2720,11 +2747,20 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .bond_mut(bond)
         .expect("bond")
         .set_order(BondOrder::Single);
+    let c = molecule.add_atom(carbon()).expect("third atom");
+    let d = molecule.add_atom(carbon()).expect("fourth atom");
+    molecule.add_bond(a, c, BondOrder::Single).expect("bond");
+    molecule.add_bond(a, d, BondOrder::Single).expect("bond");
     molecule
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center: a,
-                carriers: vec![StereoCarrier::Atom(b), StereoCarrier::ImplicitHydrogen],
+                carriers: vec![
+                    StereoCarrier::Atom(b),
+                    StereoCarrier::Atom(c),
+                    StereoCarrier::Atom(d),
+                    StereoCarrier::ImplicitHydrogen,
+                ],
                 orientation: Some(TetrahedralOrientation::Clockwise),
             },
         )))

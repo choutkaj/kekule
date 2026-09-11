@@ -1,6 +1,15 @@
 use super::*;
 use crate::properties::{PropertyKey, PropertyValue};
 
+// Defensive algorithm validation must also handle invalid internal staging;
+// public insertion rejects these malformed assertions before allocating a slot.
+fn insert_unchecked_stereo(editor: &mut MoleculeEditor, element: StereoElement) -> StereoElementId {
+    let slots = &mut editor.working_mut().graph.stereo_elements;
+    let id = StereoElementId::new(u32::try_from(slots.len()).unwrap());
+    slots.push(Some(element));
+    id
+}
+
 fn aromatic_atom(molecule: &Molecule, atom: AtomId) -> bool {
     molecule.atom_is_aromatic(atom).expect("atom exists") == Some(true)
 }
@@ -1075,8 +1084,9 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
         .expect("atom identifier capacity");
     mol.add_bond(center, a, BondOrder::Single).expect("bond");
     mark_all_fresh(mol.working_mut());
-    let element = mol
-        .add_stereo_element(StereoElement {
+    let element = insert_unchecked_stereo(
+        &mut mol,
+        StereoElement {
             kind: StereoElementKind::Tetrahedral(TetrahedralStereo {
                 center,
                 carriers: vec![
@@ -1087,8 +1097,8 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
                 orientation: None,
             }),
             group: None,
-        })
-        .expect("stereo element");
+        },
+    );
     // Inject nonadjacency through internal storage to test the diagnostic;
     // checked editing now rejects this malformed reference.
     let stored = mol.working_mut().graph.stereo_elements[element.index()]
@@ -1187,18 +1197,17 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
     let bond = double_bond
         .add_bond(left, right, BondOrder::Double)
         .expect("double bond");
-    let double_element = double_bond
-        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
-            DoubleBondStereo {
-                bond,
-                left,
-                right,
-                left_carrier: StereoCarrier::ImplicitHydrogen,
-                right_carrier: StereoCarrier::ImplicitLonePair,
-                orientation: Some(DoubleBondOrientation::Together),
-            },
-        )))
-        .expect("double-bond stereo element");
+    let double_element = insert_unchecked_stereo(
+        &mut double_bond,
+        StereoElement::new(StereoElementKind::DoubleBond(DoubleBondStereo {
+            bond,
+            left,
+            right,
+            left_carrier: StereoCarrier::ImplicitHydrogen,
+            right_carrier: StereoCarrier::ImplicitLonePair,
+            orientation: Some(DoubleBondOrientation::Together),
+        })),
+    );
 
     let error = stereo_api::validate_stereo(double_bond.working())
         .expect_err("unavailable double-bond carriers should be reported");
@@ -1217,16 +1226,17 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
     let axis_bond = axis
         .add_bond(axis_left, axis_right, BondOrder::Single)
         .expect("axis bond");
-    let axis_element = axis
-        .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
+    let axis_element = insert_unchecked_stereo(
+        &mut axis,
+        StereoElement::new(StereoElementKind::Axis(AxisStereo {
             axis: axis_bond,
             carriers: vec![
                 StereoCarrier::ImplicitHydrogen,
                 StereoCarrier::ImplicitLonePair,
             ],
             orientation: Some(AxisOrientation::Clockwise),
-        })))
-        .expect("axis stereo element");
+        })),
+    );
 
     let error = stereo_api::validate_stereo(axis.working())
         .expect_err("implicit axis carriers should be unsupported");
@@ -1929,8 +1939,9 @@ fn coordinate_stereo_does_not_duplicate_existing_represented_stereo() {
 #[test]
 fn coordinate_stereo_materialization_is_transactional_on_invalid_representation() {
     let (mut mol, center, carriers, _) = tetrahedral_marked_graph();
-    mol.add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
-        TetrahedralStereo {
+    insert_unchecked_stereo(
+        &mut mol,
+        StereoElement::new(StereoElementKind::Tetrahedral(TetrahedralStereo {
             center,
             carriers: vec![
                 StereoCarrier::Atom(carriers[0]),
@@ -1938,9 +1949,8 @@ fn coordinate_stereo_materialization_is_transactional_on_invalid_representation(
                 StereoCarrier::Atom(carriers[1]),
             ],
             orientation: Some(TetrahedralOrientation::Clockwise),
-        },
-    )))
-    .expect("reference-valid but structurally invalid stereo");
+        })),
+    );
     let before = mol.clone();
 
     let positions = crate::structure::Positions::zeros(mol.atom_count());
@@ -1949,6 +1959,209 @@ fn coordinate_stereo_materialization_is_transactional_on_invalid_representation(
 
     assert!(matches!(error, CoordinateStereoError::InvalidStereo(_)));
     assert_eq!(mol, before);
+}
+
+#[test]
+fn coordinate_stereo_infers_three_explicit_ligands_and_preserves_handedness() {
+    let mut implicit = read_smiles("C(F)(Cl)Br").unwrap();
+    perceive(&mut implicit).unwrap();
+    let mut explicit = implicit.clone();
+    explicit.add_hydrogens().unwrap();
+    for scale in [1.0e-100, 1.0, 1.0e100] {
+        for sign in [-1.0, 1.0] {
+            let points = vec![
+                Point3::origin(),
+                Point3::new(scale, 0.0, 0.0),
+                Point3::new(0.0, scale, 0.0),
+                Point3::new(0.0, 0.0, sign * scale),
+            ];
+            let inferred =
+                stereo_api::infer_coordinate_stereo(&implicit, &test_positions(points.clone()))
+                    .unwrap();
+            assert_eq!(inferred.elements.len(), 1);
+            let StereoElementKind::Tetrahedral(stereo) = &inferred.elements[0].kind else {
+                unreachable!()
+            };
+            assert_eq!(stereo.carriers[3], StereoCarrier::ImplicitHydrogen);
+            let expected = if sign > 0.0 {
+                TetrahedralOrientation::Clockwise
+            } else {
+                TetrahedralOrientation::CounterClockwise
+            };
+            assert_eq!(stereo.orientation, Some(expected));
+
+            let mut explicit_points = points;
+            explicit_points.push(Point3::new(-scale, -scale, -sign * scale));
+            let expanded =
+                stereo_api::infer_coordinate_stereo(&explicit, &test_positions(explicit_points))
+                    .unwrap();
+            assert_eq!(expanded.elements.len(), 1);
+            let StereoElementKind::Tetrahedral(stereo) = &expanded.elements[0].kind else {
+                unreachable!()
+            };
+            assert_eq!(stereo.orientation, Some(expected));
+        }
+    }
+    let flat = test_positions(vec![
+        Point3::origin(),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::new(-1.0, -1.0, 0.0),
+    ]);
+    assert!(stereo_api::infer_coordinate_stereo(&implicit, &flat)
+        .unwrap()
+        .elements
+        .is_empty());
+}
+
+#[test]
+fn coordinate_stereo_infers_fully_substituted_alkene_at_any_coordinate_scale() {
+    let molecule = read_smiles("FC(Cl)=C(Br)I").unwrap();
+    for scale in [1.0e-100, 1.0, 1.0e100] {
+        let points = [
+            (0.0, 1.0),
+            (0.0, 0.0),
+            (0.0, -1.0),
+            (1.0, 0.0),
+            (1.0, -1.0),
+            (1.0, 1.0),
+        ]
+        .map(|(x, y)| Point3::new(x * scale, y * scale, 0.0));
+        let result =
+            stereo_api::infer_coordinate_stereo(&molecule, &test_positions(points.to_vec()))
+                .unwrap();
+        assert_eq!(result.elements.len(), 1);
+        let StereoElementKind::DoubleBond(stereo) = &result.elements[0].kind else {
+            unreachable!()
+        };
+        assert_eq!(stereo.left_carrier, StereoCarrier::Atom(AtomId::new(0)));
+        assert_eq!(stereo.right_carrier, StereoCarrier::Atom(AtomId::new(4)));
+        assert_eq!(stereo.orientation, Some(DoubleBondOrientation::Opposite));
+    }
+}
+
+#[test]
+fn coordinate_stereo_infers_a_tetrahedral_sulfoxide_lone_pair() {
+    for input in ["S(=O)(C)CC", "[Se](=O)(C)CC", "[S+](C)(CC)CCC"] {
+        let mut molecule = read_smiles(input).unwrap();
+        perceive(&mut molecule).unwrap();
+        let mut points = vec![
+            Point3::origin(),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+        ];
+        points.extend(
+            (3..molecule.atom_count()).map(|index| Point3::new(0.0, 0.0, (index - 2) as f64)),
+        );
+        let result =
+            stereo_api::infer_coordinate_stereo(&molecule, &test_positions(points)).unwrap();
+        let stereo = result
+            .elements
+            .iter()
+            .find_map(|element| match &element.kind {
+                StereoElementKind::Tetrahedral(stereo) if stereo.center == AtomId::new(0) => {
+                    Some(stereo)
+                }
+                _ => None,
+            })
+            .expect("three-coordinate S/Se stereo");
+        assert_eq!(stereo.carriers[3], StereoCarrier::ImplicitLonePair);
+        assert_eq!(stereo.orientation, Some(TetrahedralOrientation::Clockwise));
+    }
+}
+
+#[test]
+fn coordinate_axis_inference_does_not_treat_saturated_rings_as_sp2() {
+    let molecule = read_smiles("C1CCCCC1C2CCCCC2").unwrap();
+    let points = (0..molecule.atom_count())
+        .map(|index| {
+            let t = index as f64;
+            Point3::new(t, (t * 1.7).sin(), (t * 2.3).cos())
+        })
+        .collect();
+    let result = stereo_api::infer_coordinate_stereo_with_options(
+        &molecule,
+        &test_positions(points),
+        CoordinateStereoOptions { infer_axes: true },
+    )
+    .unwrap();
+    assert!(result
+        .elements
+        .iter()
+        .all(|element| !matches!(element.kind, StereoElementKind::Axis(_))));
+}
+
+#[test]
+fn coordinate_axis_handedness_is_scale_and_rotation_invariant() {
+    let (molecule, positions, _) = coordinate_axis_graph(true);
+    for scale in [1.0e-100, 1.0, 1.0e100] {
+        let points = (0..positions.len())
+            .map(|index| {
+                let point = positions.position_at(index).unwrap().into_value();
+                // A cyclic permutation is a proper rotation.
+                Point3::new(point.y * scale, point.z * scale, point.x * scale)
+            })
+            .collect();
+        let result = stereo_api::infer_coordinate_stereo_with_options(
+            &molecule,
+            &test_positions(points),
+            CoordinateStereoOptions { infer_axes: true },
+        )
+        .unwrap();
+        assert_eq!(result.elements.len(), 1);
+        assert!(
+            matches!(&result.elements[0].kind, StereoElementKind::Axis(stereo) if stereo.orientation == Some(AxisOrientation::Clockwise))
+        );
+    }
+}
+
+#[test]
+fn perception_installation_rejects_a_descriptor_for_the_wrong_stereo_geometry() {
+    let (axis, positions, _) = coordinate_axis_graph(true);
+    let mut editor = axis.into_editor();
+    stereo_api::materialize_coordinate_stereo_with_options(
+        &mut editor,
+        &positions,
+        CoordinateStereoOptions { infer_axes: true },
+    )
+    .unwrap();
+    let axis = editor.finish().unwrap();
+    for (mut molecule, accepted, rejected) in [
+        (
+            read_smiles("F[C@](Cl)(Br)I").unwrap(),
+            StereoDescriptor::R,
+            StereoDescriptor::E,
+        ),
+        (
+            read_smiles("F/C=C/Cl").unwrap(),
+            StereoDescriptor::E,
+            StereoDescriptor::R,
+        ),
+        (axis, StereoDescriptor::M, StereoDescriptor::LowerR),
+    ] {
+        let element = molecule.stereo_element_ids().next().unwrap();
+        let previous = Perception::builder()
+            .with_cip_descriptors(vec![(element, accepted)])
+            .unwrap()
+            .build();
+        molecule.install_perception(previous.clone()).unwrap();
+        let before = molecule.clone();
+        let incompatible = Perception::builder()
+            .with_cip_descriptors(vec![(element, rejected)])
+            .unwrap()
+            .build();
+        let error = molecule.install_perception(incompatible).unwrap_err();
+        assert_eq!(
+            error,
+            PerceptionInstallError::IncompatibleStereoDescriptor {
+                element,
+                descriptor: rejected
+            }
+        );
+        assert!(error.to_string().contains("incompatible"));
+        assert_eq!(molecule, before);
+        assert_eq!(molecule.perception(), &previous);
+    }
 }
 
 #[test]
@@ -2115,13 +2328,14 @@ fn stereo_validation_accepts_structural_axis_elements() {
 
     mol.remove_stereo_element(valid_axis)
         .expect("remove valid axis");
-    let invalid_axis = mol
-        .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
+    let invalid_axis = insert_unchecked_stereo(
+        &mut mol,
+        StereoElement::new(StereoElementKind::Axis(AxisStereo {
             axis,
             carriers: vec![StereoCarrier::Atom(left_carrier)],
             orientation: Some(AxisOrientation::CounterClockwise),
-        })))
-        .expect("invalid axis element refs are still structurally present");
+        })),
+    );
 
     let error = stereo_api::validate_stereo(mol.working()).expect_err("axis should be invalid");
 
@@ -2234,21 +2448,51 @@ fn interpretation_prefers_exocyclic_molfile_atropisomeric_axis() {
 }
 
 #[test]
-fn interpretation_rejects_atrop_fixture_with_an_omitted_tetrahedral_carrier() {
-    let error = read_molfile(rdkit_bms986142_atrop5_molblock())
-        .expect_err("source stereo without its carrier declaration must not publish");
-    assert!(error.to_string().contains("UnassembledTetrahedralBondMark"));
+fn interpretation_materializes_omitted_hydrogen_alongside_atrop_stereo() {
+    let (mut molecule, report) = read_molfile_with_report(rdkit_bms986142_atrop5_molblock())
+        .expect("source valence defines the omitted hydrogen");
+    assert_eq!(report.created_stereo_elements().len(), 2);
+    assert_eq!(
+        molecule.atom(AtomId::new(10)).unwrap().hydrogens,
+        HydrogenDeclaration::Fixed(1)
+    );
+    assert!(molecule.stereo_elements().any(|(_, element)| matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(8))));
+    perceive(&mut molecule).unwrap();
+    let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+    assert_eq!(
+        assigned
+            .assigned
+            .iter()
+            .map(|assignment| assignment.descriptor)
+            .collect::<Vec<_>>(),
+        vec![StereoDescriptor::S, StereoDescriptor::P]
+    );
 }
 
 #[test]
-fn interpretation_rejects_one_ring_endpoint_atrop_fixtures_with_omitted_carriers() {
+fn interpretation_preserves_one_ring_endpoint_atrop_and_omitted_hydrogen() {
     for fixture in [
         rdkit_zm374979_atrop1_molblock(),
         rdkit_zm374979_atrop2_molblock(),
     ] {
-        let error = read_molfile(fixture)
-            .expect_err("omitted tetrahedral carrier must reject interpretation");
-        assert!(error.to_string().contains("UnassembledTetrahedralBondMark"));
+        let (mut molecule, report) =
+            read_molfile_with_report(fixture).expect("omitted source hydrogen interprets");
+        assert_eq!(report.created_stereo_elements().len(), 2);
+        assert_eq!(
+            molecule.atom(AtomId::new(3)).unwrap().hydrogens,
+            HydrogenDeclaration::Fixed(1)
+        );
+        assert!(molecule.stereo_elements().any(|(_, element)| matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(33))));
+        perceive(&mut molecule).unwrap();
+        let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+        assert_eq!(
+            assigned
+                .assigned
+                .iter()
+                .map(|assignment| assignment.descriptor)
+                .collect::<Vec<_>>(),
+            vec![StereoDescriptor::R, StereoDescriptor::M]
+        );
     }
 }
 

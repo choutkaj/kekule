@@ -63,6 +63,10 @@ pub enum SourceStereoNormalizationIssue {
         endpoint: AtomId,
         mark_count: usize,
     },
+    ConflictingAtropisomericWedgeMarks {
+        axis: BondId,
+        mark_count: usize,
+    },
     UnpairedDirectionalBondMark {
         bond: BondId,
     },
@@ -163,6 +167,9 @@ impl SourceStereoNormalizationError {
             SourceStereoNormalizationIssue::AmbiguousDirectionalBondMarks {
                 double_bond, ..
             } => Some(*double_bond),
+            SourceStereoNormalizationIssue::ConflictingAtropisomericWedgeMarks { axis, .. } => {
+                Some(*axis)
+            }
             SourceStereoNormalizationIssue::InvalidStereo(
                 StereoValidationIssue::MissingStereoBond { bond, .. }
                 | StereoValidationIssue::InvalidDoubleBondOrder { bond, .. }

@@ -1,5 +1,12 @@
 use crate::*;
 
+fn feature_schema_version(feature: &str) -> u32 {
+    match feature {
+        "stereo.representation" | "stereo.perception" | "io.smiles.isomeric" => 2,
+        _ => GOLDEN_SCHEMA_VERSION,
+    }
+}
+
 fn digest_hex(digest: impl AsRef<[u8]>) -> String {
     digest
         .as_ref()
@@ -104,7 +111,7 @@ fn accept_one_implementation_golden(
     let expected =
         implementation_expected(&manifest.benchmark_id, &manifest.corpus_id, &fixture_path)?;
     let document = json!({
-        "schema_version": GOLDEN_SCHEMA_VERSION,
+        "schema_version": feature_schema_version(&manifest.benchmark_id),
         "feature_id": manifest.benchmark_id,
         "corpus_id": manifest.corpus_id,
         "fixture_id": slugify_fixture(fixture),
@@ -348,7 +355,8 @@ pub(crate) fn check_golden_metadata(
     fixture: &str,
     fixture_path: &Path,
 ) -> Result<(), Box<dyn Error>> {
-    if golden.get("schema_version") != Some(&json!(GOLDEN_SCHEMA_VERSION)) {
+    if golden.get("schema_version") != Some(&json!(feature_schema_version(&manifest.benchmark_id)))
+    {
         return Err(boxed_error(format!(
             "{} has unsupported schema_version",
             golden_path.display()

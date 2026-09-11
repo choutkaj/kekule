@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use kekule::core::{
-    DoubleBondOrientation, HydrogenDeclaration, Molecule, MoleculeEditor, StereoCarrier,
-    StereoDescriptor, StereoElement, StereoElementKind,
+    DoubleBondOrientation, HydrogenDeclaration, Molecule, MoleculeEditor, MoleculeError,
+    StereoCarrier, StereoDescriptor, StereoElement, StereoElementKind,
 };
 use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
 use kekule::structure::{Model, Positions};
@@ -234,9 +234,14 @@ fn conjugated_stereo_round_trips_with_implicit_hydrogen_carriers() {
 }
 
 #[test]
-fn contradictory_double_bond_assertions_still_fail_export() {
-    let original = molecule("F/C=C/F");
-    let mut opposite = original.stereo_elements().next().unwrap().1.clone();
+fn contradictory_double_bond_assertions_are_rejected_before_export() {
+    let mut original = molecule("F/C=C/F");
+    original.perceive().unwrap();
+    stereo::assign_cip_descriptors(&mut original).unwrap();
+    let (id, element) = original.stereo_elements().next().unwrap();
+    let expected = original.cip_descriptor(id).unwrap();
+    let expected_export = smiles::write_isomeric(&original).unwrap();
+    let mut opposite = element.clone();
     let StereoElementKind::DoubleBond(stereo) = &mut opposite.kind else {
         panic!("expected double-bond assertion");
     };
@@ -245,13 +250,23 @@ fn contradictory_double_bond_assertions_still_fail_export() {
         DoubleBondOrientation::Opposite => DoubleBondOrientation::Together,
     });
     let mut editor = original.into_editor();
-    editor.add_stereo_element(opposite).unwrap();
-    let contradictory = editor.finish().unwrap();
-    let error = smiles::write_isomeric(&contradictory).unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("conflicting double-bond stereo constraints"));
-    assert_eq!(contradictory.stereo_elements().count(), 2);
+    let before = editor.clone();
+    assert!(matches!(
+        editor.add_stereo_element(opposite),
+        Err(MoleculeError::InvalidStereoReference(_))
+    ));
+    assert_eq!(editor, before);
+
+    let preserved = editor.finish().unwrap();
+    assert_eq!(preserved.stereo_elements().count(), 1);
+    assert_eq!(preserved.cip_descriptor(id).unwrap(), expected);
+    let written = smiles::write_isomeric(&preserved).unwrap();
+    assert_eq!(written, expected_export);
+    let mut restored = molecule(&written);
+    restored.perceive().unwrap();
+    stereo::assign_cip_descriptors(&mut restored).unwrap();
+    let restored_id = restored.stereo_element_ids().next().unwrap();
+    assert_eq!(restored.cip_descriptor(restored_id).unwrap(), expected);
 }
 
 #[test]
