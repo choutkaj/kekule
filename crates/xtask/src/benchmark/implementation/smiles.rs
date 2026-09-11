@@ -90,11 +90,14 @@ pub(crate) fn canonical_smiles_record_json(
 pub(crate) fn isomeric_smiles_record_json(
     record: &IndexedSmilesRecord,
 ) -> Result<Value, Box<dyn Error>> {
-    let Some(molecule) = &record.molecule else {
+    if record.components.is_empty() {
         return Ok(smiles_error_record_json(record));
-    };
-    let mut molecule = molecule.clone();
-    if molecule.perceive().is_err() {
+    }
+    let mut molecules = record.components.clone();
+    if molecules
+        .iter_mut()
+        .any(|molecule| molecule.perceive().is_err())
+    {
         return Ok(json!({
             "record_index": record.record_index,
             "status": "perception_error",
@@ -102,7 +105,11 @@ pub(crate) fn isomeric_smiles_record_json(
             "input_smiles": record.input_smiles,
         }));
     }
-    let written = match smiles::write_isomeric(&molecule) {
+    let written = match molecules
+        .iter()
+        .map(smiles::write_isomeric)
+        .collect::<Result<Vec<_>, _>>()
+    {
         Ok(written) => written,
         Err(error) => {
             return Ok(json!({
@@ -114,7 +121,11 @@ pub(crate) fn isomeric_smiles_record_json(
             }));
         }
     };
-    let reparsed = match interpret_smiles(&written) {
+    let reparsed = match written
+        .iter()
+        .map(|text| interpret_smiles(text))
+        .collect::<Result<Vec<_>, _>>()
+    {
         Ok(reparsed) => reparsed,
         Err(_) => {
             return Ok(json!({
@@ -130,23 +141,9 @@ pub(crate) fn isomeric_smiles_record_json(
         "status": "ok",
         "title": record.title,
         "input_smiles": record.input_smiles,
-        "normalized_perceived": smiles_perceived_semantic_json(reparsed.clone()),
-        "stereo": smiles_isomeric_stereo_semantic_json(reparsed),
+        "normalized_perceived": smiles_components_perceived_semantic_json(&reparsed),
+        "stereo": smiles_components_isomeric_stereo_semantic_json(&reparsed),
     }))
-}
-
-pub(crate) fn isomeric_smiles_record_is_stereo_bearing(record: &IndexedSmilesRecord) -> bool {
-    if !record.input_smiles.contains('@')
-        && !record.input_smiles.contains('/')
-        && !record.input_smiles.contains('\\')
-    {
-        return false;
-    }
-    let Some(molecule) = &record.molecule else {
-        return false;
-    };
-    let mut molecule = molecule.clone();
-    molecule.perceive().is_ok()
 }
 
 pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
@@ -335,18 +332,25 @@ pub(crate) fn hydrogen_transform_semantic_json(mut molecule: Molecule) -> Value 
     })
 }
 
-pub(crate) fn smiles_isomeric_stereo_semantic_json(mut molecule: Molecule) -> Value {
-    if molecule.perceive().is_err() {
-        return json!({ "status": "perception_error" });
+pub(crate) fn smiles_components_isomeric_stereo_semantic_json(components: &[Molecule]) -> Value {
+    let mut atom_descriptors = Vec::new();
+    let mut bond_descriptors = Vec::new();
+    for mut molecule in components.iter().cloned() {
+        if molecule.perceive().is_err() {
+            return json!({ "status": "perception_error" });
+        }
+        if stereo::assign_cip_descriptors(&mut molecule).is_err() {
+            return json!({ "status": "cip_error" });
+        }
+        atom_descriptors.extend(smiles_cip_atom_descriptor_keys_json(&molecule));
+        bond_descriptors.extend(smiles_cip_bond_descriptor_keys_json(&molecule));
     }
-    if stereo::assign_cip_descriptors(&mut molecule).is_err() {
-        return json!({ "status": "cip_error" });
-    }
-    let mol = &molecule;
+    atom_descriptors.sort_by_key(Value::to_string);
+    bond_descriptors.sort_by_key(Value::to_string);
     json!({
         "status": "ok",
-        "atom_descriptors": smiles_cip_atom_descriptor_keys_json(mol),
-        "bond_descriptors": smiles_cip_bond_descriptor_keys_json(mol),
+        "atom_descriptors": atom_descriptors,
+        "bond_descriptors": bond_descriptors,
     })
 }
 

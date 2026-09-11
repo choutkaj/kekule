@@ -1,6 +1,341 @@
 use super::*;
 use crate::properties::{PropertyKey, PropertyValue};
 
+fn wedged_tetrahedron(symbol: &str, charge_code: u8, mirror: bool) -> String {
+    let y = if mirror { -1.0 } else { 1.0 };
+    format!(
+        "stereo drawing\nkekule\n\n  4  3  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 {symbol:<3} 0  {charge_code}  0  0  0  0\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000{y:10.4}    0.0000 Br  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
+    )
+}
+
+#[test]
+fn molfile_wedges_use_drawing_geometry_for_hydrogen_and_lone_pair_carriers() {
+    // RDKit 2026.03.5 AssignCIPLabels gives S for the original drawing,
+    // and R after reflection, for all four fourth-carrier chemistries.
+    for (symbol, charge_code) in [("C", 0), ("S", 0), ("S", 3), ("P", 0)] {
+        for (mirror, expected) in [(false, StereoDescriptor::S), (true, StereoDescriptor::R)] {
+            let source = wedged_tetrahedron(symbol, charge_code, mirror);
+            let mut molecule = read_molfile(&source).expect("wedged center interprets");
+            perceive(&mut molecule).expect("valence perceives");
+            let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+            assert_eq!(assigned.assigned.len(), 1, "{symbol} {charge_code}");
+            assert_eq!(assigned.assigned[0].descriptor, expected, "{source}");
+        }
+    }
+}
+
+#[test]
+fn molfile_model_writing_preserves_tetrahedral_drawing_orientation() {
+    for (symbol, charge_code) in [("C", 0), ("S", 3), ("P", 0)] {
+        for mirror in [false, true] {
+            let document = molfile::parse_str(&wedged_tetrahedron(symbol, charge_code, mirror))
+                .expect("valid source drawing");
+            let interpreted = molfile::interpret(&document).expect("interpreted drawing");
+            let original = interpreted.molecules().next().unwrap();
+            for written in [
+                molfile::write_model_v2000(interpreted.model()).expect("V2000 model writes"),
+                molfile::write_model_v3000(interpreted.model()).expect("V3000 model writes"),
+            ] {
+                let reparsed = read_molfile(&written).expect("written drawing interprets");
+                assert_eq!(
+                    original
+                        .stereo_elements()
+                        .map(|(_, element)| &element.kind)
+                        .collect::<Vec<_>>(),
+                    reparsed
+                        .stereo_elements()
+                        .map(|(_, element)| &element.kind)
+                        .collect::<Vec<_>>(),
+                    "{written}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn molfile_redundant_wedges_preserve_consistent_and_unknown_configurations() {
+    let source = wedged_tetrahedron("C", 0, false)
+        .replace("   -1.0000    0.0000", "   -0.5000    0.8660")
+        .replace("    0.0000    1.0000", "   -0.5000   -0.8660");
+    let original = read_molfile(&source).expect("single wedge interprets");
+    let redundant = source.replace("  1  3  1  0", "  1  3  1  1");
+    let (molecule, report) =
+        read_molfile_with_report(&redundant).expect("redundant wedges interpret");
+    assert!(report.warnings().is_empty());
+    assert_eq!(
+        molecule.stereo_elements().next().unwrap().1.kind,
+        original.stereo_elements().next().unwrap().1.kind
+    );
+
+    let unknown = source.replace("  1  3  1  0", "  1  3  1  4");
+    let molecule = read_molfile(&unknown).expect("wavy mark interprets");
+    assert!(molecule
+        .stereo_elements()
+        .next()
+        .unwrap()
+        .1
+        .is_explicitly_unknown());
+
+    let degenerate = unknown
+        .replace("    1.0000    0.0000", "    0.0000    0.0000")
+        .replace("   -0.5000    0.8660", "    0.0000    0.0000")
+        .replace("   -0.5000   -0.8660", "    0.0000    0.0000");
+    let (molecule, report) = read_molfile_with_report(&degenerate).unwrap();
+    assert!(report.warnings().is_empty());
+    assert!(molecule
+        .stereo_elements()
+        .next()
+        .unwrap()
+        .1
+        .is_explicitly_unknown());
+
+    let conflicting = source.replace("  1  3  1  0", "  1  3  1  6");
+    let (molecule, report) = read_molfile_with_report(&conflicting).expect("conflict is reported");
+    assert_eq!(report.warnings().len(), 1);
+    assert!(molecule.stereo_elements().next().is_none());
+}
+
+#[test]
+fn v3000_round_trips_absolute_or_and_stereo_groups_and_promotes_auto_output() {
+    let document = molfile::parse_str(&wedged_tetrahedron("C", 0, false)).unwrap();
+    let interpreted = molfile::interpret(&document).unwrap();
+    let source = molfile::write_model_v3000(interpreted.model()).unwrap();
+    for (group, expected) in [
+        ("MDLV30/STEABS", StereoGroupKind::Absolute),
+        ("MDLV30/STEREL1", StereoGroupKind::Or),
+        ("MDLV30/STERAC1", StereoGroupKind::And),
+    ] {
+        let grouped = source.replace(
+            "M  V30 END CTAB",
+            &format!("M  V30 BEGIN COLLECTION\nM  V30 {group} ATOMS=(1 1)\nM  V30 END COLLECTION\nM  V30 END CTAB"),
+        );
+        let document = molfile::parse_str(&grouped).expect("collection syntax is preserved");
+        let interpreted = molfile::interpret(&document).expect("group semantics are represented");
+        let group = interpreted
+            .molecules()
+            .next()
+            .unwrap()
+            .stereo_groups()
+            .next()
+            .unwrap()
+            .1;
+        assert_eq!(group.kind, expected);
+        assert_eq!(group.members.len(), 1);
+        assert!(interpreted.reports()[0].ignored_record_lines().is_empty());
+        let written =
+            molfile::write_model(interpreted.model(), molfile::MolfileWriteOptions::default())
+                .unwrap();
+        assert!(written.contains("V3000"));
+        let document = molfile::parse_str(&written).unwrap();
+        let reparsed = molfile::interpret(&document).unwrap();
+        assert_eq!(
+            reparsed
+                .molecules()
+                .next()
+                .unwrap()
+                .stereo_groups()
+                .next()
+                .unwrap()
+                .1,
+            group
+        );
+        assert!(molfile::write_model_v2000(interpreted.model())
+            .unwrap_err()
+            .message()
+            .contains("enhanced stereo groups"));
+    }
+}
+
+#[test]
+fn v3000_round_trips_atropisomeric_bond_group_members() {
+    let document = molfile::parse_str(rdkit_rp6306_atrop_molblock()).unwrap();
+    let interpreted = molfile::interpret(&document).unwrap();
+    let source = molfile::write_model_v3000(interpreted.model()).unwrap();
+    // RDKit represents enhanced axis membership using either endpoint atom,
+    // and collapses a pair of endpoint references to one bond member.
+    for (name, kind) in [
+        ("STEABS", StereoGroupKind::Absolute),
+        ("STERAC1", StereoGroupKind::And),
+        ("STEREL1", StereoGroupKind::Or),
+    ] {
+        for atoms in ["1 3", "1 9", "2 3 9"] {
+            let grouped = source.replace("M  V30 END CTAB", &format!("M  V30 BEGIN COLLECTION\nM  V30 MDLV30/{name} ATOMS=({atoms})\nM  V30 END COLLECTION\nM  V30 END CTAB"));
+            let interpretation = molfile::parse_str(&grouped).unwrap().interpret().unwrap();
+            let molecule = interpretation.molecules().next().unwrap();
+            let group = molecule.stereo_groups().next().unwrap().1;
+            assert_eq!(group.kind, kind);
+            assert_eq!(group.members.len(), 1);
+            assert!(
+                matches!(&molecule.stereo_element(group.members[0]).unwrap().kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(3))
+            );
+            let output = molfile::write_model_v3000(interpretation.model()).unwrap();
+            assert!(!output.contains("BONDS="));
+            assert!(output.contains("ATOMS=(1 3)"));
+            let reread = molfile::parse_str(&output).unwrap().interpret().unwrap();
+            assert_eq!(
+                reread
+                    .molecules()
+                    .next()
+                    .unwrap()
+                    .stereo_groups()
+                    .next()
+                    .unwrap()
+                    .1,
+                group
+            );
+        }
+    }
+}
+#[test]
+fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo() {
+    let source = rdkit_rp6306_atrop_molblock().replace("  9 12  1  6", "  9 12  1  0");
+    let marked = |left, right| {
+        source
+            .replace("  3  7  1  0", &format!("  3  7  1  {left}"))
+            .replace("  3 10  1  0", &format!("  3 10  1  {right}"))
+    };
+    // RDKit 2026.03.5 accepts opposite directions at one end and rejects
+    // two wedges or two hashes at that end.
+    for (left, right, expected) in [(1, 6, StereoDescriptor::M), (6, 1, StereoDescriptor::P)] {
+        let mut molecule = read_molfile(&marked(left, right)).unwrap();
+        perceive(&mut molecule).unwrap();
+        let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+        assert_eq!(assigned.assigned.len(), 1);
+        assert_eq!(assigned.assigned[0].descriptor, expected);
+    }
+    for direction in [1, 6] {
+        let document = molfile::parse_str(&marked(direction, direction)).unwrap();
+        let error = molfile::interpret(&document).unwrap_err();
+        assert!(error
+            .message()
+            .contains("ConflictingAtropisomericWedgeMarks"));
+    }
+    for (left, right) in [(4, 0), (4, 1), (4, 6), (1, 4), (6, 4), (4, 4)] {
+        let mut molecule = read_molfile(&marked(left, right)).unwrap();
+        let elements = molecule
+            .stereo_elements()
+            .map(|(_, element)| element)
+            .collect::<Vec<_>>();
+        assert_eq!(elements.len(), 1);
+        assert!(matches!(&elements[0].kind, StereoElementKind::Axis(stereo)
+            if stereo.axis == BondId::new(3) && stereo.orientation.is_none()));
+        perceive(&mut molecule).unwrap();
+        assert!(stereo_api::assign_cip_descriptors(&mut molecule)
+            .unwrap()
+            .assigned
+            .is_empty());
+        assert!(molfile::write_v3000(&molecule)
+            .unwrap_err()
+            .message()
+            .contains("unknown axis"));
+    }
+}
+
+#[test]
+fn v3000_stereo_groups_validate_members_and_preserve_source_ids_and_continuations() {
+    let document = molfile::parse_str(&wedged_tetrahedron("C", 0, false)).unwrap();
+    let interpreted = molfile::interpret(&document).unwrap();
+    let source = molfile::write_model_v3000(interpreted.model())
+        .unwrap()
+        .replace("M  V30 1 C", "M  V30 101 C")
+        .replace("M  V30 1 1 1 2", "M  V30 1 1 101 2")
+        .replace("M  V30 2 1 1 3", "M  V30 2 1 101 3")
+        .replace("M  V30 3 1 1 4", "M  V30 3 1 101 4");
+    let collection = |row: &str| {
+        source.replace(
+            "M  V30 END CTAB",
+            &format!(
+                "M  V30 BEGIN COLLECTION\nM  V30 {row}\nM  V30 END COLLECTION\nM  V30 END CTAB"
+            ),
+        )
+    };
+    let continued = collection("MDLV30/STEREL1 ATOMS=(1 -\nM  V30 101)");
+    let document = molfile::parse_str(&continued).unwrap();
+    let interpreted = molfile::interpret(&document).unwrap();
+    let group = interpreted
+        .molecules()
+        .next()
+        .unwrap()
+        .stereo_groups()
+        .next()
+        .unwrap()
+        .1;
+    assert_eq!(group.kind, StereoGroupKind::Or);
+    assert_eq!(group.members.len(), 1);
+    assert!(interpreted.reports()[0].ignored_record_lines().is_empty());
+
+    for row in [
+        "MDLV30/STEREL0 ATOMS=(1 101)",
+        "MDLV30/STEREL1 ATOMS=(2 101)",
+        "MDLV30/STEREL1 ATOMS=(0)",
+        "MDLV30/STEREL1 ATOMS=(1 999)",
+        "MDLV30/STEREL1 ATOMS=(2 101 101)",
+        "MDLV30/STEREL1 ATOMS=(1 2)",
+        "MDLV30/STEREL1 ATOMS=(1 101) ATOMS=(1 101)",
+        "MDLV30/STEREL1 BONDS=(1 1)",
+    ] {
+        let grouped = collection(row);
+        if let Ok(document) = molfile::parse_str(&grouped) {
+            assert!(molfile::interpret(&document).is_err(), "{row}");
+        }
+    }
+}
+
+#[test]
+fn v3000_repeated_group_ids_preserve_one_relation() {
+    let molecule = read_smiles("F[C@H](Cl)[C@H](Br)I").unwrap();
+    let source = molfile::write_v3000(&molecule).unwrap();
+    for kind in ["STEREL", "STERAC"] {
+        for number in ["1", "01"] {
+            let grouped = source.replace("M  V30 END CTAB", &format!("M  V30 BEGIN COLLECTION\nM  V30 MDLV30/{kind}1 ATOMS=(1 2)\nM  V30 MDLV30/{kind}{number} ATOMS=(1 4)\nM  V30 END COLLECTION\nM  V30 END CTAB"));
+            let document = molfile::parse_str(&grouped).unwrap();
+            let interpreted = molfile::interpret(&document).unwrap();
+            let molecule = interpreted.molecules().next().unwrap();
+            assert_eq!(molecule.stereo_groups().count(), 1);
+            assert_eq!(molecule.stereo_groups().next().unwrap().1.members.len(), 2);
+            assert!(interpreted.reports()[0].ignored_record_lines().is_empty());
+        }
+    }
+}
+
+#[test]
+fn v3000_rejects_relative_groups_across_components_and_preserves_absolute_members() {
+    let document = molfile::parse_str(&wedged_tetrahedron("C", 0, false)).unwrap();
+    let interpreted = molfile::interpret(&document).unwrap();
+    let source = molfile::write_model_v3000(interpreted.model()).unwrap()
+        .replace("COUNTS 4 3", "COUNTS 8 6")
+        .replace("M  V30 END ATOM", "M  V30 5 C 5 0 0 0\nM  V30 6 F 6 0 0 0\nM  V30 7 Cl 4 0 0 0\nM  V30 8 Br 5 1 0 0\nM  V30 END ATOM")
+        .replace("M  V30 END BOND", "M  V30 4 1 5 6 CFG=1\nM  V30 5 1 5 7\nM  V30 6 1 5 8\nM  V30 END BOND");
+    for group in ["MDLV30/STERAC1", "MDLV30/STEREL1", "MDLV30/STEABS"] {
+        let source = source.replace("M  V30 END CTAB", &format!("M  V30 BEGIN COLLECTION\nM  V30 {group} ATOMS=(2 1 5)\nM  V30 END COLLECTION\nM  V30 END CTAB"));
+        let document = molfile::parse_str(&source).unwrap();
+        if group == "MDLV30/STEABS" {
+            let interpreted = molfile::interpret(&document).unwrap();
+            assert_eq!(interpreted.molecules().count(), 2);
+            assert!(interpreted
+                .molecules()
+                .all(|molecule| molecule.stereo_groups().count() == 1));
+            let output = molfile::write_model_v3000(interpreted.model()).unwrap();
+            assert_eq!(output.matches("MDLV30/STEABS").count(), 1);
+            assert!(output.contains("ATOMS=(2 1 5)"));
+            assert_eq!(
+                molfile::parse_str(&output)
+                    .unwrap()
+                    .to_molecules()
+                    .unwrap()
+                    .len(),
+                2
+            );
+        } else {
+            assert!(molfile::interpret(&document)
+                .unwrap_err()
+                .message()
+                .contains("spanning disconnected molecules"));
+        }
+    }
+}
+
 #[test]
 fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
     let molfile_text = "Header title\nprogram line\ncomment line\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nX  UNSUPPORTED\nM  END\n";
@@ -520,20 +855,30 @@ fn v2000_bond_stereo_requires_enough_source_context_to_canonicalize() {
 }
 
 #[test]
-fn v2000_does_not_infer_tetrahedral_hydrogens_without_a_source_declaration() {
-    for symbol in ["C", "N", "S"] {
+fn v2000_materializes_omitted_tetrahedral_hydrogen_from_source_valence() {
+    for symbol in ["C", "N", "S", "P"] {
         let input = format!(
             "stereo hydrogen\nkekule\n\n  4  3  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 {symbol:<3} 0  0  0  0  0  0\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
         );
 
-        if symbol == "S" {
-            let molecule = read_molfile(&input).expect("sulfur lone-pair stereo interprets");
+        if symbol != "N" {
+            let molecule = read_molfile(&input).expect("source fourth carrier interprets");
+            let expected_carrier = if symbol == "P" {
+                StereoCarrier::ImplicitLonePair
+            } else {
+                assert_eq!(
+                    molecule.atom(AtomId::new(0)).unwrap().hydrogens,
+                    HydrogenDeclaration::Fixed(1)
+                );
+                StereoCarrier::ImplicitHydrogen
+            };
+            assert!(!molecule.perception().has_valence());
             assert_eq!(molecule.stereo_elements().count(), 1);
             assert!(molecule.stereo_elements().any(|(_, element)| {
                 matches!(
                     &element.kind,
                     StereoElementKind::Tetrahedral(stereo)
-                        if stereo.carriers.contains(&StereoCarrier::ImplicitLonePair)
+                        if stereo.carriers.contains(&expected_carrier)
                 )
             }));
         } else {
@@ -670,7 +1015,7 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
     assert!(molfile::write_v2000(molecule.working())
         .expect_err("specified double-bond stereo should be rejected")
         .message
-        .contains("cannot encode"));
+        .contains("requires a Model"));
 
     let element = molecule
         .stereo_element_ids()

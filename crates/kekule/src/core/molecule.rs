@@ -471,8 +471,9 @@ impl Molecule {
                 "stereo element group membership must be established through add_stereo_group",
             ));
         }
-        self.canonicalize_stereo_element(&mut element);
         self.validate_stereo_element_refs(&element)?;
+        self.validate_unique_stereo_focus(&element, None)?;
+        self.canonicalize_stereo_element(&mut element);
         let id = checked_molecule_id(
             self.graph.stereo_elements.len(),
             MoleculeIdKind::StereoElement,
@@ -512,8 +513,9 @@ impl Molecule {
                 "stereo group membership must be changed through stereo-group operations",
             ));
         }
-        self.canonicalize_stereo_element(&mut replacement);
         self.validate_stereo_element_refs(&replacement)?;
+        self.validate_unique_stereo_focus(&replacement, Some(id))?;
+        self.canonicalize_stereo_element(&mut replacement);
         let previous = std::mem::replace(
             self.graph.stereo_elements[id.index()]
                 .as_mut()
@@ -781,9 +783,29 @@ impl Molecule {
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => {
                 self.atom(stereo.center)?;
+                if stereo.carriers.len() != 4 {
+                    return Err(MoleculeError::InvalidStereoReference(
+                        "tetrahedral stereo requires four carriers",
+                    ));
+                }
+                for (index, carrier) in stereo.carriers.iter().enumerate() {
+                    if stereo.carriers[..index].contains(carrier) {
+                        return Err(MoleculeError::InvalidStereoReference(
+                            "tetrahedral stereo carriers must be unique",
+                        ));
+                    }
+                }
                 self.validate_stereo_carriers(&stereo.carriers)?;
                 for &carrier in &stereo.carriers {
                     self.validate_stereo_carrier_adjacency(stereo.center, None, carrier)?;
+                }
+                if self
+                    .neighbors(stereo.center)?
+                    .any(|neighbor| !stereo.carriers.contains(&StereoCarrier::Atom(neighbor)))
+                {
+                    return Err(MoleculeError::InvalidStereoReference(
+                        "tetrahedral stereo must include every bonded neighbor",
+                    ));
                 }
             }
             StereoElementKind::DoubleBond(stereo) => {
@@ -798,6 +820,13 @@ impl Molecule {
                         "double-bond stereo focus does not match bond endpoints",
                     ));
                 }
+                if matches!(stereo.left_carrier, StereoCarrier::ImplicitLonePair)
+                    || matches!(stereo.right_carrier, StereoCarrier::ImplicitLonePair)
+                {
+                    return Err(MoleculeError::InvalidStereoReference(
+                        "double-bond stereo requires atom or implicit hydrogen references",
+                    ));
+                }
                 self.validate_stereo_carriers(&[stereo.left_carrier, stereo.right_carrier])?;
                 self.validate_stereo_carrier_adjacency(
                     stereo.left,
@@ -809,19 +838,80 @@ impl Molecule {
                     Some(stereo.left),
                     stereo.right_carrier,
                 )?;
-            }
-            StereoElementKind::Axis(stereo) => {
-                let axis = self.bond(stereo.axis)?;
-                self.validate_stereo_carriers(&stereo.carriers)?;
-                for &carrier in &stereo.carriers {
+                for (endpoint, other) in [(stereo.left, stereo.right), (stereo.right, stereo.left)]
+                {
                     if self
-                        .validate_stereo_carrier_adjacency(axis.a(), Some(axis.b()), carrier)
-                        .is_err()
+                        .neighbors(endpoint)?
+                        .filter(|neighbor| *neighbor != other)
+                        .count()
+                        > 2
                     {
-                        self.validate_stereo_carrier_adjacency(axis.b(), Some(axis.a()), carrier)?;
+                        return Err(MoleculeError::InvalidStereoReference(
+                            "double-bond stereo endpoint has more than two substituents",
+                        ));
                     }
                 }
             }
+            StereoElementKind::Axis(stereo) => {
+                let axis = self.bond(stereo.axis)?;
+                if stereo.carriers.len() != 2 {
+                    return Err(MoleculeError::InvalidStereoReference(
+                        "axis stereo requires two atom carriers, one at each endpoint",
+                    ));
+                }
+                self.validate_stereo_carriers(&stereo.carriers)?;
+                let mut endpoints = [false; 2];
+                for &carrier in &stereo.carriers {
+                    let StereoCarrier::Atom(atom) = carrier else {
+                        return Err(MoleculeError::InvalidStereoReference(
+                            "axis stereo requires explicit atom references",
+                        ));
+                    };
+                    let adjacent = [
+                        atom != axis.b() && self.bond_between(axis.a(), atom)?.is_some(),
+                        atom != axis.a() && self.bond_between(axis.b(), atom)?.is_some(),
+                    ];
+                    if adjacent[0] == adjacent[1] {
+                        return Err(MoleculeError::InvalidStereoReference(
+                            "axis carrier must be bonded to exactly one focus endpoint",
+                        ));
+                    }
+                    let endpoint = usize::from(adjacent[1]);
+                    if endpoints[endpoint] {
+                        return Err(MoleculeError::InvalidStereoReference(
+                            "axis stereo requires one carrier at each endpoint",
+                        ));
+                    }
+                    endpoints[endpoint] = true;
+                }
+                for (endpoint, other) in [(axis.a(), axis.b()), (axis.b(), axis.a())] {
+                    if self
+                        .neighbors(endpoint)?
+                        .filter(|neighbor| *neighbor != other)
+                        .count()
+                        > 2
+                    {
+                        return Err(MoleculeError::InvalidStereoReference(
+                            "axis stereo endpoint has more than two substituents",
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_unique_stereo_focus(
+        &self,
+        element: &StereoElement,
+        replacing: Option<StereoElementId>,
+    ) -> Result<()> {
+        if self.stereo_elements().any(|(id, stored)| {
+            Some(id) != replacing && stored.kind.focus() == element.kind.focus()
+        }) {
+            return Err(MoleculeError::InvalidStereoReference(
+                "stereo focus already has an assertion",
+            ));
         }
         Ok(())
     }
@@ -943,15 +1033,11 @@ impl Molecule {
         };
 
         let mut reference_changes = 0;
-        if let Some(canonical) =
-            self.canonical_endpoint_reference(left, right, stereo.axis, left_carrier)
-        {
+        if let Some(canonical) = self.canonical_axis_reference(left, right, stereo.axis) {
             reference_changes += usize::from(canonical != left_carrier);
             left_carrier = canonical;
         }
-        if let Some(canonical) =
-            self.canonical_endpoint_reference(right, left, stereo.axis, right_carrier)
-        {
+        if let Some(canonical) = self.canonical_axis_reference(right, left, stereo.axis) {
             reference_changes += usize::from(canonical != right_carrier);
             right_carrier = canonical;
         }
@@ -960,6 +1046,20 @@ impl Molecule {
         if reference_changes % 2 == 1 {
             stereo.orientation = stereo.orientation.map(AxisOrientation::inverted);
         }
+    }
+
+    fn canonical_axis_reference(
+        &self,
+        endpoint: AtomId,
+        other_endpoint: AtomId,
+        axis: BondId,
+    ) -> Option<StereoCarrier> {
+        self.atom_stereo_references(endpoint, other_endpoint, axis)
+            .into_iter()
+            .find(|carrier| {
+                matches!(carrier, StereoCarrier::Atom(atom)
+                if self.bond_between(other_endpoint, *atom).ok().flatten().is_none())
+            })
     }
 
     fn axis_reference_on_endpoint(

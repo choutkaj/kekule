@@ -16,12 +16,10 @@ use descriptors::{
 };
 use io::{
     interpret_molfile, interpret_sdf, mol_record_json, read_small_records_by_suffix,
-    read_stereo_perception_records_by_suffix, read_stereo_records_by_suffix, sdf_record_json,
-    small_record, smarts_query_records_json, substructure_record_json, zero_coordinate_model,
+    read_stereo_perception_records_by_suffix, sdf_record_json, small_record,
+    smarts_query_records_json, substructure_record_json, zero_coordinate_model,
 };
-use smiles::{
-    isomeric_smiles_record_is_stereo_bearing, isomeric_smiles_record_json, smiles_parse_record_json,
-};
+use smiles::{isomeric_smiles_record_json, smiles_parse_record_json};
 use stereo::{stereo_cip_record_json, stereo_perception_group_record_json, stereo_record_json};
 
 #[cfg(test)]
@@ -194,14 +192,10 @@ pub(crate) fn implementation_expected(
             }))
         }
         "io.smiles.isomeric" => {
-            let records = read_canonical_smiles_records(fixture_path)?;
-            let stereo_only = true;
+            let records = read_smiles_records(fixture_path)?;
             Ok(json!({
                 "records": records
                     .iter()
-                    .filter(|record| {
-                        !stereo_only || isomeric_smiles_record_is_stereo_bearing(record)
-                    })
                     .map(isomeric_smiles_record_json)
                     .collect::<Result<Vec<_>, Box<dyn Error>>>()?
             }))
@@ -267,7 +261,7 @@ pub(crate) fn implementation_expected(
             }))
         }
         "stereo.representation" => {
-            let records = read_stereo_records_by_suffix(fixture_path)?;
+            let records = read_stereo_perception_records_by_suffix(fixture_path)?;
             Ok(json!({ "records": records.iter().map(stereo_record_json).collect::<Vec<_>>() }))
         }
         "stereo.perception" => {
@@ -280,17 +274,16 @@ pub(crate) fn implementation_expected(
             }))
         }
         "stereo.cip" => {
-            let mut records = read_stereo_records_by_suffix(fixture_path)?;
+            let mut records = read_stereo_perception_records_by_suffix(fixture_path)?;
             let remove_plain_hydrogens = matches!(
                 fixture_path.extension().and_then(|ext| ext.to_str()),
                 Some("txt" | "smi" | "smiles")
             );
-            Ok(json!({
-                "records": records
-                    .iter_mut()
-                    .filter_map(|record| stereo_cip_record_json(record, remove_plain_hydrogens))
-                    .collect::<Vec<_>>()
-            }))
+            let compared = records
+                .iter_mut()
+                .map(|record| stereo_cip_record_json(record, remove_plain_hydrogens))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(json!({"records": compared.into_iter().flatten().collect::<Vec<_>>()}))
         }
         _ => Err(boxed_error(format!(
             "no implementation comparison configured for benchmark `{benchmark}`"

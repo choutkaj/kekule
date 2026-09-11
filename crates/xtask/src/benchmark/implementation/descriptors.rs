@@ -135,9 +135,13 @@ pub(super) fn rdkit_default_atom_index(
     remove_plain_hydrogens: bool,
 ) -> BTreeMap<AtomId, u64> {
     let mut index = BTreeMap::new();
-    let retained = mol
-        .atoms()
-        .filter(|(_, atom)| !remove_plain_hydrogens || !rdkit_default_removes_hydrogen(atom));
+    let retained = mol.atoms().filter(|(id, atom)| {
+        !remove_plain_hydrogens
+            || !rdkit_default_removes_hydrogen(atom)
+            || mol
+                .incident_bonds(*id)
+                .map_or(true, |bonds| bonds.count() != 1)
+    });
     for (dense_index, (atom_id, _)) in (0u64..).zip(retained) {
         index.insert(atom_id, dense_index);
     }

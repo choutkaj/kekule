@@ -1,0 +1,2450 @@
+{
+  "fixtures": [
+    {
+      "new_records": 1000,
+      "new_sha256": "ca3c68bb205a2896cfcae097f1a48b4e2b0aecf2ef0d2582ac86e15f297d34c4",
+      "old_records": 1000,
+      "old_sha256": "42abc9b403460d115783534b5196147d4b014a920e78cb82c3d1b47c6900bfe5",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_001.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c7ee16f4918251d8f06bd331bd876f1a8433d94cac05407e588a952a3fd9a413",
+      "old_records": 1000,
+      "old_sha256": "ee89ffedafbe9942be40b0e393030a623d1d5c78767176a2d54b74865fe5c126",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_002.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "3eb45ec032805aff1da97d0dbcb01774064fe2f527496a6e9893a4b2c037d256",
+      "old_records": 1000,
+      "old_sha256": "f692c63cd97ba5d5a8a1d89589bcbf40bc519013c4695a82aba7e04200800b52",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_003.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "38470c41c6f698fb78e9b3ac66fde634070b90922aeceb8bfd14fa9f651e7ea5",
+      "old_records": 1000,
+      "old_sha256": "9391b0d88d7e1117c318b4da4eb2b8349fc88687ff5b90c4f0b97b04548b0b98",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_004.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "6f35d5ee739c93c5581c1171e4a5e155dd0d347e2dde42c98c8ff9a4451d3abe",
+      "old_records": 1000,
+      "old_sha256": "6187f98afd2558d2928cecfb387a19ff04608aa62e1ff4cd7fd71c86c4ed1e16",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_005.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "7996ed6aec3d22d0a36e91570ef6334dc5348a6c5c868c78f2935dec2001f216",
+      "old_records": 1000,
+      "old_sha256": "0baa4a29603cd0d307aff61772414ea082477267595b0665deb59c6418de8170",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_006.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "06097274aa2ddd97c6eee4fef19a67d7ae3082fb8389c7e15daf5e606ab56122",
+      "old_records": 1000,
+      "old_sha256": "96ddc51119b3d433197f4c6932d9023afef75dd42d6ea3492414eb943bcc8a3f",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_007.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "e2027f30957dd3e2ae838f48ea42be65038fe0681bfcc1b16e7294b892942779",
+      "old_records": 1000,
+      "old_sha256": "4bacc057ab59a4c48ac17568037dac1a91d10df15ab15d5a3f6dc10f0549a7fc",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_008.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "8fce32c1dfdb18371f4763eb617697a6cb70e1cfcfc4a27239a585c48f33f0d8",
+      "old_records": 1000,
+      "old_sha256": "6f1f6fb74345633a94e691c345ea6812551945462b16f1a9f7597f5a017a14b1",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_009.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "13903857afedfde302d7146965188c3973547a398984d3d2f6380abcd321bee9",
+      "old_records": 1000,
+      "old_sha256": "44db8805e1baf8c62383c564912ed65d745a26ec2da3cf2202afa17a49681cdb",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_010.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "5ab44f9ed586e13bf6641397bad758472f51d128240547ef8f2a12226b1afd25",
+      "old_records": 1000,
+      "old_sha256": "bdc84cca9c65a754a208d10f11d9cac834995a6d58b072d7d47a1baa5c364d30",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_011.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "6ce4d25af7204b49176eec3207dced9e52598a8a5b07735accb440478988633c",
+      "old_records": 1000,
+      "old_sha256": "991ed3b181ff8f7852b23767d21a59518f0320c9345a6294669a7adc58990b1b",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_012.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "15c94566a020020ed94461e9b7b2e2bc06dbe0e5774ce8da9489ab0e5c516edf",
+      "old_records": 1000,
+      "old_sha256": "1cb978923c9c257d8fdad4f8b9e983e74090edc8538605b15e21e69213db0536",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_013.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "85089fba820d5cf155195e7a38780bead0b6721f4b5c42b9b31e2a286f8080f8",
+      "old_records": 1000,
+      "old_sha256": "6c978a46a87b21fc4a2a137af40d3fcb672c4fc50f830f54f184e846d9029aed",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_014.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "04099fffed58d4409f8495ff7be73cdd158616d7a4c57047acf8e3386bf2c386",
+      "old_records": 1000,
+      "old_sha256": "9a41d48f9905d849b2cebf6f16aab3de5434c7c1bb61958e6ee15967434c4e15",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_015.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "71228c9841a65faf5f84008a8f07370e2f62b0abf70a0067ac99e27ddfbc3f95",
+      "old_records": 1000,
+      "old_sha256": "20e61dafefe31f54656800b4804a90251107eff1ede48adc95c8cb1e26423c5a",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_016.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "6f5e1c06873567e8afa96d7f06ebb8978f1ab652dbb76943fcc81815019153fd",
+      "old_records": 1000,
+      "old_sha256": "baab3bafb81bc3f096b25431ba5d24ffa499220936249996612ee681827095e5",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_017.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b22e146bf6234c7c979800f90e03e032147819a7e3950cc3f1f3456389c44f69",
+      "old_records": 1000,
+      "old_sha256": "edfae14c342052253d805127fc1793dc2e2bf106036a51230f6bcd275e1239ce",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_018.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "72b7a9cab86a4088a7795f38b9697003202efef873b6acff1543cb398da41085",
+      "old_records": 1000,
+      "old_sha256": "1d5c4afe9595eb488ac5894c07700db36ecee25e69ae1b26c0f3f228dca5a479",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_019.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "00f09931f712d2cb193de48f95c67714dfa2217e425c6f7ba914dcf062a56918",
+      "old_records": 1000,
+      "old_sha256": "8754bc1a929197a694a217dcf11ae7af754bd9a07824c31db63b514f786d7b83",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_020.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "8c55cb84443ee6cfd1d581892dc8f027e31c8d91717a8f2cf90564ccd710039e",
+      "old_records": 1000,
+      "old_sha256": "81827e5779233aeace3af29eb1bd0d6e58ca55f4c0b125e3a5aa89f41f1118f5",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_021.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b722f1faf6601a5778ed174438b3c9ca970c634ef2cc3c428bc49f848cad2af4",
+      "old_records": 1000,
+      "old_sha256": "75f426fdcf2c761cc758943be9875cd74aad9205601261fb2db95083ca548c7f",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_022.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "9f1bb862dde88826b416be1aaea1e67224e7507a9624166849fad0704f203691",
+      "old_records": 1000,
+      "old_sha256": "47d8c6950934033bff7a4cde3b7163d5a517a324f52761ff2199bd078cb295f1",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_023.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "ec73ba6f9af9bda659f445bfcebba2e164659f9aac926d7a6bfa5df40d3107bd",
+      "old_records": 1000,
+      "old_sha256": "a179fbf5626c3edd8f6a333dec2b33253039f0020daa9eb90fae18d4c73b51c7",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_024.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "dbf8766acea0cad786d6cfde4148af7df2659d54873559f31d6ed51e1226b969",
+      "old_records": 1000,
+      "old_sha256": "88fe63f26393fa0ab47ba35b47f222825dc8b1f6c5d522aa9f47f248d2fd388a",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_025.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "009e5be3a3a32f676abfc12b6eedf411149f1da50397d86d19bcdbc5894f1105",
+      "old_records": 1000,
+      "old_sha256": "5106ef799fe7dab3540bd32ba98cd98bd9e8ef6a734630dba3aab3b1eea15972",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_026.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "d871fcc65fbe0e67ee1d2777d3ad7c04ddeadca2bd1801ed0fce0cbb3afe06dd",
+      "old_records": 1000,
+      "old_sha256": "750ed82017ae301e5d0e0574e26c9760a49b00c193fba9367e3d3fb40685e11d",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_027.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "224e79d608f5592fc62e9f81fd76ceef287b6d35c3a367943228ae844e0e1447",
+      "old_records": 1000,
+      "old_sha256": "86a6d7c1e410d0a9835a6f7fc9028e5d1088da7175cd574961333b49bfb96100",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_028.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "6733751189352850cada3649aa97d30bf6ef1d411cfe1b2fe25def42ac332408",
+      "old_records": 1000,
+      "old_sha256": "9add018334e01c8a99eb6790663f4cd8979c8afb6e467d484722bc4340dc946a",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_029.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "ce6ef8f763103057d6124fd6266a491e0898eedd8fa1f9f7c5e9be0e562ddcfb",
+      "old_records": 1000,
+      "old_sha256": "84670b5eae8dc0c1fe6713920641ee0c8fae11a59ae95ccf8d19d0db08b3b0ed",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_030.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b0063a4a93caf43a01327d815f1712a0f57139442868a04ee0d47e04a0c187bb",
+      "old_records": 1000,
+      "old_sha256": "408f55caea2467919a7f9f371c00281a547d2f30df36c0b84834c6a02f973a1a",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_031.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "a8cf85f4934b52d325a740d4b15df8a05f083b4d2c6fabcd2f2b9939c6a6c207",
+      "old_records": 1000,
+      "old_sha256": "898aab6314de65df1e5fdb87871b8243bb1ae6457674b5bc342c6261950bc055",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_032.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "d1e32961ef07a4d86c3992f9b1d7b08a1bbc7fde6f3004f5d6ae05bc71830d6e",
+      "old_records": 1000,
+      "old_sha256": "a63265e4208412a3e77f8d4583265723e0fb14c150a4a60656145cdc3ecca77d",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_033.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "8cf9f487c6b754c7f8ee39b5aca935c560a52c26f2b23fb102bb2ebe0b99c25c",
+      "old_records": 1000,
+      "old_sha256": "a2b5840c68f6ecfb81d63100d9e97e5da5d4b25920d11581b3be69b5914dcf5c",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_034.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "196e3074c34dcee24bf54606817e6f79c4d4ba64e11d712343146816ce1734ad",
+      "old_records": 1000,
+      "old_sha256": "d12717b89e1e954f36a0cc1bb0ff9c83198c4d4ff30b79d6c6474489a48e84cf",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_035.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "4d90c839040426455fbdbd7a8f62c3379227e0fc6bd78edf8549801a2eb45f27",
+      "old_records": 1000,
+      "old_sha256": "3b418be07775edf376a53e2c3c0210d8762e768a5bcb750919f88b3152016a2b",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_036.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "62a254cdeba5388fe6d3b3aa9bc0008f2e69fc12f6910a9ad2336a8742a975cd",
+      "old_records": 1000,
+      "old_sha256": "f40d434f324d4e12d8dcbacd1d753d2b3c1b08a7c1861fcfa4700eb6c5e75d1f",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_037.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "afafecd0cc43e8fef19ef68e7a9994ae5adf566f9b4f7b098bc8a9814d618b07",
+      "old_records": 1000,
+      "old_sha256": "2abee2de34ae3b3acdccf8358fe194a980d2c78af42c9f16b275f28886472d32",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_038.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "e3dd97c670194493aeca67c0b2639c932b16a091b7eb33910800b1749c709dbd",
+      "old_records": 1000,
+      "old_sha256": "52f6395b6597d254a8137e63b2d76119f7e9469996ce7eefedb0fd4b1f2876b4",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_039.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "652c51112bfc0d8033abee3cadb2df1dba286dacb4de1277825fb8810b6bbf3d",
+      "old_records": 1000,
+      "old_sha256": "292a8204d2a2d36051d82abfcd3a7d7ae0f5b4b2985496114bac8bb68af0d1a0",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_040.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "37bae1410309790f32a68aefe5f8465828a6affc86cbef41890ea4945b19e7b2",
+      "old_records": 1000,
+      "old_sha256": "71f7dedc5ef7dab404005f9b2fc4dee660a08713ece72522d75127a78ae8beb0",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_041.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "3f224efd285a9b7d27947d7355872cc0df053231e0d99b0f2e04f99b561e570a",
+      "old_records": 1000,
+      "old_sha256": "0223db8de6313a05a5cffa9f592238a4675d3a8ba39c8c65e81c0153f30d1ad1",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_042.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "d1fc7878f22722e218d78d5fa76f56541591b275ace98fdd2f1e34a00ce84ba4",
+      "old_records": 1000,
+      "old_sha256": "a65bfd19032e68b4b7e32854b29703f48a7afed41558bb195009f3125a407cec",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_043.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "caaacd648c5177fba91ace144a2d86979f9ba399b2570f08a2056ba11998fdf7",
+      "old_records": 1000,
+      "old_sha256": "95cbc5ea91b7111c7b937ac8fc8cf14482d474070a1834d3900d14024b2c4727",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_044.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "7239c661043f74639fc3cfb47411ac0ec5e4d71fb476a047e543c0503fbb8f3f",
+      "old_records": 1000,
+      "old_sha256": "d28e3d9787831d3700e8b72e9e2a4187aba0829c163b80b922753b175c5ac258",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_045.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "71a188ec21ed543d70b22a4c94cd8e935765af32e9d8d3726778a65b980cf543",
+      "old_records": 1000,
+      "old_sha256": "a53974cdfe2da18be0743e094e97ccbe0f26889d693dc6f2f8144439c7e455a8",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_046.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "23a8130de2b396c5fda9e3edb4fdc75df4a954b398a373f98371ce4621357259",
+      "old_records": 1000,
+      "old_sha256": "5b6f1e67735f45da6ef0f7fb52cdf03dd92a162f1762ba717a7752cdcb01b370",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_047.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "7a73e417623240d44fc8a3635fabfa0cd05021c7a353e6aa7a7f61625d714651",
+      "old_records": 1000,
+      "old_sha256": "ad591f8e8aeae98c99753f8fc2dc25d58f47488f2e8816f85f71a8ee6df161ad",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_048.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "4dcfcfedc5a4f114a5bddc177724d851e693ee580aae8af0d59728baaa86cf37",
+      "old_records": 1000,
+      "old_sha256": "0e4db744f6731d80ecf8cbc58c09dfda2cd68247e146911b94338599d328bbf3",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_049.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "8af604619204ee24e62abda3d1e5115ee3cd4c2b1504a0cc0b82454e09c44f5c",
+      "old_records": 1000,
+      "old_sha256": "d873d2c7b92a19cfd4c4f2fcfa6217608b4e9634cb7f757f6483d6773d0585c1",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_050.smi.json.gz"
+    },
+    {
+      "new_records": 240,
+      "new_sha256": "476583fe7d7738a3e30e9edacc071c86971dade5375b9cc79a046c79f75f2f95",
+      "old_records": 240,
+      "old_sha256": "43e45c5e4e66557338cf903d7abe3b84025be7b799b0ce4be031e6f1f47a6a51",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.perception/data_packs_pack_051.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "98059de6b9e647d1192722bfb4e2972259cbf5815c10cdb58cb3f1ede2410518",
+      "old_records": 1000,
+      "old_sha256": "5e2c9b7e53fd3b371bf9ed418b501622669f11e03b525d13c9c4ba0df2beaf35",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_001.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "7f89cc82a8d9ce6bd67d0e779d70db2c4789114f54b79a52af9f2bf597a47c61",
+      "old_records": 1000,
+      "old_sha256": "1b58f45f7f7255cbefc06aa96e1f83fafb0659d26a8d17ddbc317e020f79b9c6",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_002.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "f4afec32f9a9b92d91cbba46264722b0ce08a020095699ccef6a3dd9f2aab1aa",
+      "old_records": 1000,
+      "old_sha256": "01f7cecf2573bce93dbae9cb5530bee2e1379ab43b2f6f8d728f61887a8522ad",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_003.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "308aa44326d65112b10a394f5162262c289a4dae495366fc1b02cc20a8937cf7",
+      "old_records": 1000,
+      "old_sha256": "eac2f4db3537b02f5d0044087217850779419e2d7100a1ba5b6498dd2cfe8438",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_004.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "bc3ef6eacd6765eea360adcc36515b223b24de8a0c1d6b75856640cf8ec726ee",
+      "old_records": 1000,
+      "old_sha256": "98853163ea21dd39cf2a1024370cf4c691785c333463f8f2372910b3e341d842",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_005.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "e6d92682980ff35f84d9f9f9caa4882f89a54c21749653dc54634a1db37a80c9",
+      "old_records": 1000,
+      "old_sha256": "ec94f5c4bb85f0456a246eec229f467b1e02d6a73e6e9c09602f7fe99ab667bd",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_006.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "9140d8d552a91e1e8792ab59cc4af3e3d0719474218f71b109831d4efbed9b10",
+      "old_records": 1000,
+      "old_sha256": "396eccb31326a3c18c53a76eb57db2fafa81bf19f7551b0e12289471832caae0",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_007.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "7183c4d4de1dcf9f057bbc2958c41b2174a3d59fb31ef66258e1db74fbfd0f41",
+      "old_records": 1000,
+      "old_sha256": "650c1ee0654142227f3866006627417be467c31d7f5d44b2a758cd273a7272f0",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_008.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "e745e5c60e2777abc2596204dd0ddab3ea303114ac31db5ae080a7c1b3e57737",
+      "old_records": 1000,
+      "old_sha256": "77b64c8029691732d4c0369e05e7e66730efcabc8103a266a8d04ffac2b2c5fa",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_009.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "8f8a64c29778d33daf34b31c544756aa568363bb265a3f2b90332c18a3438446",
+      "old_records": 1000,
+      "old_sha256": "03f2fa31454b1ce4705f086429d3bba6890a70bd6913c416e9a0fdf79e0ebf42",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_010.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b718bf6e24a986e7b35a4194c61c51229aec2f1ba591644d05cee4165b7eb144",
+      "old_records": 1000,
+      "old_sha256": "ee220c25fa57092db8c5e00586b25b0865076c903da32ab9c99b53f5cc4a8d5b",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_011.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "40618d2736c8532816dd9ef9831981e4c717d47f2ac06384d6ce316070cf9802",
+      "old_records": 1000,
+      "old_sha256": "8ed441e991be8454244161406e9fddac7cd79007fadb17a1e403ca77662f8506",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_012.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "0759ce263861573f168973e1776e6991faea0ffea886381258dd658006ce9216",
+      "old_records": 1000,
+      "old_sha256": "e07099699f06e727f3ef07f4bfc7dbee80b759a9baf41e0248094ad7b067d145",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_013.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "38c1bae6d077c4df0d139ff5c675cc6d2a63ac7c7c957f82ed7ce8431f8acc6d",
+      "old_records": 1000,
+      "old_sha256": "4c285cc08566f148886ebc539ba463dbb17b0adb62f41d1f24e8abccd8f4b96a",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_014.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "d9770801e81d647e538160f75104779e3061cb8a9d74955b624a54dc6e02b46b",
+      "old_records": 1000,
+      "old_sha256": "59b901281155e5dd409ca465f3026ca5e6c15e8e36723965417fb4a8a3153caa",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_015.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "a6e446c08a58ae5638afcdf2df6ef20bf97d2b5bc663bcc051d9e91f555b8ef1",
+      "old_records": 1000,
+      "old_sha256": "8abd6a218599300ab94ea94fd6499fae2abd09ac09b495cc3f38be508f5f214d",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_016.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "0fd5ae1ff7e3e88fc160f08114508e70ad7d61e9349683890b4d8c9628574edb",
+      "old_records": 1000,
+      "old_sha256": "463ec2fed1273d6e9160a2ead7cfc6cc4728b255c77fbe2647d0471f34a9e431",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_017.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "37e7bdce74dbf5bc17a001198d6b0294869c5fe913aaf6debf9bd24ee0edeef4",
+      "old_records": 1000,
+      "old_sha256": "7d9a3146bcdf9bfd8a75ee3742f3b6ab85e5028453c415745ccd5d5e412163cf",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_018.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "9539c162ce86662dcd5a93fbfb7ae52d263777a1be1adb98e066695bc47312aa",
+      "old_records": 1000,
+      "old_sha256": "29e704ea39d849e4ba388656b4a86112165268d293680f380739c81cd3e12335",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_019.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "a6e96cfceb41feffd4111919847743a5ed3f03882db59dbeff39239b585f26b6",
+      "old_records": 1000,
+      "old_sha256": "4f1b06d4c2fdc7ae62b0514702b8ebf506766661d757f97d8bebb5e7b553cfe0",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_020.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "41dad774d3ab4c135282f0d6d68b29891d3df82e5390ee9099bf0e9c2446eeae",
+      "old_records": 1000,
+      "old_sha256": "83c719e7e845172a558360b1bfe763fd2bf4ea742e4d818142c2edbf785753b9",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_021.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "47deabea5080e015e2b24846e23cbbf7104de21b355e8c00f97e1bd3b99994f2",
+      "old_records": 1000,
+      "old_sha256": "3b5ca8fb48491b8650ffaf87986249bb51f6b138eb6fdf5068da9c71de091681",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_022.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "a6196065889bb67db0feef05f4271e75711d4c79a129068df60fc1635ec6c480",
+      "old_records": 1000,
+      "old_sha256": "a22ad4124cb5c0000bec1e1988026904bd0ecb5356e04c360cbc4361a60c8d2d",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_023.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "bdded85508990fb056a069b1466207a3e4966421f76060837d042aa95403f6d1",
+      "old_records": 1000,
+      "old_sha256": "335d0b76025fa0deb811878d407b3f48339eca20c779984bc9bf16903670273e",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_024.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "0e2c2f28c0096916156f06a622c8175c6e5a20dbb8077f5a1329dc8bab371fcb",
+      "old_records": 1000,
+      "old_sha256": "9283ff32ee95e357ea0b2bb8eb04aae79cf1def782ef4e217d027f7646e36584",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_025.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "4f21c903e5318e868dde4089a41fb91423160391e4d8e0468979672fa673178b",
+      "old_records": 1000,
+      "old_sha256": "c3659853a460c6ca40f23b1e51844c4c9a383123269cd59422ef8a2859494441",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_026.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "8573eeaac3deeb068a4d45cd9297d80e9d6767a962d456fe4c33220ae91cdc92",
+      "old_records": 1000,
+      "old_sha256": "5e081e207d8c07f4078cb0ba91a048975bf38e7a75a27802a49084a199a5c90b",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_027.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "d84ca4e72dc5f34f6a4ae021e0b7fcd9a50e9578cf30633e81114da6c98e78fb",
+      "old_records": 1000,
+      "old_sha256": "9132c5f43936c0dda91cd49185f76e40c28d0ff39f9638a0e826c2157dc41735",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_028.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "dfe573c0754f1ae53635e40d5bd7c3f3dc54a830e6c141c77f57f3d28c41db12",
+      "old_records": 1000,
+      "old_sha256": "69bb789b831a4ee557dd53eb3850b196bb40881f157d43d18a4c5f1a56ae62a1",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_029.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c9049debba96390e137e13415fa84a34355f4531d801b3cd5b91111b544ec4e3",
+      "old_records": 1000,
+      "old_sha256": "0b7fe69504a2eb871434ebf3977e9f5449307d7e97bd6abef9fa6bb6e38b3b90",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_030.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "8f9a1b65be2997a760b62e2a72a42aca420e90abf36e3183c7cfd89df72510cb",
+      "old_records": 1000,
+      "old_sha256": "3d22d6c26dc5b62099e6b84828792c945fd3d838af7029fe3ca4a961287c1ca0",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_031.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "f72fdcda8073af5d8ecf10dec9e0750a2ca6e8804b1884cf1eb8bc956d6c0937",
+      "old_records": 1000,
+      "old_sha256": "70f5e42430964f51ca5ce22a7d454d39048cc904fe80df26adf0c4462086dece",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_032.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "26a4590a79004cc97d463719ad0e8ab4cd1ae0189b20d60c9b35867431de01c2",
+      "old_records": 1000,
+      "old_sha256": "535613195171fe31d37977a1775eb1ba9a2124ad89b30794d2bac508eb01a09c",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_033.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "5d415a6113816bb50445796c992b50aa96679cf6e6ea9335387bc3b9fbe001b0",
+      "old_records": 1000,
+      "old_sha256": "f5d6940183e44f7016f86be91b874b6da95aeb4f1cf3bc631b08e382456ca376",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_034.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b03721e5f05133158f4d13d569cc1588d55dd0ec1553257b0a0734c1a9a7aa9e",
+      "old_records": 1000,
+      "old_sha256": "2a6937fd8f404d3b370537fd7dfe4e4aa17285bf840f23ea36428ae86077a181",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_035.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "e38252c8093468fd8bdf97d15466cab9c91c9fd40f7f84648dce8154299dbfb9",
+      "old_records": 1000,
+      "old_sha256": "628ef3889e586a8a16d88fd11b7ffbec54a8f5cb8c77023073772f620312b3c1",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_036.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "0d352c42ca7cb895826fa8910c3e265c9b152ef162a2586159636b90977eb3e4",
+      "old_records": 1000,
+      "old_sha256": "7f37e010d0181e574d7e6f9821ff68a236e215b017faa6d73eeabc0a66fa0e9d",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_037.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "262182df7922af65f630efe3f35d3261ab32a526e74c34da3cae4d7667556421",
+      "old_records": 1000,
+      "old_sha256": "a55275297fdfa4e542b3bbf8a208e1313823bb017b3f9e400538d50f9c1cda78",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_038.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "bdbf2d39dd34f5b4712e92450567383df471aec0287bd308471cac954f886218",
+      "old_records": 1000,
+      "old_sha256": "42c2f1956096e4fca320a305af7b20e9673d2e8d9bb5c48557f3d614fb143cc3",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_039.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "7833b74dd44360768c9f48cddd4d1ad7f534f85e5064f59e26ec7e4489911632",
+      "old_records": 1000,
+      "old_sha256": "7d0edf174a7cebd715a489d8825629b8d121e27cec49db2c35422d397177ad7b",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_040.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "f21e39816cc6a75b4707e8078099c73913a6cfac23f10107eeed446d4aa95911",
+      "old_records": 1000,
+      "old_sha256": "af5a4874c40c7b5e1a7ce9a43f8223bfd1043d02f7fd113b17fe0408e90f9d0b",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_041.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "fc5a3f3b7fef3924c59b79789cda4b54c6d4bbf0a0a2a9541ed27861f182693a",
+      "old_records": 1000,
+      "old_sha256": "3ee1eae632dafa25491c87247794160af01b94f1352773bb2fa431b69b68c5f2",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_042.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "4c5b8b9f3edb5139cd794d80ce3e06a9598e3732356d7556aba0490b34130546",
+      "old_records": 1000,
+      "old_sha256": "9197fbc271338864fe36dd90b09c39341240f588cf950bcbf270e4293ae31840",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_043.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "2eb1cf14a153e69ad00050007dc8253e52d54f6885b96e3c672be727f8466439",
+      "old_records": 1000,
+      "old_sha256": "5444616ac3e840c52d63360f14196c7a185f69b77c0c3ee0faa7f7db34ed5d27",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_044.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "6ea47415eaff1693e1a332d410566d3c6e3521f89f57ceabb635f2d039b210de",
+      "old_records": 1000,
+      "old_sha256": "6cce89d3a76e6434f80d42e3996cd979dc5ba634f1a349e84d4b9fdcbe613500",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_045.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "37eed2e96bd8152661ad8be4da19b33393ac310d660b4cfd0875155b1d787e85",
+      "old_records": 1000,
+      "old_sha256": "a07d083c5f5ed9970a86110d72dbf6ff7d5362a34b1126258d9a355dfb140d72",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_046.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "6fbecfdfdf408759e7680d8aa868f2967ba38ec5a5eb84deba80b79c4be7a8be",
+      "old_records": 1000,
+      "old_sha256": "ef4fc6ceba6dec853913f73976c513a58f8995e334831497ff8aa0d6a49f2b57",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_047.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "cede9b431f31cb19653d7c86e775248293dd719010b64c7210c727be7eae73dd",
+      "old_records": 1000,
+      "old_sha256": "26a590a6abb68f573914e554a90904dc5ffea8d3815b7b731d99194348aa2fd6",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_048.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "6add2fd39c61fb65f5ca9b767870df5c5d053733be29a5184bc1517c7ebe2a37",
+      "old_records": 1000,
+      "old_sha256": "07b5154b8faa74fea5ce958e84a77285ac5b21f9fb5b81930f3a3281ef166b37",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_049.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "cf7937f8b9bdc149955d0efb2577964e786e933d4d37b0fadf9740a587fd276f",
+      "old_records": 1000,
+      "old_sha256": "32833cfe41597451880ba89e0d6bd4ee20b75866430bfe6db8fbe5affe384a22",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_050.smi.json.gz"
+    },
+    {
+      "new_records": 240,
+      "new_sha256": "338bfd188bcea52c9d392d27777fc6e8c8cea5aa37c7c1586a25ab1640b23783",
+      "old_records": 240,
+      "old_sha256": "5cfbd4c6b63c13f7988589617c9d082eaa9fbe937f294c0807261dfe1f0aee01",
+      "path": "benchmarks/corpora/enamine-diversity/golden/stereo.representation/data_packs_pack_051.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "8563b882005869aeb14d774734ef066916e8f42a0136765e41db04bbe6e661fd",
+      "old_records": 100,
+      "old_sha256": "c5117c807186e591a171bc1d700356e7629fd75cc50ee0d527351eabdecf9d63",
+      "path": "benchmarks/corpora/pl-rex/golden/stereo.perception/data_packs_pack_01.sdf.json.gz"
+    },
+    {
+      "new_records": 64,
+      "new_sha256": "64e586878fc055a227cc25cdd49e7983fbb5b351856434fc4432925acba0ea82",
+      "old_records": 64,
+      "old_sha256": "306b0593fad494862c07ce053e539e0f84e0d37f49757d47f25d11878c88ba1b",
+      "path": "benchmarks/corpora/pl-rex/golden/stereo.perception/data_packs_pack_02.sdf.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "94a18dc05fbb7007548606078fd081893352ec25ffd6c309900efd796226d81d",
+      "old_records": 100,
+      "old_sha256": "f620426abcbe39a08a01cb70675cfe5f9c5fab6e3cb4e11f4d1d36df582efdb3",
+      "path": "benchmarks/corpora/pl-rex/golden/stereo.representation/data_packs_pack_01.sdf.json.gz"
+    },
+    {
+      "new_records": 64,
+      "new_sha256": "70988220b73460ffffe2577127e6e0a8a8b684a3db7f9d7e1d63dab94555a4fd",
+      "old_records": 64,
+      "old_sha256": "3a08b0d6ddbe3e5920f304b20760442d8c10fceb4198b56ddddf63d4d93011df",
+      "path": "benchmarks/corpora/pl-rex/golden/stereo.representation/data_packs_pack_02.sdf.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "fa17b02632139ae51eb4d50147ae1d6e9fb7ffa4501062dcae9182096304e8f3",
+      "old_records": 6,
+      "old_sha256": "b789e1552e10a7f91e65466a0f4475b9544d1e7d8c8687513bc05e74ac61214d",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/pubchem-100/golden/io.smiles.isomeric/data_packs_pack_01.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "5388e5e40e6f83006bebb26f49ee8f4db4339a4146fb42f8ad2270b1236a4f0a",
+      "old_records": 100,
+      "old_sha256": "e3efd9b5fbf9cc920b7fbc1f013bb71c8f21088a8df779410a3b92b9ec73db0f",
+      "path": "benchmarks/corpora/pubchem-100/golden/stereo.perception/data_packs_pack_01.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "14a76c3b36a26d48cb96eb91e40e7d8a863d50c0f6058dda6954afb1be3ee408",
+      "old_records": 100,
+      "old_sha256": "ea47ede4a11a3d1fe6ecc62a72d93f6ae80b2290ca6694388db317817fb84798",
+      "path": "benchmarks/corpora/pubchem-100/golden/stereo.representation/data_packs_pack_01.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "a54536f661f7d2a39f53611e089e49265ae572ee767b685a64565525633c3699",
+      "old_records": 1000,
+      "old_sha256": "08f566da27c0d919e7d7c96cb969012cf890ced0b43a21aa1e8dd87a505f8ac6",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_001.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "9e22b8162dad43d4d4cd1ba66a5b322820953bfb1c6f68dd9cc4a63a63cae78a",
+      "old_records": 1000,
+      "old_sha256": "5416d7b973697965bf8ae61c0479d8dce62f950bd027be69cca12383d8fcdee3",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_002.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b912b42e644c03dbe8dcb3ec2630ec09d389f207b21ebfdd7abf168ea4eefae9",
+      "old_records": 1000,
+      "old_sha256": "c4fa62e8d2e91d1f26b21e7d6d5ba79bcdcc2430d88c8c5647b76dee8fccc4d3",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_003.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "6f41fb721f059d6b6a06870ffca7577a17e3d14f32c6e16221cd8ae22fcd7148",
+      "old_records": 1000,
+      "old_sha256": "2c85ce0448398d8f19988b4ea221f222dc0d69db07c0731050dbb5526ed3df0b",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_004.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "df1dd3c212412d84edc63538f7b0f21e922edc985776912a4ed459b854f8794f",
+      "old_records": 1000,
+      "old_sha256": "8ae49e467774f24ba98f907d7d9856bf1a95595cf4d70fa8a891c2df7234cda1",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_005.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "a79f49aecea50db930849a07189d8341cc021bcda54b90de6e9ac0060973346e",
+      "old_records": 1000,
+      "old_sha256": "1c0a7a0b67f596973f7aa38fab209bb6abb7228e1985e86971c37fd62508b170",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_006.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "0dce45e01c3860cbd056c67029fb8d348167eebbc74b2e83301a0477b6334457",
+      "old_records": 1000,
+      "old_sha256": "9f829cef350cceebee9bef0b0205075ec05871e138f9e237c93c1dbe6d85ff3e",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_007.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "36008a43ce7db60d9ae2039ea6a04ba18043f66775cb2c47cba7e8d4751f3900",
+      "old_records": 1000,
+      "old_sha256": "75ccc4d240558b44c01ee3463456be3585a633daafea70925717c7429a813fa3",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_008.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "460c6a3d81e0e6ffa417da7945803f0e76a69d40f633e7124707c888fd8c1570",
+      "old_records": 1000,
+      "old_sha256": "f51ad3f5b5f3d67fd6ed8939414c0b49777a6f5c55267dea1fc205a637679292",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_009.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "767db25a2facea7a3bd7c9c99fdde58a722b974b34dbf0ccde46ecd0e9e3ab76",
+      "old_records": 1000,
+      "old_sha256": "4af0d9d66e9ac9ffcc9fe9f0e187567c3451a2db2bb2a6eba8bb7acd5cc8a276",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_010.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c5a01a2aa571e9fa1a04c31cac71123e3d3b9c8a8654e4d5992a049d9ee90fb1",
+      "old_records": 1000,
+      "old_sha256": "be914121cbc821055932daacff88ba6653d7f4421e06bfa4d3e838ef8112f918",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_011.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "8af4125dc52d7858a5d770a401a13fffeffadecf34d04c89e92b7d9bca3ce5ca",
+      "old_records": 1000,
+      "old_sha256": "bc7c02aed62433f6c53f5c788daca937fd72e5e33ea6191f382b4d62a13670d0",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_012.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "0b9e42f5c4fd848476f35eff9ab67d32e33e54b811291772f55093c3cbd944b9",
+      "old_records": 1000,
+      "old_sha256": "8f51d5a46d1093255b8ba3679d740e5ee9ca1465d567fb83ab722d845ba48edb",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_013.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c672471aee481a6db346c4e5140a925df4b6b689bfb74e2531c9c79fadbbe834",
+      "old_records": 1000,
+      "old_sha256": "605a8ace4853cf44f095c174a5d4aa42cc877a610c4fad30bed85e73f06c24b3",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_014.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "7cb55e3172d634c47720ef3485c5d5204fdfb4b238195de3440c60476511847f",
+      "old_records": 1000,
+      "old_sha256": "3c4cfdc239b4e63b778c2eb2057ccda0c902ba004647627d15591727098ca751",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_015.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c863f383f5be21845c6c77f40378b02d769a137cf370337055b9d59d45e9b26f",
+      "old_records": 1000,
+      "old_sha256": "70e1f7478b281e5c0b05961466a269dd27203e3f277a96fe15b5f71e7e52891b",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_016.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "ffdbbc597aad6290fa167414b66a569347acb81ad880679ed60ebdc65dfedecf",
+      "old_records": 1000,
+      "old_sha256": "14ca249ee4fb4d4e324f550acbc64c8bda14aa6360126b5611b988fe8eb01035",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_017.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "3f5727def8e85abb0c14bacb85af44ca804422c33f3da754a6ad3c5d44a59d0a",
+      "old_records": 1000,
+      "old_sha256": "f6f94d8d40f9bae5d97a107adfa1907fd0eac2625a6c436a9c82957671f5c34e",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_018.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "99dd62ad80ab87dea0d0e071f3e136402bf4a4675412734658a420bccf66ca10",
+      "old_records": 1000,
+      "old_sha256": "f4186d31a96d2711f922817253e7e5d42631e5237a9e850d8f944121d04650fb",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_019.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "d0807a9cd780aaf748700b476f0d68edba9437e9c699cf64fa5b62db41d6d353",
+      "old_records": 1000,
+      "old_sha256": "334d88e00791a73af827253ecbc120b1b58fca8eb285b25090b5cf39a5bb17bb",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_020.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "d4bc07dd0c98b6e4f6334af4b1d96e93092103e9c048f74adf997fe496ab7fc0",
+      "old_records": 1000,
+      "old_sha256": "1be9e9beb20e2b0a246320644b5c8c9b0bca23ca8535041846f7923e41a5eb7a",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_021.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b9757b7ea0edb675b2e9c9b1004857aa7c9051d47e699372204023caf57a23bb",
+      "old_records": 1000,
+      "old_sha256": "e8ed7b3438c68958655a0f04b5dfaa16fb532ecddcec0d7d3607bec6a578daa6",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_022.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "f491bee281a5c032dc700659d394f74bf89d7d53cbd118eb9caa358445697847",
+      "old_records": 1000,
+      "old_sha256": "3d5e4e83d9c6202ca3eb3096e322e493a9e627c8d5ca6e54372c45f88aea5bf0",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_023.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "6d7b71b93af5270fc2242015816928cc8625575f6e3c650b3b9bc1655f35f006",
+      "old_records": 1000,
+      "old_sha256": "f36310e4651ddc9495ab478153732978ebd74608bd2a64d044ed91f2fdf7f4cd",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_024.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "2ca1a45100c98e99a986c073bc1283a0f3db74cb229b4ae9dfb94c444512c4ac",
+      "old_records": 1000,
+      "old_sha256": "91a7010de650d9f25af854377fae6079dc2ad4b9933ffdc3342af48106b1e090",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_025.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "bf6ff05420b28f678025dfeb7ca6420bece7bbc31384153bd05084effb2300f5",
+      "old_records": 1000,
+      "old_sha256": "272f33e976fcd8062aed9d0a0eb909bf5c8db317460cf11f6231c268866ece39",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_026.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "5e749ff9b315d5dc90f4774eac65119ed23fceca15838228fe378f68dd4a0bed",
+      "old_records": 1000,
+      "old_sha256": "6cea7a337ad1f1cfcbe6f4bf1fc7d2d53c51c9a397ee5eb6300ffee629febfbd",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_027.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "ae4f535ebfa4e96176b610be1dd11abd401880340ab5b0dc09e336a7eaa73d84",
+      "old_records": 1000,
+      "old_sha256": "01b690e708f04e12c7dea15e3dd7d7cdc6cb575365802d8f44f5ea977b5ae66c",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_028.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "13ac1dae9977be998957a2843a48b8b48d520b1f3f87ff3d0a8a0e7318aa9df1",
+      "old_records": 1000,
+      "old_sha256": "12b9d64a77fa889afd126811d1b33555d5142101aeba85a0c64a93f1b70e4bdd",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_029.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "9f84e3426b3447d4ea0a61c0edf524719b0ce07c75c48ca9dd6d19a2518f6666",
+      "old_records": 1000,
+      "old_sha256": "5080f911c0c55941819c4944f088c27e82c537f1de1a3e0fb841554d9456a411",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_030.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "4f40bb2a401052f3f38916d818f1260003aa93980c14a7c9818f05deabe4d24f",
+      "old_records": 1000,
+      "old_sha256": "500dd0a0497a4e5df4d343706feafb4a61ffcce00f17b81db0cf3d948346ea0a",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_031.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "5828f10f7a5ed8193a948dcec7d8751607cd6a8684c6619f7e63ad9746267629",
+      "old_records": 1000,
+      "old_sha256": "8e9fd593b39cddf8e845418f044ab6b171c44011e5d5bad15beac41f4e39c657",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_032.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "22cf73b84ab5906156d051a702d30d55f42baa903706d6060e3a91a2ea175114",
+      "old_records": 1000,
+      "old_sha256": "3dd9dd1c9d7d206b174fda64377bfcf2cb5ee50c1854969d6e7dcaaa1fe579af",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_033.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "aea7e9fa7294a6cd344d477daa8d516980e99da4a474bf7be2add040c713195f",
+      "old_records": 1000,
+      "old_sha256": "4f043bb4b5a0a6f650b9bb7bdee755713c2994bba96d667bd457970209f9b56a",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_034.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "978c634becd6d417e15eeccdcbd5220d3760538784e02c504cd8f0d37c8d03df",
+      "old_records": 1000,
+      "old_sha256": "4a69da65cdf484a9de72129be4f97f43d8201267be72ba0130b4f64ba6158f1f",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_035.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "f41a2a37a2311755e3e259264ee95c14dd82ebc85868c79c1f546ad9af063d61",
+      "old_records": 1000,
+      "old_sha256": "c2b582aee8b7e4f989c4c4a7b4f00b0903583fe7a5da6324d43cb89192408017",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_036.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "005e8004a95ab4a58a5f51bf4f8b39e556027fe147900939ebb0da7de0af6b97",
+      "old_records": 1000,
+      "old_sha256": "33afc595f5ddd7d89b233871c1943de6a28bbb3ac4d1035b0b67f6c9c8962d7d",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_037.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "7e7d1bbbbc4cce3eb1312db138384932cf2719753b6715cf6a45c05365e63d81",
+      "old_records": 1000,
+      "old_sha256": "39c4c691b57d9c247cbaa1ba29406e2f02d6e7c47befd261cbcbc326f2bd121b",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_038.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "6ce6e6401ca76eb79f92b5047d0339e45d1463565122d2b043ec32c55913dddc",
+      "old_records": 1000,
+      "old_sha256": "710dece2dda5780976e9ac27570b598f06d5bf89e0a8e37ab3179b90030a0777",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_039.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "53f7a81b624b7acf59b63c817e5cf3cf7157278e66d6c4a9ab278458fe5b0183",
+      "old_records": 1000,
+      "old_sha256": "0766163cdc885f5c1b44086d4ada871bf21cdd06f1e965f9f3055153b5c72931",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_040.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "f53cdae9f33faee6c8030598a5a0b1db2cd42532ab81650f59315294c2273d12",
+      "old_records": 1000,
+      "old_sha256": "fd217cf97c6ec06eebec0a9c46a712b9f7a8bd44094ef5a6e22c46524da28e22",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_041.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "a127908fc7919db5a5d6022db3d1311937d9faec1ac8b0aa711da29833286a35",
+      "old_records": 1000,
+      "old_sha256": "11799928c45e81a8898e6f35f216575878736702777c006f934a342eb3bb2319",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_042.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "999e16fe3196e6af4da9bad0252623cf96fc55a387bd075973f6712d834e3cbe",
+      "old_records": 1000,
+      "old_sha256": "151f93baec5468ed6ba0e70f4604122073a84701a0ca039ddf8108a71cd18042",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_043.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "926ff5bc4da13fa351201fc1045f10e7e89b4b535abd9aebe20033d03db46368",
+      "old_records": 1000,
+      "old_sha256": "fcd46641d5aaa240790cc537a97382d3eb830d6fbc2eb35e88e6a945b0e8104e",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_044.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "7422e4e578b944198a22105b494756e5089affd9fb2f8bd6ddf5e005ea6e816d",
+      "old_records": 1000,
+      "old_sha256": "2ff56fdcffcbfa04f34a66cffc0a0e592983fae4f61f160022dc8da900d6b788",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_045.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "9e1103ad46e74e1d04ef7fd90c12aa15bb22450cdff061f96ae2c446f371e9e5",
+      "old_records": 1000,
+      "old_sha256": "55fbf808364d33ddbb0495015dd0a3f8663f9004965944aab07e904b37234ac0",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_046.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "1715d120f5e899eda02c1365a96af82c55c4c1ed5b6764546c1b2a1b94321617",
+      "old_records": 1000,
+      "old_sha256": "89c930e0560527d92f6646bd70640852a73b78337780c9916aaca7d242b6a60e",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_047.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "dcdf077d420566668349f911e6a4e5e8f4a850ad5bebcfffcae9d2831daa6a73",
+      "old_records": 1000,
+      "old_sha256": "698608e6a9ffee2be63a68b05230849f1beb1d7d0b0f1bc93abda95a9d60e864",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_048.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "33d5643c4d5cec16e6232a29d1868ce12393ca6ab63062d4547f8333f382f0a1",
+      "old_records": 1000,
+      "old_sha256": "1ed6e79faba8e9587f8d062242be10c75216da6e4cdabedc663def7b3769f0c4",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_049.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "1e723ea89a5b5fcddb02d59c872eb160040dd331ece1e67979c95b76c16afe2a",
+      "old_records": 1000,
+      "old_sha256": "347289d7683d008cab2f363345019f7fd0a5249248c2fb22a30580295c8c30f9",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_050.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "9616591844e72499a7f67bc2930581e452a402bbb20739013294c5a4cb9565d7",
+      "old_records": 1000,
+      "old_sha256": "55142fb399bdfd0890d3f033dc162b1af041bfb5fd2e6543e76515981a226429",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_051.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "10afb53a289b481f4bab62e96a1d4011ae3ccdddf797652431a8bf8ed23d24fc",
+      "old_records": 1000,
+      "old_sha256": "67235abf3c1071e804d2acf20ae1bb89d0b53fd99b161ffa1775610624dcc850",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_052.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "1a7f027c1f35d8f91c78a66e776d351d7fa4617c73ad87ce105e86a3e76fb556",
+      "old_records": 1000,
+      "old_sha256": "377dd76c769e2b8c86a44d59ddeb2dd96003dcb4eeeb2b6e2fbe24a68a9accb2",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_053.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "080166d17805a375c233bd0478dc1969a4f8bbdcb703abb4c360b4ba338143a2",
+      "old_records": 1000,
+      "old_sha256": "13cf4753d95376cef503ecbed6d47561c1c5edc23463d9cdb453c2f8f2563171",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_054.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "634ae0d2d14aac52afd99238fb4b1940474f2ba6941e37c3c2e4ebace831fc9c",
+      "old_records": 1000,
+      "old_sha256": "104735adf4140b79ea2e3426732a0d48440b450798151a4d88270bdac92d2c20",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_055.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "89645bcccf1366fb4439eb5f0662b227adb4eb71fef895a1c10e68fb380401d3",
+      "old_records": 1000,
+      "old_sha256": "f24b4c2cd0761e7672b61633d8a55277f5cc92732e215fd8bf9cf0f15c8e43c4",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_056.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "05a49c955a0d3d9c0c278b507202c6e02810b6a6f6bb3b469cadc6f7228ade9a",
+      "old_records": 1000,
+      "old_sha256": "32a888d94edc35871788e72e99cc5e0419fc1332ad6e7bd7a9232a15f5b736a7",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_057.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "1edbd4594b6d71668d1d5c41659cb512fe32f5b2485286b9f0e559d2f01e5ce1",
+      "old_records": 1000,
+      "old_sha256": "5ca67e11511951cd9f5bf81a0a2784e5103802cc9891d8ac3d29baf10a75400b",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_058.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "93088481bcafabdb299dc8b5149459695c9ae752f78a0beb4156d002fbdf6217",
+      "old_records": 1000,
+      "old_sha256": "8205d7d582d7c3d33fcd480bdda3b275eab9f87bec29024c657aa5345ea72278",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_059.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "d120af51f360d2506989bfa970d4c7ec4e0d412428932cdd0fe7d9edeb8af23c",
+      "old_records": 1000,
+      "old_sha256": "70608b3c30fd9c903f2623e62592544ff946e3b205d9f5c33cf707e23f079f88",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_060.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "9f948192d70939bb4d66c2536e22f91fc3a2a7e499f9df03f3656a0f64c5ce79",
+      "old_records": 1000,
+      "old_sha256": "5c7dfc8700a538e7f96104c504074c890476a4dde36156671c37cceb65788c74",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_061.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "e4f0fd7f85a0a79b8f48477e66fe3d8de175bbb168758890cb009a96d7ed4add",
+      "old_records": 1000,
+      "old_sha256": "687993b41905cf65a72438f224886533c9326e15a37d8243b4a189fe2f37b7a1",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_062.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "2d4111051b4abe21dcc6cca5c4c6da40dbc4fb51cd3d34fdc7e2283ac1d6d509",
+      "old_records": 1000,
+      "old_sha256": "3a5cba9e55333b43788114e984ebe7a92463d62b60b800c68cc4d88ab36d8a67",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_063.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c973fd63913044310c6cf7fcb7f749660c18ba470e9e9216b70deb9293e6922b",
+      "old_records": 1000,
+      "old_sha256": "89cb7daba1f796d6c4a5465c7f6185be03688dd21683aa396bb5a7c501f300c1",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_064.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "f9f51b74726d45540d15f4d84ee963d5b146e5a2f5904dfa30648e4a4ce087b2",
+      "old_records": 1000,
+      "old_sha256": "a493ab7aab0b6dd3f0873737b644c1f65e8399f929149e23bf8f43d8fb70444b",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_065.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "0c4b41ce6f6fbcd03ee35b3d832b2d63a8e9b5c5c7081c1f4b22187ac223285c",
+      "old_records": 1000,
+      "old_sha256": "971e936fe4d112aa94e4a385566110fa4ad15df08f299b40a642c32ff33bd894",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_066.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "06d8152111fbcf3b6075cbad71f37047d562a7d8cee7d9a9e30604c14639e0d9",
+      "old_records": 1000,
+      "old_sha256": "b5c3196f050e089737ffebe6f5487d0fbf5fbcf69720070695bfa54133df68fc",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_067.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "54ddaebcb51250f7051d80d4fc5467054cd4c98e3a652c558236aa27e5decedc",
+      "old_records": 1000,
+      "old_sha256": "30bab0e44012063a315748e8b9e0df7bab630259bd5fffcaa594c9e2d077a06c",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_068.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "aa60581462b5d6d8662260388165d6c7df1614555ac7ad3191455b60f7d3dd26",
+      "old_records": 1000,
+      "old_sha256": "18feaf50917dd128636fbf60f83d6160871d8562986daf5d4569ffdcf4834224",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_069.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "269c009d5e9e193150d0ee6006597b69023d7ac064e795fd1cb4838d51f73b03",
+      "old_records": 1000,
+      "old_sha256": "f5a12dec2d15de52a96b9f44b5a204c036671ea5d197dec16e1e7283e8918587",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_070.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "4ddaa7bc3f672c19c9e1db4035315970b95bb48607db892a233600da2921da78",
+      "old_records": 1000,
+      "old_sha256": "bba26384d1b6a8e9fe05f7536607d4d99a6f622429004b327be7ad9ad72cf733",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_071.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "e366ba1af11b48e0075651027119a84fcabde2d14ed993b96fc3cf94dd5a2350",
+      "old_records": 1000,
+      "old_sha256": "628dd66ae74c034ecd4ac5dd16c3b08e37a14cdb501e31e1d946caf52506d347",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_072.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "fdfbc32662a2494c15293621462dc699101b0b476d5ba8c5662ec23abfe761a6",
+      "old_records": 1000,
+      "old_sha256": "002a2e737e6a978623a8dbb5256dbfb6867c2045cc16ebe65ecae8d33020e4db",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_073.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "50cbff91485cd50363461ac7acce5edaa715403c18a649158939e24af49f7438",
+      "old_records": 1000,
+      "old_sha256": "6fb266bbae8b7efd7532cff8d00e55199f4aa9f711d6fadfffb385a56e17cd7f",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_074.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b616cec527b7a8eb42c4cae3dc5e679bd02e94feda2d2247fdf90b4369f7817e",
+      "old_records": 1000,
+      "old_sha256": "dfeb8e0aa8b2d13f9802978d5781adf66ea420fe489fd3c6fab0c04302cb099c",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_075.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "81afd2f6b78499dbb6ad5086ded83b1d6ead81567d8c71accab4291db3b02778",
+      "old_records": 1000,
+      "old_sha256": "0e9ee8d7f071a1e6a61a1cbeea7587eb0b04c77d58dadecc98b5baa555019724",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_076.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "0eba738b57b4e16ad0a92a78837e332a2648de8b3e74128b28c84eb040266d40",
+      "old_records": 1000,
+      "old_sha256": "970444fe95aff5d7dd5f9821cc7ade86fec5f0e7c1b3fde11848024ea79a2431",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_077.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "577c013df811a49528e6e0d352628bfbce8a763f2ce1ce518c2e025e60db5956",
+      "old_records": 1000,
+      "old_sha256": "06ae6e06ce1610148953f110cce54b699037def6526cb1c2a4d7728b3509fb5e",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_078.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "1a11465ec5abf6c6b08f445d5cb41e746711d8582ca4c3ac0380ac77df057a63",
+      "old_records": 1000,
+      "old_sha256": "70838c5f022ec1959297215e7c0ee29382c98db5d533a26aef4c97605b8680b9",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_079.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "ad5857cbb188519e784166b6cee7003048646286feb2ca64781275936f0eede3",
+      "old_records": 1000,
+      "old_sha256": "83bb209cc6828992930f6df2675e95e53b190d7180825ffbaa58d8ced6688bb6",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_080.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "5f963dae9abc1769458639db4deec9c538b0522289913a08ac93e600eec2b99a",
+      "old_records": 1000,
+      "old_sha256": "3b59a41e416d62ecdcf637c28a8c86983c20638e8104eb8a5f4079b12253e338",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_081.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "1c720cb03224e17fe23b8641d09809f8939303deee3f35acd955adccf10015a9",
+      "old_records": 1000,
+      "old_sha256": "3cbec62c39cd5a9d017deebb36e601d4cd8721ce2d6c5bb7f39b5232471686e5",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_082.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "27e8a146a40366d2e58cfae709a6dbabc4539d7be8da0c186d250beced7847b1",
+      "old_records": 1000,
+      "old_sha256": "94f63ff40dfc48904ee35c3c5ddd4ed835c36024adfe50a50b02dbed45b09207",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_083.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "494e37a23c8e2a3407806c1b0fe6496d9117452b53f26fb6a470aa48e4a68bf6",
+      "old_records": 1000,
+      "old_sha256": "1095ba8cf4ee35537fe71f28f022f577273249898a816a2ca42e4a36d0ad833d",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_084.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "24a1e582543bf97050529305b15b0d4cd572de890b79e143b167610c447eebb5",
+      "old_records": 1000,
+      "old_sha256": "fc5eb680c1b75677022fcda44741c0f894fb5e8c9f1233bc6aa9038909caedd8",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_085.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "9fadb319e7617d02295f71c1e0e9a8654c0e910f17e9dae1f59dc59f7d243a1d",
+      "old_records": 1000,
+      "old_sha256": "4646caad40183238fd18e3b3718d8a3418b9c8828e3eacda7e5099cd244fb4c7",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_086.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "ccf4f6429ee4be5dac2d955027665a4d1a911eb03ed4dbaf16fd64144189cb21",
+      "old_records": 1000,
+      "old_sha256": "08eb4a5b29a36105e171891839b0bfa2b350b82e7e88359b683d696eb3a6c174",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_087.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "e1cab1052616d8fbaa5c17bca409acd8ced5ec49c8d6bb16588bead899cd9cdc",
+      "old_records": 1000,
+      "old_sha256": "ade86379eef5b15b38d0847e5ca144322cf51984189b8e61ac6233201f4aa515",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_088.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "54a9b1599c1ca1ee31bf3825bd37880eae98a7ddd83099106e4d990e28986502",
+      "old_records": 1000,
+      "old_sha256": "302ba17fec869a718b544d2e87dc0a2413bfa6b64e0e6ca16607c4294892bf2f",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_089.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "918c998139669ef7d24ef9da1cc1c0bd988867871e000956f2352509279f5327",
+      "old_records": 1000,
+      "old_sha256": "ab495a0c7e4c297ce73007d58a2da61b97ae8dac73efecb90f13162dd3d8172b",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_090.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "dcd29b22810d8bbbf9c5a162b7bf46ef94b6baddb84a1d07e39ebd83a93e8e9e",
+      "old_records": 1000,
+      "old_sha256": "708648248db8bb2120ffa0393d9a8d6b3ab4e3d3e6c794708e5335187b3650c1",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_091.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "19f80ab41097485102a55b4e948be4d8700a8d9b3c27a2c8eeb332250df7f0ab",
+      "old_records": 1000,
+      "old_sha256": "4c98f5d05b02be923b0e8e346ffa32316249fc0f5a8fdfe457e2356240ba3911",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_092.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "972344e070ca86083a9e0482ea3664aa26377141a0a9c79e679b6300446b63cb",
+      "old_records": 1000,
+      "old_sha256": "3a4ea24bf92026bac1fd74fa0e56b7ea53debdf2b26a550badcbfda19d07f229",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_093.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "83cad8210314c7de2b95d34993c54afec5a22effbc667defa9508cdbedb0fa01",
+      "old_records": 1000,
+      "old_sha256": "f5c5e6c27acecf62c4fba24c63a3696d19f0042693715c0f00f56fd50fa6bcfd",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_094.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "00065f25b900a7243e1a764f13f413d079501db993e1e750bf4ace3b956e2a54",
+      "old_records": 1000,
+      "old_sha256": "7833b5ba0348ac9b49f58583fdc2801ccf4a5713d3ccadf874adad3973aa50c1",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_095.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "e073a87b3ef28a61c73d45000ead7e206f2084b7ffbd4ebebbc469888f4e9f0a",
+      "old_records": 1000,
+      "old_sha256": "df7b3c253afd96bd9beb465d35356fe5f24a64e8a40cbb96c434e50a33b73d2e",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_096.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b780ccad0983b08080b9ee30ac885d7b57d98479f82d7b4db2a6be2859d1c55e",
+      "old_records": 1000,
+      "old_sha256": "07d0dcae6b91321207a3bb2354162feea875aff30ef6eaa603c65841e0c369a3",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_097.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "73c3bab77f83441e4a903c80a3641191fbac1910b6d12f3d711c3004ed22044c",
+      "old_records": 1000,
+      "old_sha256": "411532b800a800a6ea3958346923a6d026eed822e549334c2895d4bc35cec62a",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_098.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "bc6812c152575b098551ae62cfef65e9bba774644ab1c3d2bb1265052f041ca0",
+      "old_records": 1000,
+      "old_sha256": "492999b6ae4be05e43c911f67fb807b8fcbf5b93f247d9d8521b1801fbfca829",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_099.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "f4c23555b24a2a90f92ee94045a37d01758ab3ddcb1d5770ca4a33dbc668da39",
+      "old_records": 1000,
+      "old_sha256": "95c1a0febaf9a642c2ef8a8f20848e429a06e5c1b7e9b018099512e268239cad",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.perception/data_packs_pack_100.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "281599dec626f0f87aadd8463b8bdc04d0d43e1ca20861ed07cc36c65ea1405f",
+      "old_records": 1000,
+      "old_sha256": "22695f53e09a4cb341c585eff5ee4e2eb32ff411dbacb11cb7812aedd86dc545",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_001.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "81f63097dba9e9042067054bfe591472d5de103e563a7eb62ff4adce2592a723",
+      "old_records": 1000,
+      "old_sha256": "94d73b33de94ebf5b42ad2bcbf3d615302a0a3a7b169cc36bcf9e20bf47f0377",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_002.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "50581984486c6e52a48f042ce31063e9fee008501296d115b5fa2855a529da5e",
+      "old_records": 1000,
+      "old_sha256": "1c17e1e8b9af99c15d25963deee3c484c4351da0da522f74a2cebca0a80a3783",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_003.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b87673d024c1ed8dd7e0e1803ed85728bfb890bdae8d9731b7c37b6e6d333f04",
+      "old_records": 1000,
+      "old_sha256": "379a52a164c6e5b46a52ee572b069346d0bcca32e9085ed0d62fc9d499706927",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_004.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "a0d556a815e62c39ca4c66bed1708d9f66cf78ef957a01b1f585111c349b73f8",
+      "old_records": 1000,
+      "old_sha256": "b05c0c2add84453ea8038b194941e5e34747dadea3a5b0f40c2c9f785bded0e9",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_005.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "34c7f7ee68aa1743b22a15eccfc4a39f436f18b0662ef96a513185e2bcee820a",
+      "old_records": 1000,
+      "old_sha256": "aac5eba158df1d9aac6af4821aa75caaa94b0b7562a3050f7c4dc8479222cbc1",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_006.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c4beb3d29c16bdc28a6cdd7fb103940508d26c51c3658b51f85e1deafa9fd85c",
+      "old_records": 1000,
+      "old_sha256": "437e14c2f7d691ce4eaac24b34c020c1ea2fa513c33c5ba18bfbb3520c227b8e",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_007.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "25697f503545df755c9840ee5a89c02c90851a217d15e701bcf1d253b3382df0",
+      "old_records": 1000,
+      "old_sha256": "0f64290336b1e67e9ba9af42f606fc0b6bf880b95a6d02b67f48b67e2c3d6108",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_008.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "5a199a09d53c00a6de32821b0c0a4b3ebcf03beeedd24493f343ba568e16341c",
+      "old_records": 1000,
+      "old_sha256": "52f7617061d1bbe88607bf4d65366f8c7aee322e814d67ee434895d5bdf7c859",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_009.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "299822d8a6c11fcb13982f0acd7aa4b2e0139b2213bb9ab25efe86233bc48af8",
+      "old_records": 1000,
+      "old_sha256": "af7c6b970a8398bf32c3908dc188ff77e8d34838d4249916a257172ff6cc8bd7",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_010.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "a908087936b16fcddae63dfa9eaf2b1fe37288f87efb971c20ecc0dc95fb9d4a",
+      "old_records": 1000,
+      "old_sha256": "ff4beca1e90329507b9d628bce6114526f55e5ddd77fd74ed68714ed65bdba75",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_011.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "cd6ca4157c878e16388bc909cf02336f563710604bb1c400bfc9858e82eb9ae1",
+      "old_records": 1000,
+      "old_sha256": "234e55d428e923d518823bde8396f87d9af05a536019cad47bb1f7b898644a99",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_012.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "542779d4007447c2f912f3048f87f4ce9f000ace558b33f7ca02d10c7426b6dc",
+      "old_records": 1000,
+      "old_sha256": "0449795e20512b748c484ae43fa7bfe219ba990b4613cf4576a2598b0d8cf6a3",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_013.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "94a233af0edef2258d48d542f751460e3c123ee29348b1a468a225e46fa70eec",
+      "old_records": 1000,
+      "old_sha256": "a96ccdacc4ed30e52f742272547c8e4a850305da7e25b4f2e52e1c2b5c561208",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_014.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c1a8b9d716ef0527fb4cb045cb9d46b54b93fd856e39a5f03b30f6f52e096e39",
+      "old_records": 1000,
+      "old_sha256": "aaa297c51b62b5004d523f64f3a97dd458ca268b304ebfba691f15be1a1544c0",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_015.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c05a1fbe244a98410d9c044fb0b7b32bcf1f53c543d2dedf88a9d151ae7b2f08",
+      "old_records": 1000,
+      "old_sha256": "1736b3c7d10ea77f816481522a0bd6f9fafccf483089ba126c979388614b527c",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_016.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "92f57bd40c9564cb22d8e5c078a10d501072c61487683ef23ffa99095f767569",
+      "old_records": 1000,
+      "old_sha256": "3d5a4fad31c28dcd2cc265c75c22cdbc4d3aa1e0cc751a933dabbe68c03d524e",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_017.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "38b184b03bebb5c9811c778849b9596a4439e622fc691a47578e675c20593a44",
+      "old_records": 1000,
+      "old_sha256": "0ddee35181447161b0ca629711ae3c62131e142cd3320b52b3f113b7bcfab274",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_018.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "10c8dff13fc8047e83e4b171bcc7bfd6967e7ca388f54d47aff7545c45cf9501",
+      "old_records": 1000,
+      "old_sha256": "e4db97f29e8dcce4a9995aaa8ece60dcddb918f67d1b449d8249b5eb161763b7",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_019.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "9d1abac96754cd725b6800df9949813f25b779ca182148d962a88993cdfd6f01",
+      "old_records": 1000,
+      "old_sha256": "057904d8432517426e2e5461ecefa49300c42d810d487956040da678ec674f09",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_020.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "8e68fd19bc008fd8d894bdb542cc30e01e2160b24fb1aa37743dbf2b56c86162",
+      "old_records": 1000,
+      "old_sha256": "ded6dbe6fb2f539651152b8eaac7a6820c4d0c23716bc7b1514e6aa02aa9fa05",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_021.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "4c93356c3852b2d6fd35b5d8e36e72a78c1c3357d554d8d2739c60c25e841f1c",
+      "old_records": 1000,
+      "old_sha256": "a3360dd2cf1eb0ba266169b7d95affc767f850cebb34d6bd60cdf36d0e89013d",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_022.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "04607d1356ecce39bc29a2b7bbb00b8a17a1c236455943aeffe363623e587752",
+      "old_records": 1000,
+      "old_sha256": "836e67d255a87fe7b16332ad3476c3d72edd6ccab8e79baa3870c376031d4b68",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_023.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "23009fe139422ec83c4a23db3f69fd0471dbbcfdd1664e4e02020a7f3bc09b9e",
+      "old_records": 1000,
+      "old_sha256": "2f672c8e4cedcd68ee7e52367e7ca8c172e1af38a466f6afcdeffe1682044475",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_024.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "08d09c68f297d88833dd6a8ae8c4c390b07a33dd96e75b1fdfb94bf2984096ec",
+      "old_records": 1000,
+      "old_sha256": "3b621e0a5dcdc62130e259fc46e9a4a134d9b456540d94a550b39da902400887",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_025.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c8aeeeb9f4daec60f085546862f0787d7ff425777ad52ae05215982e61ef0444",
+      "old_records": 1000,
+      "old_sha256": "cb4f09b85374ef43021ae351f0c13b2c70bdf57ecad53f28ac43e9e5565d27a3",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_026.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "378cdad45ddb5ce20ba5c67236516041abfb787458edd27c2c73ae6128b5ebbb",
+      "old_records": 1000,
+      "old_sha256": "acf0f75ac82ab30e31864f1625dd581170255cb6d21850eae0411858a3038e32",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_027.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "4ff24df7430daf055df19379cb9eb6125bbcae0487be19bec9c5665b8d683531",
+      "old_records": 1000,
+      "old_sha256": "604025f351ec02ae6252d953778585833132eb02dbc7a5f9ef49512c7cb3fbc5",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_028.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "5e0dea69d9861c7e562067309c93c1ac702c7bb40b78d95a3b838500da28208e",
+      "old_records": 1000,
+      "old_sha256": "3bdc32ca933f846b833dd3513ba0f32363b6ded504f0780fda3e1c261c049144",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_029.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "0c6653b49a5e4e58429823f2fd4328d95252ef8722abc377d0783d6bb60a16c8",
+      "old_records": 1000,
+      "old_sha256": "32c7c2d4839d65829b2794114bb1c582bea38e0d239dcce77eb789d9b386eec7",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_030.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "ca18b6ab84dc2ef406673b690e730003d64e37ce7fba8a6ba3dc6bba360ec3eb",
+      "old_records": 1000,
+      "old_sha256": "dc8816538c2162cd93cd5eda2e412dd066128352e3309349c88ecb24f81a79b8",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_031.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "6f2e245b17b4030233242764a4cc6c16ebcfc2c76e45c2a48a784f90ff688349",
+      "old_records": 1000,
+      "old_sha256": "c27206fb8af89d70ae1a2f3119fd917283e43fd78cf8f04feaa4dd79a1e259ce",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_032.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "2ac7da697486ef1a4e4d6200f528cfe680365820cf4a3ceed986a004bafdd133",
+      "old_records": 1000,
+      "old_sha256": "e7addfb1e84816d92b67bf8ae4bce4a36459daa4fa53c54ed34b6cde82cd6c0f",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_033.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "bbb30a8004e6f98ede719b9f5387d3d197cfc17f53f3a990c031ffecba0349c9",
+      "old_records": 1000,
+      "old_sha256": "fd3c6ce2af9bdc9c760272cb6cc84b9a4809c1a08b83c77444db82488c20fcfd",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_034.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "fb0935c1425634ca39be07ce3a23a5971413d6a2b2812192d3c49cf3582a9d89",
+      "old_records": 1000,
+      "old_sha256": "5f87fd433ea2991701ea5671bf2edf819ab1f6a615805fdf301d61fd4550eae5",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_035.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "75e535b1c9b319a3709e9735ca9e27aad4424db1a726bbcc6f508efe9d666f27",
+      "old_records": 1000,
+      "old_sha256": "24a960032415ace6000e89596fe17025b9670c08b3afaa37b6fea37da8dc37d7",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_036.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "e2f8755bf8364bf4ed3106ad27c6a8f6356a1150ccd66716b6c0e76983ceec9d",
+      "old_records": 1000,
+      "old_sha256": "90c976af0f001e048f184c10db2f74bd9a2aa647d785d16e9213c176f713cc65",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_037.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "a73d7d1f13baee87e1cea1b018fcb97281537ac1d064ebf9795d593fbc0bb1b9",
+      "old_records": 1000,
+      "old_sha256": "a288704d7e36505bbdf620fa8ab2f24e99ee0430751163a42fb8d0cc70804d7c",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_038.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b7aabbf346c8f6bbb98fc2f3d36b035b061042ff4f695f7bf41979a391d80408",
+      "old_records": 1000,
+      "old_sha256": "154cf0db75d3e104484273b4a6b6ef3ccba36198bc5899b28f8cc1fc417fef4e",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_039.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "ebe51b472ef98fb39487be228fabded95e0efb6d3d4443a735e110b5473601cb",
+      "old_records": 1000,
+      "old_sha256": "5a016efe70e375da1ceb40dcff14cea0abb4697b8c3ab045997667517193c358",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_040.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "870230e044d381302ff078260bccca0897d86dd288be1c2c68a8d64fe6f0233c",
+      "old_records": 1000,
+      "old_sha256": "c75d55485b6aa904a762f0745e9740e6b87e1aa7deb160ef0e2346a430b9730b",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_041.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "881a7fa5ac30a5fb0d4379909c6678236ba7b9c6e419abf313845673df75ec08",
+      "old_records": 1000,
+      "old_sha256": "8772ab1ab8ee7818b9dbe5a111010fb168d2174b6263b7383036f60bacb518c9",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_042.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "a7a1bc71a42bed13562b1caa0dbc5dc6e1a566245b44ca1917271304859d75d7",
+      "old_records": 1000,
+      "old_sha256": "e4fd10c82284068101b2317190b81a3f823f0bd1fb3abccf9147bc9ad46595f7",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_043.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "725f054f84cc3578a7d466c70c5f6b166bf394102679a054d75a2a48f07f75e8",
+      "old_records": 1000,
+      "old_sha256": "45b46ccffe7390a666e8f197364a6d75c9d7d084cfebdae976b018abd5500657",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_044.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "d2b5c6732435a1d476af2c91cbc96c23c64801b3de4b90f96f12fa1a47e87a66",
+      "old_records": 1000,
+      "old_sha256": "8ac8ba294e2af3ff9d06cc46999b2730c95a41f07d2c6a5e8acac1a00170a665",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_045.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "375df36048b95365290681ea31b320433da3d8720d292e90a9350d08ac6395d4",
+      "old_records": 1000,
+      "old_sha256": "f1e07dab29d576c44d6ffb2b0a9e998e2e18ebe3dfe9943a47546c3392bcd164",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_046.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "407c2ae46a9543536138f44f0aead811bde67a4c89afee684c8f1f2467610787",
+      "old_records": 1000,
+      "old_sha256": "9294603d86736b513bffe9283848858b16af5bb89363de6c999ecde303bc6388",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_047.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "37aa1c6157695fd6e4b3867907e0b63b099ec0ac26742b2525762c63cc6b71cf",
+      "old_records": 1000,
+      "old_sha256": "e69778de8434c44a988282c214b9cdcb20447fb6abd00b2355a62d1f65fa853c",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_048.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "d156a246d7b4e156157b785e8665e45195a3c84c1f2d2cd51a15ae7b5c5b5af2",
+      "old_records": 1000,
+      "old_sha256": "4ce13ba143feba7d3fc6971e58435b721a8b696bc061ed0d3831052e362cc76a",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_049.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "5cb145d9dad901bb35a1d9272b3f4f657b713942125fd21ad86bc2b50d2a983f",
+      "old_records": 1000,
+      "old_sha256": "1b2ffeff14cc283ef8cada8d88fda5eda0a473de697e13302e26c9e15a13dd37",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_050.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "40f7740727b8d1efc3e1a67f512a7a19439a44f4b13fcb21133f6351f0d1e9cc",
+      "old_records": 1000,
+      "old_sha256": "6b2d9e2e76f8a55d00330539b33b266560fd4cbdb9b0d71fb9f831c6e5111202",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_051.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "bfb8d89dc07749b2431fe12a33748724bb6edecff6fff102e86fb1706c66ccc0",
+      "old_records": 1000,
+      "old_sha256": "1938dc5efbfcc593f26c20feeb18938fdaccda3a6b4329f51683c0fee8e9e317",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_052.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "88e71d6652ff44d4d1d0aaa3cbb9fc0254e16c90b90d0afc980b23e269dc6b72",
+      "old_records": 1000,
+      "old_sha256": "c553bd0f59990b45b1a5065a8a6bc10e18607423fced9c2369614a685d4a013e",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_053.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "63387d61223d89d4ce6c02517500b6d3b657e8fdc7a0440ba73aed551621df4b",
+      "old_records": 1000,
+      "old_sha256": "9eaf040c08bb21eeed79835d7c3a4ca3393d87b544e6ca49366314b125afd7e9",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_054.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "afe327ddde04b58cb749570d7322a0ef647e279d6ca5bbce2b24b8a9124d22be",
+      "old_records": 1000,
+      "old_sha256": "24e1566b5aeaf31d1ff3cca1fa8ade964e32663675f1416fbc8dd9509e36d285",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_055.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "8a4213d2f01f484e5ea05f014611b337f83e7cc0a25f7d0abca0e99d2e77a6c9",
+      "old_records": 1000,
+      "old_sha256": "535e42e7b4b682e9ae97376cd9ffe8cbfafc4ef2b516c498468a43ddf44dafa2",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_056.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "002b7c2a01a4fba4794101f2994f860c475415a9ba4b409310d2f31f0e52e0f7",
+      "old_records": 1000,
+      "old_sha256": "ae78948259e6ff66249349642474e0f46a13322b68e6d673b7d65fb885ffb753",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_057.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "241be67b92217e211a6d9b763427abe917ef4b65a3edd1a1fcabc8c8dee5b2a6",
+      "old_records": 1000,
+      "old_sha256": "5e6fd0530ac91a4cb534c91496007217d11fed0b20f82ce0cf5d7e9d2336c185",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_058.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "321ae0c5fa790e73ac1de6dc5c7c56a3e270b0f726278c00948266fc3a1773a8",
+      "old_records": 1000,
+      "old_sha256": "811af5affbf9294e483b755fe181194c3549858c9d1c7c3dbf352b783811d9cf",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_059.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "69a70d88f06a850743fa11125c5366230937415e8fca150ea7a81d2c2888978e",
+      "old_records": 1000,
+      "old_sha256": "d119b8f6312ad3824361be2317df7556a4be54167498f1582afaeca09421919d",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_060.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "d0968f843e80d385588f2982b49a1c416c825493fe91124ed5083d234795a07a",
+      "old_records": 1000,
+      "old_sha256": "7ced01a869067444ec76346386d8b9205cf6b52a8cceeff9865e5ae9811fbf53",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_061.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "4020761bc3eea9860f1ed9361573081e87b6b464e1ce98aa81d65a1b2cc0ec6e",
+      "old_records": 1000,
+      "old_sha256": "04c87d97e62ae40f335636e6f32d6fc23200b9f30bbaaa52f52fbb6aac4b45cc",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_062.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "9ccbcfb8157f5df5d9082f8109855f1800df81c866d7b9aa8538d3c2b61bd907",
+      "old_records": 1000,
+      "old_sha256": "2c3283f1483f3baff72422969c0d1bc354b50ddca2c36e83228d99154baecf5e",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_063.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "508c00afe7fe647036517ee179458d3199a872c0635c02ab57b1f6b8d1fe841d",
+      "old_records": 1000,
+      "old_sha256": "4b9f14a59713e1dd03175faca6d3488a1f8e148d5d8176d3f439e5be583b34a7",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_064.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "3abf541d008fa620f672b7bc6b24d06534a43fdd219596deed8cc6e6f1946dee",
+      "old_records": 1000,
+      "old_sha256": "cb121dad5ddfd53235acabb093e4ac6f3ede16ff2c716c4706ac397dda0919e2",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_065.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b7dfe23b7ed229f6f677155b0c78c992e9d7f5b9e8e832c8aa02a1dbe25f062d",
+      "old_records": 1000,
+      "old_sha256": "855f643dbae21ec93bdbfb8a8fe6c1ab500a8155f4519ec4cf336f0c540750c1",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_066.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "cbaf41e01461a5137760960bddfbe311f5b635e3a805d54a4b765b351dc1763f",
+      "old_records": 1000,
+      "old_sha256": "de5f6e5e23fd195c99469922634fb4ddc08b942eb1197d29e7f13e938ae98212",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_067.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "04757ade76bf24fbcfb63133e1556b68b50cbe7421b7e15b03ec7374236d4f36",
+      "old_records": 1000,
+      "old_sha256": "02b06f0aa2167eced029f0ebfe59ce5499500a9a421d650fe69aa7f7ab6712bd",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_068.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "ee8c1f03b887b9833918ed8713d7187c21ff4dee8dc28194497d8ce1cf5f3abc",
+      "old_records": 1000,
+      "old_sha256": "52071c7e0603eeab67ccd20f2d65860c62608e4fefd08f6ce2255868405933b2",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_069.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "0266731457955debe262c6d5d3dff883f17a57312ca2338f54cae20324e01a7a",
+      "old_records": 1000,
+      "old_sha256": "079588835811a160832e001b7f3e46db82396b29bb59ca42d85d89cb371282ed",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_070.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "32d302abc0f4b418e6a503c011c9f7fe073f8218f976ab5606b8727e812ffa96",
+      "old_records": 1000,
+      "old_sha256": "fc9c3f870ae5e3e3c4c8d5660bf215b0f2918c6f640d85334373e3315019166b",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_071.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "9b331138c77a6afbae025aa142040e616360e1dfeb2dd6bfd3d382753beafb44",
+      "old_records": 1000,
+      "old_sha256": "9b52e61b701e8f20aac9f6e14a360a13bf5150b27497b4cb9224912a677e9c9b",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_072.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "36a39cc45d1ee262806bb1e2a5d2d5bc373ae2521e35f7181ea9ebc081376569",
+      "old_records": 1000,
+      "old_sha256": "3e852d38d99c9a271ad6f1446c6dd25af074d5fbe02c605ce1602f40103cb6f8",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_073.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "533174e753989d131ff211dc116f63af65325510bccb7a4a66f0bc5a3fa40797",
+      "old_records": 1000,
+      "old_sha256": "b633114cf06beca25aee0ab8e649c479fccdf8b6fe165fa092e8964a5a214b55",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_074.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "9130997e032a9cfc066a115fea37fd41309e675c763d5baebdc4d2780012f1d8",
+      "old_records": 1000,
+      "old_sha256": "9308b4f486aec4d6171e6c34a770a547af7f7ded0333776adef7028d1b67c3cc",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_075.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "086e3801b9144768d1073fa30947ef07d03c9064b611d4329cb8611781a19cf5",
+      "old_records": 1000,
+      "old_sha256": "1676bef233d75b9d35cd41eb35da5ebd9067dadaf8b73a489d86f39e556b1168",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_076.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "654aaedcd7bc5c50ac9c59b85f3519c05acd5c69ca1e11b8c40b8ff5594c6409",
+      "old_records": 1000,
+      "old_sha256": "7ecc3f6dd3882b83883531f4bf4196522cd7165d445d16d34c014f3acd31aae6",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_077.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c9453aee1318740724d911999ae4f779410181c5eaac810a65f070e5b2a20825",
+      "old_records": 1000,
+      "old_sha256": "7a45f06dc08be6c11a482bd5e8cf5398b5548bb55929a0e228a6b229827e3dd1",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_078.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b15791baa24b77e74ec904e0f47b1694dfae5a5f83b9ed1414f5a4ee23cdefb1",
+      "old_records": 1000,
+      "old_sha256": "9fdf3755cfecd091fe441f58a21d12ccde648fbb3846fe9854d371a7abd73a0a",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_079.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "13d130a61b29dec0ef411252d665dc59037183c787cd707c7ff26b6179a7095f",
+      "old_records": 1000,
+      "old_sha256": "545d975c4e2b2e3812dc02a661cf8113340b6045b261220637ce33afbcda59c1",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_080.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "772940ef754d50d7af9d9e90865b439afaff184beefc25641729f536f411c46c",
+      "old_records": 1000,
+      "old_sha256": "92944365bea6ea7b47a7eb10e27f718c20aa84519d09379e0868a9794262241d",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_081.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c8ca89d06a26f3e44c4cf7734e0d3e9ab7fa49a96a0ccaf3913baec3409791bc",
+      "old_records": 1000,
+      "old_sha256": "c418d326c124cdb72e16249a12d9be9f8b22c705de1ae6d92aa47abfd2f06711",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_082.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "094a225a551077ba8fcd44d5ed9ef69fe85737d7dc0eb3de411b44aa9821e03d",
+      "old_records": 1000,
+      "old_sha256": "4cb1510d13d7b67b3f7250bb25e6238ab5221b5c772d625aad848de3b98247be",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_083.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "e39364839e2a87a00e3dc06e094f1bafc78a338650bf738a1093d6a788501c58",
+      "old_records": 1000,
+      "old_sha256": "1cb1f1c953c93f14e325ef9a782f1bc8f35034bf543e7d17eba780cdb7852102",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_084.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "6d3554bb4e51cb306013ba2afbcb9f4328c41a8bf0de0f8a840f2d5e8feb8482",
+      "old_records": 1000,
+      "old_sha256": "ca9db3bc0eecc3e6f0273dae4582621abc69e277108feab321009b4b6de641d2",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_085.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "faf881b52d238e26c80ec833ed79bea7a5751ef68097eeedc739e5057b081ccc",
+      "old_records": 1000,
+      "old_sha256": "083d284057bf4c4fadf48617a92414f05f9a06c998c9f2cacbe8cea42a89f91e",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_086.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "61fd0542cab59cee5b454725191a847912adf04db22d0d447e1c7a43e41a5ea3",
+      "old_records": 1000,
+      "old_sha256": "4b7a238dbcc2912941f1efd4aa3b79d109f5de9a2c32c3b4b8b4f9ef91eea9d1",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_087.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "5a6a67a52c3000a6352f2305cedb398a8967681c70d69e76bdcfc1ea871bcc2c",
+      "old_records": 1000,
+      "old_sha256": "4fe8fcfac02a1376cc9e1910cfd394ecccac36250a04330e082b5f243ed25371",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_088.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c583c738219faa0029cfbd296b59719de26053037f9932e23b69d6cb982a9fac",
+      "old_records": 1000,
+      "old_sha256": "75fec0779fa9045aa48a2dbaf229560436f8cfe06e8828db8d398cff083efd7f",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_089.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "f4e423671d4b624417be992be51fec70d3e8e1faddce6a1c3efd77732b9a54bf",
+      "old_records": 1000,
+      "old_sha256": "8ef9e7f2bde28222978bb57b90e214a3390e356528c9fba6be48270e8c6198f7",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_090.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "5410133fa2254e650c5f275924377eff9017919562aa201e43a2bf3b6ab09756",
+      "old_records": 1000,
+      "old_sha256": "be4f6fed94e1f2c58ef59d45aa10992824d2b5cb46eb1b88c97623a9052c5c0b",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_091.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "fa5b3a865e9ddc15d111bc85c06af15fe61970f5d3a0dd2955d03cc6d16ca447",
+      "old_records": 1000,
+      "old_sha256": "2a978bb9ccf6d33113c7c806ed14beda5be68e2bd8ebbb3a2338ea4c9cfa7882",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_092.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "b618428096a703f5f956892222b9ba7ea897cf9ba59dfd8fa7eb01be8ea587b6",
+      "old_records": 1000,
+      "old_sha256": "fb30c64979385e24dcd548d770d218636aa7354dd02ab8e6886440940e626845",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_093.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "dfc4ea50894d288da25a4f378c309df0034a65cc817c916e25e55b5486a2e360",
+      "old_records": 1000,
+      "old_sha256": "1af46b2f9dcc685ae9d98439bda33f912829f17333f6516cd0586b587d299f3c",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_094.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "03082735140c24b55eee70e545cb8f26439bbeafae9ff72aeaf58cae6361553a",
+      "old_records": 1000,
+      "old_sha256": "30ac916c14283e6b99ccb7b095c5187ec98f8c3eea14997000c2550b8069fd8b",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_095.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "4402b4fc731538d737cb873fa45e6a8c5a5d392068719381013e390bef55b336",
+      "old_records": 1000,
+      "old_sha256": "ad7f509dade8bdefcee24f2fa64305e918ebfa38e86056869c9a12d49a8e2750",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_096.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "8022f81aed77876894e1fa568b6f195dd94209c2aca2c48946ec344799873174",
+      "old_records": 1000,
+      "old_sha256": "bbfcd0d2abb5f6891dc1171a78aa9ebf282f43540a17a1d9e8cf4a1ac18a806a",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_097.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "c23fff4e3d01a6ceabb4e34d440db30e64d4685bba4439677ec0c19ecd028670",
+      "old_records": 1000,
+      "old_sha256": "7843354d939847e7d31adf1a5009150880293a18d67038514499117627b287e9",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_098.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "34c68d7ddf2c548fa96a002ebb45af9dd9aa8f52607cc0bbf0b4a578f447d21b",
+      "old_records": 1000,
+      "old_sha256": "c79a63fb418b993c855b7c14066427bc26045019a00006c27174ab7c9657eb17",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_099.smi.json.gz"
+    },
+    {
+      "new_records": 1000,
+      "new_sha256": "41571309a6a18135689240053e9c7135ec702190507c9e4c84fca5b49e7aee5b",
+      "old_records": 1000,
+      "old_sha256": "38a0a3d0576323c84b22b992c20cf8b3114f31a662dc9a1c1f171760908f36be",
+      "path": "benchmarks/corpora/pubchem-100k/golden/stereo.representation/data_packs_pack_100.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "bef1aed79beda0482203d9c8142763b559f7d10450f32e560502c8302d9df7aa",
+      "old_records": 6,
+      "old_sha256": "ab080a754c05d38b96fa4c62d207fd740ab05e012f49c4c2e48f2f775d05ff5d",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/pubchem-1k/golden/io.smiles.isomeric/data_packs_pack_01.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "08cd939b2f0b7b65991621406b6d04e8c9249506b3c87ef89a471193808a2c60",
+      "old_records": 12,
+      "old_sha256": "2c735a6d0f0aee6ed9b1083f7441b02a718f4d5a8157cf86dbc34068254a414f",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/pubchem-1k/golden/io.smiles.isomeric/data_packs_pack_02.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "e5d551292557774e63ca1570795119aaedbf43f7aaaea5396b1dfe8d125fb559",
+      "old_records": 8,
+      "old_sha256": "e18914bd1d82161797aae84f9a8f5953ae5483c2858ea79c2ebeb5892d1642df",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/pubchem-1k/golden/io.smiles.isomeric/data_packs_pack_03.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "6287f463c70d9d702c5fae79d3c23335ce1a0743299c8b51b28b20414d83f684",
+      "old_records": 7,
+      "old_sha256": "2574a412168c6cb70a83d9e9e83dc9c5beb3a1cbb505a7664f86abdbf0c9486e",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/pubchem-1k/golden/io.smiles.isomeric/data_packs_pack_04.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "08ad5ecd7972257705eb706b0f21a2b6974d165673f722d9ef19776487fd352b",
+      "old_records": 8,
+      "old_sha256": "e1d282a6a058051e056ce3c303f05aedcda76b857d3a994f6bef5a4c67b09605",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/pubchem-1k/golden/io.smiles.isomeric/data_packs_pack_05.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "09c774da75de0eaa556a464de0ec6e9bb81f61d5759b48848b9578dafe3f8574",
+      "old_records": 11,
+      "old_sha256": "02754e177f9e280b5156430d03b69cfa55ca66dc4d2add196a948e2eb52f5582",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/pubchem-1k/golden/io.smiles.isomeric/data_packs_pack_06.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "d0e4c40a1867fd27abb1d84f263e9ab09000c466e604ccdfdb39527d516282d8",
+      "old_records": 9,
+      "old_sha256": "c4db44f9609a1ebfa74c1efa06c0049303924c66db98762b05c0fa0cbef5a632",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/pubchem-1k/golden/io.smiles.isomeric/data_packs_pack_07.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "430d74ce20203b302644613b0e5a4ec4dc733a65d83ab328b3b1cfcd7c158f7e",
+      "old_records": 6,
+      "old_sha256": "b25c58afc553d5af26f53e460fc349d9a2a1165f237757aaca592d5c465371ea",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/pubchem-1k/golden/io.smiles.isomeric/data_packs_pack_08.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "26da2dac6db5e7d1cece989f114f59ce00e43205ecf64610fb450eb13eade6cb",
+      "old_records": 7,
+      "old_sha256": "56877e53a0fe23675226000f8ef20a3c0b5f69a8e0fda118ffdd51ca4bf5d1a3",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/pubchem-1k/golden/io.smiles.isomeric/data_packs_pack_09.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "7c3d569469aff936d71f9fa7b2135db8f24ed90552501636070b685f46bd26f0",
+      "old_records": 6,
+      "old_sha256": "56ffbe2fc63d01c559da6e37ae0d67e959920881929b0de9c0d8d4b09aefa227",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/pubchem-1k/golden/io.smiles.isomeric/data_packs_pack_10.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "481a3b14f8c45a3c4bfd5d4294d55fa519569c93dce3eb3cf3e47360d63a514b",
+      "old_records": 100,
+      "old_sha256": "3169b9cdd3091807b990c0ca625927314eb05b46e8a98a4744c43b484c3c38c2",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.perception/data_packs_pack_01.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "be4a911253ba5148be48de0469686f5d1a11ae874e210a4a8a089f2aa9c919a8",
+      "old_records": 100,
+      "old_sha256": "cda0188e886927017b942aa48d646801ad8a24698470c2f81f0a6e967783fe51",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.perception/data_packs_pack_02.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "c579264d627bc109fa64a7b323905f21cc631250c303d2175faa296fdc78ea37",
+      "old_records": 100,
+      "old_sha256": "91d4428411cab318601563078f330a6e9e3af994882397cdc14d3fbaccbb473f",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.perception/data_packs_pack_03.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "4ee059533aec058823856f7ecc92e5eb5cb560a8ec7e2f3653cd799bcffc7409",
+      "old_records": 100,
+      "old_sha256": "8bdd130944e8fc2164d4cccf8ba264fcfcb90f1c6d649e1ab9e08eecdfc3714b",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.perception/data_packs_pack_04.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "8160eb8c85ebd448ea4c5045d1fbbf47ac69f16de74a073bdec58d7ffb2c378b",
+      "old_records": 100,
+      "old_sha256": "54c892d9356bcdb80e6e017e6dfed54754b56f922ae4ee266f99642e9ac47b00",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.perception/data_packs_pack_05.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "1baa2371b0f2f5d38ef686a313f5afe3be00aa2682353bfaaf44aedf8c3863e0",
+      "old_records": 100,
+      "old_sha256": "ed7da8b53fda9a4b4bac350a9c2586429e925deb59148e0ea991786d636f616c",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.perception/data_packs_pack_06.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "c67597155fa259cbda85be28152585bcbc2c37ed1fdf27f5e8e4c408b6d37c58",
+      "old_records": 100,
+      "old_sha256": "823fd9b69baae9128647e7ec0181d40d0d82fba1f19dc1284736951dd675afa6",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.perception/data_packs_pack_07.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "fd717c0de71a07035309060c01e431300d6105b4f7cca830f0225bd1bd3c3e7c",
+      "old_records": 100,
+      "old_sha256": "4f8042f7076208a2f31f72e65db3455620e78d3f8d48da90721d1c8138bae10a",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.perception/data_packs_pack_08.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "546306a7093f2582f99bb91b5d162d1b8529e39592a9ad8ec157e8104093e601",
+      "old_records": 100,
+      "old_sha256": "b4294c8d160dff4b9a91a59bfd4c6177d5627a994358b6b7d5ae1b086cc68e65",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.perception/data_packs_pack_09.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "84cdb0f97b8ad50024b7ad5f3a40acdc765dfe58c666ee1e281480f0e03060f1",
+      "old_records": 100,
+      "old_sha256": "cda5ae191d829479abde3445cd99b54467b2bdb8c6878408db563e64f62bb07b",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.perception/data_packs_pack_10.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "bf78934edf6b5c5467ee6df08b294ffaa3f8c474a39b2c00e4fe8ec24215fc47",
+      "old_records": 100,
+      "old_sha256": "4b9c0b82c74f12214d6534152bb94adfec0d29b4bcd1823ee7a232f9f4f77185",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.representation/data_packs_pack_01.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "67fbdca9e211b72aa0e8d92cd4ddd4c661f85fca54df28beec913502c8198ee8",
+      "old_records": 100,
+      "old_sha256": "558208bd34c90fb7a32d5c96ecc499a45512cca5df0da990e31e4791241bd158",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.representation/data_packs_pack_02.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "c15ada40d22287b29dbc7b375a0ee0d71cf862c119300692975fc89f23a97fe0",
+      "old_records": 100,
+      "old_sha256": "bda1b09d98b276369e163fe73642b79cd1975f3322b7fc374eea4785dfbd1409",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.representation/data_packs_pack_03.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "8ffe8732b271c6a712e728c2846ec821d62afcb0a00e7f91ef5cc2498f61bfc6",
+      "old_records": 100,
+      "old_sha256": "7084d91ec9eadaf174eb0737eb74d35110a9d603386e1ee3ca12d5e73677dccb",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.representation/data_packs_pack_04.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "e26fa5610be615087329eee766900c50887cde5fba52f06f87ec26b82d6afc1e",
+      "old_records": 100,
+      "old_sha256": "b4ea7e83eedc5bc8ac8ee27c9fb51bfd72931c60d339444a1811f36d1469283e",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.representation/data_packs_pack_05.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "3ada5e228961cf04216c68a11d444ab83709ea7a9997b09fd64c051d8d3f36c2",
+      "old_records": 100,
+      "old_sha256": "850de8438e5cda6a836cc95a131b009c0ef92811a65bd805830a7532ff1721b0",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.representation/data_packs_pack_06.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "ab3c357391282df0660913ffea57be86f957e43c7e77d500f7308186e65b1bd3",
+      "old_records": 100,
+      "old_sha256": "9042e5563fd26c39dc25b6b42efed43cfcabc6da6e607358320b3d87347e1947",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.representation/data_packs_pack_07.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "c60f5b241d4bcc3b40ac426740eb47bbed61645c628a3247c1cd94357b58c224",
+      "old_records": 100,
+      "old_sha256": "122df7f46aa3408118598889eec1826e32eb46ac4b1fe05ea36d7131ed755ef5",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.representation/data_packs_pack_08.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "365bed8b167dbf22142627910d3fb1b6354d5cd5961a74867da59859ce27fb99",
+      "old_records": 100,
+      "old_sha256": "6efb7c8b317ce268ba18804e69f02cec5028f343fa10a5444d446f00e7b165e9",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.representation/data_packs_pack_09.smi.json.gz"
+    },
+    {
+      "new_records": 100,
+      "new_sha256": "42f60f85727d5897c02ed168d34c7fe550139b6e5fa320a9996c610801b4c221",
+      "old_records": 100,
+      "old_sha256": "bdcd30d68115f68791da8400060db2b98690b24d161efcf9699a1392e09bdc9d",
+      "path": "benchmarks/corpora/pubchem-1k/golden/stereo.representation/data_packs_pack_10.smi.json.gz"
+    },
+    {
+      "new_records": 1,
+      "new_sha256": "f99312ef4123e3238ecb4b33f66deca9f765785c5382f27e89bb003650255c49",
+      "old_records": 1,
+      "old_sha256": "d0e14de6c230e9d3fd52c1edce1e96d5fca52ec78620cd5eb3c449651306b138",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/smoke/golden/io.smiles.isomeric/data_pubchem_smiles_cid_5462921.txt.json.gz"
+    },
+    {
+      "new_records": 1,
+      "new_sha256": "018d6a1cbad2bbea7f610a2cc6d8be05d38bf36a6448e0f3770249e03752891b",
+      "old_records": 1,
+      "old_sha256": "d8cc2a016f92a600649d48a67f4bb33de003fdebd234e8f0a8a08d8280e99986",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/smoke/golden/io.smiles.isomeric/data_pubchem_smiles_cid_5950.txt.json.gz"
+    },
+    {
+      "new_records": 1,
+      "new_sha256": "23a165fe62098c842d62d77f46703b055a08af4e0a7ce2c20948b27b5154ebfa",
+      "old_records": 1,
+      "old_sha256": "c83927000a44abed41015cd15fade9e4a6e14c5958b527319313f22e6745fe7a",
+      "overlap_changed_records": [],
+      "path": "benchmarks/corpora/smoke/golden/io.smiles.isomeric/data_pubchem_smiles_cid_702.txt.json.gz"
+    },
+    {
+      "new_records": 1,
+      "new_sha256": "1fadcd79a0521275a0c985b731938eef31e2deef7cf4cc454a656ace94f9b8c3",
+      "old_records": 1,
+      "old_sha256": "1567322718c4bedface6506cd3cb3e46f8b46d126919d57d432fe5c3996ae421",
+      "path": "benchmarks/corpora/smoke/golden/stereo.perception/data_pubchem_smiles_cid_5462921.txt.json.gz"
+    },
+    {
+      "new_records": 1,
+      "new_sha256": "4db8aba60c4a68a53a0fdc7d187344c587956d9c49a2a527cf3d8949e8b74eda",
+      "old_records": 1,
+      "old_sha256": "e63477563b8fb9c5262a338bae3364088f272416375cb495d8356dfca535633b",
+      "path": "benchmarks/corpora/smoke/golden/stereo.perception/data_pubchem_smiles_cid_5950.txt.json.gz"
+    },
+    {
+      "new_records": 1,
+      "new_sha256": "d00a1e4b45fcd3c8327f439779d5e9749b0837552c365314c4915f972c379e66",
+      "old_records": 1,
+      "old_sha256": "e4c7d40c2cf504cb9cbf162ba65f100c68cb2a784f4a3274d2dc8b43ff323e38",
+      "path": "benchmarks/corpora/smoke/golden/stereo.perception/data_pubchem_smiles_cid_702.txt.json.gz"
+    },
+    {
+      "new_records": 1,
+      "new_sha256": "0893229f9e72c3ce1dadff00c1cd7d4370e5ea0bad8559481d67d88b29d5896b",
+      "old_records": 1,
+      "old_sha256": "f350c4f19ad956d4c26ce8908f9db2ad32073b1c210558ca900bfb4e8513eb46",
+      "path": "benchmarks/corpora/smoke/golden/stereo.representation/data_pubchem_smiles_cid_5462921.txt.json.gz"
+    },
+    {
+      "new_records": 1,
+      "new_sha256": "125d59a2d183453022082c6ac54e128b0474aef718f82e9242054d5414359974",
+      "old_records": 1,
+      "old_sha256": "9fdc9325a97aafd6366db4eb38e086f28d621319b5e1fa61bdf5d47d0bf7e139",
+      "path": "benchmarks/corpora/smoke/golden/stereo.representation/data_pubchem_smiles_cid_5950.txt.json.gz"
+    }
+  ],
+  "method": "source-graph-boundary-v2",
+  "rdkit": "2026.03.6",
+  "schema_version": 2
+}

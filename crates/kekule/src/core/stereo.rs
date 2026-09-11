@@ -6,6 +6,8 @@ use super::*;
 /// kind has no orientation is an explicit assertion of unknown configuration.
 /// Parser provenance and source-format marks are deliberately not canonical
 /// stereo payload.
+/// Each atom or bond focus has at most one assertion; changing a configuration
+/// uses [`MoleculeEditor::replace_stereo_element`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StereoElement {
     pub kind: StereoElementKind,
@@ -51,7 +53,21 @@ pub enum StereoElementKind {
     Axis(AxisStereo),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum StereoFocus {
+    Atom(AtomId),
+    Bond(BondId),
+}
+
 impl StereoElementKind {
+    pub(crate) fn focus(&self) -> StereoFocus {
+        match self {
+            Self::Tetrahedral(stereo) => StereoFocus::Atom(stereo.center),
+            Self::DoubleBond(stereo) => StereoFocus::Bond(stereo.bond),
+            Self::Axis(stereo) => StereoFocus::Bond(stereo.axis),
+        }
+    }
+
     pub fn is_specified(&self) -> bool {
         match self {
             Self::Tetrahedral(stereo) => stereo.orientation.is_some(),
@@ -94,6 +110,8 @@ impl StereoElementKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TetrahedralStereo {
     pub center: AtomId,
+    /// Four distinct carriers in the order used by `orientation`. The explicit
+    /// atom carriers are exactly the center's bonded neighbors.
     pub carriers: Vec<StereoCarrier>,
     /// `None` represents an explicit assertion of unknown configuration.
     pub orientation: Option<TetrahedralOrientation>,
@@ -113,6 +131,8 @@ pub struct DoubleBondStereo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AxisStereo {
     pub axis: BondId,
+    /// Two explicit atom references, one bonded exclusively to each axis
+    /// endpoint. Checked insertion canonicalizes endpoint and reference order.
     pub carriers: Vec<StereoCarrier>,
     /// `None` represents an explicit assertion of unknown configuration.
     pub orientation: Option<AxisOrientation>,
@@ -137,7 +157,10 @@ impl StereoCarrier {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TetrahedralOrientation {
+    /// Positive signed volume `(p0 - p3) × (p1 - p3) · (p2 - p3)`
+    /// for carrier coordinates in their stored order.
     Clockwise,
+    /// Negative signed volume for the stored carrier order.
     CounterClockwise,
 }
 
@@ -167,7 +190,11 @@ impl DoubleBondOrientation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AxisOrientation {
+    /// Positive `(right - left) · ((left_reference - left) ×
+    /// (right_reference - right))`. Exchanging both endpoints and their
+    /// references preserves this handedness.
     Clockwise,
+    /// Negative signed triple product for the endpoint references.
     CounterClockwise,
 }
 

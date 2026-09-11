@@ -28,28 +28,15 @@ pub fn write_isomeric_smiles(molecule: &Molecule) -> std::result::Result<String,
     let mol = molecule;
     let plan = plan_smiles_write(mol, StereoWriteMode::Encode)?;
     let stereo = SmilesStereoWriteContext::new(mol)?;
-    let component_styles = smiles_connected_components(mol)?
-        .into_iter()
-        .map(|component| {
-            (
-                component.into_iter().collect::<BTreeSet<_>>(),
-                CanonicalAtomStyle::StoredKekule,
-            )
-        })
-        .collect::<Vec<_>>();
     let mut parts = Vec::new();
     for start in &plan.roots {
-        let atom_style = component_styles
-            .iter()
-            .find_map(|(component, style)| component.contains(start).then_some(*style))
-            .unwrap_or(CanonicalAtomStyle::Aromatic);
         parts.push(write_smiles_component(
             mol,
             *start,
             None,
             &plan,
             Some(&stereo),
-            atom_style,
+            CanonicalAtomStyle::StoredKekule,
         )?);
     }
     Ok(parts.join("."))
@@ -779,11 +766,12 @@ fn tetrahedral_chirality_for_smiles_order(
         .carriers
         .iter()
         .any(|carrier| matches!(carrier, StereoCarrier::ImplicitHydrogen));
+    let lone_pair = stereo.carriers.contains(&StereoCarrier::ImplicitLonePair);
     let mut emitted = Vec::with_capacity(stereo.carriers.len());
     if let Some(parent) = parent {
         emitted.push(StereoCarrier::Atom(parent));
     }
-    if force_hydrogen {
+    if force_hydrogen && !lone_pair {
         emitted.push(StereoCarrier::ImplicitHydrogen);
     }
     if let Some(closures) = closures {
@@ -803,11 +791,10 @@ fn tetrahedral_chirality_for_smiles_order(
     if let Some(index) = main_child_index {
         emitted.push(StereoCarrier::Atom(children[index].2));
     }
-    if stereo
-        .carriers
-        .iter()
-        .any(|carrier| matches!(carrier, StereoCarrier::ImplicitLonePair))
-    {
+    if lone_pair {
+        if force_hydrogen {
+            emitted.push(StereoCarrier::ImplicitHydrogen);
+        }
         emitted.push(StereoCarrier::ImplicitLonePair);
     }
     if emitted != stereo.carriers {

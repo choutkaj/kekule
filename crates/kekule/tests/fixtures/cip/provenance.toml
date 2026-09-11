@@ -1,0 +1,11 @@
+schema_version = 1
+
+[[fixture]]
+path = "VS132.sdf"
+source = "CIP Validation Suite, published VS132 3D structure (Troger's base)"
+url = "https://raw.githubusercontent.com/CIPValidationSuite/ValidationSuite/6b9f9db46dadc6749da8234b05164e1e0fb413b9/compounds_3d.sdf"
+retrieved = "2026-09-11"
+source_sha256 = "28a000b36506dabe5a45f6d7672451c61c6e34f3e0f027f2599000d850273325"
+sha256 = "00964798d1f40a9ae73e6a44bcb249c61cc5c2fa5cd5290e8f8399ecfdda15fd"
+preprocessing = "Extracted the complete VS132 record, including its original coordinates, hydrogens, bonds, properties, and terminating delimiter; no chemical data changed"
+purpose = "Independent adjudication of the nitrogen local-configuration difference between the published SMILES and RDKit 2026.03.6; published labels are 2S and 6S in this SDF"

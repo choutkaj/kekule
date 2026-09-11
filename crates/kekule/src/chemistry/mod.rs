@@ -7,5 +7,6 @@ pub(crate) use coordinate_source::AtomPositionSource;
 pub use normalization::*;
 pub use perception::*;
 pub(crate) use source_stereo::{
-    project_molfile_stereo_bond_marks, SourceStereoBondMark, SourceStereoBondMarkKind,
+    molfile_double_bond_geometry_marks, project_molfile_stereo_bond_marks,
+    source_tetrahedral_carriers, SourceStereoBondMark, SourceStereoBondMarkKind,
 };

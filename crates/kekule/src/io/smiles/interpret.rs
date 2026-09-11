@@ -674,6 +674,15 @@ fn resolve_smiles_tetrahedral_carriers(
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
     if carriers.len() == 3 && smiles_tetrahedral_center_can_have_lone_pair(mol, center) {
+        // Trigonal-pyramidal SMILES with a bracket H use explicit neighbors,
+        // then H, then the phantom lone-pair carrier (RDKit's convention).
+        if let Some(index) = carriers
+            .iter()
+            .position(|carrier| *carrier == StereoCarrier::ImplicitHydrogen)
+        {
+            let hydrogen = carriers.remove(index);
+            carriers.push(hydrogen);
+        }
         carriers.push(StereoCarrier::ImplicitLonePair);
     }
     Ok(carriers)
@@ -685,7 +694,7 @@ fn smiles_tetrahedral_center_can_have_lone_pair(mol: &Molecule, center: AtomId) 
             matches!(
                 atom.element.symbol(),
                 "N" | "P" | "As" | "Sb" | "O" | "S" | "Se" | "Te"
-            ) && atom.hydrogens.explicit_count() == 0
+            )
         })
         .unwrap_or(false)
 }

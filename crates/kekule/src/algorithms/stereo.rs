@@ -1,10 +1,8 @@
 use crate::chemistry::AtomPositionSource;
 use crate::core::*;
-use crate::geometry::Point3;
+use crate::geometry::{Point3, Vector3};
 use crate::structure::Positions;
 use std::fmt;
-
-use super::RingMembership;
 
 struct MoleculePositions<'a> {
     atom_to_dense: Vec<Option<usize>>,
@@ -77,6 +75,10 @@ pub enum StereoCandidate {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StereoValidationIssue {
+    DuplicateStereoFocus {
+        element: StereoElementId,
+        previous: StereoElementId,
+    },
     MissingStereoAtom {
         element: StereoElementId,
         atom: AtomId,
@@ -94,6 +96,11 @@ pub enum StereoValidationIssue {
         element: StereoElementId,
         center: AtomId,
         carrier: StereoCarrier,
+    },
+    UnrepresentedTetrahedralNeighbor {
+        element: StereoElementId,
+        center: AtomId,
+        neighbor: AtomId,
     },
     TetrahedralCarrierNotAdjacent {
         element: StereoElementId,
@@ -126,6 +133,11 @@ pub enum StereoValidationIssue {
         endpoint: AtomId,
         carrier: StereoCarrier,
     },
+    DoubleBondEndpointOvercoordinated {
+        element: StereoElementId,
+        endpoint: AtomId,
+        substituent_count: usize,
+    },
     InvalidAxisCarrierCount {
         element: StereoElementId,
         axis: BondId,
@@ -145,6 +157,15 @@ pub enum StereoValidationIssue {
         element: StereoElementId,
         axis: BondId,
         carrier: StereoCarrier,
+    },
+    AxisCarrierEndpointMismatch {
+        element: StereoElementId,
+        axis: BondId,
+    },
+    AxisEndpointOvercoordinated {
+        element: StereoElementId,
+        endpoint: AtomId,
+        substituent_count: usize,
     },
 }
 
@@ -294,7 +315,14 @@ pub fn materialize_coordinate_stereo_with_options(
 }
 
 fn validate_existing_elements(mol: &Molecule, issues: &mut Vec<StereoValidationIssue>) {
+    let mut foci = std::collections::BTreeMap::new();
     for (id, element) in mol.stereo_elements() {
+        if let Some(previous) = foci.insert(element.kind.focus(), id) {
+            issues.push(StereoValidationIssue::DuplicateStereoFocus {
+                element: id,
+                previous,
+            });
+        }
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => validate_tetrahedral(mol, id, stereo, issues),
             StereoElementKind::DoubleBond(stereo) => validate_double_bond(mol, id, stereo, issues),
@@ -357,6 +385,15 @@ fn validate_tetrahedral(
             StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => {}
         }
     }
+    for neighbor in mol.neighbors(stereo.center).into_iter().flatten() {
+        if !stereo.carriers.contains(&StereoCarrier::Atom(neighbor)) {
+            issues.push(StereoValidationIssue::UnrepresentedTetrahedralNeighbor {
+                element,
+                center: stereo.center,
+                neighbor,
+            });
+        }
+    }
 }
 
 fn validate_double_bond(
@@ -395,6 +432,21 @@ fn validate_double_bond(
         stereo.left_carrier,
         issues,
     );
+    for (endpoint, other) in [(stereo.left, stereo.right), (stereo.right, stereo.left)] {
+        let substituent_count = mol
+            .neighbors(endpoint)
+            .into_iter()
+            .flatten()
+            .filter(|neighbor| *neighbor != other)
+            .count();
+        if substituent_count > 2 {
+            issues.push(StereoValidationIssue::DoubleBondEndpointOvercoordinated {
+                element,
+                endpoint,
+                substituent_count,
+            });
+        }
+    }
     validate_double_bond_carrier(
         mol,
         element,
@@ -463,8 +515,46 @@ fn validate_axis(
         });
     }
     let (left, right) = bond.endpoints();
+    for (endpoint, other) in [(left, right), (right, left)] {
+        let substituent_count = mol
+            .neighbors(endpoint)
+            .into_iter()
+            .flatten()
+            .filter(|neighbor| *neighbor != other)
+            .count();
+        if substituent_count > 2 {
+            issues.push(StereoValidationIssue::AxisEndpointOvercoordinated {
+                element,
+                endpoint,
+                substituent_count,
+            });
+        }
+    }
     for carrier in &stereo.carriers {
         validate_axis_carrier(mol, element, stereo.axis, left, right, *carrier, issues);
+    }
+    if stereo.carriers.len() == 2
+        && stereo
+            .carriers
+            .iter()
+            .all(|carrier| matches!(carrier, StereoCarrier::Atom(_)))
+    {
+        let endpoint_counts = [left, right].map(|endpoint| {
+            stereo
+                .carriers
+                .iter()
+                .filter(|carrier| {
+                    matches!(carrier, StereoCarrier::Atom(atom)
+                    if mol.bond_between(endpoint, *atom).ok().flatten().is_some())
+                })
+                .count()
+        });
+        if endpoint_counts != [1, 1] {
+            issues.push(StereoValidationIssue::AxisCarrierEndpointMismatch {
+                element,
+                axis: stereo.axis,
+            });
+        }
     }
 }
 
@@ -520,21 +610,40 @@ fn tetrahedral_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
         };
         let mut atom_carriers = Vec::new();
         let mut single_bonded = true;
+        let mut double_bonds = 0;
+        let mut ordinary_covalent = true;
         for (_, bond) in incident {
             single_bonded &= bond.order == BondOrder::Single;
+            double_bonds += usize::from(bond.order == BondOrder::Double);
+            ordinary_covalent &= matches!(bond.order, BondOrder::Single | BondOrder::Double);
             atom_carriers.push(StereoCarrier::Atom(bond.other_atom(center)));
         }
         atom_carriers.sort_by_key(|carrier| carrier.canonical_order_key());
         let hydrogens = atom_hydrogen_count(mol, center);
-        if single_bonded && hydrogens <= 1 && atom_carriers.len() + usize::from(hydrogens) == 4 {
+        if ordinary_covalent
+            && double_bonds <= 1
+            && matches!(atom.element.symbol(), "S" | "Se")
+            && hydrogens == 0
+            && atom_carriers.len() == 3
+        {
+            // Three-coordinate S/Se can carry a stereogenic lone pair, as
+            // in sulfoxides and sulfonium ions. Multiple-bond duplicates are
+            // relevant to CIP ranking, not to the local carrier count.
+            atom_carriers.push(StereoCarrier::ImplicitLonePair);
+        } else if single_bonded
+            && hydrogens <= 1
+            && atom_carriers.len() + usize::from(hydrogens) == 4
+        {
             if hydrogens == 1 {
                 atom_carriers.push(StereoCarrier::ImplicitHydrogen);
             }
-            candidates.push(StereoCandidate::Tetrahedral {
-                center,
-                carriers: atom_carriers,
-            });
+        } else {
+            continue;
         }
+        candidates.push(StereoCandidate::Tetrahedral {
+            center,
+            carriers: atom_carriers,
+        });
     }
     candidates
 }
@@ -629,11 +738,7 @@ pub(crate) fn atom_axis_carriers(
     Some(carriers)
 }
 
-fn atom_is_atropisomeric_sp2_endpoint(
-    mol: &Molecule,
-    ring_membership: &RingMembership,
-    atom_id: AtomId,
-) -> bool {
+fn atom_is_atropisomeric_sp2_endpoint(mol: &Molecule, atom_id: AtomId) -> bool {
     if mol.atom(atom_id).is_err() {
         return false;
     }
@@ -649,8 +754,7 @@ fn atom_is_atropisomeric_sp2_endpoint(
     if !(2..=3).contains(&total_degree) {
         return false;
     }
-    ring_membership.atom_in_ring(atom_id)
-        || mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true)
+    mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true)
         || incident.iter().any(|(bond_id, bond)| {
             mol.bond_is_aromatic(*bond_id).ok().flatten() == Some(true)
                 || bond.order == BondOrder::Double
@@ -683,19 +787,31 @@ fn infer_coordinate_tetrahedral(
         if has_tetrahedral_stereo(mol, center) {
             continue;
         }
-        let atom_carriers = carriers
+        let Some(center_point) = coordinates.position_value(center) else {
+            continue;
+        };
+        // For three explicit ligands, using the center as the fourth point
+        // has the same determinant sign as a virtual ligand opposite their
+        // vector sum. No hydrogen coordinate needs to be guessed or stored.
+        let carrier_points = carriers
             .iter()
             .map(|carrier| match carrier {
-                StereoCarrier::Atom(atom) => Some(*atom),
-                StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => None,
+                StereoCarrier::Atom(atom) => coordinates.position_value(*atom),
+                StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => {
+                    Some(center_point)
+                }
             })
             .collect::<Option<Vec<_>>>();
-        let Some(atom_carriers) = atom_carriers else {
+        let Some(carrier_points) = carrier_points else {
             continue;
         };
-        let Some(points) = tetrahedral_points(coordinates, center, &atom_carriers) else {
-            continue;
-        };
+        let points = [
+            center_point,
+            carrier_points[0],
+            carrier_points[1],
+            carrier_points[2],
+            carrier_points[3],
+        ];
         let Some(orientation) = tetrahedral_orientation_from_points(points) else {
             continue;
         };
@@ -729,10 +845,10 @@ fn infer_coordinate_double_bonds(
         if has_double_bond_stereo(mol, bond) {
             continue;
         }
-        let Some(left_carrier) = only_atom_carrier(&left_carriers) else {
+        let Some(left_carrier) = first_atom_carrier(&left_carriers) else {
             continue;
         };
-        let Some(right_carrier) = only_atom_carrier(&right_carriers) else {
+        let Some(right_carrier) = first_atom_carrier(&right_carriers) else {
             continue;
         };
         let Some(points) =
@@ -761,18 +877,14 @@ fn infer_coordinate_axes(
     mol: &Molecule,
     coordinates: &dyn AtomPositionSource,
 ) -> Vec<StereoElement> {
-    let ring_membership = mol
-        .ring_membership()
-        .cloned()
-        .unwrap_or_else(|| super::rings::compute_ring_membership(mol));
     let mut assigned = Vec::new();
     for (axis, bond) in mol.bonds() {
         if bond.order != BondOrder::Single || has_axis_stereo(mol, axis) {
             continue;
         }
         let (left, right) = bond.endpoints();
-        if !atom_is_atropisomeric_sp2_endpoint(mol, &ring_membership, left)
-            || !atom_is_atropisomeric_sp2_endpoint(mol, &ring_membership, right)
+        if !atom_is_atropisomeric_sp2_endpoint(mol, left)
+            || !atom_is_atropisomeric_sp2_endpoint(mol, right)
         {
             continue;
         }
@@ -807,13 +919,11 @@ fn infer_coordinate_axes(
     assigned
 }
 
-fn only_atom_carrier(carriers: &[StereoCarrier]) -> Option<AtomId> {
-    let mut atoms = carriers.iter().filter_map(|carrier| match carrier {
+fn first_atom_carrier(carriers: &[StereoCarrier]) -> Option<AtomId> {
+    carriers.iter().find_map(|carrier| match carrier {
         StereoCarrier::Atom(atom) => Some(*atom),
         StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => None,
-    });
-    let atom = atoms.next()?;
-    atoms.next().is_none().then_some(atom)
+    })
 }
 
 pub(crate) fn tetrahedral_points(
@@ -849,9 +959,9 @@ fn double_bond_points(
 pub(crate) fn tetrahedral_orientation_from_points(
     points: [Point3; 5],
 ) -> Option<TetrahedralOrientation> {
-    let a = points[1] - points[4];
-    let b = points[2] - points[4];
-    let c = points[3] - points[4];
+    let a = normalized_direction(points[1] - points[4])?;
+    let b = normalized_direction(points[2] - points[4])?;
+    let c = normalized_direction(points[3] - points[4])?;
     let volume = a.cross(b).dot(c);
     if volume.abs() <= COORDINATE_EPSILON {
         return None;
@@ -863,10 +973,12 @@ pub(crate) fn tetrahedral_orientation_from_points(
     })
 }
 
-fn double_bond_orientation_from_points(points: [Point3; 4]) -> Option<DoubleBondOrientation> {
-    let axis = points[1] - points[0];
-    let left_vector = points[2] - points[0];
-    let right_vector = points[3] - points[1];
+pub(crate) fn double_bond_orientation_from_points(
+    points: [Point3; 4],
+) -> Option<DoubleBondOrientation> {
+    let axis = normalized_direction(points[1] - points[0])?;
+    let left_vector = normalized_direction(points[2] - points[0])?;
+    let right_vector = normalized_direction(points[3] - points[1])?;
     let sidedness = axis.cross(left_vector).dot(axis.cross(right_vector));
     if sidedness.abs() <= COORDINATE_EPSILON {
         return None;
@@ -889,18 +1001,9 @@ fn axis_orientation_from_3d_coordinates(
     let right_point = coordinates.position_value(right)?;
     let left_reference_point = coordinates.position_value(left_reference)?;
     let right_reference_point = coordinates.position_value(right_reference)?;
-    let points = [
-        left_point,
-        right_point,
-        left_reference_point,
-        right_reference_point,
-    ];
-    if coordinates_are_planar(&points) {
-        return None;
-    }
-    let axis = right_point - left_point;
-    let left_vector = left_reference_point - left_point;
-    let right_vector = right_reference_point - right_point;
+    let axis = normalized_direction(right_point - left_point)?;
+    let left_vector = normalized_direction(left_reference_point - left_point)?;
+    let right_vector = normalized_direction(right_reference_point - right_point)?;
     let handedness = axis.dot(left_vector.cross(right_vector));
     if handedness.abs() <= COORDINATE_EPSILON {
         return None;
@@ -922,6 +1025,13 @@ pub(crate) fn coordinates_are_planar(points: &[Point3]) -> bool {
 }
 
 const COORDINATE_EPSILON: f64 = 1.0e-8;
+
+// Test angular degeneracy instead of comparing a dimensional volume with a
+// fixed threshold. The orientation must not depend on coordinate scale.
+fn normalized_direction(vector: Vector3) -> Option<Vector3> {
+    let norm = vector.norm();
+    (norm.is_finite() && norm > 0.0).then(|| vector / norm)
+}
 
 pub(crate) fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
     let Ok(payload) = mol.atom(atom) else {

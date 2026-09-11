@@ -1,7 +1,7 @@
 feature_id = "stereo.perception"
 corpus_id = "pl-rex"
-reference_tool = "pl-rex-manual-semantic"
-reference_version = "PL-REX 1.0.1 ligand corpus 2026-07-09"
+reference_tool = "reviewed-stereo-schema"
+reference_version = "v2 + RDKit 2026.03.6"
 comparison_mode = "implementation-golden"
 
 fixtures = [
@@ -11,5 +11,5 @@ fixtures = [
 
 notes = [
   "Externally supplied PL-REX ligand SDF packs provide manually reviewed coordinate- and Molfile-stereo perception regression coverage over curated protein-ligand benchmark structures.",
-  "Goldens compare semantic stereo reports and resulting stereo elements after normalization and default perception, not bytewise SDF spelling.",
+  "Schema 2 uses retained Model coordinates for explicit stereo inference and asserts source elements, created elements, candidates and groups.",
 ]
