@@ -14,6 +14,7 @@ pub use canonical::*;
 pub use cip::*;
 pub use hydrogens::*;
 pub use rings::*;
+pub(crate) use rings::{bond_in_ring_smaller_than, compute_ring_membership};
 pub use rotatable_bonds::*;
 pub use stereo::*;
 pub(crate) use stereo::{
@@ -21,18 +22,5 @@ pub(crate) use stereo::{
     double_bond_orientation_from_points, tetrahedral_orientation_from_points, tetrahedral_points,
 };
 
-pub(crate) fn compute_graph_ring_membership(
-    molecule: &crate::core::Molecule,
-) -> crate::core::RingMembership {
-    rings::compute_ring_membership(molecule)
-}
-
-pub(crate) fn graph_bond_in_ring_smaller_than(
-    molecule: &crate::core::Molecule,
-    bond: crate::core::BondId,
-    ring_size: usize,
-) -> bool {
-    rings::bond_in_ring_smaller_than(molecule, bond, ring_size)
-}
 pub use substructure::*;
 pub use valence::*;

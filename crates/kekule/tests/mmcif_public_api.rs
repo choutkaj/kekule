@@ -110,14 +110,14 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         provenance.atoms()[0].atom().molecule(),
         provenance.molecule()
     );
-    let written = mmcif::write_with_report(
+    let written = mmcif::write_model_with_report(
         interpreted.model(),
         interpreted.report(),
         MmcifWriteOptions::default(),
     )?;
     assert!(written.starts_with("data_model\n"));
     assert!(mmcif::parse_str(&written).is_ok());
-    let custom_written = mmcif::write_with_report(
+    let custom_written = mmcif::write_model_with_report(
         interpreted.model(),
         interpreted.report(),
         MmcifWriteOptions {
@@ -127,7 +127,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     )?;
     assert!(custom_written.starts_with("data_custom\n"));
     assert!(matches!(
-        mmcif::write_with_report(
+        mmcif::write_model_with_report(
             interpreted.model(),
             interpreted.report(),
             MmcifWriteOptions {
@@ -137,11 +137,11 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         ),
         Err(MmcifWriteError::InvalidBlockName(name)) if name.is_empty()
     ));
-    let automatic = mmcif::write(interpreted.model(), MmcifWriteOptions::default())?;
+    let automatic = mmcif::write_model(interpreted.model(), MmcifWriteOptions::default())?;
     assert!(automatic.contains("1 non-polymer"));
     let mut classifications = MmcifEntityClassifications::new();
     classifications.insert(provenance.molecule(), MmcifEntityKind::Polymer)?;
-    let written = mmcif::write_with_classifications(
+    let written = mmcif::write_model_with_classifications(
         interpreted.model(),
         &classifications,
         MmcifWriteOptions::default(),

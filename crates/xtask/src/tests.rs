@@ -127,19 +127,6 @@ fn package_metadata_is_release_consistent() {
             "{relative_path} must require the workspace release version of {dependency}"
         );
     }
-
-    for legacy_path in [
-        "crates/molecular",
-        "crates/molecular-dreiding",
-        "crates/molecular-trajectory-io",
-        "crates/kekule-dreiding",
-        "crates/kekule-trajectory-io",
-    ] {
-        assert!(
-            !workspace_root.join(legacy_path).exists(),
-            "legacy package directory still exists: {legacy_path}"
-        );
-    }
 }
 
 #[test]
@@ -189,7 +176,7 @@ fn implementation_golden_acceptance_is_limited_to_manual_semantic_references() {
     fs::create_dir_all(corpus_root.join("data")).expect("data directory");
     fs::write(corpus_root.join("data/example.smi"), "CC CID:1\n").expect("fixture should write");
     let mut manifest = BenchmarkManifest {
-        benchmark_id: "stereo.perception".to_owned(),
+        feature_id: "stereo.perception".to_owned(),
         corpus_id: "smoke".to_owned(),
         reference_tool: "rdkit".to_owned(),
         reference_version: "RDKit 2026.03.3".to_owned(),
@@ -800,9 +787,25 @@ fn pack_members_support_custom_sdf_property_and_smiles_title_prefix() {
 }
 
 #[test]
+fn manifest_uses_one_current_field_name() {
+    let text = r#"
+feature_id = "io.smiles.parse"
+corpus_id = "smoke"
+reference_tool = "rdkit"
+reference_version = "RDKit test"
+comparison_mode = "implementation-golden"
+"#;
+    let manifest: BenchmarkManifest = toml::from_str(text).expect("current manifest schema");
+    assert_eq!(manifest.feature_id, "io.smiles.parse");
+    assert!(
+        toml::from_str::<BenchmarkManifest>(&text.replace("feature_id", "benchmark_id")).is_err()
+    );
+}
+
+#[test]
 fn unsupported_comparison_mode_is_rejected() {
     let manifest = BenchmarkManifest {
-        benchmark_id: "example".to_owned(),
+        feature_id: "example".to_owned(),
         corpus_id: "smoke".to_owned(),
         reference_tool: "rdkit".to_owned(),
         reference_version: "RDKit test".to_owned(),

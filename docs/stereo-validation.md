@@ -1,150 +1,86 @@
-# Reproducing stereo validation
+# Stereo validation
 
-RDKit is an optional scientific reference, never a Rust runtime dependency. The
-current comparison pins RDKit **2026.03.6** and calls the accurate
-`AssignCIPLabels` implementation. It does not use the legacy `_CIPRank` algorithm.
-The existing `stereo.cip` corpus snapshots retain their original 2026.03.3 target.
+RDKit is an optional scientific reference, never a Rust dependency or release
+gate. Differential checks pin **2026.03.6** and use accurate `AssignCIPLabels`,
+with modern perception and a one-million-iteration bound. The implementation
+follows [IUPAC P-9](https://iupac.qmul.ac.uk/BlueBook/P9.html) and the
+[Hanson et al. refinements](https://doi.org/10.1021/acs.jcim.8b00324) used by
+[RDKit's labeler](https://github.com/rdkit/rdkit/tree/Release_2026_03_6/Code/GraphMol/CIPLabeler).
+See the [support contract](stereo-support.md) and
+[benchmark contract](../benchmarks/reference/stereo/SCHEMA.md).
 
-## Differential CIP runner
+## Running the checks
 
-Build the adapter and check its record-preservation contract:
-
-```text
-cargo build -p xtask --example cip_probe --locked
-cargo test -p xtask --example cip_probe --locked
-uv run --with rdkit==2026.3.6 --python 3.13 python -m unittest discover -s benchmarks/reference/rdkit -p test_compare_cip.py
-```
-
-With the external corpus data already installed, run from the repository root:
+From the repository root, with external corpus data installed:
 
 ```text
-uv run --python 3.13 benchmarks/reference/rdkit/compare_cip.py --corpus enamine-diversity --stereo-only --mode sanitized --probe target/debug/examples/cip_probe --output target/stereo-production/enamine-2026.03.6.json
-uv run --python 3.13 benchmarks/reference/rdkit/compare_cip.py --corpus pubchem-100k --stereo-only --mode sanitized --probe target/debug/examples/cip_probe --output target/stereo-production/pubchem-2026.03.6.json
+cargo build -p xtask --examples --locked
+cargo test -p xtask --examples --locked
+uv run --with rdkit==2026.3.6 --python 3.13 python -m unittest discover -s benchmarks/reference/rdkit -p "test_*.py"
+uv run --python 3.13 benchmarks/reference/rdkit/compare_cip.py --corpus enamine-diversity --stereo-only --mode sanitized --probe target/debug/examples/cip_probe --output target/stereo-validation/enamine.json
+uv run --python 3.13 benchmarks/reference/rdkit/compare_cip.py --corpus pubchem-100k --stereo-only --mode sanitized --probe target/debug/examples/cip_probe --output target/stereo-validation/pubchem.json
+uv run --with rdkit==2026.3.6 --python 3.13 python benchmarks/reference/rdkit/compare_molfile_interchange.py --probe target/debug/examples/molfile_interchange_probe --output target/stereo-validation/molfile.json
+uv run --python 3.13 benchmarks/reference/rdkit/isomeric_projection_reproducer.py --probe target/debug/examples/smiles_write_probe --output target/stereo-validation/isomeric.json
 ```
 
-On Windows append `.exe` to the probe path. Outputs must be new files: the runner
-refuses to overwrite previous evidence. Use `--input <file>` for other external
-SMILES files. `--input-format json` reads the `cases[].smiles` input field of a
-previous audit and computes fresh reference results; it never imports expected
-descriptors. `--input-format suite` reads the published validation suite's tabular
-SMILES, case IDs, and published labels. Published labels are retained as separate
-evidence, not substituted for the RDKit result.
+Append `.exe` to probe paths on Windows. Choose fresh output paths for each run;
+reports preserve input/probe hashes and refuse overwrites. Rust, documentation,
+package, and bounded Linux fuzz checks follow `.github/workflows/ci.yml`.
+Use a separate `CARGO_TARGET_DIR` for WSL builds alongside Windows builds.
 
-Each input SMILES string appears once per run, including disconnected structures.
-Without `--stereo-only`, stereo-free controls are included. Syntax, interpretation,
-perception, CIP, process, protocol, timeout, and reference errors remain visible
-records. A reference failure is never a successful comparison. Empty selections
-are errors. The process returns nonzero for any error or descriptor difference.
+## What is compared
 
-The report stores source and binary SHA-256 checksums, versions, limits, and both
-complete descriptor maps. Atom counts, bond counts, label absence, and lowercase
-descriptors are asserted. Atom indices include explicit hydrogen vertices and all
-components. Bonds are identified by their sorted endpoint indices, avoiding
-toolkit-specific bond insertion order. Reference-only runs are explicitly counted
-as `reference_only`, never `match`.
+The CIP runner asserts complete descriptor maps, including absent and lowercase
+labels, plus atom/bond counts. Indices retain explicit hydrogen vertices and all
+components; bond keys use sorted endpoint indices. Identical input SMILES are
+deduplicated. Failures and timeouts remain records, and any error or difference
+causes a nonzero exit. Omitting `--stereo-only` includes stereo-free controls.
+`--input <file>` accepts external SMILES; `--input-format json` takes input SMILES
+from a report and recomputes expectations. `--input-format suite` also retains
+published labels as independent evidence.
 
-## Reference preparation is part of the experiment
+Both reference modes parse unsanitized SMILES, retain explicit H, perceive stereo
+with `cleanIt=False`, clear previous CIP properties, and run the accurate labeler.
+`sanitized` applies `SANITIZE_ALL`; `assertions` excludes
+`SANITIZE_CLEANUPCHIRALITY` to retain supplied tags. Parsed, sanitized, and prepared
+tags are recorded separately. Neither mode undoes changes made by the parser.
 
-Both modes parse unsanitized SMILES, retain explicit hydrogen vertices, run modern
-stereo perception with `cleanIt=False`, clear previous CIP properties, and invoke
-`AssignCIPLabels(maxRecursiveIterations=1000000)`.
+The Molfile checker compares complete indexed chemical graphs, CIP labels, and
+enhanced groups after RDKit rereads V2000/V3000 output. External PubChem alkenes and
+an RDKit atropisomer fixture also exercise cleared E/Z and V3000 atom CFG. Every
+request, output, and explicit unknown assertion is checked.
 
-| Mode | Sanitization | Purpose |
-| --- | --- | --- |
-| `sanitized` | `SANITIZE_ALL` | Reproduce the original broad-corpus pipeline |
-| `assertions` | Exclude `SANITIZE_CLEANUPCHIRALITY` | Keep supplied tetrahedral tags for a closer comparison of asserted stereo |
+The isomeric checker independently decodes eleven PubChem structures, asserting
+the complete chemical graph and source hydrogen declarations. It covers nine
+optional metal-bracketing cases and two charge-normalization cases. Source URLs,
+CIDs, and hashes live beside the fixture. This check does not call Kekule's
+canonical writer or require identical emitted strings.
 
-Parsed, sanitized, and prepared atom tags are stored separately. Neither mode can
-undo a tag transformation that RDKit already applied while parsing SMILES. VS132
-demonstrates why a disagreement must be traced through interpretation before it is
-attributed to CIP ranking. These modes describe observable procedures; neither is
-a blanket assertion that every input format has identical semantics in both tools.
+## Known reference differences and limits
 
-`benchmarks/reference/rdkit/vs132_reproducer.py` independently ranks the ligands
-in the published 3D structure and transports its local configurations onto the
-original SMILES graph. The fixture and its source hashes are retained in
-`crates/kekule/tests/fixtures/cip/`. Run the reproducer with
-`uv run --with rdkit==2026.3.6 --python 3.13 python benchmarks/reference/rdkit/vs132_reproducer.py`.
+- **VS132 (Troger's base):** the published 3D structure and Kekule give S/S.
+  RDKit's default sanitization removes the nitrogen tags; retaining them gives
+  R/S from the published SMILES. Independent ligand ordering and signed volumes,
+  then transporting those configurations onto the same RDKit graph, give S/S.
+  Run `uv run --with rdkit==2026.3.6 --python 3.13 python benchmarks/reference/rdkit/vs132_reproducer.py`;
+  its sourced fixture is in `crates/kekule/tests/fixtures/cip/`.
+- **V3000 explicit-H CFG:** [CTfile Appendix A](https://www.wincept.eu/toxlab/pdf/ctfile.pdf)
+  puts hydrogen last in carrier order regardless of atom-row position. RDKit's
+  optional `AssignAtomChiralTagsFromMolParity` ignores that exception. Kekule
+  follows CTfile. The checker explicitly invokes the helper for CFG cases;
+  ordinary wedge output uses RDKit's normal reader.
+- **SMILES hydrogen declarations:** RDKit optionally brackets metal neighbors,
+  changing explicit/implicit H policy without changing the molecular graph.
+  Kekule preserves legal source declarations. Charge introduced by normalization
+  requires brackets, so the expected declaration fixes the perceived total H on
+  those atoms. Both the original source and RDKit's full output remain evidence.
+- **Unavailable/unsupported cases:** wildcard/query atoms and allene/cumulene
+  geometries remain explicit errors. RDKit also rejects ten axial suite inputs
+  and exceeds the iteration bound on VS009/VS226 in assertion mode. Such results
+  must remain visible and cannot count as matches.
 
-The [published CIP Validation Suite](https://cipvalidationsuite.github.io/ValidationSuite/)
-is pinned to revision `6b9f9db46dadc6749da8234b05164e1e0fb413b9`.
-Its [SMILES source](https://raw.githubusercontent.com/CIPValidationSuite/ValidationSuite/6b9f9db46dadc6749da8234b05164e1e0fb413b9/compounds.smi)
-and [3D SDF source](https://raw.githubusercontent.com/CIPValidationSuite/ValidationSuite/6b9f9db46dadc6749da8234b05164e1e0fb413b9/compounds_3d.sdf)
-are external fixtures. Retain the downloaded bytes and the runner's input hashes.
-Allene/cumulene geometries and wildcard atoms remain explicit unsupported inputs;
-they must not be deleted from a differential report to obtain a passing total.
-
-## Molfile interchange
-
-The cross-tool check uses externally supplied PubChem alkenes and a sourced RDKit
-atropisomer fixture. It compares complete indexed chemical graphs, accurate CIP
-labels, and enhanced groups after RDKit rereads both output versions. It includes
-cleared E/Z assertions and V3000 atom CFG. Source and binary hashes plus every
-request and response are retained; an existing report is never overwritten.
-
-```text
-cargo build -p xtask --example molfile_interchange_probe --locked
-uv run --with rdkit==2026.3.6 --python 3.13 python benchmarks/reference/rdkit/compare_molfile_interchange.py --probe target/debug/examples/molfile_interchange_probe --output target/stereo-production/molfile-interchange.json
-```
-
-On Windows append `.exe` to the probe path. Atom CFG comparisons explicitly call
-RDKit's parity-conversion helper; ordinary wedge output is tested through the
-normal Molfile reader. Explicit-H CFG ordering follows CTfile and has separate
-Rust regressions because that RDKit helper ignores its hydrogen-last exception.
-
-## Rust and Linux validation
-
-The applicable Rust checks are listed in `.github/workflows/ci.yml`. In addition
-to the workspace checks, run the adapter's example tests above. Documentation is
-checked with `RUSTDOCFLAGS=-D warnings`. Dirty package validation uses
-`--allow-dirty`; this does not waive compilation or package-content checks.
-
-Linux fuzz smoke follows the CI configuration with nightly Rust and
-`cargo-fuzz 0.13.2`:
-
-```bash
-set -euo pipefail
-seed=0
-while read -r target; do
-    seed=$((seed + 1))
-    cargo +nightly fuzz run "$target" -- -runs=256 -max_len=4096 -seed="$seed"
-done < <(cargo +nightly fuzz list)
-```
-
-When using WSL alongside Windows builds, set `CARGO_TARGET_DIR` to a separate
-workspace directory such as `target/linux-fuzz`. Fuzz smoke is bounded execution,
-not proof that no malformed input can fail.
-
-## Isomeric writer representation checks
-
-RDKit's isomeric writer brackets every atom bonded to a metal and writes its
-total hydrogen count inside those brackets. This changes the explicit/implicit
-hydrogen split, `noImplicit`, and explicit valence even when the chemical graph
-is unchanged. For example, it writes `O[Fe]=O` as `[OH][Fe]=[O]`. Kekule preserves
-the source hydrogen declaration when the SMILES grammar permits it. The policy
-is visible in the pinned [RDKit 2026.03.6 writer source](https://github.com/rdkit/rdkit/blob/Release_2026_03_6/Code/GraphMol/SmilesParse/SmilesWrite.cpp#L138).
-
-The targeted external check retains all source declaration fields, RDKit's
-literal emitted SMILES and complete decoded projection, and Kekule's emitted
-SMILES independently decoded by RDKit. It checks the whole chemical graph using
-RDKit's canonical isomeric representation and separately asserts the complete
-minimum legal source projection. Normalization can introduce a formal charge on
-an atom that originally allowed implicit hydrogens. SMILES then requires brackets;
-the target fixes the independently perceived total hydrogen count only for those
-atoms. The report retains the original fields and lists every required change.
-The check does not call Kekule's canonical writer or require the two writers to
-emit identical strings.
-
-```text
-cargo build -p xtask --example smiles_write_probe --locked
-cargo test -p xtask --example smiles_write_probe --locked
-uv run --python 3.13 benchmarks/reference/rdkit/isomeric_projection_reproducer.py --probe target/debug/examples/smiles_write_probe --output target/stereo-production/metal-writer-projection.json
-```
-
-On Windows append `.exe` to the probe path. Eleven PubChem input records cover
-nine optional metal-bracketing cases and two chlorine-normalization cases. Their
-source URLs, CIDs, hashes, and corpus locations are retained in
-`benchmarks/reference/rdkit/fixtures/metal-writer-projection.json`. The check pins
-RDKit 2026.03.6, refuses to overwrite an existing report, and records the fixture
-and probe hashes. Omitting the probe performs a reference-only check and reports
-that distinction explicitly.
+External suite inputs are pinned to
+[revision 6b9f9db](https://github.com/CIPValidationSuite/ValidationSuite/tree/6b9f9db46dadc6749da8234b05164e1e0fb413b9):
+[SMILES](https://raw.githubusercontent.com/CIPValidationSuite/ValidationSuite/6b9f9db46dadc6749da8234b05164e1e0fb413b9/compounds.smi)
+and [3D SDF](https://raw.githubusercontent.com/CIPValidationSuite/ValidationSuite/6b9f9db46dadc6749da8234b05164e1e0fb413b9/compounds_3d.sdf).
+Finite comparisons establish tested coverage, not universal chemical completeness.

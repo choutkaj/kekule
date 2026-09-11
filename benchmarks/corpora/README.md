@@ -11,7 +11,7 @@ Each corpus is self-contained:
   golden/
 ```
 
-`data/` is generated locally and ignored. Source locks, benchmark manifests, and deterministic goldens are tracked. The historical `features/` directory name and `feature_id` manifest field are retained only to avoid rewriting manifests and compressed goldens; they are benchmark-schema vocabulary.
+`data/` is generated locally and ignored. Source locks, benchmark manifests, and deterministic goldens are tracked. Manifests in `features/` identify benchmark targets with `feature_id`.
 
 The runner discovers every corpus descriptor and manifest directly from this tree and sorts selected `(benchmark ID, corpus ID)` pairs deterministically. Missing benchmark/corpus combinations are normal unless requested concretely.
 

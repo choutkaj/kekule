@@ -8,8 +8,3 @@ fixtures = [
   "data/packs/pack_01.sdf",
   "data/packs/pack_02.sdf",
 ]
-
-notes = [
-  "Externally supplied PL-REX ligand SDF packs provide manually reviewed coordinate- and Molfile-stereo representation regression coverage over curated protein-ligand benchmark structures.",
-  "Schema 2 asserts canonical stereo elements and groups plus separately retained source-document evidence; schema 1 bytes and hashes are archived.",
-]

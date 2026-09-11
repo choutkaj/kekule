@@ -111,11 +111,11 @@ pub(crate) fn run_target(
     progress: &mut BenchmarkProgress,
 ) -> Result<BenchmarkComparison, Box<dyn Error>> {
     let mut manifest = read_benchmark_manifest(&target.manifest_path)?;
-    if manifest.benchmark_id != target.benchmark_id {
+    if manifest.feature_id != target.benchmark_id {
         return Err(boxed_error(format!(
-            "{} declares legacy feature_id `{}`, expected benchmark ID `{}`",
+            "{} declares feature_id `{}`, expected benchmark ID `{}`",
             target.manifest_path.display(),
-            manifest.benchmark_id,
+            manifest.feature_id,
             target.benchmark_id
         )));
     }

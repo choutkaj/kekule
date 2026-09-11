@@ -1,10 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::{
-    atom_axis_carriers, compute_graph_ring_membership, coordinates_are_planar,
-    double_bond_orientation_from_points, graph_bond_in_ring_smaller_than,
-    tetrahedral_orientation_from_points, tetrahedral_points, validate_stereo, RingMembership,
-    StereoValidationError,
+    atom_axis_carriers, bond_in_ring_smaller_than, compute_ring_membership, coordinates_are_planar,
+    double_bond_orientation_from_points, tetrahedral_orientation_from_points, tetrahedral_points,
+    validate_stereo, RingMembership, StereoValidationError,
 };
 use crate::core::*;
 use crate::geometry::{Point3, Vector3};
@@ -57,7 +56,7 @@ pub(super) fn normalize_source_stereo(
     validate_stereo(molecule).map_err(source_validation_error)?;
     validate_source_stereo_marks(molecule, source_marks)?;
 
-    let ring_membership = compute_graph_ring_membership(molecule);
+    let ring_membership = compute_ring_membership(molecule);
     let mut warnings = Vec::new();
     let mut issues = Vec::new();
     let mut used_marks = Vec::<BondId>::new();
@@ -135,16 +134,20 @@ pub(crate) fn project_molfile_stereo_bond_marks(
         return Ok(BTreeMap::new());
     }
     let mut projected = BTreeMap::new();
-    let mut occupied = BTreeSet::new();
     let mut added_unknown = BTreeSet::new();
+    let mut staged = molecule.clone();
+    staged.graph.stereo_groups.clear();
+    staged.perception = Perception::default();
+    // Source decoding only appends stereo elements. Reuse the graph draft,
+    // clearing those elements before each independent projection attempt.
+    let decode = |staged: &mut Molecule, marks: &[SourceStereoBondMark]| {
+        staged.graph.stereo_elements.clear();
+        normalize_source_stereo(staged, geometry, marks)
+    };
     if geometry.is_some() {
-        let mut drawn = molecule.clone();
-        drawn.graph.stereo_elements.clear();
-        drawn.graph.stereo_groups.clear();
-        drawn.perception = Perception::default();
-        let marks = molfile_double_bond_geometry_marks(&drawn, &[]);
-        normalize_source_stereo(&mut drawn, geometry, &marks).map_err(|error| error.to_string())?;
-        for (_, element) in drawn.stereo_elements() {
+        let marks = molfile_double_bond_geometry_marks(&staged, &[]);
+        decode(&mut staged, &marks).map_err(|error| error.to_string())?;
+        for (_, element) in staged.stereo_elements() {
             if let StereoElementKind::DoubleBond(stereo) = &element.kind {
                 if !has_double_bond_stereo(molecule, stereo.bond) {
                     // Drawing a nondegenerate alkene specifies E/Z in Molfile.
@@ -156,7 +159,6 @@ pub(crate) fn project_molfile_stereo_bond_marks(
                             kind: SourceStereoBondMarkKind::DoubleBondEither,
                         },
                     );
-                    occupied.insert(stereo.bond);
                     added_unknown.insert(stereo.bond);
                 }
             }
@@ -174,19 +176,15 @@ pub(crate) fn project_molfile_stereo_bond_marks(
         let candidates = molfile_projection_candidates(molecule, target)?;
         let mut selected = None;
         for (bond, projection) in candidates {
-            if occupied.contains(&bond) {
+            if projected.contains_key(&bond) {
                 continue;
             }
-            let mut staged = molecule.clone();
-            staged.graph.stereo_elements.clear();
-            staged.graph.stereo_groups.clear();
-            staged.perception = Perception::default();
             let source_marks = [SourceStereoBondMark {
                 bond,
                 from: projection.from,
                 kind: projection.kind,
             }];
-            let Ok(report) = normalize_source_stereo(&mut staged, geometry, &source_marks) else {
+            let Ok(report) = decode(&mut staged, &source_marks) else {
                 continue;
             };
             if !report.warnings.is_empty() || report.created_stereo_elements.len() != 1 {
@@ -210,13 +208,8 @@ pub(crate) fn project_molfile_stereo_bond_marks(
                 target.kind
             ));
         };
-        occupied.insert(bond);
         projected.insert(bond, projection);
     }
-    let mut staged = molecule.clone();
-    staged.graph.stereo_elements.clear();
-    staged.graph.stereo_groups.clear();
-    staged.perception = Perception::default();
     let mut source_marks = projected
         .iter()
         .map(|(bond, projection)| SourceStereoBondMark {
@@ -226,7 +219,7 @@ pub(crate) fn project_molfile_stereo_bond_marks(
         })
         .collect::<Vec<_>>();
     source_marks.extend(molfile_double_bond_geometry_marks(&staged, &source_marks));
-    let report = normalize_source_stereo(&mut staged, geometry, &source_marks)
+    let report = decode(&mut staged, &source_marks)
         .map_err(|error| format!("projected Molfile stereo is inconsistent: {error}"))?;
     if !report.warnings.is_empty()
         || staged.stereo_elements().count() != molecule.stereo_elements().count() + added_unknown.len()
@@ -1157,7 +1150,7 @@ fn source_double_bond_stereo_is_unsupported(
     bond: &Bond,
 ) -> bool {
     bond.order != BondOrder::Double
-        || graph_bond_in_ring_smaller_than(molecule, bond_id, 8)
+        || bond_in_ring_smaller_than(molecule, bond_id, 8)
         || (ring_membership.bond_in_ring(bond_id)
             && [bond.a(), bond.b()].into_iter().any(|atom_id| {
                 molecule

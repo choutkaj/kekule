@@ -1,14 +1,12 @@
 use std::sync::Arc;
 
-use kekule::alignment::PeriodicAlignmentPolicy;
+use kekule::alignment::{KabschOptions, PeriodicAlignmentPolicy};
 use kekule::geometry::Point3;
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::Positions;
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{Quantity, ANGSTROM};
-use kekule_traj::analysis::{
-    AlignedRmsdOptions, PeriodicRmsdPolicy, RmsdOptions, SuperpositionOptions,
-};
+use kekule_traj::analysis::{AlignedRmsdOptions, PeriodicRmsdPolicy, RmsdOptions};
 use kekule_traj::{Trajectory, TrajectoryFrame};
 
 mod support;
@@ -63,9 +61,9 @@ fn downstream_code_can_split_or_fuse_superposition_and_rmsd() {
             &selection,
             &selection,
             AlignedRmsdOptions {
-                superposition: SuperpositionOptions {
+                superposition: KabschOptions {
                     periodic_policy: PeriodicAlignmentPolicy::RejectPeriodic,
-                    ..SuperpositionOptions::default()
+                    ..KabschOptions::default()
                 },
                 ..AlignedRmsdOptions::default()
             },
@@ -140,7 +138,7 @@ fn ordinary_superposition_returns_a_copy_and_accepts_periodic_coordinates() {
         .superpose_to_frame_with_options(
             0,
             &fit,
-            SuperpositionOptions {
+            KabschOptions {
                 weighting: AlignmentWeighting::Explicit(&[1.0, 2.0, 3.0]),
                 ..Default::default()
             },
@@ -151,7 +149,7 @@ fn ordinary_superposition_returns_a_copy_and_accepts_periodic_coordinates() {
         .superpose_to_frame_in_place_with_options(
             0,
             &fit,
-            SuperpositionOptions {
+            KabschOptions {
                 periodic_policy: PeriodicAlignmentPolicy::RejectPeriodic,
                 ..Default::default()
             }

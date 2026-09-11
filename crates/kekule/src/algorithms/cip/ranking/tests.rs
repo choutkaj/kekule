@@ -89,8 +89,7 @@ fn trogers_base_retains_the_published_bridged_nitrogen_configuration() {
             vec![aryl, benzyl, bridge, StereoCarrier::ImplicitLonePair]
         );
         assert_eq!(stereo.orientation, Some(TetrahedralOrientation::Clockwise));
-        let bond_orders = CipBondOrders::new(&molecule, false);
-        let fractions = cip_atomic_number_fractions(&molecule, &bond_orders);
+        let fractions = cip_atomic_number_fractions(&molecule);
         let descriptors = DescriptorContext::new(element);
         let context = LigandBuildContext {
             mol: &molecule,
@@ -98,7 +97,7 @@ fn trogers_base_retains_the_published_bridged_nitrogen_configuration() {
             descriptor_context: &descriptors,
             options: CipAssignmentOptions::default(),
             atomic_number_fractions: &fractions,
-            cip_bond_orders: &bond_orders,
+            atropisomer_mode: false,
         };
         let signatures = stereo
             .carriers
@@ -305,8 +304,7 @@ fn negatively_charged_mancude_part_has_one_complete_fraction() {
         for atom in &atoms {
             mol.working_mut().set_implicit_hydrogens(*atom, 1);
         }
-        let orders = CipBondOrders::new(mol.working(), false);
-        let fractions = cip_atomic_number_fractions(mol.working(), &orders);
+        let fractions = cip_atomic_number_fractions(mol.working());
         assert_eq!(fractions, vec![AtomicNumberFraction::new(24, 5); 5]);
     }
 }
@@ -801,8 +799,7 @@ fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
             .set_implicit_hydrogens(atom, if index == 3 { 0 } else { 1 });
     }
 
-    let cip_bond_orders = CipBondOrders::new(mol.working(), false);
-    let fractions = cip_atomic_number_fractions(mol.working(), &cip_bond_orders);
+    let fractions = cip_atomic_number_fractions(mol.working());
 
     assert_eq!(
         fractions[atoms[2].index()],
@@ -823,7 +820,7 @@ fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
         terminal: false,
     };
     let mut next = Vec::new();
-    node.extend(mol.working(), &fractions, &cip_bond_orders, &mut next);
+    node.extend(mol.working(), &fractions, false, &mut next);
 
     let normal_nitrogen = next
         .iter()
@@ -859,7 +856,7 @@ fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
         descriptor_context: &descriptor_context,
         options: CipAssignmentOptions::default(),
         atomic_number_fractions: &fractions,
-        cip_bond_orders: &cip_bond_orders,
+        atropisomer_mode: false,
     };
 
     assert_eq!(
@@ -897,9 +894,8 @@ fn higher_order_bond_expansion_creates_terminal_duplicate_nodes() {
         terminal: false,
     };
     let mut next = Vec::new();
-    let cip_bond_orders = CipBondOrders::new(mol.working(), false);
-    let fractions = cip_atomic_number_fractions(mol.working(), &cip_bond_orders);
-    node.extend(mol.working(), &fractions, &cip_bond_orders, &mut next);
+    let fractions = cip_atomic_number_fractions(mol.working());
+    node.extend(mol.working(), &fractions, false, &mut next);
 
     assert_eq!(next.len(), 2);
     assert!(next.contains(&LigandNode::Atom {
@@ -933,8 +929,7 @@ fn atropisomer_digraph_retains_multiple_bond_duplicates_at_original_root() {
         .add_bond(root, neighbor, BondOrder::Double)
         .unwrap();
     for atropisomer_mode in [false, true] {
-        let bond_orders = CipBondOrders::new(molecule.working(), atropisomer_mode);
-        let fractions = cip_atomic_number_fractions(molecule.working(), &bond_orders);
+        let fractions = cip_atomic_number_fractions(molecule.working());
         for (atom, previous, path) in [
             (root, None, vec![root]),
             (neighbor, Some(root), vec![root, neighbor]),
@@ -947,7 +942,12 @@ fn atropisomer_digraph_retains_multiple_bond_duplicates_at_original_root() {
                 terminal: false,
             };
             let mut children = Vec::new();
-            node.extend(molecule.working(), &fractions, &bond_orders, &mut children);
+            node.extend(
+                molecule.working(),
+                &fractions,
+                atropisomer_mode,
+                &mut children,
+            );
             let duplicates = children
                 .iter()
                 .filter(|child| {
@@ -995,8 +995,7 @@ fn axial_auxiliary_labels_are_derived_from_the_local_digraph() {
             })))
             .unwrap();
         let primary = StereoElementId::new(element.raw() + 1);
-        let bond_orders = CipBondOrders::new(molecule.working(), false);
-        let fractions = cip_atomic_number_fractions(molecule.working(), &bond_orders);
+        let fractions = cip_atomic_number_fractions(molecule.working());
         let options = CipAssignmentOptions::default();
         let graph = build_auxiliary_graph(
             molecule.working(),
@@ -1004,7 +1003,7 @@ fn axial_auxiliary_labels_are_derived_from_the_local_digraph() {
             root,
             options,
             &fractions,
-            &bond_orders,
+            false,
         )
         .unwrap();
         let mut descriptors = DescriptorContext::new(primary);
@@ -1014,14 +1013,14 @@ fn axial_auxiliary_labels_are_derived_from_the_local_digraph() {
             &graph,
             options,
             &fractions,
-            &bond_orders,
+            false,
         );
         assert_eq!(
             descriptors.aux_labels.get(&AuxDescriptorKey {
                 element,
                 path: vec![root, left]
             }),
-            Some(&Some(expected))
+            Some(&expected)
         );
         assert!(!molecule.perception().has_stereo());
     }
@@ -1056,7 +1055,6 @@ fn negative_fractional_atoms_create_duplicate_nodes() {
     let mut fractions =
         vec![AtomicNumberFraction::element(6); mol.working_mut().graph.atom_slot_count()];
     fractions[atoms[2].index()] = AtomicNumberFraction::new(13, 2);
-    let cip_bond_orders = CipBondOrders::new(mol.working(), false);
 
     let node = LigandNode::Atom {
         atom: atoms[2],
@@ -1066,7 +1064,7 @@ fn negative_fractional_atoms_create_duplicate_nodes() {
         terminal: false,
     };
     let mut next = Vec::new();
-    node.extend(mol.working(), &fractions, &cip_bond_orders, &mut next);
+    node.extend(mol.working(), &fractions, false, &mut next);
 
     assert!(next.iter().any(|child| matches!(
         child,
