@@ -1,6 +1,217 @@
 use super::*;
 
 #[test]
+fn quadruple_bonds_contribute_four_to_both_endpoint_valences() {
+    // RDKit 2026.03.3 UpdatePropertyCache(strict=True) assigns explicit valence
+    // four and zero implicit H to both carbons connected by a QUADRUPLE bond.
+    let mut editor = MoleculeEditor::new();
+    let carbon = Atom::new(Element::from_symbol("C").unwrap());
+    let left = editor.add_atom(carbon.clone()).unwrap();
+    let right = editor.add_atom(carbon).unwrap();
+    let bond = editor.add_bond(left, right, BondOrder::Quadruple).unwrap();
+    let mut molecule = editor.finish().unwrap();
+    let represented = represented_molecule_snapshot(&molecule);
+
+    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
+        .expect("RDKit accepts valence four at each endpoint");
+
+    assert_eq!(molecule.implicit_hydrogens(left), Ok(Some(0)));
+    assert_eq!(molecule.implicit_hydrogens(right), Ok(Some(0)));
+    assert_eq!(molecule.bond(bond).unwrap().order, BondOrder::Quadruple);
+    assert_eq!(represented_molecule_snapshot(&molecule), represented);
+}
+
+fn isolated_valence_state(
+    symbol: &str,
+    formal_charge: i8,
+    radical: AtomRadical,
+    hydrogens: HydrogenDeclaration,
+) -> (Molecule, AtomId) {
+    let mut editor = MoleculeEditor::new();
+    let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
+    atom.formal_charge = formal_charge;
+    atom.radical = Some(radical);
+    atom.hydrogens = hydrogens;
+    let id = editor.add_atom(atom).unwrap();
+    (editor.finish().unwrap(), id)
+}
+
+#[test]
+fn disabling_implicit_hydrogens_skips_radical_occupancy_checks() {
+    // RDKit 2026.03.3 Atom::UpdatePropertyCache accepts represented CH4 with
+    // an explicitly assigned radical when noImplicit is true. It rejects the
+    // same occupancy when implicit-valence calculation is enabled.
+    for (hydrogens, succeeds) in [
+        (HydrogenDeclaration::Fixed(4), true),
+        (HydrogenDeclaration::Infer { explicit: 4 }, false),
+    ] {
+        let (mut molecule, atom) = isolated_valence_state("C", 0, AtomRadical::Doublet, hydrogens);
+        let represented = represented_molecule_snapshot(&molecule);
+        let result = valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike);
+        assert_eq!(result.is_ok(), succeeds);
+        assert_eq!(represented_molecule_snapshot(&molecule), represented);
+        if succeeds {
+            assert_eq!(molecule.implicit_hydrogens(atom), Ok(Some(0)));
+        } else {
+            assert_eq!(
+                result.unwrap_err().issues,
+                [ValenceIssue::ValenceOccupancyExceeded {
+                    atom,
+                    explicit_valence: 4,
+                    radical_electrons: 1,
+                    charge_offset: 0,
+                    max_allowed: 4,
+                }]
+            );
+            assert_eq!(molecule.perception(), &Perception::default());
+        }
+    }
+}
+
+#[test]
+fn strict_valence_rejects_excess_occupancy_even_without_bonds_or_declared_hydrogen() {
+    for (symbol, charge, radical, hydrogens, charge_offset, max_allowed) in [
+        (
+            "O",
+            0,
+            AtomRadical::Quintet,
+            HydrogenDeclaration::Infer { explicit: 0 },
+            0,
+            2,
+        ),
+        (
+            "P",
+            -8,
+            AtomRadical::Singlet,
+            HydrogenDeclaration::Fixed(0),
+            8,
+            5,
+        ),
+    ] {
+        let (mut molecule, atom) = isolated_valence_state(symbol, charge, radical, hydrogens);
+        let error = valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
+            .expect_err("RDKit rejects the occupancy even when represented valence is zero");
+        assert_eq!(
+            error.issues,
+            [ValenceIssue::ValenceOccupancyExceeded {
+                atom,
+                explicit_valence: 0,
+                radical_electrons: usize::from(radical.unpaired_electron_count()),
+                charge_offset,
+                max_allowed,
+            }]
+        );
+        assert_eq!(molecule.perception(), &Perception::default());
+        valence_api::perceive_valence_with_options(
+            &mut molecule,
+            ValenceModel::RdkitLike,
+            ValenceOptions { strict: false },
+        )
+        .unwrap();
+        assert_eq!(molecule.implicit_hydrogens(atom), Ok(Some(0)));
+    }
+}
+
+#[test]
+fn original_unrestricted_and_noble_gas_valences_do_not_gain_radical_limits() {
+    for (symbol, radical) in [("Li", AtomRadical::Singlet), ("He", AtomRadical::Doublet)] {
+        let (mut molecule, atom) = isolated_valence_state(
+            symbol,
+            1,
+            radical,
+            HydrogenDeclaration::Infer { explicit: 1 },
+        );
+        valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
+            .expect("RDKit preserves the original-element implicit-valence exemption");
+        assert_eq!(molecule.implicit_hydrogens(atom), Ok(Some(0)));
+    }
+}
+
+#[test]
+fn isolated_hydrogen_charge_validation_is_specific_to_hydrogen_inference() {
+    for charge in [-2, 2] {
+        let (mut molecule, atom) = isolated_valence_state(
+            "H",
+            charge,
+            AtomRadical::Singlet,
+            HydrogenDeclaration::Infer { explicit: 0 },
+        );
+        let error =
+            valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike).unwrap_err();
+        assert_eq!(
+            error.issues,
+            [ValenceIssue::InvalidFormalCharge {
+                atom,
+                formal_charge: charge
+            }]
+        );
+        valence_api::perceive_valence_with_options(
+            &mut molecule,
+            ValenceModel::RdkitLike,
+            ValenceOptions { strict: false },
+        )
+        .unwrap();
+        assert_eq!(molecule.implicit_hydrogens(atom), Ok(Some(0)));
+
+        let (mut fixed, atom) = isolated_valence_state(
+            "H",
+            charge,
+            AtomRadical::Singlet,
+            HydrogenDeclaration::Fixed(0),
+        );
+        valence_api::perceive_valence(&mut fixed, ValenceModel::RdkitLike).unwrap();
+        assert_eq!(fixed.implicit_hydrogens(atom), Ok(Some(0)));
+    }
+}
+
+#[test]
+fn hypervalent_anions_mapping_to_unrestricted_elements_do_not_infer_hydrogen() {
+    for symbol in ["S", "Se"] {
+        let (mut molecule, atom) = isolated_valence_state(
+            symbol,
+            -5,
+            AtomRadical::Singlet,
+            HydrogenDeclaration::Infer { explicit: 0 },
+        );
+        valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike).unwrap();
+        assert_eq!(molecule.implicit_hydrogens(atom), Ok(Some(0)));
+    }
+}
+
+#[test]
+fn extreme_charge_adjustments_are_bounded_without_overflow() {
+    for charge in [i8::MIN, i8::MAX] {
+        let (mut molecule, atom) = isolated_valence_state(
+            "C",
+            charge,
+            AtomRadical::Singlet,
+            HydrogenDeclaration::Infer { explicit: 0 },
+        );
+        valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike).unwrap();
+        assert_eq!(molecule.implicit_hydrogens(atom), Ok(Some(0)));
+    }
+}
+
+#[test]
+fn hydride_explicit_valence_compatibility_does_not_override_implicit_valence_rules() {
+    for (hydrogens, succeeds) in [
+        (HydrogenDeclaration::Fixed(2), true),
+        (HydrogenDeclaration::Infer { explicit: 2 }, false),
+    ] {
+        let (mut molecule, atom) = isolated_valence_state("H", -1, AtomRadical::Singlet, hydrogens);
+        let result = valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike);
+        assert_eq!(result.is_ok(), succeeds);
+        valence_api::perceive_valence_with_options(
+            &mut molecule,
+            ValenceModel::RdkitLike,
+            ValenceOptions { strict: false },
+        )
+        .unwrap();
+        assert_eq!(molecule.implicit_hydrogens(atom), Ok(Some(0)));
+    }
+}
+
+#[test]
 fn valence_accepts_aromatic_input_localized_during_interpretation() {
     let mut molecule = read_smiles("c1ccccc1").expect("benzene should interpret");
     assert_eq!(
