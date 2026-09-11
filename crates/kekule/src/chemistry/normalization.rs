@@ -17,8 +17,6 @@ const MAX_AROMATIC_LOCALIZATION_MATCHING_STATES: usize = 100_000;
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NormalizationError {
-    /// A meaning-preserving representation rewrite requires an unsupported charge.
-    FormalChargeOutOfRange { atom: AtomId, charge: usize },
     /// Source-aromatic bonds cannot be localized under the fixed rules.
     InvalidAromaticRepresentation(AtomId),
     /// Imported aromatic localization exhausted its deterministic search budget.
@@ -98,10 +96,6 @@ impl std::error::Error for SourceStereoNormalizationError {}
 impl fmt::Display for NormalizationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::FormalChargeOutOfRange { atom, charge } => write!(
-                f,
-                "normalizing atom {atom} requires formal charge +{charge}, which is outside the supported range"
-            ),
             Self::InvalidAromaticRepresentation(atom) => {
                 write!(f, "invalid imported aromatic representation at atom {atom}")
             }
@@ -123,8 +117,7 @@ impl std::error::Error for NormalizationError {}
 impl NormalizationError {
     pub(crate) fn atom_location_hint(&self) -> Option<AtomId> {
         match self {
-            Self::FormalChargeOutOfRange { atom, .. }
-            | Self::InvalidAromaticRepresentation(atom)
+            Self::InvalidAromaticRepresentation(atom)
             | Self::AromaticLocalizationLimit { atom, .. } => Some(*atom),
             Self::SourceStereo(error) => error.atom_location_hint(),
         }
@@ -194,12 +187,7 @@ pub(crate) fn canonicalize_molecule_for_publication(
     geometry: Option<&dyn crate::chemistry::AtomPositionSource>,
     source_stereo: &[SourceStereoBondMark],
 ) -> Result<NormalizationReport, NormalizationError> {
-    canonicalize_represented_chemistry(molecule).map_err(|error| {
-        NormalizationError::FormalChargeOutOfRange {
-            atom: error.atom,
-            charge: error.charge,
-        }
-    })?;
+    canonicalize_represented_chemistry(molecule);
     // Source-stereo normalization must not observe arbitrary installed
     // perception. Representation rewrites above already invalidate it
     // conceptually, so clear it before decoding any source marks.

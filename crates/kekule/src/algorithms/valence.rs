@@ -4,6 +4,9 @@ use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ValenceOptions {
+    /// Reject valence and implicit-hydrogen states that RDKit's strict property
+    /// cache calculation rejects. With `false`, excess valence implies zero
+    /// additional hydrogens instead of an error.
     pub strict: bool,
 }
 
@@ -16,9 +19,22 @@ impl Default for ValenceOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValenceIssue {
     UnsupportedElement(AtomId),
+    InvalidFormalCharge {
+        atom: AtomId,
+        formal_charge: i8,
+    },
     ValenceExceeded {
         atom: AtomId,
         explicit_valence: usize,
+        max_allowed: usize,
+    },
+    /// Represented valence plus radical electrons and/or the hypervalent-anion
+    /// charge offset exceeds the unsubtracted target valence.
+    ValenceOccupancyExceeded {
+        atom: AtomId,
+        explicit_valence: usize,
+        radical_electrons: usize,
+        charge_offset: usize,
         max_allowed: usize,
     },
 }
@@ -40,6 +56,12 @@ impl fmt::Display for ValenceError {
 
 impl std::error::Error for ValenceError {}
 
+/// Installs implicit-hydrogen assignments from localized bonds and represented
+/// atom state using the selected model's strict valence rules.
+///
+/// Success replaces installed valence and clears dependent aromaticity and CIP
+/// assignments while retaining ring perception. Failure preserves all previously
+/// installed perception. Neither outcome changes represented graph chemistry.
 pub fn perceive_valence(
     mol: &mut Molecule,
     model: ValenceModel,
@@ -47,6 +69,12 @@ pub fn perceive_valence(
     perceive_valence_with_options(mol, model, ValenceOptions::default())
 }
 
+/// Installs valence with explicit control over strict validation.
+///
+/// With `options.strict == false`, RDKit's permissive property-cache rules assign
+/// zero additional hydrogens to excess occupancy. As with [`perceive_valence`],
+/// installation is transactional and invalidates aromaticity and CIP only on
+/// success; represented chemistry and ring perception are preserved.
 pub fn perceive_valence_with_options(
     mol: &mut Molecule,
     model: ValenceModel,
@@ -64,7 +92,8 @@ fn perceive_rdkit_like_valence(
     let mut assignments = Vec::<(AtomId, u8)>::new();
     let mut issues = Vec::new();
     for (atom_id, atom) in mol.atoms() {
-        let implicit = match rdkit_atom_implicit_hydrogen_count(mol, atom_id, atom) {
+        let implicit = match rdkit_atom_implicit_hydrogen_count(mol, atom_id, atom, options.strict)
+        {
             Ok(implicit) => implicit,
             Err(issue) => {
                 if options.strict {
@@ -89,13 +118,14 @@ fn perceive_rdkit_like_valence(
 /// non-strict valence perception. Aromaticity uses this only when the atom has
 /// no installed hydrogen assignment.
 pub(crate) fn rdkit_implicit_hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
-    rdkit_atom_implicit_hydrogen_count(mol, atom_id, atom).unwrap_or(0)
+    rdkit_atom_implicit_hydrogen_count(mol, atom_id, atom, false).unwrap_or(0)
 }
 
 fn rdkit_atom_implicit_hydrogen_count(
     mol: &Molecule,
     atom_id: AtomId,
     atom: &Atom,
+    strict: bool,
 ) -> std::result::Result<u8, ValenceIssue> {
     let explicit = explicit_valence(mol, atom_id) + usize::from(atom.hydrogens.explicit_count());
     let radical_electrons = atom
@@ -108,74 +138,112 @@ fn rdkit_atom_implicit_hydrogen_count(
     // RDKit leaves atoms whose periodic-table entry is only `-1` on that
     // unrestricted rule. All other charged atoms use the isoelectronic
     // neutral element's valence list.
-    let effective_rule = if original_rule.is_only_unrestricted() {
-        Some(original_rule)
+    let effective_atomic_number = if original_rule.is_only_unrestricted() {
+        atom.element.atomic_number()
     } else {
-        rdkit_effective_atomic_number(atom).and_then(rdkit_neutral_valence_rule)
+        rdkit_effective_atomic_number(atom)
     };
-    let mut target_rule = effective_rule.ok_or(ValenceIssue::UnsupportedElement(atom_id))?;
+    let effective_rule = rdkit_neutral_valence_rule(effective_atomic_number)
+        .ok_or(ValenceIssue::UnsupportedElement(atom_id))?;
 
-    let effective_atomic_number = rdkit_effective_atomic_number(atom);
-    let hypervalent_anion = effective_atomic_number
-        .is_some_and(|effective| can_be_rdkit_hypervalent_anion(atom, effective));
+    let hypervalent_anion = can_be_rdkit_hypervalent_anion(atom, effective_atomic_number);
     let charge_offset = if hypervalent_anion {
-        target_rule = original_rule;
         usize::from(atom.formal_charge.unsigned_abs())
     } else {
         0
     };
-    let occupied_for_target = explicit + radical_electrons + charge_offset;
 
-    // Explicit-valence checking in RDKit honors unrestricted sentinels in
-    // either the original or effective valence list. Negatively charged
-    // P/S/As/Se instead use their original hypervalent limit with the
-    // charge offset applied.
+    // Explicit-valence checking is separate from implicit-H inference. It
+    // counts represented H and bonds, but not radical electrons. An unrestricted
+    // sentinel on either valence list disables this check, except that
+    // hypervalent anions use the original element's charge-adjusted limit.
     let two_coordinate_hydride = atom.element.atomic_number() == 1 && atom.formal_charge == -1;
-    let explicit_limit = if two_coordinate_hydride {
-        // Historical RDKit compatibility: two-coordinate hydride is
-        // accepted even though it is chemically unusual.
+    let explicit_limit = if original_rule.unrestricted_above {
+        None
+    } else if two_coordinate_hydride {
+        // RDKit retains historical acceptance of two-coordinate hydride.
         Some(2)
     } else if hypervalent_anion {
-        target_rule
-            .max_fixed()
-            .map(|maximum| maximum.saturating_sub(charge_offset))
-    } else if original_rule.unrestricted_above || target_rule.unrestricted_above {
+        original_rule.max_fixed()
+    } else if effective_rule.unrestricted_above {
         None
     } else {
-        target_rule.max_fixed()
+        effective_rule.max_fixed()
     };
-    let target_limit = if two_coordinate_hydride || target_rule.unrestricted_above {
-        None
-    } else {
-        target_rule
-            .max_fixed()
-            .map(|maximum| maximum.saturating_sub(radical_electrons + charge_offset))
-    };
-    let max_allowed = explicit_limit.into_iter().chain(target_limit).min();
-    if max_allowed.is_some_and(|maximum| explicit > maximum) {
+    if let Some(maximum) =
+        explicit_limit.filter(|maximum| strict && explicit + charge_offset > *maximum)
+    {
+        if charge_offset != 0 {
+            return Err(ValenceIssue::ValenceOccupancyExceeded {
+                atom: atom_id,
+                explicit_valence: explicit,
+                radical_electrons: 0,
+                charge_offset,
+                max_allowed: maximum,
+            });
+        }
         return Err(ValenceIssue::ValenceExceeded {
             atom: atom_id,
             explicit_valence: explicit,
-            max_allowed: max_allowed.expect("checked as present"),
+            max_allowed: maximum,
         });
     }
 
-    let implicit = if !atom.hydrogens.allows_implicit() {
-        0
-    } else if let Some(target) = target_rule
+    // RDKit skips the implicit-valence calculation completely when H inference
+    // is disabled, including its radical occupancy check.
+    if !atom.hydrogens.allows_implicit() {
+        return Ok(0);
+    }
+    if atom.element.atomic_number() == 1 && explicit == 0 && radical_electrons == 0 {
+        return match atom.formal_charge {
+            0 => Ok(1),
+            -1 | 1 => Ok(0),
+            _ if strict => Err(ValenceIssue::InvalidFormalCharge {
+                atom: atom_id,
+                formal_charge: atom.formal_charge,
+            }),
+            _ => Ok(0),
+        };
+    }
+    // This exit precedes the hypervalent-anion adjustment in RDKit. A charge
+    // mapping to an unrestricted element never implies hydrogen.
+    if effective_rule.is_only_unrestricted() {
+        return Ok(0);
+    }
+    let target_rule = if hypervalent_anion {
+        original_rule
+    } else {
+        effective_rule
+    };
+    let occupied_for_target = explicit + radical_electrons + charge_offset;
+    if let Some(target) = target_rule
         .fixed
         .iter()
         .copied()
         .map(usize::from)
         .find(|allowed| *allowed >= occupied_for_target)
     {
-        target - occupied_for_target
-    } else {
-        // A trailing `-1` accepts any valence above the largest fixed one
-        // but never implies additional hydrogens there.
-        0
-    };
-    Ok(u8::try_from(implicit).expect("RDKit implicit valences fit in u8"))
+        return Ok(
+            u8::try_from(target - occupied_for_target).expect("RDKit implicit valences fit in u8")
+        );
+    }
+    // The implicit occupancy check has a different original-element guard
+    // than explicit valence: an original zero-only valence list or unrestricted
+    // sentinel does not reject excess radical occupancy.
+    if strict
+        && !target_rule.unrestricted_above
+        && !original_rule.unrestricted_above
+        && original_rule.max_fixed().is_some_and(|maximum| maximum > 0)
+    {
+        return Err(ValenceIssue::ValenceOccupancyExceeded {
+            atom: atom_id,
+            explicit_valence: explicit,
+            radical_electrons,
+            charge_offset,
+            max_allowed: target_rule.max_fixed().expect("fixed target rule"),
+        });
+    }
+    Ok(0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,11 +276,10 @@ impl AllowedValenceRule {
     }
 }
 
-fn rdkit_effective_atomic_number(atom: &Atom) -> Option<u8> {
+fn rdkit_effective_atomic_number(atom: &Atom) -> u8 {
     let effective = i16::from(atom.element.atomic_number()) - i16::from(atom.formal_charge);
-    (0..=118)
-        .contains(&effective)
-        .then(|| u8::try_from(effective).expect("range checked"))
+    // Atom::UpdatePropertyCache clamps charge adjustment even in strict mode.
+    u8::try_from(effective.clamp(0, 118)).expect("clamped to periodic-table range")
 }
 
 fn can_be_rdkit_hypervalent_anion(atom: &Atom, effective_atomic_number: u8) -> bool {
@@ -247,7 +314,7 @@ pub(crate) fn allowed_valences(atom: &Atom) -> Option<&'static [u8]> {
     let rule = if original.is_only_unrestricted() {
         original
     } else {
-        rdkit_effective_atomic_number(atom).and_then(rdkit_neutral_valence_rule)?
+        rdkit_neutral_valence_rule(rdkit_effective_atomic_number(atom))?
     };
     Some(rule.fixed)
 }
@@ -262,14 +329,10 @@ pub(crate) fn rdkit_charge_adjusted_default_valence(atom: &Atom) -> Option<u8> {
 }
 
 fn rdkit_default_valence_for_atomic_number(atomic_number: u8) -> Option<u8> {
-    match atomic_number {
-        1 | 3 | 9 | 11 | 17 | 19 | 35 | 37 | 53 | 55 | 85 | 87 => Some(1),
-        2 | 10 | 18 | 36 | 54 | 86 => Some(0),
-        4 | 8 | 12 | 16 | 20 | 34 | 38 | 50 | 52 | 56 | 82 | 84 | 88 => Some(2),
-        5 | 7 | 13 | 15 | 31 | 33 | 49 | 51 | 83 => Some(3),
-        6 | 14 | 32 => Some(4),
-        _ => None,
-    }
+    rdkit_neutral_valence_rule(atomic_number)?
+        .fixed
+        .first()
+        .copied()
 }
 
 fn rdkit_neutral_valence_rule(atomic_number: u8) -> Option<AllowedValenceRule> {

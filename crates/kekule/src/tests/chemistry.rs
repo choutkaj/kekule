@@ -379,27 +379,24 @@ fn failed_strict_valence_perception_preserves_complete_previous_perception_state
 }
 
 #[test]
-fn unsupported_valence_target_remains_strictly_diagnostic_and_permissively_installable() {
-    let mut strict = crate::core::MoleculeEditor::new();
-    let carbon = strict
+fn valence_charge_adjustment_clamps_to_the_rdkit_periodic_table() {
+    let mut molecule = crate::core::MoleculeEditor::new();
+    let carbon = molecule
         .add_atom(charged_atom("C", 7))
         .expect("atom identifier capacity");
 
-    let error = valence_api::perceive_valence(strict.working_mut(), ValenceModel::RdkitLike)
-        .expect_err("out-of-range charge adjustment should be unsupported");
-
-    assert_eq!(error.issues, vec![ValenceIssue::UnsupportedElement(carbon)]);
-    assert_eq!(strict.perception(), &Perception::default());
-    assert_eq!(strict.implicit_hydrogens(carbon).unwrap(), None);
+    valence_api::perceive_valence(molecule.working_mut(), ValenceModel::RdkitLike)
+        .expect("RDKit UpdatePropertyCache clamps the effective atomic number even when strict");
+    assert_eq!(molecule.implicit_hydrogens(carbon).unwrap(), Some(0));
 
     valence_api::perceive_valence_with_options(
-        strict.working_mut(),
+        molecule.working_mut(),
         ValenceModel::RdkitLike,
         ValenceOptions { strict: false },
     )
-    .expect("permissive unsupported-element inspection should install");
-    assert!(strict.perception().has_valence());
-    assert_eq!(strict.implicit_hydrogens(carbon).unwrap(), Some(0));
+    .expect("permissive inspection should install");
+    assert!(molecule.perception().has_valence());
+    assert_eq!(molecule.implicit_hydrogens(carbon).unwrap(), Some(0));
 }
 
 #[test]
@@ -507,7 +504,7 @@ fn valence_keeps_rdkit_hypervalent_anion_limits() {
         assert!(
             matches!(
                 rejected_error.issues.as_slice(),
-                [ValenceIssue::ValenceExceeded { atom, .. }] if *atom == rejected_center
+                [ValenceIssue::ValenceOccupancyExceeded { atom, .. }] if *atom == rejected_center
             ),
             "{symbol}{charge:+} valence {rejected}"
         );
@@ -535,8 +532,10 @@ fn valence_accepts_rdkit_phosphorus_minus_one_and_hydride_compatibility_cases() 
     .is_ok());
 
     let mut bridged_hydride = crate::core::MoleculeEditor::new();
+    let mut hydride = charged_atom("H", -1);
+    hydride.hydrogens = HydrogenDeclaration::Fixed(0);
     let hydrogen = bridged_hydride
-        .add_atom(charged_atom("H", -1))
+        .add_atom(hydride)
         .expect("atom identifier capacity");
     let boron_a = bridged_hydride
         .add_atom(Atom::new(Element::from_symbol("B").expect("boron")))

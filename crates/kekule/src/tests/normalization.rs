@@ -63,6 +63,70 @@ fn normalization_is_idempotent() {
 }
 
 #[test]
+fn oxohalogen_cleanup_matches_rdkit_for_ester_and_declared_hydrogen_forms() {
+    // Full represented charges and bond orders verified against RDKit 2026.03.3.
+    for (source, charges, implicit_hydrogens) in [
+        (
+            "CC(C)(C)OCl(=O)(=O)=O",
+            vec![0, 0, 0, 0, 0, 3, -1, -1, -1],
+            vec![3, 0, 3, 3, 0, 0, 0, 0, 0],
+        ),
+        ("[IH]=O", vec![1, -1], vec![0, 0]),
+        ("[O-]=I(O)", vec![-1, 1, 0], vec![0, 0, 1]),
+    ] {
+        let mut molecule = read_smiles(source).expect(source);
+        assert_eq!(
+            molecule
+                .atoms()
+                .map(|(_, atom)| atom.formal_charge)
+                .collect::<Vec<_>>(),
+            charges,
+            "{source}"
+        );
+        assert!(molecule
+            .bonds()
+            .all(|(_, bond)| bond.order == BondOrder::Single));
+        assert_eq!(molecule.perception(), &Perception::default());
+        let represented = molecule.clone();
+        molecule.perceive().expect(source);
+        assert_eq!(
+            molecule
+                .atom_ids()
+                .map(|atom| molecule.implicit_hydrogens(atom).unwrap().unwrap())
+                .collect::<Vec<_>>(),
+            implicit_hydrogens,
+            "{source}"
+        );
+        assert_eq!(molecule, represented, "perception must preserve {source}");
+        assert_eq!(
+            molecule.edit().finish().unwrap(),
+            represented,
+            "idempotent {source}"
+        );
+    }
+}
+
+#[test]
+fn oxohalogen_cleanup_requires_only_oxygen_neighbors_and_odd_modeled_valence() {
+    for source in ["OI(=O)(C)C", "OI(=O)O"] {
+        let mut molecule = read_smiles(source).expect(source);
+        assert!(
+            molecule.atoms().all(|(_, atom)| atom.formal_charge == 0),
+            "{source}"
+        );
+        assert_eq!(
+            molecule
+                .bonds()
+                .filter(|(_, bond)| bond.order == BondOrder::Double)
+                .count(),
+            1,
+            "{source}"
+        );
+        molecule.perceive().expect(source);
+    }
+}
+
+#[test]
 fn source_stereo_is_canonicalized_once_during_interpretation() {
     let (mut molecule, interpretation) =
         read_smiles_with_report("C/C=C\\F").expect("directional SMILES should interpret");
@@ -169,6 +233,9 @@ fn ambiguous_directional_source_marks_return_a_structured_publication_error() {
                 mark_count: 2,
             })
     ));
+    // This is interpreter-owned staging: its documented failure contract is
+    // discard-on-error, and arbitrary perception is cleared before decoding.
+    assert_eq!(molecule.perception(), &Perception::default());
 }
 
 #[test]
@@ -316,22 +383,22 @@ fn successful_normalization_clears_installed_perception() {
 }
 
 #[test]
-fn failed_normalization_is_transactional() {
-    let (mut molecule, chlorine, ..) = oxo_halide(128);
-    mark_all_fresh(molecule.working_mut());
-    let before = molecule.clone();
-
-    let error = molecule
-        .working_mut()
-        .canonicalize_fixture()
-        .expect_err("unrepresentable formal charge should fail");
-
-    assert_eq!(
-        error,
-        NormalizationError::FormalChargeOutOfRange {
-            atom: chlorine,
-            charge: 128,
-        }
-    );
-    assert_eq!(molecule, before);
+fn normalization_does_not_invent_large_oxohalogen_charges() {
+    for oxo_count in [4, 128] {
+        let (mut molecule, chlorine, oxygens, bonds) = oxo_halide(oxo_count);
+        molecule
+            .working_mut()
+            .canonicalize_fixture()
+            .expect("out-of-model chemistry is preserved");
+        assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 0);
+        assert!(oxygens
+            .iter()
+            .all(|&oxygen| molecule.atom(oxygen).unwrap().formal_charge == 0));
+        assert!(bonds
+            .iter()
+            .all(|&bond| molecule.bond(bond).unwrap().order == BondOrder::Double));
+        assert!(
+            valence_api::perceive_valence(molecule.working_mut(), ValenceModel::RdkitLike).is_err()
+        );
+    }
 }
