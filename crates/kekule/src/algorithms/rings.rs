@@ -1052,28 +1052,6 @@ fn can_replace_one_sssr_ring(extra: &Ring, ring: &Ring, bond_counts: &[usize]) -
     shares_bond
 }
 
-pub(super) fn union_components(components: &mut [usize], left: usize, right: usize) {
-    let left_root = find_component(components, left);
-    let right_root = find_component(components, right);
-    if left_root != right_root {
-        components[right_root] = left_root;
-    }
-}
-
-pub(super) fn find_component(components: &mut [usize], index: usize) -> usize {
-    let mut root = index;
-    while components[root] != root {
-        root = components[root];
-    }
-    let mut current = index;
-    while components[current] != current {
-        let parent = components[current];
-        components[current] = root;
-        current = parent;
-    }
-    root
-}
-
 fn shortest_cycles_excluding(
     graph: &BTreeMap<AtomId, Vec<(AtomId, BondId)>>,
     start: AtomId,
