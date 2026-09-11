@@ -28,13 +28,6 @@ pub use reductions::*;
 #[cfg(test)]
 mod correspondence_tests;
 
-/// Options used to fit every trajectory frame onto one reference frame.
-///
-/// This is the same fitting contract as Kekule's single-model Kabsch kernel.
-/// By default it fits Cartesian coordinates as stored, including periodic frames.
-/// Making molecules whole, imaging, and temporal unwrapping are separate operations.
-pub type SuperpositionOptions<'a> = KabschOptions<'a>;
-
 /// Per-selected-atom weighting for direct RMSD measurement.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum RmsdWeighting<'a> {
@@ -72,7 +65,7 @@ pub struct RmsdOptions<'a> {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AlignedRmsdOptions<'a> {
     /// Options controlling the fit selection and periodic-cell policy.
-    pub superposition: SuperpositionOptions<'a>,
+    pub superposition: KabschOptions<'a>,
     /// Weights for the independently chosen measurement selection.
     pub measurement_weighting: RmsdWeighting<'a>,
 }
@@ -121,7 +114,7 @@ impl SuperpositionReport {
 pub struct FrameSuperposer<'a> {
     reference: kekule::structure::ModelView<'a>,
     atoms: FitAtoms<'a>,
-    options: SuperpositionOptions<'a>,
+    options: KabschOptions<'a>,
 }
 
 enum FitAtoms<'a> {
@@ -131,13 +124,13 @@ enum FitAtoms<'a> {
 
 impl<'a> FrameSuperposer<'a> {
     pub fn new(reference: TrajectoryFrameView<'a>, selection: &'a AtomSelection) -> Self {
-        Self::with_options(reference, selection, SuperpositionOptions::default())
+        Self::with_options(reference, selection, KabschOptions::default())
     }
 
     pub fn with_options(
         reference: TrajectoryFrameView<'a>,
         selection: &'a AtomSelection,
-        options: SuperpositionOptions<'a>,
+        options: KabschOptions<'a>,
     ) -> Self {
         Self {
             reference: reference.as_model(),
@@ -155,18 +148,14 @@ impl<'a> FrameSuperposer<'a> {
         reference: ModelView<'a>,
         correspondence: &'a AtomCorrespondence,
     ) -> Self {
-        Self::with_correspondence_and_options(
-            reference,
-            correspondence,
-            SuperpositionOptions::default(),
-        )
+        Self::with_correspondence_and_options(reference, correspondence, KabschOptions::default())
     }
 
     /// Fits explicit pairs with weights in pair order and an explicit periodic policy.
     pub fn with_correspondence_and_options(
         reference: ModelView<'a>,
         correspondence: &'a AtomCorrespondence,
-        options: SuperpositionOptions<'a>,
+        options: KabschOptions<'a>,
     ) -> Self {
         Self {
             reference,
@@ -273,7 +262,7 @@ impl Trajectory {
         self.superpose_to_frame_with_options(
             reference_frame,
             fit_selection,
-            SuperpositionOptions::default(),
+            KabschOptions::default(),
         )
     }
 
@@ -282,7 +271,7 @@ impl Trajectory {
         &self,
         reference_frame: usize,
         fit_selection: &AtomSelection,
-        options: SuperpositionOptions<'_>,
+        options: KabschOptions<'_>,
     ) -> Result<Self, SuperpositionError> {
         let (frames, _) =
             self.superposition_frames(reference_frame, fit_selection, options, false)?;
@@ -299,7 +288,7 @@ impl Trajectory {
         self.superpose_to_frame_with_report_and_options(
             reference_frame,
             fit_selection,
-            SuperpositionOptions::default(),
+            KabschOptions::default(),
         )
     }
 
@@ -308,7 +297,7 @@ impl Trajectory {
         &self,
         reference_frame: usize,
         fit_selection: &AtomSelection,
-        options: SuperpositionOptions<'_>,
+        options: KabschOptions<'_>,
     ) -> Result<(Self, SuperpositionReport), SuperpositionError> {
         let (frames, alignments) =
             self.superposition_frames(reference_frame, fit_selection, options, true)?;
@@ -333,7 +322,7 @@ impl Trajectory {
         self.superpose_to_frame_in_place_with_options(
             reference_frame,
             fit_selection,
-            SuperpositionOptions::default(),
+            KabschOptions::default(),
         )
     }
 
@@ -342,7 +331,7 @@ impl Trajectory {
         &mut self,
         reference_frame: usize,
         fit_selection: &AtomSelection,
-        options: SuperpositionOptions<'_>,
+        options: KabschOptions<'_>,
     ) -> Result<(), SuperpositionError> {
         let (frames, _) =
             self.superposition_frames(reference_frame, fit_selection, options, false)?;
@@ -354,7 +343,7 @@ impl Trajectory {
         &self,
         reference_frame: usize,
         fit_selection: &AtomSelection,
-        options: SuperpositionOptions<'_>,
+        options: KabschOptions<'_>,
         report: bool,
     ) -> Result<(Vec<TrajectoryFrame>, Vec<RigidAlignment>), SuperpositionError> {
         let reference =
@@ -1101,9 +1090,9 @@ mod tests {
             .superpose_to_frame_with_report_and_options(
                 0,
                 &all(&topology),
-                SuperpositionOptions {
+                KabschOptions {
                     periodic_policy: PeriodicAlignmentPolicy::UseStoredCoordinates,
-                    ..SuperpositionOptions::default()
+                    ..KabschOptions::default()
                 },
             )
             .unwrap();

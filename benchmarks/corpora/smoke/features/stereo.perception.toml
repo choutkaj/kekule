@@ -9,8 +9,3 @@ fixtures = [
   "data/pubchem_smiles/cid_5950.txt",
   "data/pubchem_smiles/cid_5462921.txt",
 ]
-
-notes = [
-  "Externally supplied PubChem SMILES fixtures cover absent stereo, stored tetrahedral stereo, and paired directional double-bond stereo source marks.",
-  "Schema 2 uses retained Model coordinates for explicit stereo inference and asserts source elements, created elements, candidates and groups.",
-]

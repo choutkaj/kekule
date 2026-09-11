@@ -122,11 +122,6 @@ fn assign_double_bond_descriptor(
         true,
         false,
     )?;
-    let left_top = left_ranked
-        .carriers
-        .first()
-        .copied()
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let right_ranked = ranked_carriers(
         mol,
         element,
@@ -136,27 +131,13 @@ fn assign_double_bond_descriptor(
         true,
         false,
     )?;
-    let right_top = right_ranked
-        .carriers
-        .first()
-        .copied()
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
-
-    let mut top_relation = orientation;
-    if stereo.left_carrier != left_top {
-        top_relation = top_relation.inverted();
-    }
-    if stereo.right_carrier != right_top {
-        top_relation = top_relation.inverted();
-    }
-    let pseudo_sequence =
-        left_ranked.pseudo_asymmetric_ordering != right_ranked.pseudo_asymmetric_ordering;
-    Ok(match (top_relation, pseudo_sequence) {
-        (DoubleBondOrientation::Together, true) => StereoDescriptor::SeqCis,
-        (DoubleBondOrientation::Opposite, true) => StereoDescriptor::SeqTrans,
-        (DoubleBondOrientation::Together, false) => StereoDescriptor::Z,
-        (DoubleBondOrientation::Opposite, false) => StereoDescriptor::E,
-    })
+    double_bond_descriptor_from_ranked(
+        element,
+        orientation,
+        (stereo.left_carrier, stereo.right_carrier),
+        &left_ranked,
+        &right_ranked,
+    )
 }
 
 fn assign_axis_descriptor(
@@ -183,11 +164,6 @@ fn assign_axis_descriptor(
         true,
         true,
     )?;
-    let left_top = left_ranked
-        .carriers
-        .first()
-        .copied()
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let right_ranked = ranked_carriers(
         mol,
         element,
@@ -197,21 +173,68 @@ fn assign_axis_descriptor(
         true,
         true,
     )?;
-    let right_top = right_ranked
+    axis_descriptor_from_ranked(
+        element,
+        orientation,
+        (left_reference, right_reference),
+        &left_ranked,
+        &right_ranked,
+    )
+}
+
+fn ranked_endpoint_relation(
+    element: StereoElementId,
+    (left_reference, right_reference): (StereoCarrier, StereoCarrier),
+    left: &RankedCarriers,
+    right: &RankedCarriers,
+) -> CipResult<(bool, bool)> {
+    let left_top = left
         .carriers
         .first()
         .copied()
         .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
-    let mut top_orientation = orientation;
-    if left_reference != left_top {
-        top_orientation = top_orientation.inverted();
+    let right_top = right
+        .carriers
+        .first()
+        .copied()
+        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+    Ok((
+        (left_reference != left_top) != (right_reference != right_top),
+        left.pseudo_asymmetric_ordering != right.pseudo_asymmetric_ordering,
+    ))
+}
+
+pub(super) fn double_bond_descriptor_from_ranked(
+    element: StereoElementId,
+    mut orientation: DoubleBondOrientation,
+    references: (StereoCarrier, StereoCarrier),
+    left: &RankedCarriers,
+    right: &RankedCarriers,
+) -> CipResult<StereoDescriptor> {
+    let (inverted, pseudo) = ranked_endpoint_relation(element, references, left, right)?;
+    if inverted {
+        orientation = orientation.inverted();
     }
-    if right_reference != right_top {
-        top_orientation = top_orientation.inverted();
+    Ok(match (orientation, pseudo) {
+        (DoubleBondOrientation::Together, true) => StereoDescriptor::SeqCis,
+        (DoubleBondOrientation::Opposite, true) => StereoDescriptor::SeqTrans,
+        (DoubleBondOrientation::Together, false) => StereoDescriptor::Z,
+        (DoubleBondOrientation::Opposite, false) => StereoDescriptor::E,
+    })
+}
+
+pub(super) fn axis_descriptor_from_ranked(
+    element: StereoElementId,
+    mut orientation: AxisOrientation,
+    references: (StereoCarrier, StereoCarrier),
+    left: &RankedCarriers,
+    right: &RankedCarriers,
+) -> CipResult<StereoDescriptor> {
+    let (inverted, pseudo) = ranked_endpoint_relation(element, references, left, right)?;
+    if inverted {
+        orientation = orientation.inverted();
     }
-    let pseudo_axis =
-        left_ranked.pseudo_asymmetric_ordering != right_ranked.pseudo_asymmetric_ordering;
-    Ok(match (top_orientation, pseudo_axis) {
+    Ok(match (orientation, pseudo) {
         (AxisOrientation::CounterClockwise, true) => StereoDescriptor::LowerM,
         (AxisOrientation::Clockwise, true) => StereoDescriptor::LowerP,
         (AxisOrientation::CounterClockwise, false) => StereoDescriptor::M,
@@ -477,8 +500,7 @@ fn carrier_signatures(
     allow_auxiliary_descriptors: bool,
     atropisomer_mode: bool,
 ) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
-    let cip_bond_orders = CipBondOrders::new(mol, atropisomer_mode);
-    let atomic_number_fractions = cip_atomic_number_fractions(mol, &cip_bond_orders);
+    let atomic_number_fractions = cip_atomic_number_fractions(mol);
     if allow_auxiliary_descriptors
         && mol
             .stereo_elements()
@@ -491,7 +513,7 @@ fn carrier_signatures(
             root,
             options,
             &atomic_number_fractions,
-            &cip_bond_orders,
+            atropisomer_mode,
         )?;
         precompute_auxiliary_descriptors(
             mol,
@@ -499,7 +521,7 @@ fn carrier_signatures(
             &aux_graph,
             options,
             &atomic_number_fractions,
-            &cip_bond_orders,
+            atropisomer_mode,
         );
         let build_context = LigandBuildContext {
             mol,
@@ -507,7 +529,7 @@ fn carrier_signatures(
             descriptor_context: &descriptor_context,
             options,
             atomic_number_fractions: &atomic_number_fractions,
-            cip_bond_orders: &cip_bond_orders,
+            atropisomer_mode,
         };
         let signatures = build_carrier_signatures(&build_context, root, carriers)?;
         return Ok(signatures);
@@ -519,7 +541,7 @@ fn carrier_signatures(
         descriptor_context: &descriptor_context,
         options,
         atomic_number_fractions: &atomic_number_fractions,
-        cip_bond_orders: &cip_bond_orders,
+        atropisomer_mode,
     };
     let mut depth = 0;
     loop {

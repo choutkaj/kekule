@@ -3,7 +3,7 @@ use std::fmt;
 
 use crate::core::*;
 
-pub(super) fn compute_ring_membership(mol: &Molecule) -> RingMembership {
+pub(crate) fn compute_ring_membership(mol: &Molecule) -> RingMembership {
     let mut graph = vec![Vec::<(AtomId, BondId)>::new(); mol.graph.atom_slot_count()];
     let mut live_bonds = Vec::new();
     for (bond_id, bond) in mol.bonds() {
@@ -58,7 +58,7 @@ pub fn perceive_ring_membership(mol: &mut Molecule) -> RingMembership {
     membership
 }
 
-pub(super) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_size: usize) -> bool {
+pub(crate) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_size: usize) -> bool {
     let Ok(bond) = mol.bond(bond_id) else {
         return false;
     };

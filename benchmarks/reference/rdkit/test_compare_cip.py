@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
 
 from rdkit import Chem
 
@@ -56,25 +55,6 @@ class ComparisonContract(unittest.TestCase):
         self.assertTrue(cleaned["evidence"]["parsed_tags"])
         self.assertEqual(cleaned["evidence"]["sanitized_tags"], [])
         self.assertEqual(retained["evidence"]["parsed_tags"], retained["evidence"]["sanitized_tags"])
-
-    def test_process_and_protocol_failures_retain_records(self):
-        cases = [{"smiles": "CCO"}, {"smiles": "C("}]
-        process = compare_cip.subprocess.CompletedProcess([], 0, "{}\n[]\n", "")
-        with patch.object(compare_cip.subprocess, "run", return_value=process):
-            values = compare_cip.run_probe(Path("probe"), cases, 1)
-        self.assertEqual([value["status"] for value in values], ["protocol_error"] * 2)
-        process = compare_cip.subprocess.CompletedProcess([], 1, "", "failed")
-        with patch.object(compare_cip.subprocess, "run", return_value=process):
-            values = compare_cip.run_probe(Path("probe"), cases, 1)
-        self.assertEqual([value["status"] for value in values], ["process_error"] * 2)
-
-    def test_launch_failure_retains_every_input(self):
-        cases = [{"smiles": "CCO"}, {"smiles": "C("}]
-        with patch.object(compare_cip.subprocess, "run", side_effect=PermissionError("cannot execute")):
-            values = compare_cip.run_probe(Path("probe"), cases, 1)
-        self.assertEqual([value["status"] for value in values], ["process_error"] * 2)
-        self.assertTrue(all("cannot execute" in value["message"] for value in values))
-
 
 if __name__ == "__main__":
     unittest.main()

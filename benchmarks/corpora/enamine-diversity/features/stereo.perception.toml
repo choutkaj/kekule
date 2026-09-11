@@ -57,8 +57,3 @@ fixtures = [
   "data/packs/pack_050.smi",
   "data/packs/pack_051.smi",
 ]
-
-notes = [
-  "Externally supplied Enamine Discovery Diversity Set SMILES packs provide broad drug-like small-molecule stereo perception regression coverage beyond PubChem.",
-  "Schema 2 uses retained Model coordinates for explicit stereo inference and asserts source elements, created elements, candidates and groups.",
-]

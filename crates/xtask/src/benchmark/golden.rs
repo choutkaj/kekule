@@ -109,10 +109,10 @@ fn accept_one_implementation_golden(
 ) -> Result<(), Box<dyn Error>> {
     let fixture_path = corpus_root.join(fixture);
     let expected =
-        implementation_expected(&manifest.benchmark_id, &manifest.corpus_id, &fixture_path)?;
+        implementation_expected(&manifest.feature_id, &manifest.corpus_id, &fixture_path)?;
     let document = json!({
-        "schema_version": feature_schema_version(&manifest.benchmark_id),
-        "feature_id": manifest.benchmark_id,
+        "schema_version": feature_schema_version(&manifest.feature_id),
+        "feature_id": manifest.feature_id,
         "corpus_id": manifest.corpus_id,
         "fixture_id": slugify_fixture(fixture),
         "fixture_path": fixture,
@@ -132,7 +132,7 @@ fn accept_one_implementation_golden(
     let compressed = encoder.finish()?;
     let golden_path = corpus_root
         .join("golden")
-        .join(&manifest.benchmark_id)
+        .join(&manifest.feature_id)
         .join(format!("{}.json.gz", slugify_fixture(fixture)));
     write_atomic_bytes(&golden_path, &compressed)
 }
@@ -315,7 +315,7 @@ fn compare_one_golden(
     let fixture_path = base.join(fixture);
     let golden_path = base
         .join("golden")
-        .join(&manifest.benchmark_id)
+        .join(&manifest.feature_id)
         .join(format!("{}.json.gz", slugify_fixture(fixture)));
     if !golden_path.exists() {
         return Err(boxed_error(format!(
@@ -329,7 +329,7 @@ fn compare_one_golden(
         .get_mut("expected")
         .ok_or_else(|| boxed_error(format!("{} is missing `expected`", golden_path.display())))?;
     let mut actual =
-        match implementation_expected(&manifest.benchmark_id, &manifest.corpus_id, &fixture_path) {
+        match implementation_expected(&manifest.feature_id, &manifest.corpus_id, &fixture_path) {
             Ok(actual) => actual,
             Err(error) => {
                 return Ok(FixtureComparison::Difference(format!(
@@ -337,9 +337,9 @@ fn compare_one_golden(
                 )))
             }
         };
-    normalize_benchmark_for_comparison_in_place(&manifest.benchmark_id, expected);
-    normalize_benchmark_for_comparison_in_place(&manifest.benchmark_id, &mut actual);
-    if let Some(diff) = first_json_diff(&manifest.benchmark_id, "$", expected, &actual) {
+    normalize_benchmark_for_comparison_in_place(&manifest.feature_id, expected);
+    normalize_benchmark_for_comparison_in_place(&manifest.feature_id, &mut actual);
+    if let Some(diff) = first_json_diff(&manifest.feature_id, "$", expected, &actual) {
         return Ok(FixtureComparison::Difference(format!(
             "{} differs from implementation output for fixture `{fixture}`: {diff}",
             golden_path.display()
@@ -355,14 +355,13 @@ pub(crate) fn check_golden_metadata(
     fixture: &str,
     fixture_path: &Path,
 ) -> Result<(), Box<dyn Error>> {
-    if golden.get("schema_version") != Some(&json!(feature_schema_version(&manifest.benchmark_id)))
-    {
+    if golden.get("schema_version") != Some(&json!(feature_schema_version(&manifest.feature_id))) {
         return Err(boxed_error(format!(
             "{} has unsupported schema_version",
             golden_path.display()
         )));
     }
-    if golden.get("feature_id").and_then(Value::as_str) != Some(manifest.benchmark_id.as_str()) {
+    if golden.get("feature_id").and_then(Value::as_str) != Some(manifest.feature_id.as_str()) {
         return Err(boxed_error(format!(
             "{} feature_id does not match manifest",
             golden_path.display()

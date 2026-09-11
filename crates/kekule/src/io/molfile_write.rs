@@ -90,6 +90,7 @@ impl<'a> MolfileRecord<'a> {
         let topology = model.topology();
         let mut atoms = Vec::with_capacity(topology.atom_count());
         let mut indexes = BTreeMap::new();
+        let mut positions = BTreeMap::new();
         for (serial, (qualified, atom)) in (1u64..).zip(topology.atoms()) {
             let occurrence = topology
                 .molecule(qualified.molecule())
@@ -99,6 +100,15 @@ impl<'a> MolfileRecord<'a> {
                 .map_err(|error| MolWriteError::invalid_model(error.to_string()))?
                 .value_in(ANGSTROM)
                 .map_err(|error| MolWriteError::invalid_model(error.to_string()))?;
+            // Parse the emitted decimal representation once so validation and
+            // rendering use exactly the same coordinates, including tie rounding.
+            let [x, y, z] = [position.x, position.y, position.z].map(|value| {
+                format!("{value:.4}")
+                    .parse()
+                    .expect("a formatted coordinate is a valid floating-point number")
+            });
+            let position = Point3::new(x, y, z);
+            positions.insert(qualified, position);
             indexes.insert(
                 (
                     ComponentKey::Instance(qualified.molecule()),
@@ -117,7 +127,7 @@ impl<'a> MolfileRecord<'a> {
         let mut projections = BTreeMap::new();
         for occurrence in topology.molecules() {
             let geometry = ModelStereoPositions {
-                model,
+                positions: &positions,
                 instance: occurrence.id(),
             };
             projections.insert(
@@ -249,22 +259,14 @@ fn project_stereo_groups(
 }
 
 struct ModelStereoPositions<'a> {
-    model: ModelView<'a>,
+    positions: &'a BTreeMap<InstanceAtomId, Point3>,
     instance: MoleculeInstanceId,
 }
 
 impl AtomPositionSource for ModelStereoPositions<'_> {
     fn position_value(&self, atom: AtomId) -> Option<Point3> {
-        let point = self
-            .model
-            .position(InstanceAtomId::new(self.instance, atom))
-            .ok()?
-            .value_in(ANGSTROM)
-            .ok()?;
-        Some(Point3::new(
-            format!("{:.4}", point.x).parse().ok()?,
-            format!("{:.4}", point.y).parse().ok()?,
-            format!("{:.4}", point.z).parse().ok()?,
-        ))
+        self.positions
+            .get(&InstanceAtomId::new(self.instance, atom))
+            .copied()
     }
 }

@@ -3,9 +3,7 @@ use crate::*;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BenchmarkManifest {
-    // `feature_id` is retained only as legacy on-disk benchmark-schema vocabulary.
-    #[serde(rename = "feature_id")]
-    pub(crate) benchmark_id: String,
+    pub(crate) feature_id: String,
     pub(crate) corpus_id: String,
     pub(crate) reference_tool: String,
     pub(crate) reference_version: String,
@@ -84,11 +82,11 @@ pub(crate) fn discover_benchmark_targets_from(
                 })?
                 .to_owned();
             let manifest = read_benchmark_manifest(&manifest_path)?;
-            if manifest.benchmark_id != benchmark_id {
+            if manifest.feature_id != benchmark_id {
                 return Err(boxed_error(format!(
-                    "{} declares legacy feature_id `{}`, expected benchmark ID `{benchmark_id}`",
+                    "{} declares feature_id `{}`, expected benchmark ID `{benchmark_id}`",
                     manifest_path.display(),
-                    manifest.benchmark_id
+                    manifest.feature_id
                 )));
             }
             if manifest.corpus_id != corpus_id {
