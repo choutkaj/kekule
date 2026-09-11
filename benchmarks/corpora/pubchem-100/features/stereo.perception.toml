@@ -1,7 +1,7 @@
 feature_id = "stereo.perception"
 corpus_id = "pubchem-100"
-reference_tool = "pubchem-manual-semantic"
-reference_version = "PubChem PUG REST 2026-07-05"
+reference_tool = "reviewed-stereo-schema"
+reference_version = "v2 + RDKit 2026.03.6"
 comparison_mode = "implementation-golden"
 
 fixtures = [
@@ -10,5 +10,5 @@ fixtures = [
 
 notes = [
   "Externally supplied PubChem isomeric SMILES pack provides broader small-molecule stereo perception regression coverage.",
-  "Goldens compare semantic stereo perception reports and resulting stereo elements, not bytewise SMILES spelling.",
+  "Schema 2 uses retained Model coordinates for explicit stereo inference and asserts source elements, created elements, candidates and groups.",
 ]

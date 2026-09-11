@@ -300,14 +300,14 @@ fn append_conflicts_roll_back_graph_properties_and_id_allocation() {
 
 #[test]
 fn append_remaps_double_bond_and_axis_stereo_across_sparse_ids() {
-    let mut source = molecule("F/C=C/F").into_editor();
+    let mut source = molecule("F/C=C/C=C").into_editor();
     let atoms = source.atom_ids().collect::<Vec<_>>();
-    let focus = source.bond_between(atoms[1], atoms[2]).unwrap().unwrap();
+    let focus = source.bond_between(atoms[2], atoms[3]).unwrap().unwrap();
     let double = source.stereo_element_ids().next().unwrap();
     let axis = source
         .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
             axis: focus,
-            carriers: vec![StereoCarrier::Atom(atoms[0]), StereoCarrier::Atom(atoms[3])],
+            carriers: vec![StereoCarrier::Atom(atoms[1]), StereoCarrier::Atom(atoms[4])],
             orientation: Some(AxisOrientation::Clockwise),
         })))
         .unwrap();
@@ -318,7 +318,7 @@ fn append_remaps_double_bond_and_axis_stereo_across_sparse_ids() {
     target.delete_atom(AtomId::new(0)).unwrap();
     let map = target.append_molecule(&source).unwrap();
     assert!(!map.atoms().contains_key(&removed));
-    assert_eq!(map.atoms().len(), 4);
+    assert_eq!(map.atoms().len(), 5);
     for id in [double, axis] {
         let old = &source.stereo_element(id).unwrap().kind;
         let new = &target
@@ -345,8 +345,8 @@ fn append_remaps_double_bond_and_axis_stereo_across_sparse_ids() {
                 assert_eq!(
                     new.carriers,
                     vec![
-                        StereoCarrier::Atom(map.atoms()[&atoms[0]]),
-                        StereoCarrier::Atom(map.atoms()[&atoms[3]])
+                        StereoCarrier::Atom(map.atoms()[&atoms[1]]),
+                        StereoCarrier::Atom(map.atoms()[&atoms[4]])
                     ]
                 );
                 assert_eq!(new.orientation, old.orientation);
@@ -453,9 +453,33 @@ fn stereo_group_replacement_preserves_identity_and_rewiring_prunes_affected_ster
         editor.stereo_element(group.members[0]).unwrap().group,
         Some(id)
     );
-    let mut added = editor.stereo_element(group.members[0]).unwrap().clone();
-    added.group = None;
-    let added = editor.add_stereo_element(added).unwrap();
+    let StereoElementKind::Tetrahedral(original) = editor
+        .stereo_element(group.members[0])
+        .unwrap()
+        .kind
+        .clone()
+    else {
+        panic!("tetrahedral fixture")
+    };
+    // Turn the iodine ligand into a second, distinct tetrahedral center.
+    // Both assertions then depend on their shared bond for the rewiring check.
+    let center = editor.atom_ids().last().unwrap();
+    editor.replace_atom(center, atom("C")).unwrap();
+    let mut carriers = vec![StereoCarrier::Atom(original.center)];
+    for symbol in ["F", "Cl", "Br"] {
+        let ligand = editor.add_atom(atom(symbol)).unwrap();
+        editor.add_bond(center, ligand, BondOrder::Single).unwrap();
+        carriers.push(StereoCarrier::Atom(ligand));
+    }
+    let added = editor
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
+                center,
+                carriers,
+                orientation: original.orientation,
+            },
+        )))
+        .unwrap();
     let before = snapshot(&editor);
     assert!(editor
         .replace_stereo_group(
@@ -478,10 +502,14 @@ fn stereo_group_replacement_preserves_identity_and_rewiring_prunes_affected_ster
         .unwrap();
     assert_eq!(editor.stereo_element(group.members[0]).unwrap().group, None);
     assert_eq!(editor.stereo_element(added).unwrap().group, Some(id));
-    let atoms = editor.atom_ids().collect::<Vec<_>>();
-    let bond = editor.bond_ids().next().unwrap();
+    let bond = editor
+        .bond_between(original.center, center)
+        .unwrap()
+        .unwrap();
     let other = editor.add_atom(atom("C")).unwrap();
-    editor.set_bond_endpoints(bond, atoms[0], other).unwrap();
+    editor
+        .set_bond_endpoints(bond, original.center, other)
+        .unwrap();
     assert_eq!(editor.stereo_elements().count(), 0);
     assert_eq!(editor.stereo_groups().count(), 0);
 }

@@ -1,12 +1,15 @@
 use std::collections::BTreeMap;
 
-use crate::chemistry::{project_molfile_stereo_bond_marks, SourceStereoBondMarkKind};
-use crate::core::{Atom, AtomId, BondId, BondOrder, Molecule};
+use crate::chemistry::{
+    project_molfile_stereo_bond_marks, AtomPositionSource, SourceStereoBondMarkKind,
+};
+use crate::core::{Atom, AtomId, BondId, BondOrder, Molecule, StereoElementKind, StereoGroupKind};
 use crate::geometry::Point3;
 use crate::structure::ModelView;
-use crate::topology::MoleculeInstanceId;
+use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::ANGSTROM;
 
+use super::structure_documents::molfile_stereo_group_members_at_atom;
 use super::MolWriteError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -35,6 +38,13 @@ pub(super) struct MolfileBond {
 pub(super) struct MolfileRecord<'a> {
     pub(super) atoms: Vec<MolfileAtom<'a>>,
     pub(super) bonds: Vec<MolfileBond>,
+    pub(super) stereo_groups: Vec<MolfileStereoGroup>,
+}
+
+#[derive(Debug)]
+pub(super) struct MolfileStereoGroup {
+    pub(super) kind: StereoGroupKind,
+    pub(super) atoms: Vec<u64>,
 }
 
 impl<'a> MolfileRecord<'a> {
@@ -53,7 +63,7 @@ impl<'a> MolfileRecord<'a> {
             .zip(1u64..)
             .map(|(atom, serial)| ((ComponentKey::Molecule, atom), serial))
             .collect::<BTreeMap<_, _>>();
-        let projected = stereo_projections(molecule)?;
+        let projected = stereo_projections(molecule, None)?;
         let bonds = molecule
             .bonds()
             .map(|(id, bond)| {
@@ -67,7 +77,13 @@ impl<'a> MolfileRecord<'a> {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { atoms, bonds })
+        let stereo_groups =
+            project_stereo_groups(molecule, |atom| indexes[&(ComponentKey::Molecule, atom)])?;
+        Ok(Self {
+            atoms,
+            bonds,
+            stereo_groups,
+        })
     }
 
     pub(super) fn model(model: ModelView<'a>) -> Result<Self, MolWriteError> {
@@ -100,7 +116,14 @@ impl<'a> MolfileRecord<'a> {
 
         let mut projections = BTreeMap::new();
         for occurrence in topology.molecules() {
-            projections.insert(occurrence.id(), stereo_projections(occurrence.molecule())?);
+            let geometry = ModelStereoPositions {
+                model,
+                instance: occurrence.id(),
+            };
+            projections.insert(
+                occurrence.id(),
+                stereo_projections(occurrence.molecule(), Some(&geometry))?,
+            );
         }
         let mut bonds = Vec::with_capacity(topology.bond_count());
         for (qualified, bond) in topology.bonds() {
@@ -116,7 +139,17 @@ impl<'a> MolfileRecord<'a> {
                 &indexes,
             )?);
         }
-        Ok(Self { atoms, bonds })
+        let mut stereo_groups = Vec::new();
+        for occurrence in topology.molecules() {
+            stereo_groups.extend(project_stereo_groups(occurrence.molecule(), |atom| {
+                indexes[&(ComponentKey::Instance(occurrence.id()), atom)]
+            })?);
+        }
+        Ok(Self {
+            atoms,
+            bonds,
+            stereo_groups,
+        })
     }
 }
 
@@ -153,10 +186,85 @@ fn prepare_bond(
 
 fn stereo_projections(
     molecule: &Molecule,
+    geometry: Option<&dyn AtomPositionSource>,
 ) -> Result<BTreeMap<BondId, (AtomId, SourceStereoBondMarkKind)>, MolWriteError> {
-    Ok(project_molfile_stereo_bond_marks(molecule)
+    Ok(project_molfile_stereo_bond_marks(molecule, geometry)
         .map_err(MolWriteError::new)?
         .into_iter()
         .map(|(bond, projection)| (bond, (projection.from, projection.kind)))
         .collect())
+}
+
+fn project_stereo_groups(
+    molecule: &Molecule,
+    atom_serial: impl Fn(AtomId) -> u64,
+) -> Result<Vec<MolfileStereoGroup>, MolWriteError> {
+    molecule
+        .stereo_groups()
+        .map(|(_, group)| {
+            if !matches!(
+                group.kind,
+                StereoGroupKind::Absolute | StereoGroupKind::And | StereoGroupKind::Or
+            ) {
+                return Err(MolWriteError::new(
+                    "Molfile writer cannot encode this stereo group kind",
+                ));
+            }
+            let mut projected = MolfileStereoGroup {
+                kind: group.kind,
+                atoms: Vec::new(),
+            };
+            for member in &group.members {
+                let element = molecule
+                    .stereo_element(*member)
+                    .map_err(|error| MolWriteError::new(error.to_string()))?;
+                let candidates = match &element.kind {
+                    StereoElementKind::Tetrahedral(stereo) => vec![stereo.center],
+                    StereoElementKind::Axis(stereo) => {
+                        let bond = molecule
+                            .bond(stereo.axis)
+                            .map_err(|error| MolWriteError::new(error.to_string()))?;
+                        vec![bond.a(), bond.b()]
+                    }
+                    StereoElementKind::DoubleBond(_) => {
+                        return Err(MolWriteError::new(
+                            "Molfile writer cannot encode double-bond stereo group members",
+                        ))
+                    }
+                };
+                let atom = candidates
+                    .into_iter()
+                    .find(|atom| molfile_stereo_group_members_at_atom(molecule, *atom) == [*member])
+                    .ok_or_else(|| {
+                        MolWriteError::new(
+                            "V3000 stereo group member has no unambiguous atom or axis endpoint",
+                        )
+                    })?;
+                projected.atoms.push(atom_serial(atom));
+            }
+            projected.atoms.sort_unstable();
+            Ok(projected)
+        })
+        .collect()
+}
+
+struct ModelStereoPositions<'a> {
+    model: ModelView<'a>,
+    instance: MoleculeInstanceId,
+}
+
+impl AtomPositionSource for ModelStereoPositions<'_> {
+    fn position_value(&self, atom: AtomId) -> Option<Point3> {
+        let point = self
+            .model
+            .position(InstanceAtomId::new(self.instance, atom))
+            .ok()?
+            .value_in(ANGSTROM)
+            .ok()?;
+        Some(Point3::new(
+            format!("{:.4}", point.x).parse().ok()?,
+            format!("{:.4}", point.y).parse().ok()?,
+            format!("{:.4}", point.z).parse().ok()?,
+        ))
+    }
 }

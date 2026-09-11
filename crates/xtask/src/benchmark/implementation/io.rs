@@ -25,6 +25,8 @@ pub(crate) struct IndexedStereoPerceptionRecord {
     pub(crate) record_index: usize,
     pub(crate) title: String,
     pub(crate) components: Vec<Molecule>,
+    pub(crate) positions: Vec<Option<kekule::structure::Positions>>,
+    pub(crate) document: Value,
 }
 
 const BOUNDED_SUBSTRUCTURE_QUERIES: &[&str] = &[
@@ -263,60 +265,115 @@ pub(crate) fn read_stereo_perception_records_by_suffix(
         path.extension().and_then(|ext| ext.to_str()),
         Some("txt" | "smi" | "smiles")
     ) {
-        return Ok(read_smiles_records(path)?
+        return read_smiles_records(path)?
             .into_iter()
-            .map(|record| IndexedStereoPerceptionRecord {
-                record_index: record.record_index,
-                title: record.title,
-                components: record.components,
+            .map(|record| {
+                let mut marks = Vec::new();
+                if let Ok(document) = smiles::parse_str(&record.input_smiles) {
+                    if let Ok(interpretation) = smiles::interpret(&document) {
+                        let mut bond_offset = 0usize;
+                        for component in interpretation.components() {
+                            for mapping in component.report().bond_mappings() {
+                                let kind = match document.source().as_bytes().get(mapping.source_offset()) {
+                                    Some(b'/') => Some("directional_up"),
+                                    Some(b'\\') => Some("directional_down"),
+                                    _ => None,
+                                };
+                                if let Some(kind) = kind {
+                                    marks.push(json!({"bond_index": bond_offset + mapping.bond().index(), "kind": kind, "source": "smiles"}));
+                                }
+                            }
+                            bond_offset += component.molecule().bond_count();
+                        }
+                    }
+                }
+                Ok(IndexedStereoPerceptionRecord {
+                    record_index: record.record_index,
+                    title: record.title,
+                    positions: vec![None; record.components.len()],
+                    components: record.components,
+                    document: json!({"format": "smiles", "source": record.input_smiles, "stereo_bond_marks": marks}),
+                })
             })
-            .collect());
+            .collect();
     }
-    Ok(read_stereo_records_by_suffix(path)?
-        .into_iter()
-        .map(|record| IndexedStereoPerceptionRecord {
-            record_index: record.record_index,
-            title: record.title,
-            components: vec![record.molecule],
-        })
-        .collect())
-}
-
-pub(crate) fn read_stereo_records_by_suffix(
-    path: &Path,
-) -> Result<Vec<IndexedSmallRecord>, Box<dyn Error>> {
     let input = fs::read_to_string(path)?;
     if matches!(
         path.extension().and_then(|ext| ext.to_str()),
-        Some("txt" | "smi" | "smiles")
-    ) {
-        return Ok(read_smiles_records(path)?
-            .into_iter()
-            .filter_map(|record| {
-                record.molecule.map(|molecule| IndexedSmallRecord {
-                    record_index: record.record_index,
-                    title: record.title,
-                    molecule,
-                    sdf_fields: BTreeMap::new(),
-                })
-            })
-            .collect());
-    }
-    if !matches!(
-        path.extension().and_then(|ext| ext.to_str()),
         Some("mol" | "mdl")
     ) {
-        return read_small_records_by_suffix(path);
+        return Ok(vec![stereo_molfile_record(
+            0,
+            &molfile::parse_str(&input)?,
+        )?]);
     }
-    let document = molfile::parse_str(&input)?;
-    let title = document.header().title().to_owned();
-    let molecule = exactly_one_molecule(molfile::interpret(&document)?.into_molecules())?;
-    Ok(vec![IndexedSmallRecord {
-        record_index: 0,
-        title,
-        molecule,
-        sdf_fields: BTreeMap::new(),
-    }])
+    sdf::parse_str(&input)?
+        .records()
+        .iter()
+        .enumerate()
+        .map(|(index, record)| stereo_molfile_record(index, record.molfile()))
+        .collect()
+}
+
+fn stereo_molfile_record(
+    record_index: usize,
+    document: &molfile::MolfileDocument,
+) -> Result<IndexedStereoPerceptionRecord, Box<dyn Error>> {
+    let format = match document.version() {
+        molfile::MolfileVersion::V2000 => "molfile_v2000",
+        molfile::MolfileVersion::V3000 => "molfile_v3000",
+    };
+    let mut marks = Vec::new();
+    for (index, line) in document.bond_records().iter().enumerate() {
+        let code = if format == "molfile_v2000" {
+            line.text().get(9..12).unwrap_or("").trim()
+        } else {
+            line.text()
+                .split_whitespace()
+                .find_map(|part| part.strip_prefix("CFG="))
+                .unwrap_or("0")
+        };
+        let kind = match (format, code) {
+            (_, "0" | "") => None,
+            ("molfile_v2000", "1") | ("molfile_v3000", "1") => Some("wedge_up"),
+            ("molfile_v2000", "6") | ("molfile_v3000", "3") => Some("wedge_down"),
+            ("molfile_v2000", "4") | ("molfile_v3000", "2") => Some("unknown"),
+            ("molfile_v2000", "3") => Some("either_double"),
+            _ => {
+                return Err(boxed_error(format!(
+                    "unrecognized stereo source code {code}"
+                )))
+            }
+        };
+        if let Some(kind) = kind {
+            marks.push(json!({"bond_index": index, "kind": kind, "source": format}));
+        }
+    }
+    let interpretation = molfile::interpret(document)?;
+    let model = interpretation.model();
+    let mut positions = Vec::new();
+    for instance in model.topology().molecules() {
+        let points = instance
+            .molecule()
+            .atom_ids()
+            .map(|atom| {
+                model
+                    .position(kekule::topology::InstanceAtomId::new(instance.id(), atom))
+                    .map(|position| position.into_value())
+                    .map_err(Box::new)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        positions.push(Some(kekule::structure::Positions::new(
+            kekule::units::Quantity::new(points, kekule::units::ANGSTROM),
+        )?));
+    }
+    Ok(IndexedStereoPerceptionRecord {
+        record_index,
+        title: document.header().title().to_owned(),
+        positions,
+        components: interpretation.into_molecules(),
+        document: json!({"format": format, "source": document.source(), "stereo_bond_marks": marks}),
+    })
 }
 
 pub(crate) fn read_canonical_smiles_records(

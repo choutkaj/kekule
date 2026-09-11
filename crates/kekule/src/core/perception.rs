@@ -3,6 +3,7 @@ use std::fmt;
 
 use super::{
     checked_fixed_id_collection_len, AtomId, BondId, Molecule, StereoDescriptor, StereoElementId,
+    StereoElementKind,
 };
 
 static EMPTY_CIP_DESCRIPTORS: BTreeMap<StereoElementId, StereoDescriptor> = BTreeMap::new();
@@ -605,6 +606,11 @@ pub enum PerceptionInstallError {
     InvalidBondId(BondId),
     /// A stereo-element reference is not live.
     InvalidStereoElementId(StereoElementId),
+    /// A descriptor uses a different stereo geometry than its represented focus.
+    IncompatibleStereoDescriptor {
+        element: StereoElementId,
+        descriptor: StereoDescriptor,
+    },
     /// Ring atom flags do not cover the molecule's exact stable atom slots.
     RingAtomSlotCountMismatch {
         /// Required molecule atom-slot count.
@@ -647,6 +653,13 @@ impl fmt::Display for PerceptionInstallError {
             Self::InvalidStereoElementId(element) => {
                 write!(formatter, "invalid perception stereo-element id: {element}")
             }
+            Self::IncompatibleStereoDescriptor {
+                element,
+                descriptor,
+            } => write!(
+                formatter,
+                "CIP descriptor {descriptor:?} is incompatible with stereo element {element}"
+            ),
             Self::RingAtomSlotCountMismatch { expected, actual } => write!(
                 formatter,
                 "ring atom-slot count mismatch: expected {expected}, got {actual}"
@@ -752,15 +765,40 @@ pub(super) fn validate_perception(
     }
 
     if let Some(stereo) = &state.stereo {
-        for element in stereo.cip_descriptors.keys().copied() {
-            if molecule
+        for (&element, &descriptor) in &stereo.cip_descriptors {
+            let represented = molecule
                 .graph
                 .stereo_elements
                 .get(element.index())
                 .and_then(Option::as_ref)
-                .is_none()
-            {
-                return Err(PerceptionInstallError::InvalidStereoElementId(element));
+                .ok_or(PerceptionInstallError::InvalidStereoElementId(element))?;
+            let compatible = matches!(
+                (&represented.kind, descriptor),
+                (
+                    StereoElementKind::Tetrahedral(_),
+                    StereoDescriptor::R
+                        | StereoDescriptor::S
+                        | StereoDescriptor::LowerR
+                        | StereoDescriptor::LowerS
+                ) | (
+                    StereoElementKind::DoubleBond(_),
+                    StereoDescriptor::E
+                        | StereoDescriptor::Z
+                        | StereoDescriptor::SeqCis
+                        | StereoDescriptor::SeqTrans
+                ) | (
+                    StereoElementKind::Axis(_),
+                    StereoDescriptor::M
+                        | StereoDescriptor::P
+                        | StereoDescriptor::LowerM
+                        | StereoDescriptor::LowerP
+                )
+            );
+            if !compatible {
+                return Err(PerceptionInstallError::IncompatibleStereoDescriptor {
+                    element,
+                    descriptor,
+                });
             }
         }
     }

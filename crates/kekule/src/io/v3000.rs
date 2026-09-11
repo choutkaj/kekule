@@ -20,6 +20,15 @@ use super::structure_documents::{
 pub(super) struct V3000Syntax {
     pub(super) atoms: Vec<V3000AtomSyntax>,
     pub(super) bonds: Vec<V3000BondSyntax>,
+    pub(super) stereo_groups: Vec<V3000StereoGroupSyntax>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct V3000StereoGroupSyntax {
+    pub(super) kind: StereoGroupKind,
+    pub(super) atoms: Vec<usize>,
+    pub(super) line: usize,
+    pub(super) source_lines: Vec<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -32,6 +41,7 @@ pub(super) struct V3000AtomSyntax {
     pub(super) hydrogen_count: Option<i32>,
     pub(super) valence: Option<i32>,
     pub(super) atom_map: Option<u32>,
+    pub(super) stereo_cfg: Option<u8>,
     pub(super) unsupported_options: Vec<String>,
     pub(super) coordinates: [f64; 3],
     pub(super) line: usize,
@@ -141,6 +151,44 @@ pub(super) fn render_mol_v3000(
         out.push('\n');
     }
     out.push_str("M  V30 END BOND\n");
+    if !record.stereo_groups.is_empty() {
+        out.push_str("M  V30 BEGIN COLLECTION\n");
+        let mut absolute_written = false;
+        for (index, group) in record.stereo_groups.iter().enumerate() {
+            if group.kind == StereoGroupKind::Absolute && absolute_written {
+                continue;
+            }
+            let atoms = if group.kind == StereoGroupKind::Absolute {
+                absolute_written = true;
+                record
+                    .stereo_groups
+                    .iter()
+                    .filter(|group| group.kind == StereoGroupKind::Absolute)
+                    .flat_map(|group| group.atoms.iter().copied())
+                    .collect::<Vec<_>>()
+            } else {
+                group.atoms.clone()
+            };
+            let kind = match group.kind {
+                StereoGroupKind::Absolute => "MDLV30/STEABS".to_owned(),
+                StereoGroupKind::Or => format!("MDLV30/STEREL{}", index + 1),
+                StereoGroupKind::And => format!("MDLV30/STERAC{}", index + 1),
+                _ => {
+                    return Err(MolWriteError::new(
+                        "V3000 cannot encode this stereo group kind",
+                    ))
+                }
+            };
+            out.push_str(&format!("M  V30 {kind}"));
+            out.push_str(&format!(" ATOMS=({}", atoms.len()));
+            for member in atoms {
+                out.push_str(&format!(" {member}"));
+            }
+            out.push(')');
+            out.push('\n');
+        }
+        out.push_str("M  V30 END COLLECTION\n");
+    }
     out.push_str("M  V30 END CTAB\n");
     out.push_str("M  END\n");
     Ok(out)
@@ -287,6 +335,7 @@ pub(super) fn parse_v3000_syntax(
             hydrogen_count: None,
             valence: None,
             atom_map: (parsed.atom_map != 0).then_some(parsed.atom_map),
+            stereo_cfg: None,
             unsupported_options: Vec::new(),
             coordinates: parsed.coordinates,
             line: row.line,
@@ -297,7 +346,7 @@ pub(super) fn parse_v3000_syntax(
     }
 
     let mut bonds = Vec::with_capacity(bond_rows.len());
-    let mut bond_indices = std::collections::BTreeSet::new();
+    let mut bond_indices = BTreeMap::new();
     let mut endpoints = std::collections::BTreeSet::new();
     for row in bond_rows {
         let parsed = parse_v3000_bond(record, row.line, &row.body)?;
@@ -308,7 +357,7 @@ pub(super) fn parse_v3000_syntax(
                 "V3000 bond indices must be positive",
             ));
         }
-        if !bond_indices.insert(parsed.index) {
+        if bond_indices.insert(parsed.index, bonds.len()).is_some() {
             return Err(SdfParseError::new(
                 record,
                 row.line,
@@ -350,7 +399,161 @@ pub(super) fn parse_v3000_syntax(
         });
     }
 
-    Ok(V3000Syntax { atoms, bonds })
+    let mut stereo_groups: Vec<V3000StereoGroupSyntax> = Vec::new();
+    let mut group_indexes = BTreeMap::new();
+    let collection_begins = v30_lines
+        .iter()
+        .filter(|line| line.body == "BEGIN COLLECTION")
+        .count();
+    let collection_ends = v30_lines
+        .iter()
+        .filter(|line| line.body == "END COLLECTION")
+        .count();
+    if collection_begins > 1 || collection_ends != collection_begins {
+        return Err(SdfParseError::new(
+            record,
+            counts_line,
+            "V3000 permits one complete COLLECTION section",
+        ));
+    }
+    if v30_lines.iter().any(|line| line.body == "BEGIN COLLECTION") {
+        let section = v3000_section(record, &v30_lines, "COLLECTION", bond_section.end + 1)?;
+        if section.end >= ctab.end {
+            return Err(SdfParseError::new(
+                record,
+                v30_lines[section.end].line,
+                "V3000 COLLECTION escapes CTAB",
+            ));
+        }
+        for index in section.start + 1..section.end {
+            let row = &v30_lines[index];
+            let mut fields = row.body.split_whitespace();
+            let name = fields.next().unwrap_or("");
+            let (kind, group_key) = match name {
+                "MDLV30/STEABS" => (StereoGroupKind::Absolute, (0, 0)),
+                _ if name.starts_with("MDLV30/STEREL") => {
+                    let number = parse_v3000_stereo_group_number(record, row.line, &name[13..])?;
+                    (StereoGroupKind::Or, (1, number))
+                }
+                _ if name.starts_with("MDLV30/STERAC") => {
+                    let number = parse_v3000_stereo_group_number(record, row.line, &name[13..])?;
+                    (StereoGroupKind::And, (2, number))
+                }
+                _ => continue,
+            };
+            let mut group = V3000StereoGroupSyntax {
+                kind,
+                atoms: Vec::new(),
+                line: row.line,
+                source_lines: (row.line..v30_lines[index + 1].line).collect(),
+            };
+            let mut seen = BTreeSet::new();
+            let mut options = row.body[name.len()..].trim();
+            while !options.is_empty() {
+                let (key, list) = options.split_once("=(").ok_or_else(|| {
+                    SdfParseError::new(record, row.line, "invalid V3000 stereo group member list")
+                })?;
+                let (values, remaining) = list.split_once(')').ok_or_else(|| {
+                    SdfParseError::new(
+                        record,
+                        row.line,
+                        "unterminated V3000 stereo group member list",
+                    )
+                })?;
+                options = remaining.trim();
+                if !seen.insert(key) {
+                    return Err(SdfParseError::new(
+                        record,
+                        row.line,
+                        "duplicate V3000 stereo group member list",
+                    ));
+                }
+                let (indexes, output) = match key {
+                    "ATOMS" => (&atom_indices, &mut group.atoms),
+                    _ => {
+                        return Err(SdfParseError::new(
+                            record,
+                            row.line,
+                            "unsupported V3000 stereo group member list",
+                        ))
+                    }
+                };
+                let mut values = values.split_whitespace();
+                let count = values.next().unwrap_or("").parse::<usize>().map_err(|_| {
+                    SdfParseError::new(record, row.line, "invalid V3000 stereo group member count")
+                })?;
+                for field in values {
+                    let serial = field.parse::<usize>().map_err(|_| {
+                        SdfParseError::new(record, row.line, "invalid V3000 stereo group member")
+                    })?;
+                    output.push(*indexes.get(&serial).ok_or_else(|| {
+                        SdfParseError::new(
+                            record,
+                            row.line,
+                            "V3000 stereo group member is outside its source table",
+                        )
+                    })?);
+                }
+                if output.len() != count {
+                    return Err(SdfParseError::new(
+                        record,
+                        row.line,
+                        "V3000 stereo group member count mismatch",
+                    ));
+                }
+            }
+            if group.atoms.is_empty() {
+                return Err(SdfParseError::new(
+                    record,
+                    row.line,
+                    "V3000 stereo group must have members",
+                ));
+            }
+            if let Some(index) = group_indexes.get(&group_key).copied() {
+                let existing: &mut V3000StereoGroupSyntax = &mut stereo_groups[index];
+                existing.atoms.extend(group.atoms);
+                existing.source_lines.extend(group.source_lines);
+            } else {
+                group_indexes.insert(group_key, stereo_groups.len());
+                stereo_groups.push(group);
+            }
+        }
+    }
+    for row in &v30_lines {
+        if (row.body.starts_with("MDLV30/STEABS")
+            || row.body.starts_with("MDLV30/STEREL")
+            || row.body.starts_with("MDLV30/STERAC"))
+            && !stereo_groups
+                .iter()
+                .any(|group| group.source_lines.contains(&row.line))
+        {
+            return Err(SdfParseError::new(
+                record,
+                row.line,
+                "V3000 stereo group is outside COLLECTION",
+            ));
+        }
+    }
+    Ok(V3000Syntax {
+        atoms,
+        bonds,
+        stereo_groups,
+    })
+}
+
+fn parse_v3000_stereo_group_number(
+    record: usize,
+    line: usize,
+    number: &str,
+) -> std::result::Result<usize, SdfParseError> {
+    match number.parse::<usize>() {
+        Ok(value) if value > 0 => Ok(value),
+        _ => Err(SdfParseError::new(
+            record,
+            line,
+            "invalid V3000 stereo group number",
+        )),
+    }
 }
 
 pub(super) fn interpret_v3000_syntax(
@@ -745,6 +948,21 @@ fn apply_v3000_atom_options(
             ));
         }
         match *key {
+            "CFG" => {
+                atom.stereo_cfg = match *value {
+                    "0" => None,
+                    "1" => Some(1),
+                    "2" => Some(2),
+                    "3" => Some(3),
+                    _ => {
+                        return Err(SdfParseError::new(
+                            record,
+                            line,
+                            "invalid V3000 atom CFG value",
+                        ))
+                    }
+                };
+            }
             "CHG" => {
                 atom.formal_charge = value
                     .parse()
@@ -897,6 +1115,7 @@ fn v3000_bond_cfg(
 ) -> std::result::Result<Option<u8>, MolWriteError> {
     match (order, stereo) {
         (_, None) => Ok(None),
+        (BondOrder::Double, Some(SourceStereoBondMarkKind::MolfileDoubleBondGeometry)) => Ok(None),
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeUp)) => Ok(Some(1)),
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeEither)) => Ok(Some(2)),
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeDown)) => Ok(Some(3)),

@@ -201,6 +201,9 @@ def generate_document(
     fixture_path: Path,
     rdkit: dict[str, Any],
 ) -> dict[str, Any]:
+    if feature_id == "io.smiles.isomeric" and rdkit["version"] != "2026.03.6":
+        raise ValueError("isomeric SMILES schema 2 requires RDKit 2026.03.6")
+    reference_evidence = None
     if feature_id == "io.sdf.v2000.parse":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [sdf_record(record) for record in records]}
@@ -259,10 +262,8 @@ def generate_document(
         expected = {"records": [canonical_smiles_record(record, exact_smiles=False) for record in records]}
     elif feature_id == "io.smiles.isomeric":
         records = read_isomeric_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
-        records = [
-            record for record in records if isomeric_smiles_record_is_stereo_bearing(record, rdkit["Chem"])
-        ]
-        expected = {"records": [isomeric_smiles_record(record) for record in records]}
+        reference_evidence = []
+        expected = {"records": [isomeric_smiles_record(record, reference_evidence) for record in records]}
     elif feature_id == "query.smarts":
         expected = {
             "records": smarts_query_records(fixture_path, rdkit["Chem"])
@@ -310,7 +311,8 @@ def generate_document(
         raise SystemExit(f"unsupported feature for RDKit generator: {feature_id}")
 
     return {
-        "schema_version": 1,
+        "schema_version": 2 if feature_id == "io.smiles.isomeric" else 1,
+        **({"reference_evidence": reference_evidence} if reference_evidence is not None else {}),
         "feature_id": feature_id,
         "corpus_id": corpus_id,
         "fixture_id": slugify_fixture(fixture),
@@ -1146,11 +1148,42 @@ def canonical_smiles_record(record: dict[str, Any], exact_smiles: bool) -> dict[
     return item
 
 
-def isomeric_smiles_record(record: dict[str, Any]) -> dict[str, Any]:
+def required_smiles_bracket_declarations(mol: Any) -> tuple[Any, list[dict[str, Any]]]:
+    """Project only declarations that cannot be emitted in SMILES grammar.
+
+    Charge requires a bracket atom, whose hydrogen count is explicit. Chemical
+    normalization can introduce charge on an originally unbracketed atom while
+    retaining its inference declaration. Optional writer bracketing (including
+    RDKit's metal-neighbor preference) is deliberately outside this rule.
+    """
+    projected = clone_and_sanitize(mol)
+    if projected is None:
+        raise ValueError("cannot project declarations of an unsanitizable source")
+    changes = []
+    for atom in projected.GetAtoms():
+        if atom.GetFormalCharge() == 0 or atom.GetNoImplicit():
+            continue
+        source = {**valence_atom_json(atom), "no_implicit_hydrogens": atom.GetNoImplicit()}
+        total_hydrogens = atom.GetTotalNumHs()
+        atom.SetNumExplicitHs(total_hydrogens)
+        atom.SetNoImplicit(True)
+        atom.UpdatePropertyCache(strict=True)
+        changes.append({
+            "atom_index": atom.GetIdx(),
+            "reason": "SMILES charge requires a bracket atom with fixed hydrogen count",
+            "source": source,
+            "emitted": {**valence_atom_json(atom), "no_implicit_hydrogens": atom.GetNoImplicit()},
+        })
+    return projected, changes
+
+
+def isomeric_smiles_record(record: dict[str, Any], evidence: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     from rdkit import Chem
 
     mol = record["mol"]
     if mol is None:
+        if evidence is not None:
+            evidence.append({"record_index": record["record_index"], "status": record["status"]})
         return {
             "record_index": record["record_index"],
             "status": record["status"],
@@ -1170,24 +1203,49 @@ def isomeric_smiles_record(record: dict[str, Any]) -> dict[str, Any]:
             "title": record["title"],
             "input_smiles": record["smiles"],
         }
+    prepared_output = clone_and_sanitize(isomeric_mol)
+    if prepared_output is None:
+        raise ValueError("RDKit's isomeric emission cannot be sanitized")
+    source_graph = Chem.MolToSmiles(mol, canonical=True, isomericSmiles=True)
+    output_graph = Chem.MolToSmiles(prepared_output, canonical=True, isomericSmiles=True)
+    if source_graph != output_graph:
+        raise ValueError("RDKit's isomeric emission changed the whole stereochemical graph")
+    emitted_declarations, mandatory_brackets = required_smiles_bracket_declarations(mol)
+    if Chem.MolToSmiles(emitted_declarations, canonical=True, isomericSmiles=True) != source_graph:
+        raise ValueError("mandatory SMILES bracket declarations changed the chemical graph")
+    if evidence is not None:
+        evidence.append({
+            "record_index": record["record_index"],
+            "status": "ok",
+            "decoded_source": {
+                "normalized_perceived": smiles_perceived_semantic_record(mol),
+                "stereo": smiles_isomeric_stereo_semantic_record(mol),
+            },
+            "mandatory_bracket_declarations": mandatory_brackets,
+            "rdkit_emitted_smiles": isomeric,
+            "decoded_emission": {
+                "normalized_perceived": smiles_perceived_semantic_record(isomeric_mol),
+                "stereo": smiles_isomeric_stereo_semantic_record(isomeric_mol),
+            },
+            "whole_graph_check": {
+                "method": "RDKit canonical isomeric graph identity",
+                "source": source_graph,
+                "emission": output_graph,
+                "equal": source_graph == output_graph,
+            },
+        })
     return {
         "record_index": record["record_index"],
         "status": "ok",
         "title": record["title"],
         "input_smiles": record["smiles"],
-        "normalized_perceived": smiles_perceived_semantic_record(isomeric_mol),
-        "stereo": smiles_isomeric_stereo_semantic_record(isomeric_mol),
+        # The roundtrip target is source chemistry and hydrogen declarations,
+        # subject only to mandatory SMILES syntax for normalized charged atoms.
+        # RDKit's optional metal-neighbor bracketing is retained above as raw
+        # reference evidence, rather than imposed on another writer.
+        "normalized_perceived": smiles_perceived_semantic_record(emitted_declarations),
+        "stereo": smiles_isomeric_stereo_semantic_record(emitted_declarations),
     }
-
-
-def isomeric_smiles_record_is_stereo_bearing(record: dict[str, Any], Chem: Any) -> bool:
-    smiles = record["smiles"]
-    if "@" not in smiles and "/" not in smiles and "\\" not in smiles:
-        return False
-    mol = record["mol"]
-    if mol is None:
-        return False
-    return clone_and_sanitize(mol) is not None
 
 
 def smiles_raw_semantic_record(mol: Any) -> dict[str, Any]:
