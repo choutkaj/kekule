@@ -249,6 +249,62 @@ fn cip_assigns_pseudo_axis_descriptors_for_pseudoasymmetric_endpoint_ordering() 
 }
 
 #[test]
+fn cip_axis_with_two_enantiomorphic_endpoint_pairs_is_absolute() {
+    for (orientation, expected) in [
+        (AxisOrientation::CounterClockwise, StereoDescriptor::M),
+        (AxisOrientation::Clockwise, StereoDescriptor::P),
+    ] {
+        let mut editor = MoleculeEditor::new();
+        let left = editor.add_atom(carbon()).expect("left endpoint");
+        let right = editor.add_atom(carbon()).expect("right endpoint");
+        let axis = editor
+            .add_bond(left, right, BondOrder::Single)
+            .expect("axis bond");
+        let (left_r, _) = add_enantiomorphic_tetrahedral_carriers(editor.working_mut(), left);
+        let (right_r, _) = add_enantiomorphic_tetrahedral_carriers(editor.working_mut(), right);
+        let element = editor
+            .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
+                axis,
+                carriers: vec![StereoCarrier::Atom(left_r), StereoCarrier::Atom(right_r)],
+                orientation: Some(orientation),
+            })))
+            .expect("axis assertion");
+        let mut molecule = editor.finish().expect("molecule");
+        assign_cip(&mut molecule);
+        assert_eq!(
+            molecule.cip_descriptor(element).expect("axis"),
+            Some(expected)
+        );
+    }
+}
+
+#[test]
+fn cip_depth_limit_cannot_promote_isotope_rule_or_claim_nonstereogenicity() {
+    for smiles in ["N[C@@H]([13CH2]CCC)CCCCO", "F[C@](Cl)(CCCC)CCCC"] {
+        let mut molecule = read_smiles(smiles).expect("depth regression");
+        perceive(&mut molecule).expect("perceive");
+        assign_cip(&mut molecule);
+        let previous = molecule.perception().clone();
+        let error = stereo_api::assign_cip_descriptors_with_options(
+            &mut molecule,
+            CipAssignmentOptions {
+                max_depth: 0,
+                ..CipAssignmentOptions::default()
+            },
+        )
+        .expect_err("a truncated constitutional tie cannot be resolved");
+        assert_eq!(
+            error.issues,
+            vec![CipAssignmentIssue::DepthLimitExceeded {
+                element: StereoElementId::new(0),
+                max_depth: 0,
+            }]
+        );
+        assert_eq!(molecule.perception(), &previous);
+    }
+}
+
+#[test]
 fn cip_matches_rdkit_for_molfile_atropisomeric_axis() {
     let mut molecule =
         read_molfile(rdkit_rp6306_atrop_molblock()).expect("RDKit atropisomer fixture parses");
@@ -298,9 +354,13 @@ fn cip_axis_ranking_is_stable_across_all_carbon_aromatic_source_kekule_variants(
 
     assert_eq!(assigned_descriptors(&report), vec![StereoDescriptor::P]);
 
-    let error = read_molfile(rdkit_bms986142_atrop4_molblock())
-        .expect_err("omitted tetrahedral carrier must reject interpretation");
-    assert!(error.to_string().contains("UnassembledTetrahedralBondMark"));
+    let mut molecule = read_molfile(rdkit_bms986142_atrop4_molblock())
+        .expect("omitted tetrahedral hydrogen interprets");
+    perceive(&mut molecule).expect("BMS atropisomer perceives");
+    assert_eq!(
+        assigned_descriptors(&assign_cip(&mut molecule)),
+        vec![StereoDescriptor::S, StereoDescriptor::P]
+    );
 }
 
 #[test]
@@ -321,15 +381,24 @@ fn cip_axis_ranking_preserves_heteromancude_source_kekule_guardrail() {
 }
 
 #[test]
-fn molfile_interpretation_rejects_atrop_fixtures_with_omitted_carriers() {
-    for fixture in [
-        rdkit_bms986142_atrop5_molblock(),
-        rdkit_zm374979_atrop1_molblock(),
-        rdkit_zm374979_atrop2_molblock(),
+fn molfile_interpretation_preserves_atrop_fixtures_with_omitted_hydrogens() {
+    for (fixture, expected) in [
+        (
+            rdkit_bms986142_atrop5_molblock(),
+            [StereoDescriptor::S, StereoDescriptor::P],
+        ),
+        (
+            rdkit_zm374979_atrop1_molblock(),
+            [StereoDescriptor::R, StereoDescriptor::M],
+        ),
+        (
+            rdkit_zm374979_atrop2_molblock(),
+            [StereoDescriptor::R, StereoDescriptor::M],
+        ),
     ] {
-        let error = read_molfile(fixture)
-            .expect_err("omitted tetrahedral carrier must reject interpretation");
-        assert!(error.to_string().contains("UnassembledTetrahedralBondMark"));
+        let mut molecule = read_molfile(fixture).expect("source hydrogen interprets");
+        perceive(&mut molecule).expect("atropisomer perceives");
+        assert_eq!(assigned_descriptors(&assign_cip(&mut molecule)), expected);
     }
 }
 
@@ -516,7 +585,7 @@ fn cip_skips_small_ring_double_bond_stereo_but_assigns_cyclooctene() {
 }
 
 #[test]
-fn cip_skips_stored_nonstereogenic_small_ring_double_bond() {
+fn cip_labels_explicitly_asserted_small_ring_double_bond() {
     let mut mol = crate::core::MoleculeEditor::new();
     let atoms = (0..6)
         .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
@@ -547,7 +616,72 @@ fn cip_skips_stored_nonstereogenic_small_ring_double_bond() {
         )))
         .expect("double-bond stereo element");
 
-    assert_cip_not_stereogenic(mol.working_mut(), stereo);
+    let report = assign_cip(mol.working_mut());
+    assert_eq!(
+        report.assigned,
+        vec![CipAssignment {
+            element: stereo,
+            descriptor: StereoDescriptor::Z
+        }]
+    );
+}
+
+#[test]
+fn cip_labels_asserted_ring_bonds_independently_of_candidate_perception() {
+    // RDKit 2026.03.5 AssignCIPLabels ranks explicit CIS/TRANS assertions on
+    // small rings, aromatic Kekule bonds, and endocyclic imines alike.
+    for smiles in [
+        "C1=CCCCC1",
+        "C1=CCCCCC1",
+        "C1=CCCCCCC1",
+        "C1=NCCCCCCC1",
+        "C1=CC=CC=C1",
+    ] {
+        for (orientation, expected) in [
+            (DoubleBondOrientation::Together, StereoDescriptor::Z),
+            (DoubleBondOrientation::Opposite, StereoDescriptor::E),
+        ] {
+            let mut molecule = read_smiles(smiles).expect("ring molecule parses");
+            perceive(&mut molecule).expect("ring molecule perceives");
+            let (bond, left, right) = molecule
+                .bonds()
+                .find_map(|(id, bond)| {
+                    (bond.order == BondOrder::Double).then_some((id, bond.a(), bond.b()))
+                })
+                .expect("localized double bond");
+            let left_carrier = molecule
+                .neighbors(left)
+                .unwrap()
+                .find(|atom| *atom != right)
+                .unwrap();
+            let right_carrier = molecule
+                .neighbors(right)
+                .unwrap()
+                .find(|atom| *atom != left)
+                .unwrap();
+            let element = molecule
+                .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+                    DoubleBondStereo {
+                        bond,
+                        left,
+                        right,
+                        left_carrier: StereoCarrier::Atom(left_carrier),
+                        right_carrier: StereoCarrier::Atom(right_carrier),
+                        orientation: Some(orientation),
+                    },
+                )))
+                .expect("explicit bond assertion");
+            let report = assign_cip(&mut molecule);
+            assert_eq!(
+                report.assigned,
+                vec![CipAssignment {
+                    element,
+                    descriptor: expected
+                }],
+                "{smiles}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -1651,9 +1785,9 @@ fn failed_cip_resource_limit_restores_previous_stereo_section() {
 
 #[test]
 fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
-    const FIXTURE: &str = "N[C@@H](C(=O)O)C[C@](F)(Cl)Br";
+    const FIXTURE: &str = "F[C@](Cl)(Br)C[C@@H](N)C(=O)O";
     let options = CipAssignmentOptions {
-        max_nodes: 7,
+        max_nodes: 1,
         ..CipAssignmentOptions::default()
     };
 
@@ -1680,7 +1814,7 @@ fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
         error.issues,
         vec![CipAssignmentIssue::ResourceLimitExceeded {
             element: StereoElementId::new(1),
-            max_nodes: 7,
+            max_nodes: 1,
         }]
     );
     assert!(installed_cip_descriptors(&molecule).is_empty());
@@ -1700,8 +1834,11 @@ fn failed_cip_validation_preserves_previous_stereo_section() {
         .expect("center bond");
     mol.add_bond(adjacent, nonadjacent, BondOrder::Single)
         .expect("connecting bond");
-    let element = mol
-        .add_stereo_element(StereoElement {
+    let element = StereoElementId::new(0);
+    mol.working_mut()
+        .graph
+        .stereo_elements
+        .push(Some(StereoElement {
             kind: StereoElementKind::Tetrahedral(TetrahedralStereo {
                 center,
                 carriers: vec![
@@ -1712,8 +1849,7 @@ fn failed_cip_validation_preserves_previous_stereo_section() {
                 orientation: None,
             }),
             group: None,
-        })
-        .expect("stored stereo element with valid graph references");
+        }));
     // Inject nonadjacency through internal storage to test defensive CIP
     // validation; checked editing now rejects this malformed reference.
     let stored = mol.working_mut().graph.stereo_elements[element.index()]
@@ -1780,6 +1916,18 @@ fn successful_cip_reassignment_replaces_the_complete_descriptor_set() {
     let StereoElementKind::Tetrahedral(stereo) = &mut unknown_kind else {
         unreachable!("test fixture is tetrahedral");
     };
+    // Keep the unknown assertion on a separate center: each graph focus has
+    // exactly one represented configuration, including an unknown one.
+    let second_center = mol.add_atom(carbon()).unwrap();
+    let mut second_carriers = Vec::new();
+    for symbol in ["F", "Cl", "Br", "I"] {
+        let carrier = mol.add_atom(element_atom(symbol)).unwrap();
+        mol.add_bond(second_center, carrier, BondOrder::Single)
+            .unwrap();
+        second_carriers.push(StereoCarrier::Atom(carrier));
+    }
+    stereo.center = second_center;
+    stereo.carriers = second_carriers;
     stereo.orientation = None;
     let unknown = mol
         .add_stereo_element(StereoElement::new(unknown_kind))
@@ -1828,6 +1976,165 @@ fn cip_descriptors_are_cleared_by_stereo_invalidating_mutations() {
             .perception()
             .cip_descriptor(StereoElementId::new(0)),
         None
+    );
+}
+
+#[test]
+fn cip_rule6_descriptor_case_is_invariant_to_equivalent_smiles_neighbor_order() {
+    // Published Hanson validation suite VS294-298 specifies absolute R/S.
+    // These reordered encodings preserve the complete chiral graph. RDKit
+    // 2026.03.5 changes only the central label's case for some encodings;
+    // retain the published descriptors rather than that traversal dependence.
+    use StereoDescriptor::{R, S};
+    for (smiles, expected) in [
+        (
+            "O[C@H]1O[C@@]2(O[C@H]1O)O[C@H]([C@H](O2)O)O",
+            vec![(1, S), (3, R), (5, R), (8, R), (9, S)],
+        ),
+        (
+            "[C@]12(O[C@@H]([C@H](O)O1)O)O[C@H]([C@H](O2)O)O",
+            vec![(0, R), (2, S), (3, R), (8, R), (9, S)],
+        ),
+        (
+            "O[C@H]1O[C@@]2(O[C@H]1O)O[C@@H]([C@@H](O2)O)O",
+            vec![(1, S), (3, S), (5, R), (8, S), (9, R)],
+        ),
+        (
+            "O1[C@H]([C@H](O[C@]21O[C@H]([C@H](O2)O)O)O)O",
+            vec![(1, R), (2, S), (4, S), (6, R), (7, S)],
+        ),
+        (
+            "[C@@H]1(O)[C@@H](O[C@@]2(O[C@H](O)[C@H](O)O2)O1)O",
+            vec![(0, S), (2, R), (4, S), (6, S), (8, R)],
+        ),
+        (
+            "C1[C@@]2(OCCC1)CC[C@]3(CC2)CC[C@@]4(CC3)OCCCC4",
+            vec![(1, S), (8, S), (13, S)],
+        ),
+        (
+            "C1[C@]2(CCCCO2)CC[C@@]2(CC[C@]3(CC2)OCCCC3)C1",
+            vec![(1, S), (9, S), (12, S)],
+        ),
+        (
+            "C1[C@@]2(CC[C@]3(C1)OCCC3)CC[C@@]4(CC2)CCCO4",
+            vec![(1, R), (4, S), (12, S)],
+        ),
+        (
+            "C1[C@]2(CC[C@]3(CC[C@@]4(CC3)CCCO4)C1)OCCC2",
+            vec![(1, S), (4, R), (7, S)],
+        ),
+        (
+            "[C@]12(CC[C@]3(OCCC3)CC1)CC[C@]1(CC2)OCCC1",
+            vec![(0, R), (3, S), (12, S)],
+        ),
+        (
+            "Cl[C@H]1C[C@]2(C1)C[C@H](C2)Cl",
+            vec![(1, R), (3, S), (6, R)],
+        ),
+        (
+            "C1[C@@]2(C[C@H](Cl)C2)C[C@@H]1Cl",
+            vec![(1, S), (3, R), (7, R)],
+        ),
+        (
+            "Cl[C@H]1C[C@@]2(C[C@@H](Cl)C2)C1",
+            vec![(1, R), (3, S), (5, R)],
+        ),
+    ] {
+        let mut molecule = read_smiles(smiles).expect("validation molecule parses");
+        perceive(&mut molecule).expect("validation molecule perceives");
+        assign_cip(&mut molecule);
+        assert_eq!(tetrahedral_descriptor_map(&molecule), expected, "{smiles}");
+    }
+}
+
+#[test]
+fn cip_assigns_mutually_dependent_double_bond_auxiliary_descriptors() {
+    // Hanson validation suite VS188: each alkene differentiates the two
+    // otherwise equivalent ring paths used to label the other alkene.
+    for (smiles, expected) in [
+        (
+            r"C\C=C/1\C/C(/C1)=C\C",
+            vec![(1, 2, StereoDescriptor::E), (4, 6, StereoDescriptor::E)],
+        ),
+        (
+            r"C/C=C1\C/C(=C/C)C1",
+            vec![(1, 2, StereoDescriptor::E), (4, 5, StereoDescriptor::E)],
+        ),
+    ] {
+        let mut molecule = read_smiles(smiles).expect("VS188 parses");
+        perceive(&mut molecule).expect("VS188 perceives");
+        assign_cip(&mut molecule);
+        assert_eq!(double_bond_descriptor_map(&molecule), expected, "{smiles}");
+    }
+}
+
+#[test]
+fn cip_uses_locally_rooted_alkene_auxiliary_labels_at_tetrahedral_centers() {
+    // Hanson validation suite VS191, VS214 and VS246 exercise ordinary,
+    // pseudoasymmetric and sequence-cis/trans auxiliary labels respectively.
+    for (smiles, atoms, bonds) in [
+        (
+            r"C/C=C\C/C(=C\[C@H](C=C(C/C=C\C)C/C=C\C)O)/C/C=C/C",
+            vec![(6, StereoDescriptor::S)],
+            vec![
+                (1, 2, StereoDescriptor::Z),
+                (4, 5, StereoDescriptor::Z),
+                (10, 11, StereoDescriptor::Z),
+                (14, 15, StereoDescriptor::Z),
+                (19, 20, StereoDescriptor::E),
+            ],
+        ),
+        (
+            r"CC[C@@H]1CC/C(/CC1)=C\2/CC[C@H](CC2)CC",
+            vec![
+                (2, StereoDescriptor::LowerS),
+                (11, StereoDescriptor::LowerS),
+            ],
+            vec![(5, 8, StereoDescriptor::E)],
+        ),
+        (
+            r"C/C=C/1\CC[C@H](C)CC1",
+            vec![(5, StereoDescriptor::R)],
+            vec![(1, 2, StereoDescriptor::SeqCis)],
+        ),
+    ] {
+        let mut molecule = read_smiles(smiles).expect("validation molecule parses");
+        perceive(&mut molecule).expect("validation molecule perceives");
+        assign_cip(&mut molecule);
+        assert_eq!(tetrahedral_descriptor_map(&molecule), atoms, "{smiles}");
+        assert_eq!(double_bond_descriptor_map(&molecule), bonds, "{smiles}");
+    }
+}
+
+#[test]
+fn cip_progressive_expansion_labels_large_pubchem_cage_with_default_limits() {
+    // External PubChem100k pack_038.smi:223. Eager complete expansion exhausted
+    // 100,000 nodes even though Rule 1a resolves every center near its root.
+    let mut molecule = read_smiles("C[C@H]1[C@H]2CC=C3C2(COC14[C@@H](CC(O4)(C)C)O)C(=O)C[C@H]5[C@H]3CC[C@@H]6[C@@]5(CC7=NC8=C(C[C@]9([C@H](C8)CC[C@@H]1[C@@H]9C[C@H]([C@]2(C1=C[C@H]1[C@@]2([C@@H](C2(O1)[C@@H](C[C@@](O2)(C)CO)O)C)O)C)O)C)N=C7C6)C").expect("PubChem cage parses");
+    perceive(&mut molecule).expect("PubChem cage perceives");
+    assign_cip(&mut molecule);
+    assert_eq!(
+        tetrahedral_descriptor_map(&molecule),
+        vec![
+            (1, StereoDescriptor::S),
+            (2, StereoDescriptor::R),
+            (10, StereoDescriptor::R),
+            (20, StereoDescriptor::S),
+            (21, StereoDescriptor::R),
+            (24, StereoDescriptor::S),
+            (25, StereoDescriptor::S),
+            (32, StereoDescriptor::S),
+            (33, StereoDescriptor::S),
+            (37, StereoDescriptor::R),
+            (38, StereoDescriptor::S),
+            (40, StereoDescriptor::R),
+            (41, StereoDescriptor::R),
+            (44, StereoDescriptor::S),
+            (45, StereoDescriptor::S),
+            (46, StereoDescriptor::S),
+            (49, StereoDescriptor::R),
+            (51, StereoDescriptor::S),
+        ]
     );
 }
 

@@ -5,20 +5,71 @@ use super::descriptors::{rdkit_default_atom_index, rdkit_default_bond_count};
 use super::io::{IndexedSmallRecord, IndexedStereoPerceptionRecord};
 use super::smiles::offset_object_u64;
 
-pub(crate) fn stereo_record_json(record: &IndexedSmallRecord) -> Value {
-    let mol = &record.molecule;
+pub(crate) fn stereo_record_json(record: &IndexedStereoPerceptionRecord) -> Value {
+    if record.components.is_empty() {
+        return json!({
+            "record_index": record.record_index,
+            "status": "parse_error",
+            "title": record.title,
+            "atom_count": 0,
+            "bond_count": 0,
+            "document": record.document,
+        });
+    }
+    let mut atom_count = 0u64;
+    let mut bond_count = 0u64;
+    let mut stereo_elements = Vec::new();
+    let mut stereo_groups = Vec::new();
+    for molecule in &record.components {
+        let element_count = stereo_elements.len() as u64;
+        let group_count = stereo_groups.len() as u64;
+        for mut element in stereo_elements_json(molecule) {
+            offset_object_u64(&mut element, "index", element_count);
+            offset_stereo_references(
+                &mut element,
+                atom_count,
+                bond_count,
+                element_count,
+                group_count,
+            );
+            stereo_elements.push(element);
+        }
+        for mut group in stereo_groups_json(molecule) {
+            offset_object_u64(&mut group, "index", group_count);
+            if let Some(members) = group.get_mut("members").and_then(Value::as_array_mut) {
+                for member in members {
+                    if let Some(index) = member.as_u64() {
+                        *member = json!(index + element_count);
+                    }
+                }
+            }
+            stereo_groups.push(group);
+        }
+        atom_count += molecule.atom_count() as u64;
+        bond_count += molecule.bond_count() as u64;
+    }
+    let document = stereo_document_json(record, &stereo_elements, &[]);
     json!({
         "record_index": record.record_index,
         "status": "ok",
         "title": record.title,
-        "atom_count": mol.atom_count(),
-        "bond_count": mol.bond_count(),
-        "stereo_elements": stereo_elements_json(mol),
-        "stereo_groups": stereo_groups_json(mol),
+        "atom_count": atom_count,
+        "bond_count": bond_count,
+        "stereo_elements": stereo_elements,
+        "stereo_groups": stereo_groups,
+        "document": document,
     })
 }
 
+#[cfg(test)]
 pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> Value {
+    stereo_perception_record_with_positions_json(record, None)
+}
+
+fn stereo_perception_record_with_positions_json(
+    record: &mut IndexedSmallRecord,
+    positions: Option<&kekule::structure::Positions>,
+) -> Value {
     let source_stereo_elements = record
         .molecule
         .stereo_elements()
@@ -35,9 +86,11 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
         });
     }
     let candidates = stereo::detect_stereo_candidates(&record.molecule);
-    let positions = kekule::structure::Positions::zeros(record.molecule.atom_count());
     let mut editor = record.molecule.edit();
-    let result = stereo::materialize_coordinate_stereo(&mut editor, &positions);
+    let result = match positions {
+        Some(positions) => stereo::materialize_coordinate_stereo(&mut editor, positions),
+        None => Ok(CoordinateStereoMaterializationReport::default()),
+    };
     if result.is_ok() {
         record.molecule = editor
             .finish()
@@ -88,6 +141,7 @@ pub(crate) fn stereo_perception_group_record_json(
             "title": record.title,
             "atom_count": 0,
             "bond_count": 0,
+            "document": record.document,
         });
     }
 
@@ -103,14 +157,17 @@ pub(crate) fn stereo_perception_group_record_json(
     let mut stereo_elements = Vec::new();
     let mut stereo_groups = Vec::new();
 
-    for component in &record.components {
+    for (component_index, component) in record.components.iter().enumerate() {
         let mut component_record = IndexedSmallRecord {
             record_index: record.record_index,
             title: record.title.clone(),
             molecule: component.clone(),
             sdf_fields: BTreeMap::new(),
         };
-        let mut value = stereo_perception_record_json(&mut component_record);
+        let mut value = stereo_perception_record_with_positions_json(
+            &mut component_record,
+            record.positions[component_index].as_ref(),
+        );
         if value.get("status").and_then(Value::as_str) != Some("ok") {
             return json!({
                 "record_index": record.record_index,
@@ -118,6 +175,7 @@ pub(crate) fn stereo_perception_group_record_json(
                 "title": record.title,
                 "atom_count": record.components.iter().map(|molecule| molecule.atom_count()).sum::<usize>(),
                 "bond_count": record.components.iter().map(|molecule| molecule.bond_count()).sum::<usize>(),
+                "document": stereo_record_json(record)["document"],
             });
         }
         let object = value
@@ -219,6 +277,7 @@ pub(crate) fn stereo_perception_group_record_json(
         },
     );
 
+    let document = stereo_document_json(record, &stereo_elements, &created_element_indices);
     json!({
         "record_index": record.record_index,
         "status": "ok",
@@ -234,36 +293,88 @@ pub(crate) fn stereo_perception_group_record_json(
         },
         "stereo_elements": stereo_elements,
         "stereo_groups": stereo_groups,
+        "document": document,
     })
 }
 
+fn stereo_document_json(
+    record: &IndexedStereoPerceptionRecord,
+    elements: &[Value],
+    coordinate_elements: &[Value],
+) -> Value {
+    let mut document = record.document.clone();
+    let sources = elements.iter().map(|element| {
+        let index = &element["index"];
+        let source = if coordinate_elements.contains(index) {
+            json!("coordinates_3d")
+        } else {
+            document["format"].clone()
+        };
+        json!({
+            "element_index": index,
+            "source": source,
+            "specifiedness": if element["orientation"].is_null() { "unknown" } else { "specified" },
+        })
+    }).collect::<Vec<_>>();
+    document["stereo_sources"] = json!(sources);
+    document
+}
+
 pub(crate) fn stereo_cip_record_json(
-    record: &mut IndexedSmallRecord,
+    record: &mut IndexedStereoPerceptionRecord,
     remove_plain_hydrogens: bool,
-) -> Option<Value> {
-    if record.molecule.perceive().is_err() {
-        return None;
+) -> Result<Option<Value>, Box<dyn Error>> {
+    if record
+        .components
+        .iter()
+        .all(|molecule| molecule.stereo_elements().next().is_none())
+    {
+        return Ok(None);
     }
-    if stereo::validate_stereo(&record.molecule).is_err() {
-        return None;
+    let mut atom_count = 0;
+    let mut bond_count = 0;
+    let mut atom_descriptors = Vec::new();
+    let mut bond_descriptors = Vec::new();
+    for molecule in &mut record.components {
+        molecule.perceive().map_err(|error| {
+            boxed_error(format!(
+                "record {} perception failed: {error:?}",
+                record.record_index
+            ))
+        })?;
+        stereo::assign_cip_descriptors(molecule).map_err(|error| {
+            boxed_error(format!(
+                "record {} CIP assignment failed: {error:?}",
+                record.record_index
+            ))
+        })?;
+        let atom_index = rdkit_default_atom_index(molecule, remove_plain_hydrogens);
+        let mut atoms = cip_atom_descriptors_json(molecule, &atom_index);
+        let mut bonds = cip_bond_descriptors_json(molecule, &atom_index);
+        for atom in &mut atoms {
+            offset_object_u64(atom, "atom_index", atom_count);
+        }
+        for bond in &mut bonds {
+            offset_object_u64(bond, "begin_atom_index", atom_count);
+            offset_object_u64(bond, "end_atom_index", atom_count);
+        }
+        atom_count += atom_index.len() as u64;
+        bond_count += rdkit_default_bond_count(molecule, &atom_index);
+        atom_descriptors.extend(atoms);
+        bond_descriptors.extend(bonds);
     }
-    stereo::assign_cip_descriptors(&mut record.molecule).ok()?;
-    let mol = &record.molecule;
-    let atom_index = rdkit_default_atom_index(mol, remove_plain_hydrogens);
-    let atom_descriptors = cip_atom_descriptors_json(mol, &atom_index);
-    let bond_descriptors = cip_bond_descriptors_json(mol, &atom_index);
     if atom_descriptors.is_empty() && bond_descriptors.is_empty() {
-        return None;
+        return Ok(None);
     }
-    Some(json!({
+    Ok(Some(json!({
         "record_index": record.record_index,
         "status": "ok",
         "title": record.title,
-        "atom_count": atom_index.len(),
-        "bond_count": rdkit_default_bond_count(mol, &atom_index),
+        "atom_count": atom_count,
+        "bond_count": bond_count,
         "atom_descriptors": atom_descriptors,
         "bond_descriptors": bond_descriptors,
-    }))
+    })))
 }
 
 pub(crate) fn cip_atom_descriptors_json(
@@ -501,6 +612,41 @@ pub(crate) fn coordinate_stereo_error_json(error: &CoordinateStereoError) -> Val
 
 pub(crate) fn stereo_validation_issue_json(issue: &StereoValidationIssue) -> Value {
     match issue {
+        StereoValidationIssue::DuplicateStereoFocus { element, previous } => json!({
+            "type": "duplicate_stereo_focus",
+            "element_index": element.raw(),
+            "previous_element_index": previous.raw(),
+        }),
+        StereoValidationIssue::UnrepresentedTetrahedralNeighbor {
+            element,
+            center,
+            neighbor,
+        } => json!({
+            "type": "unrepresented_tetrahedral_neighbor",
+            "element_index": element.raw(),
+            "center_atom_index": center.raw(),
+            "neighbor_atom_index": neighbor.raw(),
+        }),
+        StereoValidationIssue::DoubleBondEndpointOvercoordinated {
+            element,
+            endpoint,
+            substituent_count,
+        } => json!({
+            "type": "double_bond_endpoint_overcoordinated",
+            "element_index": element.raw(),
+            "endpoint_atom_index": endpoint.raw(),
+            "substituent_count": substituent_count,
+        }),
+        StereoValidationIssue::AxisEndpointOvercoordinated {
+            element,
+            endpoint,
+            substituent_count,
+        } => json!({
+            "type": "axis_endpoint_overcoordinated",
+            "element_index": element.raw(),
+            "endpoint_atom_index": endpoint.raw(),
+            "substituent_count": substituent_count,
+        }),
         StereoValidationIssue::MissingStereoAtom { element, atom } => json!({
             "type": "missing_stereo_atom",
             "element_index": element.raw(),
@@ -632,6 +778,11 @@ pub(crate) fn stereo_validation_issue_json(issue: &StereoValidationIssue) -> Val
             "element_index": element.raw(),
             "axis_bond_index": axis.raw(),
             "carrier": stereo_carrier_json(carrier),
+        }),
+        StereoValidationIssue::AxisCarrierEndpointMismatch { element, axis } => json!({
+            "type": "axis_carrier_endpoint_mismatch",
+            "element_index": element.raw(),
+            "axis_bond_index": axis.raw(),
         }),
     }
 }
@@ -790,5 +941,56 @@ pub(crate) fn axis_orientation_json(orientation: AxisOrientation) -> &'static st
     match orientation {
         AxisOrientation::Clockwise => "clockwise",
         AxisOrientation::CounterClockwise => "counter_clockwise",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn representation_component_groups_keep_member_and_element_references() {
+        let mut component = kekule::smiles::to_molecules("F[C@H](Cl)Br")
+            .unwrap()
+            .pop()
+            .unwrap();
+        let members = component.stereo_elements().map(|(id, _)| id).collect();
+        let mut editor = component.edit();
+        editor
+            .add_stereo_group(StereoGroup {
+                kind: StereoGroupKind::Absolute,
+                members,
+            })
+            .unwrap();
+        component = editor.finish().unwrap();
+        let record = IndexedStereoPerceptionRecord {
+            record_index: 7,
+            title: "two grouped components".to_owned(),
+            components: vec![component.clone(), component],
+            positions: vec![None, None],
+            document: json!({"format": "constructed", "source": "", "stereo_bond_marks": []}),
+        };
+        let value = stereo_record_json(&record);
+        assert_eq!(
+            value["stereo_groups"],
+            json!([
+                {"index": 0, "kind": "absolute", "members": [0]},
+                {"index": 1, "kind": "absolute", "members": [1]},
+            ])
+        );
+        let elements = value["stereo_elements"].as_array().unwrap();
+        assert_eq!(elements.len(), 2);
+        assert_eq!(elements[0]["index"], 0);
+        assert_eq!(elements[0]["group_index"], 0);
+        assert_eq!(elements[1]["index"], 1);
+        assert_eq!(elements[1]["group_index"], 1);
+        assert_eq!(elements[1]["center_atom_index"], 5);
+        assert_eq!(
+            elements[1]["carriers"],
+            json!([
+                {"atom_index": 4}, {"atom_index": 6}, {"atom_index": 7}, {"implicit_hydrogen": true},
+            ])
+        );
+        assert_eq!(elements[0]["orientation"], elements[1]["orientation"]);
     }
 }

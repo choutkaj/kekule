@@ -1,0 +1,140 @@
+{
+  "format_version": 1,
+  "purpose": "Externally supplied PubChem inputs distinguishing optional RDKit metal-neighbor brackets from grammar-required brackets after chlorine charge normalization; source data only, no implementation-produced expectations.",
+  "selection": "Nine first distinct metal-containing control differences and two normalization-induced chlorine-charge exceptions found during the complete September 2026 stereo audit.",
+  "source_lock_sha256": "3cb29ca91967d69d1c94af4655ff5d3a0db637d7a9834682c85f7497b59ecbf9",
+  "cases": [
+    {
+      "cid": "14789",
+      "smiles": "O[Fe]=O.O[Fe]=O.[Fe]",
+      "source": {
+        "url": "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-SMILES.gz",
+        "raw_sha256": "2f4cd8e142f56831839d4fd47f155cb468a85af0e01daf4a3f91e049b99edc72",
+        "corpus_path": "benchmarks/corpora/pubchem-1k/data/packs/pack_01.smi",
+        "line": 76,
+        "source_record": "data/raw/cid_14789.smi"
+      },
+      "declaration_contract": "preserve_source"
+    },
+    {
+      "cid": "436885",
+      "smiles": "Br[Ag]I",
+      "source": {
+        "url": "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-SMILES.gz",
+        "raw_sha256": "ad4040da1a2b4d5300024fe27923f421cabd9e10f879c4cb1b92b208ed7e6a05",
+        "corpus_path": "benchmarks/corpora/pubchem-1k/data/packs/pack_02.smi",
+        "line": 14,
+        "source_record": "data/raw/cid_436885.smi"
+      },
+      "declaration_contract": "preserve_source"
+    },
+    {
+      "cid": "433645",
+      "smiles": "C1=CC=C(C(=C1)[C-]=O)[C-]=O.[Ni+2](I)I",
+      "source": {
+        "url": "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-SMILES.gz",
+        "raw_sha256": "e292df3d300bb35a3ce43e820f7b5a192281e7801fdcc30bd45f9d2bdb041b79",
+        "corpus_path": "benchmarks/corpora/pubchem-1k/data/packs/pack_03.smi",
+        "line": 26,
+        "source_record": "data/raw/cid_433645.smi"
+      },
+      "declaration_contract": "preserve_source"
+    },
+    {
+      "cid": "420114",
+      "smiles": "CC#CC#CC1=C(C=CC(=O)O1)[Hg]Cl",
+      "source": {
+        "url": "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-SMILES.gz",
+        "raw_sha256": "4451640330f2ff0b124ae3f6203f734056ff15eb1b783b5560e561cbcebbac43",
+        "corpus_path": "benchmarks/corpora/pubchem-1k/data/packs/pack_04.smi",
+        "line": 74,
+        "source_record": "data/raw/cid_420114.smi"
+      },
+      "declaration_contract": "preserve_source"
+    },
+    {
+      "cid": "107815",
+      "smiles": "O[Cr](=O)(=O)[O-]",
+      "source": {
+        "url": "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-SMILES.gz",
+        "raw_sha256": "b9ad112ea285f8564d3bd01c076b9617c2216a4f7012ea63f3fede2ee698c55f",
+        "corpus_path": "benchmarks/corpora/pubchem-1k/data/packs/pack_05.smi",
+        "line": 22,
+        "source_record": "data/raw/cid_107815.smi"
+      },
+      "declaration_contract": "preserve_source"
+    },
+    {
+      "cid": "78342",
+      "smiles": "CC(C)[Ge](C(C)C)(C(C)C)C(C)C",
+      "source": {
+        "url": "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-SMILES.gz",
+        "raw_sha256": "f34e314e8800d317ed62b639299a28883de407d5185656d89918e7ebacb9489e",
+        "corpus_path": "benchmarks/corpora/pubchem-1k/data/packs/pack_06.smi",
+        "line": 50,
+        "source_record": "data/raw/cid_78342.smi"
+      },
+      "declaration_contract": "preserve_source"
+    },
+    {
+      "cid": "303911",
+      "smiles": "CCCC[Sn]CCCC.CCOC(=O)C1=CC=C(C=C1)C(O)OO",
+      "source": {
+        "url": "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-SMILES.gz",
+        "raw_sha256": "6db7e068fb1a7263d179e684806171774010d7ce3efa99dfaf273d7a976ae3e9",
+        "corpus_path": "benchmarks/corpora/pubchem-1k/data/packs/pack_08.smi",
+        "line": 1,
+        "source_record": "data/raw/cid_303911.smi"
+      },
+      "declaration_contract": "preserve_source"
+    },
+    {
+      "cid": "498189",
+      "smiles": "CC[Sn](CC)(Cl)Cl.CS(=O)C.CS(=O)C",
+      "source": {
+        "url": "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-SMILES.gz",
+        "raw_sha256": "92340cd34c6912073e83fe6a33f73619287755a707fb00d264b89b6c2a70f30a",
+        "corpus_path": "benchmarks/corpora/pubchem-1k/data/packs/pack_09.smi",
+        "line": 46,
+        "source_record": "data/raw/cid_498189.smi"
+      },
+      "declaration_contract": "preserve_source"
+    },
+    {
+      "cid": "431888",
+      "smiles": "C(C(C(=O)O)[NH-])[S-].C(C(C(=O)O)[NH-])[S-].O=[Mo]1O[Mo](=O)O1",
+      "source": {
+        "url": "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-SMILES.gz",
+        "raw_sha256": "23a73b15ba31397760860d607fd6117f4c2bcb5cbd884bd07cd2197246870c14",
+        "corpus_path": "benchmarks/corpora/pubchem-1k/data/packs/pack_10.smi",
+        "line": 1,
+        "source_record": "data/raw/cid_431888.smi"
+      },
+      "declaration_contract": "preserve_source"
+    },
+    {
+      "cid": "173868",
+      "smiles": "COC(=O)CCCN1C2=CC3=CC=CC=C3C=C2SC1=CC=C4CCC(=C4N(C5=CC=CC=C5)C6=CC=CC=C6)C=CC7=[N+](C8=CC9=CC=CC=C9C=C8S7)CCCC(=O)OC.[O-]Cl(=O)(=O)=O",
+      "declaration_contract": "required_charge_brackets",
+      "source": {
+        "url": "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-SMILES.gz",
+        "raw_sha256": "481761cfa41002214ca683019da8624c4ec2015abacd1e96455ba8b5629dc2ec",
+        "corpus_path": "benchmarks/corpora/pubchem-1k/data/packs/pack_04.smi",
+        "line": 21,
+        "source_record": "data/raw/cid_173868.smi"
+      }
+    },
+    {
+      "cid": "423442",
+      "smiles": "CC(=O)OC1CC2C3=CC=CC=C3C1C4=CC=CC=[N+]24.OCl(=O)(O)O",
+      "declaration_contract": "required_charge_brackets",
+      "source": {
+        "url": "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-SMILES.gz",
+        "raw_sha256": "1fd1a40fabbbfdb87efe41e0d4874d4a74fad0b0633ff7a05490838c3d1fe7e2",
+        "corpus_path": "benchmarks/corpora/pubchem-1k/data/packs/pack_06.smi",
+        "line": 46,
+        "source_record": "data/raw/cid_423442.smi"
+      }
+    }
+  ]
+}

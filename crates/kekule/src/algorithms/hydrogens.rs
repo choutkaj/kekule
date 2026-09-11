@@ -308,10 +308,18 @@ pub(crate) fn remove_hydrogens_from_molecule(
                 && molecule.atom_is_aromatic(*parent).ok().flatten() == Some(true)
         })
     }));
+    let stereo_bindings = stereo_hydrogen_bindings(molecule, &removable);
     let mut editor = molecule.edit();
-    collapse_stereo_hydrogen_carriers(&mut editor, &removable)?;
     for (parent, hydrogens) in &by_parent {
         for hydrogen in hydrogens {
+            collapse_stereo_hydrogen_carrier(
+                &mut editor,
+                *hydrogen,
+                stereo_bindings
+                    .get(hydrogen)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+            )?;
             editor.delete_atom(*hydrogen)?;
             report.removed.push(RemovedHydrogen {
                 hydrogen: *hydrogen,
@@ -569,42 +577,61 @@ fn stereo_hydrogen_is_collapsible(
     })
 }
 
-fn collapse_stereo_hydrogen_carriers(
-    editor: &mut MoleculeEditor,
+fn stereo_hydrogen_bindings(
+    molecule: &Molecule,
     removable: &BTreeSet<AtomId>,
-) -> Result<(), HydrogenTransformError> {
-    let replacements = editor
-        .working()
-        .stereo_elements()
-        .filter_map(|(id, element)| {
-            let mut replacement = element.clone();
-            let mut changed = false;
-            match &mut replacement.kind {
-                StereoElementKind::Tetrahedral(stereo) => {
-                    for carrier in &mut stereo.carriers {
-                        if matches!(carrier, StereoCarrier::Atom(atom) if removable.contains(atom)) {
-                            *carrier = StereoCarrier::ImplicitHydrogen;
-                            changed = true;
-                        }
-                    }
+) -> BTreeMap<AtomId, Vec<StereoElementId>> {
+    let mut bindings = BTreeMap::<AtomId, Vec<StereoElementId>>::new();
+    for (id, element) in molecule.stereo_elements() {
+        let mut bind = |carrier| {
+            if let StereoCarrier::Atom(atom) = carrier {
+                if removable.contains(&atom) {
+                    bindings.entry(atom).or_default().push(id);
                 }
-                StereoElementKind::DoubleBond(stereo) => {
-                    if matches!(stereo.left_carrier, StereoCarrier::Atom(atom) if removable.contains(&atom)) {
-                        stereo.left_carrier = StereoCarrier::ImplicitHydrogen;
-                        changed = true;
-                    }
-                    if matches!(stereo.right_carrier, StereoCarrier::Atom(atom) if removable.contains(&atom)) {
-                        stereo.right_carrier = StereoCarrier::ImplicitHydrogen;
-                        changed = true;
-                    }
-                }
-                StereoElementKind::Axis(_) => {}
             }
-            changed.then_some((id, replacement))
-        })
-        .collect::<Vec<_>>();
-    for (id, replacement) in replacements {
-        editor.replace_stereo_element(id, replacement)?;
+        };
+        match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => {
+                stereo.carriers.iter().copied().for_each(bind)
+            }
+            StereoElementKind::DoubleBond(stereo) => {
+                bind(stereo.left_carrier);
+                bind(stereo.right_carrier);
+            }
+            StereoElementKind::Axis(_) => {}
+        }
+    }
+    bindings
+}
+
+fn collapse_stereo_hydrogen_carrier(
+    editor: &mut MoleculeEditor,
+    hydrogen: AtomId,
+    elements: &[StereoElementId],
+) -> Result<(), HydrogenTransformError> {
+    for &id in elements {
+        let mut replacement = editor.stereo_element(id)?.clone();
+        let collapse = |carrier: &mut StereoCarrier| {
+            if *carrier == StereoCarrier::Atom(hydrogen) {
+                *carrier = StereoCarrier::ImplicitHydrogen;
+            }
+        };
+        match &mut replacement.kind {
+            StereoElementKind::Tetrahedral(stereo) => stereo.carriers.iter_mut().for_each(collapse),
+            StereoElementKind::DoubleBond(stereo) => {
+                collapse(&mut stereo.left_carrier);
+                collapse(&mut stereo.right_carrier);
+            }
+            StereoElementKind::Axis(_) => {}
+        }
+        // Keep the implicit reference until its graph hydrogen is deleted.
+        // Canonicalizing now can select that same hydrogen as the endpoint's
+        // only explicit reference, causing deletion to prune the assertion.
+        // The caller deletes this H immediately, restoring complete carrier
+        // coverage before any other graph edit can prune incomplete stereo.
+        // Publication then performs normal canonicalization and validation.
+        editor.working_mut().graph.stereo_elements[id.index()] = Some(replacement);
+        editor.working_mut().invalidate_stereo();
     }
     Ok(())
 }

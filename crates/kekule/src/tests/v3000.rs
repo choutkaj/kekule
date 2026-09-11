@@ -1,6 +1,335 @@
 use super::*;
 use crate::properties::{PropertyKey, PropertyValue};
 
+fn atom_cfg_tetrahedron(cfg: u8, fourth: Option<&str>) -> String {
+    let atoms = if fourth.is_some() { 5 } else { 4 };
+    let extra_atom = fourth
+        .map(|symbol| format!("M  V30 15 {symbol} 0 -1 0 0\n"))
+        .unwrap_or_default();
+    let extra_bond = fourth.map(|_| "M  V30 4 1 99 15\n").unwrap_or_default();
+    // Deliberately nonmonotonic atom serials and bond rows: parity follows
+    // atom-block position, not serial number or incident-bond insertion order.
+    format!("parity\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS {atoms} {} 0 0 0\nM  V30 BEGIN ATOM\nM  V30 99 C 0 0 0 0 CFG={cfg}\nM  V30 20 F 1 0 0 0\nM  V30 70 Cl -1 0 0 0\nM  V30 4 Br 0 1 0 0\n{extra_atom}M  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 3 1 99 4\nM  V30 1 1 99 20\nM  V30 2 1 99 70\n{extra_bond}M  V30 END BOND\nM  V30 END CTAB\nM  END\n", atoms - 1)
+}
+
+#[test]
+fn v3000_atom_cfg_preserves_parity_unknown_and_atom_block_order() {
+    // Reference: RDKit 2026.03.6 AssignAtomChiralTagsFromMolParity,
+    // followed by rdCIPLabeler.AssignCIPLabels (the default reader only
+    // retains molParity, so the explicit parity conversion is required).
+    for (fourth, expected) in [
+        (None, StereoDescriptor::S),
+        (Some("I"), StereoDescriptor::R),
+        (Some("H"), StereoDescriptor::S),
+    ] {
+        for cfg in 0..=3 {
+            let source = atom_cfg_tetrahedron(cfg, fourth);
+            let (mut molecule, report) = read_molfile_with_report(&source).unwrap();
+            assert!(!molecule.perception().has_valence());
+            assert_eq!(
+                report.created_stereo_elements().len(),
+                usize::from(cfg != 0)
+            );
+            if cfg == 0 {
+                continue;
+            }
+            assert_eq!(
+                molecule
+                    .stereo_elements()
+                    .next()
+                    .unwrap()
+                    .1
+                    .is_explicitly_unknown(),
+                cfg == 3
+            );
+            perceive(&mut molecule).unwrap();
+            let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+            if cfg == 3 {
+                assert!(assigned.assigned.is_empty());
+            } else {
+                let expected = if cfg == 1 {
+                    expected
+                } else if expected == StereoDescriptor::R {
+                    StereoDescriptor::S
+                } else {
+                    StereoDescriptor::R
+                };
+                assert_eq!(assigned.assigned[0].descriptor, expected);
+            }
+            for output in [
+                molfile::write_v2000(&molecule).unwrap(),
+                molfile::write_v3000(&molecule).unwrap(),
+            ] {
+                let mut reread = read_molfile(&output).unwrap();
+                perceive(&mut reread).unwrap();
+                assert_eq!(
+                    stereo_api::assign_cip_descriptors(&mut reread)
+                        .unwrap()
+                        .assigned,
+                    assigned.assigned
+                );
+            }
+        }
+    }
+    for cfg in ["4", "-1", "1 CFG=1"] {
+        assert!(molfile::parse_str(
+            &atom_cfg_tetrahedron(1, None).replace("CFG=1", &format!("CFG={cfg}"))
+        )
+        .is_err());
+    }
+}
+
+#[test]
+fn v3000_atom_cfg_checks_redundant_wedges_and_unknown_precedence() {
+    let source = atom_cfg_tetrahedron(1, None);
+    let molecule = read_molfile(&source).unwrap();
+    let wedged = molfile::write_v3000(&molecule).unwrap();
+    let with_cfg = |cfg| {
+        wedged.replace(
+            "M  V30 1 C 0.0000 0.0000 0.0000 0",
+            &format!("M  V30 1 C 0.0000 0.0000 0.0000 0 CFG={cfg}"),
+        )
+    };
+    assert_eq!(
+        read_molfile(&with_cfg(1))
+            .unwrap()
+            .stereo_elements()
+            .next()
+            .unwrap()
+            .1,
+        molecule.stereo_elements().next().unwrap().1
+    );
+    assert!(read_molfile(&with_cfg(2))
+        .unwrap_err()
+        .to_string()
+        .contains("conflicts with bond wedge"));
+    assert!(read_molfile(&with_cfg(3))
+        .unwrap()
+        .stereo_elements()
+        .next()
+        .unwrap()
+        .1
+        .is_explicitly_unknown());
+    let wavy = with_cfg(1)
+        .lines()
+        .map(|line| {
+            if line.starts_with("M  V30 ") && line.contains(" CFG=") && !line.contains(" C ") {
+                line.replace("CFG=1", "CFG=2").replace("CFG=3", "CFG=2")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    assert!(read_molfile(&wavy)
+        .unwrap()
+        .stereo_elements()
+        .next()
+        .unwrap()
+        .1
+        .is_explicitly_unknown());
+}
+
+#[test]
+fn v3000_atom_cfg_numbers_explicit_hydrogen_last_regardless_of_atom_row() {
+    // CTfile Appendix A makes hydrogen highest numbered. RDKit's explicit
+    // AssignAtomChiralTagsFromMolParity helper omits this special case in
+    // 2026.03.6, so this assertion follows the format specification.
+    let source = atom_cfg_tetrahedron(1, Some("H"));
+    let hydrogen_row = "M  V30 15 H 0 -1 0 0\n";
+    for before in [
+        "M  V30 20 F",
+        "M  V30 70 Cl",
+        "M  V30 4 Br",
+        "M  V30 END ATOM",
+    ] {
+        let reordered = source
+            .replace(hydrogen_row, "")
+            .replace(before, &format!("{hydrogen_row}{before}"));
+        let mut molecule = read_molfile(&reordered).unwrap();
+        perceive(&mut molecule).unwrap();
+        assert_eq!(
+            stereo_api::assign_cip_descriptors(&mut molecule)
+                .unwrap()
+                .assigned[0]
+                .descriptor,
+            StereoDescriptor::S
+        );
+    }
+}
+
+#[test]
+fn molfile_model_preserves_drawn_e_z_and_rejects_inconsistent_or_degenerate_output() {
+    for (smiles, last_y, expected) in [
+        ("F/C=C/Cl", -1.0, StereoDescriptor::E),
+        ("F/C=C\\Cl", 1.0, StereoDescriptor::Z),
+    ] {
+        let molecule = read_smiles(smiles).unwrap();
+        let points = vec![
+            Point3::new(-1.0, 1.0, 0.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(2.0, last_y, 0.0),
+        ];
+        let model = Model::from_molecule(&molecule, &test_positions(points.clone())).unwrap();
+        let original = model.clone();
+        for output in [
+            molfile::write_model_v2000(&model).unwrap(),
+            molfile::write_model_v3000(&model).unwrap(),
+        ] {
+            let mut reread = read_molfile(&output).unwrap();
+            assert_eq!(reread.stereo_elements().count(), 1);
+            assert!(!reread.perception().has_valence());
+            perceive(&mut reread).unwrap();
+            assert_eq!(
+                stereo_api::assign_cip_descriptors(&mut reread)
+                    .unwrap()
+                    .assigned[0]
+                    .descriptor,
+                expected
+            );
+        }
+        assert_eq!(model, original);
+        for output in [
+            molfile::write_v2000(&molecule),
+            molfile::write_v3000(&molecule),
+        ] {
+            assert!(output.unwrap_err().message().contains("requires a Model"));
+        }
+        for invalid_y in [-last_y, 0.0, 0.00000001 * last_y] {
+            let mut invalid_points = points.clone();
+            invalid_points[3].y = invalid_y;
+            let model = Model::from_molecule(&molecule, &test_positions(invalid_points)).unwrap();
+            for output in [
+                molfile::write_model_v2000(&model),
+                molfile::write_model_v3000(&model),
+            ] {
+                assert!(output
+                    .unwrap_err()
+                    .message()
+                    .contains("emitted coordinates"));
+            }
+        }
+    }
+}
+
+#[test]
+fn molfile_drawn_double_bond_unknown_annotations_override_coordinates() {
+    let molecule = read_smiles("F/C=C/Cl").unwrap();
+    let model = Model::from_molecule(
+        &molecule,
+        &test_positions(vec![
+            Point3::new(-1.0, 1.0, 0.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(2.0, -1.0, 0.0),
+        ]),
+    )
+    .unwrap();
+    let source = molfile::write_model_v3000(&model).unwrap();
+    for marked in [
+        source.replace("M  V30 2 2 2 3", "M  V30 2 2 2 3 CFG=2"),
+        source.replace("M  V30 1 1 1 2", "M  V30 1 1 1 2 CFG=2"),
+    ] {
+        for text in [
+            marked.clone(),
+            marked
+                .replace("1.0000", "0.0000")
+                .replace("2.0000", "0.0000"),
+        ] {
+            let parsed = read_molfile(&text).unwrap();
+            assert_eq!(parsed.stereo_elements().count(), 1);
+            assert!(parsed
+                .stereo_elements()
+                .next()
+                .unwrap()
+                .1
+                .is_explicitly_unknown());
+        }
+    }
+    assert!(read_molfile(
+        &source
+            .replace("1.0000", "0.0000")
+            .replace("2.0000", "0.0000")
+    )
+    .unwrap()
+    .stereo_elements()
+    .next()
+    .is_none());
+}
+
+#[test]
+fn molfile_model_does_not_promote_unasserted_alkene_geometry_to_specified_stereo() {
+    let molecule = read_smiles("FC=CCl").unwrap();
+    assert_eq!(molecule.stereo_elements().count(), 0);
+    let model = Model::from_molecule(
+        &molecule,
+        &test_positions(vec![
+            Point3::new(-1.0, 1.0, 0.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(2.0, -1.0, 0.0),
+        ]),
+    )
+    .unwrap();
+    for output in [
+        molfile::write_model_v2000(&model).unwrap(),
+        molfile::write_model_v3000(&model).unwrap(),
+    ] {
+        let mut reread = read_molfile(&output).unwrap();
+        assert_eq!(reread.stereo_elements().count(), 1);
+        assert!(reread
+            .stereo_elements()
+            .next()
+            .unwrap()
+            .1
+            .is_explicitly_unknown());
+        perceive(&mut reread).unwrap();
+        assert!(stereo_api::assign_cip_descriptors(&mut reread)
+            .unwrap()
+            .assigned
+            .is_empty());
+    }
+    assert_eq!(molecule.stereo_elements().count(), 0);
+}
+
+#[test]
+fn molfile_model_e_z_preserves_explicit_carrier_pairs_and_explicit_hydrogen() {
+    for smiles in ["F/C(Cl)=C(Br)/I", "[H]/C(F)=C(Cl)/Br"] {
+        let mut molecule = read_smiles(smiles).unwrap();
+        perceive(&mut molecule).unwrap();
+        let expected = stereo_api::assign_cip_descriptors(&mut molecule)
+            .unwrap()
+            .assigned;
+        let model = Model::from_molecule(
+            &molecule,
+            &test_positions(vec![
+                Point3::new(-1.0, 1.0, 0.0),
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(-1.0, -1.0, 0.0),
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(2.0, 1.0, 0.0),
+                Point3::new(2.0, -1.0, 0.0),
+            ]),
+        )
+        .unwrap();
+        for output in [
+            molfile::write_model_v2000(&model).unwrap(),
+            molfile::write_model_v3000(&model).unwrap(),
+        ] {
+            let mut reread = read_molfile(&output).unwrap();
+            perceive(&mut reread).unwrap();
+            assert_eq!(
+                stereo_api::assign_cip_descriptors(&mut reread)
+                    .unwrap()
+                    .assigned,
+                expected
+            );
+        }
+    }
+}
+
 #[test]
 fn mol_v3000_parses_raw_atoms_bonds_coordinates_and_metadata() {
     let input = "\
@@ -375,7 +704,7 @@ M  V30 END ATOM
 M  V30 BEGIN BOND
 M  V30 END BOND
 M  V30 BEGIN COLLECTION
-M  V30 MDLV30/STEABS ATOMS=(1 1)
+M  V30 MDLV30/HILITE ATOMS=(1 1)
 M  V30 END COLLECTION
 M  V30 END CTAB
 M  END
@@ -523,14 +852,16 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         .add_atom(carbon())
         .expect("atom identifier capacity");
     molecule
-        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+        .working_mut()
+        .graph
+        .stereo_elements
+        .push(Some(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center: a,
                 carriers: vec![StereoCarrier::ImplicitHydrogen],
                 orientation: Some(TetrahedralOrientation::Clockwise),
             },
-        )))
-        .expect("stereo element");
+        ))));
     assert!(molfile::write_v3000(molecule.working())
         .expect_err("invalid stereo element should be rejected")
         .message

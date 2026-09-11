@@ -1,7 +1,7 @@
 corpus_id = "smoke"
 feature_id = "io.smiles.isomeric"
 reference_tool = "rdkit"
-reference_version = "RDKit 2026.03.3"
+reference_version = "RDKit 2026.03.6"
 comparison_mode = "implementation-golden"
 
 fixtures = [
@@ -11,6 +11,6 @@ fixtures = [
 ]
 
 notes = [
-  "Reference RDKit goldens compare semantic output after noncanonical isomeric SMILES write and reparse.",
+  "The decoded isomeric roundtrip must preserve independently parsed source chemistry and hydrogen declarations subject to mandatory charge/bracket syntax; RDKit emission is separately retained and checked for whole-graph stereo identity.",
   "Smoke fixtures cover absent stereo, tetrahedral stereo, and explicit directional double-bond stereo.",
 ]

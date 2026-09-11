@@ -430,13 +430,16 @@ fn implementation_dispatch_uses_current_isomeric_smiles_benchmark_id() {
         .as_array()
         .expect("records should be an array");
 
-    assert_eq!(records.len(), 2);
+    assert_eq!(records.len(), 3);
     assert!(records.iter().all(|record| record["status"] == "ok"));
-    assert!(!records[0]["stereo"]["atom_descriptors"]
+    assert_eq!(records[0]["input_smiles"], "CCO");
+    assert_eq!(records[0]["stereo"]["atom_descriptors"], json!([]));
+    assert_eq!(records[0]["stereo"]["bond_descriptors"], json!([]));
+    assert!(!records[1]["stereo"]["atom_descriptors"]
         .as_array()
         .expect("atom descriptors should be an array")
         .is_empty());
-    assert!(!records[1]["stereo"]["bond_descriptors"]
+    assert!(!records[2]["stereo"]["bond_descriptors"]
         .as_array()
         .expect("bond descriptors should be an array")
         .is_empty());
@@ -454,6 +457,145 @@ fn nonisomeric_smiles_benchmark_excludes_stereo_syntax() {
         );
     }
     assert_eq!(smiles_unsupported_subset_reason("CCO"), None);
+}
+
+#[test]
+fn stereo_representation_benchmark_preserves_components_and_failed_records() {
+    let root = temp_workspace_root("stereo-representation-components");
+    let fixture = root.join("fixture.smi");
+    fs::write(
+        &fixture,
+        "[Na+].F[C@H](Cl)Br.F/C=C/F CID:components\nF[C@ CID:invalid\n",
+    )
+    .expect("fixture should write");
+    let output = implementation_expected("stereo.representation", "pubchem-1k", &fixture).unwrap();
+    let records = output["records"].as_array().unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["record_index"], 0);
+    assert_eq!(records[0]["status"], "ok");
+    assert_eq!(records[0]["atom_count"], 9);
+    assert_eq!(records[0]["bond_count"], 6);
+    let elements = records[0]["stereo_elements"].as_array().unwrap();
+    assert_eq!(elements.len(), 2);
+    assert_eq!(elements[0]["index"], 0);
+    assert_eq!(elements[0]["center_atom_index"], 2);
+    assert_eq!(
+        elements[0]["carriers"],
+        json!([
+            {"atom_index": 1}, {"atom_index": 3}, {"atom_index": 4}, {"implicit_hydrogen": true}
+        ])
+    );
+    assert_eq!(elements[1]["index"], 1);
+    assert_eq!(elements[1]["center_bond_index"], 4);
+    assert_eq!(elements[1]["left_atom_index"], 6);
+    assert_eq!(elements[1]["right_atom_index"], 7);
+    assert_eq!(elements[1]["left_carrier"], json!({"atom_index": 5}));
+    assert_eq!(elements[1]["right_carrier"], json!({"atom_index": 8}));
+    assert_eq!(records[1]["record_index"], 1);
+    assert_eq!(records[1]["status"], "parse_error");
+    assert_eq!(records[1]["title"], "CID:invalid");
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn isomeric_smiles_benchmark_preserves_components_and_failures() {
+    let root = temp_workspace_root("isomeric-smiles-components");
+    let fixture = root.join("fixture.smi");
+    fs::write(
+        &fixture,
+        [
+            "[Na+].F[C@H](Cl)Br.F/C=C/F CID:components",
+            "F[C@ CID:invalid",
+            "F[C@](Cl)(Br)[CH5] CID:invalid-valence",
+            "CCO CID:non-stereo-control",
+        ]
+        .join("\n"),
+    )
+    .expect("fixture should write");
+    let output = implementation_expected("io.smiles.isomeric", "pubchem-1k", &fixture).unwrap();
+    let records = output["records"].as_array().unwrap();
+    assert_eq!(records.len(), 4);
+    assert_eq!(records[0]["status"], "ok");
+    assert_eq!(records[0]["normalized_perceived"]["atom_count"], 9);
+    assert_eq!(records[0]["normalized_perceived"]["bond_count"], 6);
+    assert_eq!(records[0]["stereo"]["status"], "ok");
+    let atoms = records[0]["stereo"]["atom_descriptors"].as_array().unwrap();
+    let bonds = records[0]["stereo"]["bond_descriptors"].as_array().unwrap();
+    assert_eq!(atoms.len(), 1);
+    assert_eq!(atoms[0]["descriptor"], "R");
+    assert_eq!(bonds.len(), 1);
+    assert_eq!(bonds[0]["descriptor"], "E");
+    assert_eq!(records[1]["record_index"], 1);
+    assert_eq!(records[1]["status"], "parse_error");
+    assert_eq!(records[2]["record_index"], 2);
+    assert_eq!(records[2]["status"], "perception_error");
+    assert_eq!(records[3]["record_index"], 3);
+    assert_eq!(records[3]["status"], "ok");
+    assert_eq!(records[3]["input_smiles"], "CCO");
+    assert_eq!(records[3]["stereo"]["atom_descriptors"], json!([]));
+    assert_eq!(records[3]["stereo"]["bond_descriptors"], json!([]));
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn stereo_benchmark_keeps_source_marks_in_the_document_and_coordinates_in_the_model() {
+    let root = temp_workspace_root("stereo-source-and-geometry");
+    let smiles_path = root.join("source.smi");
+    fs::write(&smiles_path, "F/C=C\\F source\n").unwrap();
+    let value = implementation_expected("stereo.representation", "smoke", &smiles_path).unwrap();
+    let record = &value["records"][0];
+    assert_eq!(record["document"]["source"], "F/C=C\\F");
+    assert_eq!(
+        record["document"]["stereo_bond_marks"],
+        json!([
+            {"bond_index": 0, "kind": "directional_up", "source": "smiles"},
+            {"bond_index": 2, "kind": "directional_down", "source": "smiles"},
+        ])
+    );
+    assert_eq!(
+        record["document"]["stereo_sources"],
+        json!([
+            {"element_index": 0, "source": "smiles", "specifiedness": "specified"},
+        ])
+    );
+    assert_eq!(record["stereo_elements"][0]["type"], "double_bond");
+    assert!(record.get("stereo_bond_marks").is_none());
+    assert!(record["stereo_elements"][0].get("source").is_none());
+
+    let molecule = smiles::to_molecules("FC(Cl)(Br)I").unwrap().pop().unwrap();
+    let mut orientations = Vec::new();
+    for reflection in [1.0, -1.0] {
+        let points = [
+            [1.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0],
+            [1.0, -1.0, -1.0],
+            [-1.0, 1.0, -1.0],
+            [-1.0, -1.0, 1.0],
+        ]
+        .map(|p| kekule::geometry::Point3::new(p[0] * reflection, p[1], p[2]))
+        .to_vec();
+        let positions = kekule::structure::Positions::new(kekule::units::Quantity::new(
+            points,
+            kekule::units::ANGSTROM,
+        ))
+        .unwrap();
+        let model = kekule::structure::Model::from_molecule(&molecule, &positions).unwrap();
+        let text = molfile::write_model(&model, molfile::MolfileWriteOptions::default()).unwrap();
+        let path = root.join("geometry.mol");
+        fs::write(&path, &text).unwrap();
+        let value = implementation_expected("stereo.perception", "smoke", &path).unwrap();
+        let record = &value["records"][0];
+        assert_eq!(record["status"], "ok");
+        assert_eq!(record["report"]["created_element_indices"], json!([0]));
+        assert_eq!(record["document"]["source"], text);
+        assert_eq!(
+            record["document"]["stereo_sources"][0]["source"],
+            "coordinates_3d"
+        );
+        orientations.push(record["stereo_elements"][0]["orientation"].clone());
+    }
+    assert_ne!(orientations[0], orientations[1]);
+    fs::remove_dir_all(root).ok();
 }
 
 #[test]
@@ -502,6 +644,58 @@ fn stereo_cip_benchmark_compares_only_descriptor_bearing_records() {
         .expect("atom descriptors should be an array")
         .is_empty());
 
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn stereo_cip_benchmark_preserves_disconnected_record_indices() {
+    let root = temp_workspace_root("stereo-cip-components");
+    let fixture = root.join("fixture.smi");
+    fs::write(&fixture, "[Na+].C[C@H](N)C(=O)O.[Cl-] CID:salt\n").expect("fixture should write");
+
+    let expected = implementation_expected("stereo.cip", "pubchem-1k", &fixture)
+        .expect("disconnected record should compare");
+    let records = expected["records"].as_array().expect("record array");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["atom_count"], 8);
+    assert_eq!(records[0]["bond_count"], 5);
+    assert_eq!(
+        records[0]["atom_descriptors"],
+        json!([
+            {"atom_index": 2, "descriptor": "S"}
+        ])
+    );
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn stereo_cip_benchmark_reports_perception_failure() {
+    let root = temp_workspace_root("stereo-cip-perception-failure");
+    let fixture = root.join("fixture.smi");
+    fs::write(&fixture, "F[C@](Cl)(Br)[CH5] CID:invalid-valence\n").expect("fixture should write");
+
+    let error = implementation_expected("stereo.cip", "pubchem-1k", &fixture)
+        .expect_err("failed perception must not silently drop a stereo record");
+    assert!(error.to_string().contains("record 0 perception failed"));
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn stereo_cip_benchmark_retains_isolated_hydrogen_component() {
+    let root = temp_workspace_root("stereo-cip-isolated-hydrogen");
+    let fixture = root.join("fixture.smi");
+    fs::write(&fixture, "[HH].C[C@H](N)C(=O)O CID:hydrogen-component\n")
+        .expect("fixture should write");
+
+    let expected = implementation_expected("stereo.cip", "pubchem-1k", &fixture)
+        .expect("record should compare");
+    assert_eq!(expected["records"][0]["atom_count"], 7);
+    assert_eq!(
+        expected["records"][0]["atom_descriptors"][0]["atom_index"],
+        2
+    );
     fs::remove_dir_all(root).ok();
 }
 

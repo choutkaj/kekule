@@ -792,6 +792,11 @@ pub(super) fn render_mol_v2000(
     record: &MolfileRecord<'_>,
     title: &str,
 ) -> std::result::Result<String, MolWriteError> {
+    if !record.stereo_groups.is_empty() {
+        return Err(MolWriteError::new(
+            "V2000 cannot encode enhanced stereo groups; use V3000",
+        ));
+    }
     if record.atoms.len() > V2000_MAX_ATOMS || record.bonds.len() > V2000_MAX_BONDS {
         return Err(MolWriteError::new(
             "V2000 writer supports at most 999 atoms and 999 bonds",
@@ -1008,6 +1013,7 @@ fn v2000_bond_stereo_code(
     stereo: Option<SourceStereoBondMarkKind>,
 ) -> std::result::Result<u8, MolWriteError> {
     match (order, stereo) {
+        (BondOrder::Double, Some(SourceStereoBondMarkKind::MolfileDoubleBondGeometry)) => Ok(0),
         (_, None) => Ok(0),
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeUp)) => Ok(1),
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeEither)) => Ok(4),

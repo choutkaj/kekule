@@ -6,7 +6,8 @@ use crate::chemistry::{
 };
 use crate::core::{
     Atom, AtomId, AtomRadical, BondId, BondOrder, Element, HydrogenDeclaration, Molecule,
-    MoleculeEditor, StereoElementId,
+    MoleculeEditor, StereoElement, StereoElementId, StereoElementKind, StereoGroup,
+    StereoGroupKind, TetrahedralOrientation, TetrahedralStereo,
 };
 use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
 use crate::topology::Topology;
@@ -649,38 +650,79 @@ pub fn parse_molfile_document_with_options(
 pub fn interpret_molfile_document(
     document: &MolfileDocument,
 ) -> Result<MolfileInterpretation, MolfileInterpretError> {
-    let ((staging, geometry, source_stereo), atom_lines, bond_lines) = match &document.syntax {
-        MolfileSyntax::V2000(syntax) => (
-            interpret_v2000_syntax(syntax)?,
-            syntax
-                .atoms
-                .iter()
-                .map(|record| record.line)
-                .collect::<Vec<_>>(),
-            syntax
-                .bonds
-                .iter()
-                .map(|record| record.line)
-                .collect::<Vec<_>>(),
-        ),
-        MolfileSyntax::V3000(syntax) => (
-            interpret_v3000_syntax(syntax)?,
-            syntax
-                .atoms
-                .iter()
-                .map(|record| record.line)
-                .collect::<Vec<_>>(),
-            syntax
-                .bonds
-                .iter()
-                .map(|record| record.line)
-                .collect::<Vec<_>>(),
-        ),
+    let ((mut staging, geometry, mut source_stereo), atom_lines, bond_lines) =
+        match &document.syntax {
+            MolfileSyntax::V2000(syntax) => (
+                interpret_v2000_syntax(syntax)?,
+                syntax
+                    .atoms
+                    .iter()
+                    .map(|record| record.line)
+                    .collect::<Vec<_>>(),
+                syntax
+                    .bonds
+                    .iter()
+                    .map(|record| record.line)
+                    .collect::<Vec<_>>(),
+            ),
+            MolfileSyntax::V3000(syntax) => (
+                interpret_v3000_syntax(syntax)?,
+                syntax
+                    .atoms
+                    .iter()
+                    .map(|record| record.line)
+                    .collect::<Vec<_>>(),
+                syntax
+                    .bonds
+                    .iter()
+                    .map(|record| record.line)
+                    .collect::<Vec<_>>(),
+            ),
+        };
+    let stereo_groups = match &document.syntax {
+        MolfileSyntax::V2000(_) => &[][..],
+        MolfileSyntax::V3000(syntax) => syntax.stereo_groups.as_slice(),
     };
+    let atom_cfg = match &document.syntax {
+        MolfileSyntax::V2000(_) => Vec::new(),
+        MolfileSyntax::V3000(syntax) => staging
+            .atom_ids()
+            .zip(&syntax.atoms)
+            .filter_map(|(id, atom)| atom.stereo_cfg.map(|cfg| (id, cfg, atom.line)))
+            .collect(),
+    };
+    let tetrahedral_centers = source_stereo
+        .iter()
+        .filter(|mark| {
+            matches!(
+                mark.kind,
+                crate::chemistry::SourceStereoBondMarkKind::WedgeUp
+                    | crate::chemistry::SourceStereoBondMarkKind::WedgeDown
+                    | crate::chemistry::SourceStereoBondMarkKind::WedgeEither
+            )
+        })
+        .map(|mark| mark.from)
+        .chain(atom_cfg.iter().map(|(atom, _, _)| *atom));
+    materialize_molfile_stereo_hydrogens(staging.working_mut(), tetrahedral_centers);
+    source_stereo.extend(crate::chemistry::molfile_double_bond_geometry_marks(
+        staging.working(),
+        &source_stereo,
+    ));
     let ignored_record_lines: Vec<usize> = document
         .property_records
         .iter()
         .filter(|record| {
+            if stereo_groups
+                .iter()
+                .any(|group| group.source_lines.contains(&record.number))
+                || (!stereo_groups.is_empty()
+                    && matches!(
+                        record.text.trim(),
+                        "M  V30 BEGIN COLLECTION" | "M  V30 END COLLECTION"
+                    ))
+            {
+                return false;
+            }
             let mut fields = record.text.split_whitespace();
             !matches!(
                 (fields.next(), fields.next()),
@@ -693,7 +735,7 @@ pub fn interpret_molfile_document(
     let mut components = Vec::new();
     for raw in partition_molfile_staging(staging, &geometry, &source_stereo)? {
         let mut editor = raw.editor;
-        let publication_report = canonicalize_molecule_for_publication(
+        let mut publication_report = canonicalize_molecule_for_publication(
             editor.working_mut(),
             Some(&raw.geometry),
             &raw.source_stereo,
@@ -702,6 +744,14 @@ pub fn interpret_molfile_document(
             line: canonicalization_error_line(&error, &atom_lines, &bond_lines),
             message: format!("could not publish canonical molecule: {error}"),
         })?;
+        publication_report
+            .created_stereo_elements
+            .extend(install_v3000_atom_cfg(
+                editor.working_mut(),
+                &raw.atom_map,
+                &atom_cfg,
+            )?);
+        install_molfile_stereo_groups(editor.working_mut(), &raw.atom_map, stereo_groups)?;
         let molecule = editor.finish().map_err(|error| MolfileInterpretError {
             line: raw
                 .old_atoms
@@ -773,6 +823,190 @@ pub fn interpret_molfile_document(
         line: 4,
         message: format!("could not build Molfile model: {error}"),
     })
+}
+
+fn install_v3000_atom_cfg(
+    molecule: &mut Molecule,
+    atom_map: &BTreeMap<AtomId, AtomId>,
+    declarations: &[(AtomId, u8, usize)],
+) -> Result<Vec<StereoElementId>, MolfileInterpretError> {
+    let mut created = Vec::new();
+    for (source, cfg, line) in declarations {
+        let Some(&center) = atom_map.get(source) else {
+            continue;
+        };
+        let error = |message: String| MolfileInterpretError {
+            line: *line,
+            message,
+        };
+        // Component remapping preserves atom-block order. CTfile parity uses
+        // that order, except hydrogen (explicit or omitted) is numbered last.
+        let carriers =
+            crate::chemistry::source_tetrahedral_carriers(molecule, center).ok_or_else(|| {
+                error("V3000 atom CFG requires four supported tetrahedral carriers".into())
+            })?;
+        let mut orientation = match cfg {
+            1 => Some(TetrahedralOrientation::CounterClockwise),
+            2 => Some(TetrahedralOrientation::Clockwise),
+            3 => None,
+            _ => unreachable!("parser validates atom CFG"),
+        };
+        let is_hydrogen = |carrier: &crate::core::StereoCarrier| match carrier {
+            crate::core::StereoCarrier::Atom(atom) => molecule
+                .atom(*atom)
+                .is_ok_and(|atom| atom.element.symbol() == "H"),
+            crate::core::StereoCarrier::ImplicitHydrogen => true,
+            crate::core::StereoCarrier::ImplicitLonePair => false,
+        };
+        let hydrogen_swaps = carriers
+            .iter()
+            .enumerate()
+            .filter(|(_, carrier)| is_hydrogen(carrier))
+            .map(|(index, _)| {
+                carriers[index + 1..]
+                    .iter()
+                    .filter(|carrier| !is_hydrogen(carrier))
+                    .count()
+            })
+            .sum::<usize>();
+        if hydrogen_swaps % 2 != 0 {
+            orientation = orientation.map(TetrahedralOrientation::inverted);
+        }
+        let existing = molecule
+            .stereo_elements()
+            .find_map(|(id, element)| match &element.kind {
+                StereoElementKind::Tetrahedral(stereo) if stereo.center == center => {
+                    Some((id, stereo.clone()))
+                }
+                _ => None,
+            });
+        if let Some((id, mut stereo)) = existing {
+            if let (Some(existing), Some(asserted)) = (stereo.orientation, orientation) {
+                if existing != asserted {
+                    return Err(error(
+                        "V3000 atom CFG conflicts with bond wedge configuration".into(),
+                    ));
+                }
+            } else if orientation.is_none() && stereo.orientation.is_some() {
+                stereo.orientation = None;
+                molecule
+                    .replace_stereo_element(
+                        id,
+                        StereoElement::new(StereoElementKind::Tetrahedral(stereo)),
+                    )
+                    .map_err(|cause| error(cause.to_string()))?;
+            }
+        } else {
+            let id = molecule
+                .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+                    TetrahedralStereo {
+                        center,
+                        carriers,
+                        orientation,
+                    },
+                )))
+                .map_err(|cause| error(cause.to_string()))?;
+            created.push(id);
+        }
+    }
+    Ok(created)
+}
+
+fn install_molfile_stereo_groups(
+    molecule: &mut Molecule,
+    atom_map: &BTreeMap<AtomId, AtomId>,
+    groups: &[super::v3000::V3000StereoGroupSyntax],
+) -> Result<(), MolfileInterpretError> {
+    for group in groups {
+        let atoms = group
+            .atoms
+            .iter()
+            .filter_map(|source| {
+                atom_map
+                    .iter()
+                    .find_map(|(old, new)| (old.index() == *source).then_some(*new))
+            })
+            .collect::<Vec<_>>();
+        let present = atoms.len();
+        if present == 0 {
+            continue;
+        }
+        if present != group.atoms.len() && group.kind != StereoGroupKind::Absolute {
+            return Err(MolfileInterpretError { line: group.line, message: "relative V3000 stereo groups spanning disconnected molecules cannot be represented".to_owned() });
+        }
+        let mut seen_atoms = BTreeSet::new();
+        let mut members = BTreeSet::new();
+        for atom in atoms {
+            if !seen_atoms.insert(atom) {
+                return Err(MolfileInterpretError {
+                    line: group.line,
+                    message: "duplicate V3000 stereo group atom".to_owned(),
+                });
+            }
+            let candidates = molfile_stereo_group_members_at_atom(molecule, atom);
+            let [member] = candidates.as_slice() else {
+                return Err(MolfileInterpretError {
+                line: group.line,
+                message: "V3000 stereo group atom must identify one tetrahedral center or atropisomeric axis".to_owned(),
+                });
+            };
+            members.insert(*member);
+        }
+        molecule
+            .add_stereo_group(StereoGroup {
+                kind: group.kind,
+                members: members.into_iter().collect(),
+            })
+            .map_err(|error| MolfileInterpretError {
+                line: group.line,
+                message: format!("invalid V3000 stereo group: {error}"),
+            })?;
+    }
+    Ok(())
+}
+
+pub(super) fn molfile_stereo_group_members_at_atom(
+    molecule: &Molecule,
+    atom: AtomId,
+) -> Vec<StereoElementId> {
+    molecule
+        .stereo_elements()
+        .filter_map(|(id, element)| {
+            let matches = match &element.kind {
+                StereoElementKind::Tetrahedral(stereo) => stereo.center == atom,
+                StereoElementKind::Axis(stereo) => molecule
+                    .bond(stereo.axis)
+                    .is_ok_and(|bond| bond.a() == atom || bond.b() == atom),
+                StereoElementKind::DoubleBond(_) => false,
+            };
+            matches.then_some(id)
+        })
+        .collect()
+}
+
+fn materialize_molfile_stereo_hydrogens(
+    molecule: &mut Molecule,
+    centers: impl IntoIterator<Item = AtomId>,
+) {
+    for center in centers {
+        let Ok(atom) = molecule.atom(center) else {
+            continue;
+        };
+        // Molfile's omitted fourth substituent is an implicit hydrogen when
+        // its atom valence permits one. Resolve that format convention into a
+        // fixed carrier before the represented-only normalization kernel runs.
+        // No installed perception or unmarked coordinate inference is involved.
+        if !atom.hydrogens.allows_implicit()
+            || molecule.incident_bonds(center).ok().map(Iterator::count) != Some(3)
+            || crate::algorithms::rdkit_implicit_hydrogen_count(molecule, center, atom) != 1
+        {
+            continue;
+        }
+        molecule
+            .atom_mut(center)
+            .expect("source stereo center exists")
+            .hydrogens = HydrogenDeclaration::Fixed(1);
+    }
 }
 
 struct RawMolfileComponent {
@@ -893,4 +1127,79 @@ fn canonicalization_error_line(
         .or_else(|| bond_lines.first().copied())
         .or_else(|| atom_lines.first().copied())
         .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod stereo_group_tests {
+    use super::*;
+    use crate::core::{AxisOrientation, AxisStereo, StereoCarrier};
+
+    #[test]
+    fn enhanced_group_rejects_an_endpoint_shared_by_two_axes() {
+        // This represented graph tests source-member identity, independently
+        // of the chemical stability or coordinate perception of either axis.
+        let mut editor = MoleculeEditor::new();
+        let atoms = (0..5)
+            .map(|_| {
+                editor
+                    .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let bonds = atoms
+            .windows(2)
+            .map(|pair| {
+                editor
+                    .add_bond(pair[0], pair[1], BondOrder::Single)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mut axes = Vec::new();
+        for (bond, left, right) in [
+            (bonds[1], atoms[0], atoms[3]),
+            (bonds[2], atoms[1], atoms[4]),
+        ] {
+            axes.push(
+                editor
+                    .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
+                        axis: bond,
+                        carriers: vec![StereoCarrier::Atom(left), StereoCarrier::Atom(right)],
+                        orientation: Some(AxisOrientation::Clockwise),
+                    })))
+                    .unwrap(),
+            );
+        }
+        let mut molecule = editor.finish().unwrap();
+        assert_eq!(
+            molfile_stereo_group_members_at_atom(&molecule, atoms[2]),
+            axes
+        );
+        assert_eq!(
+            molfile_stereo_group_members_at_atom(&molecule, atoms[1]),
+            [axes[0]]
+        );
+        assert_eq!(
+            molfile_stereo_group_members_at_atom(&molecule, atoms[3]),
+            [axes[1]]
+        );
+        let atom_map = atoms.iter().copied().map(|atom| (atom, atom)).collect();
+        let mut group = super::super::v3000::V3000StereoGroupSyntax {
+            kind: StereoGroupKind::And,
+            atoms: vec![atoms[2].index()],
+            line: 73,
+            source_lines: vec![73],
+        };
+        let error =
+            install_molfile_stereo_groups(&mut molecule, &atom_map, &[group.clone()]).unwrap_err();
+        assert_eq!(error.line(), 73);
+        assert!(error
+            .message()
+            .contains("must identify one tetrahedral center or atropisomeric axis"));
+        assert_eq!(molecule.stereo_groups().count(), 0);
+
+        // The other endpoint of each axis identifies that member uniquely.
+        group.atoms = vec![atoms[1].index(), atoms[3].index()];
+        install_molfile_stereo_groups(&mut molecule, &atom_map, &[group]).unwrap();
+        assert_eq!(molecule.stereo_groups().next().unwrap().1.members, axes);
+    }
 }

@@ -132,6 +132,10 @@ impl std::error::Error for GraphValidationError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StereoPublicationError {
+    DuplicateElementFocus {
+        element: StereoElementId,
+        previous: StereoElementId,
+    },
     InvalidElementReference {
         element: StereoElementId,
     },
@@ -158,6 +162,10 @@ pub enum StereoPublicationError {
 impl fmt::Display for StereoPublicationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DuplicateElementFocus { element, previous } => write!(
+                formatter,
+                "stereo elements {previous} and {element} assert the same focus"
+            ),
             Self::InvalidElementReference { element } => write!(
                 formatter,
                 "stereo element stereo{} references an invalid atom or bond",
@@ -685,7 +693,14 @@ fn validate_graph(molecule: &Molecule) -> std::result::Result<(), GraphValidatio
 }
 
 fn validate_stereo(molecule: &Molecule) -> std::result::Result<(), StereoPublicationError> {
+    let mut foci = std::collections::BTreeMap::new();
     for (element_id, element) in molecule.stereo_elements() {
+        if let Some(previous) = foci.insert(element.kind.focus(), element_id) {
+            return Err(StereoPublicationError::DuplicateElementFocus {
+                element: element_id,
+                previous,
+            });
+        }
         molecule
             .validate_stereo_element_refs(element)
             .map_err(|_| StereoPublicationError::InvalidElementReference {
@@ -985,7 +1000,7 @@ mod tests {
                     left: chlorine,
                     right: oxo,
                     left_carrier: StereoCarrier::Atom(hydroxyl),
-                    right_carrier: StereoCarrier::ImplicitLonePair,
+                    right_carrier: StereoCarrier::ImplicitHydrogen,
                     orientation: None,
                 },
             )))

@@ -1,7 +1,7 @@
 feature_id = "stereo.representation"
 corpus_id = "pl-rex"
-reference_tool = "pl-rex-manual-semantic"
-reference_version = "PL-REX 1.0.1 ligand corpus 2026-07-09"
+reference_tool = "reviewed-stereo-schema"
+reference_version = "v2 + RDKit 2026.03.6"
 comparison_mode = "implementation-golden"
 
 fixtures = [
@@ -11,5 +11,5 @@ fixtures = [
 
 notes = [
   "Externally supplied PL-REX ligand SDF packs provide manually reviewed coordinate- and Molfile-stereo representation regression coverage over curated protein-ligand benchmark structures.",
-  "Goldens compare semantic stereo elements, groups, and source bond marks, not bytewise SDF spelling or parser-local IDs.",
+  "Schema 2 asserts canonical stereo elements and groups plus separately retained source-document evidence; schema 1 bytes and hashes are archived.",
 ]
