@@ -10,6 +10,10 @@ static EMPTY_CIP_DESCRIPTORS: BTreeMap<StereoElementId, StereoDescriptor> = BTre
 /// The valence model used to produce installed valence state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValenceModel {
+    /// RDKit-like allowed valences and hydrogen inference on localized chemistry.
+    ///
+    /// Zero-order and dative bonds contribute zero at both endpoints. Dative
+    /// acceptor valence therefore differs from RDKit's directional bond model.
     RdkitLike,
 }
 
@@ -19,10 +23,14 @@ pub enum AromaticityModel {
     RdkitLike,
 }
 
-/// The algorithm used to select an installed ring basis.
+/// The algorithm used to select an installed ring set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RingBasisModel {
-    /// Kekule's deterministic Figueras/SSSR-like basis selection.
+    /// RDKit-like Figueras selection and symmetrization, with a deterministic
+    /// depth-first cycle fallback when the candidate search is incomplete.
+    ///
+    /// This follows the selected-ring model rather than promising a minimum
+    /// cycle basis or that the selected rings span the complete cycle space.
     FiguerasSssrLike,
 }
 
@@ -76,21 +84,26 @@ impl RingMembership {
     }
 }
 
-/// One ring in an installed deterministic ring basis.
+/// One ring in an installed deterministic selected ring set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ring {
     pub atoms: Vec<AtomId>,
     pub bonds: Vec<BondId>,
 }
 
-/// A deterministic ring basis installed in molecule perception state.
+/// A deterministic selected ring set installed in molecule perception state.
+///
+/// The RDKit-like model adds symmetric alternatives to its Figueras selection
+/// and may fall back to depth-first cycles. The result is not guaranteed to be
+/// a minimum cycle basis or to span the complete cycle space. Cycle membership
+/// is available separately through [`RingMembership`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RingSet {
     pub(crate) rings: Vec<Ring>,
 }
 
 impl RingSet {
-    /// Constructs a detached deterministic ring basis.
+    /// Constructs a detached selected ring set.
     ///
     /// Ring references and graph coherence are checked when the containing
     /// [`Perception`] is installed on a molecule.

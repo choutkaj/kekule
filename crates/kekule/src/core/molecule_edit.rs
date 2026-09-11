@@ -41,7 +41,6 @@ pub enum MoleculePublicationError {
     DisconnectedGraph(MoleculeConnectivityError),
     InvalidGraph(GraphValidationError),
     InvalidStereo(StereoPublicationError),
-    FormalChargeOutOfRange { atom: AtomId, charge: usize },
 }
 
 impl fmt::Display for MoleculePublicationError {
@@ -51,10 +50,6 @@ impl fmt::Display for MoleculePublicationError {
             Self::DisconnectedGraph(error) => write!(formatter, "{error}"),
             Self::InvalidGraph(error) => write!(formatter, "invalid molecular graph: {error}"),
             Self::InvalidStereo(error) => write!(formatter, "invalid represented stereo: {error}"),
-            Self::FormalChargeOutOfRange { atom, charge } => write!(
-                formatter,
-                "publishing atom {atom} requires formal charge +{charge}, which is outside the supported range"
-            ),
         }
     }
 }
@@ -65,7 +60,7 @@ impl std::error::Error for MoleculePublicationError {
             Self::DisconnectedGraph(error) => Some(error),
             Self::InvalidGraph(error) => Some(error),
             Self::InvalidStereo(error) => Some(error),
-            Self::EmptyGraph | Self::FormalChargeOutOfRange { .. } => None,
+            Self::EmptyGraph => None,
         }
     }
 }
@@ -203,12 +198,6 @@ impl fmt::Display for StereoPublicationError {
 }
 
 impl std::error::Error for StereoPublicationError {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CanonicalRepresentationError {
-    pub(crate) atom: AtomId,
-    pub(crate) charge: usize,
-}
 
 impl Molecule {
     /// Starts a detached transaction from this published molecule.
@@ -626,12 +615,7 @@ fn publish_molecule(
     validate_stereo(&molecule).map_err(MoleculePublicationError::InvalidStereo)?;
     let perceived_graph =
         (molecule.perception != Perception::default()).then(|| molecule.graph.clone());
-    canonicalize_represented_chemistry(&mut molecule).map_err(|error| {
-        MoleculePublicationError::FormalChargeOutOfRange {
-            atom: error.atom,
-            charge: error.charge,
-        }
-    })?;
+    canonicalize_represented_chemistry(&mut molecule);
     if perceived_graph.is_some_and(|graph| graph != molecule.graph) {
         molecule.clear_perception();
     }
@@ -750,31 +734,27 @@ fn validate_stereo(molecule: &Molecule) -> std::result::Result<(), StereoPublica
     Ok(())
 }
 
-pub(crate) fn canonicalize_represented_chemistry(
-    molecule: &mut Molecule,
-) -> std::result::Result<(), CanonicalRepresentationError> {
+pub(crate) fn canonicalize_represented_chemistry(molecule: &mut Molecule) {
     let halogens = molecule
         .atoms()
         .filter_map(|(atom_id, atom)| {
             (atom.formal_charge == 0
                 && matches!(atom.element.symbol(), "Cl" | "Br" | "I")
-                && has_terminal_single_bond_oxygen_neighbor(molecule, atom_id))
+                && is_rdkit_oxohalogen(molecule, atom_id, atom))
             .then_some(atom_id)
         })
         .collect::<Vec<_>>();
 
     let mut rewritten = false;
     for atom_id in halogens {
-        let oxo_bonds = oxo_bonds_to_neutral_oxygen(molecule, atom_id);
+        let oxo_bonds = oxo_bonds_to_oxygen(molecule, atom_id);
         if oxo_bonds.is_empty() {
             continue;
         }
         rewritten = true;
-        let charge = oxo_bonds.len();
-        let formal_charge = i8::try_from(charge).map_err(|_| CanonicalRepresentationError {
-            atom: atom_id,
-            charge,
-        })?;
+        // Explicit valence is at most seven, hence at most three oxo bonds.
+        // Out-of-model graphs are left for valence validation.
+        let formal_charge = i8::try_from(oxo_bonds.len()).expect("at most three oxo bonds");
 
         if let Some(atom) = molecule.graph.atoms[atom_id.index()].as_mut() {
             atom.formal_charge = formal_charge;
@@ -793,34 +773,30 @@ pub(crate) fn canonicalize_represented_chemistry(
         molecule.clear_perception();
     }
     molecule.canonicalize_stored_stereo_elements();
-    Ok(())
 }
 
-fn has_terminal_single_bond_oxygen_neighbor(molecule: &Molecule, atom_id: AtomId) -> bool {
+fn is_rdkit_oxohalogen(molecule: &Molecule, atom_id: AtomId, atom: &Atom) -> bool {
+    // RDKit 2026.03.3 halogenCleanup: oxygen-only neighbors and represented
+    // explicit valence 3, 5 or 7. Bridging ester oxygen is allowed. This reads
+    // represented bond/H contributions, never installed perception.
+    let explicit = crate::algorithms::explicit_valence(molecule, atom_id)
+        + usize::from(atom.hydrogens.explicit_count());
+    if !matches!(explicit, 3 | 5 | 7) {
+        return false;
+    }
     molecule
         .incident_bonds(atom_id)
         .ok()
         .into_iter()
         .flatten()
-        .any(|(_, bond)| {
-            let oxygen_id = bond.other_atom(atom_id);
-            bond.order == BondOrder::Single
-                && molecule
-                    .atom(oxygen_id)
-                    .is_ok_and(|neighbor| neighbor.element.symbol() == "O")
-                && molecule.incident_bonds(oxygen_id).is_ok_and(|mut bonds| {
-                    bonds.all(|(_, oxygen_bond)| {
-                        let neighbor_id = oxygen_bond.other_atom(oxygen_id);
-                        neighbor_id == atom_id
-                            || molecule
-                                .atom(neighbor_id)
-                                .is_ok_and(|neighbor| neighbor.element.symbol() == "H")
-                    })
-                })
+        .all(|(_, bond)| {
+            molecule
+                .atom(bond.other_atom(atom_id))
+                .is_ok_and(|neighbor| neighbor.element.symbol() == "O")
         })
 }
 
-fn oxo_bonds_to_neutral_oxygen(molecule: &Molecule, atom_id: AtomId) -> Vec<(AtomId, BondId)> {
+fn oxo_bonds_to_oxygen(molecule: &Molecule, atom_id: AtomId) -> Vec<(AtomId, BondId)> {
     molecule
         .incident_bonds(atom_id)
         .ok()
@@ -832,8 +808,7 @@ fn oxo_bonds_to_neutral_oxygen(molecule: &Molecule, atom_id: AtomId) -> Vec<(Ato
             }
             let oxygen_id = bond.other_atom(atom_id);
             let oxygen = molecule.atom(oxygen_id).ok()?;
-            (oxygen.element.symbol() == "O" && oxygen.formal_charge == 0)
-                .then_some((oxygen_id, bond_id))
+            (oxygen.element.symbol() == "O").then_some((oxygen_id, bond_id))
         })
         .collect()
 }
@@ -1179,7 +1154,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_editor_canonicalization_leaves_the_published_molecule_unchanged() {
+    fn editor_publication_leaves_out_of_model_oxohalogens_for_valence_validation() {
         let mut builder = crate::core::MoleculeEditor::new();
         let chlorine = builder.add_atom(atom("Cl")).unwrap();
         let anchor = builder.add_atom(atom("O")).unwrap();
@@ -1199,26 +1174,17 @@ mod tests {
         let before = molecule.clone();
 
         let mut editor = molecule.edit();
-        for bond in oxo_bonds {
+        for &bond in &oxo_bonds {
             editor.bond_mut(bond).unwrap().set_order(BondOrder::Double);
         }
-        let draft = format!("{editor:#?}");
-        let failure = editor.clone().try_finish().unwrap_err();
-        assert_eq!(
-            failure.error(),
-            &MoleculePublicationError::FormalChargeOutOfRange {
-                atom: chlorine,
-                charge: 128,
-            }
-        );
-        assert_eq!(format!("{:#?}", failure.editor()), draft);
-        assert_eq!(
-            editor.finish(),
-            Err(MoleculePublicationError::FormalChargeOutOfRange {
-                atom: chlorine,
-                charge: 128,
-            })
-        );
+        let mut edited = editor
+            .finish()
+            .expect("publication does not validate valence");
+        assert_eq!(edited.atom(chlorine).unwrap().formal_charge, 0);
+        assert!(oxo_bonds
+            .iter()
+            .all(|&bond| edited.bond(bond).unwrap().order == BondOrder::Double));
+        assert!(edited.perceive().is_err(), "valence must reject this graph");
         assert_eq!(molecule, before);
     }
 }
