@@ -16,8 +16,3 @@ fixtures = [
   "data/packs/pack_09.smi",
   "data/packs/pack_10.smi",
 ]
-
-notes = [
-  "Externally supplied PubChem isomeric SMILES packs provide broader noncanonical isomeric SMILES writer parity coverage for all source records, including non-stereo controls.",
-  "Decoded output is compared with source graph, hydrogen declarations subject to mandatory charge/bracket syntax, and CIP stereo; RDKit raw emission and its whole-graph equivalence check remain separate reference evidence.",
-]

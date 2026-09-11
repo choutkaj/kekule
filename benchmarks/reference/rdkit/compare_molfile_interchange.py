@@ -10,12 +10,11 @@ import json
 from pathlib import Path
 import platform
 import re
-import subprocess
 
 from rdkit import Chem, rdBase
 from rdkit.Chem import rdCIPLabeler
 
-from compare_cip import DESCRIPTORS, RDKIT_VERSION, sha256
+from probe_support import DESCRIPTORS, RDKIT_VERSION, run_probe, sha256, write_report
 
 
 def labels(molecule):
@@ -142,9 +141,10 @@ def main():
         # separately documented RDKit helper discrepancy and Rust regression).
         Chem.AssignAtomChiralTagsFromMolParity(reference)
         requests.append(dict(kind="atom_cfg", name=f"CFG={cfg}", molecule=reference, source=source, clear=False, origin=tetrahedron_origin))
-    completed = subprocess.run([str(args.probe.resolve())], input="".join(json.dumps({"molfile": case["source"], "clear_double_stereo": case["clear"]}) + "\n" for case in requests), text=True, capture_output=True, check=True)
-    responses = [json.loads(line) for line in completed.stdout.splitlines()]
-    assert len(responses) == len(requests)
+    responses = run_probe(args.probe, [
+        json.dumps({"molfile": case["source"], "clear_double_stereo": case["clear"]})
+        for case in requests
+    ])
     failures = []
     evidence = []
     checks = 0
@@ -180,9 +180,7 @@ def main():
     summary = dict(schema_version=2, rdkit_version=rdBase.rdkitVersion, python=platform.python_version(),
                    inputs=inputs, probe={"path": str(args.probe), "sha256": sha256(args.probe)},
                    requests=len(requests), cross_tool_outputs=checks, failures=failures, request_evidence=evidence)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    with args.output.open("x", encoding="utf-8") as output:
-        output.write(json.dumps(summary, indent=2) + "\n")
+    write_report(args.output, summary)
     print(json.dumps({key: summary[key] for key in ("rdkit_version", "requests", "cross_tool_outputs", "failures")}))
     raise SystemExit(bool(failures))
 

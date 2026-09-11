@@ -106,8 +106,3 @@ fixtures = [
   "data/packs/pack_099.smi",
   "data/packs/pack_100.smi",
 ]
-
-notes = [
-  "Externally supplied PubChem isomeric SMILES packs provide large small-molecule stereo perception regression coverage.",
-  "Schema 2 uses retained Model coordinates for explicit stereo inference and asserts source elements, created elements, candidates and groups.",
-]

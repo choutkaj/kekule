@@ -582,25 +582,13 @@ pub mod mmcif {
 
     /// Writes a model using entity semantics derived from canonical topology classification.
     ///
-    /// Use [`write_with_classifications`] for expert format-specific overrides
-    /// or [`write_with_report`] to preserve interpreted mmCIF source semantics.
-    pub fn write(
-        model: &crate::structure::Model,
-        options: MmcifWriteOptions,
-    ) -> Result<String, MmcifWriteError> {
-        crate::io::write_mmcif_model(model, options)
-    }
-
-    /// Writes one model as one block using canonical topology classification.
-    ///
-    /// This is the canonical-object spelling of [`write()`]. An mmCIF-derived
-    /// model may use [`write_model_with_report`] to preserve exact source entity
-    /// and asymmetry semantics.
+    /// Use [`write_model_with_classifications`] for expert format-specific overrides
+    /// or [`write_model_with_report`] to preserve interpreted mmCIF source semantics.
     pub fn write_model(
         model: &crate::structure::Model,
         options: MmcifWriteOptions,
     ) -> Result<String, MmcifWriteError> {
-        write(model, options)
+        crate::io::write_mmcif_model(model, options)
     }
 
     /// Writes independent models as one deterministic block per model.
@@ -690,20 +678,12 @@ pub mod mmcif {
     /// populated topology hierarchy chain (and one to each hierarchy-free
     /// instance). Instances touched by the same chain must therefore have the
     /// same explicit classification.
-    pub fn write_with_classifications(
-        model: &crate::structure::Model,
-        classifications: &MmcifEntityClassifications,
-        options: MmcifWriteOptions,
-    ) -> Result<String, MmcifWriteError> {
-        crate::io::write_mmcif_model_with_classifications(model, classifications, options)
-    }
-
     pub fn write_model_with_classifications(
         model: &crate::structure::Model,
         classifications: &MmcifEntityClassifications,
         options: MmcifWriteOptions,
     ) -> Result<String, MmcifWriteError> {
-        write_with_classifications(model, classifications, options)
+        crate::io::write_mmcif_model_with_classifications(model, classifications, options)
     }
 
     /// Writes a canonical model while preserving source mmCIF entity/asymmetry semantics.
@@ -716,20 +696,12 @@ pub mod mmcif {
     /// atom, component, and asymmetry identifiers into the corresponding label
     /// output fields; the original report still records that those label fields
     /// were absent.
-    pub fn write_with_report(
-        model: &crate::structure::Model,
-        report: &MmcifInterpretationReport,
-        options: MmcifWriteOptions,
-    ) -> Result<String, MmcifWriteError> {
-        crate::io::write_mmcif_model_with_report(model, report, options)
-    }
-
     pub fn write_model_with_report(
         model: &crate::structure::Model,
         report: &MmcifInterpretationReport,
         options: MmcifWriteOptions,
     ) -> Result<String, MmcifWriteError> {
-        write_with_report(model, report, options)
+        crate::io::write_mmcif_model_with_report(model, report, options)
     }
 
     pub fn write_model_to(

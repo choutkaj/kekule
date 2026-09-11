@@ -344,7 +344,7 @@ fn mmcif_model_is_one_block_with_coordinate_model_one_and_automatic_classificati
     let model = model("C", &[[4.0, 5.0, 6.0]]);
     let automatic = mmcif::write_model(&model, MmcifWriteOptions::default()).unwrap();
     assert!(automatic.contains("1 non-polymer"));
-    let text = mmcif::write_with_classifications(
+    let text = mmcif::write_model_with_classifications(
         &model,
         &classifications(&model),
         MmcifWriteOptions::default(),

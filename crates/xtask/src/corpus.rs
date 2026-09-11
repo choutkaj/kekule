@@ -318,11 +318,11 @@ pub(crate) fn check_corpus_artifacts(
                     path.display()
                 ))
             })?;
-        if manifest.benchmark_id != benchmark_id {
+        if manifest.feature_id != benchmark_id {
             return Err(boxed_error(format!(
-                "{} declares legacy feature_id `{}`, expected benchmark ID `{benchmark_id}`",
+                "{} declares feature_id `{}`, expected benchmark ID `{benchmark_id}`",
                 path.display(),
-                manifest.benchmark_id
+                manifest.feature_id
             )));
         }
         if manifest.corpus_id != corpus {

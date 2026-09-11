@@ -12,11 +12,7 @@ impl Trajectory {
         reference: ModelView<'_>,
         correspondence: &AtomCorrespondence,
     ) -> Result<Self, SuperpositionError> {
-        self.superpose_to_model_with_options(
-            reference,
-            correspondence,
-            SuperpositionOptions::default(),
-        )
+        self.superpose_to_model_with_options(reference, correspondence, KabschOptions::default())
     }
 
     /// Fits to an independent reference with weights in correspondence pair order.
@@ -24,7 +20,7 @@ impl Trajectory {
         &self,
         reference: ModelView<'_>,
         correspondence: &AtomCorrespondence,
-        options: SuperpositionOptions<'_>,
+        options: KabschOptions<'_>,
     ) -> Result<Self, SuperpositionError> {
         let frames = self.model_superposition_frames(reference, correspondence, options)?;
         self.with_frames(frames)
@@ -40,7 +36,7 @@ impl Trajectory {
         self.superpose_to_model_in_place_with_options(
             reference,
             correspondence,
-            SuperpositionOptions::default(),
+            KabschOptions::default(),
         )
     }
 
@@ -49,7 +45,7 @@ impl Trajectory {
         &mut self,
         reference: ModelView<'_>,
         correspondence: &AtomCorrespondence,
-        options: SuperpositionOptions<'_>,
+        options: KabschOptions<'_>,
     ) -> Result<(), SuperpositionError> {
         let frames = self.model_superposition_frames(reference, correspondence, options)?;
         self.replace_frames(frames)
@@ -60,7 +56,7 @@ impl Trajectory {
         &self,
         reference: ModelView<'_>,
         correspondence: &AtomCorrespondence,
-        options: SuperpositionOptions<'_>,
+        options: KabschOptions<'_>,
     ) -> Result<Vec<TrajectoryFrame>, SuperpositionError> {
         correspondence
             .ensure_compatible(self.topology(), reference.topology())

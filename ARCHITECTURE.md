@@ -926,7 +926,7 @@ block.interpret_ensemble_with_options(...)
 
 A method form on `Document`/`Record`/`Block` is preferred for ordinary navigation
 once that source object already exists. Format-namespace free functions may remain
-as concise whole-source conveniences or compatibility wrappers, but there must be
+as concise whole-source conveniences, but there must be
 one authoritative implementation path beneath them.
 
 ### Component output and cardinality

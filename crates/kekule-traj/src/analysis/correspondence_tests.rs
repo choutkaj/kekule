@@ -139,7 +139,7 @@ fn correspondence_superposition_agrees_loaded_streaming_and_in_place_with_all_fi
         .collect::<Vec<_>>();
     let reference_before = reference.clone();
     let weights = [8., 1., 4., 2.];
-    let options = SuperpositionOptions {
+    let options = KabschOptions {
         weighting: kekule::alignment::AlignmentWeighting::Explicit(&weights),
         ..Default::default()
     };
@@ -353,7 +353,7 @@ fn correspondence_measurement_validates_weights_empty_pairs_and_periodic_policy(
             &fit,
             &measurement,
             AlignedRmsdOptions {
-                superposition: SuperpositionOptions {
+                superposition: KabschOptions {
                     periodic_policy: kekule::alignment::PeriodicAlignmentPolicy::RejectPeriodic,
                     ..Default::default()
                 },
