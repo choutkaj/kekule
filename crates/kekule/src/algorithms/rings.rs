@@ -47,6 +47,11 @@ pub(super) fn compute_ring_membership(mol: &Molecule) -> RingMembership {
     membership
 }
 
+/// Installs graph-theoretic cycle membership, excluding zero and dative bonds.
+///
+/// This linear-time traversal is independent of the model's selected rings.
+/// Recomputing membership preserves valence and clears the ring set,
+/// aromaticity, and dependent stereo perception.
 pub fn perceive_ring_membership(mol: &mut Molecule) -> RingMembership {
     let membership = compute_ring_membership(mol);
     mol.install_ring_membership(membership.clone());
@@ -57,7 +62,7 @@ pub(super) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_si
     let Ok(bond) = mol.bond(bond_id) else {
         return false;
     };
-    if ring_size <= 1 {
+    if ring_size <= 1 || matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
         return false;
     }
     let max_path_edges = ring_size - 2;
@@ -74,8 +79,9 @@ pub(super) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_si
         let Ok(incident) = mol.incident_bonds(atom) else {
             continue;
         };
-        for (next_bond, next) in
-            incident.map(|(next_bond, edge)| (next_bond, edge.other_atom(atom)))
+        for (next_bond, next) in incident
+            .filter(|(_, edge)| !matches!(edge.order, BondOrder::Zero | BondOrder::Dative))
+            .map(|(next_bond, edge)| (next_bond, edge.other_atom(atom)))
         {
             if next_bond == bond_id || seen.get(next.index()).copied().unwrap_or(true) {
                 continue;
@@ -147,6 +153,11 @@ fn ring_dfs_iterative(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Resource bounds for selected-ring perception.
+///
+/// Total work includes search workspace initialization, search visits,
+/// candidate generation, recovery graph and path copies, repeated recovery
+/// bond scans, and ring comparisons during pruning and symmetrization.
 pub struct RingPerceptionOptions {
     pub max_atoms: usize,
     pub max_bonds: usize,
@@ -215,34 +226,39 @@ impl fmt::Display for RingPerceptionError {
 
 impl std::error::Error for RingPerceptionError {}
 
+/// Installs RDKit-like Figueras rings and symmetric alternatives.
+///
+/// Incomplete candidate searches use deterministic depth-first cycles. This
+/// selected-ring model does not promise a mathematical minimum or full-rank
+/// cycle basis. Zero and dative bonds are excluded throughout.
+///
+/// Successful perception preserves valence and clears aromaticity and dependent
+/// stereo. Failure preserves the previously installed perception state.
 pub fn perceive_ring_set(mol: &mut Molecule) -> std::result::Result<RingSet, RingPerceptionError> {
     perceive_ring_set_with_options(mol, RingPerceptionOptions::default())
 }
 
+/// Like [`perceive_ring_set`], with explicit resource bounds for every search
+/// phase and ring comparison. Bound failures never install partial state.
 pub fn perceive_ring_set_with_options(
     mol: &mut Molecule,
     options: RingPerceptionOptions,
 ) -> std::result::Result<RingSet, RingPerceptionError> {
     let mut tracker = RingWorkTracker::new(options, mol.atom_count(), mol.bond_count())?;
     let membership = compute_ring_membership(mol);
-    let (mut rings, extras) = figueras_sssr_candidates(mol, &membership, &mut tracker)?;
+    let (mut rings, mut extras) = figueras_sssr_candidates(mol, &membership, &mut tracker)?;
     if !uncovered_ring_bonds(mol, &membership, &rings).is_empty() {
-        rings = complete_ring_coverage(mol, &membership, rings, &mut tracker)?;
-    }
-    if !rings.is_empty() {
-        let bond_counts = sssr_bond_counts(&rings, mol.graph.bond_slot_count());
-        let mut selected_bonds = rings
-            .iter()
-            .map(|ring| ring.bonds.clone())
-            .collect::<BTreeSet<_>>();
-        for ring in extras {
-            if can_replace_sssr_ring(&ring, &rings, &bond_counts)
-                && selected_bonds.insert(ring.bonds.clone())
-            {
-                rings.push(ring);
-            }
+        // RDKit can exceptionally omit a cyclic bond even after reaching its
+        // candidate count. Keep true cycle membership and the installed ring
+        // coverage invariant rather than copying that target defect.
+        rings = depth_first_ring_basis(mol, &mut tracker)?;
+        extras.clear();
+        let uncovered_bonds = uncovered_ring_bonds(mol, &membership, &rings);
+        if !uncovered_bonds.is_empty() {
+            return Err(RingPerceptionError::IncompleteRingCoverage { uncovered_bonds });
         }
     }
+    let rings = symmetrize_ring_set(rings, extras, mol.graph.bond_slot_count(), &mut tracker)?;
     let ring_set = RingSet::from_rings(rings);
     mol.install_ring_basis(
         membership,
@@ -257,6 +273,7 @@ struct ActiveRingGraph {
     adjacency: Vec<Vec<(AtomId, BondId)>>,
     active_bonds: Vec<bool>,
     atom_degrees: Vec<usize>,
+    copy_work: usize,
 }
 
 impl ActiveRingGraph {
@@ -264,6 +281,7 @@ impl ActiveRingGraph {
         let mut adjacency = vec![Vec::new(); mol.graph.atom_slot_count()];
         let mut active_bonds = vec![false; mol.graph.bond_slot_count()];
         let mut atom_degrees = vec![0usize; mol.graph.atom_slot_count()];
+        let mut adjacency_entries = 0usize;
         for (bond_id, bond) in mol.bonds() {
             if matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
                 continue;
@@ -273,11 +291,20 @@ impl ActiveRingGraph {
             active_bonds[bond_id.index()] = true;
             atom_degrees[bond.a.index()] += 1;
             atom_degrees[bond.b.index()] += 1;
+            adjacency_entries = adjacency_entries.saturating_add(2);
         }
+        // Trimming only changes flags/degrees, so this allocation-size estimate
+        // remains valid and constant-time to read for every recovery clone.
+        let copy_work = adjacency
+            .len()
+            .saturating_mul(2)
+            .saturating_add(active_bonds.len())
+            .saturating_add(adjacency_entries);
         Self {
             adjacency,
             active_bonds,
             atom_degrees,
+            copy_work,
         }
     }
 
@@ -314,6 +341,10 @@ fn figueras_sssr_candidates(
     let mut seen_invariants = BTreeSet::<Vec<AtomId>>::new();
     let mut all_sssr = Vec::new();
     let mut all_extras = Vec::new();
+    let mut discovered = RingMembership {
+        atom_flags: vec![false; mol.graph.atom_slot_count()],
+        bond_flags: vec![false; mol.graph.bond_slot_count()],
+    };
 
     for fragment in fragments {
         if fragment.len() < 3 {
@@ -354,6 +385,7 @@ fn figueras_sssr_candidates(
                     &mut graph,
                     &mut fragment_candidates,
                     &mut seen_invariants,
+                    &mut discovered,
                     tracker,
                 )?;
                 for atom in d2_nodes {
@@ -386,13 +418,33 @@ fn figueras_sssr_candidates(
             }
         }
 
-        let (kept, extras) = remove_extra_rings(fragment_candidates, mol.graph.bond_slot_count());
+        if fragment_candidates.len() < expected {
+            recover_connecting_cycles(
+                mol,
+                &fragment,
+                &mut fragment_candidates,
+                &mut seen_invariants,
+                &mut discovered,
+                tracker,
+            )?;
+            if fragment_candidates.len() < expected {
+                // RDKit falls back for the whole graph when Figueras cannot
+                // reach the fragment's cyclomatic count. Preserve that model
+                // choice instead of substituting a different shortest basis.
+                return Ok((depth_first_ring_basis(mol, tracker)?, Vec::new()));
+            }
+        }
+        let (kept, extras) = if fragment_candidates.len() > expected {
+            remove_extra_rings(fragment_candidates, mol.graph.bond_slot_count(), tracker)?
+        } else {
+            (fragment_candidates, Vec::new())
+        };
         all_sssr.extend(kept);
         all_extras.extend(extras);
     }
 
-    // Candidate search uses the full active graph like RDKit. Ring membership is
-    // still the authoritative filter for the bounded recovery path below.
+    // Candidate search uses the full active graph like RDKit. True membership
+    // remains authoritative for the caller's final coverage validation.
     debug_assert!(all_sssr
         .iter()
         .flat_map(|ring| &ring.bonds)
@@ -428,11 +480,10 @@ fn active_fragments(mol: &Molecule, graph: &ActiveRingGraph) -> Vec<Vec<AtomId>>
 fn pick_degree_two_nodes(fragment: &[AtomId], graph: &ActiveRingGraph) -> Vec<AtomId> {
     let mut forbidden = vec![false; graph.atom_degrees.len()];
     let mut roots = Vec::new();
-    while let Some(root) = fragment
-        .iter()
-        .copied()
-        .find(|atom| graph.atom_degrees[atom.index()] == 2 && !forbidden[atom.index()])
-    {
+    for root in fragment.iter().copied() {
+        if graph.atom_degrees[root.index()] != 2 || forbidden[root.index()] {
+            continue;
+        }
         roots.push(root);
         forbidden[root.index()] = true;
         let mut stack = vec![root];
@@ -453,6 +504,7 @@ fn find_rings_from_degree_two_nodes(
     graph: &mut ActiveRingGraph,
     candidates: &mut Vec<Ring>,
     seen_invariants: &mut BTreeSet<Vec<AtomId>>,
+    discovered: &mut RingMembership,
     tracker: &mut RingWorkTracker,
 ) -> std::result::Result<(), RingPerceptionError> {
     let mut duplicate_roots = BTreeMap::<Vec<AtomId>, Vec<AtomId>>::new();
@@ -464,7 +516,9 @@ fn find_rings_from_degree_two_nodes(
             let invariant = ring_invariant(atoms);
             let prior_roots = duplicate_roots.entry(invariant.clone()).or_default();
             if seen_invariants.insert(invariant) {
-                candidates.push(atom_ring_to_ring(atoms, graph, tracker)?);
+                let ring = atom_ring_to_ring(atoms, graph, tracker)?;
+                mark_discovered_ring(&ring, discovered);
+                candidates.push(ring);
             } else {
                 for other in prior_roots.iter().copied() {
                     duplicate_map.entry(*root).or_default().push(other);
@@ -506,6 +560,7 @@ fn recover_duplicate_degree_two_candidates(
         let mut recovered = Vec::<Vec<AtomId>>::new();
         let mut minimum_size = usize::MAX;
         for root in roots {
+            tracker.add_work(graph.copy_work)?;
             let mut reduced = graph.clone();
             let mut changed = VecDeque::new();
             for duplicate in duplicate_map.get(root).into_iter().flatten().copied() {
@@ -572,7 +627,7 @@ fn find_rings_from_degree_three_node(
                 .copied()
                 .filter(|neighbor| *neighbor != absent[0])
                 .collect::<Vec<_>>();
-            for forbidden_neighbor in included {
+            for forbidden_neighbor in included.into_iter().rev() {
                 let forbidden = BTreeSet::from([forbidden_neighbor]);
                 let rings = smallest_rings_bfs(root, graph, &forbidden, tracker)?;
                 store_unique_atom_rings(&rings, graph, candidates, seen_invariants, tracker)?;
@@ -606,6 +661,7 @@ fn smallest_rings_bfs(
     const WHITE: u8 = 0;
     const GRAY: u8 = 1;
     const BLACK: u8 = 2;
+    tracker.add_work(graph.atom_degrees.len().saturating_mul(3))?;
     let mut colors = vec![WHITE; graph.atom_degrees.len()];
     for atom in forbidden {
         colors[atom.index()] = BLACK;
@@ -698,13 +754,18 @@ fn atom_ring_to_ring(
     })
 }
 
-fn remove_extra_rings(mut rings: Vec<Ring>, bond_slots: usize) -> (Vec<Ring>, Vec<Ring>) {
+fn remove_extra_rings(
+    mut rings: Vec<Ring>,
+    bond_slots: usize,
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<(Vec<Ring>, Vec<Ring>), RingPerceptionError> {
     rings.sort_by_key(|ring| ring.bonds.len());
     let mut available = vec![true; rings.len()];
     let mut keep = vec![false; rings.len()];
     let mut union = vec![false; bond_slots];
 
     for index in 0..rings.len() {
+        tracker.add_work(rings[index].bonds.len())?;
         if ring_is_subset_of(&rings[index], &union) {
             available[index] = false;
         }
@@ -713,15 +774,18 @@ fn remove_extra_rings(mut rings: Vec<Ring>, bond_slots: usize) -> (Vec<Ring>, Ve
         }
         add_ring_to_union(&rings[index], &mut union);
         keep[index] = true;
-        let mut consider = ((index + 1)..rings.len())
-            .filter(|other| {
-                available[*other] && rings[*other].bonds.len() == rings[index].bonds.len()
-            })
-            .collect::<BTreeSet<_>>();
+        let mut consider = BTreeSet::new();
+        for other in index + 1..rings.len() {
+            tracker.add_work(1)?;
+            if available[other] && rings[other].bonds.len() == rings[index].bonds.len() {
+                consider.insert(other);
+            }
+        }
         while !consider.is_empty() {
             let mut best = None;
             let mut best_overlap = None;
             for other in consider.iter().copied() {
+                tracker.add_work(rings[other].bonds.len())?;
                 let overlap = rings[other]
                     .bonds
                     .iter()
@@ -753,7 +817,7 @@ fn remove_extra_rings(mut rings: Vec<Ring>, bond_slots: usize) -> (Vec<Ring>, Ve
             extras.push(ring);
         }
     }
-    (kept, extras)
+    Ok((kept, extras))
 }
 
 fn ring_is_subset_of(ring: &Ring, union: &[bool]) -> bool {
@@ -766,78 +830,144 @@ fn add_ring_to_union(ring: &Ring, union: &mut [bool]) {
     }
 }
 
-fn complete_ring_coverage(
-    mol: &Molecule,
-    membership: &RingMembership,
-    mut rings: Vec<Ring>,
-    tracker: &mut RingWorkTracker,
-) -> std::result::Result<Vec<Ring>, RingPerceptionError> {
-    let mut graph = BTreeMap::<AtomId, Vec<(AtomId, BondId)>>::new();
-    let mut ring_bonds = Vec::new();
-    for (bond_id, bond) in mol.bonds() {
-        if membership.bond_in_ring(bond_id) {
-            graph.entry(bond.a()).or_default().push((bond.b(), bond_id));
-            graph.entry(bond.b()).or_default().push((bond.a(), bond_id));
-            ring_bonds.push((bond_id, bond.a(), bond.b()));
-        }
+fn mark_discovered_ring(ring: &Ring, membership: &mut RingMembership) {
+    for atom in &ring.atoms {
+        membership.atom_flags[atom.index()] = true;
     }
-    for edges in graph.values_mut() {
-        edges.sort_by_key(|(atom, bond)| (*atom, *bond));
+    for bond in &ring.bonds {
+        membership.bond_flags[bond.index()] = true;
     }
+}
 
-    let bit_len = mol.graph.bond_slot_count().div_ceil(64);
-    let mut basis_rows = BTreeMap::<usize, Vec<u64>>::new();
-    let mut selected = BTreeSet::<Vec<BondId>>::new();
-    rings.retain(|ring| {
-        let independent =
-            add_independent_cycle(cycle_bond_bits(&ring.bonds, bit_len), &mut basis_rows);
-        if independent {
-            selected.insert(ring.bonds.clone());
-        }
-        independent
-    });
-    if uncovered_ring_bonds(mol, membership, &rings).is_empty() {
-        return Ok(rings);
-    }
-    for (closing_bond, a, b) in ring_bonds.iter().copied() {
-        for mut ring in shortest_cycles_excluding(&graph, a, b, closing_bond, tracker)? {
-            ring.bonds.push(closing_bond);
-            ring.bonds.sort();
-            ring.bonds.dedup();
-            if selected.contains(&ring.bonds) {
-                continue;
-            }
-            tracker.record_candidate()?;
-            if add_independent_cycle(cycle_bond_bits(&ring.bonds, bit_len), &mut basis_rows) {
-                selected.insert(ring.bonds.clone());
-                rings.push(ring);
-                if uncovered_ring_bonds(mol, membership, &rings).is_empty() {
-                    return Ok(rings);
+fn recover_connecting_cycles(
+    mol: &Molecule,
+    fragment: &[AtomId],
+    rings: &mut Vec<Ring>,
+    invariants: &mut BTreeSet<Vec<AtomId>>,
+    discovered: &mut RingMembership,
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<(), RingPerceptionError> {
+    let graph = ActiveRingGraph::new(mol);
+    let fragment_atoms = fragment.iter().copied().collect::<BTreeSet<_>>();
+    let mut dead = vec![false; mol.graph.bond_slot_count()];
+    loop {
+        tracker.add_work(mol.graph.bond_slot_count())?;
+        let candidate = mol.bonds().find(|(id, bond)| {
+            graph.active_bonds[id.index()]
+                && fragment_atoms.contains(&bond.a())
+                && !dead[id.index()]
+                && !discovered.bond_in_ring(*id)
+                && discovered.atom_in_ring(bond.a())
+                && discovered.atom_in_ring(bond.b())
+        });
+        let Some((bond_id, bond)) = candidate else {
+            return Ok(());
+        };
+        let mut queue = VecDeque::from([vec![bond.a()]]);
+        let mut recovered = None;
+        'search: while let Some(path) = queue.pop_front() {
+            let current = *path.last().expect("search path is nonempty");
+            for (neighbor, _) in graph.active_neighbors(current) {
+                tracker.record_path_expansion()?;
+                if neighbor == bond.b() {
+                    if current == bond.a() {
+                        continue;
+                    }
+                    let mut atoms = path.clone();
+                    atoms.push(neighbor);
+                    if invariants.contains(&ring_invariant(&atoms)) {
+                        continue;
+                    }
+                    tracker.check("cycle size", atoms.len(), tracker.options.max_cycle_size)?;
+                    tracker.record_shortest_path()?;
+                    recovered = Some(atom_ring_to_ring(&atoms, &graph, tracker)?);
+                    break 'search;
+                }
+                if discovered.atom_in_ring(neighbor) && !path.contains(&neighbor) {
+                    tracker.check("cycle size", path.len() + 1, tracker.options.max_cycle_size)?;
+                    // Bound copied path storage as well as adjacency visits.
+                    tracker.add_work(path.len() + 1)?;
+                    let mut next = path.clone();
+                    next.push(neighbor);
+                    queue.push_back(next);
                 }
             }
         }
+        if let Some(ring) = recovered {
+            invariants.insert(ring_invariant(&ring.atoms));
+            mark_discovered_ring(&ring, discovered);
+            rings.push(ring);
+        } else {
+            dead[bond_id.index()] = true;
+        }
     }
+}
 
-    // Edge-local shortest cycles do not necessarily span the complete cycle
-    // space in highly bridged cage graphs. Deterministic BFS spanning trees
-    // provide a guaranteed fundamental-cycle basis. Consider trees rooted at
-    // every ring atom and take the shortest independent fallback, keeping the
-    // usual small-ring candidates preferred while guaranteeing completeness.
-    for ring in fundamental_cycle_candidates(&graph, &ring_bonds, tracker)? {
-        if selected.contains(&ring.bonds) {
+fn depth_first_ring_basis(
+    mol: &Molecule,
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<Vec<Ring>, RingPerceptionError> {
+    struct Frame {
+        atom: AtomId,
+        parent: Option<AtomId>,
+        next_edge: usize,
+    }
+    let graph = ActiveRingGraph::new(mol);
+    let mut colors = vec![0; mol.graph.atom_slot_count()];
+    let mut positions = vec![0; mol.graph.atom_slot_count()];
+    let mut rings = Vec::new();
+    let mut stack = Vec::<Frame>::new();
+    for root in mol.atom_ids() {
+        if colors[root.index()] != 0 {
             continue;
         }
-        if add_independent_cycle(cycle_bond_bits(&ring.bonds, bit_len), &mut basis_rows) {
-            selected.insert(ring.bonds.clone());
-            rings.push(ring);
-            if uncovered_ring_bonds(mol, membership, &rings).is_empty() {
-                return Ok(rings);
+        if graph.atom_degrees[root.index()] < 2 {
+            colors[root.index()] = 2;
+            continue;
+        }
+        colors[root.index()] = 1;
+        positions[root.index()] = 0;
+        stack.push(Frame {
+            atom: root,
+            parent: None,
+            next_edge: 0,
+        });
+        while let Some(frame) = stack.last_mut() {
+            if frame.next_edge == graph.adjacency[frame.atom.index()].len() {
+                colors[frame.atom.index()] = 2;
+                stack.pop();
+                continue;
+            }
+            let atom = frame.atom;
+            let parent = frame.parent;
+            let (neighbor, _) = graph.adjacency[atom.index()][frame.next_edge];
+            frame.next_edge += 1;
+            tracker.record_path_expansion()?;
+            if colors[neighbor.index()] == 0 {
+                if graph.atom_degrees[neighbor.index()] < 2 {
+                    colors[neighbor.index()] = 2;
+                    continue;
+                }
+                colors[neighbor.index()] = 1;
+                positions[neighbor.index()] = stack.len();
+                stack.push(Frame {
+                    atom: neighbor,
+                    parent: Some(atom),
+                    next_edge: 0,
+                });
+            } else if colors[neighbor.index()] == 1 && parent != Some(neighbor) {
+                let atoms = stack[positions[neighbor.index()]..]
+                    .iter()
+                    .rev()
+                    .map(|frame| frame.atom)
+                    .collect::<Vec<_>>();
+                tracker.check("cycle size", atoms.len(), tracker.options.max_cycle_size)?;
+                tracker.add_work(atoms.len())?;
+                rings.push(atom_ring_to_ring(&atoms, &graph, tracker)?);
             }
         }
     }
-    Err(RingPerceptionError::IncompleteRingCoverage {
-        uncovered_bonds: uncovered_ring_bonds(mol, membership, &rings),
-    })
+    Ok(rings)
 }
 
 fn uncovered_ring_bonds(
@@ -852,93 +982,6 @@ fn uncovered_ring_bonds(
     mol.bond_ids()
         .filter(|bond| membership.bond_in_ring(*bond) && !covered.contains(bond))
         .collect()
-}
-
-fn fundamental_cycle_candidates(
-    graph: &BTreeMap<AtomId, Vec<(AtomId, BondId)>>,
-    ring_bonds: &[(BondId, AtomId, AtomId)],
-    tracker: &mut RingWorkTracker,
-) -> std::result::Result<Vec<Ring>, RingPerceptionError> {
-    let atom_slots = graph
-        .keys()
-        .map(|atom| atom.index())
-        .max()
-        .map_or(0, |maximum| maximum + 1);
-    let mut unique = BTreeMap::<Vec<BondId>, Vec<AtomId>>::new();
-
-    for &root in graph.keys() {
-        let mut parent_atom = vec![None; atom_slots];
-        let mut parent_bond = vec![None; atom_slots];
-        let mut depth = vec![None; atom_slots];
-        let mut tree_bonds = BTreeSet::<BondId>::new();
-        let mut queue = VecDeque::from([root]);
-        depth[root.index()] = Some(0);
-
-        while let Some(atom) = queue.pop_front() {
-            let atom_depth = depth[atom.index()].expect("queued atom has a depth");
-            for (neighbor, bond) in graph.get(&atom).into_iter().flatten().copied() {
-                tracker.record_path_expansion()?;
-                if depth[neighbor.index()].is_some() {
-                    continue;
-                }
-                depth[neighbor.index()] = Some(atom_depth + 1);
-                parent_atom[neighbor.index()] = Some(atom);
-                parent_bond[neighbor.index()] = Some(bond);
-                tree_bonds.insert(bond);
-                queue.push_back(neighbor);
-            }
-        }
-
-        for &(closing_bond, a, b) in ring_bonds {
-            if tree_bonds.contains(&closing_bond)
-                || depth[a.index()].is_none()
-                || depth[b.index()].is_none()
-            {
-                continue;
-            }
-            let mut left = a;
-            let mut right = b;
-            let mut bonds = vec![closing_bond];
-            let mut atoms = BTreeSet::from([a, b]);
-
-            while left != right {
-                let left_depth = depth[left.index()].expect("tree vertex depth");
-                let right_depth = depth[right.index()].expect("tree vertex depth");
-                if left_depth >= right_depth {
-                    let bond = parent_bond[left.index()].expect("non-root tree vertex bond");
-                    left = parent_atom[left.index()].expect("non-root tree vertex parent");
-                    bonds.push(bond);
-                    atoms.insert(left);
-                }
-                if right_depth >= left_depth && left != right {
-                    let bond = parent_bond[right.index()].expect("non-root tree vertex bond");
-                    right = parent_atom[right.index()].expect("non-root tree vertex parent");
-                    bonds.push(bond);
-                    atoms.insert(right);
-                }
-            }
-
-            bonds.sort();
-            bonds.dedup();
-            tracker.check("cycle size", bonds.len(), tracker.options.max_cycle_size)?;
-            if bonds.len() >= 3 && !unique.contains_key(&bonds) {
-                tracker.record_candidate()?;
-                unique.insert(bonds, atoms.into_iter().collect());
-            }
-        }
-    }
-
-    let mut candidates = unique
-        .into_iter()
-        .map(|(bonds, atoms)| Ring { atoms, bonds })
-        .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| {
-        left.bonds
-            .len()
-            .cmp(&right.bonds.len())
-            .then_with(|| left.bonds.cmp(&right.bonds))
-    });
-    Ok(candidates)
 }
 
 struct RingWorkTracker {
@@ -1032,9 +1075,36 @@ fn sssr_bond_counts(sssr: &[Ring], bond_slots: usize) -> Vec<usize> {
     bond_counts
 }
 
-fn can_replace_sssr_ring(extra: &Ring, sssr: &[Ring], bond_counts: &[usize]) -> bool {
-    sssr.iter()
-        .any(|ring| can_replace_one_sssr_ring(extra, ring, bond_counts))
+fn symmetrize_ring_set(
+    mut rings: Vec<Ring>,
+    extras: Vec<Ring>,
+    bond_slots: usize,
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<Vec<Ring>, RingPerceptionError> {
+    let basis_len = rings.len();
+    let bond_counts = sssr_bond_counts(&rings, bond_slots);
+    let mut selected_bonds = rings
+        .iter()
+        .map(|ring| ring.bonds.clone())
+        .collect::<BTreeSet<_>>();
+    for extra in extras {
+        // Only the original SSSR can witness a replacement. Previously added
+        // symmetric rings must not recursively justify further additions.
+        for ring in &rings[..basis_len] {
+            tracker.add_work(1)?;
+            if ring.bonds.len() != extra.bonds.len() {
+                continue;
+            }
+            tracker.add_work(ring.bonds.len().saturating_mul(extra.bonds.len()))?;
+            if can_replace_one_sssr_ring(&extra, ring, &bond_counts) {
+                if selected_bonds.insert(extra.bonds.clone()) {
+                    rings.push(extra);
+                }
+                break;
+            }
+        }
+    }
+    Ok(rings)
 }
 
 fn can_replace_one_sssr_ring(extra: &Ring, ring: &Ring, bond_counts: &[usize]) -> bool {
@@ -1052,121 +1122,6 @@ fn can_replace_one_sssr_ring(extra: &Ring, ring: &Ring, bond_counts: &[usize]) -
     shares_bond
 }
 
-fn shortest_cycles_excluding(
-    graph: &BTreeMap<AtomId, Vec<(AtomId, BondId)>>,
-    start: AtomId,
-    goal: AtomId,
-    excluded_bond: BondId,
-    tracker: &mut RingWorkTracker,
-) -> std::result::Result<Vec<Ring>, RingPerceptionError> {
-    let mut queue = VecDeque::new();
-    let mut distances = BTreeMap::<AtomId, usize>::new();
-    distances.insert(start, 0);
-    queue.push_back(start);
-
-    while let Some(atom) = queue.pop_front() {
-        let distance = distances[&atom];
-        for (neighbor, bond_id) in graph.get(&atom).into_iter().flatten().copied() {
-            tracker.record_path_expansion()?;
-            if bond_id == excluded_bond || distances.contains_key(&neighbor) {
-                continue;
-            }
-            distances.insert(neighbor, distance + 1);
-            queue.push_back(neighbor);
-        }
-    }
-
-    let Some(goal_distance) = distances.get(&goal).copied() else {
-        return Ok(Vec::new());
-    };
-    let cycle_size = goal_distance.saturating_add(1);
-    tracker.check("cycle size", cycle_size, tracker.options.max_cycle_size)?;
-
-    #[derive(Clone)]
-    struct PathState {
-        current: AtomId,
-        atoms: Vec<AtomId>,
-        bonds: Vec<BondId>,
-    }
-
-    let mut rings = Vec::new();
-    let mut stack = vec![PathState {
-        current: goal,
-        atoms: vec![goal],
-        bonds: Vec::new(),
-    }];
-    while let Some(state) = stack.pop() {
-        if state.current == start {
-            tracker.record_shortest_path()?;
-            rings.push(Ring {
-                atoms: state.atoms,
-                bonds: state.bonds,
-            });
-            continue;
-        }
-
-        let Some(distance) = distances.get(&state.current).copied() else {
-            continue;
-        };
-        let mut predecessors = graph
-            .get(&state.current)
-            .into_iter()
-            .flatten()
-            .copied()
-            .filter(|(neighbor, bond_id)| {
-                *bond_id != excluded_bond
-                    && distances.get(neighbor).copied() == distance.checked_sub(1)
-            })
-            .collect::<Vec<_>>();
-        predecessors.sort_by_key(|(neighbor, bond_id)| (*neighbor, *bond_id));
-        for (neighbor, bond_id) in predecessors.into_iter().rev() {
-            tracker.record_path_expansion()?;
-            if state.atoms.len() >= tracker.options.max_cycle_size {
-                continue;
-            }
-            let mut next = state.clone();
-            next.current = neighbor;
-            next.atoms.push(neighbor);
-            next.bonds.push(bond_id);
-            stack.push(next);
-        }
-    }
-    Ok(rings)
-}
-
-fn cycle_bond_bits(bonds: &[BondId], bit_len: usize) -> Vec<u64> {
-    let mut bits = vec![0u64; bit_len];
-    for bond in bonds {
-        let index = bond.index();
-        bits[index / 64] |= 1u64 << (index % 64);
-    }
-    bits
-}
-
-fn add_independent_cycle(mut row: Vec<u64>, basis_rows: &mut BTreeMap<usize, Vec<u64>>) -> bool {
-    while let Some(pivot) = first_set_bit(&row) {
-        if let Some(existing) = basis_rows.get(&pivot) {
-            xor_bits(&mut row, existing);
-        } else {
-            basis_rows.insert(pivot, row);
-            return true;
-        }
-    }
-    false
-}
-
-fn first_set_bit(bits: &[u64]) -> Option<usize> {
-    bits.iter().enumerate().find_map(|(block, value)| {
-        (*value != 0).then_some(block * 64 + value.trailing_zeros() as usize)
-    })
-}
-
-fn xor_bits(left: &mut [u64], right: &[u64]) {
-    for (left, right) in left.iter_mut().zip(right) {
-        *left ^= *right;
-    }
-}
-
 pub(crate) fn ordered_atom_pair(a: AtomId, b: AtomId) -> (AtomId, AtomId) {
     if a <= b {
         (a, b)
@@ -1176,39 +1131,4 @@ pub(crate) fn ordered_atom_pair(a: AtomId, b: AtomId) -> (AtomId, AtomId) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn inconsistent_ring_membership_returns_structured_coverage_error() {
-        let mut mol = crate::core::MoleculeEditor::new();
-        let atoms = (0..2)
-            .map(|_| {
-                mol.add_atom(Atom::new(Element::from_symbol("C").expect("carbon")))
-                    .expect("atom identifier capacity")
-            })
-            .collect::<Vec<_>>();
-        let bond = mol
-            .add_bond(atoms[0], atoms[1], BondOrder::Single)
-            .expect("chain bond");
-        let mut membership = compute_ring_membership(mol.working());
-        membership.atom_flags[atoms[0].index()] = true;
-        membership.atom_flags[atoms[1].index()] = true;
-        membership.bond_flags[bond.index()] = true;
-        let mut tracker = RingWorkTracker::new(
-            RingPerceptionOptions::default(),
-            mol.atom_count(),
-            mol.bond_count(),
-        )
-        .expect("tracker");
-
-        let error = complete_ring_coverage(mol.working(), &membership, Vec::new(), &mut tracker)
-            .expect_err("a bridge cannot be covered by a cycle");
-
-        assert!(matches!(
-            error,
-            RingPerceptionError::IncompleteRingCoverage { uncovered_bonds, .. }
-                if uncovered_bonds == vec![bond]
-        ));
-    }
-}
+mod tests;
