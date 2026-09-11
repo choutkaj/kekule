@@ -9,6 +9,7 @@ import gzip
 import hashlib
 import json
 import re
+import tomllib
 import shutil
 import subprocess
 import tempfile
@@ -86,7 +87,7 @@ def main() -> int:
         return 0
 
     repo_root = args.repo_root.resolve()
-    corpus_dir = repo_root / "benchmark" / "corpora" / args.corpus
+    corpus_dir = repo_root / "benchmarks" / "corpora" / args.corpus
     manifest_path = corpus_dir / "features" / f"{args.feature}.toml"
     manifest = read_manifest(manifest_path)
     if manifest.get("corpus_id") != args.corpus:
@@ -166,35 +167,10 @@ def import_biopython() -> dict[str, Any]:
 def read_manifest(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise SystemExit(f"missing benchmark manifest: {path}")
-    manifest = parse_simple_manifest(path.read_text(encoding="utf-8"))
+    manifest = tomllib.loads(path.read_text(encoding="utf-8"))
     fixtures = manifest.get("fixtures")
     if not isinstance(fixtures, list) or not all(isinstance(item, str) for item in fixtures):
         raise SystemExit(f"{path} must define fixtures as a string array")
-    return manifest
-
-
-def parse_simple_manifest(text: str) -> dict[str, Any]:
-    manifest: dict[str, Any] = {}
-    lines = iter(text.splitlines())
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = [part.strip() for part in line.split("=", 1)]
-        if value == "[":
-            items: list[str] = []
-            for array_line in lines:
-                array_line = array_line.strip()
-                if array_line == "]":
-                    break
-                item = array_line.rstrip(",").strip()
-                if item.startswith('"') and item.endswith('"'):
-                    items.append(item[1:-1])
-            manifest[key] = items
-        elif value.startswith('"') and value.endswith('"'):
-            manifest[key] = value[1:-1]
-        else:
-            manifest[key] = value
     return manifest
 
 

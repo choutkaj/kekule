@@ -8,7 +8,7 @@ This tree provides optional comparisons between Kekule and pinned external refer
 - `golden/<benchmark-id>/` contains deterministic compressed reference outputs;
 - `reference/` contains RDKit, Biopython, and DSSP reproduction tools.
 
-The `features` directory name and manifest `feature_id` field are legacy benchmark-schema vocabulary. They identify benchmark targets and do not refer to a repository feature registry.
+Each manifest in `features/` identifies its benchmark target with the `feature_id` field.
 
 All tracked manifests are discovered directly from the filesystem. Run one comparison or a deterministic selection of all available manifests with:
 

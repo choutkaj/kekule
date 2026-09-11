@@ -14,20 +14,19 @@ Append .exe on Windows. Omitting --probe checks only the external reference.
 """
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
-import subprocess
 
 from rdkit import Chem, rdBase
 
 from run_feature import (
+    required_smiles_bracket_declarations,
     smiles_isomeric_stereo_semantic_record,
     smiles_perceived_semantic_record,
 )
+from probe_support import RDKIT_VERSION, run_probe, sha256, write_report
 
 
-RDKIT_VERSION = "2026.03.6"
 RDKIT_SOURCE = (
     "https://raw.githubusercontent.com/rdkit/rdkit/Release_2026_03_6/"
     "Code/GraphMol/SmilesParse/SmilesWrite.cpp"
@@ -59,22 +58,17 @@ def graph_key(molecule):
 
 
 def required_charge_projection(molecule):
-    projected = Chem.Mol(molecule)
+    projected, required = required_smiles_bracket_declarations(molecule)
     changes = []
-    for atom in projected.GetAtoms():
-        if atom.GetFormalCharge() and not atom.GetNoImplicit():
-            # Formal charge requires brackets in SMILES. The syntax cannot
-            # retain inferred-H policy there, so encode the independently
-            # perceived source total. Optional metal-neighbor brackets do not
-            # enter this transformation.
-            assert atom.GetSymbol() in ("Cl", "O")
-            assert atom.GetTotalNumHs() == 0
-            changes.append({"atom": atom.GetIdx(), "symbol": atom.GetSymbol(),
-                            "formal_charge": atom.GetFormalCharge(),
-                            "field": "no_implicit_hydrogens", "before": False, "after": True})
-            atom.SetNoImplicit(True)
+    for change in required:
+        atom = projected.GetAtomWithIdx(change["atom_index"])
+        # These external fixtures require only the zero-H Cl/O declarations.
+        assert atom.GetSymbol() in ("Cl", "O")
+        assert atom.GetTotalNumHs() == 0
+        changes.append({"atom": atom.GetIdx(), "symbol": atom.GetSymbol(),
+                        "formal_charge": atom.GetFormalCharge(),
+                        "field": "no_implicit_hydrogens", "before": False, "after": True})
     assert {change["symbol"] for change in changes} == {"Cl", "O"}
-    projected.UpdatePropertyCache(strict=True)
     assert graph_key(projected) == graph_key(molecule)
     return projected, changes
 
@@ -94,13 +88,7 @@ def main():
     outputs = None
     if args.probe:
         args.probe = args.probe.resolve(strict=True)
-        process = subprocess.run(
-            [str(args.probe)], input="\n".join(row["smiles"] for row in sources) + "\n",
-            text=True, encoding="utf-8", capture_output=True, check=True, timeout=30,
-        )
-        outputs = [json.loads(line) for line in process.stdout.splitlines()]
-        if len(outputs) != len(sources):
-            raise ValueError("adapter must return exactly one record per input")
+        outputs = run_probe(args.probe, [row["smiles"] for row in sources])
     cases = []
     for index, source in enumerate(sources):
         original = parse(source["smiles"])
@@ -148,19 +136,17 @@ def main():
         cases.append(case)
     report = {
         "schema_version": 1, "rdkit": rdBase.rdkitVersion,
-        "fixture_sha256": hashlib.sha256(fixture.read_bytes()).hexdigest(),
+        "fixture_sha256": sha256(fixture),
         "reference_source": {"url": RDKIT_SOURCE, "sha256": RDKIT_SOURCE_SHA256},
-        "probe_sha256": hashlib.sha256(args.probe.read_bytes()).hexdigest() if args.probe else None,
+        "probe_sha256": sha256(args.probe) if args.probe else None,
         "cases": cases,
     }
-    text = json.dumps(report, indent=2) + "\n"
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(text, encoding="utf-8")
+        write_report(args.output, report)
         print(json.dumps({"rdkit": RDKIT_VERSION, "cases": len(cases),
                           "comparisons": [case["comparison"] for case in cases]}))
     else:
-        print(text, end="")
+        print(json.dumps(report, indent=2))
     return int(any(case["comparison"] == "difference" for case in cases))
 
 

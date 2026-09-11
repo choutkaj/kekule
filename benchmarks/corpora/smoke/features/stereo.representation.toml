@@ -8,8 +8,3 @@ fixtures = [
   "data/pubchem_smiles/cid_5950.txt",
   "data/pubchem_smiles/cid_5462921.txt",
 ]
-
-notes = [
-  "Externally supplied PubChem isomeric SMILES fixtures cover stored tetrahedral and directional bond stereo representation.",
-  "Schema 2 asserts source-document evidence separately from canonical molecular stereo elements; schema 1 reference bytes and hashes are archived.",
-]
