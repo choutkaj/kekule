@@ -355,6 +355,130 @@ fn mmcif_model_is_one_block_with_coordinate_model_one_and_automatic_classificati
 }
 
 #[test]
+fn mmcif_export_resolves_reused_atoms_in_hierarchy_order_and_keeps_unassigned_instances() {
+    use kekule::core::{Atom, Element, MoleculeEditor};
+    use kekule::topology::{AtomSiteMetadata, InstanceAtomId};
+
+    let water = molecule("O");
+    let oxygen = water.atom_ids().next().unwrap();
+    let mut builder = TopologyBuilder::new();
+    let definition = builder.add_molecule_definition(&water).unwrap();
+    let waters = (0..3)
+        .map(|_| builder.add_instance(definition).unwrap())
+        .collect::<Vec<_>>();
+    let mut sodium = Atom::new(Element::from_symbol("Na").unwrap());
+    sodium.formal_charge = 1;
+    let mut ion = MoleculeEditor::new();
+    ion.add_atom(sodium).unwrap();
+    builder.add_molecule(&ion.finish().unwrap()).unwrap();
+    let hierarchy = builder.hierarchy_mut();
+    let chain = hierarchy.add_chain("W", Some("solvent".into())).unwrap();
+    // Repeated local AtomIds resolve through their instances; hierarchy order
+    // intentionally differs from topology dense order.
+    for index in [2, 0, 1] {
+        let residue = hierarchy
+            .add_residue(chain, "HOH", None, Some((index + 1).to_string()), None)
+            .unwrap();
+        hierarchy
+            .add_atom_site(
+                residue,
+                InstanceAtomId::new(waters[index], oxygen),
+                AtomSiteMetadata {
+                    label_atom_id: Some(format!("O{index}")),
+                    ..AtomSiteMetadata::default()
+                },
+            )
+            .unwrap();
+    }
+    let positions = Positions::new(Quantity::new(
+        (0..4)
+            .map(|i| Point3::new(i as f64 + 1.0, 0.0, 0.0))
+            .collect::<Vec<_>>(),
+        ANGSTROM,
+    ))
+    .unwrap();
+    let mut model = Model::new(builder.build().unwrap(), positions).unwrap();
+    for index in 0..3 {
+        model
+            .set_occupancy(model.atom_ids()[index], Some((index + 1) as f64 / 10.0))
+            .unwrap();
+    }
+    let text = mmcif::write_model(&model, MmcifWriteOptions::default()).unwrap();
+    let document = mmcif::parse_str(&text).unwrap();
+    let rows = document.blocks()[0].loop_with_tag("_atom_site.id").unwrap();
+    assert_eq!(rows.row_count(), 4);
+    for (row, index) in [2, 0, 1].into_iter().enumerate() {
+        assert_eq!(
+            rows.value(row, "_atom_site.label_atom_id").unwrap().text(),
+            format!("O{index}")
+        );
+        assert_eq!(
+            rows.value(row, "_atom_site.auth_seq_id").unwrap().text(),
+            (index + 1).to_string()
+        );
+        assert_eq!(
+            rows.value(row, "_atom_site.Cartn_x")
+                .unwrap()
+                .text()
+                .parse::<f64>()
+                .unwrap(),
+            index as f64 + 1.0
+        );
+        assert_eq!(
+            rows.value(row, "_atom_site.occupancy")
+                .unwrap()
+                .text()
+                .parse::<f64>()
+                .unwrap(),
+            (index + 1) as f64 / 10.0
+        );
+    }
+    assert_eq!(
+        rows.value(3, "_atom_site.type_symbol").unwrap().text(),
+        "Na"
+    );
+    assert_eq!(
+        rows.value(3, "_atom_site.Cartn_x")
+            .unwrap()
+            .text()
+            .parse::<f64>()
+            .unwrap(),
+        4.0
+    );
+}
+
+#[test]
+fn mmcif_export_still_rejects_a_partially_assigned_molecule() {
+    use kekule::topology::{AtomSiteMetadata, InstanceAtomId};
+
+    let molecule = molecule("CO");
+    let atoms = molecule.atom_ids().collect::<Vec<_>>();
+    let mut builder = TopologyBuilder::new();
+    let instance = builder.add_molecule(&molecule).unwrap();
+    let hierarchy = builder.hierarchy_mut();
+    let chain = hierarchy.add_chain("A", None).unwrap();
+    let residue = hierarchy
+        .add_residue(chain, "UNL", None, None, None)
+        .unwrap();
+    // Put only the second atom in hierarchy so testing the first atom alone
+    // cannot incorrectly choose the hierarchy-free output path.
+    hierarchy
+        .add_atom_site(
+            residue,
+            InstanceAtomId::new(instance, atoms[1]),
+            AtomSiteMetadata::default(),
+        )
+        .unwrap();
+    let model = Model::new(builder.build().unwrap(), Positions::zeros(2)).unwrap();
+    assert_eq!(
+        mmcif::write_model(&model, MmcifWriteOptions::default()),
+        Err(mmcif::MmcifWriteError::MissingAtomSite(
+            InstanceAtomId::new(instance, atoms[0])
+        ))
+    );
+}
+
+#[test]
 fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
     let first = model("CO", &[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]);
     let unrelated = model("N", &[[3.0, 0.0, 0.0]]);
