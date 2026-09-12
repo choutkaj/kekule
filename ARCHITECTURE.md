@@ -1,3019 +1,372 @@
 # Architecture
 
-## Purpose
+This document defines ownership boundaries and invariants for contributors.
+Detailed API contracts, algorithms, numerical policies, and examples belong in
+Rustdoc beside their implementations. The links below point to those sources;
+`cargo doc --workspace --all-features --no-deps --locked` builds the API reference.
 
-This document is the normative architecture contract for `kekule`. It defines
-the ownership, semantic boundaries, and invariants of the core molecular data
-model. Detailed API behavior belongs in Rustdoc and tests.
+## Ownership map
 
-## Conversion naming and ownership
+| Owner | Authoritative responsibility | Must not own |
+| --- | --- | --- |
+| `Molecule` | One nonempty connected `Graph`, derived `Perception`, definition-scoped `Properties` | Coordinates, hierarchy, system classification |
+| `Topology` | Complete molecule instances, reusable definitions, qualified identities, dense layout, one `Hierarchy`, classification, static properties | Geometry or bonds between separate instances |
+| `Model` | One shared `Topology`, positions, optional cell, realization properties | A second chemical or hierarchy model |
+| `Ensemble` | One shared topology and non-temporal member payloads | An owned `Model` or topology in each member |
+| `Trajectory` (`kekule-traj`) | One shared topology and ordered frame payloads, including optional time, step, velocities, and forces | Implicit topology changes between frames |
 
-Conversion names follow Rust ownership conventions throughout all crates:
+A salt, solvent box, or protein-ligand complex is a topology containing connected
+molecules. Covalent connectedness determines molecule boundaries; hierarchy and
+noncovalent interactions do not. Adding a bond between occurrences constructs a
+new connected molecule and publishes a new topology.
 
-| Form | Contract |
+Dense numerical containers carry values and units, not atom identity or topology
+handles. The owning topology or realization translates semantic IDs to dense
+indices and validates every associated array and property column.
+
+See the [crate overview](crates/kekule/src/lib.rs),
+[molecular owner](crates/kekule/src/core/molecule.rs),
+[topology types](crates/kekule/src/topology/mod.rs),
+[structure types](crates/kekule/src/structure/mod.rs), and
+[trajectory types](crates/kekule-traj/src/trajectory/mod.rs).
+
+## Represented and derived chemistry
+
+`Graph` is authoritative atom, bond, connectivity, and represented stereo state.
+Local `AtomId` and `BondId` identify entities within one molecule. Atom chemistry
+includes element, isotope, charge, radical, hydrogen declaration, and atom map;
+annotations use properties instead of extending every atom or bond with a map.
+Bonds carry localized orders. Aromaticity is perceived state, not a bond order.
+Source aromatic and stereo syntax is normalized during interpretation.
+
+Represented stereo must refer to valid focuses and adjacent carriers, with the
+required focus bond order and consistent assertions and groups. Validate these
+conditions before canonicalization. Changing a focus order or deleting a carrier
+bond prunes invalid stereo and group membership, even if an alternate graph path
+keeps the molecule connected. Unaffected assertions survive.
+
+`Perception` is reconstructible state derived from the exact represented graph
+under an explicit model or policy. It contains fundamental chemistry such as
+valence, rings, aromaticity, and installed CIP descriptors. Task-specific
+descriptors, force-field typing, scoring, and analyses belong in separate result
+objects; attaching selected values as properties is deliberate.
+
+Chemical edits invalidate dependent perception. Property changes do not.
+Detached perception is checked against graph references and dimensions before
+installation; installation must not repair or rewrite represented chemistry.
+Default perception does not add atoms, materialize stereo, or assign CIP.
+CIP assignment is transactional, respects represented stereo, and reports
+unsupported or exhausted ranking rather than treating unfinished work as a tie.
+
+Owning perception runs once per reusable definition and publishes atomically.
+A successful model, ensemble, or trajectory perception operation installs a new
+shared topology snapshot without copying coordinate payloads. Existing
+selections, prepared objects, and streaming bindings remain attached to their
+original snapshot. Failure leaves all definitions and realization state intact.
+
+See [graph storage](crates/kekule/src/core/graph.rs),
+[represented stereo](crates/kekule/src/core/stereo.rs),
+[perception state and validation](crates/kekule/src/core/perception.rs),
+[chemical perception](crates/kekule/src/chemistry/perception.rs), and
+[stereo algorithms](crates/kekule/src/algorithms/stereo.rs).
+
+## Topology, hierarchy, and classification
+
+A published topology is nonempty and contains only complete connected molecule
+instances and used definitions. Definition reuse is explicit; ordinary molecular
+construction does not intern chemically equal inputs. Public system traversal is
+instance-first. A definition is a storage and reuse mechanism, not another
+chemical owner.
+
+System atom and bond identities qualify a molecule-local ID with its instance.
+Hierarchy chain, residue, and atom-site IDs are topology-global. Dense indices
+are a separate coordinate/property ordering, never interchangeable with semantic
+IDs. Publication establishes complete, deterministic mappings between them.
+
+`Hierarchy` is owned exactly once by `Topology`. Atom sites refer to live
+`InstanceAtomId` values; they do not copy atoms. One chain or residue may span
+molecules, and one molecule may span chains. Molecular and domain-specific
+hierarchy views borrow and filter this single hierarchy. Source labels and author
+identifiers remain typed metadata, with their namespaces and insertion codes
+preserved. Hierarchy membership never fabricates covalent bonds.
+
+Each reusable definition has one `MoleculeClass` shared by all its instances;
+each residue has one `ResidueClass`. These are intrinsic classifications, not
+contextual roles such as receptor or ligand, and do not affect molecular identity.
+Inference occurs at topology publication without running chemical perception.
+It combines conservative component recognition, simple graph evidence, and
+inter-residue connectivity; conflicting strong evidence yields `Other`.
+Explicit assignments retain their intent separately from inferred cached values.
+
+Unchanged complete entities preserve their classifications through subsets and
+ordinary appends. Changed chemistry or informative new context triggers
+reclassification of affected entities. Editing overrides apply to current
+connected components, not historical staging groups. Published hierarchy removal
+discards orphaned residue overrides so later ID reuse cannot revive them.
+The exact inference and override rules live with
+[classification](crates/kekule/src/topology/classification.rs),
+[builder publication](crates/kekule/src/topology/builder.rs), and
+[component editing](crates/kekule/src/topology/editor.rs).
+
+See also [hierarchy](crates/kekule/src/topology/hierarchy.rs) and
+[qualified lookups](crates/kekule/src/topology/lookup.rs).
+
+## Construction, editing, and subsets
+
+Published structural state changes through builders, editors, or explicit
+transformations. Drafts may temporarily violate connectedness; publication may
+not. Checked boundaries reject invalid references, dimensions, and empty systems.
+`validate`, `try_build`, and `try_finish` support recovery without consuming the
+draft. Mutable access must preserve safety immediately, without depending on a
+mutation guard's destructor being called.
+
+| Surface | Scope of work | Publication |
+| --- | --- | --- |
+| `MoleculeEditor` | One molecular graph, possibly disconnected while editing | Exactly one nonempty connected molecule |
+| `TopologyBuilder` | Complete definitions, instances, hierarchy, classification, properties | Immutable topology |
+| `ModelBuilder` | Complete composition with explicit coordinates | Valid model |
+| `TopologyEditor` | Occurrence-local atom, bond, component, and hierarchy changes | Repartitioned topology |
+| `ModelEditor` | Structural edits coordinated with one realization | Topology and coordinates together |
+
+`MoleculeEditor` is a draft, not a molecule view. Mutable chemistry access
+invalidates perception immediately; validated no-op replacements retain state.
+System editors clone touched definitions lazily and preserve unaffected
+occurrences. Stable draft handles reject deleted or foreign entities. Joining or
+splitting components follows asserted connectivity. Surviving model coordinates
+are preserved; new atoms require supplied coordinates, never invented geometry.
+Geometry-only edits retain the exact shared topology.
+
+Append-oriented construction preserves existing IDs and dense order. General
+structural edits publish deterministic new layouts. Hierarchy is filtered and
+empty nodes are pruned; its partition is independent of molecule splits/merges.
+Per-entity annotations follow the operation's explicit correspondence. Generic
+owner annotations are conservatively cleared when their owner changes, including
+ambiguous instance splits or merges. No-op edits preserve them.
+
+Complete model append accepts borrowed realizations. It imports definitions,
+reuse, perception, classification, hierarchy, coordinates, and entity properties
+without interning independent sources or merging equal hierarchy labels.
+Coordinates remain in the supplied coordinate system. Incompatible cells,
+property types, or units reject the entire append. Owner-property omissions are
+reported. Import mappings are scoped to that append and its draft identities.
+See the [append contract](crates/kekule/src/structure/model_editor/append.rs) for
+cell comparison tolerances, property transfer, and examples.
+
+Selections bind to one exact shared topology, including empty selections and set
+operations. They contain unique atoms in authoritative dense order. Whole-residue
+expansion retains selected atoms without residue assignments. Structural subsets
+may cut molecules and must repartition the induced graph into connected output
+definitions. The same operation-specific mapping transfers hierarchy,
+classification, properties, and every realization array. Do not add a universal
+topology remapping or provenance framework.
+
+See [molecular editing](crates/kekule/src/core/molecule_edit.rs),
+[system editing](crates/kekule/src/topology/editor.rs),
+[model editing](crates/kekule/src/structure/model_editor.rs),
+[selections](crates/kekule/src/topology/selection.rs), and
+[subsets](crates/kekule/src/topology/transform.rs).
+
+## Properties and units
+
+Properties are annotations owned at the narrowest scope whose lifetime matches
+their validity. One shared `Properties` / `PropertyTable` substrate stores owner
+scalars and typed per-entity columns; do not introduce parallel atom/bond data
+containers or maps inside every repeated entity.
+
+| Scope | Permitted entity domains |
 | --- | --- |
-| `as_*` | Produces a cheap borrowed view without copying the underlying data. |
-| `to_*` | Produces a converted or owned result while leaving the source available. |
-| `into_*` | Takes ownership of the source and transfers or converts its data. |
+| Molecule definition | Local atoms and bonds |
+| Topology | Instances, qualified atoms and bonds, chains, residues, atom sites |
+| Model, ensemble member, trajectory frame | Realization atoms and bonds |
+| Ensemble or trajectory collection | Owner values |
 
-`into_*` does not promise zero allocation: validation, transformation, or shared
-storage may still require work. Small `Copy` views may take `self` by value and
-still use `as_*` or `to_*`, since their underlying owner remains borrowed.
-Ordinary getters keep their semantic names (`model()`, `topology()`, `value()`).
-Operations keep their verbs (`edit()`, `build()`, `finish()`, `interpret()`).
+Keys are validated. A column has one type and, for real values, one physical unit;
+missing entries are explicit. Column length matches its owner's domain. Compatible
+units convert to the stored unit; incompatible types or dimensions fail. Borrowed
+property reads avoid unnecessary string copies. Realization installation rejects
+populated properties in unsupported domains even when dimensions happen to match.
 
-For editing, `edit()` creates a detached draft and `into_editor()` consumes the
-owner. A clone-based `to_builder()` and consuming `into_builder()` have distinct
-ownership contracts. Compatibility aliases are not retained when a conversion is
-renamed. Public API tests and Clippy's `wrong_self_convention` check enforce this
-convention; crates must not suppress that lint globally.
+Generic properties do not define chemical identity, topology layout, or perception.
+Transformations transfer entity values explicitly and do not infer annotation
+validity or recompute arbitrary properties. Arbitrary source fields stay in
+format sidecars unless canonical semantics, scope, and domain justify promotion.
+Occupancy and B factors use reserved realization atom columns with checked
+semantics. Positions, cells, weights, time, steps, velocities, and forces retain
+their dedicated APIs.
 
-`kekule` is a pure-Rust foundation for cheminformatics, structural
-bioinformatics, molecular structure handling, and molecular modelling.
+Kekule uses one runtime unit system across all crates. Public boundaries accept
+compatible `Quantity` units; internal numerical state uses the library-wide
+canonical units. Mass and amount remain distinct dimensions, with molecular mass
+and energy conventions chosen coherently. Unit composition and conversion reject
+unrepresentable dimensions or scales; checked numerical storage rejects nonfinite
+values. Exact units, tolerances, and conversion policies belong with
+[units](crates/kekule/src/units.rs) and
+[properties](crates/kekule/src/properties.rs), not in a second architecture table.
 
-The foundational chemical object is `Molecule`: one non-empty connected,
-geometry-independent molecular entity. The foundational system object is
-`Topology`: one coordinate-free molecular system composed from one or more
-molecule instances and their system-level hierarchy. Geometry belongs above
-topology.
+## Geometry and realization ownership
 
-## Canonical object model
+A model, ensemble, or trajectory owns its shared topology once. Members and frames
+store payloads, not nested models. Borrowed `ModelView` access lets coordinate
+algorithms and writers share kernels across models, members, frames, and buffers.
+Owned projections explicitly materialize a model while sharing the topology.
+There is no implicit collection-of-models constructor or special single-member
+ownership model.
 
-```text
-source text / bytes
-    -> format-specific parsing
-    -> FormatDocument
-         -> optional format-specific Record values for record-oriented formats
-    -> interpretation / canonical publication
-         -> connected canonical Molecule components
-              -> Vec<Molecule> when geometry/system context is not requested
-              -> Topology + Positions -> Model when one record carries geometry
-              -> higher geometry objects such as Ensemble when the format
-                 semantically contains several realizations of one topology
-```
+Dense positions, velocities, and forces validate values and units without carrying
+semantic IDs. Consuming vector constructors and projections transfer storage;
+borrowed bulk inputs are evaluated once. The owning realization checks lengths,
+property domains, and table dimensions on insertion, replacement, or publication.
+Empty property tables may acquire their owner's dimensions; populated tables may
+not be silently resized or discarded. Stored editing surfaces enforce these
+invariants immediately, including when a guard is forgotten.
 
-The intended ownership hierarchy is therefore:
+Measurements and spatial selections operate on borrowed realizations. Cartesian
+measurements do not silently apply periodic imaging. A spatial selection is one
+realization's result; reevaluating it across frames is explicit. Numerical
+policies and supported geometries live with
+[positions](crates/kekule/src/structure/positions.rs),
+[models](crates/kekule/src/structure/model.rs),
+[ensembles](crates/kekule/src/structure/ensemble.rs),
+[measurements](crates/kekule/src/structure/measure.rs), and
+[alignment](crates/kekule/src/alignment.rs).
 
-```text
-Molecule
-  one connected geometry-independent molecular entity
-  Graph + Perception + definition-scoped Properties
+## Trajectories and streaming
 
-Topology
-  one geometry-independent system made from one or more Molecule instances
-  reusable MoleculeDefinition values with canonical MoleculeClass
-  topology-wide atom/bond identity and dense ordering
-  one system-level Hierarchy, which may be empty
-  canonical ResidueClass for hierarchy residues
-  system-scoped Properties
+A trajectory represents one fixed-topology epoch. Changing chemistry or hierarchy
+requires a new topology and explicitly constructed geometry for the next epoch.
+Frame selection is separate from atom subsetting: requested order, duplicates,
+and empty selections are supported without renumbering stored time or step.
+Consuming frame projections transfer payloads rather than cloning them.
 
-Model
-  one geometry-dependent realization of a Topology
-  realization-scoped Properties
+File readers receive the topology and interpret file atom index as its dense atom
+index. They validate counts and available metadata; equal counts alone do not
+prove atom identity. Callers may independently validate semantic atom order.
+Streaming buffers bind to the exact topology and publish complete frames
+transactionally. Eager reads use the same decoder path through clean EOF.
+Path writers stage output and publish only a completed nonempty trajectory;
+unsupported fields and collection properties are rejected rather than discarded.
 
-Ensemble
-  several non-temporal realizations of one Topology
+Loaded and streaming transformations share kernels. Copy-returning operations
+leave sources intact; explicit in-place operations stage all affected state before
+publication. Superposition rotates cells, velocities, and forces consistently.
+Periodic reconstruction uses asserted bonds and checks ring closure. Imaging
+acts on whole molecules. Unwrapping retains temporal state and requires ordered,
+sufficiently close samples; it precedes downsampling. Failed streaming operations
+change neither the frame buffer nor temporal state. Diagnostics are opt-in.
 
-Trajectory
-  several temporally ordered realizations of one Topology
-```
+RMSF and contact-occupancy reductions consume borrowed frames from the exact source
+topology with memory bounded by selected atoms or pairs, not frame count. Failed
+observations leave accumulators unchanged. Results retain atom/pair associations;
+frame indices are diagnostic labels, not statistical weights. Preprocessing,
+including alignment or imaging, is explicit. These are separate analysis results,
+not new topology state or a generic reduction framework.
 
-A salt, noncovalent complex, solvent box, protein-ligand system, or DNA duplex
-is not represented by weakening `Molecule` into a disconnected graph. It is
-represented by several connected molecules at the `Topology` level.
+For format profiles, limits, periodic conventions, statistical definitions, and
+streaming sequence/reset contracts, see
+[trajectory storage](crates/kekule-traj/src/trajectory/collection.rs),
+[frame buffers](crates/kekule-traj/src/trajectory/buffer.rs),
+[file I/O](crates/kekule-traj/src/io/mod.rs),
+[periodic operations](crates/kekule-traj/src/periodic.rs),
+[streaming periodic operations](crates/kekule-traj/src/periodic/stream.rs), and
+[analysis reductions](crates/kekule-traj/src/analysis/reductions.rs).
 
-An asserted topological `Bond` contributes to molecular connectedness. Spatial
-association, hydrogen bonding, ionic attraction, contact, or any other
-non-topological interaction does not.
+## Parsing, interpretation, and export
 
-Examples:
-
-```text
-ethanol                         -> 1 Molecule
-ubiquitin                       -> 1 Molecule
-Na+ + acetate-                  -> 2 Molecules
-protein + noncovalent ligand    -> 2 Molecules
-covalent protein-ligand adduct  -> 1 Molecule
-DNA duplex                      -> typically 2 Molecules
-disulfide-linked protein chains -> 1 Molecule
-```
-
-## `Molecule`
-
-There is exactly one foundational molecular type. Kekule does not distinguish
-`SmallMolecule` and `MacroMolecule` as owning wrappers.
-
-The intended core shape is:
-
-```rust
-pub struct Molecule {
-    graph: Graph,
-    perception: Perception,
-    properties: Properties,
-}
-```
-
-These fields have deliberately different semantic roles:
+The authoritative input pipeline is:
 
 ```text
-Graph
-  authoritative represented chemistry
-  required
-  defines the connected molecular entity
-
-Perception
-  derived chemical interpretation
-  reconstructible from represented chemistry plus an explicit perception model
-  does not define molecular identity
-
-Properties
-  extensible geometry-independent annotations valid for this molecular definition
-  may target the molecule itself, its atoms, or its bonds
-  do not define represented chemistry or molecular identity
-```
-
-Residue, chain, polymer, asymmetry, and atom-site organization do not belong to
-`Molecule`. They belong to the system-level `Hierarchy` owned by `Topology`.
-
-This boundary is intentional. Covalent connectedness and biological/source
-hierarchy are independent partitions of atoms: one hierarchy chain may span
-several disconnected `Molecule` instances, and one connected `Molecule` may span
-several hierarchy chains.
-
-`Molecule` contains no coordinates, conformers, velocities, periodic cell,
-residue/chain hierarchy, or other system/geometry-dependent state. Its
-properties must likewise be geometry-independent and valid for every use of that
-molecular definition. Properties that differ between instances of the same
-molecule definition belong at `Topology` scope instead.
-
-### Connectedness invariant
-
-Every published `Molecule` is non-empty and connected through asserted
-topological bonds. A single atom is a valid connected molecule.
-
-A disconnected graph is never a valid `Molecule`.
-
-Temporary disconnectedness is permitted only inside construction/edit staging
-such as `MoleculeEditor`.
-
-This is a type-level architectural invariant, not merely a convention. Public
-construction and editing APIs must make it impossible to publish an invalid
-disconnected molecule.
-
-## `Graph`
-
-`Graph` is the authoritative chemical graph of a molecule.
-
-Conceptually it owns:
-
-```text
-Graph
-  atoms
-  bonds
-  adjacency/connectivity
-  stable local AtomId / BondId identity
-  represented stereochemical elements/groups
-```
-
-The exact physical storage is an implementation detail, but it should remain
-purpose-built for chemistry, compact, deterministic, and efficient.
-
-Generic annotations do not live inside `Graph`, `Atom`, or `Bond`. Definition-
-scoped object, atom, and bond annotations live in the containing `Molecule`'s
-`Properties`. This keeps represented graph chemistry separate from extensible
-metadata and prevents generic annotations from affecting molecular identity or
-perception invalidation.
-
-### Represented atom chemistry
-
-Fundamental asserted atom state belongs in the graph, for example:
-
-```text
-element
-isotope
-formal charge
-radical state
-represented hydrogen declaration
-atom-map identity when retained as canonical represented chemistry
-```
-
-### Represented bond chemistry
-
-Fundamental asserted bond state belongs in the graph:
-
-```text
-endpoints
-localized represented bond order/kind
-represented bond stereochemistry where applicable
-```
-
-A `Bond` is a topological relation. A noncovalent interaction must not be added
-as a `Bond` merely because it relates two atoms spatially or energetically.
-
-### Stereochemistry
-
-Canonical represented stereochemical state belongs to the graph because it is
-part of the asserted molecular representation.
-
-Source-format marks such as SMILES directional syntax or molfile wedges are
-format/interpreter state. They must be resolved into Kekule's canonical stereo
-representation before a molecule is published.
-
-Format interpretation may decode geometry when the format itself defines stereo
-through that geometry, including Molfile drawn double-bond configuration. This is
-source interpretation, not general coordinate perception, and does not install
-perception. V3000 atom CFG uses CTfile carrier order, including hydrogen last;
-enhanced atropisomer groups use unambiguous axis endpoints in atom collections.
-
-A represented double-bond stereo focus must reference a bond whose order is
-`Double`. Changing a bond's order removes assertions focused on that bond and
-their group memberships; assigning the existing order is a no-op. Publication
-and checked stereo insertion/replacement also enforce the focus-order invariant.
-
-Explicit atom carriers must be bonded to their stereo focus endpoint. Deleting a
-carrier bond removes affected stereo assertions and their group memberships,
-even when an alternate ring path keeps the carrier and focus connected.
-Publication and checked stereo insertion/replacement enforce this adjacency.
-
-CIP labels are derived and therefore belong to `Perception`, not `Graph`.
-
-A stereo focus has at most one represented assertion. Checked insertion,
-replacement, and publication reject duplicate atom or bond focuses, incomplete
-tetrahedral carriers, repeated carriers, and axis references that do not identify
-opposite endpoints. Validation precedes carrier canonicalization so that
-canonicalization cannot conceal an invalid assertion.
-
-CIP assignment is transactional: all descriptors are computed from the represented
-graph and installed together after successful assignment. Auxiliary descriptors
-belong to occurrences in the focus-rooted CIP digraph, not to a global atom rank
-or a previously installed CIP label. Exhausting a ranking resource bound reports
-failure and preserves the previous perception; a truncated ligand comparison is
-not evidence of equivalence. Checked perception installation also validates that
-each descriptor belongs to its stereo element's geometry.
-
-CIP ranks explicit represented configurations. Rules for detecting plausible
-stereo candidates, such as small-ring restrictions, belong to source or coordinate
-perception and must not silently suppress an explicit assertion during ranking.
-
-### Aromaticity
-
-Aromaticity is perceived chemistry, not a canonical bond order.
-
-Canonical graph bonding is localized. Aromatic source syntax may be accepted by
-format readers/interpreters, but a published `Graph` contains ordinary
-represented bond orders. Aromatic atom/bond membership belongs to `Perception`.
-
-## `Hierarchy`
-
-`Hierarchy` is authoritative coordinate-independent organization of atoms at
-`Topology` scope.
-
-It may be empty. Its presence does not create a different molecular or topology
-type.
-
-Typical hierarchy state includes:
-
-```text
-chains
-residues
-residue classification
-polymer organization
-residue/chain identifiers
-component names
-atom-site annotations
-mappings from hierarchy atom sites to InstanceAtomId
-```
-
-Fixed semantic hierarchy fields remain strongly typed hierarchy state. Generic
-annotations targeting chains, residues, atom sites, or the system as a whole are
-stored in `Topology`'s `Properties`, not as independent property maps embedded in
-each hierarchy node.
-
-Hierarchy is orthogonal to molecular connectedness:
-
-```text
-Molecule / Graph answers:
-  which atoms form one connected molecular entity, and how are they bonded?
-
-Topology / Hierarchy answers:
-  how are system atoms organized into residues, chains, polymers, asymmetry
-  groups, and related source-level structural organization?
-```
-
-Hierarchy does not own independent atoms or bonds. Every hierarchy atom site
-must resolve to one live `InstanceAtomId` in the containing `Topology`.
-
-Hierarchy node identities are topology-global. A chain, residue, or atom-site ID
-belongs to one `Topology`; it is not a molecule-local ID requiring an additional
-`MoleculeInstanceId` qualifier.
-
-Conceptually:
-
-```text
-Hierarchy
-  ChainId -> Chain
-    ResidueId -> Residue + ResidueClass
-      AtomSiteId -> AtomSite -> InstanceAtomId
-```
-
-These are the canonical public hierarchy names. `Chain`, `Residue`, and
-`AtomSite` are topology-owned storage nodes; topology-bound `ChainView`,
-`ResidueView`, and `AtomSiteView` values provide borrowed navigation context.
-
-Kekule intentionally does not reproduce a `Structure -> Model -> Chain ->
-Residue -> Atom` object hierarchy. In particular, hierarchy has no `Model`
-node, and an `AtomSite` remains metadata and organization referring to the
-authoritative chemical atom through `InstanceAtomId`.
-
-### Hierarchy may cross molecule boundaries
-
-Hierarchy and connected molecular identity must not be forced to have the same
-boundaries.
-
-Examples:
-
-```text
-one source chain with an unresolved break
-  -> two connected Molecule instances
-  -> one Chain containing residues/atom sites from both instances
-
-covalently disulfide-linked source chains
-  -> one connected Molecule instance
-  -> two Chains inside one Topology hierarchy
-
-many disconnected waters sharing one source asymmetry identifier
-  -> many Molecule instances
-  -> hierarchy organization may group their residues under one source chain/asym
-```
-
-Kekule must never fabricate bonds merely to preserve hierarchy grouping, and it
-must never duplicate hierarchy nodes merely because a chain crosses a molecule
-boundary.
-
-### Molecule-centric hierarchy views
-
-`Molecule` itself does not own hierarchy. At system scope, an instance-first
-view may nevertheless expose convenient filtered hierarchy navigation:
-
-```text
-topology.molecule(instance).chains()
-topology.molecule(instance).residues()
-topology.molecule(instance).atom_sites()
-```
-
-Such APIs are borrowed/filtering views over the one topology-owned hierarchy.
-They do not create or own per-molecule hierarchy copies.
-
-### Domain-specific APIs
-
-Protein-, nucleic-acid-, or polymer-specific algorithms do not require owning
-wrapper types.
-
-They may operate on `Topology`/`Hierarchy`, `Model`, or lightweight borrowed
-validated views such as `ProteinView<'_>` or `NucleicAcidView<'_>`.
-
-Such views interpret existing topology/hierarchy state; they do not own another
-molecular object.
-
-## `Perception`
-
-`Perception` is the installed derived interpretation of one exact represented
-molecular graph.
-
-It replaces the architectural role formerly described by `PerceptionState`.
-Within `Molecule`, `perception: Perception` is idiomatic Rust and unambiguous.
-
-Perception is semantically subordinate to represented chemistry:
-
-```text
-Graph
-  + perception model/policy
-        |
-        v
-Perception
-```
-
-Deleting all perception state must never destroy authoritative information
-about the molecule.
-
-Two molecules must not become chemically different merely because one has more
-derived perception cached than the other.
-
-Fundamental perception may include sections such as:
-
-```text
-valence / implicit hydrogens
-ring/cycle information
-aromaticity
-CIP assignments
-```
-
-Not every calculated property belongs in `Perception`. Fingerprints,
-descriptors, partial charges, force-field types, pharmacophore features,
-rotatable-bond classifications, scoring terms, and other task-specific results
-remain separate derived objects by default. When a caller deliberately attaches
-such a result to a domain object and its validity matches that owner's scope, it
-may be stored through the generic `Properties` layer instead. This does not turn
-it into fundamental chemical perception.
-
-### Structural graph derivations versus chemical perception
-
-Kekule may internally distinguish mathematically unique graph caches from
-model-dependent chemical perception.
-
-For example:
-
-```text
-graph-derived:
-  degree
-  connected traversal data
-  generic cycle membership
-
-chemically perceived:
-  valence model
-  implicit hydrogens
-  aromaticity model
-  CIP assignment
-```
-
-This distinction may be reflected internally if useful, but the public
-`Molecule` architecture remains `Graph + Perception + Properties`.
-
-### Perception installation and invalidation
-
-Perception must always correspond to the current authoritative graph.
-
-Graph-changing edits invalidate affected perception. The implementation should
-prefer simple, safe invalidation over a complex dependency engine.
-
-Exact reconstruction of externally stored perception may be supported through
-checked installation APIs, but installation must validate references and
-dimensions and must never rewrite authoritative graph chemistry.
-
-Public convenience APIs may expose perception-backed queries directly through
-`Molecule`; callers should not need to duplicate perceived flags into generic
-properties.
-
-Mutating generic properties does not change represented graph chemistry and must
-not invalidate perception.
-
-### Perception on canonical owning objects
-
-Explicit perception is available after canonical publication at every owning
-level. `Molecule::perceive()` installs the default valence, ring-set, and
-aromaticity profile transactionally. `Topology::perceived()` returns a new
-topology snapshot with that same profile computed once per reusable molecule
-definition, in definition order. It recomputes installed perception and clears
-dependent CIP state according to the molecular pipeline's invalidation rules.
-It does not assign CIP or add explicit hydrogen atoms.
-
-`Model::perceive()`, `Ensemble::perceive()`, and `Trajectory::perceive()` install
-that new topology snapshot only after every definition succeeds. Failure
-identifies the source molecule definition and leaves the entire receiving owner,
-including its topology allocation and previously installed perception, unchanged.
-Collection perception is independent of member/frame count; it never runs once
-per realization or once per instance of a reused definition.
-
-Perception preserves represented graphs, definition reuse, instances, semantic
-IDs, authoritative dense ordering, hierarchy, classifications, and all stored
-properties. Realization arrays, periodic cells, weights, time, step, and other
-realization/collection state remain intact without copying realization payloads.
-The operation changes no represented chemistry and needs no geometry remapping.
-
-Published shared topologies remain immutable. Successful model/collection
-perception always installs a new `Arc<Topology>` snapshot, even when the old
-allocation has no other owners. Other owners retain their old snapshot.
-Selections, prepared calculations, and trajectory readers/buffers retain their
-original topology bindings; layout equality does not implicitly transfer them.
-
-## Editing
-
-All structural mutation of `Molecule` happens through `MoleculeEditor` or an
-equivalent transactional staging type.
-
-Conceptually:
-
-```text
-Molecule
-   |
-   | edit
-   v
-MoleculeEditor
-   |
-   | arbitrary intermediate structural edits
-   | temporary disconnection is allowed
-   | temporary incomplete chemistry is allowed
-   v
-finish()
-   |
-   +-- invalid -> error
-   |
-   `-- valid -> Molecule
-```
-
-`MoleculeEditor` is allowed to violate publication invariants while editing.
-The finished `Molecule` is not.
-
-Editing operations should be simple graph operations; validity is enforced at
-publication rather than through specialized mutation APIs.
-
-`finish()` must at minimum validate:
-
-```text
-non-empty graph
-exactly one connected component
-valid atom/bond references
-valid adjacency
-valid stereo references
-valid property-table dimensions for retained atom/bond identity spaces
-```
-
-Hierarchy validation is not a `MoleculeEditor` responsibility. Hierarchy is
-validated when a `Topology` is published.
-
-Chemical perception need not be valid during editing. On successful
-publication, stale perception must be discarded, recomputed, or explicitly
-reinstalled through a checked path. Per-atom and per-bond properties may be
-projected through editor identity when their target entity survives; owner-level
-properties must follow the explicit transformation semantics rather than being
-blindly assumed valid for a structurally changed molecule.
-
-The same editor concept may be used for construction from scratch; a separate
-public `MoleculeBuilder` is not architecturally required unless it provides
-clear ergonomic value without duplicating semantics.
-
-`MoleculeEditor` is the single public construction and editing interface. It
-exposes live atom/bond and stereo inspection, connectivity queries, represented
-state replacement, checked bond rewiring, batch deletion/retention, and owner and
-entity property editing. Complete property columns follow live entity order;
-deleted storage slots are handled internally. Fragment append returns atom,
-bond, stereo-element, and stereo-group ID correspondence and preserves entity
-annotations and represented stereo. It does not import fragment owner properties
-or perception; conflicting property data fails transactionally.
-
-`Molecule::edit()` clones into detached state; `Molecule::into_editor()` moves it.
-`finish()` consumes the draft. `validate()` checks a snapshot, and `try_finish()`
-keeps a rollback snapshot so failed publication can return an unchanged editor
-for repair. The latter operations explicitly trade a clone for recoverability.
-Published-molecule algorithms require a finished `Molecule`: editors do not
-dereference to `Molecule`, including in tests. Internal algorithm fixtures that
-intentionally use unfinished state access it explicitly through crate-private
-test paths. Bond mutation cannot replace endpoints outside checked rewiring.
-
-Mutable atom access invalidates perception and owner annotations immediately;
-invalidation never depends on a guard destructor. Explicit identical atom
-replacement and unchanged bond-order setters preserve draft state. Checked
-perception installation belongs on the published `Molecule`, after `finish()`.
-
-Public unrestricted mutable access to graph internals should not bypass the
-editor and thereby bypass publication validation.
-
-### Coherent system construction and editing
-
-`TopologyBuilder` assembles complete connected molecules, reusable definitions,
-instances, hierarchy, classifications, and static properties. `ModelBuilder`
-coordinates that assembly with explicit positions and realization properties.
-Builders expose inspection, non-consuming `validate()`, consuming `build()`, and
-recoverable `try_build()`. A model builder never exposes unrestricted mutable
-topology staging: instance changes and coordinates are staged together.
-
-`TopologyEditor` changes chemistry, composition, hierarchy, and static properties
-of a coordinate-free system. `ModelEditor` coordinates the same structural editor
-with one realization's positions, cell, and properties. Direct `Model` setters
-remain the ordinary interface for changes that preserve topology. All editors
-support detached drafts, `validate()`, `finish()`, and recoverable `try_finish()`.
-
-System edits target individual occurrences. Editing one occurrence of a reused
-definition must not change other occurrences. Untouched definitions retain their
-reuse, properties, and perception; their inferred classification also remains
-unchanged unless hierarchy evidence used for inference changes. Explicit class
-assignments retain precedence. Mutable molecular drafts are
-created only for affected occurrences. Graph operations and molecular publication
-use the same checked chemical machinery as `MoleculeEditor`.
-
-Deleting a bond may split an occurrence into several connected molecules; adding
-a bond may merge occurrences. System publication partitions final asserted
-connectivity into non-empty connected molecules. An isolated new atom is a valid
-single-atom occurrence. An empty system cannot be published. No inter-instance
-bond survives into a published topology. A `MoleculeEditor` still publishes
-exactly one connected molecule and rejects a disconnected final draft.
-
-Opaque editing handles remain stable within a draft through splitting, merging,
-deletion of other entities, and dense reordering. Deleted and foreign handles are
-rejected. Source identity is resolved explicitly to these handles. Editing handles
-are draft-only; `finish()` returns the completed owner without a correspondence
-wrapper. Append-only extension preserves existing semantic IDs and dense order.
-Other edits publish deterministic ordering. Internal row projection keeps entity
-properties and coordinates aligned with the final topology.
-
-Model atom insertion requires a finite, unit-aware coordinate. Deletion removes
-the corresponding coordinate and incident bonds. Surviving atoms keep their
-coordinates unless explicitly moved. Bond edits do not generate or optimize
-geometry. The model editor does not expose mutable structural staging that can
-bypass this coordination. Geometry-only edits retain the exact shared topology;
-topology edits publish a new immutable snapshot. Existing owners and bound
-selections remain attached to the original snapshot.
-
-Hierarchy remains independent of molecular partitioning. Merging molecules does
-not merge residues/chains; splitting molecules does not duplicate them. Removing
-atoms removes their sites and prunes residues/chains emptied by that removal.
-New atoms may remain outside hierarchy until explicitly assigned. Changed residue
-composition and changed molecular definitions are reclassified unless a fresh
-explicit override is supplied.
-
-Surviving entity annotations follow internal identity bookkeeping; new rows are missing.
-Changed owner and instance annotations are not inherited ambiguously across edits,
-splits, or merges. Incompatible property types or units fail transactionally.
-Transferring an annotation does not assert that an arbitrary derived value remains
-scientifically valid. Generic properties never trigger implicit recomputation.
-No-op publication preserves installed perception and annotations. Complete editor
-property-column getters, insertion, and removal all use live entity order; explicit
-stable-slot tables remain lower-level inspection surfaces.
-
-### Complete model append
-
-`ModelEditor::append_model` accepts a borrowed `Model` or `ModelView` and imports
-the complete canonical model state under the existing edit rules. Coordinates are
-included automatically and used as supplied in the destination coordinate system.
-Placement is the caller's responsibility; append does not fit, image, infer bonds,
-or generate geometry. Ordinary `add_atom`, `delete_atom`, and bond operations
-remain the editing interface for all elements, including hydrogen.
-
-The structural editor imports connected definitions, their explicit reuse within
-each append, occurrence annotations, represented stereo, perception, classification,
-hierarchy, and entity property columns. Independent definitions and independent
-appends are not deduplicated by chemical equality. The model editor coordinates
-this import with positions and realization properties, including occupancy and B
-factors. Equal hierarchy labels remain on distinct nodes with fresh identities;
-append does not infer that chains or residues from separate inputs should merge.
-
-Compatible entity properties follow their source-to-draft correspondence, with
-missing values on unrelated rows. Conflicting property types or physical dimensions
-reject the entire append. Source topology/model owner annotations are not imported,
-and changed destination topology/model owner annotations are cleared. An append
-report lists those keys. Unchanged molecular definitions keep their own annotations;
-subsequent chemistry edits follow the existing invalidation and propagation rules.
-
-A source without a periodic cell uses the destination cell. An empty editor with
-no cell adopts the source cell. Otherwise a periodic source must have the same
-periodic-axis flags and canonical cell vectors as the destination, allowing only
-floating-point conversion roundoff (16 machine epsilons times the largest vector
-component). A mismatch rejects without mutation so the caller can set the intended cell and
-retry. Every complete append is transactional, including late property failures.
-
-Each append returns a separate source-to-draft mapping, even for repeated imports
-of one source. It retains the source topology and supplies stable editing handles
-for subsequent operations in that draft, including adding or removing bonds.
-Deleted and foreign handles reject. `finish()` returns the completed model;
-`try_finish()` also retains the draft on failure. Neither returns a mapping of
-draft handles into the published result or rebinds topology-bound objects.
-
-## Parsing and interpretation
-
-### Canonical parsing pipeline
-
-Kekule uses one format boundary and one canonical publication path:
-
-```text
-source text / bytes
-    -> parse
-format-specific Document
-    -> select the format's independently interpretable scope when nested
-       (Record, Block, or equivalent)
-    -> interpret / canonicalize
-format-specific Interpretation
-    -> borrowed views or owned projections
-       -> Vec<Molecule>
-       -> Topology
-       -> Model
-       -> Ensemble / Trajectory when the source semantics justify them
-```
-
-Parsing is format-specific. Canonical target semantics are not. The interpretation
-object should retain the richest canonical Kekule state justified by the selected
-source scope; simpler outputs are projections that deliberately discard
-information rather than independent reinterpretations of the source.
-
-The canonical target hierarchy is:
-
-| Source scope | `Vec<Molecule>` | `Topology` | `Model` | `Ensemble` / `Trajectory` |
-| --- | --- | --- | --- | --- |
-| SMILES record/document | natural | natural | not represented | not represented |
-| Molfile document | lossy projection | lossy projection | natural | not represented |
-| SDF record | lossy projection | lossy projection | natural | not represented |
-| mmCIF block, one selected coordinate model | lossy projection | lossy projection | natural | not represented |
-| mmCIF block, several compatible coordinate models | projection of one selected interpretation policy | shared topology | selected-model projection | `Ensemble` is natural |
-| trajectory/coordinate stream with external topology | usually not reconstructed from the coordinate format alone | supplied externally | one-frame view/model where useful | `Trajectory` is natural |
-
-"Natural" means that the source scope directly carries the information needed for
-that canonical object. "Lossy projection" means the source carries richer state,
-usually geometry and/or system hierarchy, that is intentionally discarded.
-
-Formats that contain only coordinates are a separate capability class. They must
-not invent molecular chemistry merely to satisfy this table. XTC/DCD-like formats
-normally require an external `Topology`; XYZ-like formats require an explicit
-connectivity interpretation policy before they can become chemically meaningful
-`Model` values.
-
-### Independently interpretable source scopes
-
-A `Document` preserves source-format syntax and container organization. It may
-retain source locations, metadata, coordinates, unsupported records, data blocks,
-or other information required for faithful interpretation and diagnostics. It is
-not itself a canonical chemistry object.
-
-The format's native independently interpretable scope must remain explicit:
-
-```text
-SMILES
-  SmilesDocument
-    -> SmilesInterpretation
-
-Molfile
-  MolfileDocument
-    -> MolfileInterpretation
-
-SDF
-  SdfDocument
-    -> records: Vec<SdfRecord>
-         -> SdfRecordInterpretation
-
-mmCIF
-  MmcifDocument
-    -> blocks: Vec<MmcifBlock>
-         -> MmcifInterpretation         (one selected coordinate model)
-         -> MmcifEnsembleInterpretation (several compatible coordinate models)
-```
-
-Formats that intrinsically represent one record do not need a synthetic public
-`Record` wrapper merely for uniformity. Record-oriented formats should expose
-records, and block-oriented formats should expose blocks. Kekule should not force
-all formats through one generic `Document`/`Record` trait with unsupported
-operations.
-
-`SdfRecord` is the independently interpretable SDF unit. `MmcifBlock` is the
-independently interpretable CIF/mmCIF data-block unit. Sibling SDF records and
-sibling mmCIF blocks are independent source scopes and must not be silently merged
-into one `Topology`, `Model`, or `Ensemble` merely because they occur in the same
-file.
-
-### Consistent parse API
-
-Text formats should use the same parse vocabulary:
-
-```rust
-smiles::parse_str(input)?
-smiles::parse_str_with_options(input, options)?
-
-molfile::parse_str(input)?
-molfile::parse_str_with_options(input, options)?
-
-sdf::parse_str(input)?
-sdf::parse_str_with_options(input, options)?
-
-mmcif::parse_str(input)?
-mmcif::parse_str_with_options(input, options)?
-```
-
-The no-options form uses the format's documented defaults. Explicit options are
-available through the `_with_options` form. Future byte-oriented formats should
-follow the analogous `parse_bytes` / `parse_bytes_with_options` convention where
-appropriate.
-
-Parsing only parses. It does not publish canonical molecules, run chemical
-perception, choose a main component, or perform a format-independent modelling
-workflow.
-
-### Interpretation is the richest result
-
-Interpretation translates source assertions into canonical Kekule state. The
-interpretation object should retain all successfully interpreted canonical state
-needed for its format scope plus format-specific reports, mappings, provenance,
-and metadata sidecars.
-
-For a geometry-free format such as SMILES, the richest canonical state is the
-source-ordered connected molecular components plus interpretation diagnostics.
-
-For a one-realization geometry-bearing scope such as a Molfile, SDF record, or one
-selected mmCIF coordinate model, the richest canonical state is a `Model` (or
-state exactly equivalent to `Topology + Positions` plus realization properties)
-alongside the format-specific report/metadata. Geometry-independent outputs are
-projections from that same interpreted state.
-
-`MolfileInterpretation` owns this final `Model` and one source report per molecule
-instance. Its `model()` and `topology()` accessors borrow that state;
-`into_model()` and `into_topology()` are infallible consuming projections. Model assembly errors
-are interpretation errors. `reports()` and `into_parts()` retain the component-local
-source mappings without a second owner of the molecular definitions or positions.
-
-`SdfInterpretation::reports()` borrows reports directly from its records. The
-document interpretation does not own duplicate copies of record diagnostics;
-consuming `into_records()` retains each record's report alongside its model.
-
-In particular, `SdfRecordInterpretation` must retain geometry. It must not eagerly
-collapse to only `Vec<Molecule>` plus SDF data fields and thereby make
-`into_model()` require a second interpretation path. Conceptually its shape is:
-
-```text
-SdfRecordInterpretation
-  canonical Model                 # topology + matching Positions
-  SDF title/data fields           # source metadata sidecar
-  interpretation report/mappings
-```
-
-The exact physical field layout is an implementation detail, but after one SDF
-record has been interpreted the same interpretation value must be sufficient to
-inspect or obtain its molecules, topology, model, metadata, and report without
-reinterpreting the source.
-
-For a scope containing several compatible realizations of one topology, such as
-multiple coordinate models within one mmCIF block, the richest multi-realization
-result is an `Ensemble`. Multiple coordinate models are not automatically a
-`Trajectory` because the source does not necessarily assign temporal semantics.
-
-mmCIF block interpretation reads atom rows, resolves alternate locations, and
-parses the connectivity catalog once. Rows are partitioned by coordinate model;
-each candidate is published and validated against the first member's identity,
-chemistry, and dense layout before its realization payload is moved into the
-ensemble. Candidate topologies are released as interpretation proceeds. Selection
-does not skip validation of source rows or alternate locations in omitted models.
-
-### Borrowed accessors and owned projections
-
-Interpretation APIs distinguish borrowed access from consuming projection:
-
-```text
-interpretation.model()        -> borrowed Model access
-interpretation.topology()     -> borrowed Topology access
-interpretation.molecules()    -> borrowed/iterated Molecule access
-
-interpretation.into_model()     -> consume/project to owned Model
-interpretation.into_topology()  -> consume/project to shared-owned/owned Topology
-interpretation.into_molecules() -> consume/project to owned Vec<Molecule>
-```
-
-The getters leave the interpretation available so callers may continue
-to inspect reports, mappings, provenance, and metadata. The consuming `into_*`
-family is for callers that are finished with the format-specific interpretation
-wrapper and want to retain only a canonical Kekule object.
-
-The exact ownership type of an owned topology projection may follow Kekule's
-shared-topology architecture, for example `Arc<Topology>`, rather than forcing an
-expensive independent topology clone. The semantic distinction is borrowed versus
-owned/shared-owned access, not the spelling of the smart pointer.
-
-### Format-level ergonomic conversions
-
-The common path should be concise while remaining a composition of parse and
-interpret rather than a second code path.
-
-For SMILES:
-
-```rust
-let molecules = smiles::to_molecules("CCO.[Na+]")?;
-let topology = smiles::to_topology("CCO.[Na+]")?;
-```
-
-The explicit path remains available:
-
-```rust
-let document = smiles::parse_str("CCO.[Na+]")?;
-let interpretation = document.interpret()?;
-let molecules = interpretation.into_molecules();
-```
-
-For SDF:
-
-```rust
-let document = sdf::parse_str(text)?;
-let record = &document.records()[0];
-let interpretation = record.interpret()?;
-
-let molecules = interpretation.molecules();
-let topology = interpretation.topology();
-let model = interpretation.model();
-```
-
-and the independently interpretable record may expose direct conveniences:
-
-```text
-record.to_molecules()
-record.to_topology()
-record.to_model()
-```
-
-For mmCIF the same vocabulary applies at block scope, with explicit
-interpretation options where model/alternate-location policy is required:
-
-```rust
-let document = mmcif::parse_str(text)?;
-let block = &document.blocks()[0];
-let interpretation = block.interpret_with_options(options)?;
-
-let molecules = interpretation.molecules();
-let topology = interpretation.topology();
-let model = interpretation.model();
-```
-
-and conceptually:
-
-```text
-block.to_molecules(...)
-block.to_topology(...)
-block.to_model(...)
-block.interpret_ensemble_with_options(...)
-```
-
-A method form on `Document`/`Record`/`Block` is preferred for ordinary navigation
-once that source object already exists. Format-namespace free functions may remain
-as concise whole-source conveniences, but there must be
-one authoritative implementation path beneath them.
-
-### Component output and cardinality
-
-The canonical molecule-producing result for a source scope that may contain
-several disconnected molecular components is:
-
-```rust
-Result<Vec<Molecule>>
-```
-
-Every returned element is one valid connected molecule. Disconnected source
-syntax is partitioned rather than represented as a disconnected `Molecule`.
-
-Examples:
-
-```text
-"CCO"               -> [ethanol]
-"[Na+].[Cl-]"       -> [sodium, chloride]
-"CC(=O)[O-].[Na+]"  -> [acetate, sodium]
-```
-
-Component order follows deterministic source/interpreter order. Element zero does
-not carry a semantic guarantee that it is the chemically "main" component. A
-caller may choose the first component if that is its desired policy, or apply an
-explicit largest/organic/main-component policy separately.
-
-An owned conversion uses the plural `to_molecules()` or `into_molecules()` whenever
-the source can produce several components, according to its ownership contract.
-A strict `to_molecule()` or `into_molecule()` convenience is
-appropriate only when the operation either guarantees one connected molecule or
-fails loudly unless exactly one component exists. No convenience may silently
-select the first component.
-
-### Geometry-bearing projections
-
-For a one-realization geometry-bearing source scope, the canonical relationship
-is:
-
-```text
-Interpretation
-  richest state: Model + format report/metadata
-
-  -> molecules() / into_molecules()
-       discard geometry and system organization
-       retain the same canonical connected chemistry
-
-  -> topology() / into_topology()
-       discard realization-dependent state
-       retain system molecule instances, hierarchy, static properties, and order
-
-  -> model() / into_model()
-       retain the full one-realization canonical state
-```
-
-"Geometry is ignored" in a molecule/topology projection means geometry is not
-retained in the resulting canonical object. It does not mean coordinates are
-forbidden during interpretation. Coordinates may legitimately participate in
-source-stereo normalization, alternate-location/model selection, connectivity
-resolution, atom correspondence, or other format semantics before being
-discarded.
-
-The chemistry and geometry paths must share one publication pipeline. An
-implementation must not independently reinterpret chemistry for `into_molecules()`,
-`into_topology()`, and `into_model()`. Borrowed document conveniences (`to_*`)
-interpret once and delegate to these same consuming projections.
-
-Detached `Positions` access is not a headline parsing workflow. `Positions` is
-deliberately topology-agnostic dense storage whose semantic meaning depends on
-the matching topology order. Callers may construct a `Model` explicitly from a
-shared `Topology` and matching `Positions` through the canonical model
-constructor, but format APIs should normally return/project the complete `Model`
-rather than encourage independently detached topology and position extraction.
-
-### Projection invariants
-
-All projections from one interpretation under one interpretation policy must be
-mutually consistent.
-
-For any one-realization source interpretation:
-
-```text
-interpretation.model().topology()
-    has the same complete static layout as
-interpretation.topology()
-
-interpretation.into_model().topology()
-    has the same complete static layout as
-interpretation.into_topology()
-
-interpretation.molecules()
-    corresponds exactly to the molecule instances of interpretation.topology()
-    in authoritative instance/source order
-```
-
-Equivalent consuming forms must preserve the same relationship. No projection
-may silently drop a connected component, select a "main" molecule, reorder
-components inconsistently, synthesize different chemistry, or run a different
-perception policy.
-
-If a format constructs or preserves hierarchy, the topology obtained directly
-from the interpretation and the topology inside its model must carry the same
-hierarchy. `into_topology()` must not construct a bare topology while `into_model()`
-secretly adds hierarchy.
-
-### Multi-record and multi-block containers
-
-Multi-record formats preserve record boundaries rather than flattening all
-components from an entire source into one undifferentiated vector.
-
-For SDF:
-
-```text
-SdfDocument
-  records: Vec<SdfRecord>
-```
-
-`SdfRecord` is independently interpretable. `SdfDocument` must not expose a
-conversion that interprets all of its records as one `Model`; independent SDF
-records are a collection, not molecule instances of one spatial system.
-Whole-document conveniences may return one interpretation/result per record, but
-their semantics must remain explicitly record-preserving.
-
-An mmCIF source may likewise contain multiple independent data blocks:
-
-```text
-MmcifDocument
-  blocks: Vec<MmcifBlock>
-```
-
-Sibling blocks must not be combined merely because they occur in one file.
-Document-level exact-one-structural-block conveniences may remain ergonomic, but
-zero or several independently interpretable structural blocks require explicit
-selection/iteration by the caller. Block-level interpretation is authoritative.
-
-### Synthetic MOL/SDF hierarchy
-
-Molfile and SDF do not normally provide PDB/mmCIF-style chain/residue hierarchy,
-but a geometry-bearing `Model` benefits from uniform hierarchy-aware selection
-and slicing.
-
-When a Molfile or SDF record is interpreted into a `Model`/`Topology`, it should
-synthesize minimal hierarchy at topology scope:
-
-```text
-one deterministic synthetic chain
-  one residue per connected source component
-    residue name: UNL
-    atom sites -> the component's InstanceAtomId values
-```
-
-`UNL` is the conventional unknown-ligand residue name. The exact synthetic chain
-identifier and residue numbering policy may be implementation-defined, but must
-be deterministic and documented.
-
-This synthetic hierarchy belongs only to the assembled `Topology`; the
-underlying `Molecule` definitions remain hierarchy-free. The same hierarchy must
-be present whether that topology is observed through `to_topology()` or through
-the topology owned by `to_model()`.
-
-### mmCIF coordinate models and hierarchy interpretation
-
-Coordinate-model multiplicity lives inside one `MmcifBlock`, independently of
-block multiplicity:
-
-```text
-MmcifDocument
-  MmcifBlock A
-    coordinate model 1
-    coordinate model 2
-      -> Ensemble when interpreted together with verified shared topology
-
-  MmcifBlock B
-    coordinate model 1
-      -> Model when one realization is selected
-```
-
-One selected coordinate model should expose the same molecule/topology/model
-projection family as an SDF record. Several selected compatible coordinate models
-may be interpreted as one shared-topology `Ensemble`. Model selection and
-alternate-location selection are interpretation policy and must be applied once,
-then inherited by every projection from that interpretation.
-
-mmCIF hierarchy must be reconstructed as one topology-level hierarchy, not as
-independent copies attached to connected molecules. The interpretation order for
-one block is conceptually:
-
-```text
-_atom_site and related mmCIF categories
-    -> parse source atom/residue/chain/asymmetry identity
-    -> select coordinate model and alternate locations
-    -> construct asserted/inferred molecular connectivity
-    -> partition into connected components
-    -> publish canonical Molecule values
-    -> install Molecule instances into one Topology
-    -> establish source atom -> InstanceAtomId correspondence
-    -> construct one Hierarchy over those InstanceAtomId values
-    -> classify residues and molecule definitions
-    -> attach Positions / realization Properties
-    -> publish Model or shared-topology Ensemble
-```
-
-The hierarchy must preserve distinct mmCIF label and author identity where both
-are present, including at least the relevant chain/asymmetry, residue/component,
-sequence, insertion-code, and atom-site identifiers.
-
-Hierarchy construction must not be restricted to polymer entities. Polymer,
-branched, non-polymer, ligand/ion, and water atom-site records may all carry
-hierarchical/source organization and should participate when representable.
-
-mmCIF entity kinds such as polymer, branched, non-polymer, and water are
-format-specific source semantics. They are useful evidence during interpretation
-and may be retained in mmCIF provenance for faithful diagnostics or round trips,
-but they do not form a parallel canonical Kekule entity-role layer. The
-published topology instead carries canonical `MoleculeClass` and `ResidueClass`
-values under the ordinary topology classification rules.
-
-If one source chain/asymmetry spans several disconnected graph components, the
-result must remain one hierarchy chain referencing atoms from several molecule
-instances. If several source chains are covalently connected, they remain
-several hierarchy chains referencing one molecule instance.
-
-Recognized semantic realization data such as occupancy and B-factor may be
-promoted into reserved atom property columns with dedicated APIs. Arbitrary
-source fields are not automatically promoted into canonical properties merely
-because a generic property layer exists.
-
-### Canonical constructors are orthogonal to parsing
-
-Canonical domain objects should provide ergonomic format-independent construction
-without acquiring format-specific constructors.
-
-In particular, `Topology` should support concise construction from one or more
-already canonical connected molecules:
-
-```rust
-let topology = Topology::from_molecule(&molecule)?;
-let topology = Topology::from_molecules(&molecules)?;
-```
-
-The simple constructor semantics are one explicit molecule instance per input
-molecule, in input order. Definition interning/reuse remains an advanced builder
-concern and must not make the ordinary constructor's scientific semantics
-surprising.
-
-Likewise the canonical relationship:
-
-```text
-Topology + Positions -> Model
-```
-
-should remain available through `Model::new(...)` (with the library's shared
-ownership type for topology). This is a general domain constructor, not the
-standard parsing workflow. Geometry-bearing format interpretation should normally
-produce/project a complete `Model` directly.
-
-Canonical domain objects must not accumulate format-specific constructors or
-writers such as `Molecule::from_smiles(...)` or `Model::from_mmcif(...)`.
-Equivalent functionality belongs in the format namespace or on the
-format-specific source/interpretation types.
-
-### Reports, metadata, and source correspondence
-
-Canonical conversion must not require throwing away useful format diagnostics.
-Interpretation may return or retain format-specific reports, source mappings,
-warnings, data fields, provenance, or other sidecars alongside the canonical
-objects.
-
-Source metadata belongs in a canonical domain object only when its semantics are
-part of that object's architecture or when interpretation explicitly promotes it
-into the generic property layer with a well-defined owner scope and target.
-Otherwise it remains attached to the format document, record, block,
-interpretation result, or another explicit sidecar.
-
-SDF data fields therefore remain SDF interpretation/source metadata unless
-explicitly promoted. Known mmCIF atom-site quantities such as occupancy and
-B-factor may be promoted because their canonical semantics and realization scope
-are defined.
-
-### Interpretation and perception
-
-Parsing recognizes source syntax. Interpretation translates source assertions
-into canonical Kekule graph state and, where a system object is constructed,
-canonical topology hierarchy and realization state.
-
-Interpretation may perform deterministic representation rewrites required to
-publish a canonical molecule, such as localization of aromatic source bonding
-and conversion of source stereo notation into canonical stereo elements.
-
-Interpretation does not run arbitrary chemical standardization, choose a
-tautomer/protonation state, or invent bonds merely to force connectedness or
-preserve hierarchy.
-
-If interpretation yields multiple disconnected components, each component is
-published independently as a valid `Molecule`.
-
-Chemical perception remains a separate explicit operation. Neither molecule,
-topology, model, ensemble, nor trajectory projection implicitly runs default
-perception merely because a canonical object is being constructed. Requesting
-geometry must not silently change the installed chemical perception relative to
-a geometry-independent projection from the same interpretation.
-
-Topology classification is separate from `Molecule::Perception`. Publishing a
-`Topology` does assign the lightweight canonical `MoleculeClass` and
-`ResidueClass` values defined below; it must not use classification as a reason
-to run the molecule's general perception pipeline.
-
-Perception of molecule definitions already installed in a `Topology`, `Model`,
-`Ensemble`, or `Trajectory` uses the explicit owning-object operations above.
-It is not part of parsing or interpretation semantics. For example, an SDF
-workflow may call `let mut model = record.to_model()?; model.perceive()?;`.
-
-## `Topology`
-
-`Topology` is the immutable, geometry-independent representation of one
-molecular system.
-
-Its fundamental responsibility is to answer:
-
-> Which molecular entities exist in this system, how are all of their identities
-> laid out at system scope, how are their atoms organized hierarchically, and
-> what broad molecular/residue classes do those entities belong to?
-
-A topology contains one or more explicit `Molecule` instances. Because every
-`Molecule` is connected and topology introduces no bonds between different
-instances, the connected components of the topology's asserted covalent graph
-are exactly its molecule instances.
-
-Conceptually:
-
-```text
-Topology
-  molecule definitions + MoleculeClass
-  molecule instances
-  topology-wide atom/bond identity
-  canonical dense atom/bond ordering
-  identity <-> dense-index mappings
-  Hierarchy + ResidueClass
-  Properties
-```
-
-Topology contains no positions, velocities, forces, periodic cell, conformers,
-frame ordering, or other geometry-dependent state. Its properties are likewise
-coordinate-independent and valid for this exact system layout.
-
-### Molecule instances are the public system concept
-
-Scientifically, a topology is a system containing molecules. A caller should
-normally think in terms of explicit molecule instances, not storage
-normalization.
-
-The primary public abstraction is therefore one instance-qualified molecule.
-A borrowed view such as:
-
-```rust
-pub struct MoleculeInstanceView<'a> {
-    topology: &'a Topology,
-    id: MoleculeInstanceId,
-}
-```
-
-may provide ergonomic access to:
-
-```text
-instance identity
-underlying Molecule
-canonical MoleculeClass through the referenced definition
-qualified atoms
-qualified bonds
-filtered hierarchy nodes touching this instance
-```
-
-The exact type name is not normative, but instance-first navigation is.
-
-Typical APIs should make ordinary iteration natural:
-
-```rust
-for molecule in topology.molecules() {
-    for (atom_id, atom) in molecule.atoms() {
-        // atom_id is instance-qualified
-    }
-}
-```
-
-Lower-level definition/instance APIs remain useful for explicit reuse and
-advanced system construction.
-
-### Definitions are a storage/reuse mechanism
-
-Repeated identical molecule instances should not require repeated storage of the
-same geometry-independent molecular definition.
-
-Topology may therefore intern reusable `Molecule` values as definitions:
-
-```text
-MoleculeDefinition
-  owns one Molecule
-  owns one MoleculeClass
-
-MoleculeInstance
-  has one MoleculeInstanceId
-  references one MoleculeDefinitionId
-```
-
-For example, a box containing many water molecules may store one water
-`MoleculeDefinition` and many `MoleculeInstance`s. All instances referencing one
-definition necessarily expose the same `MoleculeClass`.
-
-This definition/instance split is part of the storage architecture, but it is
-not the primary scientific mental model presented to ordinary callers.
-
-A published topology must not contain unused molecule definitions. Every
-`MoleculeDefinition` must be referenced by at least one `MoleculeInstance`.
-
-Instance-specific generic annotations do not require a parallel
-`MoleculeInstanceMetadata` object. They belong in the molecule-instance
-`PropertyTable` of the containing `Topology`'s `Properties`. Definition-invariant
-annotations remain on the reusable `Molecule` definition instead.
-
-### Canonical molecule and residue classification
-
-Kekule has a small canonical topology classification layer for broad structural
-navigation and format projection. It is intentionally not a general biological
-role ontology. In particular, contextual concepts such as receptor, ligand,
-cofactor, substrate, counterion, or structural water are not part of this layer.
-
-The canonical molecule vocabulary is:
-
-```rust
-pub enum MoleculeClass {
-    Protein,
-    Dna,
-    Rna,
-    Carbohydrate,
-    Water,
-    Ion,
-    SmallMolecule,
-    Other,
-}
+source -> syntax Document -> independent Record/Block -> richest Interpretation
+                                                       -> borrowed/owned projections
 ```
-
-`SmallMolecule` is the ordinary class for connected non-polymeric molecular
-compounds that do not match one of the more specific classes. It is deliberately
-preferred over a contextual name such as `Ligand`. `Other` is reserved for
-entities for which Kekule has positive reason not to use one of the named
-classes, including irreducibly mixed/conflicting cases.
-
-`MoleculeClass` is definition-scoped state. One `MoleculeDefinition` stores one
-class and every instance of that definition shares it. The class is not stored
-inside the foundational `Molecule`, because classification may legitimately use
-system hierarchy and source component information that exist only when the
-molecule is installed in a `Topology`.
-
-Hierarchy residues have a parallel small canonical vocabulary:
-
-```rust
-pub enum ResidueClass {
-    AminoAcid,
-    DnaNucleotide,
-    RnaNucleotide,
-    Carbohydrate,
-    Water,
-    Ion,
-    Other,
-}
-```
-
-`ResidueClass` describes broad residue/component identity, not canonicality.
-Kekule does not introduce `NoncanonicalAminoAcid` or
-`NoncanonicalNucleotide` variants in this foundational taxonomy. A modified
-component may be recognized as its broad structural class when the evidence is
-strong; otherwise conservative initial recognition may leave it as `Other`.
-That does not prevent the enclosing molecule from being recognized from its
-polymer connectivity.
-
-Classification is automatic during topology publication, with explicit builder
-assignment available as an override. Published topologies retain explicit
-assignment intent separately from inferred class values; this intent does not
-participate in layout equality. Resumed builders and editors refresh inferred
-classes when an existing entity's component identity or hierarchy evidence
-changes, while preserving explicit overrides through metadata changes. Changes
-to composition or chemistry still follow the editor's fresh-override rule. No-op
-rebuilds and ordinary appends retain cached classes, including complete-entity
-classes intentionally preserved by subsets and transforms.
-New informative instances of a reused definition contribute to classification
-and invalidate its cached inference; explicit molecule-class overrides still win.
-Classification must remain lightweight and
-deterministic; it is not a reason to run generic chemical perception, expensive
-graph isomorphism, or a large substructure-search suite while loading a
-`Topology`.
-
-The initial residue classifier should use a conservative cascade:
-
-```text
-explicit user override
-  -> exact known component/residue identity
-  -> trivial unambiguous water/monoatomic-ion recognition where applicable
-  -> Other
-```
-
-Known-component tables are fast paths, not the definition of the chemistry. The
-initial tables should be small and conservative. Non-canonical or modified
-residues that are not explicitly recognized may therefore remain `Other` in v1.
-
-Molecule classification may use the whole connected molecular graph, residue
-classes, and inter-residue connectivity. The initial precedence is:
-
-```text
-explicit user override
-  -> Water
-  -> Ion
-  -> peptide-connected polymer       -> Protein
-  -> DNA phosphodiester polymer      -> Dna
-  -> RNA phosphodiester polymer      -> Rna
-  -> recognized carbohydrate entity  -> Carbohydrate
-  -> ordinary fallback               -> SmallMolecule
-
-conflicting strong polymer identities -> Other
-```
-
-Water and monoatomic-ion recognition should use trivial graph/source evidence.
-Protein and nucleic-acid recognition should be based on actual inter-residue
-covalent linkage patterns plus recognized residues rather than require every
-residue name to be canonical. For example, an `Other` residue embedded between
-recognized amino-acid residues by peptide bonds does not break an otherwise
-unambiguous `Protein` classification. The analogous rule applies to modified
-nucleotides embedded in an otherwise unambiguous DNA or RNA backbone.
-
-The initial implementation should prefer a single pass over residue identities
-plus a linear scan of bonds between known residue atom groups. Local linkage
-predicates such as peptide-bond and phosphodiester-link recognition are preferred
-over unrestricted whole-molecule substructure matching. Classification should
-therefore remain approximately linear in topology size and negligible compared
-with structural parsing/construction.
-
-Because inference may use topology-owned hierarchy while storage is definition-
-scoped, `TopologyBuilder::build()` (or the equivalent publication boundary) is
-the natural point at which unresolved classifications are finalized. Evidence
-from every informative instance of one definition must resolve to one definition
-class. If strong instance-derived evidence conflicts and there is no explicit
-override, the conservative result is `MoleculeClass::Other`.
-
-Builder publication discards residue overrides whose IDs are absent from the
-final hierarchy. Such orphan assignments must not persist across publication
-and attach to a later residue that reuses a numeric ID. Within a system editor,
-fresh molecule-class assignments apply to current connected components;
-chemical edits invalidate only affected components, including after splitting
-a historical staging group.
-
-Source formats may provide useful classification hints or exact source-level
-categories, but source-specific enums are not canonical replacements for
-`MoleculeClass` or `ResidueClass`. Format adapters translate between their source
-semantics and this canonical layer where appropriate and may retain exact source
-provenance separately for round-trip fidelity.
-
-### Instance-qualified molecular identity
-
-`AtomId` and `BondId` are local to one `Molecule` definition. Once a molecule
-appears in a topology, system-level molecular identity must qualify the local ID
-by its molecule instance.
-
-Conceptually:
-
-```text
-InstanceAtomId = (MoleculeInstanceId, AtomId)
-InstanceBondId = (MoleculeInstanceId, BondId)
-```
-
-This prevents identity collisions when one definition is instantiated multiple
-times.
-
-Hierarchy identities are different: chains, residues, and atom sites are owned
-by the topology itself and therefore already have topology scope. They must not
-be represented as `(MoleculeInstanceId, local hierarchy ID)` merely because an
-atom site eventually points into a molecule instance.
-
-### Dense topology ordering
-
-Numerical and property-column state requires a deterministic dense ordering over
-the complete system.
-
-Topology therefore owns an authoritative dense atom order and, where useful, a
-dense bond order:
-
-```text
-InstanceAtomId <-> TopologyAtomIndex
-InstanceBondId <-> TopologyBondIndex
-```
-
-These concepts have deliberately different roles:
-
-```text
-InstanceAtomId / InstanceBondId
-  semantic system identity
-
-TopologyAtomIndex / TopologyBondIndex
-  dense storage position
-```
-
-Dense ordering tells `Properties`, `Model`, `Ensemble`, and `Trajectory` how to
-interpret topology-wide atom and bond columns and numerical arrays. Detached
-tables/arrays themselves do not own topology identity.
-
-### Hierarchy ownership and invariants
-
-`Topology` is the sole authoritative owner of `Hierarchy`.
-
-A published topology must guarantee at least:
-
-```text
-every hierarchy chain/residue/site ID is valid within that Topology
-every residue references a live chain
-every residue has one canonical ResidueClass
-every atom site references a live residue
-every atom site resolves to one live InstanceAtomId
-atom-site lookup mappings are internally consistent
-hierarchy nodes may reference atoms from any molecule instance in the Topology
-```
-
-There must not be a second authoritative hierarchy stored inside molecule
-definitions or instances. Molecule-centric hierarchy APIs are projections of the
-topology hierarchy.
-
-Generic chain/residue/atom-site annotations are likewise stored once at topology
-scope in property tables keyed to the topology-owned hierarchy identities.
-
-### No topology-level covalent bonds
-
-Topology must not introduce asserted covalent/topological bonds between
-molecule instances.
-
-If atoms from two current molecule instances become connected by an asserted
-bond, those atoms belong to one connected `Molecule`. The resulting system must
-therefore be represented by a new topology containing the newly connected
-molecule rather than by adding an inter-instance bond.
-
-Hydrogen bonds, salt bridges, contacts, coordination hypotheses, force-field
-interactions, and other spatial or energetic relations are not topology bonds.
-
-### No connected-components API per instance
-
-Because every published `Molecule` is connected, asking for connected components
-inside one molecule instance is redundant: the answer is always exactly that
-instance.
-
-Topology should therefore expose molecule-instance membership directly rather
-than retain an API such as `connected_components(instance)` whose result is
-architecturally predetermined.
-
-### Hierarchy-aware selections and subsets
-
-Hierarchy is a primary system-navigation mechanism. `Topology` should support
-selections over chains, residues, atom sites, molecule classes, residue classes,
-and their identifiers/labels, with results represented as topology-bound atom
-selections.
-
-`AtomSelection::all(&topology)` infallibly selects every atom in authoritative
-dense order and retains the exact shared topology allocation.
-
-Selection union, intersection, and difference preserve sorted unique dense
-ordering and require the exact same topology snapshot, including for empty
-sets. `atom_ids()` borrows the selection's topology context without allocating.
-Whole-residue expansion adds all atoms of touched residues and preserves
-selected atoms without hierarchy assignments; it never removes selected atoms.
-Atom-name selections explicitly distinguish label and author namespaces.
-
-Single-result hierarchy lookups reject missing and ambiguous matches. Label and
-author identifiers never substitute for one another, and author residue
-addresses include the insertion code. An author chain ID may span several label
-chains; topology-level author-residue lookup checks uniqueness of the complete
-address rather than requiring the author chain ID alone to be unique.
-
-A hierarchy selection and a structural subset are distinct operations:
-
-```text
-selection
-  identifies atoms in the existing Topology
-
-subset/slice
-  constructs a new Topology containing the selected atoms
-```
-
-A structural subset may cut through existing molecule instances. For each
-source `Molecule`, the induced selected graph is partitioned into connected
-components, and every non-empty component is published as a new valid
-`Molecule` instance in the target topology. The target hierarchy is filtered and
-remapped onto the resulting target `InstanceAtomId` values; empty residues and
-chains are omitted.
-
-The subset operation should return a narrow, operation-specific source-to-target
-correspondence sufficient to transfer dense state such as positions,
-per-entity property columns, velocities, and forces. This is not a resurrection
-of a generic foundational `TopologyMapping` abstraction.
-
-With that primitive, higher-level objects may expose ergonomic operations such
-as:
-
-```text
-model.slice(selection)
-ensemble.slice(selection)
-trajectory.slice(selection)
-```
-
-`Model` transfers one realization; `Ensemble` and `Trajectory` construct the
-subset topology once and apply the same dense-index correspondence to every
-member/frame.
-
-Property propagation through structural transformations is conservative.
-Per-entity columns may be projected when a valid source-to-target entity
-correspondence exists. Owner-level scalar properties are not automatically
-copied to a structurally changed owner unless the operation explicitly defines
-that their semantics remain valid.
-
-A subset that creates new molecular definitions or changes residue composition
-must obtain classifications valid for the resulting topology rather than blindly
-copy a source definition class onto a chemically different target definition.
-Complete retained molecules and residues preserve their source classification.
-Instances selecting the same local atoms from the same source definition reuse
-the reconstructed compact definitions.
-
-### Construction and invariants
-
-A topology builder may stage definitions, instances, hierarchy, classifications,
-and properties and publish an immutable `Topology` only after validation.
-
-A published topology must satisfy at least:
-
-```text
-at least one molecule instance
-every instance references a live definition
-every definition is referenced by at least one instance
-every definition has one canonical MoleculeClass
-every referenced Molecule satisfies Molecule invariants
-instance-qualified atom/bond identities are valid
-dense atom/bond ordering is complete and deterministic
-identity/index mappings are mutually consistent
-hierarchy references and lookups are valid and complete for every stored site
-every hierarchy residue has one canonical ResidueClass
-all topology property tables match their target-domain cardinalities/orderings
-```
-
-Builder property mutation uses fixed-length table views. Appending identities
-extends tables with missing values; replacing hierarchy cannot silently truncate
-populated columns. Publication rejects remaining dimension mismatches.
-
-High-level format-independent construction should include:
-
-```rust
-Topology::from_molecule(&molecule)?
-Topology::from_molecules(&molecules)?
-```
-
-These constructors create one explicit molecule instance per input molecule in
-input order. Explicit builder APIs remain available when callers want reusable
-definitions and repeated instances; definition interning must not make the
-ordinary constructor's scientific semantics surprising. Classification is
-automatic for these ordinary constructors; callers should not have to supply a
-parallel classification sidecar merely to build or serialize a normal topology.
-
-### Immutability and topology changes
-
-Published `Topology` is structurally immutable.
-
-Shared exact ownership should use `Arc<Topology>` rather than cloning independent
-copies of topology state.
-
-Topology properties are annotations, not structural layout. They may be staged
-through `TopologyBuilder` and exposed read-only through a shared published
-`Topology`. The architecture does not require interior mutability merely to add
-annotations after an `Arc<Topology>` is already shared; workflows that require a
-modified static property set may construct a new topology value with the same
-layout.
-
-A chemical or structural transformation that changes molecule membership,
-connectivity, atom count, bond count, hierarchy identity, or dense layout
-produces a new `Topology` rather than mutating an existing topology underneath
-geometry-bearing state.
-
-Ordinary append-style extension follows the same publication rule. The primary
-API should stage from the existing published topology and publish a new value:
-
-```rust
-let mut builder = topology.into_builder();
-builder.add_molecule(&ligand);
-let topology = builder.build()?;
-```
-
-`into_builder()` is a topology transformation boundary, not hidden mutation. For
-append-only extension it should preserve the existing definitions, instances,
-semantic IDs, authoritative dense order, hierarchy IDs, retained
-classifications, and retained entity properties, then append new identities
-deterministically. A non-consuming clone-based convenience may be added later if
-justified, but direct structural mutation such as `topology.add_molecule(...)`
-is not the canonical API.
-
-Appending to a builder resumed from a published owner clears inherited owner
-annotations. Fresh construction may stage owner annotations for the final object;
-retained per-entity annotations extend with missing rows for appended entities.
-
-The core architecture does not provide a generic topology-remapping framework.
-If a workflow changes topology, geometry or other dense state for the new system
-must be constructed explicitly according to that workflow's own semantics.
-Operation-specific correspondence, such as the mapping returned by a subset
-operation, is allowed when required by that operation.
-
-### Scope of the current Topology design
-
-The current core intentionally remains minimal.
-
-It does not introduce:
-
-```text
-generic provenance framework
-contextual molecule-role ontology
-geometry-dependent interactions
-inter-molecule topology bonds
-generic topology remapping
-```
-
-A unified generic property layer is part of the core because annotations already
-exist across molecule, hierarchy, model, ensemble, and trajectory surfaces and
-need one coherent ownership/storage model. It is not a generic provenance
-framework and does not imply automatic ingestion of arbitrary source metadata.
-
-System-level chain/residue/atom-site hierarchy and broad canonical
-molecule/residue classification are not speculative metadata; they are part of
-the core Topology architecture because they support structural navigation,
-selection, slicing, and format projection without depending on a source-specific
-sidecar.
-
-Other concerns should not be added speculatively. They may be introduced later
-only as separate concepts when concrete requirements establish their semantics.
-
-## Properties
-
-Kekule has one generic property architecture for extensible annotations across
-its canonical molecular and structural objects. The canonical public vocabulary
-is:
-
-```text
-PropertyKey
-PropertyValue
-PropertyColumn
-PropertyTable
-Properties
-```
-
-The old parallel concepts `PropMap`, `AtomData`, and `BondData` are not separate
-architectural layers. Their useful semantics are folded into this one property
-system.
-
-Properties are annotations. They do not replace strongly typed core chemistry,
-hierarchy, classification, geometry, or trajectory fields, and they do not
-define molecular or topology identity.
-
-### `PropertyKey`
-
-`PropertyKey` identifies one property by name. It is a validated key type rather
-than an unconstrained `String` scattered throughout the API.
-
-The exact validation grammar is an implementation detail, but it should be
-stable, deterministic, and shared by object values and columns. A conservative
-ASCII identifier grammar and bounded key length are preferred.
-
-Conceptually:
-
-```text
-PropertyKey("energy")
-PropertyKey("partial_charge")
-PropertyKey("source_id")
-```
-
-### `PropertyValue`
-
-`PropertyValue` is one scalar value of one property attached directly to an
-owner.
-
-The initial value domain is deliberately small:
-
-```rust
-pub enum PropertyValue {
-    Bool(bool),
-    Int(i64),
-    Real { value: f64, unit: Unit },
-    String(String),
-}
-```
-
-Real-valued properties are always unit-aware. A dimensionless real uses
-`DIMENSIONLESS`; there is no parallel untyped floating-point property concept.
-Stored real values must be finite.
-
-`PropertyValueRef` is a borrowed scalar view. Strings borrow their owner or
-column storage, while numerical values and units are copied. `value_ref()` on
-columns and tables exposes this view without allocation; `to_value()` explicitly
-materializes an owned `PropertyValue`.
-
-`PropertyValue` is intended for scalar/object-level annotations such as a model
-energy, method label, boolean status, or integer generation number. Large arrays
-or structured analysis results should not be forced into scalar property values.
-
-### `PropertyColumn`
-
-`PropertyColumn` represents one property repeated over a homogeneous entity
-domain in authoritative owner order.
-
-Conceptually, columns mirror the scalar property value domain:
-
-```rust
-pub enum PropertyColumn {
-    Bool(Vec<Option<bool>>),
-    Int(Vec<Option<i64>>),
-    Real { unit: Unit, values: Vec<Option<f64>> },
-    String(Vec<Option<String>>),
-}
-```
-
-`Option` permits a property to be absent for individual entities. One column has
-one type, one semantic key, and for real-valued data one stored unit. Compatible
-real-valued updates are converted into the stored unit. An entirely absent
-column may be normalized away.
-
-For dense topology domains, column position follows the topology's authoritative
-dense order. For definition-local molecule atom/bond domains, owner APIs map
-stable local identities to the corresponding property-table positions; detached
-columns themselves do not resolve semantic IDs.
-
-### `PropertyTable`
-
-`PropertyTable` is the columnar property store for one homogeneous entity
-domain.
-
-Conceptually:
-
-```rust
-pub struct PropertyTable {
-    len: usize,
-    columns: BTreeMap<PropertyKey, PropertyColumn>,
-}
-```
-
-Every column in one table has the table's logical length. Examples include:
-
-```text
-Molecule atom PropertyTable
-Topology molecule-instance PropertyTable
-Topology atom PropertyTable
-Topology residue PropertyTable
-Model atom PropertyTable
-TrajectoryFrame bond PropertyTable
-```
-
-Columnar storage is the canonical representation for per-entity properties.
-Kekule should not embed an independent map in every `Atom`, `Bond`, `Residue`,
-or other repeated entity merely to attach generic annotations. Strongly typed
-canonical fields such as `ResidueClass` are not generic properties and remain on
-the corresponding domain object.
-
-Stable deterministic iteration is preferred. `BTreeMap` is therefore a suitable
-initial implementation unless a demonstrated performance requirement justifies a
-different internal map.
-
-### `Properties`
-
-`Properties` is the unified storage concept for generic annotations owned at one
-scope. It contains scalar values describing the owner itself and may internally
-aggregate zero or more `PropertyTable`s for repeated entity domains addressed by
-that owner.
-
-Conceptually:
-
-```text
-Properties
-  owner values
-    PropertyKey -> PropertyValue
-
-  entity-domain tables
-    atoms              -> PropertyTable
-    bonds              -> PropertyTable
-    molecule_instances -> PropertyTable
-    chains             -> PropertyTable
-    residues           -> PropertyTable
-    atom_sites         -> PropertyTable
-    ... only where meaningful for that owner
-```
-
-The exact physical nesting of those tables inside `Properties` is an
-implementation detail. The public API is owner-centric: `properties()` exposes
-the owner-level property namespace, while repeated entity domains are exposed
-directly by the owning domain object through accessors such as
-`atom_properties()` and `bond_properties()`. Callers should not have to navigate
-through `properties().atoms()` or drive a generic public target enum. This keeps
-the valid property domains of each owner explicit and lets the owner enforce its
-identity and mutation invariants.
-
-For example:
-
-```text
-molecule.properties()
-molecule.atom_properties()
-molecule.bond_properties()
-
-model.properties()
-model.atom_properties()
-model.bond_properties()
-
-topology.properties()
-topology.molecule_instance_properties()
-topology.atom_properties()
-topology.bond_properties()
-topology.chain_properties()
-topology.residue_properties()
-topology.atom_site_properties()
-
-ensemble.properties()
-ensemble_member.properties()
-ensemble_member.atom_properties()
-ensemble_member.bond_properties()
-
-trajectory.properties()
-trajectory_frame.properties()
-trajectory_frame.atom_properties()
-trajectory_frame.bond_properties()
-```
-
-Thus `properties()` has one consistent public meaning: properties attached
-directly to that owner. Per-entity property tables are reached through the
-owner's semantic domain accessors, even if the implementation stores everything
-inside one `Properties` value.
-
-The full word `properties` is preferred in the public API over the abbreviation
-`props`.
-
-### Ownership and validity
-
-Property scope is determined by the narrowest owner whose lifetime exactly
-matches the property's validity.
-
-```text
-Molecule
-  geometry-independent and invariant across every instance of this definition
-
-Topology
-  geometry-independent but specific to this exact system / instance layout
-
-Model
-  specific to one concrete realization
-
-EnsembleMember
-  specific to one non-temporal realization
-
-TrajectoryFrame
-  specific to one temporal realization
-
-Ensemble / Trajectory
-  collection-level annotations that apply to the collection itself
-```
-
-Target and owner are independent dimensions. An atom property may legitimately
-exist at Molecule, Topology, Model, EnsembleMember, or TrajectoryFrame scope, but
-those values have different validity semantics.
-
-For example:
-
-```text
-Molecule atom property
-  definition-invariant atom class
-
-Topology atom property
-  static force-field assignment specific to this assembled system
-
-Model atom property
-  geometry-dependent SASA or charge for one realization
-
-TrajectoryFrame atom property
-  instantaneous per-frame analysis value
-```
-
-A property that differs between two instances of one reusable molecular
-definition cannot live on the definition's `Molecule`; it belongs at topology or
-realization scope.
-
-### Owner shapes
-
-The intended conceptual property targets are:
-
-```text
-Molecule Properties
-  owner
-  atoms
-  bonds
-
-Topology Properties
-  owner
-  molecule_instances
-  atoms
-  bonds
-  chains
-  residues
-  atom_sites
-
-Model Properties
-  owner
-  atoms
-  bonds
-
-Ensemble Properties
-  owner
-
-EnsembleMember Properties
-  owner
-  atoms
-  bonds
-
-Trajectory Properties
-  owner
-
-TrajectoryFrame Properties
-  owner
-  atoms
-  bonds
-```
-
-Additional target domains should be added only when a concrete owning identity
-space exists and the semantics justify them.
-
-Realization installation rejects populated molecule-instance and hierarchy
-domains, even when atom and bond dimensions happen to match. Cloning a generic
-property container does not implicitly promote its domains to a different scope.
-
-### Canonical scientific state versus generic properties
-
-The property system is an extensibility mechanism, not a replacement for the
-type system.
-
-Strongly defined core state remains available through dedicated fields/APIs, for
-example:
-
-```text
-Atom.element / formal_charge / represented hydrogens
-Bond.order
-MoleculeDefinition.class
-Residue.class
-Hierarchy labels and identifiers
-Positions
-PeriodicCell
-EnsembleMember.weight
-TrajectoryFrame.time / step
-TrajectoryFrame.velocities / forces
-```
-
-Canonical per-entity scientific annotations may reuse `PropertyTable` as their
-physical storage when that eliminates a redundant data container. Occupancy and
-B-factor are the primary initial examples: they belong to realization atom
-properties, but retain dedicated semantic APIs, canonical units, validation,
-and reserved names rather than becoming arbitrary user-defined strings.
-
-Thus `AtomData` and `BondData` disappear as public architectural concepts while
-their strongest implementation idea -- validated, unit-aware columnar storage --
-becomes the generic `PropertyTable` / `PropertyColumn` substrate.
-
-### Identity, equality, and perception
-
-Generic properties do not define represented molecular chemistry.
-
-Consequently:
-
-```text
-changing Molecule properties
-  -> does not change Graph identity
-  -> does not invalidate Perception
-  -> does not make an otherwise identical represented Molecule chemically unequal
-
-changing Topology properties
-  -> does not change topology layout identity
-  -> does not change same-layout compatibility
-```
-
-APIs that intentionally compare complete annotations may be added separately if
-needed, but structural/chemical equality must not accidentally include generic
-properties merely because of derived `PartialEq` on storage structs.
-
-### Transformations and propagation
-
-Property propagation is explicit and conservative.
-
-When a transformation provides a valid source-to-target correspondence for a
-repeated entity domain, its `PropertyTable` columns may be projected through that
-correspondence. This is the natural behavior for retained atoms, bonds, residues,
-or frames.
-
-Owner-level `PropertyValue`s are not automatically valid after a structural
-transformation. For example, a total energy, system label, or score attached to
-a full model may no longer describe a sliced model. Such values are copied only
-when the operation explicitly guarantees or defines that behavior.
-
-The generic property layer must not invent semantic recomputation rules.
-
-### Source metadata boundary
-
-The existence of a generic property system does not mean arbitrary parser fields
-are automatically copied into canonical objects.
-
-```text
-arbitrary source metadata
-  -> stays on format Document / Record / Block / interpretation sidecar
-
-recognized canonical or explicitly promoted data
-  -> may populate a typed core field or a property with defined owner/target
-```
-
-SDF data fields therefore remain SDF record metadata unless explicitly promoted.
-Known mmCIF atom-site quantities such as occupancy and B-factor may be promoted
-because their canonical semantics and realization scope are defined.
-
-## Physical quantities and units
-
-Kekule has one runtime physical-unit architecture for the entire library. It
-must not define independent "model", "trajectory", "QM", or other subsystem
-unit conventions. Public APIs may accept values expressed in any compatible
-`Unit`; when numerical domain state is normalized for internal storage, it uses
-one library-wide canonical unit system.
-
-The intended core remains deliberately small:
-
-```text
-BaseDimension
-    -> Dimension
-         -> Unit
-
-value + Unit
-    -> Quantity<T>
-```
-
-`Dimension` represents integer powers of the independent physical dimensions.
-`Unit` represents one linear unit by its dimension, conversion scale, and
-optional symbol. `Quantity<T>` pairs an arbitrary supported value/container with
-one runtime `Unit`.
-
-Every published `Unit` has a finite, strictly positive scale. Dynamic composition
-uses fallible `try_mul`, `try_div`, and `try_powi` methods to reject scale
-underflow/overflow and dimension-exponent overflow. The existing arithmetic
-operators and `powi` remain conveniences that panic on an unrepresentable unit;
-they cannot construct invalid units. Scalar quantities offer matching fallible
-unit-composition methods. Conversion rejects scale ratios that overflow or
-underflow to zero before applying them to any scalar or collection. Approximate
-scalar comparison accepts only finite values, including after conversion, and
-avoids overflow in its tolerance calculation.
-
-Runtime units are intentional. Kekule should not replace this architecture with
-a compile-time type-level quantity system merely to encode dimensions in Rust
-types. Runtime units fit parsing, serialization, dynamic APIs, foreign-language
-interfaces, trajectories, potentials, and user-selected units while keeping the
-core representation straightforward.
-
-Unit conversion is explicit at boundaries. Canonicalization does not mean that
-non-canonical units are second-class: `ANGSTROM`, `BOHR`, `KILOCALORIE_PER_MOLE`,
-and other compatible units remain valid public inputs and outputs where useful.
-The canonical system defines only the preferred numerical representation used
-inside Kekule.
-
-### Dimensional coherence at molecular scale
-
-The canonical unit system must be both dimensionally and numerically coherent
-for molecular mechanics and dynamics.
-
-`Mass` and `Amount` remain independent base dimensions. Atomic and molecular
-masses expressed in daltons are treated dimensionally as molar mass
-(`Mass / Amount`), consistent with `1 Da = 1 g/mol` for unit bookkeeping. This
-allows molecular-scale mechanics to compose naturally with molar energies such
-as `kJ/mol`.
-
-In particular, the canonical basis must satisfy the identity:
-
-```text
-CANONICAL_MASS_UNIT
-    * CANONICAL_LENGTH_UNIT^2
-    / CANONICAL_TIME_UNIT^2
-
-== dimensionally and numerically ==
-
-CANONICAL_ENERGY_UNIT
-```
-
-and therefore likewise produce coherent velocity, force, gradient, and force
-constant units without hidden subsystem-specific conversion factors.
-
-### Library-wide canonical unit system
-
-The preferred canonical basis is:
-
-```text
-CANONICAL_LENGTH_UNIT          = NANOMETER
-CANONICAL_MASS_UNIT            = DALTON
-CANONICAL_TIME_UNIT            = PICOSECOND
-CANONICAL_ENERGY_UNIT          = KILOJOULE_PER_MOLE
-CANONICAL_CHARGE_UNIT          = ELEMENTARY_CHARGE
-CANONICAL_TEMPERATURE_UNIT     = KELVIN
-CANONICAL_ANGLE_UNIT           = RADIAN
-
-CANONICAL_VELOCITY_UNIT        = NANOMETER / PICOSECOND
-CANONICAL_FORCE_UNIT           = KILOJOULE_PER_MOLE / NANOMETER
-CANONICAL_GRADIENT_UNIT        = KILOJOULE_PER_MOLE / NANOMETER
-CANONICAL_FORCE_CONSTANT_UNIT  = KILOJOULE_PER_MOLE / NANOMETER^2
-```
-
-These names are library-wide. They must not use a `MODEL_` prefix, because the
-canonical convention is not owned by or restricted to the `Model` type. The
-same canonical units apply wherever Kekule stores the corresponding physical
-quantity internally, including real-valued generic properties and property
-columns when normalized storage is appropriate.
-
-Subsystem-specific canonical unit families should not be introduced unless a
-future requirement demonstrates that one shared convention is technically
-insufficient. Interfaces to external tools may of course convert to whatever
-units those tools require without changing Kekule's canonical system.
-
-## Geometry boundary
-
-Geometry starts above `Topology`.
-
-The fundamental relationship is:
-
-```text
-Topology + Positions -> Model
-```
-
-`Positions` and the other dense realization arrays are numerical storage. They
-do not own or retain `Arc<Topology>` and they do not resolve semantic atom or
-bond identities themselves.
-
-The intended separation is:
-
-```text
-Topology
-  defines semantic identities, Hierarchy, classification, static Properties,
-  and dense atom/bond ordering
-
-Positions / Velocities / Forces
-  store dense numerical geometry/dynamics state
-  know their own shape/length and numerical units as appropriate
-  do not own Topology
-  do not carry topology identity
-
-Properties / PropertyTable / PropertyColumn
-  store extensible annotations at the owner scope where they are valid
-  per-entity tables know their logical shape and units/types
-  detached tables/columns do not own Topology identity
-
-Model / Ensemble / Trajectory
-  own the Topology context exactly once
-  own realization/collection Properties as appropriate
-  validate dense state and property-table dimensions against that Topology
-  provide semantic atom/bond/hierarchy access when topology context is required
-```
-
-This means operations such as resolving an `InstanceAtomId` to a coordinate or a
-realization atom property are operations on `Model`, `Ensemble` member/frame
-views, or `Trajectory` frame views, not on a detached `Positions` array or
-`PropertyTable`.
-
-Similarly, topology compatibility is an invariant of the owning aggregate. It
-is not established by storing repeated `Arc<Topology>` handles inside every
-numerical or property subobject.
-
-Geometry-dependent quantities such as positions, velocities, forces, periodic
-cell, occupancies, B-factors, and other model/frame state do not belong in
-`Molecule` or static `Topology` properties.
-
-### Dense numerical and property containers
-
-`Positions`, `Velocities`, and `Forces` are dense numerical arrays in Kekule's
-library-wide canonical units. They validate numerical shape, units, and finite
-values as appropriate, but are otherwise topology-agnostic.
-
-Their generic `new()` constructors copy from borrowed numerical input.
-`from_vec()` converts and validates an owned vector in place, and `into_values()`
-transfers its allocation together with the canonical unit. Bulk setters validate
-and copy the same borrowed slice, including for user-defined `AsRef` inputs.
-
-`PropertyTable` and `PropertyColumn` provide the corresponding generic columnar
-storage for extensible per-entity data. The former `AtomData` and `BondData`
-public concepts are folded into this property layer rather than maintained as a
-parallel storage architecture.
-
-Primitive dense containers must not expose APIs that require a `Topology`
-parameter merely to translate semantic IDs. Semantic navigation belongs to the
-higher-level object that owns both topology and dense/property state.
-
-### Canonical construction and realization projection
-
-The canonical format-independent construction graph is:
-
-```text
-                          + Positions
-                          |
-Molecule(s) -> Topology --+----------------------> Model
-                          |
-                          + EnsembleMember(s) ----> Ensemble
-                          |
-                          + TrajectoryFrame(s) ---> Trajectory
-
-Ensemble   -- select member --> EnsembleMemberView -- as_model() --> ModelView
-                                              `---- to_model() --> Model
-
-Trajectory -- select frame  --> TrajectoryFrameView -- as_model() --> ModelView
-                                              `---- to_model() --> Model
-```
-
-The native vocabulary of each owning collection remains authoritative. An
-`Ensemble` contains `EnsembleMember` payloads, not `Model` values. A `Trajectory`
-contains `TrajectoryFrame` payloads, not `Model` values. A selected member or
-frame may nevertheless be projected into model semantics because the containing
-collection supplies the shared topology context.
 
-The intended ordinary construction surface is:
+Parsing preserves syntax and source metadata. Interpretation constructs represented
+chemistry, hierarchy, classification, and available geometry once; it does not run
+general perception, standardization, tautomerization, or protonation. Geometry may
+inform source stereo even when the caller ultimately requests topology only.
+Format convenience functions compose this pipeline without reimplementing it.
 
-| Object | Canonical construction |
+| Format scope | Interpretation and projection |
 | --- | --- |
-| `Topology` | `Topology::from_molecule(...)`, `Topology::from_molecules(...)`, or `TopologyBuilder` |
-| `Model` | `Model::new(topology, positions)` |
-| `EnsembleMember` | `EnsembleMember::new(positions)` |
-| `TrajectoryFrame` | `TrajectoryFrame::new(positions)` |
-| `Ensemble` | `Ensemble::new(topology)` plus `push(member)`, or `Ensemble::from_members(topology, members)` |
-| `Trajectory` | `Trajectory::new(topology)` plus `push(frame)`, or `Trajectory::from_frames(topology, frames)` |
-
-The public constructors should make passing either an owned `Topology` or the
-library's shared topology handle ergonomic where this does not weaken ownership
-semantics. The smart-pointer spelling is an implementation detail; callers
-should not need to restructure otherwise natural construction code merely to
-wrap an already complete topology.
-
-There is no special singular collection constructor. A one-member ensemble or a
-one-frame trajectory uses the same member/frame construction path as any other
-cardinality.
-
-Selection from collections should bind the stored topology-free payload to the
-collection's topology and return a borrowed topology-aware view:
-
-```text
-ensemble.member(i)  -> Option<EnsembleMemberView<'_>>
-ensemble.members()  -> Iterator<Item = EnsembleMemberView<'_>>
-
-trajectory.frame(i) -> Option<TrajectoryFrameView<'_>>
-trajectory.frames() -> Iterator<Item = TrajectoryFrameView<'_>>
-```
-
-The topology-free `EnsembleMember` and `TrajectoryFrame` remain the payload types
-used for construction and storage. Their corresponding views are borrowed
-navigation/projection helpers, not additional canonical owning objects.
-
-Detached member/frame construction requires only positions. Atom dimensions are
-known from positions; bond dimensions come from explicitly supplied columns or
-from the containing topology at insertion. Insertion and member replacement
-establish dimensions for property tables without retained columns and validate
-all populated tables against the topology, without resizing or discarding their
-columns. Empty table dimensions are storage metadata, not scientific input.
-Stored-member editors and frame buffers preserve their established dimensions.
-
-Projection into model semantics uses an ownership-explicit naming convention:
-
-```text
-member.as_model() -> ModelView<'_>
-member.to_model() -> Model
-
-frame.as_model()  -> ModelView<'_>
-frame.to_model()  -> Model
-```
-
-`as_model()` is a zero-copy borrowed projection. `to_model()` explicitly
-materializes an owned `Model`, cloning realization state as required while
-sharing the immutable topology. `ModelView` should likewise provide the explicit
-owned materialization operation needed to support this convention.
-
-The collection itself must not expose convenience methods such as
-`ensemble.model(i)` or `trajectory.model(i)`: those names incorrectly suggest
-that the collection contains models. The semantic operation is selection of a
-member/frame followed by an optional projection to model semantics.
-
-No Model-based `Ensemble`/`Trajectory` construction API is required by this
-architecture. If such conveniences are ever justified, they must remain
-secondary to the native `EnsembleMember`/`TrajectoryFrame` construction model.
-
-## `Model`
-
-Checked distance, angle, dihedral, and spatial-selection helpers in
-`structure::measure` consume borrowed `ModelView` values. They measure stored
-Cartesian coordinates, ignore cells, and perform no automatic preprocessing.
-Distances and angles use the existing physical quantity system. Spatial
-selection returns a static topology-bound atom set for one view; frame-dependent
-membership requires reevaluation on each frame. Candidate selection, geometric
-cutoff, whole-residue expansion, and structural slicing remain separate steps.
-
-`Model` is one concrete geometry-dependent realization of one topology.
-
-Conceptually:
-
-```text
-Model
-  shared Topology          <- owned once
-  Positions
-  optional periodic cell
-  Properties
-    owner-level values
-    atom PropertyTable
-    bond PropertyTable
-```
-
-A `Model` does not duplicate molecular chemistry or hierarchy. It interprets
-dense realization state and property columns against its topology's
-authoritative identities, dense layout, and hierarchy.
-
-`Model` is specifically Kekule's geometry-bearing `Topology + Positions`
-abstraction. Multiple coordinate models from a source format are several
-realizations of the same topology and therefore belong to `Ensemble`, not to a
-hierarchy-level node.
-
-Construction validates at least:
-
-```text
-Positions length == Topology atom count
-Model atom PropertyTable length == Topology atom count
-Model bond PropertyTable length == Topology bond count
-```
-
-After construction, public mutation APIs must preserve those dimensional
-invariants.
-
-Canonical realization atom data such as occupancy and B-factor are represented
-inside the atom property table but retain dedicated typed APIs and validation.
-There is no parallel model-level `AtomData`/`BondData` architecture.
-
-Semantic operations such as `position(InstanceAtomId)`, atom/bond property
-access by semantic ID, and hierarchy-aware selection/slicing belong on `Model`
-or a model-level borrowed view because only that layer owns both topology and the
-realization state.
-
-## `Ensemble`
-
-`Ensemble` is a finite collection of non-temporal realizations of one topology.
-
-Conceptually:
-
-```text
-Ensemble
-  shared Topology          <- owned once
-  collection Properties
-  members[]
-    Positions
-    optional periodic cell
-    Properties
-      owner-level values
-      atom PropertyTable
-      bond PropertyTable
-    optional weight
-```
-
-Members do not own or repeat the shared topology. Their dense state and
-property columns are interpreted in the `Ensemble` topology's authoritative
-order.
-
-Insertion/construction validates every member's dimensions against the ensemble
-topology. Differences between members are geometric or member-level data, not
-molecular or hierarchy identity.
-
-An ensemble weight is contextual to membership in that ensemble and therefore
-belongs to the member relation rather than to `Topology`. It remains a dedicated
-semantic field/API rather than an arbitrary generic property.
-
-## `Trajectory`
-
-`Trajectory` is an ordered temporal sequence of realizations of one topology.
-
-Conceptually:
-
-```text
-Trajectory
-  shared Topology          <- owned once
-  collection Properties
-  ordered frames[]
-    Positions
-    optional periodic cell
-    Properties
-      owner-level values
-      atom PropertyTable
-      bond PropertyTable
-    optional Velocities / Forces
-    optional time / step
-```
-
-Frames do not own or repeat the shared topology. Their dense arrays and property
-columns are interpreted in the `Trajectory` topology's authoritative order.
-
-Insertion, replacement, decoding, and reusable frame-buffer publication validate frame
-shapes and property-table dimensions against the trajectory topology. Streaming
-infrastructure may use reusable buffers for allocation efficiency, but those
-buffers follow the same ownership rule: topology context is owned once by the
-buffer/container rather than repeated inside every numerical/property subobject.
-Stored frame access and iteration borrow this validated state without rescanning
-dense fields. Public views of detached frames still validate against the supplied
-topology. `TrajectoryFrameView::to_frame` copies the complete topology-free payload,
-including velocities, forces, time, step, and all properties.
-
-Consuming `Trajectory::into_frames()` transfers all frame payloads without copying
-dense arrays and discards the collection context. `into_parts()` transfers the
-shared topology, collection properties, and frame vector together when that context
-must also be retained.
-
-`frame_mut` exposes a restricted editor with immediately validated, dimension-
-preserving setters and no mutable dereference to the payload. Invariants must hold
-even if the editor is forgotten; no validation depends on its destructor.
-`replace_frame` validates the complete replacement before publishing it and returns
-the old payload. `select_frames(indices)` copies frames in exactly the requested
-order, permits duplicates and empty selections, preserves original times and steps,
-and retains exact topology sharing and collection properties. It is distinct from
-atom `slice`, which constructs a topology subset. Temporal unwrapping precedes frame
-downsampling; selection never invents missing intermediate samples.
-
-Trajectory readers accept a topology directly, interpreting file coordinate index
-`i` as topology dense atom index `i`. They validate counts and available format
-metadata (including XYZ element order) automatically. Coordinate-only data cannot
-prove atom identity from equal counts. An independently supplied semantic atom
-sequence may be checked against topology order without creating a persistent
-assertion or binding object. A reader can create a reusable frame buffer sharing
-its exact topology; publication rejects buffers belonging to another topology.
-
-The format-oriented `io::read_trajectory(path, topology)` convenience deliberately
-loads all frames into a `Trajectory` through the existing sequential reader and
-validated in-memory writer. It retains decoded frame state and publishes a result
-only after clean EOF. `io::open_trajectory` and reusable buffers remain public for
-streaming workflows; opening a reader does not load an entire trajectory.
-
-`io::write_trajectory(path, &trajectory)` infers the format from the extension and
-uses the same strict, atomic path writer. Its options variant selects format,
-precision, field policies, and overwrite behavior explicitly. No format silently
-drops unsupported metadata: unrepresentable collection properties are rejected
-before creating a file, and unsupported frame state prevents publication. Writing
-an empty trajectory fails; existing destinations are preserved by default.
-
-Coordinate transformations return an owned trajectory by default. Explicit
-`_in_place` variants stage every frame before publishing any change, so failure
-leaves the original trajectory unchanged. Both forms retain exact topology
-sharing and all collection/frame properties. Superposition fits stored Cartesian
-coordinates by default, even when cells are present; it rotates cells, velocities,
-and forces consistently with positions. Diagnostic reports are opt-in; ordinary
-superposition does not allocate a discarded collection of frame reports.
-
-Periodic preprocessing consists of distinct operations: making each bonded
-molecule whole within a frame, imaging whole molecules around explicit anchor
-selections, and temporally unwrapping atom paths across successive frames. These
-operations require cells and change positions only, preserving other frame state.
-Molecular reconstruction uses asserted topology bonds and shortest Cartesian bond
-images, checking ring closure without inferring bonds or changing topology.
-Imaging expands selected anchor atoms to complete molecule instances. Temporal
-unwrapping follows continuity in periodic fractional coordinates with each frame's
-cell, leaves the first frame unchanged, and rejects ambiguous half-cell crossings.
-It requires sufficiently close sequential samples and fixed periodic-axis flags;
-its variable-cell convention must be documented rather than hidden in alignment.
-
-`FrameSuperposer`, `MoleculeImager`, and `TrajectoryUnwrapper` expose these same
-operations for streaming buffers and individual frame views. The imager retains a
-bond traversal for one exact topology; the superposer borrows a reference and fit
-selection. The unwrapper retains the previous fractional coordinates across buffer
-reuse and processing chunks. It accepts any first source index, then requires
-consecutive indices and nondecreasing available times (missing times are allowed).
-Errors identify the caller's source frame index. A failed streaming transformation
-changes neither the buffer nor temporal state, so the corrected frame can be
-retried. Explicit reset starts an independent unwrapping sequence. Loaded operations
-use the same kernels and stage the entire result before publication.
-
-Time, step, velocities, and forces remain dedicated semantic fields/APIs rather
-than being demoted into arbitrary generic properties.
-
-A trajectory represents one fixed-topology epoch. Topology-changing chemistry or
-hierarchy is not represented by silently mutating one shared topology. A workflow
-with changing topology should use separate topology epochs/objects and explicitly
-construct the geometry belonging to each epoch.
-
-RMSF and contact-occupancy accumulators consume borrowed frames from the exact
-source topology and retain memory proportional to selected atoms or specified
-pairs, independent of frame count. Loaded trajectory methods use those same
-accumulators. Each successful observation has equal statistical weight; failed
-observations leave counts and moments unchanged. Frame indices are diagnostic
-labels, not inferred sampling intervals or statistical weights.
-
-RMSF is per atom about its mean stored position, with population normalization.
-Contact occupancy counts frames at Cartesian pair distance less than or equal
-to the explicit cutoff. Neither operation aligns, images, or unwraps input;
-preprocessing is an explicit preceding operation. Results retain source topology
-and atom/pair associations. A CA result is a CA measurement, not an implicit
-average over a residue. These are concrete derived analysis results, not new
-state owned by topology or a generic reduction framework.
-
-## Molecular identity and equality
-
-Authoritative molecular identity is defined by represented molecular state, not
-by derived cache population, generic properties, topology classification, or
-system hierarchy.
-
-`Perception` must therefore not make two otherwise identical represented
-molecules unequal merely because one has different cache presence. Generic
-properties likewise do not participate in represented-molecule equality.
-
-A `Molecule` is independent of the residue/chain context in which one of its
-instances appears. The same molecular definition may be instantiated in several
-hierarchical contexts without becoming a different `Molecule`. `MoleculeClass`
-is stored by the topology's reusable definition wrapper and does not become part
-of the foundational `Molecule`'s represented chemical identity.
-
-Topology layout equality is distinct from graph isomorphism or chemical
-identity. Full topology layout equality may include molecule definitions,
-instances, canonical classifications, hierarchy, semantic IDs, and dense
-ordering, but installed perception and generic properties do not alter layout
-compatibility. `Topology::same_layout()` therefore remains true after explicit
-perception, while exact shared snapshot identity changes. APIs requiring the
-same `Arc<Topology>` retain that requirement. Two independently constructed
-topologies may represent chemically equivalent systems while still having
-different hierarchy IDs or dense layouts.
-
-Alignment and geometric comparison may accept an explicit, ordered atom
-correspondence between two exact topology snapshots. Each side validates its
-own atom identities; pairing is one-to-one within the selected subsets and need
-not cover either complete system. A checked same-layout constructor may pair
-matching dense indices, while explicit pairs permit different atom orders and
-system sizes. This is an operation-specific geometric relation, not a claim of
-chemical equivalence or a generic topology/metadata remapping framework.
-Correspondence retains both snapshot identities and never rebinds either model.
-Pair-based and same-topology calculations share numerical kernels; existing
-selection and shared-identity contracts remain intact.
-
-If complete annotated-state equality is needed, it should be an explicit API
-rather than an accidental consequence of deriving `PartialEq` over storage
-structs containing properties.
-
-## Persistence and reconstruction
-
-Persistence consumers may store molecular graph/perception, properties, topology
-classification, and topology hierarchy separately according to their ownership
-boundaries.
-
-Molecule reconstruction order is conceptually:
-
-```text
-Graph
-  -> validate represented graph
-Properties
-  -> validate definition-local owner/atom/bond property dimensions
-Perception
-  -> checked install last
-Molecule
-```
-
-Persisted disconnected graph data must be partitioned into connected molecules
-or rejected before publication.
-
-Loading must never weaken the connectedness invariant.
-
-Topology persistence must reconstruct definitions, definition-scoped
-`MoleculeClass`, instances, qualified atom/bond identities, authoritative dense
-ordering, hierarchy with `ResidueClass`, and topology property tables
-consistently. Hierarchy atom sites are validated against reconstructed
-`InstanceAtomId` values. Geometry and realization properties are restored
-separately and validated by the owning `Model`, `Ensemble`, or `Trajectory`
-against that topology layout.
-
-Runtime domain objects are not required to be generic file-format DTOs. Source
-metadata that is not canonical represented molecular/topology state and has not
-been explicitly promoted into a property with defined semantics should remain in
-format records or other external sidecars.
-
-## Mutation and transformations
-
-A normal molecular edit returns one valid connected `Molecule`.
-
-Operations whose semantic purpose is to split a molecule naturally return more
-than one molecule, for example a fragmentation transformation may return
-`Vec<Molecule>`.
-
-Topology-changing system operations return a new topology rather than mutating a
-published topology in place. They do not automatically remap existing dense
-geometry/data unless that operation explicitly defines and returns the necessary
-correspondence, as hierarchy-aware slicing does.
-
-Per-entity property columns may follow such an explicit correspondence. Generic
-owner-level properties are not blindly copied to structurally changed owners.
-Canonical molecule/residue classifications must remain valid for the transformed
-topology and are re-inferred when structural changes make direct preservation
-unsafe.
-
-Coordinate-only operations never mutate `Graph`, `Perception`, `Hierarchy`, or
-`Topology`.
-
-## Naming and module style
-
-The intended molecule field/type naming is idiomatic Rust:
-
-```rust
-pub struct Molecule {
-    graph: Graph,
-    perception: Perception,
-    properties: Properties,
-}
-```
-
-`Topology` owns the system-level `Hierarchy`, canonical classification, and
-`Properties`; the exact physical field/module layout is not normative.
-
-The canonical classification vocabulary is:
-
-```text
-MoleculeClass
-ResidueClass
-```
-
-The canonical property vocabulary is:
-
-```text
-PropertyKey
-PropertyValue
-PropertyColumn
-PropertyTable
-Properties
-```
-
-The public API should prefer the full word `properties` rather than `props`.
-`PropMap`, `AtomData`, `BondData`, and `RealizationProperties` are not canonical
-architectural names.
-
-Field names use `snake_case`; type names use `UpperCamelCase`. Patterns such as
-`graph: Graph`, `perception: Perception`, `hierarchy: Hierarchy`, and
-`properties: Properties` are normal Rust style and are preferred over redundant
-names unless a real ambiguity appears.
-
-The exact file/module layout is not normative; semantic boundaries are.
-
-## Design rules
-
-When deciding where new state belongs:
-
-1. Is it authoritative atom/bond/stereo chemistry of one connected molecule?
-   Put it in `Graph`.
-2. Is it fundamental chemistry derived from the represented molecular graph?
-   Put it in `Perception`.
-3. Is it an extensible annotation whose validity exactly matches one molecular
-   definition, one system layout, one realization, or one collection? Put it in
-   that owner's `Properties`, using an owner-level `PropertyValue` or the
-   appropriate per-entity `PropertyTable`.
-4. Is it the broad canonical class of a reusable molecule definition or topology
-   residue? Use strongly typed `MoleculeClass` / `ResidueClass` at `Topology`
-   scope rather than a generic property or source-format entity enum.
-5. Does it identify which connected molecules exist in one coordinate-free
-   system or define their topology-wide atom/bond layout? Put it in `Topology`.
-6. Is it coordinate-independent residue/chain/polymer/atom-site organization of
-   system atoms, potentially spanning molecule instances? Put it in the
-   `Hierarchy` owned by `Topology`; generic annotations about those hierarchy
-   nodes belong in topology property tables.
-7. Is it a substantial task-specific analysis, typing, scoring, parameterization,
-   or other derived result whose own data model is meaningful? Prefer a separate
-   derived object. Attach selected results as properties only deliberately and
-   at the scope where their validity is defined.
-8. Is it dense coordinate/model/frame data? Store it in a topology-agnostic
-   numerical container or the owning realization's property tables above
-   `Topology`, according to its semantics.
-9. Does an operation need to interpret dense data or property columns by semantic
-   atom/bond/hierarchy identity? Perform it at the `Model`, `Ensemble`,
-   `Trajectory`, or owning `Topology` level where the identity context exists.
-10. Does an asserted new bond connect two current molecule instances? Construct a
-    new connected `Molecule` and therefore a new `Topology`.
-11. Does a workflow change topology? Construct the new topology and its new dense
-    state explicitly; do not rely on a generic remapping layer. Narrow
-    operation-specific correspondence is appropriate when required by the
-    operation.
-12. Is a physical quantity stored numerically inside Kekule, including as a real
-    property value/column? Accept compatible units at the boundary and normalize
-    consistently rather than creating a subsystem-specific unit convention.
-13. Is an operation specific to a file or serialization format? Put it in that
-    format namespace or on a format-specific `Document`/`Record`/`Block`, not on
-    `Molecule`, `Topology`, `Model`, `Ensemble`, or `Trajectory`. Ergonomic
-    helpers may compose the canonical parse/interpret pipeline but must not
-    create an independent conversion path.
-14. Is an arbitrary source field merely available in an input format? Do not
-    automatically turn it into a generic property. Promotion requires defined
-    canonical semantics, owner scope, and target domain.
-
-The core invariants are intentionally simple:
-
-> A Kekule `Molecule` is one connected, geometry-independent molecular entity
-> represented by authoritative `Graph`, reconstructible `Perception`, and
-> definition-scoped generic `Properties` that do not define chemical identity.
-
-> A Kekule `Topology` is one immutable, geometry-independent molecular system
-> composed of one or more explicit `Molecule` instances with authoritative
-> topology-wide identity, dense layout, system-level `Hierarchy`, canonical
-> molecule/residue classification, and system-scoped `Properties` that do not
-> define layout identity.
-
-> Every reusable `MoleculeDefinition` has one canonical `MoleculeClass`, shared
-> by all of its instances, and every hierarchy `Residue` has one canonical
-> `ResidueClass`. Classification is assigned automatically at topology
-> publication with explicit builder overrides available for callers.
-
-> `Hierarchy` is owned exactly once by `Topology`; it may span molecule-instance
-> boundaries and maps atom sites to topology-qualified `InstanceAtomId` values.
-
-> `Model`, `Ensemble`, and `Trajectory` each own their shared `Topology` exactly
-> once. Geometry-bearing realizations use the same generic `Properties` /
-> `PropertyTable` substrate instead of parallel `AtomData` and `BondData`
-> architectures.
-
-> A property is owned at the narrowest scope whose lifetime matches its validity,
-> and per-entity properties are stored column-wise rather than as a separate map
-> embedded in every repeated entity.
-
-> Kekule has one library-wide canonical physical-unit system. Runtime
-> `Quantity<T>` values may use any compatible unit at interfaces, but internal
-> normalized numerical state and real-valued properties do not define
-> independent subsystem-specific canonical unit conventions.
-
-## Writing and export
-
-Writing is the format-specific projection of canonical Kekule state into an
-external representation. It is related to parsing and interpretation, but it is
-not a guaranteed lossless inverse: an export format may be unable to represent
-all canonical state owned by `Molecule`, `Topology`, `Model`, or `Ensemble`.
-
-Writing remains format-oriented. Public write/export operations belong in
-format namespaces such as `smiles`, `molfile`, `sdf`, and `mmcif`; canonical
-objects must not acquire format-specific methods such as `model.write_sdf(...)`,
-and Kekule must not introduce a universal `Save`/`Serializable` trait whose
-implementations silently discard unsupported state.
-
-The canonical output mapping is:
-
-| Canonical object | SMILES | Molfile / SDF | mmCIF |
-| --- | --- | --- | --- |
-| `Molecule` | one connected SMILES | coordinate-free Molfile where requested | not a primary target |
-| `Topology` | one dot-separated SMILES record | not directly | not directly |
-| `Model` | explicit topology projection only | one Molfile / one SDF record | one block, one coordinate model |
-| `[Model]` | not direct | one SDF record per model | one block per model |
-| `Ensemble` | not direct | one SDF record per member | one block containing multiple coordinate models |
-
-### SMILES projection
-
-A `Molecule` writes as one connected SMILES. A `Topology` writes as one
-dot-separated SMILES record by serializing every explicit molecule instance.
-Canonical mode sorts the component strings; other modes retain authoritative
-topology instance order. Reused definitions do not collapse
-repeated instances. This projection intentionally discards hierarchy, topology
-properties, definition reuse, and all geometry.
-
-Canonical SMILES traversal uses complete canonical labeling, including tied
-symmetry classes and stereo configurations, so atom numbering and adjacency
-insertion order cannot choose
-the result. Ranking uses the same isotope and hydrogen projection as emission,
-so repeating parse/perceive/canonical-write preserves the output. Labeling and
-candidate serialization have explicit work and storage bounds; exceeding a
-bound returns a write error instead of an unproved canonical candidate. The
-serializer retains only the best candidate, and checks graph-slot and total
-candidate-visit limits before cloning or ranking. Hydrogen normalization must
-retain charged, atom-mapped, and isotope-labelled hydrogen vertices. Only
-removable neutral nonisotopic hydrogen vertices collapse into counts, using the
-shared hydrogen transform to preserve stereo carriers. Canonical output retains
-stereo and isotope identity. Unsupported configurations fail explicitly.
-
-All SMILES writers retain isotope labels and hydrogen counts, including
-on aromatic atoms. Bracket syntax disables SMILES hydrogen inference, so writers
-materialize the required hydrogen count there. If an atom permits inference but
-has no installed hydrogen perception and requires brackets, writing fails with
-an explicit error instead of assuming zero hydrogens.
-
-`Model` and `Ensemble` should not gain direct SMILES writers merely to discard
-geometry implicitly. Callers that want that projection write their topology
-explicitly.
-
-### Molfile and SDF projection
-
-A `Model` is the natural geometry-bearing Molfile/SDF structural unit. One model
-writes as one CTAB / SDF record, and that record may contain several disconnected
-molecule instances from the model topology. Molfile connected-component
-boundaries therefore do not imply that a writer must accept exactly one Kekule
-`Molecule`.
-
-A sequence of independent models writes to SDF as one record per input model in
-input order. The models need not share topology and Kekule must not infer
-ensemble semantics merely because two model topologies happen to be compatible.
-
-An `Ensemble` writes to SDF as one record per ensemble member. Members share the
-ensemble topology by type semantics, but SDF represents them as separate records.
-Format-specific SDF titles and data fields remain SDF-side metadata and are not
-invented or copied into canonical `Model` state. Explicit SDF record wrappers may
-carry such metadata for round-trip or expert writing.
-
-Molfile version selection is format policy. An automatic policy should prefer
-V2000 when the complete record is faithfully representable and promote to V3000
-when required by representational limits. An explicitly requested version must
-fail rather than silently discard canonical chemistry that it cannot encode.
-
-Specified double-bond output requires a Model whose emitted, rounded coordinates
-encode the asserted configuration. Conflicting or degenerate geometry is an error;
-the writer does not invent coordinates. If an unasserted double bond would become
-specified solely from its drawing, the writer emits either/crossed syntax instead.
-Rereading that projection may introduce an explicit unknown element, but must not
-invent a specified configuration. All projected stereo is validated using the same
-format-local decoding path as input interpretation.
-
-### mmCIF projection
-
-For mmCIF, data-block multiplicity and coordinate-model multiplicity retain their
-separate meanings:
-
-```text
-Model
-  -> one data block
-       one coordinate model
-
-[Model]
-  -> one independent data block per model
-
-Ensemble
-  -> one data block
-       several coordinate models sharing one topology
-```
-
-This distinction is architectural. `Vec<Model>` represents independent objects;
-`Ensemble` represents several non-temporal realizations of one shared topology.
-Even when a sequence of models happens to contain identical topology layouts, a
-writer must not reinterpret it as an ensemble.
-
-Consequently:
-
-```text
-Vec<Model> + mmCIF -> multiple blocks
-Ensemble   + mmCIF -> one multi-model block
-```
-
-Generic `Topology` carries canonical `MoleculeClass` and `ResidueClass`, not the
-mmCIF-specific polymer/branched/non-polymer/water taxonomy. The mmCIF writer
-should normally derive the required mmCIF entity classification automatically
-from canonical topology classification plus hierarchy/structural information
-where the mmCIF distinction requires it. Typical mappings include protein/DNA/RNA
-to polymer, water to water, and ion/small-molecule to non-polymer; carbohydrate
-may require hierarchy/connectivity to distinguish polymeric, branched, and
-discrete mmCIF representations.
-
-An explicit `MmcifEntityClassifications`-style input may remain as an expert
-format-specific override or exact source-preserving aid, but it is not the
-ordinary requirement for writing a normal canonical `Model` or `Ensemble`.
-Source-preserving round trips may additionally reuse exact mmCIF interpretation
-provenance when it carries distinctions not represented by the canonical broad
-classification.
-
-The writer must not infer biological/contextual roles such as receptor or ligand,
-and it must not use the mere presence of hierarchy as a proxy for polymer status.
-
-### Shared realization-writing path
-
-Where practical, geometry-bearing writers should operate on borrowed model
-semantics such as `ModelView` rather than require an owned `Model`. This allows
-one structural-writing implementation to serve a `Model`, an
-`EnsembleMemberView`, and later a trajectory-frame view without materializing
-intermediate owned models.
-
-This is an internal reuse principle, not a requirement for one generic public
-writer trait. Clear format-specific implementations are preferred over
-abstraction for its own sake.
-
-Trajectory codecs remain a separate specialized capability and are outside this
-canonical structural-export contract. Their frame views may reuse compatible
-model-view writing machinery in the future where appropriate.
-
-### Output sinks and errors
-
-The foundational writer path should support streaming to an output sink where
-practical, especially for multi-record SDF and multi-model mmCIF. String-returning
-helpers may wrap the same authoritative implementation for ergonomic use.
-
-Write failures are format-specific and must be explicit. Writers must reject
-unsupported selected-version chemistry, unresolved required mmCIF semantics,
-invalid format metadata, incompatible realization state, or I/O failures rather
-than silently omit canonical state.
-
-### Export is not native persistence
-
-SMILES, Molfile/SDF, and mmCIF are interoperability/export formats. They are not
-the versioned native persistence representation of Kekule's complete canonical
-object graph. Exact persistence may eventually use a separate Kekule-native
-serialization format capable of preserving definitions, canonical
-classification, hierarchy, perception, generic properties, collection metadata,
-and other canonical state without forcing that state through an external
-chemistry format that cannot represent it.
+| SMILES document | All connected components, with topology projection |
+| Molfile document | One model with topology and molecule projections |
+| SDF record | Model, title, fields, and reports; each record independent |
+| mmCIF block | One model or compatible coordinate models as an ensemble |
+
+Sibling SDF records and mmCIF blocks never merge implicitly. Singular projections
+check cardinality; plural molecule projections retain every connected component
+in source order. MOL/SDF interpretation supplies deterministic synthetic hierarchy
+at topology scope. mmCIF preserves label/author hierarchy identities and interprets
+all coordinate-model candidates against the same identity, chemistry, and dense
+layout. Malformed rows in unselected models still fail validation. Ensemble
+assembly releases redundant topologies while transferring realization payloads;
+multiple coordinate models do not imply temporal trajectory semantics.
+
+Interpretations own format reports, metadata, and source correspondence. Borrowed
+projections reuse canonical owners; consuming projections explicitly discard richer
+information. Document-level reports borrow record reports instead of duplicating
+them. Format-specific constructors and save methods do not belong on canonical
+owners. See the [public format namespaces](crates/kekule/src/lib.rs),
+[MOL interpretation](crates/kekule/src/io/structure_documents.rs),
+[SDF records](crates/kekule/src/io/sdf_document.rs), and
+[mmCIF interpretation](crates/kekule/src/io/mmcif_interpret/mod.rs).
+
+Writers live in format namespaces and accept the richest supported source.
+Models share a borrowed realization path; string-returning conveniences wrap sink
+writers. Unsupported representational content must fail explicitly. There is no
+universal save trait or implicit trajectory-to-structure export.
+
+- SMILES exports represented chemistry and supported stereo. Canonical output
+  requires complete labeling under explicit resource bounds; exhaustion is an
+  error, never an unproved canonical answer. Hydrogen and isotope projection must
+  agree with emitted syntax and preserve stereo.
+- Molfile chooses V2000 when it can represent all supported content, otherwise
+  promotes to V3000; explicitly requested versions fail on unsupported content.
+  Coordinate stereo must agree with the actual rounded emitted geometry. Writers
+  must not invent assertions from an unasserted drawing or hide a conflict.
+- SDF represents independent records. mmCIF distinguishes independent model blocks
+  from one ensemble's multi-model block. Canonical classification informs entity
+  kinds; hierarchy alone does not establish polymer status or contextual roles.
+  Expert overrides and source provenance handle finer format distinctions.
+
+Exact capability and numerical policies live with
+[SMILES writing](crates/kekule/src/io/smiles/write.rs),
+[canonical labeling](crates/kekule/src/io/smiles/canonical.rs),
+[MOL/SDF writing](crates/kekule/src/io/molfile_write.rs), and
+[mmCIF writing](crates/kekule/src/io/mmcif_write.rs).
+
+## Identity and reconstruction
+
+Molecular equality compares authoritative represented chemistry, excluding
+perception, annotations, hierarchy, and topology classification. Topology layout
+equality is separate: it includes definitions, instances, classifications,
+hierarchy, semantic IDs, and dense order, but excludes perception and properties.
+Exact shared snapshot identity is stricter than equal layout. Operations requiring
+one `Arc<Topology>` must not silently substitute an independently equal topology.
+
+Geometric correspondence may explicitly pair selected atoms from two exact
+snapshots, with each side validated and pairs one-to-one. It need not cover equal
+system sizes and does not claim chemical equivalence or rebind either owner.
+See [alignment correspondence](crates/kekule/src/alignment.rs) and
+[trajectory correspondence](crates/kekule-traj/src/analysis/correspondence.rs).
+
+Reconstruction validates represented graph connectedness first, then property
+references/dimensions, then installs checked perception. Topology reconstruction
+restores definitions, instances, classes, hierarchy, qualified IDs, and dense
+layout consistently before validating realization payloads. Disconnected persisted
+graphs must be partitioned or rejected. Export to scientific formats is not exact
+native persistence and must not weaken these boundaries. See
+[reconstruction regressions](crates/kekule/tests/canonical_reconstruction.rs).
+
+## API and maintenance rules
+
+Use `as_*` for cheap borrowed views, `to_*` for owned conversion while retaining
+the source, and `into_*` for consuming conversion. Consuming does not promise zero
+allocation, but should transfer compatible storage. Keep mutation on appropriate
+editors and semantic owner APIs. Use full `properties` names and avoid redundant
+owner wrappers, compatibility aliases, and generic target/remapping abstractions.
+
+When adding state, choose its owner from the ownership map. Substantial derived
+results deserve their own concrete types. Format metadata stays with the format
+unless deliberate promotion defines its canonical meaning and validity scope.
+Keep API inventories and algorithm-specific policies beside the implementation;
+update this document when ownership or cross-module invariants change.

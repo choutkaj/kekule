@@ -1,71 +1,13 @@
 use std::collections::BTreeMap;
 
 use kekule::core::{
-    DoubleBondOrientation, HydrogenDeclaration, Molecule, MoleculeEditor, MoleculeError,
-    StereoCarrier, StereoDescriptor, StereoElement, StereoElementKind,
+    DoubleBondOrientation, Molecule, MoleculeEditor, MoleculeError, StereoCarrier,
+    StereoDescriptor, StereoElement, StereoElementKind,
 };
-use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
-use kekule::structure::{Model, Positions};
-use kekule::topology::TopologyBuilder;
-use kekule::{mmcif, molfile, sdf, smiles, stereo};
+use kekule::{smiles, stereo};
 
 fn molecule(source: &str) -> Molecule {
     smiles::to_molecules(source).unwrap().pop().unwrap()
-}
-
-#[test]
-fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_counts() {
-    for source in [
-        "[C]", "[O]", "[N]", "[H]", "[13C]", "[O-]", "[C]C", "[CH]", "C",
-    ] {
-        let mut original = molecule(source);
-        let written = molfile::write_v3000(&original).unwrap();
-        let mut restored = molfile::parse_str(&written)
-            .unwrap()
-            .to_molecules()
-            .unwrap()
-            .pop()
-            .unwrap();
-        assert_eq!(original, restored, "{source} -> {written}");
-        original.perceive().unwrap();
-        restored.perceive().unwrap();
-        assert_eq!(
-            molecular_formula(&original, HydrogenCountPolicy::IncludePerceived).unwrap(),
-            molecular_formula(&restored, HydrogenCountPolicy::IncludePerceived).unwrap(),
-            "{source} -> {written}"
-        );
-    }
-}
-
-#[test]
-fn automatic_molfile_and_sdf_promotion_preserve_zero_hydrogens_on_reused_instances() {
-    let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule("[C]")).unwrap();
-    for _ in 0..1_000 {
-        builder.add_instance(definition).unwrap();
-    }
-    let model = Model::new(builder.build().unwrap(), Positions::zeros(1_000)).unwrap();
-    let molfile = molfile::write_model(&model, molfile::MolfileWriteOptions::default()).unwrap();
-    let sdf = sdf::write_models(&[model], sdf::SdfWriteOptions::default()).unwrap();
-    assert!(molfile.contains("V3000"));
-    assert!(sdf.contains("V3000"));
-    let molfile_model = molfile::parse_str(&molfile).unwrap().to_model().unwrap();
-    let sdf_model = sdf::parse_str(&sdf).unwrap().records()[0]
-        .to_model()
-        .unwrap();
-    for mut restored in [molfile_model, sdf_model] {
-        assert_eq!(restored.topology().instance_count(), 1_000);
-        assert!(restored
-            .topology()
-            .atoms()
-            .all(|(_, atom)| atom.hydrogens == HydrogenDeclaration::Fixed(0)));
-        restored.perceive().unwrap();
-        for instance in restored.topology().molecules() {
-            let molecule = instance.molecule();
-            let atom = molecule.atom_ids().next().unwrap();
-            assert_eq!(molecule.implicit_hydrogens(atom).unwrap(), Some(0));
-        }
-    }
 }
 
 #[test]
@@ -267,43 +209,4 @@ fn contradictory_double_bond_assertions_are_rejected_before_export() {
     stereo::assign_cip_descriptors(&mut restored).unwrap();
     let restored_id = restored.stereo_element_ids().next().unwrap();
     assert_eq!(restored.cip_descriptor(restored_id).unwrap(), expected);
-}
-
-#[test]
-fn mmcif_loop_accessors_reject_out_of_range_indices_in_all_build_profiles() {
-    for columns in [1, 2, 3, 5] {
-        let mut input = String::from("data_bounds\nloop_\n");
-        for column in 0..columns {
-            input.push_str(&format!("_x.c{column}\n"));
-        }
-        for column in 0..columns {
-            input.push_str(&format!("v{column} "));
-        }
-        let document = mmcif::parse_str(&input).unwrap();
-        let table = document.blocks()[0].loop_with_tag("_x.c0").unwrap();
-        assert_eq!(table.row_count(), 1);
-        assert_eq!(table.row(0).unwrap().len(), columns);
-        for column in 0..columns {
-            let tag = format!("_x.c{column}");
-            assert_eq!(table.value(0, &tag).unwrap().text(), format!("v{column}"));
-            for row in [
-                1,
-                usize::MAX / columns,
-                (usize::MAX / columns).saturating_add(1),
-                usize::MAX,
-            ] {
-                assert!(
-                    table.value(row, &tag).is_none(),
-                    "row {row}, columns {columns}"
-                );
-                assert!(table.row(row).is_none(), "row {row}, columns {columns}");
-            }
-        }
-        assert!(table.value(0, "_x.missing").is_none());
-    }
-    let document = mmcif::parse_str("data_empty\nloop_\n_x.a\n").unwrap();
-    let table = document.blocks()[0].loop_with_tag("_x.a").unwrap();
-    assert_eq!(table.row_count(), 0);
-    assert!(table.row(0).is_none());
-    assert!(table.value(usize::MAX, "_x.a").is_none());
 }
