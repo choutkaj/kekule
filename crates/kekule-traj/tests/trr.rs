@@ -634,6 +634,82 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
 }
 
 #[test]
+fn trr_triplet_fields_reject_nonfinite_input_without_publishing_partial_frames() {
+    let topology = topology();
+    for (precision, width) in [
+        (TrrScalarPrecision::Float32, 4),
+        (TrrScalarPrecision::Float64, 8),
+    ] {
+        let first = populated_frame(&topology, 0.0, 0);
+        let mut writer = TrrWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            TrrWriteOptions::default().with_precision(precision),
+            "triplets.trr",
+        )
+        .unwrap();
+        writer.write_frame(first.frame_view()).unwrap();
+        let valid = writer.finish().unwrap().into_inner();
+        for (field_index, field) in ["position", "velocity", "force"].into_iter().enumerate() {
+            let mut invalid = valid.clone();
+            // These three atom-array blocks end the TRR frame. Corrupt the last
+            // scalar of each block to exercise late failure in each shared loop.
+            let offset = invalid.len() - (2 - field_index) * 9 * width - width;
+            let nan = match precision {
+                TrrScalarPrecision::Float32 => f32::NAN.to_be_bytes().to_vec(),
+                TrrScalarPrecision::Float64 => f64::NAN.to_be_bytes().to_vec(),
+                _ => unreachable!("test uses the two supported scalar widths"),
+            };
+            invalid[offset..offset + width].copy_from_slice(&nan);
+            let mut reader = TrrReader::new(
+                Cursor::new(invalid),
+                Arc::clone(&topology),
+                TrrReadOptions::default().with_source_label("triplets.trr"),
+            )
+            .unwrap();
+            let mut destination = populated_frame(&topology, 10.0, 7);
+            let snapshot = buffer_snapshot(&destination);
+            let error = reader.read_next(&mut destination).unwrap_err();
+            assert!(error
+                .to_string()
+                .contains(&format!("TRR {field} contains a non-finite value")));
+            assert_eq!(buffer_snapshot(&destination), snapshot);
+        }
+    }
+
+    for field in ["position", "velocity", "force"] {
+        let mut frame = populated_frame(&topology, 0.0, 0);
+        let huge_vectors = [Vector3::new(0.0, 0.0, 1.0e39); 3];
+        match field {
+            "position" => frame
+                .set_positions(Quantity::new([Point3::new(0.0, 0.0, 1.0e39); 3], NANOMETER))
+                .unwrap(),
+            "velocity" => frame
+                .set_velocities(Some(Quantity::new(huge_vectors, CANONICAL_VELOCITY_UNIT)))
+                .unwrap(),
+            "force" => frame
+                .set_forces(Some(Quantity::new(huge_vectors, CANONICAL_FORCE_UNIT)))
+                .unwrap(),
+            _ => unreachable!(),
+        }
+        let mut writer = TrrWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            TrrWriteOptions::default().with_precision(TrrScalarPrecision::Float32),
+            "triplets.trr",
+        )
+        .unwrap();
+        let error = writer.write_frame(frame.frame_view()).unwrap_err();
+        assert_eq!(
+            codec_kind(&error),
+            Some(TrajectoryCodecErrorKind::InvalidFrame)
+        );
+        assert!(error.to_string().contains(field));
+        assert!(writer.writer().get_ref().is_empty());
+    }
+}
+
+#[test]
 fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
     let topology = topology();
     let mut writer = TrrWriter::new(

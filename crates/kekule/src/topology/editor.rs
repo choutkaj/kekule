@@ -531,34 +531,50 @@ impl TopologyEditor {
             return Ok(());
         }
         let mut staged = self.clone();
-        let old_loc = staged.bond_location(id)?;
+        staged.set_bond_endpoints_staged(id, a, b)?;
+        *self = staged;
+        Ok(())
+    }
+
+    // The caller owns rollback; group merging may precede a failed rewire.
+    fn set_bond_endpoints_staged(
+        &mut self,
+        id: EditBondId,
+        a: EditAtomId,
+        b: EditAtomId,
+    ) -> Result<(), TopologyEditError> {
+        let old = self.bond(id)?;
+        self.atom_location(a)?;
+        self.atom_location(b)?;
+        if (old.a == a && old.b == b) || (old.a == b && old.b == a) {
+            return Ok(());
+        }
+        let old_loc = self.bond_location(id)?;
         // A checked replacement on the combined draft preserves definition-level
         // bond annotations too. Combine groups before rewiring, without new bonds.
         for atom in [a, b] {
-            let bond_group = staged.bond_location(id)?.group;
-            let atom_group = staged.atom_location(atom)?.group;
+            let bond_group = self.bond_location(id)?.group;
+            let atom_group = self.atom_location(atom)?.group;
             if bond_group != atom_group {
                 let target = bond_group.min(atom_group);
                 let other = bond_group.max(atom_group);
-                let mut draft = staged.molecule(target).edit();
-                let map = draft.append_working(staged.molecule(other))?;
-                staged.commit_merge(target, other, draft, &map);
+                let mut draft = self.molecule(target).edit();
+                let map = draft.append_working(self.molecule(other))?;
+                self.commit_merge(target, other, draft, &map);
             }
         }
-        let loc = staged.bond_location(id)?;
-        let aa = staged.atom_location(a)?.local;
-        let bb = staged.atom_location(b)?.local;
-        staged
-            .draft_mut(loc.group)
+        let loc = self.bond_location(id)?;
+        let aa = self.atom_location(a)?.local;
+        let bb = self.atom_location(b)?.local;
+        self.draft_mut(loc.group)
             .set_bond_endpoints(loc.local, aa, bb)?;
         debug_assert_eq!(old_loc.slot, loc.slot);
-        staged.mark_group_changed(loc.group);
-        staged.invalidate_component_classes([old.a, old.b, a, b]);
+        self.mark_group_changed(loc.group);
+        self.invalidate_component_classes([old.a, old.b, a, b]);
         for atom in [old.a, old.b, a, b] {
-            staged.invalidate_residue_for_atom(atom);
+            self.invalidate_residue_for_atom(atom);
         }
-        staged.changed();
-        *self = staged;
+        self.changed();
         Ok(())
     }
 
@@ -569,7 +585,7 @@ impl TopologyEditor {
     ) -> Result<EditBond, TopologyEditError> {
         let previous = self.bond(id)?;
         let mut staged = self.clone();
-        staged.set_bond_endpoints(id, replacement.a, replacement.b)?;
+        staged.set_bond_endpoints_staged(id, replacement.a, replacement.b)?;
         staged.set_bond_order(id, replacement.order)?;
         *self = staged;
         Ok(previous)

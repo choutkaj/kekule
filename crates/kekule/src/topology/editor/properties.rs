@@ -87,12 +87,12 @@ impl TopologyEditor {
         key: PropertyKey,
         values: impl IntoIterator<Item = (EditAtomId, Option<PropertyValue>)>,
     ) -> Result<(), TopologyEditError> {
-        let mut staged = self.properties.atoms().clone();
+        let mut staged = self.properties.atoms().stage_column(&key);
         for (id, value) in values {
             staged.set_value(key.clone(), self.atom_slot(id)?, value)?;
         }
-        if &staged != self.properties.atoms() {
-            *self.properties.atoms_mut() = staged;
+        if staged.get(&key) != self.properties.atoms().get(&key) {
+            self.properties.atoms_mut().commit_column(key, staged);
             self.revision += 1;
         }
         Ok(())
@@ -102,12 +102,12 @@ impl TopologyEditor {
         key: PropertyKey,
         values: impl IntoIterator<Item = (EditBondId, Option<PropertyValue>)>,
     ) -> Result<(), TopologyEditError> {
-        let mut staged = self.properties.bonds().clone();
+        let mut staged = self.properties.bonds().stage_column(&key);
         for (id, value) in values {
             staged.set_value(key.clone(), self.bond_slot(id)?, value)?;
         }
-        if &staged != self.properties.bonds() {
-            *self.properties.bonds_mut() = staged;
+        if staged.get(&key) != self.properties.bonds().get(&key) {
+            self.properties.bonds_mut().commit_column(key, staged);
             self.revision += 1;
         }
         Ok(())

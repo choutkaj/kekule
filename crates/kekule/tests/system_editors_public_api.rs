@@ -622,6 +622,212 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
 }
 
 #[test]
+fn bond_replacement_rolls_back_failed_group_merges_and_preserves_the_handle() {
+    use kekule::topology::EditBond;
+
+    let source = model("CC.O");
+    let mut editor = TopologyEditor::from_topology(source.shared_topology());
+    let atoms = editor.atom_ids().collect::<Vec<_>>();
+    let bond = editor.bond_ids().next().unwrap();
+    editor
+        .set_bond_property(bond, key("tag"), Some(PropertyValue::Int(7)))
+        .unwrap();
+    let previous = editor.bond(bond).unwrap();
+    let snapshot = format!("{editor:?}");
+    // The oxygen group is merged before the molecular editor rejects the loop.
+    assert!(editor
+        .replace_bond(bond, EditBond::new(atoms[2], atoms[2], BondOrder::Double))
+        .is_err());
+    assert_eq!(format!("{editor:?}"), snapshot);
+
+    let replacement = EditBond::new(atoms[0], atoms[2], BondOrder::Double);
+    assert_eq!(editor.replace_bond(bond, replacement).unwrap(), previous);
+    assert_eq!(editor.bond(bond).unwrap(), replacement);
+    assert_eq!(
+        editor.bond_property(bond, &key("tag")).unwrap(),
+        Some(PropertyValue::Int(7))
+    );
+    let result = editor.finish().unwrap();
+    assert_eq!(result.instance_count(), 2);
+    assert_eq!(result.bond_count(), 1);
+    assert_eq!(result.bonds().next().unwrap().1.order, BondOrder::Double);
+}
+
+#[test]
+fn model_property_batch_recreation_preserves_unit_symbols_and_signed_zero() {
+    use kekule::units::Unit;
+
+    let mut editor = model("C").into_editor();
+    let atom = editor.atom_ids().next().unwrap();
+    editor
+        .set_atom_property(
+            atom,
+            key("length"),
+            Some(PropertyValue::Real {
+                value: 0.0,
+                unit: NANOMETER,
+            }),
+        )
+        .unwrap();
+    let alias = Unit::new(NANOMETER.dimension(), NANOMETER.scale(), Some("custom_nm")).unwrap();
+    assert_eq!(alias, NANOMETER); // Unit equality deliberately ignores symbols.
+    editor
+        .set_atom_properties(
+            key("length"),
+            [
+                (atom, None),
+                (
+                    atom,
+                    Some(PropertyValue::Real {
+                        value: -0.0,
+                        unit: alias,
+                    }),
+                ),
+            ],
+        )
+        .unwrap();
+    let Some(PropertyValue::Real { value, unit }) =
+        editor.atom_property(atom, &key("length")).unwrap()
+    else {
+        panic!("expected recreated real column");
+    };
+    assert!(value.is_sign_negative());
+    assert_eq!(unit.symbol(), Some("custom_nm"));
+    editor.finish().unwrap();
+}
+
+#[test]
+fn editor_property_batches_preserve_unrelated_allocations_and_ordered_update_semantics() {
+    fn int_column_ptr(table: &kekule::properties::PropertyTable) -> *const Option<i64> {
+        match table.get(&key("untouched")).unwrap() {
+            PropertyColumn::Int(values) => values.as_ptr(),
+            _ => panic!("expected integer column"),
+        }
+    }
+
+    macro_rules! check_batches {
+        ($editor:expr) => {{
+            let editor = &mut $editor;
+            let atoms = editor.atom_ids().collect::<Vec<_>>();
+            let bonds = editor.bond_ids().collect::<Vec<_>>();
+            editor
+                .insert_property(key("owner"), PropertyValue::String("retained".into()))
+                .unwrap();
+            editor
+                .set_atom_property(atoms[0], key("untouched"), Some(PropertyValue::Int(1)))
+                .unwrap();
+            editor
+                .set_bond_property(bonds[0], key("untouched"), Some(PropertyValue::Int(2)))
+                .unwrap();
+            let atom_ptr = int_column_ptr(editor.atom_properties());
+            let bond_ptr = int_column_ptr(editor.bond_properties());
+            editor
+                .set_atom_property(atoms[0], key("edited"), Some(PropertyValue::Int(3)))
+                .unwrap();
+            editor
+                .set_bond_property(bonds[0], key("edited"), Some(PropertyValue::Int(3)))
+                .unwrap();
+            editor
+                .set_atom_properties(
+                    key("edited"),
+                    [
+                        (atoms[0], Some(PropertyValue::Int(3))),
+                        (atoms[0], None),
+                        (
+                            atoms[1],
+                            Some(PropertyValue::Real {
+                                value: 10.0,
+                                unit: ANGSTROM,
+                            }),
+                        ),
+                        (
+                            atoms[1],
+                            Some(PropertyValue::Real {
+                                value: 2.0,
+                                unit: NANOMETER,
+                            }),
+                        ),
+                    ],
+                )
+                .unwrap();
+            assert_eq!(
+                editor.atom_property(atoms[1], &key("edited")).unwrap(),
+                Some(PropertyValue::Real {
+                    value: 20.0,
+                    unit: ANGSTROM
+                })
+            );
+            let snapshot = editor.atom_properties().clone();
+            assert!(editor
+                .set_atom_properties(
+                    key("edited"),
+                    [
+                        (
+                            atoms[0],
+                            Some(PropertyValue::Real {
+                                value: 1.0,
+                                unit: ANGSTROM
+                            })
+                        ),
+                        (atoms[1], Some(PropertyValue::String("bad type".into()))),
+                    ]
+                )
+                .is_err());
+            assert_eq!(editor.atom_properties(), &snapshot);
+            editor
+                .set_bond_properties(
+                    key("edited"),
+                    [
+                        (bonds[0], Some(PropertyValue::Int(3))),
+                        (bonds[0], None),
+                        (bonds[1], Some(PropertyValue::String("new type".into()))),
+                    ],
+                )
+                .unwrap();
+            assert_eq!(
+                editor.bond_property(bonds[1], &key("edited")).unwrap(),
+                Some(PropertyValue::String("new type".into()))
+            );
+            let snapshot = editor.bond_properties().clone();
+            assert!(editor
+                .set_bond_properties(
+                    key("edited"),
+                    [
+                        (bonds[0], Some(PropertyValue::String("staged".into()))),
+                        (bonds[1], Some(PropertyValue::Int(4))),
+                    ]
+                )
+                .is_err());
+            assert_eq!(editor.bond_properties(), &snapshot);
+            editor
+                .set_bond_properties(key("edited"), [(bonds[1], None)])
+                .unwrap();
+            assert!(editor.bond_properties().get(&key("edited")).is_none());
+            assert_eq!(
+                editor.properties().get(&key("owner")),
+                Some(&PropertyValue::String("retained".into()))
+            );
+            assert_eq!(int_column_ptr(editor.atom_properties()), atom_ptr);
+            assert_eq!(int_column_ptr(editor.bond_properties()), bond_ptr);
+        }};
+    }
+
+    let source = model("CCC");
+    let mut topology_editor = TopologyEditor::from_topology(source.shared_topology());
+    check_batches!(topology_editor);
+    topology_editor.finish().unwrap();
+    let mut editor = source.into_editor();
+    check_batches!(editor);
+    let atom = editor.atom_ids().next().unwrap();
+    let snapshot = editor.atom_properties().clone();
+    assert!(editor
+        .set_atom_properties(key("occupancy"), [(atom, Some(PropertyValue::Int(1)))])
+        .is_err());
+    assert_eq!(editor.atom_properties(), &snapshot);
+    editor.finish().unwrap();
+}
+
+#[test]
 fn recovery_keeps_builder_state_and_editor_handles() {
     use std::error::Error;
     let carbon = molecule("C");

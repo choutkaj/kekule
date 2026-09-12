@@ -110,84 +110,43 @@ impl FileWriterInner {
     }
 
     fn flush_and_sync(&mut self, label: &str) -> Result<(), TrajectoryError> {
-        match self {
+        let (format, flushed, file) = match self {
             Self::Xyz(writer) => {
                 writer.validate_finish()?;
-                writer.flush().map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::Finish,
-                        Some(TrajectoryFormat::Xyz),
-                        label,
-                        error,
-                    )
-                })?;
-                writer.writer().get_ref().sync_all().map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::Finish,
-                        Some(TrajectoryFormat::Xyz),
-                        label,
-                        error,
-                    )
-                })
+                (
+                    TrajectoryFormat::Xyz,
+                    writer.flush(),
+                    writer.writer().get_ref(),
+                )
             }
             Self::Dcd(writer) => {
                 writer.finalize()?;
-                writer.flush().map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::Finish,
-                        Some(TrajectoryFormat::Dcd),
-                        label,
-                        error,
-                    )
-                })?;
-                writer.writer().get_ref().sync_all().map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::Finish,
-                        Some(TrajectoryFormat::Dcd),
-                        label,
-                        error,
-                    )
-                })
+                (
+                    TrajectoryFormat::Dcd,
+                    writer.flush(),
+                    writer.writer().get_ref(),
+                )
             }
             Self::Trr(writer) => {
                 writer.validate_finish()?;
-                writer.flush().map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::Finish,
-                        Some(TrajectoryFormat::Trr),
-                        label,
-                        error,
-                    )
-                })?;
-                writer.writer().get_ref().sync_all().map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::Finish,
-                        Some(TrajectoryFormat::Trr),
-                        label,
-                        error,
-                    )
-                })
+                (
+                    TrajectoryFormat::Trr,
+                    writer.flush(),
+                    writer.writer().get_ref(),
+                )
             }
             Self::Xtc(writer) => {
                 writer.validate_finish()?;
-                writer.flush().map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::Finish,
-                        Some(TrajectoryFormat::Xtc),
-                        label,
-                        error,
-                    )
-                })?;
-                writer.writer().get_ref().sync_all().map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::Finish,
-                        Some(TrajectoryFormat::Xtc),
-                        label,
-                        error,
-                    )
-                })
+                (
+                    TrajectoryFormat::Xtc,
+                    writer.flush(),
+                    writer.writer().get_ref(),
+                )
             }
-        }
+        };
+        flushed
+            .and_then(|()| file.sync_all())
+            .map_err(|error| io_context(TrajectoryIoOperation::Finish, Some(format), label, error))
     }
 }
 

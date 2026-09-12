@@ -8,7 +8,7 @@ use crate::io::mmcif_interpret::{
     MmcifEnsembleInterpretation, MmcifEntityKind, MmcifInterpretationReport,
 };
 use crate::structure::{Ensemble, Model, ModelView};
-use crate::topology::{AtomSite, Hierarchy, MoleculeClass, ResidueClass, ResidueId, Topology};
+use crate::topology::{Hierarchy, MoleculeClass, ResidueClass, ResidueId, Topology};
 use crate::topology::{
     InstanceAtomId, InstanceBondId, MoleculeDefinition, MoleculeInstance, MoleculeInstanceId,
 };
@@ -1091,25 +1091,23 @@ fn prepare_model(model: ModelView<'_>, plan: EntityPlan) -> Result<PreparedModel
     } = plan;
 
     let mut atoms = Vec::new();
+    let hierarchy = model.topology().hierarchy();
     for (id, molecule) in model.topology().instances() {
         let definition = model
             .topology()
             .definition_for_instance(id)
             .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
         validate_graph_chemistry(molecule, definition)?;
-        if model
-            .topology()
-            .molecule(id)
-            .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
-            .atom_sites()
-            .next()
-            .is_some()
-        {
+        if definition.molecule().atom_ids().any(|atom| {
+            hierarchy
+                .atom_site_for_atom(molecule.qualify_atom(atom))
+                .is_some()
+        }) {
             collect_macro_rows(
                 model,
                 molecule,
                 definition,
-                model.topology().hierarchy(),
+                hierarchy,
                 &assignments,
                 &mut atoms,
             )?;
@@ -1332,7 +1330,6 @@ fn validate_graph_chemistry(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn collect_macro_rows(
     model: ModelView<'_>,
     molecule: &MoleculeInstance,
@@ -1341,17 +1338,10 @@ fn collect_macro_rows(
     assignments: &BTreeMap<InstanceAtomId, AtomEntityAssignment>,
     rows: &mut Vec<AtomRow>,
 ) -> Result<(), MmcifWriteError> {
-    let mut sites = BTreeMap::<InstanceAtomId, &AtomSite>::new();
-    for (_, site) in hierarchy.atom_sites() {
-        if site.atom.molecule() == molecule.id() && sites.insert(site.atom, site).is_some() {
-            return Err(MmcifWriteError::DuplicateAtomSite(site.atom));
-        }
-    }
     for (atom_id, atom) in definition.molecule().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
-        let site = sites
-            .get(&qualified)
-            .copied()
+        let site = hierarchy
+            .atom_site_for_atom(qualified)
             .ok_or(MmcifWriteError::MissingAtomSite(qualified))?;
         let residue = hierarchy
             .residue(site.residue)
