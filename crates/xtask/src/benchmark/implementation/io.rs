@@ -10,6 +10,26 @@ pub(crate) struct IndexedSmallRecord {
     pub(crate) sdf_fields: BTreeMap<String, String>,
 }
 
+pub(super) fn round_trip_molfiles(
+    records: Vec<IndexedSmallRecord>,
+    write: fn(&Molecule) -> Result<String, molfile::MolWriteError>,
+) -> Result<Vec<IndexedSmallRecord>, Box<dyn Error>> {
+    records
+        .into_iter()
+        .enumerate()
+        .map(|(index, record)| {
+            let written = write(&record.molecule)?;
+            let molecule = interpret_molfile(&written)?;
+            Ok(IndexedSmallRecord {
+                record_index: index,
+                title: record.title,
+                molecule,
+                sdf_fields: BTreeMap::new(),
+            })
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct IndexedSmilesRecord {
     pub(crate) record_index: usize,

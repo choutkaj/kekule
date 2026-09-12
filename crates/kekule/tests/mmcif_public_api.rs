@@ -1,3 +1,5 @@
+use kekule::mmcif;
+
 const MINIMAL_MMCIF: &str = r#"
 data_demo
 loop_
@@ -188,4 +190,43 @@ fn duplicate_conflicting_authoritative_bond_evidence_is_rejected() {
         error.message(),
         "conflicting authoritative mmCIF bond evidence for one atom pair: Double versus Single"
     );
+}
+
+#[test]
+fn mmcif_loop_accessors_reject_out_of_range_indices_in_all_build_profiles() {
+    for columns in [1, 2, 3, 5] {
+        let mut input = String::from("data_bounds\nloop_\n");
+        for column in 0..columns {
+            input.push_str(&format!("_x.c{column}\n"));
+        }
+        for column in 0..columns {
+            input.push_str(&format!("v{column} "));
+        }
+        let document = mmcif::parse_str(&input).unwrap();
+        let table = document.blocks()[0].loop_with_tag("_x.c0").unwrap();
+        assert_eq!(table.row_count(), 1);
+        assert_eq!(table.row(0).unwrap().len(), columns);
+        for column in 0..columns {
+            let tag = format!("_x.c{column}");
+            assert_eq!(table.value(0, &tag).unwrap().text(), format!("v{column}"));
+            for row in [
+                1,
+                usize::MAX / columns,
+                (usize::MAX / columns).saturating_add(1),
+                usize::MAX,
+            ] {
+                assert!(
+                    table.value(row, &tag).is_none(),
+                    "row {row}, columns {columns}"
+                );
+                assert!(table.row(row).is_none(), "row {row}, columns {columns}");
+            }
+        }
+        assert!(table.value(0, "_x.missing").is_none());
+    }
+    let document = mmcif::parse_str("data_empty\nloop_\n_x.a\n").unwrap();
+    let table = document.blocks()[0].loop_with_tag("_x.a").unwrap();
+    assert_eq!(table.row_count(), 0);
+    assert!(table.row(0).is_none());
+    assert!(table.value(usize::MAX, "_x.a").is_none());
 }

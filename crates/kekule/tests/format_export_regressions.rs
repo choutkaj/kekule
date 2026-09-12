@@ -3,6 +3,8 @@ use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
 use kekule::molfile::{self, MolfileWriteVersion};
 use kekule::sdf::{self, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles;
+use kekule::structure::{Model, Positions};
+use kekule::topology::TopologyBuilder;
 
 fn molecule(source: &str) -> Molecule {
     smiles::to_molecules(source).unwrap().pop().unwrap()
@@ -201,6 +203,61 @@ fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
             let mut output = Vec::new();
             assert!(sdf::write_records_to(&mut output, &[record], options).is_err());
             assert!(output.is_empty());
+        }
+    }
+}
+
+#[test]
+fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_counts() {
+    for source in [
+        "[C]", "[O]", "[N]", "[H]", "[13C]", "[O-]", "[C]C", "[CH]", "C",
+    ] {
+        let mut original = molecule(source);
+        let written = molfile::write_v3000(&original).unwrap();
+        let mut restored = molfile::parse_str(&written)
+            .unwrap()
+            .to_molecules()
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(original, restored, "{source} -> {written}");
+        original.perceive().unwrap();
+        restored.perceive().unwrap();
+        assert_eq!(
+            molecular_formula(&original, HydrogenCountPolicy::IncludePerceived).unwrap(),
+            molecular_formula(&restored, HydrogenCountPolicy::IncludePerceived).unwrap(),
+            "{source} -> {written}"
+        );
+    }
+}
+
+#[test]
+fn automatic_molfile_and_sdf_promotion_preserve_zero_hydrogens_on_reused_instances() {
+    let mut builder = TopologyBuilder::new();
+    let definition = builder.add_molecule_definition(&molecule("[C]")).unwrap();
+    for _ in 0..1_000 {
+        builder.add_instance(definition).unwrap();
+    }
+    let model = Model::new(builder.build().unwrap(), Positions::zeros(1_000)).unwrap();
+    let molfile = molfile::write_model(&model, molfile::MolfileWriteOptions::default()).unwrap();
+    let sdf = sdf::write_models(&[model], sdf::SdfWriteOptions::default()).unwrap();
+    assert!(molfile.contains("V3000"));
+    assert!(sdf.contains("V3000"));
+    let molfile_model = molfile::parse_str(&molfile).unwrap().to_model().unwrap();
+    let sdf_model = sdf::parse_str(&sdf).unwrap().records()[0]
+        .to_model()
+        .unwrap();
+    for mut restored in [molfile_model, sdf_model] {
+        assert_eq!(restored.topology().instance_count(), 1_000);
+        assert!(restored
+            .topology()
+            .atoms()
+            .all(|(_, atom)| atom.hydrogens == HydrogenDeclaration::Fixed(0)));
+        restored.perceive().unwrap();
+        for instance in restored.topology().molecules() {
+            let molecule = instance.molecule();
+            let atom = molecule.atom_ids().next().unwrap();
+            assert_eq!(molecule.implicit_hydrogens(atom).unwrap(), Some(0));
         }
     }
 }
