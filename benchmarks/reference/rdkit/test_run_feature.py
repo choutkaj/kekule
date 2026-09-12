@@ -8,6 +8,19 @@ import run_feature as reference
 
 
 class IsomericReferenceTests(unittest.TestCase):
+    def test_canonical_reference_retains_stereo_isotopes_and_components(self):
+        source = "[13CH3][C@@H](F)Cl.O.F/C=C/F"
+        mol = Chem.MolFromSmiles(source)
+        record = {"record_index": 0, "status": "ok", "title": "regression",
+                  "smiles": source, "mol": mol}
+        expected = reference.canonical_smiles_record(record)
+        self.assertEqual(expected["normalized_perceived"]["atom_count"], mol.GetNumAtoms())
+        self.assertTrue(any(atom["isotope"] == 13 for atom in expected["normalized_perceived"]["atoms"]))
+        self.assertEqual(len(expected["stereo"]["atom_descriptors"]), 1)
+        self.assertEqual(len(expected["stereo"]["bond_descriptors"]), 1)
+        lost = dict(record, mol=Chem.MolFromSmiles("CC(F)Cl.O.FC=CF"))
+        self.assertNotEqual(reference.canonical_smiles_record(lost), expected)
+
     def test_required_charge_brackets_fix_total_hydrogens_without_mutating_source(self):
         # Model chemical normalization introducing charge on an inferred-H atom.
         # This is element independent: an emitted charged nitrogen must also

@@ -123,12 +123,12 @@ def main():
             output = outputs[index]
             if output.get("status") != "ok":
                 raise ValueError(f"adapter failed for CID {source['cid']}: {output}")
-            actual = parse(output["smiles"])
+            actual = parse(output["isomeric"]["Ok"])
             actual_projection = projection(actual)
             same_graph = graph_key(original) == graph_key(actual)
             same_declarations = expected == actual_projection
             case["implementation_emission"] = {
-                "smiles": output["smiles"], "projection": actual_projection,
+                "smiles": output["isomeric"]["Ok"], "projection": actual_projection,
                 "whole_graph_preserved": same_graph,
                 "minimum_legal_source_projection_preserved": same_declarations,
             }

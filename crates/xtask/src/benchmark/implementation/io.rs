@@ -16,7 +16,6 @@ pub(crate) struct IndexedSmilesRecord {
     pub(crate) status: String,
     pub(crate) title: String,
     pub(crate) input_smiles: String,
-    pub(crate) molecule: Option<Molecule>,
     pub(crate) components: Vec<Molecule>,
 }
 
@@ -234,24 +233,19 @@ fn read_smiles_records_with_filter(
                 status: "unsupported".to_owned(),
                 title,
                 input_smiles: smiles,
-                molecule: None,
                 components: Vec::new(),
             });
             continue;
         }
-        let (status, molecule, components) = match interpret_smiles_components(&smiles) {
-            Ok(components) => {
-                let molecule = (components.len() == 1).then(|| components[0].clone());
-                ("ok".to_owned(), molecule, components)
-            }
-            Err(_) => ("parse_error".to_owned(), None, Vec::new()),
+        let (status, components) = match interpret_smiles_components(&smiles) {
+            Ok(components) => ("ok".to_owned(), components),
+            Err(_) => ("parse_error".to_owned(), Vec::new()),
         };
         records.push(IndexedSmilesRecord {
             record_index: index,
             status,
             title,
             input_smiles: smiles,
-            molecule,
             components,
         });
     }
@@ -379,29 +373,7 @@ fn stereo_molfile_record(
 pub(crate) fn read_canonical_smiles_records(
     path: &Path,
 ) -> Result<Vec<IndexedSmilesRecord>, Box<dyn Error>> {
-    let mut records = Vec::new();
-    for (index, raw_line) in fs::read_to_string(path)?.lines().enumerate() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let mut parts = line.splitn(2, char::is_whitespace);
-        let smiles = parts.next().unwrap_or_default().to_owned();
-        let title = parts.next().unwrap_or_default().trim().to_owned();
-        let (status, molecule) = match interpret_smiles(&smiles) {
-            Ok(molecule) => ("ok".to_owned(), Some(molecule)),
-            Err(_) => ("parse_error".to_owned(), None),
-        };
-        records.push(IndexedSmilesRecord {
-            record_index: index,
-            status,
-            title,
-            input_smiles: smiles,
-            components: molecule.iter().cloned().collect(),
-            molecule,
-        });
-    }
-    Ok(records)
+    read_smiles_records_with_filter(path, |_| false)
 }
 
 pub(crate) fn smiles_unsupported_subset_reason(smiles: &str) -> Option<&'static str> {

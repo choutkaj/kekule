@@ -2871,24 +2871,27 @@ The canonical output mapping is:
 ### SMILES projection
 
 A `Molecule` writes as one connected SMILES. A `Topology` writes as one
- dot-separated SMILES record by serializing every explicit molecule instance in
-authoritative topology instance order. Reused definitions do not collapse
+dot-separated SMILES record by serializing every explicit molecule instance.
+Canonical mode sorts the component strings; other modes retain authoritative
+topology instance order. Reused definitions do not collapse
 repeated instances. This projection intentionally discards hierarchy, topology
 properties, definition reuse, and all geometry.
 
 Canonical SMILES traversal uses complete canonical labeling, including tied
-symmetry classes, so atom numbering and adjacency insertion order cannot choose
+symmetry classes and stereo configurations, so atom numbering and adjacency
+insertion order cannot choose
 the result. Ranking uses the same isotope and hydrogen projection as emission,
 so repeating parse/perceive/canonical-write preserves the output. Labeling and
 candidate serialization have explicit work and storage bounds; exceeding a
 bound returns a write error instead of an unproved canonical candidate. The
 serializer retains only the best candidate, and checks graph-slot and total
 candidate-visit limits before cloning or ranking. Hydrogen normalization must
-retain charged and atom-mapped hydrogen vertices; neutral terminal isotope-H
-vertices may collapse when the canonical nonisomeric projection removes isotope
-labels.
+retain charged, atom-mapped, and isotope-labelled hydrogen vertices. Only
+removable neutral nonisotopic hydrogen vertices collapse into counts, using the
+shared hydrogen transform to preserve stereo carriers. Canonical output retains
+stereo and isotope identity. Unsupported configurations fail explicitly.
 
-Ordinary and isomeric SMILES retain isotope labels and hydrogen counts, including
+All SMILES writers retain isotope labels and hydrogen counts, including
 on aromatic atoms. Bracket syntax disables SMILES hydrogen inference, so writers
 materialize the required hydrogen count there. If an atom permits inference but
 has no installed hydrogen perception and requires brackets, writing fails with

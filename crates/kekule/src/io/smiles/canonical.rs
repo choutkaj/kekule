@@ -8,9 +8,9 @@ use crate::core::*;
 use crate::io::MolWriteError;
 
 use super::write::{
-    collect_smiles_tree, smiles_atom, smiles_atom_requires_brackets, smiles_bond_between,
-    smiles_connected_components, smiles_incident_bonds_for_style, smiles_ring_closures,
-    smiles_ring_number, validate_smiles_writeable, CanonicalAtomStyle, SmilesBondOrder,
+    collect_smiles_tree, smiles_atom, smiles_atom_requires_brackets, smiles_connected_components,
+    smiles_incident_bonds_for_style, smiles_ring_closures, validate_smiles_writeable,
+    write_smiles_component, CanonicalAtomStyle, SmilesBondOrder, SmilesStereoWriteContext,
     SmilesWritePlan, StereoWriteMode,
 };
 
@@ -53,22 +53,26 @@ fn write_canonical_smiles_with_limits(
             "canonical SMILES exceeds the candidate traversal limit ({max_candidate_visits} atom/edge visits)"
         )));
     }
-    validate_smiles_writeable(molecule, StereoWriteMode::Ignore)?;
-    let normalized = canonical_nonisomeric_graph(molecule)?;
+    validate_smiles_writeable(molecule, StereoWriteMode::Encode)?;
+    let normalized = canonical_hydrogen_graph(molecule)?;
     let mol = &normalized;
     let mut components = Vec::new();
     for component in smiles_connected_components(mol)? {
-        let atom_style = canonical_component_atom_style(mol, &component)?;
-        let ranking = canonical_projection_ranking(mol, atom_style)?;
+        let atom_style = canonical_atom_style(mol);
+        let projected = canonical_projection_graph(mol, atom_style)?;
+        let mol = &projected;
+        let ranking = canonical_atom_ranking(mol);
         let order = CanonicalOrder::new(mol, &ranking, atom_style)?;
+        let stereo = SmilesStereoWriteContext::new(mol, |atom| canonical_label(&order, atom))?;
         let mut best = None;
         for preference in [
             CanonicalBondTraversal::HighOrderFirst,
             CanonicalBondTraversal::LowOrderFirst,
         ] {
             for root in &component {
-                let candidate =
-                    write_canonical_smiles_component(mol, *root, &order, preference, atom_style)?;
+                let candidate = write_canonical_smiles_component(
+                    mol, *root, &order, preference, atom_style, &stereo,
+                )?;
                 let key = canonical_smiles_candidate_key(candidate);
                 if best.as_ref().is_none_or(|best| key < *best) {
                     best = Some(key);
@@ -83,75 +87,24 @@ fn write_canonical_smiles_with_limits(
     Ok(components.join("."))
 }
 
-fn canonical_nonisomeric_graph(mol: &Molecule) -> std::result::Result<Molecule, MolWriteError> {
+fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, MolWriteError> {
     let mut normalized = mol.clone();
-    let perception = normalized.perception.clone();
-    let collapsible_hydrogens = mol
-        .atoms()
-        .filter_map(|(atom_id, atom)| {
-            if atom.element.symbol() != "H"
-                || atom.formal_charge != 0
-                || atom.atom_map.is_some()
-                || atom.radical.is_some()
-                || atom.hydrogens.explicit_count() != 0
-            {
-                return None;
-            }
-            let bonds = mol.incident_bonds(atom_id).ok()?.collect::<Vec<_>>();
-            if bonds.len() != 1 || !matches!(bonds[0].1.order, BondOrder::Single) {
-                return None;
-            }
-            let parent = bonds[0].1.other_atom(atom_id);
-            mol.atom(parent)
-                .is_ok_and(|parent_atom| parent_atom.element.symbol() != "H")
-                .then_some((atom_id, parent))
-        })
-        .collect::<Vec<_>>();
-
-    let mut implicit_by_parent = BTreeMap::new();
-    for (hydrogen, parent) in collapsible_hydrogens {
-        let implicit = mol
-            .implicit_hydrogens(parent)
-            .map_err(|error| MolWriteError::new(error.to_string()))?;
-        if implicit.is_none()
-            && mol
-                .atom(parent)
-                .is_ok_and(|atom| atom.hydrogens.allows_implicit())
-        {
-            return Err(MolWriteError::new(format!(
-                "canonical SMILES hydrogen collapse at {parent} requires installed hydrogen perception; perceive the molecule before writing"
-            )));
-        }
-        let implicit = implicit.unwrap_or(0);
-        let count = implicit_by_parent.entry(parent).or_insert(implicit);
-        *count = count.checked_add(1).ok_or_else(|| {
-            MolWriteError::new("collapsed hydrogen count exceeds the SMILES representation limit")
-        })?;
-        let parent_atom = normalized
-            .graph
-            .atoms
-            .get_mut(parent.index())
-            .and_then(Option::as_mut)
-            .ok_or_else(|| MolWriteError::new(format!("invalid hydrogen parent atom {parent}")))?;
-        parent_atom.hydrogens = HydrogenDeclaration::Infer {
-            explicit: parent_atom.hydrogens.explicit_count(),
-        };
-        normalized
-            .delete_atom(hydrogen)
-            .map_err(|error| MolWriteError::new(error.to_string()))?;
-    }
-    normalized.perception = perception;
-    for (parent, implicit) in implicit_by_parent {
-        normalized.set_implicit_hydrogens(parent, implicit);
-    }
+    // Metadata does not affect a molecular identifier. Use the common hydrogen
+    // transform so carrier remapping and count reconstruction have one owner.
+    normalized.clear_properties();
+    normalized.remove_hydrogens().map_err(|error| {
+        MolWriteError::new(format!(
+            "canonical SMILES hydrogen normalization requires known hydrogen perception: {error}"
+        ))
+    })?;
     restore_projection_aromaticity(&mut normalized, mol.perception());
     Ok(normalized)
 }
 
-fn canonical_projection_ranking(
+fn canonical_projection_graph(
     mol: &Molecule,
     atom_style: CanonicalAtomStyle,
-) -> std::result::Result<CanonicalAtomRanking, MolWriteError> {
+) -> std::result::Result<Molecule, MolWriteError> {
     // Ranking must see the same isotope and hydrogen projection as the output.
     // Keep the general atom-ranking API sensitive to authoritative chemistry;
     // only this private copy adopts the exported atom representation.
@@ -163,7 +116,7 @@ fn canonical_projection_ranking(
         projected.set_implicit_hydrogens(atom_id, implicit_hydrogens);
     }
     restore_projection_aromaticity(&mut projected, mol.perception());
-    Ok(canonical_atom_ranking(&projected))
+    Ok(projected)
 }
 
 fn restore_projection_aromaticity(projected: &mut Molecule, original: &Perception) {
@@ -201,112 +154,23 @@ impl CanonicalBondTraversal {
     }
 }
 
-fn canonical_component_atom_style(
-    mol: &Molecule,
-    atom_ids: &[AtomId],
-) -> std::result::Result<CanonicalAtomStyle, MolWriteError> {
-    if canonical_component_has_aromatic_shorthand_sensitive_atom(mol, atom_ids)? {
-        Ok(CanonicalAtomStyle::StoredKekule)
-    } else {
-        Ok(CanonicalAtomStyle::Aromatic)
-    }
-}
-
-fn canonical_component_has_aromatic_shorthand_sensitive_atom(
-    mol: &Molecule,
-    atom_ids: &[AtomId],
-) -> std::result::Result<bool, MolWriteError> {
-    let atom_set = atom_ids.iter().copied().collect::<BTreeSet<_>>();
-    let component_has_aromatic_atom = atom_ids
-        .iter()
-        .any(|atom_id| mol.atom_is_aromatic(*atom_id).ok().flatten() == Some(true));
-    if !component_has_aromatic_atom {
-        return Ok(false);
-    }
-    for atom_id in atom_ids {
-        let atom = mol
-            .atom(*atom_id)
-            .map_err(|error| MolWriteError::new(error.to_string()))?;
-        let aromatic = mol.atom_is_aromatic(*atom_id).ok().flatten() == Some(true);
-        if aromatic && atom.formal_charge != 0 && matches!(atom.element.symbol(), "B" | "C") {
-            return Ok(true);
-        }
-        if aromatic && atom_has_exocyclic_hetero_multiple_bond(mol, *atom_id, &atom_set)? {
-            return Ok(true);
-        }
-        if aromatic {
-            continue;
-        }
-        let mut aromatic_neighbors = 0usize;
-        let mut pi_framework_neighbors = 0usize;
-        let mut multiple_bond_to_non_aromatic_neighbor = false;
-        for (_, bond) in mol
-            .incident_bonds(*atom_id)
-            .map_err(|error| MolWriteError::new(error.to_string()))?
-        {
-            let neighbor_id = bond.other_atom(*atom_id);
-            let neighbor = mol
-                .atom(neighbor_id)
-                .map_err(|error| MolWriteError::new(error.to_string()))?;
-            let neighbor_aromatic = mol.atom_is_aromatic(neighbor_id).ok().flatten() == Some(true);
-            if atom_set.contains(&neighbor_id) && neighbor_aromatic {
-                aromatic_neighbors += 1;
+fn canonical_atom_style(mol: &Molecule) -> CanonicalAtomStyle {
+    if mol
+        .stereo_elements()
+        .any(|(_, element)| match &element.kind {
+            StereoElementKind::DoubleBond(value) => [value.left, value.right]
+                .iter()
+                .any(|atom| mol.atom_is_aromatic(*atom).ok().flatten() == Some(true)),
+            StereoElementKind::Tetrahedral(value) => {
+                mol.atom_is_aromatic(value.center).ok().flatten() == Some(true)
             }
-            if atom_set.contains(&neighbor_id)
-                && matches!(neighbor.element.symbol(), "B" | "C" | "N" | "P" | "S")
-            {
-                pi_framework_neighbors += 1;
-            }
-            if matches!(bond.order, BondOrder::Double | BondOrder::Triple) && !neighbor_aromatic {
-                multiple_bond_to_non_aromatic_neighbor = true;
-            }
-        }
-        let unsupported_aromatic_ring_element = aromatic_neighbors > 0
-            && mol
-                .ring_membership()
-                .is_some_and(|membership| membership.atom_in_ring(*atom_id))
-            && !matches!(
-                atom.element.symbol(),
-                "B" | "C" | "N" | "O" | "P" | "S" | "Se" | "Te"
-            );
-        if unsupported_aromatic_ring_element {
-            return Ok(true);
-        }
-        if atom.formal_charge == 0
-            && (aromatic_neighbors > 0 || pi_framework_neighbors >= 3)
-            && pi_framework_neighbors >= 2
-            && multiple_bond_to_non_aromatic_neighbor
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn atom_has_exocyclic_hetero_multiple_bond(
-    mol: &Molecule,
-    atom_id: AtomId,
-    atom_set: &BTreeSet<AtomId>,
-) -> std::result::Result<bool, MolWriteError> {
-    for (_, bond) in mol
-        .incident_bonds(atom_id)
-        .map_err(|error| MolWriteError::new(error.to_string()))?
+            StereoElementKind::Axis(_) => false,
+        })
     {
-        if !matches!(bond.order, BondOrder::Double | BondOrder::Triple) {
-            continue;
-        }
-        let neighbor_id = bond.other_atom(atom_id);
-        let neighbor = mol
-            .atom(neighbor_id)
-            .map_err(|error| MolWriteError::new(error.to_string()))?;
-        if !atom_set.contains(&neighbor_id)
-            || mol.atom_is_aromatic(neighbor_id).ok().flatten() != Some(true)
-                && !matches!(neighbor.element.symbol(), "B" | "C")
-        {
-            return Ok(true);
-        }
+        CanonicalAtomStyle::StoredKekule
+    } else {
+        CanonicalAtomStyle::Aromatic
     }
-    Ok(false)
 }
 
 fn canonical_smiles_candidate_key(candidate: String) -> (usize, usize, usize, String) {
@@ -370,9 +234,12 @@ fn write_canonical_smiles_component(
     ranking: &CanonicalOrder,
     preference: CanonicalBondTraversal,
     atom_style: CanonicalAtomStyle,
+    stereo: &SmilesStereoWriteContext,
 ) -> std::result::Result<String, MolWriteError> {
     let plan = plan_canonical_smiles_component(mol, root, ranking, preference, atom_style)?;
-    write_canonical_smiles_component_with_plan(mol, root, &plan, ranking, preference, atom_style)
+    write_canonical_smiles_component_with_plan(
+        mol, root, &plan, ranking, preference, atom_style, stereo,
+    )
 }
 
 fn plan_canonical_smiles_component(
@@ -415,7 +282,7 @@ fn plan_canonical_smiles_component(
             canonical_label(ranking, *second),
         )
     });
-    let mut closures = smiles_ring_closures(ring_bonds)?;
+    let mut closures = smiles_ring_closures(ring_bonds);
     for closures in closures.values_mut() {
         closures.sort_by_key(|closure| {
             (
@@ -441,98 +308,27 @@ fn write_canonical_smiles_component_with_plan(
     ranking: &CanonicalOrder,
     preference: CanonicalBondTraversal,
     atom_style: CanonicalAtomStyle,
+    stereo: &SmilesStereoWriteContext,
 ) -> std::result::Result<String, MolWriteError> {
-    enum Action {
-        Node {
-            atom: AtomId,
-            parent: Option<AtomId>,
+    write_smiles_component(
+        mol,
+        root,
+        plan,
+        Some(stereo),
+        atom_style,
+        |atom, children| {
+            children.sort_by_key(|(_, order, child)| {
+                (
+                    !canonical_smiles_aromatic_continuation(mol, atom, *child, *order),
+                    canonical_rank(ranking, *child),
+                    canonical_smiles_atom_for_sort(mol, *child, atom_style),
+                    preference.order_key(*order),
+                    canonical_label(ranking, *child),
+                )
+            });
+            (!children.is_empty()).then_some(0)
         },
-        Bond {
-            order: SmilesBondOrder,
-            left: AtomId,
-            right: AtomId,
-        },
-        OpenBranch,
-        CloseBranch,
-    }
-
-    let mut out = String::new();
-    let mut actions = vec![Action::Node {
-        atom: root,
-        parent: None,
-    }];
-    while let Some(action) = actions.pop() {
-        match action {
-            Action::OpenBranch => out.push('('),
-            Action::CloseBranch => out.push(')'),
-            Action::Bond { order, left, right } => {
-                out.push_str(smiles_bond_between(mol, order, left, right)?);
-            }
-            Action::Node { atom, parent } => {
-                let atom_record = mol
-                    .atom(atom)
-                    .map_err(|error| MolWriteError::new(error.to_string()))?;
-                out.push_str(&canonical_smiles_atom(mol, atom, atom_record, atom_style)?);
-                if let Some(closures) = plan.closures.get(&atom) {
-                    for closure in closures {
-                        out.push_str(smiles_bond_between(
-                            mol,
-                            closure.order,
-                            atom,
-                            closure.other,
-                        )?);
-                        out.push_str(&smiles_ring_number(closure.number));
-                    }
-                }
-
-                let mut children =
-                    canonical_smiles_incident_bonds(mol, atom, ranking, preference, atom_style)?
-                        .into_iter()
-                        .filter(|(bond_id, _, neighbor)| {
-                            plan.tree_bonds.contains(bond_id) && Some(*neighbor) != parent
-                        })
-                        .collect::<Vec<_>>();
-                children.sort_by_key(|(_, order, child)| {
-                    (
-                        !canonical_smiles_aromatic_continuation(mol, atom, *child, *order),
-                        canonical_rank(ranking, *child),
-                        canonical_smiles_atom_for_sort(mol, *child, atom_style),
-                        preference.order_key(*order),
-                        canonical_label(ranking, *child),
-                    )
-                });
-                let main_child = children.first().copied();
-                if let Some((_, order, child)) = main_child {
-                    actions.push(Action::Node {
-                        atom: child,
-                        parent: Some(atom),
-                    });
-                    actions.push(Action::Bond {
-                        order,
-                        left: atom,
-                        right: child,
-                    });
-                }
-                for (index, (_, order, child)) in children.into_iter().enumerate().rev() {
-                    if index == 0 {
-                        continue;
-                    }
-                    actions.push(Action::CloseBranch);
-                    actions.push(Action::Node {
-                        atom: child,
-                        parent: Some(atom),
-                    });
-                    actions.push(Action::Bond {
-                        order,
-                        left: atom,
-                        right: child,
-                    });
-                    actions.push(Action::OpenBranch);
-                }
-            }
-        }
-    }
-    Ok(out)
+    )
 }
 
 fn canonical_smiles_aromatic_continuation(
@@ -578,6 +374,7 @@ fn bond_order_code(order: SmilesBondOrder) -> u8 {
         SmilesBondOrder::Single => 1,
         SmilesBondOrder::Double => 2,
         SmilesBondOrder::Triple => 3,
+        SmilesBondOrder::Quadruple => 4,
         SmilesBondOrder::Aromatic => 5,
     }
 }
@@ -603,24 +400,18 @@ fn canonical_smiles_atom_representation(
     atom: &Atom,
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<(Atom, bool, u8), MolWriteError> {
-    let mut normalized = atom.clone();
+    let normalized = atom.clone();
     let aromatic = mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true);
     let perceived_hydrogens = mol
         .implicit_hydrogens(atom_id)
         .map_err(|error| MolWriteError::new(error.to_string()))?;
-    let mut implicit_hydrogens = perceived_hydrogens.unwrap_or(0);
+    let implicit_hydrogens = perceived_hydrogens.unwrap_or(0);
     atom.hydrogens
         .explicit_count()
         .checked_add(implicit_hydrogens)
         .ok_or_else(|| {
             MolWriteError::new("hydrogen count exceeds the SMILES representation limit")
         })?;
-    normalized.isotope = None;
-    let represented_hydrogens = atom.hydrogens.explicit_count();
-    if atom.isotope.is_some() && represented_hydrogens > 0 {
-        implicit_hydrogens = represented_hydrogens.saturating_add(implicit_hydrogens);
-        normalized.hydrogens = HydrogenDeclaration::Infer { explicit: 0 };
-    }
     let aromatic = aromatic && !matches!(atom_style, CanonicalAtomStyle::StoredKekule);
     let (mut payload, mut implicit_hydrogens) = canonical_smiles_atom_normalized(
         mol,

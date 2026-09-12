@@ -3,7 +3,7 @@
 //! Color refinement alone is not a canonical labeling: inequivalent vertices
 //! can retain the same color. Every unresolved choice is explored, except for
 //! exact twins whose transposition is a proved automorphism. The least complete
-//! colored adjacency certificate selects an order. Equal certificates describe
+//! colored adjacency and stereo certificate selects an order. Equal certificates describe
 //! the same labeled graph, so choosing either cannot affect emitted SMILES.
 
 use super::*;
@@ -81,14 +81,52 @@ impl CanonicalOrder {
                 Ok(neighbors)
             })
             .collect::<Result<Vec<_>, MolWriteError>>()?;
+        let stereo = molecule
+            .stereo_elements()
+            .map(|(_, element)| {
+                let carrier = |c| match c {
+                    StereoCarrier::Atom(a) => dense[a.index()],
+                    StereoCarrier::ImplicitHydrogen => atoms.len(),
+                    StereoCarrier::ImplicitLonePair => atoms.len() + 1,
+                };
+                match &element.kind {
+                    StereoElementKind::Tetrahedral(value) => LabelStereo::Tetrahedral {
+                        center: dense[value.center.index()],
+                        carriers: value.carriers.iter().copied().map(carrier).collect(),
+                        clockwise: value.orientation == Some(TetrahedralOrientation::Clockwise),
+                    },
+                    StereoElementKind::DoubleBond(value) => LabelStereo::DoubleBond {
+                        left: dense[value.left.index()],
+                        right: dense[value.right.index()],
+                        left_carrier: carrier(value.left_carrier),
+                        right_carrier: carrier(value.right_carrier),
+                        together: value.orientation == Some(DoubleBondOrientation::Together),
+                    },
+                    StereoElementKind::Axis(_) => {
+                        unreachable!("unsupported SMILES geometry is rejected before labeling")
+                    }
+                }
+            })
+            .collect();
+        let stereo_atoms = atoms
+            .iter()
+            .map(|atom| {
+                molecule
+                    .stereo_elements()
+                    .any(|(_, element)| element.references_atom(*atom))
+            })
+            .collect();
         let mut search = Search {
             adjacency,
+            stereo,
+            stereo_atoms,
             initial,
             states: 0,
             work: 0,
             max_states,
             max_work,
             best: None,
+            automorphisms: Vec::new(),
         };
         let order = search.run()?;
         let mut labels = vec![usize::MAX; slots];
@@ -103,9 +141,26 @@ impl CanonicalOrder {
     }
 }
 
-type Certificate = Vec<(usize, Vec<(usize, u8)>)>;
+type Certificate = (Vec<(usize, Vec<(usize, u8)>)>, Vec<Vec<usize>>);
+
+enum LabelStereo {
+    Tetrahedral {
+        center: usize,
+        carriers: Vec<usize>,
+        clockwise: bool,
+    },
+    DoubleBond {
+        left: usize,
+        right: usize,
+        left_carrier: usize,
+        right_carrier: usize,
+        together: bool,
+    },
+}
 
 struct Search {
+    stereo: Vec<LabelStereo>,
+    stereo_atoms: Vec<bool>,
     adjacency: Vec<Vec<(usize, u8)>>,
     initial: Vec<usize>,
     states: usize,
@@ -113,6 +168,7 @@ struct Search {
     max_states: usize,
     max_work: usize,
     best: Option<(Certificate, Vec<usize>)>,
+    automorphisms: Vec<Vec<usize>>,
 }
 
 struct Frame {
@@ -182,7 +238,15 @@ impl Search {
                         .1);
                 };
                 if let Some(&atom) = frame.choices.get(frame.next) {
+                    let redundant = self.equivalent_to_prior_choice(
+                        &frame.colors,
+                        &frame.choices[..frame.next],
+                        atom,
+                    )?;
                     frame.next += 1;
+                    if redundant {
+                        continue;
+                    }
                     colors = frame.colors.clone();
                     let chosen = colors[atom];
                     for (index, color) in colors.iter_mut().enumerate() {
@@ -193,6 +257,52 @@ impl Search {
                 pending.pop();
             }
         }
+    }
+
+    fn equivalent_to_prior_choice(
+        &mut self,
+        colors: &[usize],
+        prior: &[usize],
+        atom: usize,
+    ) -> Result<bool, MolWriteError> {
+        if prior.is_empty() || self.automorphisms.is_empty() {
+            return Ok(false);
+        }
+        self.charge_work(colors.len().saturating_mul(self.automorphisms.len()))?;
+        // Only automorphisms preserving every current partition cell can map
+        // two branches of this frame. Their compositions preserve it as well.
+        let generators = self
+            .automorphisms
+            .iter()
+            .filter(|permutation| {
+                permutation
+                    .iter()
+                    .enumerate()
+                    .all(|(from, &to)| colors[from] == colors[to])
+            })
+            .collect::<Vec<_>>();
+        let mut seen = vec![false; colors.len()];
+        let mut pending = prior.to_vec();
+        for &value in prior {
+            seen[value] = true;
+        }
+        let mut work = 0usize;
+        while let Some(value) = pending.pop() {
+            for permutation in &generators {
+                work = work.saturating_add(1);
+                let other = permutation[value];
+                if other == atom {
+                    self.charge_work(work)?;
+                    return Ok(true);
+                }
+                if !seen[other] {
+                    seen[other] = true;
+                    pending.push(other);
+                }
+            }
+        }
+        self.charge_work(work)?;
+        Ok(false)
     }
 
     fn refine(&mut self, colors: &mut Vec<usize>) -> Result<(), MolWriteError> {
@@ -242,12 +352,14 @@ impl Search {
     }
 
     fn twins(&self, left: usize, right: usize) -> bool {
-        self.adjacency[left]
-            .iter()
-            .filter(|(atom, _)| *atom != right)
-            .eq(self.adjacency[right]
+        !self.stereo_atoms[left]
+            && !self.stereo_atoms[right]
+            && self.adjacency[left]
                 .iter()
-                .filter(|(atom, _)| *atom != left))
+                .filter(|(atom, _)| *atom != right)
+                .eq(self.adjacency[right]
+                    .iter()
+                    .filter(|(atom, _)| *atom != left))
     }
 
     fn consider(&mut self, colors: &[usize]) {
@@ -263,7 +375,82 @@ impl Search {
                 neighbors.sort_unstable();
                 (self.initial[atom], neighbors)
             })
-            .collect::<Certificate>();
+            .collect::<Vec<_>>();
+        let mut stereo = self
+            .stereo
+            .iter()
+            .map(|element| {
+                let label = |atom: usize| colors.get(atom).copied().unwrap_or(atom);
+                match element {
+                    LabelStereo::Tetrahedral {
+                        center,
+                        carriers,
+                        clockwise,
+                    } => {
+                        let mut carriers = carriers.iter().copied().map(label).collect::<Vec<_>>();
+                        let odd = (0..carriers.len())
+                            .flat_map(|i| (i + 1..carriers.len()).map(move |j| (i, j)))
+                            .filter(|&(i, j)| carriers[i] > carriers[j])
+                            .count()
+                            % 2
+                            != 0;
+                        carriers.sort_unstable();
+                        let mut value = vec![0, label(*center)];
+                        value.extend(carriers);
+                        value.push(usize::from(*clockwise != odd));
+                        value
+                    }
+                    LabelStereo::DoubleBond {
+                        left,
+                        right,
+                        left_carrier,
+                        right_carrier,
+                        together,
+                    } => {
+                        let first_carrier =
+                            |atom: usize, other: usize| {
+                                self.adjacency[atom].iter()
+                        .filter(|&&(neighbor, bond)| neighbor != other && bond == 1)
+                        .map(|&(neighbor, _)| label(neighbor)).min()
+                        .expect("SMILES stereo endpoints have an explicit single-bond carrier")
+                            };
+                        let mut endpoints = [label(*left), label(*right)];
+                        endpoints.sort_unstable();
+                        let inverted = (label(*left_carrier) != first_carrier(*left, *right))
+                            != (label(*right_carrier) != first_carrier(*right, *left));
+                        vec![
+                            1,
+                            endpoints[0],
+                            endpoints[1],
+                            usize::from(*together != inverted),
+                        ]
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+        stereo.sort_unstable();
+        let certificate = (certificate, stereo);
+        if let Some((best, representative)) = &self.best {
+            if *best == certificate {
+                // Equal complete certificates prove a graph-and-stereo
+                // automorphism. Reuse it to avoid equivalent subtrees.
+                let mut permutation = vec![0; order.len()];
+                for (&from, &to) in representative.iter().zip(&order) {
+                    permutation[from] = to;
+                }
+                if permutation.iter().enumerate().any(|(from, &to)| from != to)
+                    && !self.automorphisms.contains(&permutation)
+                    && self
+                        .automorphisms
+                        .len()
+                        .saturating_add(1)
+                        .saturating_mul(order.len())
+                        <= MAX_PENDING_ATOMS
+                {
+                    self.automorphisms.push(permutation);
+                }
+            }
+        }
         if self
             .best
             .as_ref()

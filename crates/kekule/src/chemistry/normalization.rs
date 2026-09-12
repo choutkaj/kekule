@@ -435,7 +435,7 @@ fn source_aromatic_implicit_hydrogens(atom: &Atom, explicit_valence: usize) -> u
                 2
             }
         }
-        "P" => explicit_valence,
+        "P" | "As" => explicit_valence,
         _ => return 0,
     };
     target.saturating_sub(explicit_valence)
@@ -458,9 +458,9 @@ fn aromatic_localization_target_valence(
             3
         }
         ("C", 0) => 4,
-        ("N" | "P", -1) => 2,
-        ("N" | "P", 0) => 3,
-        ("N" | "P", 1) => 4,
+        ("N" | "P" | "As", -1) => 2,
+        ("N" | "P" | "As", 0) => 3,
+        ("N" | "P" | "As", 1) => 4,
         ("O" | "S" | "Se" | "Te", -1) => 1,
         ("O" | "S" | "Se" | "Te", 0) => 2,
         ("O" | "S" | "Se" | "Te", 1) => 3,
