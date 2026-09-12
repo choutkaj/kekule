@@ -261,8 +261,14 @@ pub fn interpret_smiles_document(
         .map(|range| fragment_source_span(document, range.clone()))
         .collect::<Result<Vec<_>, _>>()?;
     let mut source_spans = vec![document.source().len()..0; component_count];
+    // Partition once. Dot-separated records can contain as many components as
+    // atoms, so rescanning the complete program per component is quadratic.
+    let mut programs = (0..component_count)
+        .map(|_| ComponentProgram::default())
+        .collect::<Vec<_>>();
     let mut fragment = 0;
-    for atom in &document.program.atoms {
+    for (index, atom) in document.program.atoms.iter().enumerate() {
+        programs[atom.component].atoms.push(index);
         while fragment_spans[fragment].end <= atom.span.start {
             fragment += 1;
         }
@@ -270,41 +276,22 @@ pub fn interpret_smiles_document(
         span.start = span.start.min(fragment_spans[fragment].start);
         span.end = span.end.max(fragment_spans[fragment].end);
     }
+    for (index, bond) in document.program.bonds.iter().enumerate() {
+        programs[bond.component].bonds.push(index);
+    }
+    for pending in &document.program.tetrahedral {
+        programs[document.program.atoms[pending.center].component]
+            .tetrahedral
+            .push(*pending);
+    }
     let mut components = Vec::with_capacity(component_count);
-    for (component_index, source_span) in source_spans.into_iter().enumerate() {
-        let local = interpret_smiles_component(document, component_index).map_err(|error| {
-            SmilesInterpretError {
-                offset: error.offset(),
-                message: error.message().to_owned(),
-            }
-        })?;
-        let (molecule, report) = local.into_parts();
-        let atom_mappings = report
-            .atom_mappings()
-            .iter()
-            .map(|mapping| SmilesAtomMapping {
-                atom: mapping.atom(),
-                source_span: mapping.source_span(),
-            })
-            .collect();
-        let bond_mappings = report
-            .bond_mappings()
-            .iter()
-            .map(|mapping| SmilesBondMapping {
-                bond: mapping.bond(),
-                source_offset: mapping.source_offset(),
-            })
-            .collect();
-        let created_stereo_elements = report.created_stereo_elements().to_vec();
-
+    for (program, source_span) in programs.iter().zip(source_spans) {
+        let (molecule, report) =
+            interpret_smiles_program_component(&document.program, program, document.source())?;
         components.push(SmilesComponentInterpretation {
             source_span,
             molecule,
-            report: SmilesInterpretationReport {
-                atom_mappings,
-                bond_mappings,
-                created_stereo_elements,
-            },
+            report,
         });
     }
     Ok(SmilesInterpretation { components })
@@ -337,40 +324,26 @@ fn fragment_source_span(
     Ok(first.span().start..last.span().end)
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct SmilesProgramInterpretation {
-    molecule: Molecule,
-    report: SmilesInterpretationReport,
-}
-
-impl SmilesProgramInterpretation {
-    fn into_parts(self) -> (Molecule, SmilesInterpretationReport) {
-        (self.molecule, self.report)
-    }
-}
-
-fn interpret_smiles_component(
-    document: &SmilesDocument,
-    component: usize,
-) -> std::result::Result<SmilesProgramInterpretation, SmilesInterpretError> {
-    interpret_smiles_program_component(&document.program, component, document.source())
+#[derive(Default)]
+struct ComponentProgram {
+    atoms: Vec<usize>,
+    bonds: Vec<usize>,
+    tetrahedral: Vec<PendingTetrahedral>,
 }
 
 fn interpret_smiles_program_component(
     program: &SmilesProgram,
-    component: usize,
+    component: &ComponentProgram,
     source: &str,
-) -> std::result::Result<SmilesProgramInterpretation, SmilesInterpretError> {
+) -> std::result::Result<(Molecule, SmilesInterpretationReport), SmilesInterpretError> {
     validate_smiles_source_aromaticity(program, component, source)?;
     let end_offset = source.len();
 
     let mut editor = crate::core::MoleculeEditor::new();
     let mut source_to_atom = BTreeMap::<usize, AtomId>::new();
     let mut atom_mappings = Vec::new();
-    for (index, record) in program.atoms.iter().enumerate() {
-        if record.component != component {
-            continue;
-        }
+    for &index in &component.atoms {
+        let record = &program.atoms[index];
         let atom = interpret_smiles_atom(&record.syntax, record.span.start)?;
         let atom_id = editor
             .add_atom(atom)
@@ -388,10 +361,8 @@ fn interpret_smiles_program_component(
     let mut source_aromatic_bonds = BTreeSet::new();
     let mut source_stereo = Vec::new();
     let mut first_aromatic_offset = None;
-    for bond in &program.bonds {
-        if bond.component != component {
-            continue;
-        }
+    for &index in &component.bonds {
+        let bond = &program.bonds[index];
         let left = source_to_atom
             .get(&bond.left)
             .copied()
@@ -448,7 +419,7 @@ fn interpret_smiles_program_component(
     add_smiles_tetrahedral_elements(
         &mut editor,
         &source_to_atom,
-        &program.tetrahedral,
+        &component.tetrahedral,
         &program.tetrahedral_carriers,
         end_offset,
     )?;
@@ -468,14 +439,14 @@ fn interpret_smiles_program_component(
             .map_or(end_offset, |mapping| mapping.source_span.start),
         message: error.to_string(),
     })?;
-    Ok(SmilesProgramInterpretation {
+    Ok((
         molecule,
-        report: SmilesInterpretationReport {
+        SmilesInterpretationReport {
             atom_mappings,
             bond_mappings,
             created_stereo_elements: publication_report.created_stereo_elements,
         },
-    })
+    ))
 }
 
 fn canonicalization_error_offset(
@@ -512,14 +483,12 @@ fn canonicalization_error_offset(
 /// same staged subgraph before any canonical molecule is constructed.
 fn validate_smiles_source_aromaticity(
     program: &SmilesProgram,
-    component: usize,
+    component: &ComponentProgram,
     source: &str,
 ) -> std::result::Result<(), SmilesInterpretError> {
     let mut source_aromatic_atoms = BTreeSet::new();
-    for (index, record) in program.atoms.iter().enumerate() {
-        if record.component != component {
-            continue;
-        }
+    for &index in &component.atoms {
+        let record = &program.atoms[index];
         let imported = program.imported_aromatic_atoms.contains(&index);
         if record.syntax.aromatic != imported {
             return Err(SmilesInterpretError {
@@ -533,10 +502,11 @@ fn validate_smiles_source_aromaticity(
     }
 
     let mut atoms_with_source_aromatic_bonds = BTreeSet::new();
-    for bond in program
+    for bond in component
         .bonds
         .iter()
-        .filter(|bond| bond.component == component && bond.token == SmilesBondToken::Aromatic)
+        .map(|&index| &program.bonds[index])
+        .filter(|bond| bond.token == SmilesBondToken::Aromatic)
     {
         if !source_aromatic_atoms.contains(&bond.left)
             || !source_aromatic_atoms.contains(&bond.right)

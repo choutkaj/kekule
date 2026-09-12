@@ -20,6 +20,51 @@ mod fused_tests;
 pub enum AromaticityError {
     UnsupportedElement(AtomId),
     RingPerception(RingPerceptionError),
+    /// Aromaticity work was exhausted; no partial assignment is installed.
+    ResourceLimit {
+        limit: usize,
+    },
+}
+
+/// Independent bounds for ring perception and aromaticity assignment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AromaticityOptions {
+    /// Used only when no ring set is installed.
+    pub ring_options: RingPerceptionOptions,
+    /// Bounds graph slots, ring entries, fusion comparisons, and subset search
+    /// visits and workspace copies. Applies even to an installed ring set.
+    pub max_total_work: usize,
+}
+
+impl Default for AromaticityOptions {
+    fn default() -> Self {
+        Self {
+            ring_options: RingPerceptionOptions::default(),
+            max_total_work: 5_000_000,
+        }
+    }
+}
+
+struct AromaticityWork {
+    remaining: usize,
+    limit: usize,
+}
+
+impl AromaticityWork {
+    fn new(limit: usize) -> Self {
+        Self {
+            remaining: limit,
+            limit,
+        }
+    }
+
+    fn charge(&mut self, amount: usize) -> std::result::Result<(), AromaticityError> {
+        self.remaining = self
+            .remaining
+            .checked_sub(amount)
+            .ok_or(AromaticityError::ResourceLimit { limit: self.limit })?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,11 +82,19 @@ impl fmt::Display for AromaticityError {
                 write!(f, "unsupported aromaticity element at atom {id}")
             }
             Self::RingPerception(error) => write!(f, "{error}"),
+            Self::ResourceLimit { limit } => write!(f, "aromaticity work limit exceeded ({limit})"),
         }
     }
 }
 
-impl std::error::Error for AromaticityError {}
+impl std::error::Error for AromaticityError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::RingPerception(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// Perceives aromatic atom and bond membership without changing localized bonds.
 ///
@@ -66,8 +119,25 @@ pub fn perceive_aromaticity_with_ring_options(
     model: AromaticityModel,
     ring_options: RingPerceptionOptions,
 ) -> std::result::Result<(), AromaticityError> {
+    perceive_aromaticity_with_options(
+        mol,
+        model,
+        AromaticityOptions {
+            ring_options,
+            ..Default::default()
+        },
+    )
+}
+
+/// Perceives aromaticity with explicit work limits, including fused-ring search.
+/// Failure preserves all previously installed perception and represented chemistry.
+pub fn perceive_aromaticity_with_options(
+    mol: &mut Molecule,
+    model: AromaticityModel,
+    options: AromaticityOptions,
+) -> std::result::Result<(), AromaticityError> {
     let previous = mol.perception().clone();
-    if let Err(error) = perceive_aromaticity_with_ring_options_in_place(mol, model, ring_options) {
+    if let Err(error) = perceive_aromaticity_with_options_in_place(mol, model, options) {
         mol.install_perception(previous)
             .expect("previous perception state must remain valid");
         return Err(error);
@@ -79,33 +149,46 @@ pub(crate) fn perceive_aromaticity_in_place(
     mol: &mut Molecule,
     model: AromaticityModel,
 ) -> std::result::Result<(), AromaticityError> {
-    perceive_aromaticity_with_ring_options_in_place(mol, model, RingPerceptionOptions::default())
+    perceive_aromaticity_with_options_in_place(mol, model, AromaticityOptions::default())
 }
 
-fn perceive_aromaticity_with_ring_options_in_place(
+fn perceive_aromaticity_with_options_in_place(
     mol: &mut Molecule,
     model: AromaticityModel,
-    ring_options: RingPerceptionOptions,
+    options: AromaticityOptions,
 ) -> std::result::Result<(), AromaticityError> {
     match model {
-        AromaticityModel::RdkitLike => perceive_rdkit_like_aromaticity(mol, ring_options),
+        AromaticityModel::RdkitLike => perceive_rdkit_like_aromaticity(mol, options),
     }
 }
 
 fn perceive_rdkit_like_aromaticity(
     mol: &mut Molecule,
-    ring_options: RingPerceptionOptions,
+    options: AromaticityOptions,
 ) -> std::result::Result<(), AromaticityError> {
-    let ring_set = match mol.ring_set() {
-        Some(ring_set) => ring_set.clone(),
-        None => perceive_ring_set_with_options(mol, ring_options)
-            .map_err(AromaticityError::RingPerception)?,
-    };
-    assign_rdkit_like_localized_aromaticity(mol, &ring_set);
-    Ok(())
+    let mut work = AromaticityWork::new(options.max_total_work);
+    work.charge(mol.graph.atom_slot_count())?;
+    work.charge(mol.graph.bond_slot_count())?;
+    if mol.ring_set().is_none() {
+        perceive_ring_set_with_options(mol, options.ring_options)
+            .map_err(AromaticityError::RingPerception)?;
+    }
+    // Charge the complete stored ring family before cloning it, including
+    // expert-installed families that bypass ring enumeration limits.
+    for ring in mol.ring_set().expect("rings installed").rings() {
+        work.charge(1)?;
+        work.charge(ring.atoms.len())?;
+        work.charge(ring.bonds.len())?;
+    }
+    let ring_set = mol.ring_set().expect("rings installed").clone();
+    assign_rdkit_like_localized_aromaticity(mol, &ring_set, &mut work)
 }
 
-fn assign_rdkit_like_localized_aromaticity(mol: &mut Molecule, ring_set: &RingSet) {
+fn assign_rdkit_like_localized_aromaticity(
+    mol: &mut Molecule,
+    ring_set: &RingSet,
+    work: &mut AromaticityWork,
+) -> std::result::Result<(), AromaticityError> {
     mol.begin_aromaticity(AromaticityModel::RdkitLike);
 
     let mut donors = vec![AromaticElectronDonorType::None; mol.graph.atom_slot_count()];
@@ -128,7 +211,7 @@ fn assign_rdkit_like_localized_aromaticity(mol: &mut Molecule, ring_set: &RingSe
                 .then_some(index)
         })
         .collect::<Vec<_>>();
-    let neighbors = rdkit_fused_ring_neighbors(ring_set.rings(), &candidates);
+    let neighbors = rdkit_fused_ring_neighbors(ring_set.rings(), &candidates, work)?;
     let components = rdkit_fused_ring_components(&neighbors, &candidates);
     for component in components {
         apply_rdkit_huckel_to_fused_component(
@@ -137,8 +220,10 @@ fn assign_rdkit_like_localized_aromaticity(mol: &mut Molecule, ring_set: &RingSe
             &neighbors,
             &component,
             &donors,
-        );
+            work,
+        )?;
     }
+    Ok(())
 }
 
 fn rdkit_localized_atom_donor_type(
@@ -229,30 +314,45 @@ fn atom_has_cyclic_pi_bond(mol: &Molecule, atom_id: AtomId) -> bool {
         })
 }
 
-fn rdkit_rings_are_fused(left: &Ring, right: &Ring) -> bool {
-    if left.bonds.len() > MAX_FUSED_AROMATIC_RING_SIZE
-        || right.bonds.len() > MAX_FUSED_AROMATIC_RING_SIZE
-    {
-        return false;
+fn rdkit_fused_ring_neighbors(
+    rings: &[Ring],
+    candidates: &[usize],
+    work: &mut AromaticityWork,
+) -> std::result::Result<Vec<Vec<usize>>, AromaticityError> {
+    // Only rings sharing a bond can fuse. Avoid comparing every pair in a
+    // molecule containing many independent ring systems.
+    let mut rings_by_bond = BTreeMap::<BondId, Vec<usize>>::new();
+    for &index in candidates {
+        let ring = &rings[index];
+        if ring.bonds.len() <= MAX_FUSED_AROMATIC_RING_SIZE {
+            for &bond in &ring.bonds {
+                work.charge(1)?;
+                rings_by_bond.entry(bond).or_default().push(index);
+            }
+        }
     }
-    left.bonds
-        .iter()
-        .filter(|bond| right.bonds.contains(bond))
-        .count()
-        == 1
-}
-
-fn rdkit_fused_ring_neighbors(rings: &[Ring], candidates: &[usize]) -> Vec<Vec<usize>> {
     let mut neighbors = vec![Vec::new(); rings.len()];
-    for (position, &left) in candidates.iter().enumerate() {
-        for &right in &candidates[position + 1..] {
-            if rdkit_rings_are_fused(&rings[left], &rings[right]) {
+    for &left in candidates {
+        if rings[left].bonds.len() > MAX_FUSED_AROMATIC_RING_SIZE {
+            continue;
+        }
+        let mut shared = BTreeMap::<usize, usize>::new();
+        for bond in &rings[left].bonds {
+            for &right in &rings_by_bond[bond] {
+                work.charge(1)?;
+                if right > left {
+                    *shared.entry(right).or_default() += 1;
+                }
+            }
+        }
+        for (right, count) in shared {
+            if count == 1 {
                 neighbors[left].push(right);
                 neighbors[right].push(left);
             }
         }
     }
-    neighbors
+    Ok(neighbors)
 }
 
 fn rdkit_fused_ring_components(neighbors: &[Vec<usize>], candidates: &[usize]) -> Vec<Vec<usize>> {
@@ -285,7 +385,8 @@ fn apply_rdkit_huckel_to_fused_component(
     neighbors: &[Vec<usize>],
     component: &[usize],
     donors: &[AromaticElectronDonorType],
-) {
+    work: &mut AromaticityWork,
+) -> std::result::Result<(), AromaticityError> {
     let component_bonds = component
         .iter()
         .flat_map(|index| rings[*index].bonds.iter().copied())
@@ -296,10 +397,16 @@ fn apply_rdkit_huckel_to_fused_component(
         if subset_size > 2 && component.len() > LARGE_FUSED_RING_SYSTEM_SEARCH_LIMIT {
             break;
         }
-        let result =
-            visit_connected_ring_subsets(neighbors, component, subset_size, &mut |subset| {
+        let result = visit_connected_ring_subsets(
+            neighbors,
+            component,
+            subset_size,
+            work,
+            &mut |subset, work| {
                 let mut atom_counts = BTreeMap::<AtomId, usize>::new();
                 for ring_index in subset {
+                    work.charge(rings[*ring_index].atoms.len())?;
+                    work.charge(rings[*ring_index].bonds.len())?;
                     for atom in &rings[*ring_index].atoms {
                         *atom_counts.entry(*atom).or_default() += 1;
                     }
@@ -309,18 +416,20 @@ fn apply_rdkit_huckel_to_fused_component(
                     .filter_map(|(atom, count)| (count <= 2).then_some(donors[atom.index()]))
                     .collect::<Vec<_>>();
                 if huckel_electron_count_for_donors(&subset_donors).is_none() {
-                    return ControlFlow::Continue(());
+                    return Ok(ControlFlow::Continue(()));
                 }
                 mark_rdkit_aromatic_subset(mol, rings, subset, &mut done_bonds);
                 if done_bonds.len() >= component_bonds.len() {
-                    return ControlFlow::Break(());
+                    return Ok(ControlFlow::Break(()));
                 }
-                ControlFlow::Continue(())
-            });
+                Ok(ControlFlow::Continue(()))
+            },
+        )?;
         if result.is_break() {
-            return;
+            return Ok(());
         }
     }
+    Ok(())
 }
 
 fn mark_rdkit_aromatic_subset(
@@ -361,28 +470,38 @@ fn visit_connected_ring_subsets(
     neighbors: &[Vec<usize>],
     indexes: &[usize],
     subset_size: usize,
-    visit: &mut impl FnMut(&[usize]) -> ControlFlow<()>,
-) -> ControlFlow<()> {
-    let mut excluded = vec![false; neighbors.len()];
+    work: &mut AromaticityWork,
+    visit: &mut impl FnMut(
+        &[usize],
+        &mut AromaticityWork,
+    ) -> std::result::Result<ControlFlow<()>, AromaticityError>,
+) -> std::result::Result<ControlFlow<()>, AromaticityError> {
+    let mut excluded = BTreeSet::new();
     let mut current = Vec::with_capacity(subset_size);
     for &root in indexes {
         current.push(root);
+        work.charge(neighbors[root].len())?;
         let frontier = neighbors[root]
             .iter()
             .copied()
             .filter(|&ring| ring > root)
             .collect();
-        extend_connected_ring_subset(
+        if extend_connected_ring_subset(
             neighbors,
             subset_size,
             frontier,
             &mut current,
             &mut excluded,
+            work,
             visit,
-        )?;
+        )?
+        .is_break()
+        {
+            return Ok(ControlFlow::Break(()));
+        }
         current.pop();
     }
-    ControlFlow::Continue(())
+    Ok(ControlFlow::Continue(()))
 }
 
 fn extend_connected_ring_subset(
@@ -390,37 +509,53 @@ fn extend_connected_ring_subset(
     subset_size: usize,
     mut frontier: Vec<usize>,
     current: &mut Vec<usize>,
-    excluded: &mut [bool],
-    visit: &mut impl FnMut(&[usize]) -> ControlFlow<()>,
-) -> ControlFlow<()> {
+    excluded: &mut BTreeSet<usize>,
+    work: &mut AromaticityWork,
+    visit: &mut impl FnMut(
+        &[usize],
+        &mut AromaticityWork,
+    ) -> std::result::Result<ControlFlow<()>, AromaticityError>,
+) -> std::result::Result<ControlFlow<()>, AromaticityError> {
+    work.charge(1)?;
     if current.len() == subset_size {
-        return visit(current);
+        return visit(current, work);
     }
     let mut blocked = Vec::new();
     while let Some(ring) = frontier.pop() {
-        excluded[ring] = true;
+        excluded.insert(ring);
         blocked.push(ring);
         current.push(ring);
+        work.charge(frontier.len())?;
         let mut next_frontier = frontier.clone();
         for &neighbor in &neighbors[ring] {
-            if neighbor > current[0] && !excluded[neighbor] && !next_frontier.contains(&neighbor) {
+            work.charge(1)?;
+            work.charge(next_frontier.len())?;
+            if neighbor > current[0]
+                && !excluded.contains(&neighbor)
+                && !next_frontier.contains(&neighbor)
+            {
                 next_frontier.push(neighbor);
             }
         }
-        extend_connected_ring_subset(
+        if extend_connected_ring_subset(
             neighbors,
             subset_size,
             next_frontier,
             current,
             excluded,
+            work,
             visit,
-        )?;
+        )?
+        .is_break()
+        {
+            return Ok(ControlFlow::Break(()));
+        }
         current.pop();
     }
     for ring in blocked {
-        excluded[ring] = false;
+        excluded.remove(&ring);
     }
-    ControlFlow::Continue(())
+    Ok(ControlFlow::Continue(()))
 }
 
 fn atom_is_rdkit_aromatic_candidate_for_donor(
