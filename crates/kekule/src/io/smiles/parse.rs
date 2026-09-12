@@ -6,7 +6,7 @@ use std::ops::Range;
 pub struct SmilesDocument {
     source: String,
     tokens: Vec<SmilesDocumentToken>,
-    components: Vec<Range<usize>>,
+    fragments: Vec<Range<usize>>,
     pub(super) program: SmilesProgram,
 }
 
@@ -19,8 +19,9 @@ impl SmilesDocument {
         &self.tokens
     }
 
-    pub fn component_token_ranges(&self) -> &[Range<usize>] {
-        &self.components
+    /// Dot-delimited source fragments; ring closures may connect fragments.
+    pub fn fragment_token_ranges(&self) -> &[Range<usize>] {
+        &self.fragments
     }
 
     /// Interprets this document into source-ordered connected components.
@@ -36,8 +37,8 @@ impl SmilesDocument {
 
     /// Interprets this source document as connected canonical molecules.
     ///
-    /// Dot-delimited components remain separate and no chemical perception is
-    /// run implicitly.
+    /// Components follow connectivity, including ring bonds across dots. No
+    /// general chemical perception runs implicitly.
     pub fn to_molecules(
         &self,
     ) -> Result<Vec<crate::core::Molecule>, super::interpret::SmilesInterpretError> {
@@ -89,6 +90,7 @@ pub(super) enum SmilesBondToken {
     Single,
     Double,
     Triple,
+    Quadruple,
     Aromatic,
 }
 
@@ -244,16 +246,10 @@ pub fn parse_smiles_document_with_options(
                 component_start = tokens.len() + 1;
                 (SmilesDocumentTokenKind::ComponentSeparator, cursor + 1)
             }
-            '-' | '=' | '#' | ':' | '/' | '\\' => (SmilesDocumentTokenKind::Bond, cursor + 1),
+            '-' | '=' | '#' | '$' | ':' | '/' | '\\' => (SmilesDocumentTokenKind::Bond, cursor + 1),
             '0'..='9' => (SmilesDocumentTokenKind::Ring, cursor + 1),
             '%' => {
-                let mut next = cursor + 1;
-                while next < chars.len() && chars[next].1.is_ascii_digit() {
-                    next += 1;
-                }
-                if next == cursor + 1 {
-                    return Err(SmilesParseError::new(start, "invalid ring label"));
-                }
+                let (_, next) = parse_smiles_ring_label(&chars, cursor)?;
                 (SmilesDocumentTokenKind::Ring, next)
             }
             '*' | '@' => (SmilesDocumentTokenKind::Unsupported, cursor + 1),
@@ -300,7 +296,7 @@ pub fn parse_smiles_document_with_options(
     Ok(SmilesDocument {
         source: input.to_owned(),
         tokens,
-        components,
+        fragments: components,
         program,
     })
 }
@@ -367,13 +363,9 @@ fn parse_smiles_program(
             '.' => {
                 if current.is_none()
                     || pending_bond.is_some()
-                    || !stack.is_empty()
                     || matches!(
                         previous,
-                        SmilesTokenKind::Start
-                            | SmilesTokenKind::BranchOpen
-                            | SmilesTokenKind::Bond
-                            | SmilesTokenKind::Dot
+                        SmilesTokenKind::Start | SmilesTokenKind::Bond | SmilesTokenKind::Dot
                     )
                 {
                     return Err(SmilesParseError::new(offset, "invalid component separator"));
@@ -385,7 +377,7 @@ fn parse_smiles_program(
                 previous = SmilesTokenKind::Dot;
                 cursor += 1;
             }
-            '-' | '=' | '#' | ':' | '/' | '\\' => {
+            '-' | '=' | '#' | '$' | ':' | '/' | '\\' => {
                 if current.is_none()
                     || pending_bond.is_some()
                     || !matches!(
@@ -402,6 +394,7 @@ fn parse_smiles_program(
                     '-' => SmilesBondToken::Single,
                     '=' => SmilesBondToken::Double,
                     '#' => SmilesBondToken::Triple,
+                    '$' => SmilesBondToken::Quadruple,
                     ':' => SmilesBondToken::Aromatic,
                     '/' | '\\' => SmilesBondToken::Single,
                     _ => unreachable!(),
@@ -425,37 +418,38 @@ fn parse_smiles_program(
                         (token, direction, source_offset, atom)
                     });
                 if let Some((other, open_bond, open_component)) = rings.remove(&label) {
-                    if open_component != component {
-                        return Err(SmilesParseError::new(
-                            offset,
-                            "ring closure crosses a component separator",
-                        ));
-                    }
-                    if open_bond.is_some()
-                        && close_bond.is_some()
-                        && open_bond.map(|(token, direction, _, _)| (token, direction))
-                            != close_bond.map(|(token, direction, _, _)| (token, direction))
+                    if let (
+                        Some((open_order, open_direction, _, _)),
+                        Some((close_order, close_direction, _, _)),
+                    ) = (open_bond, close_bond)
                     {
-                        return Err(SmilesParseError::new(
-                            offset,
-                            "conflicting ring bond symbols",
-                        ));
+                        if open_order != close_order
+                            || matches!((open_direction, close_direction), (Some(a), Some(b)) if a == b)
+                        {
+                            return Err(SmilesParseError::new(
+                                offset,
+                                "conflicting ring bond symbols",
+                            ));
+                        }
                     }
-                    let (token, direction, direction_from, direction_offset) =
-                        match close_bond.or(open_bond) {
-                            Some((token, direction, source_offset, source_from)) => (
-                                token,
-                                direction,
-                                direction.map(|_| source_from),
-                                direction.map(|_| source_offset),
-                            ),
-                            None => (
-                                default_smiles_bond_order(&imported_aromatic_atoms, other, atom),
-                                None,
-                                None,
-                                None,
-                            ),
-                        };
+                    let (token, direction, direction_from, direction_offset) = match close_bond
+                        .filter(|(_, direction, _, _)| direction.is_some())
+                        .or(open_bond)
+                        .or(close_bond)
+                    {
+                        Some((token, direction, source_offset, source_from)) => (
+                            token,
+                            direction,
+                            direction.map(|_| source_from),
+                            direction.map(|_| source_offset),
+                        ),
+                        None => (
+                            default_smiles_bond_order(&imported_aromatic_atoms, other, atom),
+                            None,
+                            None,
+                            None,
+                        ),
+                    };
                     add_smiles_program_bond(
                         &mut bonds,
                         (other, atom),
@@ -469,7 +463,7 @@ fn parse_smiles_program(
                         &mut tetrahedral_carriers,
                         other,
                         label,
-                        component,
+                        open_component,
                         atom,
                     );
                     push_tetrahedral_carrier(
@@ -626,6 +620,41 @@ fn parse_smiles_program(
     if matches!(previous, SmilesTokenKind::Dot | SmilesTokenKind::BranchOpen) {
         return Err(SmilesParseError::new(input.len(), "incomplete SMILES"));
     }
+    // Dots separate written fragments, not necessarily connected components:
+    // ring bonds may join fragments, including fragments inside branches.
+    let mut adjacency = vec![Vec::new(); atoms.len()];
+    let mut edges = BTreeSet::new();
+    for bond in &bonds {
+        if !edges.insert((bond.left.min(bond.right), bond.left.max(bond.right))) {
+            return Err(SmilesParseError::new(bond.offset, "duplicate bond"));
+        }
+        adjacency[bond.left].push(bond.right);
+        adjacency[bond.right].push(bond.left);
+    }
+    let mut membership = vec![usize::MAX; atoms.len()];
+    let mut next_component = 0;
+    for root in 0..atoms.len() {
+        if membership[root] != usize::MAX {
+            continue;
+        }
+        membership[root] = next_component;
+        let mut pending = vec![root];
+        while let Some(atom) = pending.pop() {
+            for &neighbor in &adjacency[atom] {
+                if membership[neighbor] == usize::MAX {
+                    membership[neighbor] = next_component;
+                    pending.push(neighbor);
+                }
+            }
+        }
+        next_component += 1;
+    }
+    for (index, atom) in atoms.iter_mut().enumerate() {
+        atom.component = membership[index];
+    }
+    for bond in &mut bonds {
+        bond.component = membership[bond.left];
+    }
     Ok(SmilesProgram {
         atoms,
         bonds,
@@ -674,21 +703,6 @@ fn add_smiles_program_bond(
     }
     if left == right {
         return Err(SmilesParseError::new(offset, "self bond"));
-    }
-    let endpoints = if left < right {
-        (left, right)
-    } else {
-        (right, left)
-    };
-    if bonds.iter().any(|bond| {
-        let bond_endpoints = if bond.left < bond.right {
-            (bond.left, bond.right)
-        } else {
-            (bond.right, bond.left)
-        };
-        bond_endpoints == endpoints
-    }) {
-        return Err(SmilesParseError::new(offset, "duplicate bond"));
     }
     bonds.push(SmilesProgramBond {
         left,
@@ -904,14 +918,8 @@ fn parse_bracket_atom(
         let value = text[index..isotope_end]
             .parse::<u16>()
             .map_err(|_| SmilesParseError::new(start + 1 + index, "invalid isotope"))?;
-        if value == 0 {
-            return Err(SmilesParseError::new(
-                start + 1 + index,
-                "isotope must be positive",
-            ));
-        }
         index = isotope_end;
-        Some(value)
+        (value != 0).then_some(value)
     } else {
         None
     };
@@ -955,6 +963,12 @@ fn parse_bracket_atom(
                 chirality = if bytes.get(index) == Some(&b'@') {
                     index += 1;
                     Some(SmilesChiralityToken::AtAt)
+                } else if bytes[index..].starts_with(b"TH1") {
+                    index += 3;
+                    Some(SmilesChiralityToken::At)
+                } else if bytes[index..].starts_with(b"TH2") {
+                    index += 3;
+                    Some(SmilesChiralityToken::AtAt)
                 } else {
                     Some(SmilesChiralityToken::At)
                 };
@@ -969,12 +983,6 @@ fn parse_bracket_atom(
                     let value = text[index..digit_end].parse::<u8>().map_err(|_| {
                         SmilesParseError::new(start + 1 + index, "invalid hydrogen count")
                     })?;
-                    if value == 0 {
-                        return Err(SmilesParseError::new(
-                            start + 1 + index,
-                            "hydrogen count must be positive",
-                        ));
-                    }
                     index = digit_end;
                     value
                 };
@@ -1002,12 +1010,6 @@ fn parse_bracket_atom(
                     magnitude = text[index..digit_end]
                         .parse::<u16>()
                         .map_err(|_| SmilesParseError::new(start + 1 + index, "invalid charge"))?;
-                    if magnitude == 0 {
-                        return Err(SmilesParseError::new(
-                            start + 1 + index,
-                            "charge magnitude must be positive",
-                        ));
-                    }
                     index = digit_end;
                 }
                 let charge =
@@ -1032,12 +1034,6 @@ fn parse_bracket_atom(
                 let map = text[index..digit_end]
                     .parse::<u32>()
                     .map_err(|_| SmilesParseError::new(start + 1 + index, "invalid atom map"))?;
-                if map == 0 {
-                    return Err(SmilesParseError::new(
-                        start + 1 + index,
-                        "atom map must be positive",
-                    ));
-                }
                 atom_map = Some(map);
                 index = digit_end;
             }
@@ -1073,6 +1069,7 @@ fn parse_bracket_atom(
 
 fn parse_aromatic_bracket_element(bytes: &[u8], index: usize) -> Option<(&'static str, usize)> {
     match bytes.get(index)? {
+        b'a' if bytes.get(index + 1) == Some(&b's') => Some(("As", 2)),
         b'b' => Some(("B", 1)),
         b'c' => Some(("C", 1)),
         b'n' => Some(("N", 1)),

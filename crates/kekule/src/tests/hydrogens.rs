@@ -515,3 +515,26 @@ fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
         _ => panic!("expected double-bond stereo"),
     }
 }
+
+#[test]
+fn hydrogen_collapse_requires_only_the_affected_parent_counts() {
+    let mut fixed = crate::tests::read_smiles("[H][CH2]C").unwrap();
+    assert!(!fixed.perception().has_valence());
+    let report = fixed.remove_hydrogens().unwrap();
+    assert_eq!(report.removed.len(), 1);
+    assert_eq!(
+        fixed.atom(report.removed[0].parent).unwrap().hydrogens,
+        HydrogenDeclaration::Fixed(3)
+    );
+    let mut unknown = crate::tests::read_smiles("[H]C").unwrap();
+    let before = unknown.clone();
+    assert_eq!(
+        unknown.remove_hydrogens(),
+        Err(HydrogenTransformError::MissingValencePerception)
+    );
+    assert_eq!(unknown, before);
+    let mut unchanged = crate::tests::read_smiles("[H][H]").unwrap();
+    let before = unchanged.clone();
+    assert!(unchanged.remove_hydrogens().unwrap().removed.is_empty());
+    assert_eq!(unchanged, before);
+}

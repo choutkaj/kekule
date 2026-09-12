@@ -11,7 +11,7 @@ stereogenic. CIP assignment does not invent an unasserted configuration.
 | CIP assignment | Complete supported assertions using ordered sequence rules and local rooted-digraph auxiliary descriptors; R/S, r/s, E/Z, sequential cis/trans, M/P, and m/p as appropriate |
 | Unknown configuration | Preserved as unknown; no specified CIP descriptor is inferred from it |
 | Enhanced groups | Molecule-local Absolute, OR, and AND membership; relative membership does not become an absolute configuration |
-| Isomeric SMILES | Tetrahedral and ordinary double-bond stereo, isotope labels, and disconnected component projections |
+| Isomeric and canonical SMILES | Tetrahedral and ordinary double-bond stereo, isotope labels, and disconnected component projections |
 | V2000/V3000 Model output | Coordinate-consistent tetrahedral, double-bond, and atropisomer stereo; validation uses coordinates rounded to the emitted precision |
 | Specified E/Z Model output | Supplied coordinates must encode the assertion; conflicting or degenerate drawings fail explicitly |
 | Molfile output of an unasserted alkene | Crossed/either syntax prevents a nondegenerate drawing from inventing specified E/Z; rereading may introduce an explicit unknown element |
@@ -26,11 +26,13 @@ encode double-bond group members or ambiguous endpoint membership. Absolute grou
 may be partitioned across connected components. Cross-component OR/AND relations
 are rejected because molecule-local ownership cannot represent their relationship.
 
-Plain isomeric SMILES rejects axial stereo, explicit unknown configurations, and
+Plain isomeric and canonical SMILES reject axial stereo, explicit unknown configurations, and
 enhanced groups. A successful ordinary isomeric SMILES write is therefore not a
 claim that every represented geometry has a SMILES encoding. Chiral SMARTS is
-unsupported. Canonical SMILES remains the documented projection that omits stereo
-and isotopes; changing that behavior is a separate pending task.
+unsupported. Canonical output preserves supported stereo and isotopes and is
+invariant under atom numbering. Ordinary SMILES rejects stereo assertions.
+Directional bonds must reconstruct exactly the asserted alkene configurations;
+unrepresentable partial assignments fail rather than inventing stereo.
 
 Molfile output preserves unknown tetrahedral and double-bond configurations, but
 rejects unknown axes. Molfile input can retain an axis declared unknown by a wavy

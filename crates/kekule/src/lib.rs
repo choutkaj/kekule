@@ -256,7 +256,7 @@ pub mod smiles {
 
     /// Parses and interprets one SMILES record as a coordinate-free topology.
     ///
-    /// Every dot-delimited connected component becomes one explicit molecule
+    /// Every connected component becomes one explicit molecule
     /// occurrence in source order. No hierarchy or perception is fabricated.
     pub fn to_topology(input: &str) -> Result<Topology, SmilesReadError> {
         let document = parse_str(input)?;
@@ -285,34 +285,41 @@ pub mod smiles {
         }
     }
 
-    /// Writes every explicit topology molecule instance in authoritative order.
+    /// Writes every explicit topology molecule instance.
     ///
     /// Reused definitions are emitted once per occurrence and joined with `.`.
+    /// Canonical mode sorts components; other modes preserve instance order.
     pub fn write_topology(
         topology: &Topology,
         options: SmilesWriteOptions,
     ) -> Result<String, MolWriteError> {
-        topology
+        let mut components = topology
             .molecules()
             .map(|occurrence| write_molecule(occurrence.molecule(), options))
-            .collect::<Result<Vec<_>, _>>()
-            .map(|components| components.join("."))
+            .collect::<Result<Vec<_>, _>>()?;
+        if options.mode == SmilesWriteMode::Canonical {
+            components.sort();
+        }
+        Ok(components.join("."))
     }
 
     /// Writes one connected molecule while preserving represented stereo.
     ///
+    /// Directional encoding is bounded by 4,096 carrier combinations and
+    /// 50,000,000 graph visits. Exceeding either returns a resource-limit error.
     /// Isotope labels, including those on aromatic atoms, are retained. The
     /// bracketed-atom hydrogen perception requirement of [`write()`] also applies.
     pub fn write_isomeric(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_isomeric_smiles(molecule)
     }
 
-    /// Writes deterministic canonical connectivity SMILES.
+    /// Writes deterministic canonical isomeric SMILES.
     ///
-    /// Successful output is invariant under atom numbering. Isotopes and stereo
-    /// are omitted, while formal charges and atom maps are retained. Neutral
-    /// unmapped terminal hydrogen vertices may collapse into hydrogen counts,
-    /// including isotope-labelled hydrogens after the isotope projection.
+    /// Successful output is invariant under atom numbering and preserves supported
+    /// stereo, isotopes, formal charges, and atom maps. Neutral unmapped
+    /// nonisotopic terminal hydrogen vertices may collapse into hydrogen counts.
+    /// Supplied local stereo assertions are retained even when CIP perception
+    /// finds no stereogenic unit. Canonicalization does not clean source tags.
     /// Ranking uses the emitted projection so parse/perceive/write is stable.
     /// Inferred hydrogen counts must be installed when the projection requires
     /// brackets or collapses a hydrogen vertex into an atom that permits

@@ -45,50 +45,9 @@ pub(crate) fn smiles_write_record_json(
     }))
 }
 
-pub(crate) fn canonical_smiles_record_json(
+pub(crate) fn stereo_smiles_record_json(
     record: &IndexedSmilesRecord,
-    exact_smiles: bool,
-) -> Result<Value, Box<dyn Error>> {
-    let Some(molecule) = &record.molecule else {
-        return Ok(smiles_error_record_json(record));
-    };
-    let mut molecule = molecule.clone();
-    if molecule.perceive().is_err() {
-        return Ok(json!({
-            "record_index": record.record_index,
-            "status": "parse_error",
-            "title": record.title,
-            "input_smiles": record.input_smiles,
-        }));
-    }
-    let written = smiles::write_canonical(&molecule)?;
-    let reparsed = match interpret_smiles(&written) {
-        Ok(reparsed) => reparsed,
-        Err(_) => {
-            return Ok(json!({
-                "record_index": record.record_index,
-                "status": "write_reparse_error",
-                "title": record.title,
-                "input_smiles": record.input_smiles,
-                "canonical_smiles": written,
-            }));
-        }
-    };
-    let mut item = json!({
-        "record_index": record.record_index,
-        "status": "ok",
-        "title": record.title,
-        "input_smiles": record.input_smiles,
-        "normalized_perceived": smiles_perceived_semantic_json(reparsed),
-    });
-    if exact_smiles {
-        item["canonical_smiles"] = json!(written);
-    }
-    Ok(item)
-}
-
-pub(crate) fn isomeric_smiles_record_json(
-    record: &IndexedSmilesRecord,
+    mode: smiles::SmilesWriteMode,
 ) -> Result<Value, Box<dyn Error>> {
     if record.components.is_empty() {
         return Ok(smiles_error_record_json(record));
@@ -100,14 +59,14 @@ pub(crate) fn isomeric_smiles_record_json(
     {
         return Ok(json!({
             "record_index": record.record_index,
-            "status": "perception_error",
+            "status": if mode == smiles::SmilesWriteMode::Canonical { "parse_error" } else { "perception_error" },
             "title": record.title,
             "input_smiles": record.input_smiles,
         }));
     }
     let written = match molecules
         .iter()
-        .map(smiles::write_isomeric)
+        .map(|molecule| smiles::write_molecule(molecule, smiles::SmilesWriteOptions { mode }))
         .collect::<Result<Vec<_>, _>>()
     {
         Ok(written) => written,

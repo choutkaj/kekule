@@ -2,7 +2,10 @@ use crate::*;
 
 fn feature_schema_version(feature: &str) -> u32 {
     match feature {
-        "stereo.representation" | "stereo.perception" | "io.smiles.isomeric" => 2,
+        "stereo.representation"
+        | "stereo.perception"
+        | "io.smiles.isomeric"
+        | "io.smiles.canonical" => 2,
         _ => GOLDEN_SCHEMA_VERSION,
     }
 }
