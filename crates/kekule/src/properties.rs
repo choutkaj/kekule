@@ -495,6 +495,29 @@ impl PropertyTable {
         self.columns.remove(key)
     }
 
+    /// Stages one column for a transactional sequence of ordinary cell updates.
+    /// Other columns are not copied. Commit only after every update succeeds.
+    pub(crate) fn stage_column(&self, key: &PropertyKey) -> Self {
+        let mut staged = Self::new(self.len);
+        if let Some(column) = self.columns.get(key) {
+            staged.columns.insert(key.clone(), column.clone());
+            staged.populated.insert(key.clone(), self.populated[key]);
+        }
+        staged
+    }
+
+    /// Installs the final staged column, preserving its exact stored values.
+    /// A sequence may clear a column and recreate it with a new type or unit.
+    pub(crate) fn commit_column(&mut self, key: PropertyKey, mut staged: Self) {
+        debug_assert_eq!(self.len, staged.len);
+        self.remove(&key);
+        if let Some(column) = staged.columns.remove(&key) {
+            let populated = staged.populated.remove(&key).expect("staged column count");
+            self.populated.insert(key.clone(), populated);
+            self.columns.insert(key, column);
+        }
+    }
+
     pub fn value(
         &self,
         key: &PropertyKey,
@@ -1211,7 +1234,7 @@ fn b_factor_key() -> PropertyKey {
     PropertyKey::new("b_factor").expect("canonical property key is valid")
 }
 
-fn reject_reserved_realization_atom_key(key: &PropertyKey) -> Result<(), PropertyError> {
+pub(crate) fn reject_reserved_realization_atom_key(key: &PropertyKey) -> Result<(), PropertyError> {
     if is_reserved_realization_atom_key(key) {
         return Err(PropertyError::ReservedKey(key.clone()));
     }

@@ -6,7 +6,8 @@ use super::{Model, ModelError, PositionError, Positions};
 use crate::core::{Atom, BondOrder, Molecule};
 use crate::geometry::{PeriodicCell, Point3};
 use crate::properties::{
-    Properties, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue,
+    reject_reserved_realization_atom_key, Properties, PropertyColumn, PropertyError, PropertyKey,
+    PropertyTable, PropertyValue,
 };
 use crate::topology::{
     AtomSiteId, AtomSiteMetadata, ChainId, EditAtomId, EditAtomSite, EditAtomSiteId, EditBond,
@@ -377,11 +378,13 @@ impl ModelEditor {
         key: PropertyKey,
         values: impl IntoIterator<Item = (EditAtomId, Option<PropertyValue>)>,
     ) -> Result<(), ModelEditError> {
-        let mut staged = self.properties.clone();
+        let mut staged = self.properties.atoms().stage_column(&key);
         for (id, value) in values {
-            staged.set_realization_atom_value(key.clone(), self.topology.atom_slot(id)?, value)?;
+            let slot = self.topology.atom_slot(id)?;
+            reject_reserved_realization_atom_key(&key)?;
+            staged.set_value(key.clone(), slot, value)?;
         }
-        self.properties = staged;
+        self.properties.atoms_mut().commit_column(key, staged);
         Ok(())
     }
     pub fn set_bond_properties(
@@ -389,11 +392,11 @@ impl ModelEditor {
         key: PropertyKey,
         values: impl IntoIterator<Item = (EditBondId, Option<PropertyValue>)>,
     ) -> Result<(), ModelEditError> {
-        let mut staged = self.properties.clone();
+        let mut staged = self.properties.bonds().stage_column(&key);
         for (id, value) in values {
-            staged.set_realization_bond_value(key.clone(), self.topology.bond_slot(id)?, value)?;
+            staged.set_value(key.clone(), self.topology.bond_slot(id)?, value)?;
         }
-        self.properties = staged;
+        self.properties.bonds_mut().commit_column(key, staged);
         Ok(())
     }
     pub fn atom_property_column(
