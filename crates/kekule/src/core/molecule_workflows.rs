@@ -32,6 +32,8 @@ impl Molecule {
     }
 
     /// Collapse ordinary graph hydrogens and report retained protected atoms.
+    /// Parents that permit inference require an installed hydrogen count; fixed
+    /// declarations need no perception. A graph with nothing removable is unchanged.
     pub fn remove_hydrogens(&mut self) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
         remove_hydrogens_from_molecule(self)
     }

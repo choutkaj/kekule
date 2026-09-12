@@ -19,7 +19,7 @@ use io::{
     read_stereo_perception_records_by_suffix, sdf_record_json, small_record,
     smarts_query_records_json, substructure_record_json, zero_coordinate_model,
 };
-use smiles::{isomeric_smiles_record_json, smiles_parse_record_json};
+use smiles::smiles_parse_record_json;
 use stereo::{stereo_cip_record_json, stereo_perception_group_record_json, stereo_record_json};
 
 #[cfg(test)]
@@ -30,12 +30,12 @@ pub(crate) use io::{
 };
 #[cfg(test)]
 pub(crate) use io::{smiles_unsupported_subset_reason, IndexedSmilesRecord};
-pub(crate) use smiles::{canonical_smiles_record_json, smiles_write_record_json};
 #[cfg(test)]
 pub(crate) use smiles::{
     smiles_components_perceived_semantic_json, smiles_perceived_atoms_json,
     smiles_perceived_bonds_json, smiles_perceived_semantic_json,
 };
+pub(crate) use smiles::{smiles_write_record_json, stereo_smiles_record_json};
 #[cfg(test)]
 pub(crate) use stereo::stereo_perception_record_json;
 
@@ -183,11 +183,10 @@ pub(crate) fn implementation_expected(
         }
         "io.smiles.canonical" => {
             let records = read_canonical_smiles_records(fixture_path)?;
-            let exact_smiles = false;
             Ok(json!({
                 "records": records
                     .iter()
-                    .map(|record| canonical_smiles_record_json(record, exact_smiles))
+                    .map(|record| stereo_smiles_record_json(record, kekule::smiles::SmilesWriteMode::Canonical))
                     .collect::<Result<Vec<_>, Box<dyn Error>>>()?
             }))
         }
@@ -196,7 +195,7 @@ pub(crate) fn implementation_expected(
             Ok(json!({
                 "records": records
                     .iter()
-                    .map(isomeric_smiles_record_json)
+                    .map(|record| stereo_smiles_record_json(record, kekule::smiles::SmilesWriteMode::Isomeric))
                     .collect::<Result<Vec<_>, Box<dyn Error>>>()?
             }))
         }

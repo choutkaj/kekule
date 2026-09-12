@@ -1,5 +1,122 @@
 use super::*;
 
+fn assigned_descriptors(molecule: &mut Molecule) -> Vec<StereoDescriptor> {
+    stereo_api::assign_cip_descriptors(molecule)
+        .unwrap()
+        .assigned
+        .into_iter()
+        .map(|assignment| assignment.descriptor)
+        .collect()
+}
+
+#[test]
+fn smiles_accepts_zero_counts_and_explicit_tetrahedral_classes() {
+    for (source, equivalent) in [
+        ("[0CH0+0]", "[C]"),
+        ("[C@TH1H](F)(Cl)Br", "[C@H](F)(Cl)Br"),
+        ("[C@TH2H](F)(Cl)Br", "[C@@H](F)(Cl)Br"),
+    ] {
+        let left = read_smiles(source).unwrap();
+        let right = read_smiles(equivalent).unwrap();
+        assert_eq!(
+            left.atoms().map(|(_, atom)| atom).collect::<Vec<_>>(),
+            right.atoms().map(|(_, atom)| atom).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            left.stereo_elements()
+                .map(|(_, value)| value)
+                .collect::<Vec<_>>(),
+            right
+                .stereo_elements()
+                .map(|(_, value)| value)
+                .collect::<Vec<_>>()
+        );
+    }
+    let mapped = read_smiles("[CH4:0]").unwrap();
+    assert_eq!(mapped.atoms().next().unwrap().1.atom_map, Some(0));
+    assert_eq!(smiles_api::write_isomeric(&mapped).unwrap(), "[CH4:0]");
+}
+
+#[test]
+fn smiles_components_follow_connectivity_across_fragments_and_branches() {
+    for (source, counts) in [
+        ("C1.C1", vec![2]),
+        ("C(C.C)", vec![2, 1]),
+        ("C(.O)N", vec![2, 1]),
+        ("C1.C2.C12", vec![3]),
+    ] {
+        let components = read_smiles_components(source).unwrap();
+        assert_eq!(
+            components
+                .iter()
+                .map(Molecule::atom_count)
+                .collect::<Vec<_>>(),
+            counts,
+            "{source}"
+        );
+        assert_eq!(
+            components.iter().map(Molecule::bond_count).sum::<usize>(),
+            counts.iter().sum::<usize>() - counts.len()
+        );
+    }
+}
+
+#[test]
+fn smiles_ring_direction_is_relative_to_each_written_endpoint() {
+    let source = r"C/1=C/CCCCCC\1";
+    let mut mol = read_smiles(source).unwrap();
+    perceive(&mut mol).unwrap();
+    let descriptors = assigned_descriptors(&mut mol);
+    assert_eq!(descriptors.len(), 1);
+    for output in [
+        smiles_api::write_isomeric(&mol).unwrap(),
+        smiles_api::write_canonical(&mol).unwrap(),
+    ] {
+        let mut restored = read_smiles(&output).unwrap();
+        perceive(&mut restored).unwrap();
+        assert_eq!(assigned_descriptors(&mut restored), descriptors, "{output}");
+    }
+    assert!(smiles_api::parse_str("C/1=C/CCCCCC/1").is_err());
+}
+
+#[test]
+fn smiles_rejects_directional_projection_that_invents_an_alkene_assertion() {
+    let mut mol = read_smiles("F/C=C/C=C/C=C/F").unwrap();
+    let middle = mol.stereo_elements().find_map(|(id, element)| matches!(&element.kind, StereoElementKind::DoubleBond(value) if value.bond == BondId::new(3)).then_some(id)).unwrap();
+    mol.remove_stereo_element(middle).unwrap();
+    perceive(&mut mol).unwrap();
+    assert_eq!(mol.stereo_elements().count(), 2);
+    assert!(smiles_api::write_isomeric(&mol)
+        .unwrap_err()
+        .message()
+        .contains("stereo assertion"));
+    assert!(smiles_api::write_canonical(&mol)
+        .unwrap_err()
+        .message()
+        .contains("stereo assertion"));
+}
+
+#[test]
+fn smiles_quadruple_bonds_round_trip_without_loss() {
+    let molecule = read_smiles("[Mo]$[Mo]").unwrap();
+    for written in [
+        smiles_api::write(&molecule).unwrap(),
+        smiles_api::write_isomeric(&molecule).unwrap(),
+        smiles_api::write_canonical(&molecule).unwrap(),
+    ] {
+        assert_eq!(
+            read_smiles(&written)
+                .unwrap()
+                .bonds()
+                .next()
+                .unwrap()
+                .1
+                .order,
+            BondOrder::Quadruple
+        );
+    }
+}
+
 #[test]
 fn phosphine_smiles_preserve_bracket_hydrogen_and_lone_pair() {
     for (source, expected) in [
@@ -91,7 +208,7 @@ fn smiles_document_preserves_spans_and_dot_boundaries_before_interpretation() {
     let input = "[Na+].[Cl-]";
     let document = smiles_api::parse_str(input).expect("document parses");
     assert_eq!(document.source(), input);
-    assert_eq!(document.component_token_ranges().len(), 2);
+    assert_eq!(document.fragment_token_ranges().len(), 2);
     assert!(document.tokens().iter().all(|token| {
         let span = token.span();
         span.start <= span.end && span.end <= input.len()
@@ -305,7 +422,6 @@ fn malformed_smiles_returns_errors_without_panicking() {
         "C=",
         "=C",
         "C..C",
-        "C1.C1",
         "C=1CCCCC-1",
         "[]",
         "[13]",
@@ -405,59 +521,46 @@ fn canonical_smiles_components_can_be_sorted_by_callers() {
 }
 
 #[test]
-fn canonical_smiles_ignores_stereo_for_non_isomeric_output() {
-    let mut molecule = read_smiles("N[C@H](O)C").expect("chiral SMILES parses");
-    perceive(&mut molecule).expect("chiral molecule perceives");
-
-    assert!(smiles_api::write(&molecule)
-        .expect_err("ordinary writer should reject lossy atom stereo")
-        .message
-        .contains("stereochemistry"));
-
-    let written = smiles_api::write_canonical(&molecule)
-        .expect("non-isomeric canonical SMILES should ignore atom stereo");
-    let reparsed = read_smiles(&written).expect("canonical output should parse");
-
-    assert!(!written.contains('['), "{written}");
-    assert_eq!(reparsed.stereo_elements().count(), 0);
-    assert_eq!(reparsed.atom_count(), molecule.atom_count());
-    assert_eq!(reparsed.bond_count(), molecule.bond_count());
-
-    let isotope = read_smiles("[11CH3]OC").expect("isotope parses");
-    assert_eq!(
-        smiles_api::write_canonical(&isotope)
-            .expect("non-isomeric canonical SMILES should ignore isotope labels"),
-        "COC"
-    );
-
-    let mut aromatic_isotope = read_smiles("C1=CC=[14CH]C=C1").expect("aromatic isotope parses");
-    perceive(&mut aromatic_isotope).expect("aromatic isotope perceives");
-    assert_eq!(
-        smiles_api::write_canonical(&aromatic_isotope,).expect("aromatic isotope canonicalizes"),
-        "c1ccccc1"
-    );
-
-    let mut explicit_hydrogens =
-        read_smiles("[H]C([3H])(F)Cl").expect("explicit hydrogen isotopologue parses");
-    perceive(&mut explicit_hydrogens).expect("explicit hydrogen isotopologue perceives");
-    let written = smiles_api::write_canonical(&explicit_hydrogens)
-        .expect("explicit hydrogen isotopologue canonicalizes");
-    // Isotope-free projection collapses both neutral hydrogen vertices. Keeping
-    // an unlabeled vertex only because it used to carry an isotope would make
-    // the next canonical export choose a different representation.
-    assert_eq!(written.matches("[H]").count(), 0, "{written}");
-    let mut reparsed = read_smiles(&written).expect("normalized explicit hydrogen output reparses");
-    perceive(&mut reparsed).expect("normalized explicit hydrogen output perceives");
-    assert_eq!(reparsed.atom_count(), 3, "{written}");
-    assert_eq!(smiles_api::write_canonical(&reparsed).unwrap(), written);
-    assert_eq!(
-        reparsed
+fn canonical_smiles_preserves_stereo_and_isotopes() {
+    for source in [
+        "N[C@H](O)C",
+        "[11CH3]OC",
+        "C1=CC=[14CH]C=C1",
+        "[H]C([3H])(F)Cl",
+        "[H][C@](F)(Cl)Br",
+        "C/C=C\\C",
+    ] {
+        let mut molecule = read_smiles(source).unwrap();
+        perceive(&mut molecule).unwrap();
+        let before = assigned_descriptors(&mut molecule);
+        let isotopes = molecule
             .atoms()
-            .map(|(id, atom)| usize::from(atom.hydrogens.explicit_count())
-                + usize::from(reparsed.implicit_hydrogens(id).unwrap().unwrap_or(0)))
-            .sum::<usize>(),
-        2
-    );
+            .filter_map(|(_, atom)| atom.isotope)
+            .collect::<Vec<_>>();
+        let written = smiles_api::write_canonical(&molecule).unwrap();
+        let mut restored = read_smiles(&written).unwrap();
+        perceive(&mut restored).unwrap();
+        assert_eq!(
+            assigned_descriptors(&mut restored),
+            before,
+            "{source} -> {written}"
+        );
+        assert_eq!(
+            restored
+                .atoms()
+                .filter_map(|(_, atom)| atom.isotope)
+                .collect::<Vec<_>>(),
+            isotopes
+        );
+        assert_eq!(smiles_api::write_canonical(&restored).unwrap(), written);
+    }
+    let canonical = |source| {
+        let mut mol = read_smiles(source).unwrap();
+        perceive(&mut mol).unwrap();
+        smiles_api::write_canonical(&mol).unwrap()
+    };
+    assert_ne!(canonical("N[C@H](O)C"), canonical("N[C@@H](O)C"));
+    assert_ne!(canonical("[11CH3]OC"), canonical("COC"));
 }
 
 #[test]
@@ -2467,6 +2570,7 @@ fn canonical_substituted_pyridinium_round_trip_perceives() {
 #[test]
 fn canonical_pubchem_100k_main_group_regressions_reperceive() {
     for input in [
+        r"CCC\1=C(/C/2=C/C3=C(C(=C(N3)/C=C\4/C(=C(C(N4)CC5=C(C(=C(N5)/C=C1\N2)C)CCC(=O)O)CCC(=O)O)C)C)CC)C",
         "C1=CC=C2C(=C1)NC3=CC=CC=C3[As]2O[As]4C5=CC=CC=C5NC6=CC=CC=C64",
         "C1=CC2=C(C=C1Cl)[I+]C3=C(O2)C=CC(=C3)Cl.OS(=O)(=O)[O-]",
         "CC(C)CC(=O)OCC1=COC=C2C1=CC=C2C=O",
@@ -2936,7 +3040,7 @@ fn isomeric_smiles_writes_tetrahedral_elements_from_stereo_model() {
 }
 
 #[test]
-fn isomeric_smiles_rejects_tetrahedral_stereo_that_would_fix_inferred_hydrogen_policy() {
+fn isomeric_smiles_materializes_required_tetrahedral_hydrogen_without_mutating_source() {
     let mut molecule = read_smiles("FC(Cl)Br").expect("tetrahedral graph should parse");
     perceive(&mut molecule).expect("tetrahedral graph should perceive");
     let center = AtomId::new(1);
@@ -2960,14 +3064,16 @@ fn isomeric_smiles_rejects_tetrahedral_stereo_that_would_fix_inferred_hydrogen_p
         )))
         .expect("canonical tetrahedral element");
 
-    let error = smiles_api::write_isomeric(&molecule)
-        .expect_err("[C@H] would silently change Infer to Fixed");
-    assert!(
-        error
-            .message()
-            .contains("allows implicit-H inference without changing its hydrogen declaration"),
-        "{error}"
-    );
+    let before = assigned_descriptors(&mut molecule);
+    for written in [
+        smiles_api::write_isomeric(&molecule).unwrap(),
+        smiles_api::write_canonical(&molecule).unwrap(),
+    ] {
+        let mut restored = read_smiles(&written).unwrap();
+        perceive(&mut restored).unwrap();
+        assert_eq!(assigned_descriptors(&mut restored), before);
+        assert!(written.contains("@H"), "{written}");
+    }
     assert_eq!(
         molecule.atom(center).expect("center").hydrogens,
         HydrogenDeclaration::Infer { explicit: 0 }
@@ -3033,8 +3139,8 @@ fn isomeric_smiles_accepts_interpreted_source_stereo_and_rejects_unknown_stereo(
 #[test]
 fn isomeric_smiles_writes_directional_double_bond_elements() {
     for (input, expected_output, expected_orientation) in [
-        ("C/C=C\\C", "C\\C=C/C", DoubleBondOrientation::Together),
-        ("C/C=C/C", "C\\C=C\\C", DoubleBondOrientation::Opposite),
+        ("C/C=C\\C", "C/C=C\\C", DoubleBondOrientation::Together),
+        ("C/C=C/C", "C/C=C/C", DoubleBondOrientation::Opposite),
     ] {
         let mut molecule = read_smiles(input).expect("directional alkene should parse");
         perceive(&mut molecule).expect("directional alkene should perceive");
@@ -3191,7 +3297,7 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
 }
 
 #[test]
-fn smiles_writer_rejects_more_ring_labels_than_parser_supports() {
+fn smiles_writer_reuses_ring_labels_after_closure() {
     let mut molecule = crate::core::MoleculeEditor::new();
     let atoms = (0..16)
         .map(|_| {
@@ -3208,8 +3314,83 @@ fn smiles_writer_rejects_more_ring_labels_than_parser_supports() {
         }
     }
 
-    assert!(smiles_api::write(molecule.working())
-        .expect_err("more than 99 ring closures should be rejected")
-        .message
-        .contains("at most 99"));
+    let written = smiles_api::write(molecule.working()).unwrap();
+    let restored = read_smiles(&written).unwrap();
+    assert_eq!(restored.atom_count(), molecule.atom_count());
+    assert_eq!(restored.bond_count(), molecule.bond_count());
+}
+
+#[test]
+fn smiles_directional_carrier_search_preserves_partial_branched_polyene_stereo() {
+    let mut molecule = read_smiles("F/C=C(C=C(C)/C=C/F)/C").unwrap();
+    perceive(&mut molecule).unwrap();
+    assert_eq!(molecule.stereo_elements().count(), 2);
+    let expected = assigned_descriptors(&mut molecule);
+    for written in [
+        smiles_api::write_isomeric(&molecule).unwrap(),
+        smiles_api::write_canonical(&molecule).unwrap(),
+    ] {
+        let mut restored = read_smiles(&written).unwrap();
+        perceive(&mut restored).unwrap();
+        assert_eq!(restored.stereo_elements().count(), 2, "{written}");
+        let mut actual = assigned_descriptors(&mut restored);
+        let mut expected = expected.clone();
+        actual.sort_by_key(|value| format!("{value:?}"));
+        expected.sort_by_key(|value| format!("{value:?}"));
+        assert_eq!(actual, expected, "{written}");
+    }
+}
+
+#[test]
+fn smiles_aromatic_arsenic_round_trip() {
+    let mut molecule = read_smiles("[as]1ccccc1").unwrap();
+    perceive(&mut molecule).unwrap();
+    for written in [
+        smiles_api::write_isomeric(&molecule).unwrap(),
+        smiles_api::write_canonical(&molecule).unwrap(),
+    ] {
+        let mut restored = read_smiles(&written).unwrap();
+        perceive(&mut restored).unwrap();
+        assert_eq!(restored.atom_count(), 6);
+        let hydrogens = |mol: &Molecule| {
+            mol.atoms()
+                .map(|(id, atom)| {
+                    usize::from(atom.hydrogens.explicit_count())
+                        + usize::from(mol.implicit_hydrogens(id).unwrap().unwrap_or(0))
+                })
+                .sum::<usize>()
+        };
+        assert_eq!(hydrogens(&restored), hydrogens(&molecule));
+    }
+}
+
+#[test]
+fn smiles_canonicalization_retains_supplied_nonstereogenic_assertions() {
+    let mut molecule = read_smiles("F/C=C(/F)F").unwrap();
+    perceive(&mut molecule).unwrap();
+    assert_eq!(molecule.stereo_elements().count(), 1);
+    assert!(assigned_descriptors(&mut molecule).is_empty());
+    for writer in [smiles_api::write_isomeric, smiles_api::write_canonical] {
+        let written = writer(&molecule).unwrap();
+        let mut restored = read_smiles(&written).unwrap();
+        perceive(&mut restored).unwrap();
+        assert_eq!(restored.stereo_elements().count(), 1);
+        assert!(assigned_descriptors(&mut restored).is_empty());
+    }
+}
+
+#[test]
+fn smiles_percent_ring_tokens_consume_exactly_two_digits() {
+    let source = "C%123CCCCC%12CCC3";
+    let document = smiles_api::parse_str(source).unwrap();
+    let rings = document
+        .tokens()
+        .iter()
+        .filter(|token| token.kind() == smiles_api::SmilesDocumentTokenKind::Ring)
+        .map(|token| &source[token.span()])
+        .collect::<Vec<_>>();
+    assert_eq!(rings, ["%12", "3", "%12", "3"]);
+    let molecule = document.to_molecules().unwrap().pop().unwrap();
+    assert_eq!(molecule.atom_count(), 9);
+    assert_eq!(molecule.bond_count(), 10);
 }

@@ -17,4 +17,10 @@ assertions. RDKit 2026.03.6 is an optional reference, never a runtime dependency
   `reference_evidence` retains complete original source and RDKit-emission
   projections, required declaration changes, and whole-graph stereo checks.
 
+- `io.smiles.canonical` compares the complete perceived reparse and CIP fields
+  of RDKit's canonical isomeric output, retaining isotope labels and every
+  disconnected component. Exact traversal strings are not compared. The direct
+  SMILES checker additionally tests whole-graph identity, atom-order invariance,
+  and canonical fixed points.
+
 The `stereo.cip` goldens retain their original RDKit 2026.03.3 reference.

@@ -6,12 +6,24 @@ use kekule::smiles;
 use serde_json::{json, Value};
 
 fn probe(input: &str) -> Result<Value, Box<dyn std::error::Error>> {
-    let mut written = Vec::new();
-    for mut molecule in smiles::parse_str(input)?.interpret()?.into_molecules() {
+    let mut molecules = smiles::parse_str(input)?.interpret()?.into_molecules();
+    for molecule in &mut molecules {
         molecule.perceive()?;
-        written.push(smiles::write_isomeric(&molecule)?);
     }
-    Ok(json!({"status": "ok", "smiles": written.join(".")}))
+    let write = |mode| -> Result<String, String> {
+        let mut parts = molecules
+            .iter()
+            .map(|mol| smiles::write_molecule(mol, smiles::SmilesWriteOptions { mode }))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        if mode == smiles::SmilesWriteMode::Canonical {
+            parts.sort();
+        }
+        Ok(parts.join("."))
+    };
+    Ok(
+        json!({"status": "ok", "isomeric": write(smiles::SmilesWriteMode::Isomeric), "canonical": write(smiles::SmilesWriteMode::Canonical)}),
+    )
 }
 
 fn main() {
@@ -39,10 +51,7 @@ mod tests {
     #[test]
     fn emits_all_components_without_fixing_metal_neighbor_hydrogen_declarations() {
         let input = "O[Fe]=O.O[Fe]=O.[Fe]";
-        assert_eq!(
-            probe(input).unwrap(),
-            json!({"status": "ok", "smiles": input})
-        );
+        assert_eq!(probe(input).unwrap()["isomeric"], json!({"Ok": input}));
         assert!(probe("C(").is_err());
     }
 }

@@ -16,6 +16,7 @@ From the repository root, with external corpus data installed:
 ```text
 cargo build -p xtask --examples --locked
 cargo test -p xtask --examples --locked
+uv run --python 3.13 benchmarks/reference/rdkit/compare_smiles.py --corpus pubchem-1k --variants 3 --probe target/debug/examples/smiles_write_probe --output target/stereo-validation/smiles.json
 uv run --with rdkit==2026.3.6 --python 3.13 python -m unittest discover -s benchmarks/reference/rdkit -p "test_*.py"
 uv run --python 3.13 benchmarks/reference/rdkit/compare_cip.py --corpus enamine-diversity --stereo-only --mode sanitized --probe target/debug/examples/cip_probe --output target/stereo-validation/enamine.json
 uv run --python 3.13 benchmarks/reference/rdkit/compare_cip.py --corpus pubchem-100k --stereo-only --mode sanitized --probe target/debug/examples/cip_probe --output target/stereo-validation/pubchem.json
@@ -50,6 +51,14 @@ enhanced groups after RDKit rereads V2000/V3000 output. External PubChem alkenes
 an RDKit atropisomer fixture also exercise cleared E/Z and V3000 atom CFG. Every
 request, output, and explicit unknown assertion is checked.
 
+The SMILES checker compares both writers against RDKit's complete chemical graph,
+including isotopes, maps, charges, bonds, and stereo. Randomized atom orderings
+must produce the same canonical string, and rereading that string must reach a
+fixed point. Ordinary removable hydrogen vertices are normalized; mapped and
+isotopic hydrogens remain distinct. Reference self-inconsistencies and writer
+errors stay visible and cause a nonzero result. Canonical strings are not
+required to match RDKit's particular traversal convention.
+
 The isomeric checker independently decodes eleven PubChem structures, asserting
 the complete chemical graph and source hydrogen declarations. It covers nine
 optional metal-bracketing cases and two charge-normalization cases. Source URLs,
@@ -57,6 +66,17 @@ CIDs, and hashes live beside the fixture. This check does not call Kekule's
 canonical writer or require identical emitted strings.
 
 ## Known reference differences and limits
+
+- **Canonical SMILES and macrocycles:** RDKit 2026.03.6 can change perceived
+  aromaticity when its own output is reread or atom order is shuffled. The direct
+  checker records these as reference failures. Raw canonical goldens retain
+  their aromaticity, valence, neighbor, and CIP assertions; derived-field
+  differences are not suppressed when whole-graph identity agrees.
+- **Redundant stereo tags:** RDKit's writer removes supplied configurations at
+  nonstereogenic units. Kekule retains these represented assertions, although
+  CIP assigns no descriptor. Such a cleaned encoding is not an atom permutation
+  of the same asserted graph. The checker compares assertion counts before
+  cleanup and records this reference transformation explicitly.
 
 - **VS132 (Troger's base):** the published 3D structure and Kekule give S/S.
   RDKit's default sanitization removes the nitrogen tags; retaining them gives

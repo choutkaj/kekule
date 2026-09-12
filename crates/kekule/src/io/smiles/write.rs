@@ -8,35 +8,48 @@ use crate::io::MolWriteError;
 use super::parse::SmilesDirectionToken;
 
 pub fn write_smiles(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
-    let mol = molecule;
-    let plan = plan_smiles_write(mol, StereoWriteMode::Reject)?;
-    let mut parts = Vec::new();
-    for start in &plan.roots {
-        parts.push(write_smiles_component(
-            mol,
-            *start,
-            None,
-            &plan,
-            None,
-            CanonicalAtomStyle::Aromatic,
-        )?);
-    }
-    Ok(parts.join("."))
+    write_source_order_smiles(
+        molecule,
+        StereoWriteMode::Reject,
+        CanonicalAtomStyle::Aromatic,
+    )
 }
 
 pub fn write_isomeric_smiles(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
-    let mol = molecule;
-    let plan = plan_smiles_write(mol, StereoWriteMode::Encode)?;
-    let stereo = SmilesStereoWriteContext::new(mol)?;
+    write_source_order_smiles(
+        molecule,
+        StereoWriteMode::Encode,
+        CanonicalAtomStyle::StoredKekule,
+    )
+}
+
+fn write_source_order_smiles(
+    mol: &Molecule,
+    mode: StereoWriteMode,
+    style: CanonicalAtomStyle,
+) -> std::result::Result<String, MolWriteError> {
+    let plan = plan_smiles_write(mol, mode)?;
+    let stereo = (mode == StereoWriteMode::Encode)
+        .then(|| SmilesStereoWriteContext::new(mol, AtomId::index))
+        .transpose()?;
     let mut parts = Vec::new();
     for start in &plan.roots {
         parts.push(write_smiles_component(
             mol,
             *start,
-            None,
             &plan,
-            Some(&stereo),
-            CanonicalAtomStyle::StoredKekule,
+            stereo.as_ref(),
+            style,
+            |_, children| {
+                children.sort_by_key(|(bond, _, atom)| (*atom, *bond));
+                children
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, (_, _, child))| {
+                        (plan.subtree_sizes.get(child).copied().unwrap_or(0), *child)
+                    })
+                    .map(|(index, _)| index)
+            },
         )?);
     }
     Ok(parts.join("."))
@@ -59,7 +72,6 @@ pub(super) struct SmilesWritePlan {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SmilesRingClosure {
     pub(super) bond: BondId,
-    pub(super) number: u64,
     pub(super) order: SmilesBondOrder,
     pub(super) other: AtomId,
 }
@@ -70,6 +82,7 @@ pub(super) enum SmilesBondOrder {
     Single,
     Double,
     Triple,
+    Quadruple,
     Aromatic,
 }
 
@@ -107,7 +120,7 @@ fn plan_smiles_write(
         })
         .collect::<Vec<_>>();
     ring_bonds.sort_by_key(|(bond_id, first, second, _)| (*first, *second, *bond_id));
-    let closures = smiles_ring_closures(ring_bonds)?;
+    let closures = smiles_ring_closures(ring_bonds);
 
     let mut subtree_sizes = BTreeMap::new();
     for root in &roots {
@@ -125,7 +138,6 @@ fn plan_smiles_write(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum StereoWriteMode {
     Reject,
-    Ignore,
     Encode,
 }
 
@@ -140,7 +152,7 @@ pub(super) fn validate_smiles_writeable(
             ));
         }
         StereoWriteMode::Encode => validate_isomeric_smiles_stereo(mol)?,
-        StereoWriteMode::Reject | StereoWriteMode::Ignore => {}
+        StereoWriteMode::Reject => {}
     }
     for (_, atom) in mol.atoms() {
         if atom.radical.is_some() {
@@ -156,10 +168,10 @@ pub(super) fn validate_smiles_writeable(
     }
     for (_, bond) in mol.bonds() {
         match bond.order {
-            BondOrder::Single | BondOrder::Double | BondOrder::Triple => {}
-            BondOrder::Zero | BondOrder::Dative | BondOrder::Quadruple => {
+            BondOrder::Single | BondOrder::Double | BondOrder::Triple | BondOrder::Quadruple => {}
+            BondOrder::Zero | BondOrder::Dative => {
                 return Err(MolWriteError::new(
-                    "SMILES writer cannot encode zero, dative, or quadruple bonds",
+                    "SMILES writer cannot encode zero or dative bonds",
                 ));
             }
         }
@@ -189,11 +201,6 @@ fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), Mo
                 let atom = mol
                     .atom(stereo.center)
                     .map_err(|error| MolWriteError::new(error.to_string()))?;
-                if atom.hydrogens.allows_implicit() {
-                    return Err(MolWriteError::new(
-                        "isomeric SMILES cannot encode tetrahedral stereo on an atom that allows implicit-H inference without changing its hydrogen declaration",
-                    ));
-                }
                 let hydrogen_count = stereo
                     .carriers
                     .iter()
@@ -204,9 +211,19 @@ fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), Mo
                         "isomeric SMILES writer cannot encode tetrahedral stereo with repeated implicit hydrogens",
                     ));
                 }
-                if usize::from(atom.hydrogens.explicit_count()) != hydrogen_count {
+                let implicit = mol
+                    .implicit_hydrogens(stereo.center)
+                    .map_err(|error| MolWriteError::new(error.to_string()))?;
+                if atom.hydrogens.allows_implicit() && implicit.is_none() {
                     return Err(MolWriteError::new(
-                        "isomeric SMILES cannot encode tetrahedral stereo whose implicit-hydrogen carriers disagree with its fixed hydrogen declaration",
+                        "SMILES stereo atom requires installed hydrogen perception",
+                    ));
+                }
+                if usize::from(atom.hydrogens.explicit_count()) + usize::from(implicit.unwrap_or(0))
+                    != hydrogen_count
+                {
+                    return Err(MolWriteError::new(
+                        "SMILES tetrahedral hydrogen carriers disagree with the atom hydrogen count",
                     ));
                 }
             }
@@ -377,29 +394,21 @@ where
 
 pub(super) fn smiles_ring_closures(
     ring_bonds: Vec<(BondId, AtomId, AtomId, SmilesBondOrder)>,
-) -> std::result::Result<BTreeMap<AtomId, Vec<SmilesRingClosure>>, MolWriteError> {
-    if ring_bonds.len() > 99 {
-        return Err(MolWriteError::new(
-            "SMILES writer supports at most 99 simultaneous ring closures",
-        ));
-    }
-
+) -> BTreeMap<AtomId, Vec<SmilesRingClosure>> {
     let mut closures = BTreeMap::<AtomId, Vec<SmilesRingClosure>>::new();
-    for (number, (bond, first, second, order)) in (1u64..).zip(ring_bonds) {
+    for (bond, first, second, order) in ring_bonds {
         closures.entry(first).or_default().push(SmilesRingClosure {
             bond,
-            number,
             order,
             other: second,
         });
         closures.entry(second).or_default().push(SmilesRingClosure {
             bond,
-            number,
             order,
             other: first,
         });
     }
-    Ok(closures)
+    closures
 }
 
 fn compute_smiles_subtree_sizes(
@@ -439,7 +448,7 @@ fn compute_smiles_subtree_sizes(
 }
 
 #[derive(Debug, Clone)]
-struct SmilesStereoWriteContext {
+pub(super) struct SmilesStereoWriteContext {
     tetrahedral: BTreeMap<AtomId, TetrahedralSmilesState>,
     directional: BTreeMap<BondId, DirectionalSmilesConstraint>,
 }
@@ -460,6 +469,7 @@ struct ChiralAtomWriteState {
 struct DirectionalSmilesConstraint {
     endpoint: AtomId,
     direction_at_endpoint: SmilesDirectionToken,
+    component: BondId,
 }
 
 struct DirectionalBondConstraints {
@@ -470,9 +480,12 @@ struct DirectionalBondConstraints {
 }
 
 impl SmilesStereoWriteContext {
-    fn new(mol: &Molecule) -> std::result::Result<Self, MolWriteError> {
+    pub(super) fn new(
+        mol: &Molecule,
+        rank: impl Fn(AtomId) -> usize,
+    ) -> std::result::Result<Self, MolWriteError> {
         let mut tetrahedral = BTreeMap::new();
-        let mut constraints = BTreeMap::new();
+        let mut double_bonds = Vec::new();
         for (_, element) in mol.stereo_elements() {
             match &element.kind {
                 StereoElementKind::Tetrahedral(stereo) => {
@@ -497,14 +510,15 @@ impl SmilesStereoWriteContext {
                     }
                 }
                 StereoElementKind::DoubleBond(stereo) => {
-                    add_double_bond_directional_constraints(mol, stereo, &mut constraints)?;
+                    double_bonds.push(stereo.clone());
                 }
                 StereoElementKind::Axis(_) => {}
             }
         }
+        let directional = choose_directional_bonds(mol, double_bonds, &rank)?;
         Ok(Self {
             tetrahedral,
-            directional: solve_directional_constraints(constraints)?,
+            directional,
         })
     }
 
@@ -531,44 +545,99 @@ impl SmilesStereoWriteContext {
         bond: BondId,
         left: AtomId,
         right: AtomId,
+        phases: &mut BTreeMap<BondId, bool>,
     ) -> std::result::Result<Option<SmilesDirectionToken>, MolWriteError> {
         let Some(constraint) = self.directional.get(&bond) else {
             return Ok(None);
         };
-        directional_mark_for_emitted_bond(
+        let direction = directional_mark_for_emitted_bond(
             constraint.direction_at_endpoint,
             constraint.endpoint,
             left,
             right,
-        )
-        .map(Some)
+        )?;
+        let invert = *phases
+            .entry(constraint.component)
+            .or_insert(direction == SmilesDirectionToken::Down);
+        Ok(Some(if invert {
+            invert_directional_mark(direction)
+        } else {
+            direction
+        }))
     }
+}
+
+fn validate_directional_projection(
+    mol: &Molecule,
+    directional: &BTreeMap<BondId, DirectionalSmilesConstraint>,
+) -> std::result::Result<(), MolWriteError> {
+    use crate::chemistry::{
+        normalize_source_stereo, SourceStereoBondMark, SourceStereoBondMarkKind,
+    };
+    let expected = mol
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::DoubleBond(value) => Some((value.bond, value)),
+            _ => None,
+        })
+        .collect::<BTreeMap<_, _>>();
+    if expected.is_empty() {
+        return Ok(());
+    }
+    let marks = directional
+        .iter()
+        .map(|(&bond, value)| SourceStereoBondMark {
+            bond,
+            from: value.endpoint,
+            kind: match value.direction_at_endpoint {
+                SmilesDirectionToken::Up => SourceStereoBondMarkKind::DirectionalUp,
+                SmilesDirectionToken::Down => SourceStereoBondMarkKind::DirectionalDown,
+            },
+        })
+        .collect::<Vec<_>>();
+    let mut decoded = mol.clone();
+    decoded.graph.stereo_elements.clear();
+    decoded.graph.stereo_groups.clear();
+    normalize_source_stereo(&mut decoded, None, &marks).map_err(|error| {
+        MolWriteError::new(format!(
+            "SMILES directional stereo cannot be represented: {error}"
+        ))
+    })?;
+    if decoded.stereo_elements().count() != expected.len() {
+        return Err(MolWriteError::new(
+            "SMILES directional bonds would add or lose a double-bond stereo assertion",
+        ));
+    }
+    for (_, element) in decoded.stereo_elements() {
+        let StereoElementKind::DoubleBond(actual) = &element.kind else {
+            unreachable!()
+        };
+        let Some(source) = expected.get(&actual.bond) else {
+            return Err(MolWriteError::new(
+                "SMILES directional bonds would specify an unasserted double bond",
+            ));
+        };
+        let inverted = (source.left_carrier != actual.left_carrier)
+            != (source.right_carrier != actual.right_carrier);
+        let orientation = source
+            .orientation
+            .map(|value| if inverted { value.inverted() } else { value });
+        if actual.orientation != orientation {
+            return Err(MolWriteError::new(
+                "SMILES directional bonds would change double-bond configuration",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn add_double_bond_directional_constraints(
     mol: &Molecule,
     stereo: &DoubleBondStereo,
+    [left_carrier_bond, right_carrier_bond]: [DoubleBondPrintableCarrierBond; 2],
     constraints: &mut BTreeMap<BondId, DirectionalBondConstraints>,
 ) -> std::result::Result<(), MolWriteError> {
-    let Some(orientation) = stereo.orientation else {
-        return Err(MolWriteError::new(
-            "isomeric SMILES writer cannot encode explicitly unknown double-bond stereo",
-        ));
-    };
-    let left_carrier_bond = double_bond_printable_carrier_bond(
-        mol,
-        stereo.left,
-        stereo.right,
-        stereo.bond,
-        stereo.left_carrier,
-    )?;
-    let right_carrier_bond = double_bond_printable_carrier_bond(
-        mol,
-        stereo.right,
-        stereo.left,
-        stereo.bond,
-        stereo.right_carrier,
-    )?;
+    let orientation = stereo.orientation.expect("validated specified double bond");
     let left_direction = SmilesDirectionToken::Up;
     let right_direction = match orientation {
         DoubleBondOrientation::Together => left_direction,
@@ -613,6 +682,7 @@ fn canonical_directional_constraint(
     Ok(DirectionalSmilesConstraint {
         endpoint: left,
         direction_at_endpoint: directional_mark_for_emitted_bond(direction, endpoint, left, right)?,
+        component: carrier.bond,
     })
 }
 
@@ -646,6 +716,7 @@ fn solve_directional_constraints(
                         DirectionalSmilesConstraint {
                             endpoint: constraints[&neighbor].preferred.endpoint,
                             direction_at_endpoint: expected,
+                            component: seed,
                         },
                     );
                     pending.push(neighbor);
@@ -662,45 +733,100 @@ struct DoubleBondPrintableCarrierBond {
     invert_direction: bool,
 }
 
-fn double_bond_printable_carrier_bond(
+fn choose_directional_bonds(
     mol: &Molecule,
-    endpoint: AtomId,
-    other_endpoint: AtomId,
-    focus_bond: BondId,
-    carrier: StereoCarrier,
-) -> std::result::Result<DoubleBondPrintableCarrierBond, MolWriteError> {
-    match carrier {
-        StereoCarrier::Atom(atom) => {
-            let bond = mol
-                .bond_between(endpoint, atom)
-                .map_err(|error| MolWriteError::new(error.to_string()))?
-                .ok_or_else(|| MolWriteError::new("double-bond stereo carrier is not bonded"))?;
-            Ok(DoubleBondPrintableCarrierBond {
-                bond,
-                invert_direction: false,
-            })
-        }
-        StereoCarrier::ImplicitHydrogen => {
-            let Some(bond) = implicit_double_bond_printable_carrier_bond(
-                mol,
-                endpoint,
-                other_endpoint,
-                focus_bond,
-            )?
-            else {
-                return Err(MolWriteError::new(
-                    "isomeric SMILES writer cannot encode implicit double-bond carrier without a unique explicit substituent bond",
-                ));
-            };
-            Ok(DoubleBondPrintableCarrierBond {
-                bond,
-                invert_direction: true,
-            })
-        }
-        StereoCarrier::ImplicitLonePair => Err(MolWriteError::new(
-            "isomeric SMILES writer cannot encode lone-pair double-bond carrier",
-        )),
+    mut stereo: Vec<DoubleBondStereo>,
+    rank: &impl Fn(AtomId) -> usize,
+) -> std::result::Result<BTreeMap<BondId, DirectionalSmilesConstraint>, MolWriteError> {
+    if stereo.is_empty() {
+        return Ok(BTreeMap::new());
     }
+    // Normalize endpoint and assertion order before searching: the first valid
+    // encoding must depend on canonical labels, not the source's carrier choice.
+    for value in &mut stereo {
+        if rank(value.left) > rank(value.right) {
+            std::mem::swap(&mut value.left, &mut value.right);
+            std::mem::swap(&mut value.left_carrier, &mut value.right_carrier);
+        }
+    }
+    stereo.sort_by_key(|value| (rank(value.left), rank(value.right)));
+    let mut candidates = Vec::new();
+    for value in &stereo {
+        for (endpoint, carrier) in [
+            (value.left, value.left_carrier),
+            (value.right, value.right_carrier),
+        ] {
+            let mut bonds = mol
+                .incident_bonds(endpoint)
+                .map_err(|error| MolWriteError::new(error.to_string()))?
+                .filter(|(id, bond)| *id != value.bond && bond.order == BondOrder::Single)
+                .map(|(id, bond)| {
+                    (
+                        rank(bond.other_atom(endpoint)),
+                        DoubleBondPrintableCarrierBond {
+                            bond: id,
+                            invert_direction: carrier
+                                != StereoCarrier::Atom(bond.other_atom(endpoint)),
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            bonds.sort_by_key(|(label, _)| *label);
+            if bonds.is_empty() {
+                return Err(MolWriteError::new(
+                    "SMILES double-bond stereo requires an explicit single-bond substituent",
+                ));
+            }
+            candidates.push(bonds.into_iter().map(|(_, bond)| bond).collect::<Vec<_>>());
+        }
+    }
+    let mut choices = vec![0; candidates.len()];
+    for attempt in 0usize..4096 {
+        if attempt
+            .saturating_add(1)
+            .saturating_mul(mol.atom_count().saturating_add(mol.bond_count()))
+            > 50_000_000
+        {
+            return Err(MolWriteError::resource_limit(
+                "SMILES directional assignment exceeds 50,000,000 graph visits",
+            ));
+        }
+        let mut constraints = BTreeMap::new();
+        for (index, value) in stereo.iter().enumerate() {
+            add_double_bond_directional_constraints(
+                mol,
+                value,
+                [
+                    candidates[2 * index][choices[2 * index]],
+                    candidates[2 * index + 1][choices[2 * index + 1]],
+                ],
+                &mut constraints,
+            )?;
+        }
+        let result = solve_directional_constraints(constraints).and_then(|directional| {
+            validate_directional_projection(mol, &directional)?;
+            Ok(directional)
+        });
+        let error = match result {
+            Ok(directional) => return Ok(directional),
+            Err(error) => error,
+        };
+        let mut next = false;
+        for index in (0..choices.len()).rev() {
+            choices[index] += 1;
+            if choices[index] < candidates[index].len() {
+                next = true;
+                break;
+            }
+            choices[index] = 0;
+        }
+        if !next {
+            return Err(error);
+        }
+    }
+    Err(MolWriteError::resource_limit(
+        "SMILES directional assignment exceeds 4,096 carrier combinations",
+    ))
 }
 
 fn implicit_double_bond_printable_carrier_bond(
@@ -845,13 +971,13 @@ fn carrier_permutation_is_odd(from: &[StereoCarrier], to: &[StereoCarrier]) -> O
     Some(odd)
 }
 
-fn write_smiles_component(
+pub(super) fn write_smiles_component(
     mol: &Molecule,
     atom_id: AtomId,
-    parent: Option<AtomId>,
     plan: &SmilesWritePlan,
     stereo: Option<&SmilesStereoWriteContext>,
     atom_style: CanonicalAtomStyle,
+    order_children: impl Fn(AtomId, &mut Vec<(BondId, SmilesBondOrder, AtomId)>) -> Option<usize>,
 ) -> std::result::Result<String, MolWriteError> {
     enum Action {
         Node {
@@ -869,9 +995,12 @@ fn write_smiles_component(
     }
 
     let mut out = String::new();
+    let mut phases = BTreeMap::new();
+    let mut open_rings = BTreeMap::new();
+    let mut available_rings = (0..=99u64).collect::<BTreeSet<_>>();
     let mut actions = vec![Action::Node {
         atom: atom_id,
-        parent,
+        parent: None,
     }];
     while let Some(action) = actions.pop() {
         match action {
@@ -884,7 +1013,7 @@ fn write_smiles_component(
                 right,
             } => {
                 let directional = stereo
-                    .map(|context| context.directional_bond(bond, left, right))
+                    .map(|context| context.directional_bond(bond, left, right, &mut phases))
                     .transpose()?
                     .flatten();
                 out.push_str(smiles_bond_between_with_direction(
@@ -906,15 +1035,7 @@ fn write_smiles_component(
                         plan.tree_bonds.contains(bond_id) && Some(*neighbor) != parent
                     })
                     .collect::<Vec<_>>();
-                children.sort_by_key(|(bond_id, _, child)| (*child, *bond_id));
-                let main_child_index = children
-                    .iter()
-                    .enumerate()
-                    .max_by_key(|(_, child_entry)| {
-                        let child = child_entry.2;
-                        (plan.subtree_sizes.get(&child).copied().unwrap_or(0), child)
-                    })
-                    .map(|(index, _)| index);
+                let main_child_index = order_children(atom, &mut children);
                 let chirality = stereo
                     .and_then(|context| {
                         context.atom_chirality(atom, parent, closures, &children, main_child_index)
@@ -940,7 +1061,12 @@ fn write_smiles_component(
                         };
                         let directional = stereo
                             .map(|context| {
-                                context.directional_bond(closure.bond, atom, closure.other)
+                                context.directional_bond(
+                                    closure.bond,
+                                    atom,
+                                    closure.other,
+                                    &mut phases,
+                                )
                             })
                             .transpose()?
                             .flatten();
@@ -951,7 +1077,25 @@ fn write_smiles_component(
                             closure.other,
                             directional,
                         )?);
-                        out.push_str(&smiles_ring_number(closure.number));
+                        let number = if let Some(number) = open_rings.remove(&closure.bond) {
+                            available_rings.insert(number);
+                            number
+                        } else {
+                            let number = available_rings
+                                .range(1..)
+                                .next()
+                                .copied()
+                                .or_else(|| available_rings.first().copied())
+                                .ok_or_else(|| {
+                                    MolWriteError::resource_limit(
+                                        "SMILES requires more than 100 simultaneous ring labels",
+                                    )
+                                })?;
+                            available_rings.remove(&number);
+                            open_rings.insert(closure.bond, number);
+                            number
+                        };
+                        out.push_str(&smiles_ring_number(number));
                     }
                 }
 
@@ -1038,8 +1182,9 @@ fn smiles_bond_order(order: BondOrder) -> std::result::Result<SmilesBondOrder, M
         BondOrder::Single => Ok(SmilesBondOrder::Single),
         BondOrder::Double => Ok(SmilesBondOrder::Double),
         BondOrder::Triple => Ok(SmilesBondOrder::Triple),
-        BondOrder::Zero | BondOrder::Dative | BondOrder::Quadruple => Err(MolWriteError::new(
-            "SMILES writer cannot encode zero, dative, or quadruple bonds",
+        BondOrder::Quadruple => Ok(SmilesBondOrder::Quadruple),
+        BondOrder::Zero | BondOrder::Dative => Err(MolWriteError::new(
+            "SMILES writer cannot encode zero or dative bonds",
         )),
     }
 }
@@ -1049,6 +1194,7 @@ fn smiles_bond(order: SmilesBondOrder) -> &'static str {
         SmilesBondOrder::Single => "",
         SmilesBondOrder::Double => "=",
         SmilesBondOrder::Triple => "#",
+        SmilesBondOrder::Quadruple => "$",
         SmilesBondOrder::Aromatic => ":",
     }
 }
