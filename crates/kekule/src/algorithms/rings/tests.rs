@@ -1,5 +1,53 @@
 use super::*;
 
+#[test]
+fn ring_limits_include_deleted_storage_before_allocating_scratch_arrays() {
+    let mut editor = graph(4, &[(0, 1), (1, 2), (2, 0), (0, 3)]).into_editor();
+    editor.delete_atom(AtomId::new(3)).unwrap();
+    let mut molecule = editor.finish().unwrap();
+    perceive_ring_set(&mut molecule).unwrap();
+    let previous = molecule.perception().clone();
+    for (options, resource, observed, limit) in [
+        (
+            RingPerceptionOptions {
+                max_atoms: 3,
+                ..Default::default()
+            },
+            "atoms",
+            4,
+            3,
+        ),
+        (
+            RingPerceptionOptions {
+                max_bonds: 3,
+                ..Default::default()
+            },
+            "bonds",
+            4,
+            3,
+        ),
+        (
+            RingPerceptionOptions {
+                max_total_work: 7,
+                ..Default::default()
+            },
+            "total work",
+            8,
+            7,
+        ),
+    ] {
+        assert_eq!(
+            perceive_ring_set_with_options(&mut molecule, options),
+            Err(RingPerceptionError::ResourceLimit {
+                resource,
+                observed,
+                limit
+            })
+        );
+        assert_eq!(molecule.perception(), &previous);
+    }
+}
+
 fn graph(size: usize, edges: &[(usize, usize)]) -> Molecule {
     let mut editor = MoleculeEditor::new();
     let atoms = (0..size)

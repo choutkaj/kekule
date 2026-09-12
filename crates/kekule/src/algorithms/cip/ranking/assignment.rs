@@ -595,7 +595,9 @@ pub(super) fn rank_carrier_signatures(
             }
         }
     }
-    let mut signatures = signatures.to_vec();
+    // Sorting only needs an order of carriers, not copies of their expanded
+    // ligand trees (each can contain up to max_nodes nodes).
+    let mut signatures = signatures.iter().collect::<Vec<_>>();
     signatures.sort_by(|left, right| {
         right
             .1
@@ -603,7 +605,10 @@ pub(super) fn rank_carrier_signatures(
             .ordering
     });
     Ok(RankedCarriers {
-        carriers: signatures.into_iter().map(|(carrier, _)| carrier).collect(),
+        carriers: signatures
+            .into_iter()
+            .map(|(carrier, _)| *carrier)
+            .collect(),
         pseudo_asymmetric_ordering: pseudo_asymmetric_pair_count == 1,
     })
 }

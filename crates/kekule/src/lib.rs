@@ -841,7 +841,8 @@ pub mod perception {
     /// bond order in represented graph chemistry.
     pub mod aromaticity {
         pub use crate::algorithms::{
-            perceive_aromaticity, perceive_aromaticity_with_ring_options, AromaticityError,
+            perceive_aromaticity, perceive_aromaticity_with_options,
+            perceive_aromaticity_with_ring_options, AromaticityError, AromaticityOptions,
         };
         pub use crate::core::AromaticityModel;
     }
