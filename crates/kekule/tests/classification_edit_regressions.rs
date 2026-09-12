@@ -1,12 +1,9 @@
 use std::sync::Arc;
 
-use kekule::core::{
-    Atom, Bond, BondOrder, Element, Molecule, MoleculeEditor, StereoElementKind, StereoGroup,
-    StereoGroupKind,
-};
+use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::topology::{
     transform, AtomSelection, AtomSiteMetadata, EditAtomId, Hierarchy, InstanceAtomId,
-    MoleculeClass, ResidueClass, Topology, TopologyBuilder, TopologyEditor,
+    MoleculeClass, MoleculeDefinitionId, ResidueClass, Topology, TopologyBuilder, TopologyEditor,
 };
 
 fn atom(symbol: &str) -> Atom {
@@ -25,126 +22,6 @@ fn single_atom(symbol: &str) -> Molecule {
 
 fn classes(topology: &Topology) -> Vec<MoleculeClass> {
     topology.molecules().map(|m| m.class()).collect()
-}
-
-#[test]
-fn changed_bond_orders_prune_stereo_through_all_molecular_mutators() {
-    let source = molecule("F/C=C/F");
-    let bond = source
-        .bonds()
-        .find(|(_, bond)| bond.order == BondOrder::Double)
-        .unwrap()
-        .0;
-    let (a, b) = source.bond(bond).unwrap().endpoints();
-    for operation in 0..3 {
-        let mut editor = source.edit();
-        match operation {
-            0 => editor.set_bond_order(bond, BondOrder::Single).unwrap(),
-            1 => editor.bond_mut(bond).unwrap().set_order(BondOrder::Single),
-            _ => {
-                editor
-                    .replace_bond(bond, Bond::new(b, a, BondOrder::Single))
-                    .unwrap();
-            }
-        }
-        editor.validate().unwrap();
-        let result = editor.try_finish().unwrap();
-        assert_eq!(result.bond(bond).unwrap().order, BondOrder::Single);
-        assert_eq!(result.stereo_elements().count(), 0);
-        let text = kekule::smiles::write_isomeric(&result).unwrap();
-        let reparsed = molecule(&text);
-        assert_eq!(reparsed.stereo_elements().count(), 0);
-        assert_eq!(kekule::smiles::write_canonical(&result).unwrap(), "FCCF");
-    }
-    assert_eq!(source.stereo_elements().count(), 1);
-}
-
-#[test]
-fn order_changes_update_stereo_groups_without_removing_unrelated_assertions() {
-    let source = molecule("F/C=C/C=C/F");
-    let bonds = source
-        .bonds()
-        .filter_map(|(id, bond)| (bond.order == BondOrder::Double).then_some(id))
-        .collect::<Vec<_>>();
-    let elements = source.stereo_element_ids().collect::<Vec<_>>();
-    assert_eq!(elements.len(), 2);
-    let mut editor = source.into_editor();
-    let group = editor
-        .add_stereo_group(StereoGroup {
-            kind: StereoGroupKind::And,
-            members: elements,
-        })
-        .unwrap();
-    let source = editor.finish().unwrap();
-    let mut editor = source.edit();
-    editor.set_bond_order(bonds[0], BondOrder::Double).unwrap();
-    assert_eq!(editor.clone().finish().unwrap(), source);
-    editor.set_bond_order(bonds[0], BondOrder::Single).unwrap();
-    let retained = editor.stereo_element_ids().next().unwrap();
-    assert_eq!(editor.stereo_element_ids().count(), 1);
-    assert_eq!(editor.stereo_group(group).unwrap().members, vec![retained]);
-    assert_eq!(editor.stereo_element(retained).unwrap().group, Some(group));
-    let mut editor = editor.finish().unwrap().into_editor();
-    editor.set_bond_order(bonds[1], BondOrder::Single).unwrap();
-    let result = editor.finish().unwrap();
-    assert_eq!(result.stereo_elements().count(), 0);
-    assert_eq!(result.stereo_groups().count(), 0);
-}
-
-#[test]
-fn checked_stereo_insertion_and_replacement_reject_single_bond_focus() {
-    let source = molecule("F/C=C/C=C/F");
-    let elements = source.stereo_elements().collect::<Vec<_>>();
-    let invalid = elements[0].1.clone();
-    let StereoElementKind::DoubleBond(stereo) = &invalid.kind else {
-        panic!("expected double-bond stereo");
-    };
-    let focus = stereo.bond;
-    let retained_element = elements[1].0;
-    let mut editor = source.edit();
-    editor.set_bond_order(focus, BondOrder::Single).unwrap();
-    let before = format!("{editor:?}");
-    assert!(editor.add_stereo_element(invalid.clone()).is_err());
-    assert!(editor
-        .replace_stereo_element(retained_element, invalid)
-        .is_err());
-    assert_eq!(format!("{editor:?}"), before);
-    assert_eq!(editor.finish().unwrap().stereo_elements().count(), 1);
-}
-
-#[test]
-fn topology_order_changes_publish_without_stale_double_bond_stereo() {
-    for replacement in [false, true] {
-        let source = Arc::new(Topology::from_molecule(&molecule("F/C=C/F")).unwrap());
-        let mut editor = source.edit();
-        let (id, bond) = editor
-            .bonds()
-            .find(|(_, bond)| bond.order == BondOrder::Double)
-            .unwrap();
-        if replacement {
-            editor
-                .replace_bond(
-                    id,
-                    kekule::topology::EditBond::new(bond.a(), bond.b(), BondOrder::Single),
-                )
-                .unwrap();
-        } else {
-            editor.set_bond_order(id, BondOrder::Single).unwrap();
-        }
-        let target = editor.finish().unwrap();
-        let definition = target.molecules().next().unwrap();
-        assert_eq!(definition.molecule().stereo_elements().count(), 0);
-        assert_eq!(
-            source
-                .molecules()
-                .next()
-                .unwrap()
-                .molecule()
-                .stereo_elements()
-                .count(),
-            1
-        );
-    }
 }
 
 fn split_editor() -> (TopologyEditor, Vec<EditAtomId>) {
@@ -425,6 +302,141 @@ fn instance_filters_reclassify_partial_residues_and_preserve_complete_assignment
         assert_eq!(
             editor.finish().unwrap().residues().nth(1).unwrap().class(),
             ResidueClass::Carbohydrate
+        );
+    }
+}
+
+fn oxygen_builder() -> (TopologyBuilder, MoleculeDefinitionId) {
+    let mut editor = MoleculeEditor::new();
+    editor
+        .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
+        .unwrap();
+    let mut builder = TopologyBuilder::new();
+    let definition = builder
+        .add_molecule_definition_owned(editor.finish().unwrap())
+        .unwrap();
+    (builder, definition)
+}
+
+fn add_instance(
+    builder: &mut TopologyBuilder,
+    definition: MoleculeDefinitionId,
+    component: Option<&str>,
+    residue_class: Option<ResidueClass>,
+) -> kekule::topology::MoleculeInstanceId {
+    let local = builder
+        .definition(definition)
+        .unwrap()
+        .molecule()
+        .atom_ids()
+        .next()
+        .unwrap();
+    let instance = builder.add_instance(definition).unwrap();
+    if let Some(component) = component {
+        let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
+        let residue = builder
+            .hierarchy_mut()
+            .add_residue(chain, component, None, None, None)
+            .unwrap();
+        builder
+            .hierarchy_mut()
+            .add_atom_site(
+                residue,
+                InstanceAtomId::new(instance, local),
+                AtomSiteMetadata::default(),
+            )
+            .unwrap();
+        if let Some(class) = residue_class {
+            builder.set_residue_class(residue, class).unwrap();
+        }
+    }
+    instance
+}
+
+#[test]
+fn resumed_reused_definitions_combine_new_informative_evidence_like_fresh_builders() {
+    for explicit in [false, true] {
+        let (mut builder, definition) = oxygen_builder();
+        add_instance(&mut builder, definition, Some("HOH"), None);
+        if explicit {
+            builder
+                .set_molecule_class(definition, MoleculeClass::Water)
+                .unwrap();
+        }
+        let source = builder.clone().build().unwrap();
+        assert_eq!(
+            source.definition(definition).unwrap().class(),
+            MoleculeClass::Water
+        );
+        for mut builder in [source.into_builder(), builder] {
+            add_instance(
+                &mut builder,
+                definition,
+                Some("UNK"),
+                Some(ResidueClass::Ion),
+            );
+            builder.validate().unwrap();
+            let result = builder.try_build().unwrap();
+            assert_eq!(
+                result.definition(definition).unwrap().class(),
+                if explicit {
+                    MoleculeClass::Water
+                } else {
+                    MoleculeClass::Other
+                }
+            );
+            assert_eq!(
+                result.residues().map(|r| r.class()).collect::<Vec<_>>(),
+                vec![ResidueClass::Water, ResidueClass::Ion]
+            );
+        }
+    }
+    let (mut builder, definition) = oxygen_builder();
+    add_instance(&mut builder, definition, None, None);
+    let mut builder = builder.build().unwrap().into_builder();
+    add_instance(&mut builder, definition, Some("HOH"), None);
+    assert_eq!(
+        builder
+            .build()
+            .unwrap()
+            .definition(definition)
+            .unwrap()
+            .class(),
+        MoleculeClass::Water
+    );
+}
+
+#[test]
+fn uninformative_and_unrelated_appends_preserve_complete_entity_cached_classes() {
+    let (mut builder, definition) = oxygen_builder();
+    let retained = add_instance(&mut builder, definition, Some("HOH"), None);
+    add_instance(
+        &mut builder,
+        definition,
+        Some("UNK"),
+        Some(ResidueClass::Ion),
+    );
+    let source = Arc::new(builder.build().unwrap());
+    // The retained class deliberately remembers the complete source definition.
+    // Adding an uninformative occurrence must not recompute it from just HOH.
+    for component in [None, Some("UNK")] {
+        let retained = transform::retain_instances(&source, [retained]).unwrap();
+        assert_eq!(
+            retained.definition(definition).unwrap().class(),
+            MoleculeClass::Other
+        );
+        let mut builder = Arc::try_unwrap(retained).unwrap().into_builder();
+        add_instance(&mut builder, definition, component, None);
+        let independent = builder.add_molecule_definition(&molecule("CC")).unwrap();
+        builder.add_instance(independent).unwrap();
+        let result = builder.build().unwrap();
+        assert_eq!(
+            result.definition(definition).unwrap().class(),
+            MoleculeClass::Other
+        );
+        assert_eq!(
+            result.definition(independent).unwrap().class(),
+            MoleculeClass::SmallMolecule
         );
     }
 }

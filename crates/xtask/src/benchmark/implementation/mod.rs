@@ -15,8 +15,8 @@ use descriptors::{
     rotatable_bond_smiles_record_json, valence_record_json,
 };
 use io::{
-    interpret_molfile, interpret_sdf, mol_record_json, read_small_records_by_suffix,
-    read_stereo_perception_records_by_suffix, sdf_record_json, small_record,
+    interpret_sdf, mol_record_json, read_small_records_by_suffix,
+    read_stereo_perception_records_by_suffix, round_trip_molfiles, sdf_record_json, small_record,
     smarts_query_records_json, substructure_record_json, zero_coordinate_model,
 };
 use smiles::smiles_parse_record_json;
@@ -26,10 +26,9 @@ use stereo::{stereo_cip_record_json, stereo_perception_group_record_json, stereo
 pub(crate) use chemistry::explicit_valence_json;
 pub(crate) use io::{
     read_canonical_smiles_records, read_nonisomeric_smiles_records, read_smiles_records,
-    IndexedSmallRecord,
 };
 #[cfg(test)]
-pub(crate) use io::{smiles_unsupported_subset_reason, IndexedSmilesRecord};
+pub(crate) use io::{smiles_unsupported_subset_reason, IndexedSmallRecord, IndexedSmilesRecord};
 #[cfg(test)]
 pub(crate) use smiles::{
     smiles_components_perceived_semantic_json, smiles_perceived_atoms_json,
@@ -79,21 +78,7 @@ pub(crate) fn implementation_expected(
         }
         "io.mol.v3000.parse" => {
             let records = read_small_records_by_suffix(fixture_path)?;
-            let records = records
-                .into_iter()
-                .enumerate()
-                .map(|(index, record)| {
-                    let title = record.title;
-                    let written = molfile::write_v3000(&record.molecule)?;
-                    let molecule = interpret_molfile(&written)?;
-                    Ok(IndexedSmallRecord {
-                        record_index: index,
-                        title,
-                        molecule,
-                        sdf_fields: BTreeMap::new(),
-                    })
-                })
-                .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+            let records = round_trip_molfiles(records, molfile::write_v3000)?;
             Ok(json!({ "records": records.iter().map(mol_parse_record_json).collect::<Vec<_>>() }))
         }
         "descriptor.molecular" => {
@@ -130,40 +115,12 @@ pub(crate) fn implementation_expected(
         }
         "io.mol.v2000.write" => {
             let records = read_small_records_by_suffix(fixture_path)?;
-            let records = records
-                .into_iter()
-                .enumerate()
-                .map(|(index, record)| {
-                    let title = record.title;
-                    let written = molfile::write_v2000(&record.molecule)?;
-                    let molecule = interpret_molfile(&written)?;
-                    Ok(IndexedSmallRecord {
-                        record_index: index,
-                        title,
-                        molecule,
-                        sdf_fields: BTreeMap::new(),
-                    })
-                })
-                .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+            let records = round_trip_molfiles(records, molfile::write_v2000)?;
             Ok(json!({ "records": records.iter().map(mol_record_json).collect::<Vec<_>>() }))
         }
         "io.mol.v3000.write" => {
             let records = read_small_records_by_suffix(fixture_path)?;
-            let records = records
-                .into_iter()
-                .enumerate()
-                .map(|(index, record)| {
-                    let title = record.title;
-                    let written = molfile::write_v3000(&record.molecule)?;
-                    let molecule = interpret_molfile(&written)?;
-                    Ok(IndexedSmallRecord {
-                        record_index: index,
-                        title,
-                        molecule,
-                        sdf_fields: BTreeMap::new(),
-                    })
-                })
-                .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+            let records = round_trip_molfiles(records, molfile::write_v3000)?;
             Ok(json!({ "records": records.iter().map(mol_record_json).collect::<Vec<_>>() }))
         }
         "io.smiles.parse" => {
