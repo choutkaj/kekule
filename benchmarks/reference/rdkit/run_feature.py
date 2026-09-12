@@ -177,8 +177,8 @@ def generate_document(
     fixture_path: Path,
     rdkit: dict[str, Any],
 ) -> dict[str, Any]:
-    if feature_id == "io.smiles.isomeric" and rdkit["version"] != "2026.03.6":
-        raise ValueError("isomeric SMILES schema 2 requires RDKit 2026.03.6")
+    if feature_id in {"io.smiles.isomeric", "io.smiles.canonical"} and rdkit["version"] != "2026.03.6":
+        raise ValueError("SMILES stereo schema 2 requires RDKit 2026.03.6")
     reference_evidence = None
     if feature_id == "io.sdf.v2000.parse":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
@@ -235,7 +235,7 @@ def generate_document(
         expected = {"records": [smiles_write_record(record) for record in records]}
     elif feature_id == "io.smiles.canonical":
         records = read_canonical_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
-        expected = {"records": [canonical_smiles_record(record, exact_smiles=False) for record in records]}
+        expected = {"records": [canonical_smiles_record(record) for record in records]}
     elif feature_id == "io.smiles.isomeric":
         records = read_isomeric_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
         reference_evidence = []
@@ -287,7 +287,7 @@ def generate_document(
         raise SystemExit(f"unsupported feature for RDKit generator: {feature_id}")
 
     return {
-        "schema_version": 2 if feature_id == "io.smiles.isomeric" else 1,
+        "schema_version": 2 if feature_id in {"io.smiles.isomeric", "io.smiles.canonical"} else 1,
         **({"reference_evidence": reference_evidence} if reference_evidence is not None else {}),
         "feature_id": feature_id,
         "corpus_id": corpus_id,
@@ -1095,7 +1095,7 @@ def smiles_write_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def canonical_smiles_record(record: dict[str, Any], exact_smiles: bool) -> dict[str, Any]:
+def canonical_smiles_record(record: dict[str, Any]) -> dict[str, Any]:
     from rdkit import Chem
 
     mol = record["mol"]
@@ -1109,7 +1109,7 @@ def canonical_smiles_record(record: dict[str, Any], exact_smiles: bool) -> dict[
     canonical = Chem.MolToSmiles(
         mol,
         canonical=True,
-        isomericSmiles=False,
+        isomericSmiles=True,
     )
     canonical_mol = Chem.MolFromSmiles(canonical, sanitize=False)
     item = {
@@ -1118,9 +1118,8 @@ def canonical_smiles_record(record: dict[str, Any], exact_smiles: bool) -> dict[
         "title": record["title"],
         "input_smiles": record["smiles"],
         "normalized_perceived": smiles_perceived_semantic_record(canonical_mol),
+        "stereo": smiles_isomeric_stereo_semantic_record(canonical_mol),
     }
-    if exact_smiles:
-        item["canonical_smiles"] = canonical
     return item
 
 

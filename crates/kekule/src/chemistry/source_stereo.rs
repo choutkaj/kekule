@@ -48,7 +48,7 @@ pub(crate) enum SourceStereoBondMarkKind {
 /// coordinates only when a source wedge/hash mark needs its format-local
 /// drawing geometry decoded, including Molfile double bonds whose configuration
 /// is defined by the atom coordinates. It does not run general coordinate perception.
-pub(super) fn normalize_source_stereo(
+pub(crate) fn normalize_source_stereo(
     molecule: &mut Molecule,
     geometry: Option<&dyn AtomPositionSource>,
     source_marks: &[SourceStereoBondMark],

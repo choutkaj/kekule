@@ -154,6 +154,14 @@ fn aromatic_bond_valence_twice(
         {
             2
         }
+        "O" | "S" | "Se" | "Te"
+            if atom.formal_charge == 1
+                && (atom.hydrogens.explicit_count() > 0
+                    || has_non_aromatic_bond
+                    || aromatic_bond_count >= 3) =>
+        {
+            2
+        }
         "N" if atom.formal_charge < 0 => 2,
         "N" if atom.formal_charge == 0 && has_aromatic_nitrogen_hydrogen => 2,
         "N" if atom.formal_charge == 0 && has_non_aromatic_bond => 2,

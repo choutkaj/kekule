@@ -593,12 +593,12 @@ fn stereo_and_nonisomeric_benchmark_use_distinct_smiles_subsets() {
 
     let stereo_records = read_smiles_records(&fixture).expect("stereo records");
     assert_eq!(stereo_records[0].status, "ok");
-    assert!(stereo_records[0].molecule.is_some());
+    assert!(!stereo_records[0].components.is_empty());
 
     let nonisomeric_records =
         read_nonisomeric_smiles_records(&fixture).expect("nonisomeric records");
     assert_eq!(nonisomeric_records[0].status, "unsupported");
-    assert!(nonisomeric_records[0].molecule.is_none());
+    assert!(nonisomeric_records[0].components.is_empty());
 
     fs::remove_dir_all(root).ok();
 }
@@ -1022,8 +1022,8 @@ fn smiles_component_benchmarks_preserve_source_record_cardinality() {
     );
     let connected_written = smiles::write(
         records[1]
-            .molecule
-            .as_ref()
+            .components
+            .first()
             .expect("connected record should have one molecule"),
     )
     .expect("connected record should write");
@@ -1043,7 +1043,6 @@ fn smiles_component_benchmarks_preserve_source_record_cardinality() {
         status: "ok".to_owned(),
         title: "missing components".to_owned(),
         input_smiles: "CC.Cl.Cl".to_owned(),
-        molecule: None,
         components: Vec::new(),
     };
     let skipped = smiles_write_record_json(&skipped).expect("error record should serialize");
@@ -1326,7 +1325,7 @@ fn canonical_smiles_records_do_not_prefilter_unsupported_categories() {
     assert_eq!(records[0].record_index, 0);
     assert_eq!(records[0].status, "parse_error");
     assert_eq!(records[0].input_smiles, "*");
-    assert!(records[0].molecule.is_none());
+    assert!(records[0].components.is_empty());
 }
 
 #[test]
@@ -1336,11 +1335,16 @@ fn canonical_smiles_benchmark_perceives_before_writing() {
     fs::write(&fixture, "C1=CC=CC=C1 CID:benzene\n").expect("fixture should write");
 
     let records = read_canonical_smiles_records(&fixture).expect("records should load");
-    let item =
-        canonical_smiles_record_json(&records[0], true).expect("canonical record should render");
+    let item = stereo_smiles_record_json(&records[0], smiles::SmilesWriteMode::Canonical)
+        .expect("canonical record should render");
 
     assert_eq!(item["status"], "ok");
-    assert_eq!(item["canonical_smiles"], "c1ccccc1");
+    assert_eq!(item["normalized_perceived"]["atom_count"], 6);
+    assert!(item["normalized_perceived"]["atoms"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|atom| atom["aromatic"] == true));
 }
 
 #[test]
@@ -1350,8 +1354,8 @@ fn canonical_smiles_benchmark_matches_rdkit_parse_status_for_invalid_input() {
     fs::write(&fixture, "[Cl-](Br)Br CID:invalid\n").expect("fixture should write");
 
     let records = read_canonical_smiles_records(&fixture).expect("records should load");
-    let item =
-        canonical_smiles_record_json(&records[0], false).expect("canonical record should render");
+    let item = stereo_smiles_record_json(&records[0], smiles::SmilesWriteMode::Canonical)
+        .expect("canonical record should render");
 
     assert_eq!(item["status"], "parse_error");
 }
@@ -1527,4 +1531,17 @@ fn write_gzip_json(path: &Path, value: &Value) {
         .write_all(value.to_string().as_bytes())
         .expect("gzip json should write");
     encoder.finish().expect("gzip json should finish");
+}
+
+#[test]
+fn aromatic_sulfonium_benchmark_uses_trivalent_donor_valence() {
+    let mut molecule = one_smiles("C[s+]1cccc1").unwrap();
+    molecule.perceive().unwrap();
+    let (sulfur, atom) = molecule
+        .atoms()
+        .find(|(_, atom)| atom.element.symbol() == "S")
+        .unwrap();
+    assert_eq!(atom.formal_charge, 1);
+    assert_eq!(explicit_valence_json(&molecule, sulfur), 3);
+    assert_eq!(molecule.implicit_hydrogens(sulfur).unwrap(), Some(0));
 }

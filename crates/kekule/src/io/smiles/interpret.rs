@@ -124,7 +124,7 @@ impl SmilesInterpretationReport {
     }
 }
 
-/// Interpretation of one dot-delimited connected SMILES component.
+/// Interpretation of one connected SMILES component.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SmilesComponentInterpretation {
     source_span: Range<usize>,
@@ -133,6 +133,8 @@ pub struct SmilesComponentInterpretation {
 }
 
 impl SmilesComponentInterpretation {
+    /// Bounding span of the source fragments containing this component.
+    /// Spans can overlap when branches interleave disconnected components.
     pub fn source_span(&self) -> Range<usize> {
         self.source_span.clone()
     }
@@ -188,9 +190,8 @@ impl SmilesInterpretation {
 
     /// Convenience access for callers that require exactly one component.
     ///
-    /// Prefer [`Self::components`] for general SMILES input. This method keeps
-    /// the pre-component API convenient for callers whose input contract is
-    /// already single-molecule and fails loudly rather than discarding data.
+    /// Prefer [`Self::components`] for general SMILES input. An input with
+    /// several connected components returns a component-count error.
     pub fn molecule(&self) -> Result<&Molecule, SmilesComponentCountError> {
         Ok(self.single_component()?.molecule())
     }
@@ -238,18 +239,39 @@ impl SmilesInterpretation {
     }
 }
 
-/// Interprets each dot-delimited SMILES component independently.
+/// Interprets each connected SMILES component independently.
 ///
 /// Parsing remains record-level: [`SmilesDocument`] preserves the complete
-/// source and component separators. Interpretation turns each syntactic
-/// component into one connected [`Molecule`] with component-local atom and
+/// source and fragment separators. Ring closures may join dot-separated
+/// fragments. Interpretation turns each connected component into one [`Molecule`] with component-local atom and
 /// bond identifiers while retaining mappings to the original source offsets.
 pub fn interpret_smiles_document(
     document: &SmilesDocument,
 ) -> Result<SmilesInterpretation, SmilesInterpretError> {
-    let mut components = Vec::with_capacity(document.component_token_ranges().len());
-    for (component_index, token_range) in document.component_token_ranges().iter().enumerate() {
-        let source_span = component_source_span(document, token_range.clone())?;
+    let component_count = document
+        .program
+        .atoms
+        .iter()
+        .map(|atom| atom.component)
+        .max()
+        .map_or(0, |last| last + 1);
+    let fragment_spans = document
+        .fragment_token_ranges()
+        .iter()
+        .map(|range| fragment_source_span(document, range.clone()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut source_spans = vec![document.source().len()..0; component_count];
+    let mut fragment = 0;
+    for atom in &document.program.atoms {
+        while fragment_spans[fragment].end <= atom.span.start {
+            fragment += 1;
+        }
+        let span = &mut source_spans[atom.component];
+        span.start = span.start.min(fragment_spans[fragment].start);
+        span.end = span.end.max(fragment_spans[fragment].end);
+    }
+    let mut components = Vec::with_capacity(component_count);
+    for (component_index, source_span) in source_spans.into_iter().enumerate() {
         let local = interpret_smiles_component(document, component_index).map_err(|error| {
             SmilesInterpretError {
                 offset: error.offset(),
@@ -288,7 +310,7 @@ pub fn interpret_smiles_document(
     Ok(SmilesInterpretation { components })
 }
 
-fn component_source_span(
+fn fragment_source_span(
     document: &SmilesDocument,
     token_range: Range<usize>,
 ) -> Result<Range<usize>, SmilesInterpretError> {
@@ -580,6 +602,7 @@ const fn interpret_smiles_bond_token(token: SmilesBondToken) -> (BondOrder, bool
         SmilesBondToken::Single => (BondOrder::Single, false),
         SmilesBondToken::Double => (BondOrder::Double, false),
         SmilesBondToken::Triple => (BondOrder::Triple, false),
+        SmilesBondToken::Quadruple => (BondOrder::Quadruple, false),
         SmilesBondToken::Aromatic => (BondOrder::Single, true),
     }
 }

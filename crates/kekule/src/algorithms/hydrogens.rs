@@ -249,10 +249,6 @@ pub(crate) fn add_hydrogens_to_molecule(
 pub(crate) fn remove_hydrogens_from_molecule(
     molecule: &mut Molecule,
 ) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
-    if !molecule.perception().has_valence() {
-        return Err(HydrogenTransformError::MissingValencePerception);
-    }
-
     let mut report = RemoveHydrogensReport::default();
     let mut candidates = Vec::<(AtomId, AtomId, BondId)>::new();
     for (hydrogen, atom) in molecule
@@ -290,10 +286,19 @@ pub(crate) fn remove_hydrogens_from_molecule(
         }
     }
 
+    if by_parent.is_empty() {
+        report.retained.sort_by_key(|entry| entry.hydrogen);
+        return Ok(report);
+    }
+
     let mut expected_totals = BTreeMap::<AtomId, usize>::new();
     for (parent, hydrogens) in &by_parent {
         let atom = molecule.atom(*parent)?;
-        let implicit = usize::from(molecule.implicit_hydrogens(*parent)?.unwrap_or(0));
+        let perceived = molecule.implicit_hydrogens(*parent)?;
+        if atom.hydrogens.allows_implicit() && perceived.is_none() {
+            return Err(HydrogenTransformError::MissingValencePerception);
+        }
+        let implicit = usize::from(perceived.unwrap_or(0));
         expected_totals.insert(
             *parent,
             usize::from(atom.hydrogens.explicit_count()) + implicit + hydrogens.len(),

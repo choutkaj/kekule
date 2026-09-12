@@ -1,7 +1,7 @@
 feature_id = "io.smiles.canonical"
 corpus_id = "pubchem-100k"
 reference_tool = "rdkit"
-reference_version = "RDKit 2026.03.3"
+reference_version = "RDKit 2026.03.6"
 comparison_mode = "implementation-golden"
 
 fixtures = [
