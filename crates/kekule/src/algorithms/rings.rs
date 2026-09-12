@@ -159,7 +159,9 @@ fn ring_dfs_iterative(
 /// candidate generation, recovery graph and path copies, repeated recovery
 /// bond scans, and ring comparisons during pruning and symmetrization.
 pub struct RingPerceptionOptions {
+    /// Maximum atom storage slots, including deleted atoms.
     pub max_atoms: usize,
+    /// Maximum bond storage slots, including deleted bonds.
     pub max_bonds: usize,
     pub max_candidates: usize,
     pub max_path_expansions: usize,
@@ -244,7 +246,11 @@ pub fn perceive_ring_set_with_options(
     mol: &mut Molecule,
     options: RingPerceptionOptions,
 ) -> std::result::Result<RingSet, RingPerceptionError> {
-    let mut tracker = RingWorkTracker::new(options, mol.atom_count(), mol.bond_count())?;
+    let mut tracker = RingWorkTracker::new(
+        options,
+        mol.graph.atom_slot_count(),
+        mol.graph.bond_slot_count(),
+    )?;
     let membership = compute_ring_membership(mol);
     let (mut rings, mut extras) = figueras_sssr_candidates(mol, &membership, &mut tracker)?;
     if !uncovered_ring_bonds(mol, &membership, &rings).is_empty() {

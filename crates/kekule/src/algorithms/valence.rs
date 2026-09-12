@@ -89,7 +89,7 @@ fn perceive_rdkit_like_valence(
     mol: &mut Molecule,
     options: ValenceOptions,
 ) -> std::result::Result<(), ValenceError> {
-    let mut assignments = Vec::<(AtomId, u8)>::new();
+    let mut assignments = BTreeMap::new();
     let mut issues = Vec::new();
     for (atom_id, atom) in mol.atoms() {
         let implicit = match rdkit_atom_implicit_hydrogen_count(mol, atom_id, atom, options.strict)
@@ -102,15 +102,12 @@ fn perceive_rdkit_like_valence(
                 0
             }
         };
-        assignments.push((atom_id, implicit));
+        assignments.insert(atom_id, implicit);
     }
     if !issues.is_empty() {
         return Err(ValenceError { issues });
     }
-    mol.install_valence(
-        ValenceModel::RdkitLike,
-        assignments.into_iter().collect::<BTreeMap<_, _>>(),
-    );
+    mol.install_valence(ValenceModel::RdkitLike, assignments);
     Ok(())
 }
 
