@@ -178,6 +178,28 @@ fn explicit_format_overrides_extension_and_precision_is_preserved() {
 }
 
 #[test]
+fn every_empty_path_writer_rejects_publication_and_removes_temporary_files() {
+    use kekule_traj::io::create_trajectory_writer;
+
+    let directory = Directory::new();
+    let topology = linear_carbon_topology(3);
+    for (format, extension) in [
+        (TrajectoryFormat::Xyz, "xyz"),
+        (TrajectoryFormat::Dcd, "dcd"),
+        (TrajectoryFormat::Trr, "trr"),
+        (TrajectoryFormat::Xtc, "xtc"),
+    ] {
+        let path = directory.file(&format!("empty.{extension}"));
+        let empty =
+            create_trajectory_writer(&path, topology.clone(), TrajectoryWriteOptions::new(format))
+                .unwrap();
+        assert!(empty.finish().is_err());
+        assert!(!path.exists());
+        assert_eq!(directory.count(), 0);
+    }
+}
+
+#[test]
 fn failed_saves_leave_no_output_or_temporary_files_and_preserve_existing_destinations() {
     let directory = Directory::new();
     let topology = linear_carbon_topology(3);

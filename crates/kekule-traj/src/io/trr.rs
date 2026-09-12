@@ -426,10 +426,11 @@ impl<R: Read + Seek> TrrReader<R> {
             self.frame_cursor,
             "TRR positions",
         )?;
-        decode_points(
+        decode_triplets(
             &self.raw,
             header.precision,
             &mut self.positions,
+            Point3::new,
             &self.options.source_label,
             self.frame_cursor,
             "position",
@@ -444,10 +445,11 @@ impl<R: Read + Seek> TrrReader<R> {
                 self.frame_cursor,
                 "TRR velocities",
             )?;
-            decode_vectors(
+            decode_triplets(
                 &self.raw,
                 header.precision,
                 &mut self.velocities,
+                Vector3::new,
                 &self.options.source_label,
                 self.frame_cursor,
                 "velocity",
@@ -463,10 +465,11 @@ impl<R: Read + Seek> TrrReader<R> {
                 self.frame_cursor,
                 "TRR forces",
             )?;
-            decode_vectors(
+            decode_triplets(
                 &self.raw,
                 header.precision,
                 &mut self.forces,
+                Vector3::new,
                 &self.options.source_label,
                 self.frame_cursor,
                 "force",
@@ -1386,15 +1389,16 @@ fn read_raw<R: Read>(
     )
 }
 
-fn decode_points(
+fn decode_triplets<T>(
     raw: &[u8],
     precision: TrrScalarPrecision,
-    destination: &mut [Point3],
+    destination: &mut [T],
+    construct: impl Fn(f64, f64, f64) -> T,
     source_label: &str,
     frame: u64,
     field: &str,
 ) -> Result<(), TrajectoryError> {
-    for (point, values) in destination
+    for (destination, values) in destination
         .iter_mut()
         .zip(raw.chunks_exact(3 * precision.bytes()))
     {
@@ -1408,34 +1412,7 @@ fn decode_points(
                 format!("TRR {field} contains a non-finite value"),
             ));
         }
-        *point = Point3::new(x, y, z);
-    }
-    Ok(())
-}
-
-fn decode_vectors(
-    raw: &[u8],
-    precision: TrrScalarPrecision,
-    destination: &mut [Vector3],
-    source_label: &str,
-    frame: u64,
-    field: &str,
-) -> Result<(), TrajectoryError> {
-    for (vector, values) in destination
-        .iter_mut()
-        .zip(raw.chunks_exact(3 * precision.bytes()))
-    {
-        let x = scalar_at(values, 0, precision);
-        let y = scalar_at(values, 1, precision);
-        let z = scalar_at(values, 2, precision);
-        if ![x, y, z].into_iter().all(f64::is_finite) {
-            return Err(frame_error(
-                source_label,
-                frame,
-                format!("TRR {field} contains a non-finite value"),
-            ));
-        }
-        *vector = Vector3::new(x, y, z);
+        *destination = construct(x, y, z);
     }
     Ok(())
 }
@@ -1447,7 +1424,15 @@ fn decode_cell(
     frame: u64,
 ) -> Result<PeriodicCell, TrajectoryError> {
     let mut vectors = [Vector3::zero(); 3];
-    decode_vectors(raw, precision, &mut vectors, source_label, frame, "box")?;
+    decode_triplets(
+        raw,
+        precision,
+        &mut vectors,
+        Vector3::new,
+        source_label,
+        frame,
+        "box",
+    )?;
     PeriodicCell::new(Quantity::new(vectors, NANOMETER), [true; 3]).map_err(|error| {
         frame_error(
             source_label,
@@ -1476,19 +1461,15 @@ fn encode_points_to_raw(
     precision: TrrScalarPrecision,
     source_label: &str,
 ) -> Result<(), TrajectoryError> {
-    raw.clear();
-    let bytes = points
-        .len()
-        .checked_mul(3 * precision.bytes())
-        .ok_or_else(|| writer_limit(source_label, "TRR position bytes overflow"))?;
-    raw.try_reserve(bytes.saturating_sub(raw.len()))
-        .map_err(|_| writer_limit(source_label, "could not reserve TRR writer scratch"))?;
-    for point in points {
-        for value in [point.x * factor, point.y * factor, point.z * factor] {
-            push_scalar(raw, value, precision, source_label, "position")?;
-        }
-    }
-    Ok(())
+    encode_triplets_to_raw(
+        raw,
+        points.iter().map(|p| [p.x, p.y, p.z]),
+        factor,
+        precision,
+        source_label,
+        "position",
+        "TRR position bytes overflow",
+    )
 }
 
 fn encode_vectors_to_raw(
@@ -1499,16 +1480,36 @@ fn encode_vectors_to_raw(
     source_label: &str,
     field: &str,
 ) -> Result<(), TrajectoryError> {
+    encode_triplets_to_raw(
+        raw,
+        vectors.iter().map(|v| [v.x, v.y, v.z]),
+        factor,
+        precision,
+        source_label,
+        field,
+        "TRR vector bytes overflow",
+    )
+}
+
+fn encode_triplets_to_raw(
+    raw: &mut Vec<u8>,
+    values: impl ExactSizeIterator<Item = [f64; 3]>,
+    factor: f64,
+    precision: TrrScalarPrecision,
+    source_label: &str,
+    field: &str,
+    overflow_message: &str,
+) -> Result<(), TrajectoryError> {
     raw.clear();
-    let bytes = vectors
+    let bytes = values
         .len()
         .checked_mul(3 * precision.bytes())
-        .ok_or_else(|| writer_limit(source_label, "TRR vector bytes overflow"))?;
+        .ok_or_else(|| writer_limit(source_label, overflow_message))?;
     raw.try_reserve(bytes.saturating_sub(raw.len()))
         .map_err(|_| writer_limit(source_label, "could not reserve TRR writer scratch"))?;
-    for vector in vectors {
-        for value in [vector.x * factor, vector.y * factor, vector.z * factor] {
-            push_scalar(raw, value, precision, source_label, field)?;
+    for triplet in values {
+        for value in triplet {
+            push_scalar(raw, value * factor, precision, source_label, field)?;
         }
     }
     Ok(())
