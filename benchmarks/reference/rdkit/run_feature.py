@@ -3,12 +3,10 @@
 
 from __future__ import annotations
 
-import argparse
 import gzip
 import hashlib
 import json
 import re
-import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -74,64 +72,6 @@ BOUNDED_SUBSTRUCTURE_QUERIES = (
 )
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Generate normalized JSON golden data with RDKit."
-    )
-    parser.add_argument("--feature", required=True, choices=sorted(SUPPORTED_FEATURES))
-    parser.add_argument("--corpus", default="pubchem-1k")
-    parser.add_argument(
-        "--repo-root",
-        type=Path,
-        default=Path(__file__).resolve().parents[3],
-        help="Repository root. Defaults to the script's containing checkout.",
-    )
-    parser.add_argument(
-        "--fixture",
-        action="append",
-        help="Fixture path from the selected corpus manifest. May be repeated.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        help="Directory for JSON output. Defaults to benchmarks/corpora/<corpus>/golden/<feature>.",
-    )
-    parser.add_argument(
-        "--check-deps",
-        action="store_true",
-        help="Only check that RDKit imports and print its version.",
-    )
-    args = parser.parse_args()
-
-    rdkit = import_rdkit()
-    if args.check_deps:
-        print(f"RDKit {rdkit['version']}")
-        return 0
-
-    repo_root = args.repo_root.resolve()
-    corpus_dir = repo_root / "benchmarks" / "corpora" / args.corpus
-    manifest_path = corpus_dir / "features" / f"{args.feature}.toml"
-    manifest = read_manifest(manifest_path)
-    if manifest.get("corpus_id") != args.corpus:
-        raise SystemExit(
-            f"{manifest_path} declares corpus_id {manifest.get('corpus_id')!r}, "
-            f"expected {args.corpus!r}"
-        )
-    fixtures = selected_fixtures(manifest, args.fixture)
-    output_dir = (args.output_dir or corpus_dir / "golden" / args.feature).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    for fixture in fixtures:
-        fixture_path = (corpus_dir / fixture).resolve()
-        if not fixture_path.exists():
-            raise SystemExit(f"{manifest_path} references missing fixture: {fixture}")
-        document = generate_document(args.feature, args.corpus, fixture, fixture_path, rdkit)
-        output_path = output_dir / f"{slugify_fixture(fixture)}.json.gz"
-        write_json(output_path, document)
-        print(output_path)
-    return 0
-
-
 def import_rdkit() -> dict[str, Any]:
     try:
         from rdkit import Chem, RDLogger, rdBase
@@ -150,33 +90,7 @@ def import_rdkit() -> dict[str, Any]:
     }
 
 
-def read_manifest(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        raise SystemExit(f"missing benchmark manifest: {path}")
-    manifest = tomllib.loads(path.read_text(encoding="utf-8"))
-    fixtures = manifest.get("fixtures")
-    if not isinstance(fixtures, list) or not all(isinstance(item, str) for item in fixtures):
-        raise SystemExit(f"{path} must define fixtures as a string array")
-    return manifest
-
-
-def selected_fixtures(manifest: dict[str, Any], requested: list[str] | None) -> list[str]:
-    fixtures = list(manifest["fixtures"])
-    if not requested:
-        return fixtures
-    unknown = sorted(set(requested) - set(fixtures))
-    if unknown:
-        raise SystemExit(f"requested fixture(s) not present in manifest: {', '.join(unknown)}")
-    return [fixture for fixture in fixtures if fixture in requested]
-
-
-def generate_document(
-    feature_id: str,
-    corpus_id: str,
-    fixture: str,
-    fixture_path: Path,
-    rdkit: dict[str, Any],
-) -> dict[str, Any]:
+def evaluate(feature_id: str, fixture_path: Path, rdkit: dict[str, Any], evidence=None) -> dict[str, Any]:
     if feature_id in {"io.smiles.isomeric", "io.smiles.canonical"} and rdkit["version"] != "2026.03.6":
         raise ValueError("SMILES stereo schema 2 requires RDKit 2026.03.6")
     reference_evidence = None
@@ -208,7 +122,7 @@ def generate_document(
         }
     elif feature_id == "descriptor.rotatable-bonds.rdkit-strict":
         if fixture_path.suffix.lower() in {".smi", ".smiles", ".txt"}:
-            records = read_canonical_smiles_records(
+            records = read_smiles_records(
                 fixture_path, rdkit["Chem"], sanitize=False
             )
         else:
@@ -234,10 +148,10 @@ def generate_document(
         records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
         expected = {"records": [smiles_write_record(record) for record in records]}
     elif feature_id == "io.smiles.canonical":
-        records = read_canonical_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
+        records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
         expected = {"records": [canonical_smiles_record(record) for record in records]}
     elif feature_id == "io.smiles.isomeric":
-        records = read_isomeric_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
+        records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
         reference_evidence = []
         expected = {"records": [isomeric_smiles_record(record, reference_evidence) for record in records]}
     elif feature_id == "query.smarts":
@@ -277,30 +191,14 @@ def generate_document(
     elif feature_id == "stereo.cip":
         records = read_stereo_cip_records(fixture_path, rdkit["Chem"])
         expected = {
-            "records": [
-                expected_record
-                for record in records
-                if (expected_record := stereo_cip_record(record, rdkit["Chem"])) is not None
-            ]
+            "records": [stereo_cip_record(record, rdkit["Chem"]) for record in records]
         }
     else:
         raise SystemExit(f"unsupported feature for RDKit generator: {feature_id}")
 
-    return {
-        "schema_version": 2 if feature_id in {"io.smiles.isomeric", "io.smiles.canonical"} else 1,
-        **({"reference_evidence": reference_evidence} if reference_evidence is not None else {}),
-        "feature_id": feature_id,
-        "corpus_id": corpus_id,
-        "fixture_id": slugify_fixture(fixture),
-        "fixture_path": fixture,
-        "input_sha256": sha256_file(fixture_path),
-        "reference": {
-            "tool": "rdkit",
-            "version": rdkit["version"],
-            "runtime_dependency": False,
-        },
-        "expected": expected,
-    }
+    if evidence is not None and reference_evidence is not None:
+        evidence.extend(reference_evidence)
+    return expected
 
 
 def read_sdf_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
@@ -560,20 +458,6 @@ def read_smiles_records(fixture_path: Path, Chem: Any, sanitize: bool) -> list[d
         parts = line.split(maxsplit=1)
         smiles = parts[0]
         title = parts[1] if len(parts) > 1 else ""
-        unsupported = smiles_unsupported_subset_reason(smiles)
-        if unsupported is not None:
-            records.append(
-                {
-                    "record_index": index,
-                    "status": "unsupported",
-                    "title": title,
-                    "smiles": smiles,
-                    "mol": None,
-                    "radicals": {},
-                    "bond_stereo": {},
-                }
-            )
-            continue
         mol = Chem.MolFromSmiles(smiles, sanitize=sanitize)
         records.append(
             {
@@ -591,104 +475,8 @@ def read_smiles_records(fixture_path: Path, Chem: Any, sanitize: bool) -> list[d
 
 def read_stereo_cip_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
     if fixture_path.suffix.lower() in {".smi", ".smiles", ".txt"}:
-        return read_stereo_cip_smiles_records(fixture_path, Chem)
+        return read_smiles_records(fixture_path, Chem, sanitize=True)
     return read_records_by_suffix(fixture_path, Chem)
-
-
-def read_stereo_cip_smiles_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split(maxsplit=1)
-        smiles = parts[0]
-        title = parts[1] if len(parts) > 1 else ""
-        unsupported = "*" in smiles
-        mol = None if unsupported else Chem.MolFromSmiles(smiles, sanitize=True)
-        records.append(
-            {
-                "record_index": index,
-                "status": (
-                    "unsupported"
-                    if unsupported
-                    else "ok"
-                    if mol is not None
-                    else "parse_error"
-                ),
-                "title": title,
-                "smiles": smiles,
-                "mol": mol,
-                "radicals": {},
-                "bond_stereo": {},
-            }
-        )
-    return records
-
-
-def read_canonical_smiles_records(
-    fixture_path: Path, Chem: Any, sanitize: bool
-) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split(maxsplit=1)
-        smiles = parts[0]
-        title = parts[1].strip() if len(parts) > 1 else ""
-        mol = Chem.MolFromSmiles(smiles, sanitize=sanitize)
-        records.append(
-            {
-                "record_index": index,
-                "status": "ok" if mol is not None else "parse_error",
-                "title": title,
-                "smiles": smiles,
-                "mol": mol,
-                "radicals": {},
-                "bond_stereo": {},
-            }
-        )
-    return records
-
-
-def read_isomeric_smiles_records(
-    fixture_path: Path, Chem: Any, sanitize: bool
-) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split(maxsplit=1)
-        smiles = parts[0]
-        title = parts[1].strip() if len(parts) > 1 else ""
-        unsupported = "*" in smiles
-        mol = None if unsupported else Chem.MolFromSmiles(smiles, sanitize=sanitize)
-        records.append(
-            {
-                "record_index": index,
-                "status": (
-                    "unsupported"
-                    if unsupported
-                    else "ok"
-                    if mol is not None
-                    else "parse_error"
-                ),
-                "title": title,
-                "smiles": smiles,
-                "mol": mol,
-                "radicals": {},
-                "bond_stereo": {},
-            }
-        )
-    return records
-
-
-def smiles_unsupported_subset_reason(smiles: str) -> str | None:
-    if any(ch in smiles for ch in ("@", "/", "\\", "*")):
-        return "unsupported"
-    return None
 
 
 def read_sdf_blocks(fixture_path: Path) -> list[str]:
@@ -1455,21 +1243,20 @@ def canonical_ranking_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def stereo_cip_record(record: dict[str, Any], Chem: Any) -> dict[str, Any] | None:
+def stereo_cip_record(record: dict[str, Any], Chem: Any) -> dict[str, Any]:
+    failure = {"record_index": record["record_index"], "title": record["title"]}
     mol = record["mol"]
     if mol is None:
-        return None
+        return {**failure, "status": "parse_error"}
     prepared = clone_and_sanitize(mol)
     if prepared is None:
-        return None
+        return {**failure, "status": "sanitize_error"}
     try:
         Chem.AssignCIPLabels(prepared)
     except Exception:
-        return None
+        return {**failure, "status": "cip_error"}
     atom_descriptors = cip_atom_descriptors(prepared)
     bond_descriptors = cip_bond_descriptors(prepared)
-    if not atom_descriptors and not bond_descriptors:
-        return None
     return {
         "record_index": record["record_index"],
         "status": "ok",
@@ -1612,18 +1399,3 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def slugify_fixture(fixture: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", fixture).strip("._-")
-
-
-def write_json(path: Path, document: dict[str, Any]) -> None:
-    payload = (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    with path.open("wb") as raw:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as handle:
-            handle.write(payload)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

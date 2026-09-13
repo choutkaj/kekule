@@ -13,6 +13,17 @@ import compare_molfile_interchange as comparison
 
 
 class InterchangeContract(unittest.TestCase):
+    def test_inputs_come_from_full_pubchem_dataset_without_subset_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            packs = root / "benchmarks/corpora/pubchem-100k/data/packs"
+            packs.mkdir(parents=True)
+            for name in ["pack_02.sdf", "pack_01.sdf", "pack_01.smi"]:
+                (packs / name).touch()
+            self.assertEqual(comparison.pubchem_sdf_paths(root), [
+                packs / "pack_01.sdf", packs / "pack_02.sdf",
+            ])
+
     def test_unlabelled_atom_and_bond_loss_are_differences(self):
         molecule = Chem.MolFromSmiles("CCO")
         expected = {"graph": comparison.chemical_graph(molecule), "labels": [], "groups": []}

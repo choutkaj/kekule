@@ -132,7 +132,7 @@ def main() -> int:
     parser.add_argument("--input-format", choices=("smiles", "suite", "json"), default="smiles")
     parser.add_argument("--stereo-only", action="store_true")
     parser.add_argument("--mode", choices=("sanitized", "assertions"), required=True)
-    parser.add_argument("--probe", type=Path, help="Compiled xtask cip_probe example; omit for references only")
+    parser.add_argument("--probe", type=Path, help="Compiled kekule-bench cip_probe example; omit for references only")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-iterations", type=int, default=1_000_000)
     parser.add_argument("--timeout", type=float, default=30.0)

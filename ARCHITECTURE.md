@@ -370,3 +370,8 @@ results deserve their own concrete types. Format metadata stays with the format
 unless deliberate promotion defines its canonical meaning and validity scope.
 Keep API inventories and algorithm-specific policies beside the implementation;
 update this document when ownership or cross-module invariants change.
+
+The unpublished `kekule-bench` workspace package calls public APIs to compare
+scientific outputs and measure explicitly scoped workflows. Dataset provenance,
+reference-tool adapters and benchmark reports stay outside the runtime crates.
+See the [benchmark guide](benchmarks/GUIDE.md) for the optional execution workflow.

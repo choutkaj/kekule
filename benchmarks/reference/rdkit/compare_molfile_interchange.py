@@ -1,6 +1,6 @@
 """Optional RDKit Molfile interchange check using externally supplied corpora.
 
-Build the xtask molfile_interchange_probe example first. This is an independent
+Build the kekule-bench molfile_interchange_probe example first. This is an independent
 cross-tool check, not a golden generator or a runtime dependency.
 """
 
@@ -80,6 +80,10 @@ def compare_output(expected, molecule, clear_double_stereo):
     return {"status": "difference" if differences else "match", "differences": differences, "actual": actual}
 
 
+def pubchem_sdf_paths(repo):
+    return sorted((repo / "benchmarks/corpora/pubchem-100k/data/packs").glob("*.sdf"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[3])
@@ -95,7 +99,7 @@ def main():
     cases = []
     tetrahedron = None
     tetrahedron_origin = None
-    for path in sorted((args.repo / "benchmarks/corpora/pubchem-1k/data/packs").glob("*.sdf")):
+    for path in pubchem_sdf_paths(args.repo):
         inputs.append({"path": str(path.resolve()), "sha256": sha256(path)})
         for index, record in enumerate(path.read_text().split("$$$$")):
             if not record.strip():

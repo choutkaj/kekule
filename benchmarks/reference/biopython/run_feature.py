@@ -3,13 +3,10 @@
 
 from __future__ import annotations
 
-import argparse
-import concurrent.futures
 import gzip
 import hashlib
 import json
 import re
-import tomllib
 import shutil
 import subprocess
 import tempfile
@@ -46,103 +43,6 @@ ATOM_SITE_FIELDS = [
 ]
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Generate normalized JSON golden data with Biopython."
-    )
-    parser.add_argument("--feature", required=True, choices=sorted(SUPPORTED_FEATURES))
-    parser.add_argument("--corpus", default="pdb-100")
-    parser.add_argument(
-        "--repo-root",
-        type=Path,
-        default=Path(__file__).resolve().parents[3],
-        help="Repository root. Defaults to the script's containing checkout.",
-    )
-    parser.add_argument(
-        "--fixture",
-        action="append",
-        help="Fixture path from the selected corpus manifest. May be repeated.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        help="Directory for JSON output. Defaults to benchmarks/corpora/<corpus>/golden/<feature>.",
-    )
-    parser.add_argument(
-        "--check-deps",
-        action="store_true",
-        help="Only check that Biopython imports and print its version.",
-    )
-    parser.add_argument(
-        "--jobs",
-        type=positive_int,
-        default=1,
-        help="Number of independent fixture generators to run concurrently.",
-    )
-    args = parser.parse_args()
-
-    biopython = import_biopython()
-    if args.check_deps:
-        print(f"Biopython {biopython['version']}")
-        return 0
-
-    repo_root = args.repo_root.resolve()
-    corpus_dir = repo_root / "benchmarks" / "corpora" / args.corpus
-    manifest_path = corpus_dir / "features" / f"{args.feature}.toml"
-    manifest = read_manifest(manifest_path)
-    if manifest.get("corpus_id") != args.corpus:
-        raise SystemExit(
-            f"{manifest_path} declares corpus_id {manifest.get('corpus_id')!r}, "
-            f"expected {args.corpus!r}"
-        )
-    fixtures = selected_fixtures(manifest, args.fixture)
-    output_dir = (args.output_dir or corpus_dir / "golden" / args.feature).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    tasks = [
-        (args.feature, args.corpus, fixture, str(corpus_dir), str(output_dir))
-        for fixture in fixtures
-    ]
-    if args.jobs == 1:
-        output_paths = [generate_fixture(task, biopython) for task in tasks]
-    else:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs) as executor:
-            output_paths = list(executor.map(generate_fixture, tasks))
-    for output_path in output_paths:
-        print(output_path)
-    return 0
-
-
-def positive_int(value: str) -> int:
-    parsed = int(value)
-    if parsed < 1:
-        raise argparse.ArgumentTypeError("must be at least 1")
-    return parsed
-
-
-def generate_fixture(
-    task: tuple[str, str, str, str, str],
-    biopython: dict[str, Any] | None = None,
-) -> Path:
-    feature, corpus, fixture, corpus_dir_text, output_dir_text = task
-    corpus_dir = Path(corpus_dir_text)
-    output_dir = Path(output_dir_text)
-    fixture_path = (corpus_dir / fixture).resolve()
-    manifest_path = corpus_dir / "features" / f"{feature}.toml"
-    if not fixture_path.exists():
-        raise SystemExit(f"{manifest_path} references missing fixture: {fixture}")
-    document = generate_document(
-        feature,
-        corpus,
-        fixture,
-        fixture_path,
-        biopython or import_biopython(),
-    )
-    output_path = output_dir / f"{slugify_fixture(fixture)}.json.gz"
-    write_json(output_path, document)
-    return output_path
-
-
 def import_biopython() -> dict[str, Any]:
     try:
         import Bio
@@ -164,67 +64,12 @@ def import_biopython() -> dict[str, Any]:
     }
 
 
-def read_manifest(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        raise SystemExit(f"missing benchmark manifest: {path}")
-    manifest = tomllib.loads(path.read_text(encoding="utf-8"))
-    fixtures = manifest.get("fixtures")
-    if not isinstance(fixtures, list) or not all(isinstance(item, str) for item in fixtures):
-        raise SystemExit(f"{path} must define fixtures as a string array")
-    return manifest
-
-
-def selected_fixtures(manifest: dict[str, Any], requested: list[str] | None) -> list[str]:
-    fixtures = list(manifest["fixtures"])
-    if not requested:
-        return fixtures
-    unknown = sorted(set(requested) - set(fixtures))
-    if unknown:
-        raise SystemExit(f"requested fixture(s) not present in manifest: {', '.join(unknown)}")
-    return [fixture for fixture in fixtures if fixture in requested]
-
-
-def generate_document(
-    feature_id: str,
-    corpus_id: str,
-    fixture: str,
-    fixture_path: Path,
-    biopython: dict[str, Any],
-) -> dict[str, Any]:
+def evaluate(feature_id: str, fixture_path: Path, biopython: dict[str, Any]) -> dict[str, Any]:
     if feature_id == "bio.secondary-structure.dssp":
-        expected = dssp_summary(
-            fixture_path,
-            biopython["MMCIFParser"],
-            biopython["MMCIF2Dict"],
-            biopython["MMCIFIO"],
-            biopython["DSSP"],
-        )
-        reference = dssp_reference(biopython["version"])
-        return {
-            "schema_version": 1,
-            "feature_id": feature_id,
-            "corpus_id": corpus_id,
-            "fixture_id": slugify_fixture(fixture),
-            "fixture_path": fixture,
-            "input_sha256": sha256_file(fixture_path),
-            "reference": reference,
-            "expected": expected,
-        }
-    atom_site = atom_site_table(fixture_path, biopython["MMCIF2Dict"])
-    return {
-        "schema_version": 1,
-        "feature_id": feature_id,
-        "corpus_id": corpus_id,
-        "fixture_id": slugify_fixture(fixture),
-        "fixture_path": fixture,
-        "input_sha256": sha256_file(fixture_path),
-        "reference": {
-            "tool": "biopython",
-            "version": biopython["version"],
-            "runtime_dependency": False,
-        },
-        "expected": {"atom_site_rows": atom_site},
-    }
+        return dssp_summary(fixture_path, biopython["MMCIFParser"], biopython["MMCIF2Dict"], biopython["MMCIFIO"], biopython["DSSP"])
+    if feature_id == "io.mmcif.parse":
+        return {"atom_site_rows": atom_site_table(fixture_path, biopython["MMCIF2Dict"])}
+    raise ValueError(f"unsupported feature: {feature_id}")
 
 
 def dssp_reference(biopython_version: str) -> dict[str, Any]:
@@ -613,18 +458,3 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def slugify_fixture(fixture: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", fixture).strip("._-")
-
-
-def write_json(path: Path, document: dict[str, Any]) -> None:
-    payload = (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    with path.open("wb") as raw:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as handle:
-            handle.write(payload)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
