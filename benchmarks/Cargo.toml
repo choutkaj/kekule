@@ -1,0 +1,19 @@
+[package]
+name = "kekule-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+flate2 = "1"
+indicatif = "0.18"
+rayon = "1.11"
+kekule = { path = "../crates/kekule" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+[dev-dependencies]
+toml = "0.9"

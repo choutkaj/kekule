@@ -1,2 +1,2 @@
 [alias]
-xtask = "run -q -p xtask --"
+benchmark = "run --release -q -p kekule-bench --"

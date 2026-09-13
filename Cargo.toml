@@ -4,7 +4,7 @@ members = [
     "crates/kekule",
     "crates/kekule-potentials",
     "crates/kekule-traj",
-    "crates/xtask",
+    "benchmarks",
 ]
 
 [workspace.package]

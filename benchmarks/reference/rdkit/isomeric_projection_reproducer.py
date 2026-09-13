@@ -6,7 +6,7 @@
 """Distinguish optional metal-neighbor and required charge brackets in SMILES.
 
 Build the optional implementation adapter with:
-    cargo build -p xtask --example smiles_write_probe --locked
+    cargo build -p kekule-bench --example smiles_write_probe --locked
 Run from the repository root:
     uv run --python 3.13 benchmarks/reference/rdkit/isomeric_projection_reproducer.py \
         --probe target/debug/examples/smiles_write_probe
