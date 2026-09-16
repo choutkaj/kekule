@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import warnings
+import math
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,7 @@ def dssp_reference(biopython_version: str) -> dict[str, Any]:
         check=True,
         capture_output=True,
         text=True,
+        timeout=120,
     ).stdout.strip()
     return {
         "tool": "biopython",
@@ -82,11 +84,18 @@ def dssp_summary(
             warnings.simplefilter("ignore")
             model = parser.get_structure(fixture_path.stem, str(fixture_path))[0]
             with tempfile.TemporaryDirectory(prefix="kekule-dssp-") as temp_dir:
+                legacy = subprocess.run(
+                    ['mkdssp', '--output-format=dssp', '--quiet', str(fixture_path)],
+                    check=True, capture_output=True, text=True, timeout=120,
+                ).stdout
+                legacy_path = Path(temp_dir) / 'assignments.dssp'
+                legacy_path.write_text(legacy, encoding='utf-8')
+                partners = beta_partner_indices(legacy)
                 assignments = DSSP(
                     model,
-                    str(fixture_path),
+                    str(legacy_path),
                     dssp="mkdssp",
-                    file_type="MMCIF",
+                    file_type="DSSP",
                 )
                 annotated_path = Path(temp_dir) / "annotated.cif"
                 subprocess.run(
@@ -100,6 +109,7 @@ def dssp_summary(
                     check=True,
                     capture_output=True,
                     text=True,
+                    timeout=120,
                 )
                 extended_rows = dssp_extended_rows(MMCIF2Dict(str(annotated_path)))
     except Exception as error:
@@ -122,7 +132,7 @@ def dssp_summary(
     residues = []
     previous_dssp_index = None
     previous_label_chain = None
-    for key, extended in zip(keys, extended_rows, strict=True):
+    for ordinal, (key, extended) in enumerate(zip(keys, extended_rows, strict=True)):
         chain_id, residue_id = key
         _, sequence_id, insertion_code = residue_id
         value = assignments[key]
@@ -158,6 +168,9 @@ def dssp_summary(
                 "strand": extended["strand"],
                 "ladders": extended["ladders"],
                 "beta_parallel": extended["beta_parallel"],
+                "beta_partners": [partner_identity(keys_by_dssp_index[index]) if index else None
+                                  for index in partners[dssp_index]],
+                "omega_degrees": omega_angle(model, keys, assignments, ordinal),
                 "acceptors": [
                     dssp_bond(value[6], value[7], dssp_index, keys_by_dssp_index),
                     dssp_bond(value[10], value[11], dssp_index, keys_by_dssp_index),
@@ -171,6 +184,44 @@ def dssp_summary(
         previous_dssp_index = dssp_index
         previous_label_chain = extended["label_chain_id"]
     return {"status": "ok", "residues": residues}
+
+
+def beta_partner_indices(text):
+    """Read the two explicit BP columns; do not reconstruct partners from ladders."""
+    rows = {}
+    started = False
+    for line in text.splitlines():
+        if '  #  RESIDUE' in line:
+            started = True
+            continue
+        if not started or len(line) < 34 or line[9] == ' ':
+            continue
+        index = int(line[:5])
+        if index in rows:
+            raise ValueError('duplicate DSSP residue index')
+        rows[index] = [int(line[25:29]), int(line[29:33])]
+    return rows
+
+
+def partner_identity(key):
+    chain, (_, sequence, insertion) = key
+    return {'partner_chain_id': chain, 'partner_sequence_id': sequence,
+            'partner_insertion_code': normalize_missing(insertion.strip())}
+
+
+def omega_angle(model, keys, assignments, index):
+    """Biopython dihedral of CA(i), C(i), N(i+1), CA(i+1), in degrees."""
+    from Bio.PDB.vectors import calc_dihedral
+    if index + 1 == len(keys):
+        return None
+    key, following = keys[index:index + 2]
+    if key[0] != following[0] or assignments[following][0] != assignments[key][0] + 1:
+        return None
+    def residue(key):
+        return next(r for r in model[key[0]] if r.id[1:] == key[1][1:] and r.id[0] != 'W')
+    a, b = residue(key), residue(following)
+    return math.degrees(calc_dihedral(a['CA'].get_vector(), a['C'].get_vector(),
+                                    b['N'].get_vector(), b['CA'].get_vector()))
 
 
 def dssp_extended_rows(document: dict[str, Any]) -> list[dict[str, Any]]:

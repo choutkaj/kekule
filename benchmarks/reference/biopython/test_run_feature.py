@@ -7,6 +7,11 @@ import run_feature as reference
 
 
 class BiopythonReferenceTests(unittest.TestCase):
+    def test_version_probe_is_resource_bounded(self):
+        with patch.object(reference.shutil,'which',return_value='mkdssp'),patch.object(reference.subprocess,'run',return_value=SimpleNamespace(stdout='mkdssp version 4.6.1')) as execute:
+            self.assertIn('4.6.1',reference.dssp_reference('1.87')['version'])
+            self.assertEqual(execute.call_args.kwargs['timeout'],120)
+
     def evaluate(self, text):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'input.cif'
@@ -29,14 +34,43 @@ class BiopythonReferenceTests(unittest.TestCase):
             path=Path(directory)/'input.cif'
             path.write_text(text)
             seen=[]
-            def dssp(model, source, **kwargs):
-                seen.append((Path(source),Path(source).read_text()))
-                return {}
+            def execute(command, **kwargs):
+                source=Path(command[3])
+                seen.append((source,source.read_text()))
+                self.assertEqual(kwargs['timeout'],120)
+                return SimpleNamespace(stdout='')
             parser=lambda **kwargs:SimpleNamespace(get_structure=lambda *args:[object()])
-            with patch.object(reference.subprocess,'run'),patch.object(reference,'dssp_extended_rows',return_value=[]):
-                value=reference.dssp_summary(path,parser,lambda *args:{},dssp)
-            self.assertEqual(seen,[(path,text)])
+            with patch.object(reference.subprocess,'run',side_effect=execute),patch.object(reference,'dssp_extended_rows',return_value=[]):
+                value=reference.dssp_summary(path,parser,lambda *args:{},lambda *args,**kwargs:{})
+            self.assertEqual(seen,[(path,text),(path,text)])
             self.assertEqual(value['status'],'no_analyzable_residues')
+
+    def test_beta_partner_identity_comes_from_explicit_columns(self):
+        row=list(' '*80)
+        row[:5]='    1'
+        row[9]='1'
+        row[25:29]='   7'
+        row[29:33]='  13'
+        text='  #  RESIDUE\n'+''.join(row)
+        self.assertEqual(reference.beta_partner_indices(text),{1:[7,13]})
+        with self.assertRaises(ValueError):
+            reference.beta_partner_indices(text+'\n'+''.join(row))
+        self.assertEqual(reference.partner_identity(('A',(' ',13,'B'))),
+                         {'partner_chain_id':'A','partner_sequence_id':13,'partner_insertion_code':'B'})
+
+    def test_omega_uses_four_backbone_atoms_and_stops_at_breaks(self):
+        from Bio.PDB.vectors import Vector
+        class Residue(dict):
+            def __init__(self,index,atoms):
+                super().__init__({name:SimpleNamespace(get_vector=lambda xyz=xyz:Vector(*xyz)) for name,xyz in atoms.items()})
+                self.id=(' ',index,' ')
+        keys=[('A',(' ',1,' ')),('A',(' ',2,' '))]
+        model={'A':[Residue(1,{'CA':(0,1,0),'C':(0,0,0)}),Residue(2,{'N':(1,0,0),'CA':(1,0,1)})]}
+        assignments={keys[0]:[1],keys[1]:[2]}
+        self.assertAlmostEqual(abs(reference.omega_angle(model,keys,assignments,0)),90.0)
+        self.assertIsNone(reference.omega_angle(model,keys,assignments,1))
+        assignments[keys[1]]=[3]
+        self.assertIsNone(reference.omega_angle(model,keys,assignments,0))
 
 
 if __name__=='__main__':

@@ -2,8 +2,10 @@ import importlib.util
 from pathlib import Path
 import unittest
 from rdkit import Chem
-import run_feature as reference
-import strict
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from reference.rdkit import run_feature as reference
+from reference.rdkit import molecule as strict
 
 spec = importlib.util.spec_from_file_location('benchmark_runner', Path(__file__).parents[1] / 'run.py')
 runner = importlib.util.module_from_spec(spec)
@@ -11,6 +13,22 @@ spec.loader.exec_module(runner)
 
 
 class StrictReferenceTests(unittest.TestCase):
+    def test_writer_version_contract_and_extensions(self):
+        mol = Chem.MolFromSmiles('CCO')
+        mol.AddConformer(Chem.Conformer(3))
+        v2, v3 = Chem.MolToMolBlock(mol), Chem.MolToV3KMolBlock(mol)
+        for feature, text, path in [
+            ('io.mol.v2000.write', v3, 'output.mol'),
+            ('io.mol.v3000.write', v2, 'output.mol'),
+            ('io.sdf.v2000.write', v3 + '$$$$\n', 'output.sdf'),
+        ]:
+            with self.subTest(feature=feature), self.assertRaisesRegex(ValueError, 'must emit'):
+                strict.read_written(feature, {'written':[{'path':path,'text':text}]}, runner.MemoryInput)
+        for text in ['F[C@H](Cl)Br |&1:1|', 'F[C@H](Cl)Br |&1:1| sample']:
+            value = strict.writer_value('io.smiles.isomeric', self.source(text))['records'][0]
+            self.assertIn('&', value['identity'])
+            self.assertEqual(value['title'], 'sample' if text.endswith('sample') else '')
+
     def source(self, text, path='input.smi'):
         return runner.MemoryInput(path,text)
 
@@ -29,10 +47,10 @@ class StrictReferenceTests(unittest.TestCase):
         self.assertNotEqual(a['records'][0]['components'][0]['stereo'],b['records'][0]['components'][0]['stereo'])
 
     def test_dative_direction_survives(self):
-        a=strict.graph(Chem.MolFromSmiles('[NH3]->[Cu+2]'),reference)
+        a=strict.graph(Chem.MolFromSmiles('[NH3]->[Cu+2]'))
         backward=Chem.MolFromSmiles('[NH3]<-[Cu+2]',sanitize=False)
         backward.UpdatePropertyCache(strict=False)
-        b=strict.graph(backward,reference)
+        b=strict.graph(backward)
         self.assertNotEqual(a['bonds'],b['bonds'])
 
     def test_molfile_memory_input_bonds_coordinates_and_duplicate_fields(self):
@@ -71,14 +89,14 @@ class StrictReferenceTests(unittest.TestCase):
         text='[H:7]C'
         params=Chem.SmilesParserParams(); params.removeHs=False
         mol=Chem.MolFromSmiles(text,params)
-        expected=strict.graph(Chem.RemoveHs(Chem.AddHs(mol)),reference)
+        expected=strict.graph(Chem.RemoveHs(Chem.AddHs(mol)))
         value=self.value(text,'chem.hydrogen-transforms')['records'][0]['round_trip']
         self.assertEqual(value,expected)
 
     def test_writer_identity_rejects_wrong_connectivity_and_stereo(self):
         for a,b in [('C1CCCCC1','C1CC1.C1CC1'),('F[C@H](Cl)C[C@@H](F)Br','F[C@@H](Cl)C[C@H](F)Br')]:
-            expected=strict.writer_value('io.smiles.isomeric',self.source(a),reference)
-            actual=strict.read_written('io.smiles.isomeric',{'written':[{'path':'output.smi','text':b}]},reference,runner.MemoryInput)
+            expected=strict.writer_value('io.smiles.isomeric',self.source(a))
+            actual=strict.read_written('io.smiles.isomeric',{'written':[{'path':'output.smi','text':b}]},runner.MemoryInput)
             self.assertNotEqual(expected,actual)
 
     def test_all_input_categories_and_errors_are_retained(self):

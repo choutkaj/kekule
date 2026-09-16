@@ -1,4 +1,6 @@
-use crate::*;
+use crate::{boxed_error, dataset::Input};
+use serde_json::{json, Value};
+use std::error::Error;
 mod bio;
 mod chemistry;
 mod descriptors;
@@ -11,11 +13,7 @@ pub(crate) fn is_writer(feature: &str) -> bool {
     feature.ends_with(".write") || matches!(feature, "io.smiles.canonical" | "io.smiles.isomeric")
 }
 
-pub(crate) fn evaluate(
-    feature: &str,
-    _dataset: &str,
-    input: &Input,
-) -> Result<Value, Box<dyn Error>> {
+pub(crate) fn evaluate(feature: &str, input: &Input) -> Result<Value, Box<dyn Error>> {
     if is_writer(feature) {
         return strict::write(feature, input);
     }
@@ -45,16 +43,16 @@ pub(crate) fn evaluate(
         .iter_mut()
         .map(|record| {
             Ok(match feature {
-                "descriptor.molecular" => molecular_descriptor_record_json(record),
+                "descriptor.molecular" => molecular_descriptor_record_json(record)?,
                 "descriptor.rotatable-bonds.rdkit-strict" => rotatable_bond_record_json(record),
                 "algo.rings.fast" => ring_membership_record_json(record),
-                "algo.rings.sssr" => ring_set_record_json(record),
-                "algo.valence.rdkit-like" => valence_record_json(record),
-                "algo.aromaticity.rdkit-like" => aromaticity_record_json(record),
-                "algo.canonical-ranking" => canonical_ranking_record_json(record),
-                "algo.substructure.vf2" => io::substructure_record_json(record),
-                "chem.perception.default" => default_perception_atom_record_json(record),
-                "chem.hydrogen-transforms" => hydrogen_transform_record_json(record),
+                "algo.rings.sssr" => ring_set_record_json(record)?,
+                "algo.valence.rdkit-like" => valence_record_json(record)?,
+                "algo.aromaticity.rdkit-like" => aromaticity_record_json(record)?,
+                "algo.canonical-ranking" => canonical_ranking_record_json(record)?,
+                "algo.substructure.vf2" => io::substructure_record_json(record)?,
+                "chem.perception.default" => default_perception_atom_record_json(record)?,
+                "chem.hydrogen-transforms" => hydrogen_transform_record_json(record)?,
                 _ => return Err(boxed_error(format!("no Kekule adapter for {feature}"))),
             })
         })

@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "dataset": "pl-rex",
+  "feature": "io.smiles.isomeric",
+  "input_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d",
+  "sha256": "4f5bfaab6f28a977d387262a349f1cd41204252fbb174df76ffd0b3b43732470",
+  "reference": null,
+  "reference_code_sha256": null,
+  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded.",
+  "cases": 164
+}

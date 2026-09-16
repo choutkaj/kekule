@@ -1,18 +1,13 @@
-use crate::*;
+use crate::{boxed_error, dataset::Input};
+use kekule::{core::Molecule, molfile, query, sdf, smiles, substructure};
+use serde_json::{json, Value};
+use std::error::Error;
 
 #[derive(Debug, Clone)]
 pub(crate) struct IndexedSmallRecord {
     pub(crate) record_index: usize,
     pub(crate) title: String,
     pub(crate) molecule: Molecule,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct IndexedSmilesRecord {
-    pub(crate) record_index: usize,
-    pub(crate) status: String,
-    pub(crate) title: String,
-    pub(crate) components: Vec<Molecule>,
 }
 
 #[derive(Debug, Clone)]
@@ -23,71 +18,34 @@ pub(crate) struct IndexedStereoPerceptionRecord {
     pub(crate) positions: Vec<Option<kekule::structure::Positions>>,
 }
 
-const BOUNDED_SUBSTRUCTURE_QUERIES: &[&str] = &[
-    "[#6]",
-    "[!#6]",
-    "A",
-    "a",
-    "[C,N]",
-    "[C,H]",
-    "[H,D]",
-    "[!H]",
-    "[#6]-[#8]",
-    "C=O",
-    "[O;H1]",
-    "[#8;+0]",
-    "[#6,#7;H1]",
-    "[#6;R]",
-    "[R0]",
-    "C@C",
-    "C!@C",
-    "c1ccccc1",
-];
+const BOUNDED_SUBSTRUCTURE_QUERIES: &str = include_str!("../../queries.smarts");
 
 pub(super) fn smarts_query_records_json(path: &Input) -> Result<Vec<Value>, Box<dyn Error>> {
     let mut records = Vec::new();
-    for (record_index, raw_line) in path.text.clone().lines().enumerate() {
+    for (record_index, raw_line) in path.text.lines().enumerate() {
         let line = raw_line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
         let (smarts, title) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
-        match query::parse_smarts(smarts) {
-            Ok(graph) => records.push(json!({
-                "record_index": record_index,
-                "status": "ok",
-                "smarts": smarts,
-                "title": title.trim(),
-                "atom_count": graph.atom_count(),
-                "bond_count": graph.bond_count(),
-            })),
-            Err(_) => records.push(json!({
-                "record_index": record_index,
-                "status": "parse_error",
-                "smarts": smarts,
-                "title": title.trim(),
-                "atom_count": Value::Null,
-                "bond_count": Value::Null,
-            })),
-        }
+        let graph = query::parse_smarts(smarts)?;
+        records.push(
+            json!({"record_index":record_index,"status":"ok","smarts":smarts,
+            "title":title.trim(),"atom_count":graph.atom_count(),"bond_count":graph.bond_count()}),
+        );
     }
     Ok(records)
 }
 
-pub(super) fn substructure_record_json(record: &mut IndexedSmallRecord) -> Value {
-    if record.molecule.perceive().is_err() {
-        return json!({
-            "record_index": record.record_index,
-            "status": "perception_error",
-            "title": record.title,
-            "queries": [],
-        });
-    }
+pub(super) fn substructure_record_json(
+    record: &mut IndexedSmallRecord,
+) -> Result<Value, Box<dyn Error>> {
+    record.molecule.perceive()?;
     let mut queries = Vec::new();
-    for smarts in BOUNDED_SUBSTRUCTURE_QUERIES {
+    for smarts in BOUNDED_SUBSTRUCTURE_QUERIES.lines() {
         let graph =
             query::parse_smarts(smarts).expect("checked-in bounded benchmark SMARTS must parse");
-        let matches = match substructure::find_substructure_matches_with_options(
+        let matches = substructure::find_substructure_matches_with_options(
             &record.molecule,
             &graph,
             substructure::SubstructureMatchOptions {
@@ -95,19 +53,15 @@ pub(super) fn substructure_record_json(record: &mut IndexedSmallRecord) -> Value
                 uniquify: false,
                 ..Default::default()
             },
-        ) {
-            Ok(matches) => matches,
-            Err(error) => return json!({"status":"error","message":error.to_string()}),
-        };
+        )?;
         let mut atom_sets = matches
             .into_iter()
             .map(|query_match| {
-                let atoms = query_match
+                query_match
                     .atoms()
                     .iter()
                     .map(|atom| atom.raw())
-                    .collect::<Vec<_>>();
-                atoms
+                    .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
         atom_sets.sort_unstable();
@@ -116,12 +70,12 @@ pub(super) fn substructure_record_json(record: &mut IndexedSmallRecord) -> Value
             "matches": atom_sets,
         }));
     }
-    json!({
+    Ok(json!({
         "record_index": record.record_index,
         "status": "ok",
         "title": record.title,
         "queries": queries,
-    })
+    }))
 }
 
 pub(crate) fn read_small_records_by_suffix(
@@ -150,9 +104,9 @@ fn interpret_smiles_components(input: &str) -> Result<Vec<Molecule>, Box<dyn Err
 
 pub(crate) fn read_smiles_records(
     path: &Input,
-) -> Result<Vec<IndexedSmilesRecord>, Box<dyn Error>> {
+) -> Result<Vec<IndexedStereoPerceptionRecord>, Box<dyn Error>> {
     let mut records = Vec::new();
-    for (index, raw_line) in path.text.clone().lines().enumerate() {
+    for (index, raw_line) in path.text.lines().enumerate() {
         let line = raw_line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -160,14 +114,16 @@ pub(crate) fn read_smiles_records(
         let mut parts = line.splitn(2, char::is_whitespace);
         let smiles = parts.next().unwrap_or_default().to_owned();
         let title = parts.next().unwrap_or_default().trim().to_owned();
-        let (status, components) = match interpret_smiles_components(&smiles) {
-            Ok(components) => ("ok".to_owned(), components),
-            Err(_) => ("parse_error".to_owned(), Vec::new()),
-        };
-        records.push(IndexedSmilesRecord {
+        if title.starts_with('|') {
+            return Err(boxed_error(
+                "CXSMILES extensions are not supported by Kekule; refusing to discard them",
+            ));
+        }
+        let components = interpret_smiles_components(&smiles)?;
+        records.push(IndexedStereoPerceptionRecord {
             record_index: index,
-            status,
             title,
+            positions: vec![None; components.len()],
             components,
         });
     }
@@ -181,29 +137,16 @@ pub(crate) fn read_stereo_perception_records_by_suffix(
         path.extension().and_then(|ext| ext.to_str()),
         Some("txt" | "smi" | "smiles")
     ) {
-        return read_smiles_records(path)?
-            .into_iter()
-            .map(|record| {
-                Ok(IndexedStereoPerceptionRecord {
-                    record_index: record.record_index,
-                    title: record.title,
-                    positions: vec![None; record.components.len()],
-                    components: record.components,
-                })
-            })
-            .collect();
+        return read_smiles_records(path);
     }
-    let input = path.text.clone();
+    let input = &path.text;
     if matches!(
         path.extension().and_then(|ext| ext.to_str()),
         Some("mol" | "mdl")
     ) {
-        return Ok(vec![stereo_molfile_record(
-            0,
-            &molfile::parse_str(&input)?,
-        )?]);
+        return Ok(vec![stereo_molfile_record(0, &molfile::parse_str(input)?)?]);
     }
-    sdf::parse_str(&input)?
+    sdf::parse_str(input)?
         .records()
         .iter()
         .enumerate()

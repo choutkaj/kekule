@@ -1,4 +1,10 @@
-use crate::*;
+use crate::{boxed_error, dataset::Input};
+use kekule::{
+    dssp,
+    mmcif::{self, MmcifInterpretOptions, MmcifModelSelection},
+};
+use serde_json::{json, Value};
+use std::{collections::BTreeMap, error::Error};
 
 pub(super) fn mmcif_document_json(input: &Input) -> Result<Value, Box<dyn Error>> {
     let document = mmcif::parse_str(&input.text)?;
@@ -44,8 +50,7 @@ pub(super) fn mmcif_document_json(input: &Input) -> Result<Value, Box<dyn Error>
     Ok(json!({"blocks":blocks}))
 }
 pub(super) fn dssp_record_json(fixture_path: &Input) -> Result<Value, Box<dyn Error>> {
-    let input = fixture_path.text.clone();
-    let document = mmcif::parse_str(&input)?;
+    let document = mmcif::parse_str(&fixture_path.text)?;
     let interpretation = mmcif::interpret(
         &document,
         MmcifInterpretOptions {
@@ -64,6 +69,24 @@ pub(super) fn dssp_record_json(fixture_path: &Input) -> Result<Value, Box<dyn Er
         Err(error) => return Err(Box::new(error)),
     };
     let residues = result.residues().collect::<Vec<_>>();
+    for residue in &residues {
+        for value in [
+            residue.phi_degrees(),
+            residue.psi_degrees(),
+            residue.omega_degrees(),
+            residue.tco(),
+            residue.kappa_degrees(),
+            residue.alpha_degrees(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            crate::observation::finite(value)?;
+        }
+        for bond in residue.acceptors().iter().chain(residue.donors()).flatten() {
+            crate::observation::finite(bond.energy_kcal_per_mol)?;
+        }
+    }
     let residues_by_key = residues
         .iter()
         .map(|residue| (residue.key(), *residue))
@@ -89,6 +112,7 @@ pub(super) fn dssp_record_json(fixture_path: &Input) -> Result<Value, Box<dyn Er
                 "chain_break": dssp_chain_break_json(residue.chain_break()),
                 "phi_degrees": residue.phi_degrees(),
                 "psi_degrees": residue.psi_degrees(),
+                "omega_degrees": residue.omega_degrees(),
                 "tco": residue.tco(),
                 "kappa_degrees": residue.kappa_degrees(),
                 "alpha_degrees": residue.alpha_degrees(),
@@ -97,6 +121,11 @@ pub(super) fn dssp_record_json(fixture_path: &Input) -> Result<Value, Box<dyn Er
                 "strand": residue.strand(),
                 "ladders": residue.beta_partners().map(|partner| partner.map(|partner| partner.ladder)),
                 "beta_parallel": residue.beta_partners().map(|partner| partner.map(|partner| partner.parallel)),
+                "beta_partners": residue.beta_partners().map(|partner| partner.map(|partner| {
+                    let source = residues_by_key[&partner.partner].source();
+                    json!({"partner_chain_id":source.chain_author_id.as_ref().unwrap_or(&source.chain_label_id),
+                        "partner_sequence_id":dssp_sequence_id(source),"partner_insertion_code":source.insertion_code})
+                })),
                 "acceptors": residue.acceptors().map(|bond| dssp_bond_json(bond, &residues_by_key)),
                 "donors": residue.donors().map(|bond| dssp_bond_json(bond, &residues_by_key)),
             })

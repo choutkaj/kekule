@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "dataset": "pl-rex",
+  "feature": "io.mmcif.parse",
+  "input_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d",
+  "sha256": "a200548ec4a5f4c257a5482b8ea67ff4f931247e2312a7f91aaceb27b6af42a6",
+  "reference": null,
+  "reference_code_sha256": null,
+  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded.",
+  "cases": 164
+}

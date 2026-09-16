@@ -11,7 +11,7 @@ follows [IUPAC P-9](https://iupac.qmul.ac.uk/BlueBook/P9.html) and the
 [Hanson et al. refinements](https://doi.org/10.1021/acs.jcim.8b00324) used by
 [RDKit's labeler](https://github.com/rdkit/rdkit/tree/Release_2026_03_6/Code/GraphMol/CIPLabeler).
 See the [support contract](stereo-support.md) and
-[benchmark contract](../benchmarks/reference/stereo/SCHEMA.md).
+[current benchmark contract](../benchmarks/GUIDE.md).
 
 ## Running the checks
 

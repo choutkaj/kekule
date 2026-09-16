@@ -11,6 +11,10 @@ environment. Supply a matching PDB/XTC pair containing one connected molecule.
 The PDB provides atom order and bond connectivity for numerical reconstruction;
 this does not establish chemical bond orders. The script records input SHA-256
 hashes and reference-library versions alongside the exported coordinates.
+Schema 2 exports also hash the generated topology and all four coordinate
+artifacts. The Rust checker verifies those hashes, the supplied XTC hash,
+reference versions, units, tolerance and dimensions before comparing values.
+Use a new output directory; existing exports are not overwritten.
 
 ```text
 python benchmarks/reference/trajectory/export_periodic.py --topology SYSTEM.pdb --trajectory INPUT.xtc --output target/periodic-reference
