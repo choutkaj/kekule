@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
+from reference.rdkit import molecule
+from reference.rdkit.molecule import atom_json, graph as molecular_graph, records as molecular_records
 
 
 RDKIT_STRICT_ROTATABLE_BOND_SMARTS = (
@@ -21,26 +22,7 @@ RDKIT_STRICT_ROTATABLE_BOND_SMARTS = (
     "&!$(C([CH3])([CH3])[CH3])&!$([CH3])]"
 )
 
-BOUNDED_SUBSTRUCTURE_QUERIES = (
-    "[#6]",
-    "[!#6]",
-    "A",
-    "a",
-    "[C,N]",
-    "[C,H]",
-    "[H,D]",
-    "[!H]",
-    "[#6]-[#8]",
-    "C=O",
-    "[O;H1]",
-    "[#8;+0]",
-    "[#6,#7;H1]",
-    "[#6;R]",
-    "[R0]",
-    "C@C",
-    "C!@C",
-    "c1ccccc1",
-)
+SUBSTRUCTURE_QUERIES = (Path(__file__).parents[2] / 'queries.smarts').read_text().splitlines()
 
 
 def import_rdkit() -> dict[str, Any]:
@@ -63,22 +45,16 @@ def import_rdkit() -> dict[str, Any]:
 
 def evaluate(feature_id, fixture_path, rdkit):
     # All available components are evaluated. Reference errors stay errors.
-    import importlib.util
-    spec = importlib.util.spec_from_file_location('strict_reference', Path(__file__).with_name('strict.py'))
-    strict = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(strict)
     Chem = rdkit['Chem']
     if feature_id == 'query.smarts':
         return {'records': smarts_query_records(fixture_path, Chem)}
-    from types import SimpleNamespace
-    helpers = SimpleNamespace(read_sdf_blocks=read_sdf_blocks)
     if feature_id == 'stereo.cip':
         records = []
-        for index, (title, mol, fields) in enumerate(strict.records(fixture_path, helpers)) :
+        for index, (title, mol, fields) in enumerate(molecular_records(fixture_path)) :
             records.append({'record_index':index,'title':title,'status':'ok','mol':mol})
         return {'records':[stereo_cip_record(record, Chem) for record in records]}
     records = []
-    for title, mol, fields in strict.records(fixture_path, helpers):
+    for title, mol, fields in molecular_records(fixture_path):
         fragments = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=False)
         for fragment in fragments:
             fragment.RemoveAllConformers()
@@ -143,7 +119,7 @@ def substructure_record(record: dict[str, Any], Chem: Any) -> dict[str, Any]:
         }
 
     queries: list[dict[str, Any]] = []
-    for smarts in BOUNDED_SUBSTRUCTURE_QUERIES:
+    for smarts in SUBSTRUCTURE_QUERIES:
         query = Chem.MolFromSmarts(smarts)
         if query is None:
             raise RuntimeError(f"benchmark SMARTS did not parse in RDKit: {smarts}")
@@ -268,21 +244,6 @@ def rotatable_bond_record(
     }
 
 
-def read_sdf_blocks(fixture_path: Path) -> list[str]:
-    text = fixture_path.read_text(encoding="utf-8", errors="replace")
-    blocks: list[str] = []
-    current: list[str] = []
-    for line in text.splitlines():
-        if line == "$$$$":
-            blocks.append("\n".join(current) + "\n")
-            current = []
-        else:
-            current.append(line)
-    if current:
-        blocks.append("\n".join(current) + "\n")
-    return blocks
-
-
 def ring_record(record: dict[str, Any]) -> dict[str, Any]:
     from rdkit import Chem
 
@@ -332,15 +293,6 @@ def basic_atom_json(atom: Any) -> dict[str, Any]:
         "atom_map": atom.GetAtomMapNum() or None,
         "aromatic": atom.GetIsAromatic(),
     }
-
-
-def molecular_graph(mol):
-    import importlib.util
-    from types import SimpleNamespace
-    spec = importlib.util.spec_from_file_location('strict_graph', Path(__file__).with_name('strict.py'))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.graph(mol, SimpleNamespace(atom_json=atom_json))
 
 
 def perceived_atom_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -510,7 +462,7 @@ def stereo_cip_record(record: dict[str, Any], Chem: Any) -> dict[str, Any]:
     if prepared is None:
         return {**failure, "status": "sanitize_error"}
     try:
-        Chem.AssignCIPLabels(prepared)
+        Chem.AssignCIPLabels(prepared, maxRecursiveIterations=1_000_000)
     except Exception:
         return {**failure, "status": "cip_error"}
     atom_descriptors = cip_atom_descriptors(prepared)
@@ -582,33 +534,6 @@ def clone_and_sanitize(mol: Any) -> Any | None:
     except Exception:
         return None
     return cloned
-
-
-def atom_json(atom: Any) -> dict[str, Any]:
-    radical, unpaired_electrons = radical_json(atom)
-    return {
-        "index": atom.GetIdx(),
-        "atomic_number": atom.GetAtomicNum(),
-        "symbol": atom.GetSymbol(),
-        "formal_charge": atom.GetFormalCharge(),
-        "isotope": atom.GetIsotope() or None,
-        "explicit_hydrogens": atom.GetNumExplicitHs(),
-        "atom_map": atom.GetAtomMapNum() or None,
-        "radical": radical,
-        "unpaired_electrons": unpaired_electrons,
-        "aromatic": atom.GetIsAromatic(),
-    }
-
-
-def radical_json(atom: Any) -> tuple[str | None, int]:
-    unpaired_electrons = atom.GetNumRadicalElectrons()
-    if unpaired_electrons == 0:
-        return None, 0
-    if unpaired_electrons == 1:
-        return "DOUBLET", 1
-    if unpaired_electrons == 2:
-        return "TRIPLET", 2
-    return None, unpaired_electrons
 
 
 def valence_atom_json(atom: Any) -> dict[str, Any]:

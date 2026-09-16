@@ -1,8 +1,14 @@
-use super::*;
+use crate::{
+    compare::{differences, normalize_benchmark_for_comparison_in_place},
+    dataset::{Dataset, Input},
+    features::evaluate,
+};
+use kekule::{molfile, smiles};
+use serde_json::{json, Value};
+use std::{collections::BTreeSet, fs, path::Path};
 fn output(feature: &str, path: &str, text: &str) -> Value {
     evaluate(
         feature,
-        "regression",
         &Input {
             path: path.into(),
             text: text.into(),
@@ -13,7 +19,7 @@ fn output(feature: &str, path: &str, text: &str) -> Value {
 fn compare(feature: &str, mut a: Value, mut b: Value) -> bool {
     normalize_benchmark_for_comparison_in_place(feature, &mut a);
     normalize_benchmark_for_comparison_in_place(feature, &mut b);
-    first_json_diff("$", &a, &b).is_none()
+    differences(feature, &a, &b).exact()
 }
 
 #[test]
@@ -28,6 +34,48 @@ fn query_records_separate_the_query_from_the_source_title() {
     assert_eq!(value["records"][0]["smarts"], "[#6]-[#8]");
     assert_eq!(value["records"][0]["title"], "external query");
     assert_eq!(value["records"][0]["atom_count"], 2);
+}
+
+#[test]
+fn cxsmiles_is_never_silently_reduced_to_plain_smiles() {
+    for feature in [
+        "io.smiles.parse",
+        "stereo.representation",
+        "io.smiles.isomeric",
+        "descriptor.molecular",
+    ] {
+        let input = Input {
+            path: "input.smi".into(),
+            text: "F[C@H](Cl)Br |&1:1| name".into(),
+        };
+        assert!(evaluate(feature, &input)
+            .unwrap_err()
+            .to_string()
+            .contains("CXSMILES"));
+    }
+}
+
+#[test]
+fn observation_schema_requires_measured_nullable_fields_and_rejects_extras() {
+    let original = output("io.smiles.parse", "input.smi", "CC");
+    crate::observation::validate("io.smiles.parse", &original).unwrap();
+    for field in ["isotope", "atom_map", "radical"] {
+        let mut value = original.clone();
+        value["records"][0]["components"][0]["atoms"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            crate::observation::validate("io.smiles.parse", &value).is_err(),
+            "{field}"
+        );
+    }
+    let mut value = original;
+    value["records"][0]["unexpected"] = json!(true);
+    assert!(crate::observation::validate("io.smiles.parse", &value).is_err());
+    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(crate::observation::finite(value).is_err());
+    }
 }
 #[test]
 fn stereo_and_coordinate_units_match_the_reference_conventions() {
@@ -195,7 +243,7 @@ $$$$
     .to_owned()
 }
 
-fn simple_sdf_record(title: &str) -> String {
+pub(crate) fn simple_sdf_record(title: &str) -> String {
     format!(
         "{title}
   xtask-test

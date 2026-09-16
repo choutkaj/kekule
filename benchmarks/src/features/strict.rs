@@ -1,7 +1,20 @@
 //! Direct observations of public molecular APIs. No reference chemistry here.
 use super::chemistry::{atom_json, bond_order_json};
 use super::io::read_stereo_perception_records_by_suffix;
-use crate::*;
+use crate::{boxed_error, dataset::Input};
+use kekule::{
+    core::{
+        AtomId, AxisOrientation, BondOrder, DoubleBondOrientation, Molecule, StereoCarrier,
+        StereoElementKind, TetrahedralOrientation,
+    },
+    molfile,
+    perception::valence,
+    sdf::{self, SdfRecordInterpretation},
+    smiles,
+    stereo::{self, StereoCandidate},
+};
+use serde_json::{json, Value};
+use std::{collections::BTreeMap, error::Error};
 
 pub(super) fn molecular(feature: &str, input: &Input) -> Result<Value, Box<dyn Error>> {
     let mut records = read_stereo_perception_records_by_suffix(input)?;
@@ -74,6 +87,9 @@ pub(super) fn graph(
                 let point = positions
                     .position_at(id.index())?
                     .value_in(kekule::units::ANGSTROM)?;
+                for coordinate in [point.x, point.y, point.z] {
+                    crate::observation::finite(coordinate)?;
+                }
                 value["coord"] = json!([point.x, point.y, point.z]);
             }
             Ok(value)
@@ -195,7 +211,7 @@ pub(super) fn write(feature: &str, input: &Input) -> Result<Value, Box<dyn Error
     let mut written = Vec::new();
     if feature.starts_with("io.smiles.") {
         for record in super::io::read_smiles_records(input)? {
-            if record.status != "ok" || record.components.is_empty() {
+            if record.components.is_empty() {
                 return Err(boxed_error("SMILES parse failed"));
             }
             let mode = match feature {
@@ -234,7 +250,7 @@ pub(super) fn write(feature: &str, input: &Input) -> Result<Value, Box<dyn Error
                     if reparsed.len() != 1 {
                         return Err(boxed_error("canonical output changed component count"));
                     }
-                    let mut reparsed = reparsed[0].clone();
+                    let mut reparsed = reparsed.into_iter().next().unwrap();
                     reparsed.perceive()?;
                     if smiles::write_molecule(&reparsed, smiles::SmilesWriteOptions { mode })?
                         != original

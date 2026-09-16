@@ -1,0 +1,15 @@
+{
+  "schema": 2,
+  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "dataset": "enamine-diversity",
+  "feature": "io.smiles.isomeric",
+  "input_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+  "sha256": "21710f9b3d088ae4a163a3a027928115b009d9d2df6f017244d0902a2cf64b8f",
+  "reference": {
+    "tool": "rdkit",
+    "version": "2026.03.3"
+  },
+  "reference_code_sha256": null,
+  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded. Corrected 2881 source SMILES cases with CXSMILES extensions by independent RDKit evaluation using adapter SHA-256 18d9a3b6f0e39794720a5ca1c906d1a47c868fd4e2405bdc7506cbe369bba9e8; all other stored lines retained verbatim.",
+  "cases": 50240
+}

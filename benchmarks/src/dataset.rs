@@ -1,4 +1,12 @@
-use crate::*;
+use crate::boxed_error;
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::{
+    collections::BTreeSet,
+    error::Error,
+    fs,
+    path::{Path, PathBuf},
+};
 
 pub(crate) const DATASETS: &[&str] = &[
     "pubchem-100k",
@@ -230,6 +238,7 @@ pub(crate) fn split_records(input: &Input, count: usize) -> Result<Vec<String>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     #[test]
     fn selection_does_not_exclude_inputs_based_on_their_names() {
         let dataset = Dataset {

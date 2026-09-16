@@ -1,0 +1,15 @@
+{
+  "schema": 2,
+  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "dataset": "smoke",
+  "feature": "io.smiles.parse",
+  "input_lock_sha256": "f071f66843ebccd2fe0a0417db961f5ce228d01083c84943e2357afab21fedae",
+  "sha256": "b124d977e0164dce7cd79092c8f79df14892cc09ec30d65bf26d558bb0ef4045",
+  "reference": {
+    "tool": "rdkit",
+    "version": "2026.03.3"
+  },
+  "reference_code_sha256": null,
+  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded.",
+  "cases": 20
+}

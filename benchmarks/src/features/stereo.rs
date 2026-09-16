@@ -1,5 +1,11 @@
 use super::io::IndexedStereoPerceptionRecord;
-use crate::*;
+use crate::boxed_error;
+use kekule::{
+    core::{AtomId, Molecule, StereoDescriptor, StereoElementKind, StereoGroupKind},
+    stereo,
+};
+use serde_json::{json, Value};
+use std::{collections::BTreeMap, error::Error};
 fn offset_object_u64(value: &mut Value, key: &str, offset: u64) {
     if let Some(number) = value.get(key).and_then(Value::as_u64) {
         value[key] = json!(number + offset);
@@ -72,8 +78,7 @@ pub(crate) fn cip_atom_descriptors_json(
         .filter_map(|(id, element)| match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => mol
                 .cip_descriptor(id)
-                .ok()
-                .flatten()
+                .expect("live stereo element")
                 .and_then(|descriptor| {
                     let atom_index = *atom_index.get(&stereo.center)?;
                     Some(json!({
@@ -102,8 +107,7 @@ pub(crate) fn cip_bond_descriptors_json(
         .filter_map(|(id, element)| match &element.kind {
             StereoElementKind::DoubleBond(stereo) => mol
                 .cip_descriptor(id)
-                .ok()
-                .flatten()
+                .expect("live stereo element")
                 .and_then(|descriptor| {
                     let begin_atom_index = *atom_index.get(&stereo.left)?;
                     let end_atom_index = *atom_index.get(&stereo.right)?;
@@ -113,22 +117,20 @@ pub(crate) fn cip_bond_descriptors_json(
                         "descriptor": stereo_descriptor_json(descriptor),
                     }))
                 }),
-            StereoElementKind::Axis(stereo) => {
-                mol.cip_descriptor(id)
-                    .ok()
-                    .flatten()
-                    .and_then(|descriptor| {
-                        let bond = mol.bond(stereo.axis).ok()?;
-                        let (begin, end) = bond.endpoints();
-                        let begin_atom_index = *atom_index.get(&begin)?;
-                        let end_atom_index = *atom_index.get(&end)?;
-                        Some(json!({
-                            "begin_atom_index": begin_atom_index,
-                            "end_atom_index": end_atom_index,
-                            "descriptor": stereo_descriptor_json(descriptor),
-                        }))
-                    })
-            }
+            StereoElementKind::Axis(stereo) => mol
+                .cip_descriptor(id)
+                .expect("live stereo element")
+                .and_then(|descriptor| {
+                    let bond = mol.bond(stereo.axis).expect("live stereo axis");
+                    let (begin, end) = bond.endpoints();
+                    let begin_atom_index = *atom_index.get(&begin)?;
+                    let end_atom_index = *atom_index.get(&end)?;
+                    Some(json!({
+                        "begin_atom_index": begin_atom_index,
+                        "end_atom_index": end_atom_index,
+                        "descriptor": stereo_descriptor_json(descriptor),
+                    }))
+                }),
             StereoElementKind::Tetrahedral(_) => None,
         })
         .collect::<Vec<_>>();

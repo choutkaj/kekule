@@ -20,6 +20,12 @@ runner = load(Path(__file__).parent / 'run.py', 'benchmark_reference')
 
 
 class RunnerTests(unittest.TestCase):
+    def test_original_failure_is_not_replaced_by_empty_collection(self):
+        adapter = (SimpleNamespace(evaluate=lambda *args: {'status':'reference_error', 'message':'specific DSSP failure', 'residues':[]}), {}, {'tool':'biopython','version':'test'})
+        with patch.object(runner, 'adapter', return_value=adapter):
+            value = runner.run({'feature':'bio.secondary-structure.dssp','inputs':[{'path':'input.cif','text':'data_x'}]})
+        self.assertIn('specific DSSP failure', value['results'][0]['message'])
+
     def test_reference_errors_are_isolated_and_later_inputs_still_run(self):
         calls = []
         def evaluate(feature, source, dependencies):

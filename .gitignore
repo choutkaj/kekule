@@ -12,9 +12,12 @@ __pycache__/
 .mypy_cache/
 fuzz/artifacts/
 fuzz/target/
-benchmarks/corpora/*/data/
+# Full scientific datasets stay local; only smoke payloads and provenance travel.
+/benchmarks/corpora/*/data/
+!/benchmarks/corpora/smoke/data/
+!/benchmarks/corpora/smoke/data/**
+/benchmarks/goldens/**
+!/benchmarks/goldens/*/
+!/benchmarks/goldens/*/*.jsonl.meta.json
+!/benchmarks/goldens/smoke/*.jsonl.gz
 tools/atomic-data/cache/
-!benchmarks/corpora/smoke/data/
-!benchmarks/corpora/smoke/data/**
-!benchmarks/corpora/tiny/data/
-!benchmarks/corpora/tiny/data/**

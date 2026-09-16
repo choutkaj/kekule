@@ -53,6 +53,15 @@ fn unavailable_goldens_stop_the_cli_without_reporting_case_failures() {
         assert!(!stdout.contains("agree"), "{stdout}");
         assert!(!stdout.contains("errors"), "{stdout}");
         assert!(fs::read(&cases).unwrap().is_empty());
+        let summary: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report).unwrap()).unwrap();
+        assert_eq!(summary["complete"], false);
+        assert_eq!(summary["passed"], false);
+        assert!(summary["error"]
+            .as_str()
+            .unwrap()
+            .contains("cannot load stored goldens"));
+        assert_eq!(summary["results"], serde_json::json!([]));
         assert_eq!(golden.exists(), !missing);
         fs::remove_file(&report).unwrap();
         fs::remove_file(&cases).unwrap();

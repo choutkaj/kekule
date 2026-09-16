@@ -1,12 +1,28 @@
-use crate::*;
+use crate::{
+    boxed_error,
+    compare::{differences, normalize_benchmark_for_comparison_in_place},
+    dataset::{safe_join, sha256, split_records, Dataset, Input, DATASETS},
+    features::{self, evaluate},
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env,
+    error::Error,
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    process,
+};
 #[cfg(test)]
 mod storage_tests;
 mod stored;
 use indicatif::{ProgressBar, ProgressFinish, ProgressStyle};
 use rayon::prelude::*;
-use std::io::{BufRead, BufReader};
+use std::io::{Read, Seek, SeekFrom};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use stored::{GeneratedGoldens, StoredGoldens};
+use stored::{GeneratedGoldens, Metadata, StoredGoldens};
 
 const FEATURES: &[&str] = &[
     "io.smiles.parse",
@@ -63,7 +79,13 @@ fn failure(value: &Value) -> Option<String> {
         Value::Object(fields) => {
             if let Some(status) = fields.get("status").and_then(Value::as_str) {
                 if status != "ok" {
-                    return Some(format!("adapter returned {status}"));
+                    return Some(
+                        fields
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or(status)
+                            .to_owned(),
+                    );
                 }
             }
             if fields
@@ -79,7 +101,7 @@ fn failure(value: &Value) -> Option<String> {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Reference {
     tool: String,
@@ -94,7 +116,7 @@ struct ReferenceResponse {
     time_ms: f64,
 }
 
-fn reference_run(
+fn reference_batch(
     python: &Path,
     request: &Value,
     count: usize,
@@ -105,12 +127,54 @@ fn reference_run(
         .stdout(process::Stdio::piped())
         .stderr(process::Stdio::piped())
         .spawn()?;
-    child
-        .stdin
-        .take()
-        .ok_or("missing reference stdin")?
-        .write_all(serde_json::to_string(request)?.as_bytes())?;
-    let output = child.wait_with_output()?;
+    let mut input = child.stdin.take().ok_or("missing reference stdin")?;
+    let request = serde_json::to_vec(request)?;
+    let input_thread = std::thread::spawn(move || input.write_all(&request));
+    let mut stdout = child.stdout.take().ok_or("missing reference stdout")?;
+    let mut stderr = child.stderr.take().ok_or("missing reference stderr")?;
+    let out_thread = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let err_thread = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let start = Instant::now();
+    let mut timed_out = false;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if start.elapsed() > std::time::Duration::from_secs(300) {
+            timed_out = true;
+            child.kill()?;
+            break child.wait()?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    if timed_out {
+        return Err(boxed_error(
+            "reference exceeded its 300-second resource limit",
+        ));
+    }
+    let stdout = out_thread
+        .join()
+        .map_err(|_| "reference stdout reader panicked")??;
+    let stderr = err_thread
+        .join()
+        .map_err(|_| "reference stderr reader panicked")??;
+    let input_result = input_thread
+        .join()
+        .map_err(|_| "reference stdin writer panicked")?;
+    let output = process::Output {
+        status,
+        stdout,
+        stderr,
+    };
+    if output.status.success() {
+        input_result?;
+    }
     if !output.status.success() {
         return Err(boxed_error(format!(
             "reference process failed: {}",
@@ -122,6 +186,66 @@ fn reference_run(
         return Err(boxed_error("invalid reference result count or time"));
     }
     Ok(response)
+}
+
+/// Retry a failed process batch one case at a time so a crashing reference
+/// cannot erase the observations of unrelated cases.
+fn reference_run(
+    python: &Path,
+    request: &Value,
+    count: usize,
+) -> Result<ReferenceResponse, Box<dyn Error>> {
+    isolate_reference(request, count, |request, count| {
+        reference_batch(python, request, count)
+    })
+}
+fn isolate_reference(
+    request: &Value,
+    count: usize,
+    mut run: impl FnMut(&Value, usize) -> Result<ReferenceResponse, Box<dyn Error>>,
+) -> Result<ReferenceResponse, Box<dyn Error>> {
+    match run(request, count) {
+        Ok(response) => Ok(response),
+        Err(batch_error) => {
+            let description = run(&json!({"feature":request["feature"],"describe":true}), 0)?;
+            let field = if request.get("written").is_some() {
+                "written"
+            } else {
+                "inputs"
+            };
+            let mut response = ReferenceResponse {
+                reference: description.reference,
+                results: Vec::new(),
+                time_ms: 0.0,
+            };
+            for item in request[field]
+                .as_array()
+                .ok_or("invalid reference request")?
+            {
+                if count == 1 {
+                    response.results.push(Outcome::Error {
+                        message: batch_error.to_string(),
+                    });
+                } else {
+                    match run(&json!({"feature":request["feature"],field:[item]}), 1) {
+                        Ok(single) => {
+                            if single.reference != response.reference {
+                                return Err(boxed_error(
+                                    "reference version changed during isolation",
+                                ));
+                            }
+                            response.time_ms += single.time_ms;
+                            response.results.extend(single.results);
+                        }
+                        Err(error) => response.results.push(Outcome::Error {
+                            message: error.to_string(),
+                        }),
+                    }
+                }
+            }
+            Ok(response)
+        }
+    }
 }
 
 struct Options {
@@ -233,45 +357,49 @@ struct Summary {
     agrees: usize,
     disagrees: usize,
     errors: usize,
+    not_applicable: usize,
+    input_errors: usize,
+    reference_errors: usize,
+    kekule_errors: usize,
+    writer_validation_errors: usize,
+    observation_errors: usize,
+    exact_agrees: usize,
+    structural_differences: usize,
+    numerical_differences: usize,
+    golden: Option<Metadata>,
     kekule_ms: f64,
     reference_ms: f64,
 }
 
-fn comparison(
-    feature: &str,
-    expected: &Outcome,
-    actual: &Outcome,
-) -> (&'static str, Option<String>) {
+fn comparison(feature: &str, expected: &Outcome, actual: &Outcome) -> (&'static str, Value) {
     match (expected, actual) {
         (Outcome::Ok { value: expected }, Outcome::Ok { value: actual }) => {
-            let collection = match feature {
-                "io.mmcif.parse" => "blocks",
-                "bio.secondary-structure.dssp" => "residues",
-                _ => "records",
-            };
-            if [expected, actual].iter().any(|value| {
-                value
-                    .get(collection)
-                    .and_then(Value::as_array)
-                    .is_none_or(Vec::is_empty)
-            }) {
-                return ("error", Some(format!("missing or empty {collection}")));
-            }
-            if let Some(error) = failure(expected).or_else(|| failure(actual)) {
-                return ("error", Some(error));
+            if let Err(error) = crate::observation::validate(feature, expected)
+                .and_then(|()| crate::observation::validate(feature, actual))
+            {
+                return ("error", json!({"cause":error.to_string()}));
             }
             let mut expected = expected.clone();
             let mut actual = actual.clone();
+            // The public model writer has no title or SDF-property input.
+            // Its source reference remains unmodified in the case report.
+            if feature.starts_with("io.mol.") && features::is_writer(feature) {
+                for record in expected["records"].as_array_mut().unwrap() {
+                    record["title"] = json!("");
+                    record["properties"] = json!([]);
+                }
+            }
             normalize_benchmark_for_comparison_in_place(feature, &mut expected);
             normalize_benchmark_for_comparison_in_place(feature, &mut actual);
-            match first_json_diff("$", &expected, &actual) {
-                None => ("agrees", None),
-                Some(diff) => ("disagrees", Some(diff)),
-            }
+            let diff = differences(feature, &expected, &actual);
+            (
+                if diff.agrees() { "agrees" } else { "disagrees" },
+                json!({"exact":diff.exact(),"differences":diff}),
+            )
         }
         _ => (
             "error",
-            Some("reference or Kekule evaluation failed".into()),
+            json!({"reference_failed":matches!(expected,Outcome::Error{..}),"kekule_failed":matches!(actual,Outcome::Error{..})}),
         ),
     }
 }
@@ -291,13 +419,19 @@ fn json_line<W: Write + ?Sized>(file: &mut W, value: &Value) -> Result<(), Box<d
 }
 
 type ReferenceRunner = fn(&Path, &Value, usize) -> Result<ReferenceResponse, Box<dyn Error>>;
-type Evaluator = fn(&str, &str, &Input) -> Result<Value, Box<dyn Error>>;
+type Evaluator = fn(&str, &Input) -> Result<Value, Box<dyn Error>>;
+enum RunMode {
+    Compare(StoredGoldens),
+    Generate {
+        writer: GeneratedGoldens,
+        metadata: Metadata,
+    },
+}
 struct BatchRun<'a> {
     opts: &'a Options,
     pool: &'a rayon::ThreadPool,
     progress: &'a ProgressBar,
-    stored: Result<StoredGoldens, String>,
-    generated: Option<GeneratedGoldens>,
+    mode: RunMode,
     results: &'a mut (dyn Write + Send + Sync),
     reference: ReferenceRunner,
     evaluate: Evaluator,
@@ -308,7 +442,11 @@ impl BatchRun<'_> {
         if cases.is_empty() {
             return Ok(());
         }
-        if let Some(goldens) = &mut self.generated {
+        if let RunMode::Generate {
+            writer: goldens,
+            metadata,
+        } = &mut self.mode
+        {
             // Explicit generation invokes only the reference. Never evaluate Kekule.
             self.progress.set_message("reference");
             let request = json!({"feature": row.feature, "inputs": cases.iter()
@@ -321,8 +459,19 @@ impl BatchRun<'_> {
                 &request,
                 cases.len(),
             )?;
+            if metadata
+                .reference
+                .as_ref()
+                .is_some_and(|reference| reference != &response.reference)
+            {
+                return Err(boxed_error("mixed reference versions during generation"));
+            }
+            metadata.reference = Some(response.reference.clone());
             row.reference_ms += response.time_ms;
             for (case, expected) in cases.iter().zip(response.results) {
+                if let Outcome::Ok { value } = &expected {
+                    crate::observation::validate(&row.feature, value)?;
+                }
                 json_line(
                     goldens,
                     &json!({"dataset":row.dataset,"feature":row.feature,"id":case.id,
@@ -337,26 +486,35 @@ impl BatchRun<'_> {
             }
             return Ok(());
         }
-        let expected: Vec<_> = cases
+        let RunMode::Compare(stored) = &mut self.mode else {
+            unreachable!()
+        };
+        let expected = cases
             .iter()
-            .map(|case| match &self.stored {
-                Ok(goldens) => goldens.expected(case),
-                Err(error) => Outcome::Error {
-                    message: error.clone(),
-                },
-            })
-            .collect();
+            .map(|case| stored.expected(case))
+            .collect::<Result<Vec<_>, _>>()?;
         self.progress.set_message("Kekule");
         let start = Instant::now();
         let mut actual: Vec<_> = self.pool.install(|| {
             cases
                 .par_iter()
                 .map(|case| {
-                    let value = Outcome::from_result((self.evaluate)(
-                        &row.feature,
-                        &row.dataset,
-                        &case.input,
-                    ));
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        (self.evaluate)(&row.feature, &case.input)
+                    }));
+                    let value = match result {
+                        Ok(result) => Outcome::from_result(result),
+                        Err(payload) => Outcome::Error {
+                            message: format!(
+                                "Kekule panicked: {}",
+                                payload
+                                    .downcast_ref::<String>()
+                                    .map(String::as_str)
+                                    .or_else(|| payload.downcast_ref::<&str>().copied())
+                                    .unwrap_or("unknown panic")
+                            ),
+                        },
+                    };
                     self.progress.inc(1);
                     value
                 })
@@ -377,6 +535,9 @@ impl BatchRun<'_> {
             match (self.reference)(&python, &request, cases.len()) {
                 Ok(response) => {
                     row.reference_ms += response.time_ms;
+                    if stored.metadata.reference.as_ref()!=Some(&response.reference) {
+                        return Err(boxed_error("writer reader version differs from stored reference"));
+                    }
                     actual = response.results;
                 },
                 Err(error) => actual = vec![Outcome::Error { message: format!("writer validation failed: {error}; select its interpreter with --writer-python or KEKULE_WRITER_PYTHON") }; cases.len()],
@@ -387,6 +548,24 @@ impl BatchRun<'_> {
         {
             let (status, difference) = comparison(&row.feature, expected, actual);
             row.cases += 1;
+            row.reference_errors += usize::from(matches!(expected, Outcome::Error { .. }));
+            let implementation_outcome = emitted
+                .as_ref()
+                .map_or(actual, |values| &values[case_index]);
+            row.kekule_errors +=
+                usize::from(matches!(implementation_outcome, Outcome::Error { .. }));
+            row.writer_validation_errors += usize::from(
+                emitted.is_some()
+                    && matches!(implementation_outcome, Outcome::Ok { .. })
+                    && matches!(actual, Outcome::Error { .. }),
+            );
+            row.observation_errors += usize::from(difference.get("cause").is_some());
+            row.exact_agrees += usize::from(difference["exact"].as_bool() == Some(true));
+            row.numerical_differences +=
+                difference["differences"]["numerical"].as_u64().unwrap_or(0) as usize;
+            row.structural_differences += difference["differences"]["structural"]
+                .as_u64()
+                .unwrap_or(0) as usize;
             match status {
                 "agrees" => row.agrees += 1,
                 "disagrees" => row.disagrees += 1,
@@ -413,13 +592,26 @@ impl BatchRun<'_> {
         fixture: Option<&str>,
         message: &str,
     ) -> Result<(), Box<dyn Error>> {
-        row.cases += 1;
-        row.errors += 1;
+        if matches!(self.mode, RunMode::Generate { .. }) && fixture.is_some() {
+            return Err(boxed_error(format!(
+                "cannot generate a reference from invalid input {id}: {message}"
+            )));
+        }
+        if fixture.is_some() {
+            row.cases += 1;
+            row.errors += 1;
+            row.input_errors += 1;
+        } else {
+            row.not_applicable += 1;
+        }
         self.progress.inc(1);
         let outcome = Outcome::Error {
             message: message.into(),
         };
-        if let Some(goldens) = &mut self.generated {
+        if let RunMode::Generate {
+            writer: goldens, ..
+        } = &mut self.mode
+        {
             json_line(
                 goldens,
                 &json!({"dataset":row.dataset,"feature":row.feature,"id":id,
@@ -429,7 +621,7 @@ impl BatchRun<'_> {
             json_line(
                 self.results,
                 &json!({"dataset":row.dataset,"feature":row.feature,"id":id,
-                "fixture":fixture,"record_index":null,"status":"error","difference":message,
+                "fixture":fixture,"record_index":null,"status":if fixture.is_none(){"not_applicable"}else{"input_error"},"difference":message,
                 "expected":outcome,"actual":outcome,"written":null}),
             )
         }
@@ -495,150 +687,212 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         .num_threads(opts.jobs)
         .build()?;
     let mut rows = Vec::new();
-    for id in DATASETS
-        .iter()
-        .filter(|id| opts.dataset == "all" || **id == opts.dataset)
-    {
-        let dataset = Dataset::open(id)?;
-        let selected = dataset.selection(opts.limit)?;
-        for feature in FEATURES
+    let implementation = implementation_identity()?;
+    write_report(
+        &mut report,
+        &opts,
+        &rows,
+        &implementation,
+        false,
+        false,
+        None,
+    )?;
+    let execution = (|| -> Result<(), Box<dyn Error>> {
+        for id in DATASETS
             .iter()
-            .filter(|feature| opts.feature == "all" || **feature == opts.feature)
+            .filter(|id| opts.dataset == "all" || **id == opts.dataset)
         {
-            let mut row = Summary {
-                dataset: id.to_string(),
-                feature: feature.to_string(),
-                source_ids: selected.len(),
-                ..Summary::default()
-            };
-            let fixtures = dataset.fixtures(feature);
-            let progress = ProgressBar::new(progress_length(&dataset, &selected, &fixtures)?)
-                .with_style(
-                    ProgressStyle::with_template(
-                        "{prefix} {bar:20} {pos}/{len} {percent:>3}% {msg}",
-                    )?
-                    .progress_chars("██░"),
-                )
-                .with_prefix(format!("{id} {feature}"))
-                .with_finish(ProgressFinish::AbandonWithMessage("stopped".into()));
-            progress.enable_steady_tick(std::time::Duration::from_millis(100));
-            progress.set_message(if opts.generate {
-                "reference"
-            } else {
-                "loading stored goldens"
-            });
-            let golden_path = opts.goldens.join(id).join(format!("{feature}.jsonl.gz"));
-            let (stored, generated) = if opts.generate {
-                fs::create_dir_all(golden_path.parent().ok_or("golden path has no parent")?)?;
-                (
-                    Err("generation does not read goldens".into()),
-                    Some(GeneratedGoldens::create(&golden_path)?),
-                )
-            } else {
-                (
-                    Ok(StoredGoldens::load(&golden_path, id, feature, &selected)?),
+            let dataset = Dataset::open(id)?;
+            let selected = dataset.selection(opts.limit)?;
+            for feature in FEATURES
+                .iter()
+                .filter(|feature| opts.feature == "all" || **feature == opts.feature)
+            {
+                let mut row = Summary {
+                    dataset: id.to_string(),
+                    feature: feature.to_string(),
+                    source_ids: selected.len(),
+                    ..Summary::default()
+                };
+                let fixtures = dataset.fixtures(feature);
+                let progress = ProgressBar::new(progress_length(&dataset, &selected, &fixtures)?)
+                    .with_style(
+                        ProgressStyle::with_template(
+                            "{prefix} {bar:20} {pos}/{len} {percent:>3}% {msg}",
+                        )?
+                        .progress_chars("██░"),
+                    )
+                    .with_prefix(format!("{id} {feature}"))
+                    .with_finish(ProgressFinish::AbandonWithMessage("stopped".into()));
+                progress.enable_steady_tick(std::time::Duration::from_millis(100));
+                progress.set_message(if opts.generate {
+                    "reference"
+                } else {
+                    "loading stored goldens"
+                });
+                let golden_path = opts.goldens.join(id).join(format!("{feature}.jsonl.gz"));
+                let lock_hash =
+                    stored::text_hash(&fs::read_to_string(dataset.root.join("sources.lock.json"))?);
+                let mode = if opts.generate {
+                    fs::create_dir_all(golden_path.parent().ok_or("golden parent missing")?)?;
+                    RunMode::Generate {
+                        writer: GeneratedGoldens::create(&golden_path)?,
+                        metadata: Metadata {
+                            schema: 2,
+                            contract_sha256: stored::contract_hash(),
+                            dataset: id.to_string(),
+                            feature: feature.to_string(),
+                            input_lock_sha256: lock_hash,
+                            sha256: String::new(),
+                            reference: None,
+                            reference_code_sha256: Some(stored::reference_code_hash()?),
+                            origin: "independent generation".into(),
+                            cases: 0,
+                        },
+                    }
+                } else {
+                    let stored = StoredGoldens::load(&golden_path, id, feature, &lock_hash)?;
+                    row.golden = Some(stored.metadata.clone());
+                    RunMode::Compare(stored)
+                };
+                let mut run = BatchRun {
+                    opts: &opts,
+                    pool: &pool,
+                    progress: &progress,
+                    mode,
+                    results: &mut *results,
+                    reference: reference_run,
+                    evaluate,
+                };
+                let mut seen = BTreeSet::new();
+                let mut pending = Vec::new();
+                for fixture in fixtures {
+                    let members = dataset.members(&fixture)?;
+                    if !members.iter().any(|id| selected.contains(id)) {
+                        continue;
+                    }
+                    let read = (|| -> Result<_, Box<dyn Error>> {
+                        let path = safe_join(&dataset.root, &fixture)?;
+                        let input = Input::read(&path)?;
+                        dataset.verify(&fixture, &input)?;
+                        Ok((path, split_records(&input, members.len())?))
+                    })();
+                    match read {
+                        Ok((path, texts)) => {
+                            if members.len() == 1 && texts.len() > 1 {
+                                progress.inc_length((texts.len() - 1) as u64);
+                            }
+                            for (index, text) in texts.into_iter().enumerate() {
+                                let id = if members.len() == 1 {
+                                    &members[0]
+                                } else {
+                                    &members[index]
+                                };
+                                if !selected.contains(id) {
+                                    continue;
+                                }
+                                seen.insert(id.clone());
+                                pending.push(Case {
+                                    id: id.clone(),
+                                    fixture: fixture.clone(),
+                                    index,
+                                    input: Input {
+                                        path: path.clone(),
+                                        text,
+                                    },
+                                });
+                                if pending.len() == 256 {
+                                    run.batch(&pending, &mut row)?;
+                                    pending.clear();
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            run.batch(&pending, &mut row)?;
+                            pending.clear();
+                            for id in members.iter().filter(|id| selected.contains(*id)) {
+                                seen.insert(id.clone());
+                                run.input_error(&mut row, id, Some(&fixture), &error.to_string())?;
+                            }
+                        }
+                    }
+                }
+                run.batch(&pending, &mut row)?;
+                for id in selected.difference(&seen) {
+                    run.input_error(&mut row, id, None, "no source input in the required format")?;
+                }
+                match run.mode {
+                    RunMode::Generate {
+                        writer,
+                        mut metadata,
+                    } => {
+                        metadata.cases = row.cases + row.not_applicable;
+                        writer.finish(metadata)?;
+                    }
+                    RunMode::Compare(mut stored) => {
+                        progress.set_message("validate remaining stored records");
+                        stored.finish()?;
+                    }
+                }
+                progress.finish_and_clear();
+                if opts.generate {
+                    println!(
+                        "{} {}: stored {} reference outcomes ({} errors) in {}",
+                        row.dataset,
+                        row.feature,
+                        row.cases,
+                        row.errors,
+                        golden_path.display()
+                    );
+                } else {
+                    println!(
+                        "{} {}: {}/{} agree; {} disagree; {} errors",
+                        row.dataset, row.feature, row.agrees, row.cases, row.disagrees, row.errors
+                    );
+                }
+                rows.push(row);
+                write_report(
+                    &mut report,
+                    &opts,
+                    &rows,
+                    &implementation,
+                    false,
+                    false,
                     None,
-                )
-            };
-            let mut run = BatchRun {
-                opts: &opts,
-                pool: &pool,
-                progress: &progress,
-                stored,
-                generated,
-                results: &mut *results,
-                reference: reference_run,
-                evaluate,
-            };
-            let mut seen = BTreeSet::new();
-            let mut pending = Vec::new();
-            for fixture in fixtures {
-                let members = dataset.members(&fixture)?;
-                if !members.iter().any(|id| selected.contains(id)) {
-                    continue;
-                }
-                let read = (|| -> Result<_, Box<dyn Error>> {
-                    let path = safe_join(&dataset.root, &fixture)?;
-                    let input = Input::read(&path)?;
-                    dataset.verify(&fixture, &input)?;
-                    Ok((path, split_records(&input, members.len())?))
-                })();
-                match read {
-                    Ok((path, texts)) => {
-                        if members.len() == 1 && texts.len() > 1 {
-                            progress.inc_length((texts.len() - 1) as u64);
-                        }
-                        for (index, text) in texts.into_iter().enumerate() {
-                            let id = if members.len() == 1 {
-                                &members[0]
-                            } else {
-                                &members[index]
-                            };
-                            if !selected.contains(id) {
-                                continue;
-                            }
-                            seen.insert(id.clone());
-                            pending.push(Case {
-                                id: id.clone(),
-                                fixture: fixture.clone(),
-                                index,
-                                input: Input {
-                                    path: path.clone(),
-                                    text,
-                                },
-                            });
-                            if pending.len() == 256 {
-                                run.batch(&pending, &mut row)?;
-                                pending.clear();
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        for id in members.iter().filter(|id| selected.contains(*id)) {
-                            seen.insert(id.clone());
-                            run.input_error(&mut row, id, Some(&fixture), &error.to_string())?;
-                        }
-                    }
-                }
+                )?;
             }
-            run.batch(&pending, &mut row)?;
-            for id in selected.difference(&seen) {
-                run.input_error(&mut row, id, None, "no source input in the required format")?;
-            }
-            if let Some(generated) = run.generated.take() {
-                generated.finish()?;
-            }
-            progress.finish_and_clear();
-            if opts.generate {
-                println!(
-                    "{} {}: stored {} reference outcomes ({} errors) in {}",
-                    row.dataset,
-                    row.feature,
-                    row.cases,
-                    row.errors,
-                    golden_path.display()
-                );
-            } else {
-                println!(
-                    "{} {}: {}/{} agree; {} disagree; {} errors",
-                    row.dataset, row.feature, row.agrees, row.cases, row.disagrees, row.errors
-                );
-            }
-            rows.push(row);
         }
+        Ok(())
+    })();
+    if let Err(error) = execution {
+        write_report(
+            &mut report,
+            &opts,
+            &rows,
+            &implementation,
+            false,
+            false,
+            Some(error.to_string()),
+        )?;
+        return Err(error);
     }
     let passed = !rows.is_empty()
+        && rows.iter().any(|row| row.cases > 0)
         && rows.iter().all(|row| {
-            row.cases > 0
-                && if opts.generate {
-                    row.errors == 0
-                } else {
-                    row.agrees == row.cases
-                }
+            if opts.generate {
+                row.errors == 0
+            } else {
+                row.agrees == row.cases
+            }
         });
-    serde_json::to_writer_pretty(
+    write_report(
         &mut report,
-        &json!({"mode":if opts.generate { "generate" } else { "compare" },"passed":passed,"goldens":opts.goldens,"cases":if opts.generate { None } else { Some(result_path) },"results":rows}),
+        &opts,
+        &rows,
+        &implementation,
+        true,
+        passed,
+        None,
     )?;
     println!("Report: {}", opts.output.display());
     if !passed {
@@ -648,6 +902,46 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             "benchmark comparison failed; see report"
         }));
     }
+    Ok(())
+}
+
+fn implementation_identity() -> Result<Value, Box<dyn Error>> {
+    let git = |args: &[&str]| -> Option<String> {
+        let output = process::Command::new("git")
+            .args(args)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        Some(String::from_utf8(output.stdout).ok()?.trim().into())
+    };
+    let executable = stored::file_hash(&env::current_exe()?)?;
+    let status = git(&["status", "--porcelain"]);
+    Ok(
+        json!({"revision":git(&["rev-parse","HEAD"]),"dirty":status.as_ref().map(|status|!status.is_empty()),"working_tree_status_sha256":status.as_ref().map(|status|sha256(status.as_bytes())),
+        "executable_sha256":executable,"reference_code_sha256":stored::reference_code_hash()?,"contract_sha256":stored::contract_hash()}),
+    )
+}
+fn write_report(
+    file: &mut fs::File,
+    opts: &Options,
+    rows: &[Summary],
+    implementation: &Value,
+    complete: bool,
+    passed: bool,
+    error: Option<String>,
+) -> Result<(), Box<dyn Error>> {
+    file.seek(SeekFrom::Start(0))?;
+    file.set_len(0)?;
+    serde_json::to_writer_pretty(
+        &mut *file,
+        &json!({"schema":2,"mode":if opts.generate{"generate"}else{"compare"},
+        "complete":complete,"passed":passed,"error":error,"implementation":implementation,"goldens":opts.goldens,
+        "cases":if opts.generate{None}else{Some(opts.output.with_extension("cases.jsonl"))},"results":rows}),
+    )?;
+    file.flush()?;
     Ok(())
 }
 
@@ -676,7 +970,7 @@ mod tests {
         let actual = Outcome::Ok {
             value: json!({"records":[{"x":1,"extra":0}]}),
         };
-        assert_eq!(comparison("test", &expected, &actual).0, "disagrees");
+        assert_eq!(comparison("test", &expected, &actual).0, "error");
     }
     #[test]
     fn protocol_rejects_ambiguous_outcomes_and_extra_metadata() {

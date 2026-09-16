@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "dataset": "enamine-diversity",
+  "feature": "io.mmcif.parse",
+  "input_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+  "sha256": "b39bce125d1e08a73f12a698a663f79cda2ca5778e4b5ecd7923a458ef506c6b",
+  "reference": null,
+  "reference_code_sha256": null,
+  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded.",
+  "cases": 50240
+}
