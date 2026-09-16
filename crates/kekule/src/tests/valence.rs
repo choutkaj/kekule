@@ -502,3 +502,39 @@ fn fused_aromatic_valence_comes_from_localized_bond_orders() {
         10
     );
 }
+
+#[test]
+fn represented_valence_exposes_localized_bonds_and_declared_hydrogens() {
+    let molecule = crate::smiles::to_molecules("C[CH2]O").unwrap().remove(0);
+    assert_eq!(
+        valence_api::represented_valence(&molecule, AtomId::new(0)),
+        Ok(1)
+    );
+    assert_eq!(
+        valence_api::represented_valence(&molecule, AtomId::new(1)),
+        Ok(4)
+    );
+    assert_eq!(
+        valence_api::represented_valence(&molecule, AtomId::new(2)),
+        Ok(1)
+    );
+    assert!(valence_api::represented_valence(&molecule, AtomId::new(99)).is_err());
+    assert!(!molecule.perception().has_valence());
+    let mut editor = MoleculeEditor::new();
+    let mut nitrogen = Atom::new(Element::from_symbol("N").unwrap());
+    nitrogen.hydrogens = HydrogenDeclaration::Fixed(3);
+    let left = editor.add_atom(nitrogen).unwrap();
+    let right = editor
+        .add_atom(Atom::new(Element::from_symbol("Cu").unwrap()))
+        .unwrap();
+    editor.add_bond(left, right, BondOrder::Dative).unwrap();
+    let molecule = editor.finish().unwrap();
+    assert_eq!(
+        valence_api::represented_valence(&molecule, AtomId::new(0)),
+        Ok(3)
+    );
+    assert_eq!(
+        valence_api::represented_valence(&molecule, AtomId::new(1)),
+        Ok(0)
+    );
+}

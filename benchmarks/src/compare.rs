@@ -1,11 +1,6 @@
 use crate::*;
 
-pub(crate) fn first_json_diff(
-    benchmark_id: &str,
-    path: &str,
-    expected: &Value,
-    actual: &Value,
-) -> Option<String> {
+pub(crate) fn first_json_diff(path: &str, expected: &Value, actual: &Value) -> Option<String> {
     match (expected, actual) {
         (Value::Object(expected), Value::Object(actual)) => {
             for key in expected.keys() {
@@ -13,9 +8,7 @@ pub(crate) fn first_json_diff(
                 let Some(actual_value) = actual.get(key) else {
                     return Some(format!("{next} missing from actual output"));
                 };
-                if let Some(diff) =
-                    first_json_diff(benchmark_id, &next, &expected[key], actual_value)
-                {
+                if let Some(diff) = first_json_diff(&next, &expected[key], actual_value) {
                     return Some(diff);
                 }
             }
@@ -35,83 +28,12 @@ pub(crate) fn first_json_diff(
                 ));
             }
             for (index, (expected_value, actual_value)) in expected.iter().zip(actual).enumerate() {
-                if let Some(diff) = first_json_diff(
-                    benchmark_id,
-                    &format!("{path}[{index}]"),
-                    expected_value,
-                    actual_value,
-                ) {
+                if let Some(diff) =
+                    first_json_diff(&format!("{path}[{index}]"), expected_value, actual_value)
+                {
                     return Some(diff);
                 }
             }
-            None
-        }
-        (Value::Number(expected), Value::Number(actual))
-            if path.contains(".coord[")
-                && expected
-                    .as_f64()
-                    .zip(actual.as_f64())
-                    .map(|(expected, actual)| (expected - actual).abs() <= 0.0015)
-                    .unwrap_or(false) =>
-        {
-            None
-        }
-        (Value::Number(expected), Value::Number(actual))
-            if benchmark_id == "bio.secondary-structure.dssp"
-                && (path.ends_with(".phi_degrees")
-                    || path.ends_with(".psi_degrees")
-                    || path.ends_with(".kappa_degrees")
-                    || path.ends_with(".alpha_degrees"))
-                && expected
-                    .as_f64()
-                    .zip(actual.as_f64())
-                    .map(|(expected, actual)| (expected - actual).abs() <= 0.15)
-                    .unwrap_or(false) =>
-        {
-            None
-        }
-        (Value::Number(expected), Value::Number(actual))
-            if benchmark_id == "descriptor.molecular"
-                && path.ends_with(".average_mass_da")
-                && expected
-                    .as_f64()
-                    .zip(actual.as_f64())
-                    .map(|(expected, actual)| (expected - actual).abs() <= 0.05)
-                    .unwrap_or(false) =>
-        {
-            None
-        }
-        (Value::Number(expected), Value::Number(actual))
-            if benchmark_id == "descriptor.molecular"
-                && path.ends_with(".monoisotopic_mass_da")
-                && expected
-                    .as_f64()
-                    .zip(actual.as_f64())
-                    .map(|(expected, actual)| (expected - actual).abs() <= 5.0e-5)
-                    .unwrap_or(false) =>
-        {
-            None
-        }
-        (Value::Number(expected), Value::Number(actual))
-            if benchmark_id == "bio.secondary-structure.dssp"
-                && path.ends_with(".tco")
-                && expected
-                    .as_f64()
-                    .zip(actual.as_f64())
-                    .map(|(expected, actual)| (expected - actual).abs() <= 0.0015)
-                    .unwrap_or(false) =>
-        {
-            None
-        }
-        (Value::Number(expected), Value::Number(actual))
-            if benchmark_id == "bio.secondary-structure.dssp"
-                && path.ends_with(".energy_kcal_per_mol")
-                && expected
-                    .as_f64()
-                    .zip(actual.as_f64())
-                    .map(|(expected, actual)| (expected - actual).abs() <= 0.051)
-                    .unwrap_or(false) =>
-        {
             None
         }
         _ if expected == actual => None,
@@ -209,28 +131,12 @@ pub(crate) fn normalize_for_comparison_in_place(value: &mut Value) {
             }
             normalize_undirected_bond_object(object);
             normalize_bond_array_object(object);
+            if let Some(Value::Array(descriptors)) = object.get_mut("bond_descriptors") {
+                descriptors.sort_by_key(bond_sort_key);
+            }
             normalize_ring_set_object(object);
-            normalize_coord_object(object);
         }
         _ => {}
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn normalize_for_comparison(value: &Value) -> Value {
-    let mut normalized = value.clone();
-    normalize_for_comparison_in_place(&mut normalized);
-    normalized
-}
-
-pub(crate) fn normalize_coord_object(object: &mut serde_json::Map<String, Value>) {
-    let Some(Value::Array(coord)) = object.get_mut("coord") else {
-        return;
-    };
-    for value in coord.iter_mut() {
-        if let Some(number) = value.as_f64() {
-            *value = json!((number * 1000.0).round() / 1000.0);
-        }
     }
 }
 
@@ -241,6 +147,9 @@ pub(crate) fn normalize_undirected_bond_object(object: &mut serde_json::Map<Stri
     let Some(end) = object.get("end_atom_index").and_then(Value::as_u64) else {
         return;
     };
+    if object.get("bond_type").and_then(Value::as_str) == Some("DATIVE") {
+        return;
+    }
     if begin > end {
         object.insert("begin_atom_index".to_owned(), json!(end));
         object.insert("end_atom_index".to_owned(), json!(begin));
@@ -313,56 +222,36 @@ pub(crate) fn normalize_ring_set_object(object: &mut serde_json::Map<String, Val
     });
 }
 
-pub(crate) fn slugify_fixture(fixture: &str) -> String {
-    let mut slug = String::new();
-    let mut previous_was_separator = false;
-    for ch in fixture.chars() {
-        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
-            slug.push(ch);
-            previous_was_separator = false;
-        } else if !previous_was_separator {
-            slug.push('_');
-            previous_was_separator = true;
-        }
-    }
-    slug.trim_matches(['.', '_', '-']).to_owned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn dssp_numeric_tolerances_do_not_relax_other_benchmarks() {
-        let expected = json!({ "phi_degrees": -75.0 });
-        let actual = json!({ "phi_degrees": -74.9 });
-
-        assert!(
-            first_json_diff("bio.secondary-structure.dssp", "$", &expected, &actual,).is_none()
-        );
-        assert!(first_json_diff("unrelated.benchmark", "$", &expected, &actual).is_some());
+    fn descriptor_order_follows_normalized_bond_endpoints() {
+        let mut a = json!({"bond_descriptors":[{"begin_atom_index":0,"end_atom_index":3,"descriptor":"E"},{"begin_atom_index":1,"end_atom_index":2,"descriptor":"Z"}]});
+        let mut b = json!({"bond_descriptors":[{"begin_atom_index":2,"end_atom_index":1,"descriptor":"Z"},{"begin_atom_index":3,"end_atom_index":0,"descriptor":"E"}]});
+        normalize_for_comparison_in_place(&mut a);
+        normalize_for_comparison_in_place(&mut b);
+        assert_eq!(a, b);
+        b["bond_descriptors"][0]["descriptor"] = json!("Z");
+        assert!(first_json_diff("$", &a, &b).is_some());
     }
-
     #[test]
-    fn molecular_descriptor_mass_tolerances_are_field_specific() {
-        let expected = json!({
-            "average_mass_da": 100.0,
-            "monoisotopic_mass_da": 99.0,
-            "formal_charge": 0,
-        });
-        let actual = json!({
-            "average_mass_da": 100.049,
-            "monoisotopic_mass_da": 99.000049,
-            "formal_charge": 0,
-        });
-        assert!(first_json_diff("descriptor.molecular", "$", &expected, &actual).is_none());
-
-        let wrong_charge = json!({
-            "average_mass_da": 100.0,
-            "monoisotopic_mass_da": 99.0,
-            "formal_charge": 1,
-        });
-        assert!(first_json_diff("descriptor.molecular", "$", &expected, &wrong_charge).is_some());
-        assert!(first_json_diff("unrelated.benchmark", "$", &expected, &actual).is_some());
+    fn no_numeric_rounding_or_tolerance_hides_differences() {
+        for _feature in [
+            "io.sdf.parse",
+            "descriptor.molecular",
+            "bio.secondary-structure.dssp",
+        ] {
+            for key in [
+                "coord",
+                "average_mass_da",
+                "phi_degrees",
+                "energy_kcal_per_mol",
+            ] {
+                let expected = json!({key: 1.0});
+                let actual = json!({key: 1.000000001});
+                assert!(first_json_diff("$", &expected, &actual).is_some());
+            }
+        }
     }
 }

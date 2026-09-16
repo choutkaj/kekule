@@ -817,8 +817,8 @@ pub mod perception {
     /// reached.
     pub mod valence {
         pub use crate::algorithms::{
-            perceive_valence, perceive_valence_with_options, ValenceError, ValenceIssue,
-            ValenceOptions,
+            perceive_valence, perceive_valence_with_options, represented_valence, ValenceError,
+            ValenceIssue, ValenceOptions,
         };
         pub use crate::core::ValenceModel;
     }

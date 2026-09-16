@@ -1,208 +1,205 @@
-# Correctness and timing benchmarks
+# Correctness comparisons
 
-The benchmark executable is the unpublished `kekule-bench` workspace package.
-It calls Kekule's public API. External scientific tools are reference tools only.
-Benchmark execution remains optional, outside ordinary CI and release gates.
-
-This guide describes the replacement interface. The earlier benchmark READMEs
-describe the removed `xtask` interface and were left unchanged under the repository's
-README editing policy.
+Reference values are calculated once in a separate generation step and stored.
+Normal benchmarks calculate Kekule values from the same supplied inputs and
+compare against those stored goldens. They never regenerate or modify them.
+A successful run
+requires every selected case to agree. Reference errors, Kekule errors, missing
+input formats and missing reference adapters all fail the run. Matching failures
+are never scientific agreement.
 
 ## Run
 
+Normal parser and algorithm benchmarks need only Rust and stored goldens:
+
 ```text
 cargo benchmark --list
-cargo benchmark --feature io.smiles.parse --dataset pubchem-100k
-cargo benchmark --feature io.sdf.v2000.parse --dataset enamine-diversity
+cargo benchmark --feature io.smiles.parse --dataset smoke
+cargo benchmark --feature io.sdf.parse --dataset enamine-diversity
 cargo benchmark --feature stereo.cip --dataset pl-rex
-cargo benchmark --feature bio.secondary-structure.dssp --dataset pdb-1000
-cargo benchmark --feature all --dataset smoke
 ```
 
-`cargo benchmark` builds in release mode. `--feature all` and `--dataset all`
-select the available pinned evidence. A concrete unsupported combination errors.
-Each input record is evaluated once per feature. The same output is used for correctness;
-there is no warmup or repeated timing pass.
-Evaluation uses all available CPUs by default. `--jobs N` limits concurrency;
-`--jobs 1` runs serially. Small batches span input files, including individual PDB
-structures, and results retain source order regardless of completion order.
-Each feature shows a progress bar labeled with its dataset and feature, completed
-inputs, total selected inputs, and percentage. Errors and unsupported inputs count
-toward completion. Bars update between evaluation batches, outside measured Time,
-and remain above each feature's summary. Bars are hidden when stderr is redirected
-or the terminal declares `TERM=dumb`.
-`--output FILE` chooses a new JSON result file. The default is a unique file in
-`target/benchmarks`. Existing reports are never overwritten.
+Progress bars show the current dataset/feature, completed cases, total and phase.
+Agreement, disagreement and error counts follow each completed feature. Progress
+includes multiple source formats and cases that fail.
 
-The old `cargo xtask`, corpus builders, feature TOML manifests and golden-acceptance
-command have been removed. There are no compatibility aliases.
+Goldens live in `benchmarks/goldens/<dataset>/<feature>.jsonl.gz`. Complete files
+are prepared for all 25 features across all five datasets, without case limits.
+See [GOLDENS.md](GOLDENS.md) for coverage, reference-error counts and reference
+versions. Missing-format cases and reference failures remain stored errors;
+complete files do not mean every comparison passes.
 
-## Inputs and selections
-
-| Dataset | Purpose | N |
-| --- | --- | ---: |
-| `pubchem-100k` | Broad cheminformatics, supplied SDF and SMILES | 100,000 |
-| `enamine-diversity` | Compound-library workload, supplied SDF and SMILES | 50,240 |
-| `pl-rex` | Primary ligands, including supplied 3D coordinates | 164 |
-| `pdb-1000` | Proteins, nucleic acids, complexes, heterogens, multiple models | 1,000 |
-| `smoke` | Small checked-in external edge fixtures | 20 |
-
-N is the number of source records in the pinned dataset. Every feature selects
-the whole dataset by default, including expensive features. There are no automatic
-dataset or feature limits. An explicit `--limit N` selects a smaller run;
-selecting more than a dataset contains selects the whole dataset.
-
-Molecular IDs are ordered by SHA-256 of `kekule-benchmark-v1:<id>`, with the ID
-as a tie-breaker. Limits are nested selections of the same source membership,
-independent of feature and input format. PDB uses its existing locked order,
-preserving the 10/100/1000 subsets. Limits count source records, not connected
-components, coordinate models, file packs, or successfully processed molecules.
-
-Features use the original pinned input format recorded in their evidence. They
-do not turn every dataset into RDKit-generated SMILES. A selected ID with no
-input/reference for that feature is reported as unsupported. This also makes
-the intentionally narrow applicability of individual smoke fixtures visible.
-
-Feature adapters do not exclude SMILES containing stereochemistry or wildcard
-atoms. They attempt every supplied record and report actual outcomes. CIP also
-evaluates molecules without stereo: an empty descriptor list is a valid result,
-while parsing, perception, and assignment failures remain visible.
-
-PubChem membership is unchanged: the existing selection uses the CID 1–500,000
-shard, V2000 records, bounded molecule sizes, and RDKit-based selection checks.
-It is not an unbiased sample of all chemical inputs. Keep rare external fixtures
-visible separately. PubChem's 2D depictions are not a SASA input; future geometry
-features should use PL-REX's supplied 3D coordinates or PDB structures.
-
-Subset datasets have been removed. Use `pubchem-100k --limit N` or
-`pdb-1000 --limit N` for smaller runs.
-
-## Data storage
-
-`corpora/<dataset>/sources.lock.json` pins source IDs, file membership and hashes.
-`references.json` indexes existing evidence: tool/version, input paths and
-preparation notes. It does not configure algorithms, tolerances or plugin loading.
-Changing packaging preserved the compressed `golden/` outputs. Removing the old
-SMILES and CIP filters subsequently extended the RDKit 2026.03.3 evidence for
-previously skipped records. Existing asserted records and source hashes were
-preserved; only `unsupported` placeholders and missing CIP records were filled
-with independent RDKit results.
-
-Inputs other than the checked-in smoke fixtures remain ignored local files.
-The runner verifies each used input against both its source lock and its reference.
-Missing files, changed bytes, bad reference versions and malformed outputs fail
-explicitly and appear in the JSON report.
-
-Use a standard Python 3.11+ interpreter to verify or transport pinned inputs:
+To prepare a new dataset/feature, activate the reference environment in
+`reference/environment.yml` and explicitly generate:
 
 ```text
-python benchmarks/data.py verify --dataset pubchem-100k
-python benchmarks/data.py pack --dataset pubchem-100k --archive target/pubchem-100k.tar.gz
-python benchmarks/data.py unpack --dataset pubchem-100k --archive DOWNLOADED.tar.gz --sha256 EXPECTED_SHA256
+cargo benchmark generate --feature FEATURE --dataset DATASET
 ```
 
-`pack` prints the archive hash. Store that archive on ordinary artifact storage
-and distribute its hash with it. No hosted archive is assumed or automatically
-published. `unpack` stages and verifies all members before installation, rejects
-unexpected paths/links/duplicates, and never replaces different existing input
-bytes. `verify` checks all pinned source files, including raw provenance files
-that a benchmark may not need when a complete pack is available.
+The generation command runs the reference software only; it does not run Kekule.
+Use `--python PATH` on this command to select a different reference environment.
+RDKit supplies molecular goldens; Biopython and mkdssp supply biomolecular ones.
+The activated environment must expose mkdssp, its libraries and CIF dictionary.
 
-## Correctness
+Existing goldens are never overwritten. To regenerate deliberately, write to a
+new directory with `--goldens DIR`, review the new results, then use that same
+directory for comparison. Incomplete generation is not published. Reference
+errors are stored and remain failures; successful cases do not disappear because
+another case failed.
 
-The existing asserted JSON fields, ordering normalizations, preparation choices
-and numeric tolerances are retained in the feature code and comparator. Each
-selected record is evaluated independently, restoring its source record index
-before comparison. One bad record cannot abort all other records in a pack.
+The default selects every source ID. `--limit N` explicitly selects a smaller,
+deterministic subset, including during generation. A partial golden set causes
+errors for any selected cases it does not contain. Missing, malformed, duplicated
+or stale goldens never trigger automatic regeneration. An absent or unreadable
+golden file stops the run with its cause before that feature evaluates Kekule;
+it is not reported as thousands of individual comparison errors. `--jobs N`
+controls Kekule concurrency; `--output FILE` selects a new report.
 
-Reports separate agreement, disagreement, unsupported input, record errors, and
-execution/provenance errors. Matching parse failures do not count as successful
-scientific agreement. A missing CIP record is not a successful comparison; an
-explicit empty descriptor list must agree with the reference. A mismatch retains source ID, fixture path, record
-index and the first differing field for that record. Every failing record is kept.
-
-Numeric outputs additionally report mean and maximum absolute errors by field
-path, without mixing different physical quantities. Agreement uses the existing
-field-specific tolerances. Floating-point metrics describe the normalized values
-actually compared. Correlation is not used as proof of numerical agreement.
-
-Historical `*-manual-semantic` outputs are implementation snapshots. They remain
-available and explicitly labeled, but are not independent scientific validation.
-There is no command to accept implementation output as a reference.
-
-The biomolecular parsing feature compares all retained atom-site fields.
-DSSP uses the first model and the existing highest-occupancy reference preparation;
-its exact policy and compared fields remain in `src/features/bio.rs` and
-`reference/biopython/run_feature.py`. Source identity orders residue comparisons.
-
-## Timing and live references
-
-`Time` measures elapsed time for parallel evaluation batches: parsing, the selected
-feature, and materializing comparison outputs. Each batch holds at most 256 records.
-The timer stops before outputs are compared with the reference and dropped.
-Inputs are preloaded. Thread-pool creation, file reading,
-reference decompression, checksum validation, correctness comparisons, JSON
-encoding and report writing occur outside measurement. These are adapter workflow
-timings, not isolated kernel microbenchmarks. Scheduling and failed evaluations
-are included. Each fixture lists all evaluated record IDs, including failures.
-
-Results use schema version 3 and contain `time_ms` per feature/dataset,
-obtained by summing elapsed batch times, not individual worker durations. Batches
-can span fixtures, so times are not attributed to individual files. Worker counts
-are not recorded. There are no timing
-repetitions or `--samples` option. These single-pass times can vary between runs.
-Results also record source IDs, dataset hashes, reference versions,
-Git revision/dirty status, Rust version,
-build mode, OS, architecture and available machine information. Compare revisions
-on the same machine, with the same selection and measurement settings.
-
-The default uses pinned reference outputs and reports Kekule timing. To also run
-and time an installed independent reference, supply its Python interpreter:
+Writer benchmarks retain independent validation: RDKit reads newly emitted
+Kekule text and compares its meaning against **stored** expectations. It never
+recalculates those expectations. Use an activated reference environment, set
+`KEKULE_WRITER_PYTHON`, or select it explicitly:
 
 ```text
-cargo benchmark --feature io.smiles.parse --dataset pubchem-100k --limit 1000 --reference-python PATH_TO_REFERENCE_PYTHON
+cargo benchmark --feature io.smiles.isomeric --dataset smoke --writer-python PATH
 ```
 
-Use the supplied RDKit or Biopython/DSSP environment definitions. Stereo SMILES
-schema 2 requires RDKit 2026.03.6; older feature evidence includes RDKit 2026.03.3.
-Choose a suitable environment for the requested feature. Live results record the
-actual version, evaluate each input once, compare against the already computed
-Kekule output, and never replace pinned expectations.
-Differences against either the pinned or live reference return a nonzero exit.
+This is the only normal benchmark path that uses Python. The former required
+`--reference-python` option is gone.
 
-Optional live reference adapters currently evaluate serially, once per input,
-after the corresponding Kekule batch finishes. Their results and `time_ms` values
-are stored in `live_references`, with the input IDs for each batch.
-Reference timing excludes interpreter startup, imports and JSON transport. The
-Biopython/DSSP adapter includes staged-file reading and DSSP subprocess execution.
-Some historical feature adapters perform different preparation work, so the
-report deliberately does not compute a cross-library speed ratio. Use the labeled
-timings for each workflow; only compare speed ratios after matching their scopes.
+`io.mol.parse` and `io.sdf.parse` read supplied V2000 and V3000 records directly.
+There is no parser benchmark that generates its own input with Kekule's writer.
+The versioned writer features specify the requested output version. A format
+that cannot encode the input must report an error, not quietly discard fields.
 
-Generate a standalone candidate for independent review with:
+## Outputs
+
+A normal run writes a summary `FILE.json` and per-case comparisons
+`FILE.cases.jsonl`. Writer cases retain the original emitted text. Stored golden
+files are read only. Generation writes compressed reference JSONL files plus its
+own summary; it does not produce Kekule observations.
+
+Each evaluation is either `{"status":"ok","value":...}` or
+`{"status":"error","message":"..."}`. The transport rejects unknown fields,
+missing outputs and nonfinite numbers. Stored entries identify the source ID,
+path, record index, input hash, reference tool/version and measured values.
+Loading verifies dataset/feature identity and rejects duplicate cases or mixed
+reference versions; comparison verifies the current input hash.
+
+There are no implementation snapshot sources, acceptance commands, evidence
+migrations, hardware fingerprints or per-case comparison overrides. The old
+`corpora/*/references.json` indexes and compressed `golden/` files are historical
+artifacts and are never read by this runner. Their earlier scores do not validate
+the new comparisons. Former standalone SMILES/CIP/MOL comparison commands have
+been retired; use the features above.
+
+## Comparison contract
+
+Keys, types, values, cardinality and ordering are checked. Numbers compare
+exactly: no rounding, tolerances or averaging can turn a difference into a pass.
+Small floating-point differences and large discrepancies both remain visible;
+a disagreement alone does not establish the cause or its scientific magnitude.
+
+Only representation order is normalized: undirected bond endpoints and bond
+list order, ring membership-set order, and arbitrary DSSP sheet/strand/ladder
+labels and residue order. Dative direction is retained. Stereo parity is expressed
+relative to explicit atom indices and a fixed carrier order. Distinct global
+graphs, components and stereo placements cannot collapse to local atom hashes.
+
+Molecular reader checks compare complete indexed component graphs: atoms, bonds,
+charges, isotopes, radicals, atom maps, declared and inferred hydrogens, represented
+valence, aromaticity, stereo and relation groups. Both adapters run ordinary
+perception/sanitization before observing this state. Coordinates are in angstroms;
+SDF data fields remain an ordered list. Kekule preserves duplicate names;
+RDKit cannot represent them, so such cases report a reference error. Component
+and atom order follow the input correspondence. This is deliberately stronger
+than a count or formula comparison.
+
+SMILES writer outputs are read by RDKit and compared through full canonical
+isomeric CXSMILES identity. MOL/SDF writer outputs are also read by RDKit, with
+coordinates and properties retained. Writers do not validate themselves by
+re-reading with Kekule. Canonical SMILES additionally checks a read/write fixed
+point and invariance after reversing atom and bond numbering while retaining all
+stereo and relation groups. These deterministic probes do not exhaust all
+permutations. Molecule output components are sorted in canonical mode.
+
+Valence reads Kekule's actual `represented_valence` and `implicit_hydrogens`
+results. No benchmark nitrogen/aromaticity rules reconstruct or adjust them.
+Dative valence therefore exposes any difference between the libraries' models.
+Hydrogen transformations compare the complete added and collapsed graphs, using
+RDKit's default removal policy without matching it to Kekule's policy.
+Reference masses are the direct RDKit descriptor values, without charge-based
+corrections. Rotatable-bond references retain explicit hydrogen vertices.
+Substructure comparisons retain every query-to-target mapping, without the old
+1000-match cap or atom-set projection. Search resource errors remain failures.
+The fixed query list is in the two adapters. `query.smarts` separately compares
+syntax acceptance and graph size; it is not a complete proof of predicate
+semantics. Behavioral predicate checks come from the substructure feature.
+
+mmCIF compares every decoded tag/value, including non-atom categories, entity
+IDs, charges and distinct `.`/`?` values. Biopython's single-block limitation is
+reported as a reference error. DSSP consumes the original supplied mmCIF and
+uses the first model through the reference APIs. No alternate-location snapshot
+or archive-category deletion edits the reference input. Differences in the
+libraries' model/alternate-location policies remain visible.
+
+The stereo adapter's index/parity conversion follows public Kekule definitions
+and RDKit conventions, with geometry-based regression checks. In particular,
+RDKit's atropisomer convention is defined in
+[Atropisomers.cpp](https://github.com/rdkit/rdkit/blob/master/Code/GraphMol/Atropisomers.cpp).
+
+## Inputs and coverage
+
+`corpora/<dataset>/sources.lock.json` supplies membership and input hashes.
+Selection never consults reference success or implementation support. Every
+available matching-format source is evaluated, so an ID with both SDF and
+SMILES can contribute two cases to an algorithm feature. Multi-record source
+files are split before either engine runs. One failed record cannot remove the
+remaining records. Missing formats are recorded as errors for the selected ID;
+`all` includes every feature, including combinations lacking source material.
+This means heterogeneous datasets such as `smoke` can contain coverage errors.
+
+Enamine includes all 50,240 supplied SDF records. Packs 049–051 restore the 2,881
+V3000 records that the old builder filtered out, without changing their bytes.
+All 1,000 PDB entries reach DSSP, including the five previously absent from its
+reference index. Nothing filters stereo, disconnected records, wildcards or
+reference failures.
+
+The existing PubChem membership remains a historical, preselected 100,000-ID
+sample: its old builder imposed V2000, size and RDKit-success requirements.
+These source files cannot establish performance on the compounds that builder
+did not retain. The new runner does not repeat those filters, but it cannot
+recover missing PubChem inputs. Do not describe this sample as unbiased.
+
+Input files outside `smoke` remain local/ignored. Transport them with `data.py`:
 
 ```text
-python benchmarks/reference/run.py --feature io.smiles.parse --input INPUT.smi --output target/candidate.json
+python benchmarks/data.py verify --dataset enamine-diversity
+python benchmarks/data.py pack --dataset enamine-diversity --archive target/enamine.tar.gz
+python benchmarks/data.py unpack --dataset enamine-diversity --archive ARCHIVE --sha256 HASH
 ```
 
-The output path must be new. Existing reference-specific diagnostic probes remain
-available under `reference/`, with their Rust examples in this benchmark package.
-Trajectory reference checks remain documented in `reference/trajectory/VALIDATION.md`;
-static PDB models do not replace real trajectory inputs.
+## Measurement and maintenance
 
-## Maintenance
-
-Add an ordinary function in `src/features/`, register the feature, and provide
-independent reference evidence and focused comparison regressions. Input
-preparation and comparison policies belong beside their feature. The shared
-runner owns only selection, execution, timing and reporting. Avoid new manifest
-languages, generic chemistry adapters and framework layers.
+Timing is supplementary. `kekule_ms` measures parallel batches of public API
+work and result construction, including writer contract checks. `reference_ms`
+measures reference generation in generation reports, and only independent writer
+validation in normal reports (zero for other features). Golden loading, startup,
+JSON transport and comparison are excluded. These are workflow timings; no
+cross-library speed ratio is claimed.
 
 ```text
 cargo test -p kekule-bench --locked
 python -m unittest discover -s benchmarks/reference -p test_runner.py
 python -m unittest discover -s benchmarks/reference/rdkit -p "test_*.py"
+python -m unittest discover -s benchmarks/reference/biopython -p "test_*.py"
 ```
 
-The last command requires RDKit. The runner and comparison regressions use
-ordinary Rust tests and do not execute the broad external benchmarks in CI.
+Scientific runs remain optional, outside routine CI/release gates. Fix the
+implementation or a demonstrably incorrect adapter when values differ; never
+substitute Kekule output for a golden. New features need independent reference
+code and regressions that prove meaningful mutations fail comparison.
+
+Trajectory development checks remain a separate workflow documented in
+`reference/trajectory/VALIDATION.md`; this executable does not claim coverage
+of their trajectory operations or historical results.

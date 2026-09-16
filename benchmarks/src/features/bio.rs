@@ -1,55 +1,47 @@
 use crate::*;
 
-const MMCIF_ATOM_SITE_FIELDS: &[&str] = &[
-    "group_PDB",
-    "id",
-    "type_symbol",
-    "label_atom_id",
-    "auth_atom_id",
-    "label_alt_id",
-    "label_comp_id",
-    "auth_comp_id",
-    "label_asym_id",
-    "auth_asym_id",
-    "label_seq_id",
-    "auth_seq_id",
-    "pdbx_PDB_ins_code",
-    "occupancy",
-    "B_iso_or_equiv",
-    "Cartn_x",
-    "Cartn_y",
-    "Cartn_z",
-    "pdbx_PDB_model_num",
-];
-
-pub(super) fn mmcif_document_json(fixture_path: &Input) -> Result<Value, Box<dyn Error>> {
-    let input = fixture_path.text.clone();
-    let document = mmcif::parse_str(&input)?;
-    let table = document
+pub(super) fn mmcif_document_json(input: &Input) -> Result<Value, Box<dyn Error>> {
+    let document = mmcif::parse_str(&input.text)?;
+    let blocks = document
         .blocks()
         .iter()
-        .find_map(|block| block.loop_with_tag("_atom_site.id"));
-    let row_count = table.map_or(0, |table| table.row_count());
-    let rows = (0..row_count)
-        .map(|row_index| {
-            let mut row = serde_json::Map::new();
-            for field in MMCIF_ATOM_SITE_FIELDS {
-                let tag = format!("_atom_site.{field}");
-                let value = table
-                    .and_then(|table| table.value(row_index, &tag))
-                    .and_then(|value| value.optional_text());
-                row.insert((*field).to_owned(), json!(value));
+        .map(|block| {
+            let mut values = BTreeMap::new();
+            for entry in block.entries() {
+                match entry {
+                    mmcif::MmcifEntry::Item(item) => {
+                        if values
+                            .insert(
+                                item.tag().to_ascii_lowercase(),
+                                vec![item.value().text().to_owned()],
+                            )
+                            .is_some()
+                        {
+                            return Err(boxed_error("duplicate mmCIF tag"));
+                        }
+                    }
+                    mmcif::MmcifEntry::Loop(table) => {
+                        for tag in table.tags() {
+                            let column = (0..table.row_count())
+                                .map(|row| {
+                                    table
+                                        .value(row, tag)
+                                        .expect("parsed column")
+                                        .text()
+                                        .to_owned()
+                                })
+                                .collect::<Vec<_>>();
+                            if values.insert(tag.to_ascii_lowercase(), column).is_some() {
+                                return Err(boxed_error("duplicate mmCIF tag"));
+                            }
+                        }
+                    }
+                }
             }
-            Value::Object(row)
+            Ok(json!({"name":block.name(),"values":values}))
         })
-        .collect::<Vec<_>>();
-    Ok(json!({
-        "atom_site_rows": {
-            "status": "ok",
-            "row_count": row_count,
-            "rows": rows,
-        }
-    }))
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    Ok(json!({"blocks":blocks}))
 }
 pub(super) fn dssp_record_json(fixture_path: &Input) -> Result<Value, Box<dyn Error>> {
     let input = fixture_path.text.clone();

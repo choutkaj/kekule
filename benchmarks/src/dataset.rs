@@ -30,19 +30,9 @@ impl Input {
     }
 }
 
-#[derive(Deserialize)]
-pub(crate) struct Reference {
-    pub(crate) tool: String,
-    pub(crate) version: String,
-    pub(crate) fixtures: Vec<String>,
-    pub(crate) notes: Vec<String>,
-}
-
 pub(crate) struct Dataset {
     pub(crate) root: PathBuf,
     pub(crate) lock: Value,
-    pub(crate) references: BTreeMap<String, Reference>,
-    pub(crate) lock_sha256: String,
 }
 
 pub(crate) fn sha256(bytes: &[u8]) -> String {
@@ -76,12 +66,7 @@ impl Dataset {
         if lock["corpus_id"] != id {
             return Err(boxed_error("source lock dataset identity mismatch"));
         }
-        Ok(Self {
-            references: serde_json::from_slice(&fs::read(root.join("references.json"))?)?,
-            lock,
-            root,
-            lock_sha256: sha256(&bytes),
-        })
+        Ok(Self { lock, root })
     }
 
     /// The PDB source order preserves its existing 10/100/1000 nesting.
@@ -145,21 +130,47 @@ impl Dataset {
             .to_owned()])
     }
 
-    pub(crate) fn reference(
-        &self,
-        feature: &str,
-        fixture: &str,
-        input: &Input,
-        reference: &Reference,
-    ) -> Result<Value, Box<dyn Error>> {
-        let path = self
-            .root
-            .join("golden")
-            .join(feature)
-            .join(format!("{}.json.gz", slugify_fixture(fixture)));
-        let mut bytes = Vec::new();
-        GzDecoder::new(fs::File::open(&path)?).read_to_end(&mut bytes)?;
-        let golden: Value = serde_json::from_slice(&bytes)?;
+    /// Source membership and format alone select inputs. Every available input
+    /// in that format is tested, even if an ID has multiple source files.
+    pub(crate) fn fixtures(&self, feature: &str) -> Vec<String> {
+        let accepts = |path: &str| {
+            let ext = Path::new(path)
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if feature == "query.smarts" {
+                matches!(ext, "smarts" | "sma" | "smi" | "smiles" | "txt")
+            } else if feature.starts_with("io.smiles.") {
+                matches!(ext, "smi" | "smiles" | "txt")
+            } else if feature.starts_with("io.mmcif.") || feature.starts_with("bio.") {
+                matches!(ext, "cif" | "mmcif")
+            } else if feature.starts_with("io.sdf.") || feature.starts_with("io.mol.") {
+                matches!(ext, "sdf" | "mol" | "mdl")
+            } else {
+                matches!(ext, "sdf" | "mol" | "mdl" | "smi" | "smiles" | "txt")
+            }
+        };
+        let mut paths = self.lock["packs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(
+                self.lock["entries"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|entry| entry["files"].as_array().into_iter().flatten()),
+            )
+            .filter_map(|file| file["path"].as_str())
+            .filter(|path| accepts(path))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths.dedup();
+        paths
+    }
+
+    pub(crate) fn verify(&self, fixture: &str, input: &Input) -> Result<(), Box<dyn Error>> {
         let pinned = self.lock["packs"]
             .as_array()
             .into_iter()
@@ -173,79 +184,41 @@ impl Dataset {
             )
             .find(|file| file["path"] == fixture)
             .and_then(|file| file["sha256"].as_str())
-            .ok_or("fixture checksum missing from source lock")?;
+            .ok_or("input checksum missing from source lock")?;
         if pinned != sha256(input.text.as_bytes()) {
             return Err(boxed_error(format!(
                 "input differs from source lock: {fixture}"
             )));
         }
-        let schema = if matches!(
-            feature,
-            "stereo.representation"
-                | "stereo.perception"
-                | "io.smiles.isomeric"
-                | "io.smiles.canonical"
-        ) {
-            2
-        } else {
-            1
-        };
-        let version = golden["reference"]["version"]
-            .as_str()
-            .ok_or("missing reference version")?;
-        let version_matches = reference.version == version
-            || reference.version == format!("RDKit {version}")
-            || reference.version == format!("Biopython {version}");
-        if golden["schema_version"] != schema
-            || golden["feature_id"] != feature
-            || golden["corpus_id"] != self.lock["corpus_id"]
-            || golden["fixture_path"] != fixture
-            || golden["input_sha256"] != sha256(input.text.as_bytes())
-            || golden["reference"]["tool"] != reference.tool
-            || !version_matches
-            || golden["reference"]["runtime_dependency"] != false
-        {
-            return Err(boxed_error(format!(
-                "reference provenance mismatch: {}",
-                path.display()
-            )));
-        }
-        Ok(golden
-            .get("expected")
-            .ok_or("missing reference output")?
-            .clone())
+        Ok(())
     }
 }
 
 pub(crate) fn split_records(input: &Input, count: usize) -> Result<Vec<String>, Box<dyn Error>> {
-    let records = if count == 1 {
-        vec![input.text.clone()]
-    } else if input.extension().is_some_and(|ext| ext == "sdf") {
-        input
-            .text
-            .split_inclusive("$$$$")
-            .filter(|s| !s.trim().is_empty())
-            .enumerate()
-            .map(|(i, s)| {
-                if i == 0 {
-                    s.to_owned()
-                } else {
-                    s.strip_prefix("\r\n")
-                        .or_else(|| s.strip_prefix('\n'))
-                        .unwrap_or(s)
-                        .to_owned()
+    let records = match input.extension().and_then(|e| e.to_str()) {
+        Some("mol" | "mdl" | "cif" | "mmcif") => vec![input.text.clone()],
+        Some("sdf") => {
+            let mut records = Vec::new();
+            let mut record = String::new();
+            for line in input.text.split_inclusive('\n') {
+                record.push_str(line);
+                if line.trim_end_matches(['\r', '\n']) == "$$$$" {
+                    records.push(std::mem::take(&mut record));
                 }
-            })
-            .collect()
-    } else {
-        input
+            }
+            if !record.trim().is_empty() {
+                records.push(record);
+            }
+            records
+        }
+        _ => input
             .text
             .lines()
             .filter(|line| !line.trim().is_empty())
             .map(str::to_owned)
-            .collect()
+            .collect(),
     };
-    if records.len() != count {
+    if records.is_empty() || (count != 1 && records.len() != count) {
         return Err(boxed_error(format!(
             "source membership count {count} differs from input record count {}",
             records.len()
@@ -258,60 +231,24 @@ pub(crate) fn split_records(input: &Input, count: usize) -> Result<Vec<String>, 
 mod tests {
     use super::*;
     #[test]
-    fn changed_input_is_rejected_even_when_reference_metadata_is_consistent() {
-        let root = env::temp_dir().join(format!(
-            "kekule-reference-integrity-{}-{}",
-            process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let directory = root.join("golden/io.smiles.parse");
-        fs::create_dir_all(&directory).unwrap();
-        let path = directory.join("data_input.smi.json.gz");
-        let bytes = b"CC\n";
-        let golden = json!({"schema_version":1,"feature_id":"io.smiles.parse","corpus_id":"test","fixture_path":"data/input.smi","input_sha256":sha256(bytes),"reference":{"tool":"rdkit","version":"test","runtime_dependency":false},"expected":{"records":[]}});
-        let mut encoder = flate2::write::GzEncoder::new(
-            fs::File::create(&path).unwrap(),
-            flate2::Compression::default(),
-        );
-        encoder.write_all(golden.to_string().as_bytes()).unwrap();
-        encoder.finish().unwrap();
+    fn selection_does_not_exclude_inputs_based_on_their_names() {
         let dataset = Dataset {
-            root: root.clone(),
-            references: BTreeMap::new(),
-            lock_sha256: String::new(),
-            lock: json!({"corpus_id":"test","entries":[{"id":"1","files":[{"path":"data/input.smi","sha256":sha256(bytes)}]}]}),
+            root: PathBuf::new(),
+            lock: json!({"entries":[{"id":"external", "files":[{"path":"data/smarts-example.smi"}]}]}),
         };
-        let reference = Reference {
-            tool: "rdkit".into(),
-            version: "RDKit test".into(),
-            fixtures: vec!["data/input.smi".into()],
-            notes: vec![],
-        };
-        let mut input = Input {
-            path: "data/input.smi".into(),
-            text: "CC\n".into(),
-        };
-        assert!(dataset
-            .reference("io.smiles.parse", "data/input.smi", &input, &reference)
-            .is_ok());
-        input.text = "CCC\n".into();
-        assert!(dataset
-            .reference("io.smiles.parse", "data/input.smi", &input, &reference)
-            .is_err());
-        fs::remove_file(path).unwrap();
-        fs::remove_dir(directory).unwrap();
-        fs::remove_dir(root.join("golden")).unwrap();
-        fs::remove_dir(root).unwrap();
+        assert_eq!(
+            dataset.fixtures("io.smiles.parse"),
+            vec!["data/smarts-example.smi"]
+        );
+        assert_eq!(
+            dataset.fixtures("algo.rings.fast"),
+            vec!["data/smarts-example.smi"]
+        );
     }
     #[test]
     fn molecular_selections_are_nested_and_independent_of_file_order() {
         let mut dataset = Dataset {
             root: PathBuf::new(),
-            references: BTreeMap::new(),
-            lock_sha256: String::new(),
             lock: json!({"corpus_id":"pubchem-100k","entries":[{"id":"1"},{"id":"2"},{"id":"3"},{"id":"4"}]}),
         };
         let small = dataset.selection(2).unwrap();
@@ -325,8 +262,6 @@ mod tests {
     fn pdb_selection_retains_locked_prefix() {
         let dataset = Dataset {
             root: PathBuf::new(),
-            references: BTreeMap::new(),
-            lock_sha256: String::new(),
             lock: json!({"corpus_id":"pdb-1000","entries":[{"id":"Z"},{"id":"A"},{"id":"B"}]}),
         };
         assert_eq!(

@@ -1,3 +1,7 @@
+# Historical stereo validation
+
+The results below describe the retired benchmark adapters. They do not validate the new strict comparison layer. Use [the current benchmark guide](../benchmarks/GUIDE.md) to generate fresh reference results; the old standalone comparison commands are no longer available.
+
 # Stereo validation
 
 RDKit is an optional scientific reference, never a Rust dependency or release

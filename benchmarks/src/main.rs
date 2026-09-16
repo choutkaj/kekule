@@ -2,17 +2,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use flate2::read::GzDecoder;
 use kekule::{
     canon,
     core::{
-        Atom, AtomId, AtomRadical, AxisOrientation, Bond, BondId, BondOrder, DoubleBondOrientation,
-        Molecule, StereoCarrier, StereoDescriptor, StereoElement, StereoElementId,
-        StereoElementKind, StereoGroup, StereoGroupKind, TetrahedralOrientation,
+        Atom, AtomId, AtomRadical, AxisOrientation, BondOrder, DoubleBondOrientation, Molecule,
+        StereoCarrier, StereoDescriptor, StereoElementKind, StereoGroupKind,
+        TetrahedralOrientation,
     },
     dssp, hydrogens,
     mmcif::{self, MmcifInterpretOptions, MmcifModelSelection},
@@ -22,12 +21,9 @@ use kekule::{
         valence::{self, ValenceModel, ValenceOptions},
     },
     query,
-    sdf::{self, SdfDataField, SdfRecordInterpretation},
+    sdf::{self, SdfRecordInterpretation},
     smiles::{self},
-    stereo::{
-        self, CoordinateStereoError, CoordinateStereoMaterializationReport, StereoCandidate,
-        StereoValidationIssue,
-    },
+    stereo::{self, StereoCandidate},
     substructure,
 };
 use serde::{Deserialize, Serialize};

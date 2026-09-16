@@ -20,38 +20,32 @@ runner = load(Path(__file__).parent / 'run.py', 'benchmark_reference')
 
 
 class RunnerTests(unittest.TestCase):
-    def test_reference_evaluates_each_input_once_and_returns_timed_outputs(self):
-        for engine, feature in [('rdkit', 'io.smiles.parse'), ('biopython', 'io.mmcif.parse')]:
-            with self.subTest(engine=engine):
-                calls = []
+    def test_reference_errors_are_isolated_and_later_inputs_still_run(self):
+        calls = []
+        def evaluate(feature, source, dependencies):
+            calls.append(source.read_text())
+            if calls[-1] == 'bad':
+                raise ValueError('injected reference failure')
+            return {'blocks':[{'value':calls[-1]}]}
+        adapter = (SimpleNamespace(evaluate=evaluate), {}, {'tool':'biopython','version':'test'})
+        with patch.object(runner, 'adapter', return_value=adapter):
+            result = runner.run({'feature':'io.mmcif.parse','inputs':[
+                {'path':'input.cif','text':text} for text in ('first','bad','last')]})
+        self.assertEqual(calls,['first','bad','last'])
+        self.assertEqual([r['status'] for r in result['results']],['ok','error','ok'])
+        self.assertEqual(result['results'][2]['value'],{'blocks':[{'value':'last'}]})
+        self.assertEqual(set(result),{'reference','results','time_ms'})
 
-                def evaluate(feature, source, dependencies, evidence=None):
-                    text = source.read_text()
-                    calls.append(text)
-                    if evidence is not None:
-                        evidence.append({'source': text})
-                    return {'value': text, 'evaluation': len(calls)}
+    def test_matching_failures_empty_records_and_nonfinite_values_are_not_goldens(self):
+        for value in (None, {}, {'status':'unsupported'},{'blocks':[]},{'blocks':[{'number':float('nan')}]}, {'blocks':[{'status':'unsupported'}]}):
+            adapter = (SimpleNamespace(evaluate=lambda *args:value), {}, {'tool':'biopython','version':'test'})
+            with patch.object(runner,'adapter',return_value=adapter):
+                result=runner.run({'feature':'io.mmcif.parse','inputs':[{'path':'input.cif','text':'source'}]})
+            self.assertEqual(result['results'][0]['status'],'error')
 
-                adapter = (SimpleNamespace(evaluate=evaluate), {}, {'tool': engine, 'version': 'test'})
-                with patch.object(runner, 'adapter', return_value=adapter), patch.object(
-                    runner.time, 'perf_counter_ns', side_effect=[100, 300, 500, 800]
-                ):
-                    result = runner.run({'feature': feature, 'inputs': [
-                        {'path': 'first.smi', 'text': 'first'},
-                        {'path': 'second.smi', 'text': 'second'},
-                    ]})
-                self.assertEqual(calls, ['first', 'second'])
-                self.assertEqual(result['expected'], [
-                    {'value': 'first', 'evaluation': 1},
-                    {'value': 'second', 'evaluation': 2},
-                ])
-                self.assertEqual(result['time_ms'], 0.0005)
-                self.assertEqual(result['reference_evidence'],
-                    [[{'source': 'first'}], [{'source': 'second'}]] if engine == 'rdkit' else [])
-
-    def test_repetition_option_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, 'no longer supported'):
-            runner.run({'samples': 1})
+    def test_implementation_outputs_cannot_enter_reference_request(self):
+        with self.assertRaisesRegex(ValueError,'only feature'):
+            runner.run({'feature':'io.smiles.parse','inputs':[],'actual':{'answer':1}})
 
     def test_cached_input_preserves_bytes_and_open_modes(self):
         value = runner.MemoryInput('input.sdf', '\r\nexample\n')

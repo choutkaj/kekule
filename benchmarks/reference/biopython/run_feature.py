@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import gzip
-import hashlib
 import json
 import re
 import shutil
@@ -20,35 +18,11 @@ SUPPORTED_FEATURES = {
     "io.mmcif.parse",
 }
 
-ATOM_SITE_FIELDS = [
-    "group_PDB",
-    "id",
-    "type_symbol",
-    "label_atom_id",
-    "auth_atom_id",
-    "label_alt_id",
-    "label_comp_id",
-    "auth_comp_id",
-    "label_asym_id",
-    "auth_asym_id",
-    "label_seq_id",
-    "auth_seq_id",
-    "pdbx_PDB_ins_code",
-    "occupancy",
-    "B_iso_or_equiv",
-    "Cartn_x",
-    "Cartn_y",
-    "Cartn_z",
-    "pdbx_PDB_model_num",
-]
-
-
 def import_biopython() -> dict[str, Any]:
     try:
         import Bio
         from Bio.PDB.DSSP import DSSP
         from Bio.PDB.MMCIF2Dict import MMCIF2Dict
-        from Bio.PDB.mmcifio import MMCIFIO
         from Bio.PDB.MMCIFParser import MMCIFParser
     except ImportError as error:
         raise SystemExit(
@@ -59,16 +33,20 @@ def import_biopython() -> dict[str, Any]:
         "version": Bio.__version__,
         "DSSP": DSSP,
         "MMCIF2Dict": MMCIF2Dict,
-        "MMCIFIO": MMCIFIO,
         "MMCIFParser": MMCIFParser,
     }
 
 
 def evaluate(feature_id: str, fixture_path: Path, biopython: dict[str, Any]) -> dict[str, Any]:
     if feature_id == "bio.secondary-structure.dssp":
-        return dssp_summary(fixture_path, biopython["MMCIFParser"], biopython["MMCIF2Dict"], biopython["MMCIFIO"], biopython["DSSP"])
+        return dssp_summary(fixture_path, biopython["MMCIFParser"], biopython["MMCIF2Dict"], biopython["DSSP"])
     if feature_id == "io.mmcif.parse":
-        return {"atom_site_rows": atom_site_table(fixture_path, biopython["MMCIF2Dict"])}
+        values = biopython["MMCIF2Dict"](str(fixture_path))
+        name = values.pop('data_')
+        # MMCIF2Dict reads one block. Refuse to silently merge multiple blocks.
+        if any(key.lower().startswith('data_') for key in values):
+            raise ValueError('Biopython MMCIF2Dict cannot represent multiple data blocks')
+        return {'blocks':[{'name':name,'values':{key.lower():value for key,value in values.items()}}]}
     raise ValueError(f"unsupported feature: {feature_id}")
 
 
@@ -88,18 +66,7 @@ def dssp_reference(biopython_version: str) -> dict[str, Any]:
     return {
         "tool": "biopython",
         "version": f"Biopython {biopython_version} / {version}",
-        "biopython_version": biopython_version,
-        "dssp_version": version,
-        "dssp_executable_sha256": sha256_file(Path(executable)),
-        "command": (
-            "Bio.PDB.DSSP.DSSP(model, highest_occupancy_snapshot, "
-            "dssp='mkdssp', file_type='MMCIF')"
-        ),
-        "extended_command": (
-            "mkdssp --output-format=mmcif --quiet "
-            "highest_occupancy_snapshot annotated.cif"
-        ),
-        "runtime_dependency": False,
+
     }
 
 
@@ -107,7 +74,6 @@ def dssp_summary(
     fixture_path: Path,
     MMCIFParser: Any,
     MMCIF2Dict: Any,
-    MMCIFIO: Any,
     DSSP: Any,
 ) -> dict[str, Any]:
     parser = MMCIFParser(QUIET=True)
@@ -116,13 +82,9 @@ def dssp_summary(
             warnings.simplefilter("ignore")
             model = parser.get_structure(fixture_path.stem, str(fixture_path))[0]
             with tempfile.TemporaryDirectory(prefix="kekule-dssp-") as temp_dir:
-                selected_path = Path(temp_dir) / fixture_path.name
-                write_highest_occupancy_snapshot(
-                    fixture_path, selected_path, MMCIF2Dict, MMCIFIO
-                )
                 assignments = DSSP(
                     model,
-                    str(selected_path),
+                    str(fixture_path),
                     dssp="mkdssp",
                     file_type="MMCIF",
                 )
@@ -132,7 +94,7 @@ def dssp_summary(
                         "mkdssp",
                         "--output-format=mmcif",
                         "--quiet",
-                        str(selected_path),
+                        str(fixture_path),
                         str(annotated_path),
                     ],
                     check=True,
@@ -309,74 +271,6 @@ def dssp_identifier(value: Any, *, one_based: bool) -> int | None:
     return identifier + 1 if one_based else identifier
 
 
-def write_highest_occupancy_snapshot(
-    input_path: Path, output_path: Path, MMCIF2Dict: Any, MMCIFIO: Any
-) -> None:
-    """Write the same explicit altloc snapshot used by mmcif::interpret.
-
-    DSSP itself keeps the last atom-site row for duplicate backbone names. The
-    feature consumes an already-selected Model instead, so reference goldens
-    must run mkdssp on that same coordinate choice. Highest occupancy wins;
-    ties prefer a missing altloc and then the lexicographically first label.
-    """
-    document = MMCIF2Dict(str(input_path))
-    # DSSP validates the whole input dictionary even though this descriptive
-    # archive-link category is unrelated to coordinates or polymer topology.
-    # Some otherwise usable PDB entries contain duplicate keys there.
-    for key in [key for key in document if key.startswith("_pdbx_database_related.")]:
-        del document[key]
-    atom_columns = {
-        key: normalize_mmcif_column(value)
-        for key, value in document.items()
-        if key.startswith("_atom_site.")
-    }
-    row_count = len(atom_columns.get("_atom_site.id", []))
-    if row_count == 0:
-        raise RuntimeError(f"{input_path} has no atom_site rows")
-
-    identity_fields = (
-        "group_PDB",
-        "label_asym_id",
-        "label_entity_id",
-        "label_seq_id",
-        "pdbx_PDB_ins_code",
-        "label_comp_id",
-        "auth_asym_id",
-        "auth_seq_id",
-        "auth_comp_id",
-        "label_atom_id",
-        "auth_atom_id",
-        "pdbx_PDB_model_num",
-    )
-
-    def field(row: int, name: str) -> str | None:
-        values = atom_columns.get(f"_atom_site.{name}", [])
-        return values[row] if row < len(values) else None
-
-    def rank(row: int) -> tuple[float, int, str]:
-        occupancy = field(row, "occupancy")
-        try:
-            occupancy_value = float(occupancy) if occupancy not in (None, ".", "?") else 0.0
-        except ValueError:
-            occupancy_value = 0.0
-        alt_id = normalize_missing(field(row, "label_alt_id"))
-        return (-occupancy_value, 0 if alt_id is None else 1, alt_id or "")
-
-    selected_by_identity: dict[tuple[str | None, ...], int] = {}
-    for row in range(row_count):
-        identity = tuple(field(row, name) for name in identity_fields)
-        current = selected_by_identity.get(identity)
-        if current is None or rank(row) < rank(current):
-            selected_by_identity[identity] = row
-    selected_rows = sorted(selected_by_identity.values())
-
-    for key, values in atom_columns.items():
-        document[key] = [values[row] for row in selected_rows]
-    writer = MMCIFIO()
-    writer.set_dict(document)
-    writer.save(str(output_path))
-
-
 def dssp_optional_angle(value: Any) -> float | None:
     angle = float(value)
     return None if angle == 360.0 else angle
@@ -408,36 +302,6 @@ def dssp_bond(
     }
 
 
-def atom_site_table(fixture_path: Path, MMCIF2Dict: Any) -> dict[str, Any]:
-    try:
-        raw = MMCIF2Dict(str(fixture_path))
-    except Exception as error:
-        return {"status": "parse_error", "error": error.__class__.__name__, "rows": []}
-
-    values_by_field: dict[str, list[str | None]] = {}
-    row_count = 0
-    for field in ATOM_SITE_FIELDS:
-        raw_value = raw.get(f"_atom_site.{field}")
-        values = normalize_mmcif_column(raw_value)
-        if values:
-            row_count = max(row_count, len(values))
-        values_by_field[field] = values
-
-    rows = []
-    for index in range(row_count):
-        row = {
-            field: normalize_missing(values[index]) if index < len(values) else None
-            for field, values in values_by_field.items()
-        }
-        rows.append(row)
-
-    return {
-        "status": "ok",
-        "row_count": row_count,
-        "rows": rows,
-    }
-
-
 def normalize_mmcif_column(value: Any) -> list[str | None]:
     if value is None:
         return []
@@ -450,11 +314,3 @@ def normalize_missing(value: str | None) -> str | None:
     if value is None or value in {"", ".", "?"}:
         return None
     return value
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
