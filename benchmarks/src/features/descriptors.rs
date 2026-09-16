@@ -1,8 +1,7 @@
 use crate::*;
 
 use super::chemistry::*;
-use super::io::{IndexedSmallRecord, IndexedSmilesRecord};
-use super::smiles::hydrogen_transform_semantic_json;
+use super::io::IndexedSmallRecord;
 
 pub(crate) fn molecular_descriptor_record_json(record: &mut IndexedSmallRecord) -> Value {
     if record.molecule.perceive().is_err() {
@@ -82,91 +81,6 @@ pub(crate) fn rotatable_bond_record_json(record: &IndexedSmallRecord) -> Value {
     })
 }
 
-pub(crate) fn rotatable_bond_smiles_record_json(record: &IndexedSmilesRecord) -> Value {
-    if record.status != "ok" {
-        return json!({
-            "record_index": record.record_index,
-            "status": record.status,
-            "title": record.title,
-        });
-    }
-
-    let mut atom_offset = 0usize;
-    let mut bonds = Vec::new();
-    for component in &record.components {
-        let molecule = component;
-        let detected = kekule::rotatable_bonds::detect(
-            molecule,
-            kekule::rotatable_bonds::RotatableBondOptions::STRICT,
-        );
-        bonds.extend(detected.bond_ids().iter().copied().map(|bond_id| {
-            let bond = molecule
-                .bond(bond_id)
-                .expect("rotatable-bond detector returns live bond IDs");
-            json!({
-                "begin_atom_index": atom_offset + bond.a().raw() as usize,
-                "end_atom_index": atom_offset + bond.b().raw() as usize,
-            })
-        }));
-        atom_offset += molecule.atom_count();
-    }
-    json!({
-        "record_index": record.record_index,
-        "status": "ok",
-        "title": record.title,
-        "count": bonds.len(),
-        "bonds": bonds,
-    })
-}
-
-pub(crate) fn mol_parse_record_json(record: &IndexedSmallRecord) -> Value {
-    let mol = &record.molecule;
-    json!({
-        "record_index": record.record_index,
-        "status": "ok",
-        "title": record.title,
-        "atom_count": mol.atom_count(),
-        "atoms": atoms_json(mol),
-    })
-}
-
-pub(super) fn rdkit_default_atom_index(
-    mol: &Molecule,
-    remove_plain_hydrogens: bool,
-) -> BTreeMap<AtomId, u64> {
-    let mut index = BTreeMap::new();
-    let retained = mol.atoms().filter(|(id, atom)| {
-        !remove_plain_hydrogens
-            || !rdkit_default_removes_hydrogen(atom)
-            || mol
-                .incident_bonds(*id)
-                .map_or(true, |bonds| bonds.count() != 1)
-    });
-    for (dense_index, (atom_id, _)) in (0u64..).zip(retained) {
-        index.insert(atom_id, dense_index);
-    }
-    index
-}
-
-pub(super) fn rdkit_default_bond_count(
-    mol: &Molecule,
-    atom_index: &BTreeMap<AtomId, u64>,
-) -> usize {
-    mol.bonds()
-        .filter(|(_, bond)| {
-            atom_index.contains_key(&bond.a()) && atom_index.contains_key(&bond.b())
-        })
-        .count()
-}
-
-fn rdkit_default_removes_hydrogen(atom: &Atom) -> bool {
-    atom.element.symbol() == "H"
-        && atom.isotope.is_none()
-        && atom.formal_charge == 0
-        && atom.radical.is_none()
-        && atom.atom_map.is_none()
-}
-
 pub(crate) fn ring_membership_record_json(record: &mut IndexedSmallRecord) -> Value {
     let membership = rings::perceive_ring_membership(&mut record.molecule);
     let mol = &record.molecule;
@@ -175,7 +89,7 @@ pub(crate) fn ring_membership_record_json(record: &mut IndexedSmallRecord) -> Va
         "status": "ok",
         "title": record.title,
         "atom_in_ring": mol.atom_ids().map(|id| membership.atom_in_ring(id)).collect::<Vec<_>>(),
-        "bond_in_ring": mol.bond_ids().map(|id| membership.bond_in_ring(id)).collect::<Vec<_>>(),
+        "bond_in_ring": bond_values(mol, |id| json!(membership.bond_in_ring(id))),
     })
 }
 
@@ -206,6 +120,8 @@ pub(crate) fn default_perception_atom_record_json(record: &mut IndexedSmallRecor
             "status": "ok",
             "title": record.title,
             "atoms": basic_atoms_json(&record.molecule),
+            "graph": super::strict::graph(&record.molecule, None).unwrap_or_else(|e| json!({"status":"error","message":e.to_string()})),
+            "valence": record.molecule.atoms().map(|(id, atom)| valence_atom_json(&record.molecule, id, atom)).collect::<Vec<_>>(),
         })
     } else {
         json!({
@@ -273,6 +189,11 @@ pub(crate) fn hydrogen_transform_record_json(record: &mut IndexedSmallRecord) ->
             "title": record.title,
         });
     }
+    if record.molecule.perceive().is_err() {
+        return json!({"status":"perception_error"});
+    }
+    let added_graph = super::strict::graph(&record.molecule, None)
+        .unwrap_or_else(|e| json!({"status":"error","message":e.to_string()}));
     if hydrogens::remove_hydrogens(&mut record.molecule).is_err() {
         return json!({
             "record_index": record.record_index,
@@ -281,11 +202,15 @@ pub(crate) fn hydrogen_transform_record_json(record: &mut IndexedSmallRecord) ->
         });
     }
 
+    if record.molecule.perceive().is_err() {
+        return json!({"status":"perception_error"});
+    }
     json!({
         "record_index": record.record_index,
         "status": "ok",
         "title": record.title,
         "atom_count_after_add": atom_count_after_add,
+        "added_graph": added_graph,
         "added_hydrogens_by_parent": added_by_parent
             .into_iter()
             .map(|(parent_atom_index, count)| json!({
@@ -293,7 +218,7 @@ pub(crate) fn hydrogen_transform_record_json(record: &mut IndexedSmallRecord) ->
                 "count": count,
             }))
             .collect::<Vec<_>>(),
-        "round_trip": hydrogen_transform_semantic_json(record.molecule.clone()),
+        "round_trip": super::strict::graph(&record.molecule, None).unwrap_or_else(|e| json!({"status":"error","message":e.to_string()})),
     })
 }
 
@@ -311,7 +236,7 @@ pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value 
         "status": "ok",
         "title": record.title,
         "atom_aromatic": mol.atoms().map(|(id, _)| mol.atom_is_aromatic(id).ok().flatten().unwrap_or(false)).collect::<Vec<_>>(),
-        "bond_aromatic": mol.bonds().map(|(id, _)| mol.bond_is_aromatic(id).ok().flatten().unwrap_or(false)).collect::<Vec<_>>(),
+        "bond_aromatic": bond_values(mol, |id| json!(mol.bond_is_aromatic(id).expect("live bond"))),
     })
 }
 
@@ -336,4 +261,22 @@ pub(crate) fn canonical_ranking_record_json(record: &mut IndexedSmallRecord) -> 
         "title": record.title,
         "classes": classes,
     })
+}
+
+fn bond_values(mol: &Molecule, value: impl Fn(kekule::core::BondId) -> Value) -> Vec<Value> {
+    let mut bonds = mol
+        .bonds()
+        .map(|(id, bond)| {
+            let mut ends = [bond.a().raw(), bond.b().raw()];
+            if bond.order != BondOrder::Dative {
+                ends.sort();
+            }
+            (
+                ends,
+                json!({"begin_atom_index":ends[0],"end_atom_index":ends[1],"value":value(id)}),
+            )
+        })
+        .collect::<Vec<_>>();
+    bonds.sort_by_key(|(ends, _)| *ends);
+    bonds.into_iter().map(|(_, value)| value).collect()
 }

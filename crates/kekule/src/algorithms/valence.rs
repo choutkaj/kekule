@@ -287,6 +287,19 @@ fn can_be_rdkit_hypervalent_anion(atom: &Atom, effective_atomic_number: u8) -> b
     }
 }
 
+/// Returns the represented valence used by this module's hydrogen inference.
+///
+/// Counts localized incident bond orders and the atom's declared hydrogens.
+/// Inferred hydrogens are excluded. Zero-order and dative bonds contribute zero
+/// at both endpoints, as specified by [`ValenceModel::RdkitLike`]. This reads
+/// represented chemistry without installing or changing perception.
+///
+/// Returns an error if `atom` is not live in `mol`.
+pub fn represented_valence(mol: &Molecule, atom: AtomId) -> Result<usize> {
+    let declaration = mol.atom(atom)?.hydrogens.explicit_count();
+    Ok(explicit_valence(mol, atom) + usize::from(declaration))
+}
+
 pub(crate) fn explicit_valence(mol: &Molecule, atom: AtomId) -> usize {
     mol.incident_bonds(atom)
         .ok()
