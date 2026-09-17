@@ -64,6 +64,8 @@ fn opts(generate: bool) -> Options {
         python: Some("must-not-run".into()),
         goldens: "unused".into(),
         output: "unused".into(),
+        runs_dir: "unused".into(),
+        started_at_unix_ms: 1,
     }
 }
 fn case(index: usize) -> Case {

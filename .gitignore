@@ -1,4 +1,6 @@
 /target/
+/benchmarks/runs/
+/benchmarks/.dashboard-python
 **/*.rs.bk
 .DS_Store
 .idea/

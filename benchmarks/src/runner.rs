@@ -15,6 +15,7 @@ use std::{
     path::{Path, PathBuf},
     process,
 };
+mod dashboard;
 #[cfg(test)]
 mod storage_tests;
 mod stored;
@@ -257,6 +258,8 @@ struct Options {
     python: Option<PathBuf>,
     goldens: PathBuf,
     output: PathBuf,
+    runs_dir: PathBuf,
+    started_at_unix_ms: u64,
 }
 
 fn options(args: &[String]) -> Result<Options, Box<dyn Error>> {
@@ -301,6 +304,10 @@ fn options(args: &[String]) -> Result<Options, Box<dyn Error>> {
     if generate && values.contains_key("--writer-python") {
         return Err(boxed_error("use --python for golden generation"));
     }
+    let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+    let runs_dir = env::var_os("KEKULE_BENCHMARK_RUNS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("runs"));
     Ok(Options {
         feature: values
             .get("--feature")
@@ -334,17 +341,10 @@ fn options(args: &[String]) -> Result<Options, Box<dyn Error>> {
             .get("--output")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../target/benchmarks")
-                    .join(format!(
-                        "run-{}-{}.json",
-                        process::id(),
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_nanos()
-                    ))
+                runs_dir.join(format!("run-{started_at_unix_ms}-{}.json", process::id()))
             }),
+        runs_dir,
+        started_at_unix_ms,
     })
 }
 
@@ -874,6 +874,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             false,
             Some(error.to_string()),
         )?;
+        dashboard::publish(&opts);
         return Err(error);
     }
     let passed = !rows.is_empty()
@@ -895,6 +896,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         None,
     )?;
     println!("Report: {}", opts.output.display());
+    dashboard::publish(&opts);
     if !passed {
         return Err(boxed_error(if opts.generate {
             "reference generation retained errors; see report"
@@ -938,6 +940,7 @@ fn write_report(
     serde_json::to_writer_pretty(
         &mut *file,
         &json!({"schema":2,"mode":if opts.generate{"generate"}else{"compare"},
+        "started_at_unix_ms":opts.started_at_unix_ms,
         "complete":complete,"passed":passed,"error":error,"implementation":implementation,"goldens":opts.goldens,
         "cases":if opts.generate{None}else{Some(opts.output.with_extension("cases.jsonl"))},"results":rows}),
     )?;

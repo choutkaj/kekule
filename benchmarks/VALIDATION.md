@@ -75,6 +75,61 @@ The package file list contains 25 smoke archives and 125 manifests, with no bulk
 inputs or golden archives. Formatting, workspace check, clippy and Rustdoc also
 passed after the distribution changes.
 
+## Dashboard validation
+
+`dashboard.py` builds a self-contained HTML snapshot from explicit comparison
+summaries and the tracked reference catalogue. It reads no golden payloads or
+case records and exports no local paths or raw error messages. Runs stay separate;
+selection scope, incomplete runs, stale provenance and unrun pairs remain visible.
+Fixed snapshots stay under the ignored `target/` directory. Automatic run history
+and its live page are kept under the ignored `benchmarks/runs/` directory.
+
+Validation for this dashboard addition:
+
+- All 21 standard-library Python regressions passed, including inconsistent
+  counts, incomplete runs, overlapping error origins, changed provenance, duplicate
+  imports/rows, safe embedded JSON, preservation of input reports, corpus sizes
+  and formats, recorded-time ordering, legacy filenames, invalid-report isolation,
+  empty/incomplete history, the combined agreement display and simplified tables. These tests
+  are now included in CI without invoking scientific reference software.
+- JavaScript syntax and in-memory DOM checks passed for 125 cells, filtering,
+  empty search results, run switching, incomplete-run provenance, corpus rows,
+  combined agreement bar widths
+  and downloading the sanitized plotted data. The tracked Node regression also
+  verifies live updates, unchanged-history selection, newest-run selection, empty
+  history and retry after a missing local data file. This is not a visual browser test.
+- Rust formatting, workspace check, clippy, Rustdoc, 45 benchmark tests and the
+  benchmark package file-list check passed. The package still omits bulk data.
+- Fresh full-smoke and one-ID-per-dataset comparisons completed and reproduced
+  the totals below. Both correctly returned exit status 1 for scientific
+  disagreements. The initial debug sample was stopped after preserving its
+  incomplete checkpoint, then completed using the optimized executable.
+- Automated visual preview could not run: the browser tool's URL security policy
+  blocked local `file:` navigation. No alternate browser route was attempted.
+
+The automatic page is `benchmarks/runs/index.html`; comparison commands refresh
+its sanitized `dashboard-data.js` feed after success, disagreement or a handled
+execution error. Each report records `started_at_unix_ms`. Updates are serialized
+with an OS file lock and published by atomic replacement. Explicit `--output`
+summaries join the history without copying their potentially large case files.
+Missing Python leaves the report and scientific exit status intact and emits a
+warning. Integration tests cover these cases against the checked-in smoke data.
+The Git staging and package checks exclude run history and `.dashboard-python`.
+An initially stale Cargo test executable created temporary missing-golden reports
+in the default history. The benchmark build cache was cleared, all benchmark tests
+were rebuilt and passed with isolated history, and only those test artifacts were
+removed. Workspace check, clippy and Rustdoc were repeated after the clean build.
+
+The existing Enamine comparison `run-32348-1789591874492654300.json` and the two
+earlier dashboard summaries were imported without modifying the source reports;
+the large case records remain at their original local paths. The earlier fixed
+snapshot remains at `target/benchmark-dashboard/index.html`.
+Full runtime/MSRV test matrices and runtime package builds were not repeated for
+these benchmark reporting changes; their preceding audit results are above.
+No runtime implementation, comparison contract, reference adapter or golden was
+changed. Full-corpus Kekule evaluation and external trajectory profiling remain
+outside this dashboard validation. No website publication was performed.
+
 ## Scientific results
 
 The full smoke corpus measures 452 applicable cases across all 25 features:

@@ -24,8 +24,10 @@ their hashes against the tracked provenance. Missing files stop the run.
 
 The default selects all locked source IDs. `--limit N` selects a deterministic
 subset before either engine runs; molecular subsets are nested and PDB subsets
-retain lock-file order. `--jobs N` controls Kekule concurrency. `--output FILE`
-selects a new report. Files are never overwritten by the CLI.
+retain lock-file order. `--jobs N` controls Kekule concurrency. Reports and per-case
+JSONL are saved under `benchmarks/runs/`, with unique run names. `--output FILE`
+selects another report location; its summary is also archived in `benchmarks/runs/`
+without duplicating its case records. Existing reports are never overwritten.
 
 Normal parser and algorithm checks need Rust and the stored goldens. Writers
 also need RDKit to read the emitted text. Select it with `--writer-python`,
@@ -39,6 +41,68 @@ Generation is explicit and never evaluates Kekule. Write regenerated goldens to
 a new directory, investigate changes, and review them before adopting them.
 Missing, stale, malformed or duplicated goldens stop comparison; they do not
 trigger regeneration. A partial generation does not cover omitted cases.
+
+## Dashboard
+
+Every comparison refreshes `benchmarks/runs/index.html`, including comparisons that
+fail or stop with an error. Open that page once: it checks the adjacent local data
+file every five seconds and selects the newest run when history changes. Unchanged
+history preserves your selected run and search. Reports are ordered by their recorded
+start time, not file modification time. Reference generation is excluded.
+
+Python 3.11+ and its standard library are needed to render the dashboard. The command
+uses `KEKULE_DASHBOARD_PYTHON`, an executable path in the ignored file
+`benchmarks/.dashboard-python`, the selected writer Python, or Python on `PATH`.
+If rendering fails, a warning identifies the problem; reports and the scientific
+exit status are preserved. `KEKULE_BENCHMARK_RUNS_DIR` can override the local history
+directory. There is no server or upload.
+
+To refresh history manually, including checkpoints left by an aborted process:
+
+```text
+python benchmarks/dashboard.py
+```
+
+Invalid or incompatible reports are skipped with a warning; identical reports are
+deduplicated. Incomplete comparison reports remain labeled in provenance. Original
+reports are retained. Old runner filenames carry a sortable start time; other
+untimestamped imports sort after timestamped runs, without inferring dates from mtime.
+
+You can also build a fixed snapshot from explicit schema-2 comparison reports:
+
+```text
+python benchmarks/dashboard.py target/smoke.json target/full-corpus-sample.json
+```
+
+Open `target/benchmark-dashboard/index.html` in a browser, or choose another
+destination with `--output PATH.html`. Python 3.11+ and its standard library are
+sufficient. This explicit-report mode produces a single file without live polling,
+a server, network requests or external assets. It can later be hosted unchanged.
+Rerun the command to refresh this derived page; input reports are never modified.
+
+The dashboard shows a searchable feature/dataset comparison table and an overview
+of the data corpora: source ID counts (N), supplied formats
+and selection notes. Plots group exact and within-precision agreement into one
+"Agrees" category; report counts and comparison tolerances are unchanged. Runs
+remain separate. Cells distinguish full selections, deterministic samples, stale
+provenance and absent results; run completion is recorded in the provenance panel.
+No overall correctness score or cross-library speed ratio is computed. Counts
+repeat inputs across features and formats; unavailable formats stay outside the
+measured denominator.
+
+Only aggregate counts, source membership sizes and hashes/tool versions are
+embedded. Inputs, golden payloads, per-case observations, local paths and raw
+error messages stay local. The page can be generated without the full datasets
+or golden archives. Run history and local Python configuration are excluded from
+Git and Cargo packages; fixed snapshots under `target/` are likewise local.
+Publication is a separate, deliberate step; this command uploads nothing.
+"Download plotted data" saves a sanitized dashboard export, not the original
+runner report. Rebuild the page from the original comparison summaries.
+
+```text
+python -m unittest discover -s benchmarks -p test_dashboard.py
+node benchmarks/test_dashboard.cjs
+```
 
 ## Observations and comparisons
 
@@ -121,7 +185,8 @@ case limit, so a small selection can still incur substantial validation I/O.
 Memory does not grow with corpus size. Writer readers must match the stored
 reference tool/version.
 
-Reports contain the Git revision/worktree state, executable hash, current adapter
+Reports record their start time in `started_at_unix_ms`, the Git revision/worktree
+state, executable hash, current adapter
 and contract hashes, and each feature's golden manifest. A summary is written
 before evaluation and checkpointed after each feature. Incomplete runs carry
 `complete: false` and the error; per-case JSONL preserves completed observations

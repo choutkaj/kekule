@@ -63,6 +63,20 @@ fn staging_keeps_bulk_data_local_and_includes_smoke_and_provenance() {
         }
     }
     fs::write(root.join("benchmarks/goldens/bundle.tar.gz"), b"fixture").unwrap();
+    fs::create_dir(root.join("benchmarks/runs")).unwrap();
+    for name in [
+        "run.json",
+        "run.cases.jsonl",
+        "index.html",
+        "dashboard-data.js",
+    ] {
+        fs::write(root.join("benchmarks/runs").join(name), b"local run").unwrap();
+    }
+    fs::write(
+        root.join("benchmarks/.dashboard-python"),
+        b"local executable",
+    )
+    .unwrap();
     git(&root, &["init", "--quiet"]);
     git(&root, &["add", "."]);
     let staged = git(&root, &["ls-files"]);
