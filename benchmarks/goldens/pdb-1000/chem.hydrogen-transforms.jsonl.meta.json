@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "dataset": "pdb-1000",
+  "feature": "chem.hydrogen-transforms",
+  "input_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171",
+  "sha256": "703d8538a2474b86dc4f0f4fb1cf4e2614f9f82d1616ee1e243be9b1d3540df9",
+  "reference": null,
+  "reference_code_sha256": null,
+  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded.",
+  "cases": 1000
+}

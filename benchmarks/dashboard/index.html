@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'DASHBOARD_LIVE_SOURCE; style-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>kekule · Benchmarks</title>
+  <style>/* DASHBOARD_CSS */</style>
+</head>
+<body>
+  <header class="masthead">
+    <a class="brand" href="#top" aria-label="kekule benchmarks">kekule<span class="brand-divider">/</span><span class="brand-section">benchmarks</span></a>
+  </header>
+  <main id="top">
+    <section class="intro">
+      <h1>Benchmarks</h1>
+      <div class="run-control"><label for="run">Benchmark run</label><select id="run"></select></div>
+    </section>
+    <section class="panel matrix-panel">
+      <div class="section-head"><h2>Comparisons</h2><button id="download" class="button">Download plotted data</button></div>
+      <div class="matrix-tools"><label class="search-label">Find a feature<input id="search" type="search" placeholder="e.g. stereo or io.smiles" autocomplete="off"></label><div class="legend"><span><i class="swatch agree"></i>Agrees</span><span><i class="swatch disagree"></i>Disagrees</span><span><i class="swatch error"></i>Error</span></div></div>
+      <div class="matrix-scroll"><table id="matrix"><caption class="sr-only">Independent comparisons by feature and dataset</caption><thead></thead><tbody></tbody></table></div>
+      <p id="no-matches" class="caption" hidden>No features match this search.</p>
+    </section>
+    <section class="panel corpora-panel">
+      <h2>Data corpora</h2>
+      <div class="matrix-scroll"><table class="corpora-table">
+        <caption class="sr-only">Complete locked input collections, independent of the selected run</caption>
+        <thead><tr><th scope="col">Corpus</th><th scope="col">N</th><th scope="col">Formats</th><th scope="col">Contents and selection</th></tr></thead>
+        <tbody id="corpora"></tbody>
+      </table></div>
+    </section>
+    <details class="panel provenance"><summary>Run provenance &amp; reproducibility</summary><div id="provenance"></div></details>
+    <footer>kekule · Benchmarks</footer>
+  </main>
+  <noscript><p class="panel">Enable JavaScript to explore this self-contained benchmark snapshot.</p></noscript>
+  <script id="benchmark-data" type="application/json">DASHBOARD_DATA</script>
+  <script>/* DASHBOARD_JS */</script>
+</body>
+</html>

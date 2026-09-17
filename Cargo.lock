@@ -1050,6 +1050,20 @@ name = "kekule"
 version = "0.2.1"
 
 [[package]]
+name = "kekule-bench"
+version = "0.2.1"
+dependencies = [
+ "flate2",
+ "indicatif",
+ "kekule",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml",
+]
+
+[[package]]
 name = "kekule-potentials"
 version = "0.2.1"
 dependencies = [
@@ -1065,6 +1079,7 @@ version = "0.2.1"
 dependencies = [
  "kekule",
  "molly",
+ "serde_json",
  "sha2",
 ]
 
@@ -2335,18 +2350,6 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
-
-[[package]]
-name = "xtask"
-version = "0.2.1"
-dependencies = [
- "flate2",
- "kekule",
- "serde",
- "serde_json",
- "sha2",
- "toml",
-]
 
 [[package]]
 name = "zerocopy"

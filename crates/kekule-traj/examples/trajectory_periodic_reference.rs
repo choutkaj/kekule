@@ -14,7 +14,57 @@ use kekule_traj::{
     periodic::{MoleculeImager, TrajectoryUnwrapper},
     FrameBuffer, Trajectory,
 };
-use std::{error::Error, fs, path::Path, sync::Arc};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::{error::Error, fs, io::Read, path::Path, sync::Arc};
+
+fn sha256(path: &Path) -> Result<String, Box<dyn Error>> {
+    let mut file = fs::File::open(path)?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0; 65536];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hash.update(&buffer[..n]);
+    }
+    Ok(hash
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+fn provenance(
+    topology: &Path,
+    trajectory: &Path,
+    directory: &Path,
+) -> Result<Value, Box<dyn Error>> {
+    let metadata: Value =
+        serde_json::from_reader(fs::File::open(directory.join("provenance.json"))?)?;
+    if metadata["schema"] != 2
+        || metadata["coordinate_unit"] != "nm"
+        || metadata["tolerance_nm"] != json!(0.0001)
+        || metadata["references"]["mdtraj"] != "1.11.1.post1"
+        || metadata["references"]["MDAnalysis"] != "2.9.0"
+    {
+        return Err("incompatible reference provenance".into());
+    }
+    for (path, expected) in [
+        (topology, &metadata["artifacts"]["topology.txt"]),
+        (trajectory, &metadata["inputs"]["trajectory"]["sha256"]),
+    ] {
+        if expected.as_str() != Some(sha256(path)?.as_str()) {
+            return Err("reference input checksum differs".into());
+        }
+    }
+    for name in ["raw.txt", "whole.txt", "image.txt", "unwrap.txt"] {
+        if metadata["artifacts"][name].as_str() != Some(sha256(&directory.join(name))?.as_str()) {
+            return Err("reference artifact checksum differs".into());
+        }
+    }
+    Ok(metadata)
+}
 
 fn topology(path: &Path) -> Result<Arc<Topology>, Box<dyn Error>> {
     let input = fs::read_to_string(path)?;
@@ -82,8 +132,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             "usage: trajectory_periodic_reference TOPOLOGY.txt INPUT.xtc REFERENCES_DIR".into(),
         );
     }
+    let provenance = provenance(
+        Path::new(&args[0]),
+        Path::new(&args[1]),
+        Path::new(&args[2]),
+    )?;
     let topology = topology(Path::new(&args[0]))?;
     let source = read_trajectory(Path::new(&args[1]), topology.clone())?;
+    if source.is_empty()
+        || topology.atom_count() == 0
+        || provenance["frames"] != json!(source.len())
+        || provenance["atoms"] != json!(topology.atom_count())
+    {
+        return Err("reference dimensions differ or are empty".into());
+    }
     let anchors = AtomSelection::all(&topology);
     let whole = source.make_molecules_whole()?;
     let imaged = source.image_molecules(&anchors)?;
@@ -119,26 +181,86 @@ fn main() -> Result<(), Box<dyn Error>> {
             assert_eq!(output.positions().values().unit(), NANOMETER);
         }
     }
-    println!(
-        "{{\"frames\":{},\"atoms\":{},\"maximum_error_nm\":{{",
-        source.len(),
-        topology.atom_count()
-    );
-    for (index, (label, trajectory)) in [
+    let mut errors = serde_json::Map::new();
+    for (label, trajectory) in [
         ("raw", &source),
         ("whole", &whole),
         ("image", &imaged),
         ("unwrap", &unwrapped),
     ]
     .into_iter()
-    .enumerate()
     {
         let error = compare(
             trajectory,
             &Path::new(&args[2]).join(format!("{label}.txt")),
         )?;
-        println!("{}\"{label}\":{error}", if index == 0 { "" } else { "," });
+        errors.insert(label.into(), json!(error));
     }
-    println!("}},\"streaming_parity\":true,\"metadata_preserved\":true}}");
+    println!(
+        "{}",
+        json!({"frames":source.len(),"atoms":topology.atom_count(),"maximum_error_nm":errors,"streaming_parity":true,"metadata_preserved":true,"provenance":provenance})
+    );
     Ok(())
+}
+
+#[test]
+fn provenance_rejects_changed_sources_artifacts_and_contracts() {
+    let directory = std::env::temp_dir().join(format!(
+        "kekule-trajectory-provenance-{}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).unwrap();
+    let names = [
+        "topology.txt",
+        "raw.txt",
+        "whole.txt",
+        "image.txt",
+        "unwrap.txt",
+        "input.xtc",
+    ];
+    for name in names {
+        fs::write(directory.join(name), b"regression bytes").unwrap();
+    }
+    let digest = sha256(&directory.join("input.xtc")).unwrap();
+    let mut artifacts = serde_json::Map::new();
+    for name in &names[..5] {
+        artifacts.insert((*name).into(), json!(digest));
+    }
+    let baseline = json!({"schema":2,"coordinate_unit":"nm","tolerance_nm":0.0001,"references":{"mdtraj":"1.11.1.post1","MDAnalysis":"2.9.0"},"inputs":{"trajectory":{"sha256":digest}},"artifacts":artifacts});
+    let write = |value: &Value| {
+        fs::write(
+            directory.join("provenance.json"),
+            serde_json::to_vec(value).unwrap(),
+        )
+        .unwrap()
+    };
+    let check = || {
+        provenance(
+            &directory.join("topology.txt"),
+            &directory.join("input.xtc"),
+            &directory,
+        )
+    };
+    write(&baseline);
+    assert!(check().is_ok());
+    for name in names {
+        fs::write(directory.join(name), b"changed").unwrap();
+        assert!(check().is_err(), "{name}");
+        fs::write(directory.join(name), b"regression bytes").unwrap();
+    }
+    for (key, value) in [
+        ("schema", json!(1)),
+        ("coordinate_unit", json!("angstrom")),
+        ("tolerance_nm", json!(0.1)),
+    ] {
+        let mut modified = baseline.clone();
+        modified[key] = value;
+        write(&modified);
+        assert!(check().is_err());
+    }
+    for name in names {
+        fs::remove_file(directory.join(name)).unwrap();
+    }
+    fs::remove_file(directory.join("provenance.json")).unwrap();
+    fs::remove_dir(directory).unwrap();
 }

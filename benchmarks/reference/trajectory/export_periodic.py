@@ -33,7 +33,11 @@ def main():
     molecules = source.topology.find_molecules()
     if len(molecules) != 1:
         raise ValueError("This reference profile requires one connected molecule")
-    args.output.mkdir(parents=True, exist_ok=True)
+    if args.output.exists():
+        raise ValueError('Choose a new output directory; reference exports are immutable')
+    if source.n_atoms == 0 or source.n_frames == 0:
+        raise ValueError('Empty trajectories cannot establish correctness')
+    args.output.mkdir(parents=True)
     with (args.output / "topology.txt").open("w", encoding="utf-8") as output:
         output.write(f"{source.n_atoms} {source.topology.n_bonds}\n")
         output.write(" ".join(atom.element.symbol for atom in source.topology.atoms) + "\n")
@@ -49,7 +53,7 @@ def main():
     for name, values in {"raw": source.xyz, "whole": whole.xyz, "image": image.xyz, "unwrap": unwrapped}.items():
         np.savetxt(args.output / f"{name}.txt", values.reshape(-1, 3), fmt="%.17g")
     metadata = {
-        "schema": 1,
+        "schema": 2,
         "frames": source.n_frames,
         "atoms": source.n_atoms,
         "bonds": source.topology.n_bonds,
@@ -57,7 +61,9 @@ def main():
         "tolerance_nm": 0.0001,
         "references": {"mdtraj": md.__version__, "MDAnalysis": mda.__version__, "numpy": np.__version__},
         "operations": {"whole": "MDTraj make_molecules_whole", "image": "MDTraj image_molecules, entire molecule as explicit anchor", "unwrap": "MDAnalysis NoJump, sequential fractional-coordinate continuity"},
-        "inputs": [{"path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in (args.topology, args.trajectory)],
+        "inputs": {role: {"path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for role,path in [('topology',args.topology),('trajectory',args.trajectory)]},
+        "artifacts": {name: hashlib.sha256((args.output/name).read_bytes()).hexdigest() for name in ['topology.txt','raw.txt','whole.txt','image.txt','unwrap.txt']},
+        "generator_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
     }
     (args.output / "provenance.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(metadata, indent=2))

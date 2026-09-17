@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "dataset": "pdb-1000",
+  "feature": "descriptor.molecular",
+  "input_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171",
+  "sha256": "b8cdb7ca115091f578527c69fd712ad8f177a0b9058b7dcd5a9abb34c96acd13",
+  "reference": null,
+  "reference_code_sha256": null,
+  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded.",
+  "cases": 1000
+}
