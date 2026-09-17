@@ -1,3 +1,7 @@
+# Historical stereo validation
+
+The results below describe the retired benchmark adapters. They do not validate the new strict comparison layer. Use [the current benchmark guide](../benchmarks/GUIDE.md) to generate fresh reference results; the old standalone comparison commands are no longer available.
+
 # Stereo validation
 
 RDKit is an optional scientific reference, never a Rust dependency or release
@@ -7,16 +11,16 @@ follows [IUPAC P-9](https://iupac.qmul.ac.uk/BlueBook/P9.html) and the
 [Hanson et al. refinements](https://doi.org/10.1021/acs.jcim.8b00324) used by
 [RDKit's labeler](https://github.com/rdkit/rdkit/tree/Release_2026_03_6/Code/GraphMol/CIPLabeler).
 See the [support contract](stereo-support.md) and
-[benchmark contract](../benchmarks/reference/stereo/SCHEMA.md).
+[current benchmark contract](../benchmarks/GUIDE.md).
 
 ## Running the checks
 
 From the repository root, with external corpus data installed:
 
 ```text
-cargo build -p xtask --examples --locked
-cargo test -p xtask --examples --locked
-uv run --python 3.13 benchmarks/reference/rdkit/compare_smiles.py --corpus pubchem-1k --variants 3 --probe target/debug/examples/smiles_write_probe --output target/stereo-validation/smiles.json
+cargo build -p kekule-bench --examples --locked
+cargo test -p kekule-bench --examples --locked
+uv run --python 3.13 benchmarks/reference/rdkit/compare_smiles.py --corpus pubchem-100k --variants 3 --probe target/debug/examples/smiles_write_probe --output target/stereo-validation/smiles.json
 uv run --with rdkit==2026.3.6 --python 3.13 python -m unittest discover -s benchmarks/reference/rdkit -p "test_*.py"
 uv run --python 3.13 benchmarks/reference/rdkit/compare_cip.py --corpus enamine-diversity --stereo-only --mode sanitized --probe target/debug/examples/cip_probe --output target/stereo-validation/enamine.json
 uv run --python 3.13 benchmarks/reference/rdkit/compare_cip.py --corpus pubchem-100k --stereo-only --mode sanitized --probe target/debug/examples/cip_probe --output target/stereo-validation/pubchem.json

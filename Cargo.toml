@@ -4,7 +4,7 @@ members = [
     "crates/kekule",
     "crates/kekule-potentials",
     "crates/kekule-traj",
-    "crates/xtask",
+    "benchmarks",
 ]
 
 [workspace.package]
@@ -18,15 +18,6 @@ keywords = ["chemistry", "cheminformatics", "bioinformatics", "molecular-modelin
 categories = ["science", "data-structures", "parser-implementations"]
 
 [profile.dev.package.sha2]
-opt-level = 3
-
-[profile.dev.package.flate2]
-opt-level = 3
-
-[profile.dev.package.miniz_oxide]
-opt-level = 3
-
-[profile.dev.package.crc32fast]
 opt-level = 3
 
 [profile.dev.package.serde_json]

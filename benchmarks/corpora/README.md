@@ -1,20 +1,14 @@
-# Benchmark Corpora
+# Benchmark inputs
 
-Each corpus is self-contained:
+Each dataset contains `sources.lock.json` and externally supplied files in
+`data/`. The lock defines membership, source provenance and expected file hashes.
+The tracked smoke corpus is small; larger source files are local and ignored.
 
-```text
-<corpus-id>/
-  corpus.toml
-  sources.lock.json
-  data/
-  features/
-  golden/
-```
+The current datasets are `smoke`, `pubchem-100k`, `enamine-diversity`, `pdb-1000`
+and `pl-rex`. The runner selects from their locks, independently of reference or
+Kekule success. Available matching formats determine the cases for each feature.
 
-`data/` is generated locally and ignored. Source locks, benchmark manifests, and deterministic goldens are tracked. Manifests in `features/` identify benchmark targets with `feature_id`.
-
-The runner discovers every corpus descriptor and manifest directly from this tree and sorts selected `(benchmark ID, corpus ID)` pairs deterministically. Missing benchmark/corpus combinations are normal unless requested concretely.
-
-Checked-in source-lock entry IDs and categories are canonical membership. Normal builders reconstruct those records. Creating a different corpus version requires explicit reselection and a new `selection_id`.
-
-PubChem-100 is an exact prefix of PubChem-1k. PDB-10 and PDB-100 are exact prefixes of PDB-1000. The smoke corpus provides small tracked fixtures; broader corpora may require locally built ignored data.
+Current independent goldens live separately in `../goldens/`. See
+[GUIDE.md](../GUIDE.md) for selection, integrity checks, generation, comparison
+and the historical PubChem selection limitation. Use `../data.py` to verify,
+pack or unpack supplied inputs without changing their bytes or membership.

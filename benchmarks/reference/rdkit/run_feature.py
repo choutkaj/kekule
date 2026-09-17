@@ -3,42 +3,12 @@
 
 from __future__ import annotations
 
-import argparse
-import gzip
-import hashlib
 import json
-import re
-import tomllib
 from pathlib import Path
 from typing import Any
+from reference.rdkit import molecule
+from reference.rdkit.molecule import atom_json, graph as molecular_graph, records as molecular_records
 
-
-SUPPORTED_FEATURES = {
-    "algo.substructure.vf2",
-    "algo.canonical-ranking",
-    "algo.aromaticity.rdkit-like",
-    "algo.rings.fast",
-    "algo.rings.sssr",
-    "algo.valence.rdkit-like",
-    "chem.hydrogen-transforms",
-    "chem.perception.default",
-    "descriptor.molecular",
-    "descriptor.rotatable-bonds.rdkit-strict",
-    "io.mol.v2000.parse",
-    "io.mol.v2000.write",
-    "io.mol.v3000.parse",
-    "io.mol.v3000.write",
-    "io.sdf.v2000.parse",
-    "io.sdf.v2000.write",
-    "io.smiles.parse",
-    "io.smiles.write",
-    "io.smiles.canonical",
-    "io.smiles.isomeric",
-    "query.smarts",
-    "stereo.cip",
-}
-
-HYDROGEN_BENCHMARK_INDEX_PROPERTY = "_benchmarkOriginalIndex"
 
 RDKIT_STRICT_ROTATABLE_BOND_SMARTS = (
     "[!$(*#*)&!D1&!$(C(F)(F)F)&!$(C(Cl)(Cl)Cl)&!$(C(Br)(Br)Br)"
@@ -52,84 +22,7 @@ RDKIT_STRICT_ROTATABLE_BOND_SMARTS = (
     "&!$(C([CH3])([CH3])[CH3])&!$([CH3])]"
 )
 
-BOUNDED_SUBSTRUCTURE_QUERIES = (
-    "[#6]",
-    "[!#6]",
-    "A",
-    "a",
-    "[C,N]",
-    "[C,H]",
-    "[H,D]",
-    "[!H]",
-    "[#6]-[#8]",
-    "C=O",
-    "[O;H1]",
-    "[#8;+0]",
-    "[#6,#7;H1]",
-    "[#6;R]",
-    "[R0]",
-    "C@C",
-    "C!@C",
-    "c1ccccc1",
-)
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Generate normalized JSON golden data with RDKit."
-    )
-    parser.add_argument("--feature", required=True, choices=sorted(SUPPORTED_FEATURES))
-    parser.add_argument("--corpus", default="pubchem-1k")
-    parser.add_argument(
-        "--repo-root",
-        type=Path,
-        default=Path(__file__).resolve().parents[3],
-        help="Repository root. Defaults to the script's containing checkout.",
-    )
-    parser.add_argument(
-        "--fixture",
-        action="append",
-        help="Fixture path from the selected corpus manifest. May be repeated.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        help="Directory for JSON output. Defaults to benchmarks/corpora/<corpus>/golden/<feature>.",
-    )
-    parser.add_argument(
-        "--check-deps",
-        action="store_true",
-        help="Only check that RDKit imports and print its version.",
-    )
-    args = parser.parse_args()
-
-    rdkit = import_rdkit()
-    if args.check_deps:
-        print(f"RDKit {rdkit['version']}")
-        return 0
-
-    repo_root = args.repo_root.resolve()
-    corpus_dir = repo_root / "benchmarks" / "corpora" / args.corpus
-    manifest_path = corpus_dir / "features" / f"{args.feature}.toml"
-    manifest = read_manifest(manifest_path)
-    if manifest.get("corpus_id") != args.corpus:
-        raise SystemExit(
-            f"{manifest_path} declares corpus_id {manifest.get('corpus_id')!r}, "
-            f"expected {args.corpus!r}"
-        )
-    fixtures = selected_fixtures(manifest, args.fixture)
-    output_dir = (args.output_dir or corpus_dir / "golden" / args.feature).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    for fixture in fixtures:
-        fixture_path = (corpus_dir / fixture).resolve()
-        if not fixture_path.exists():
-            raise SystemExit(f"{manifest_path} references missing fixture: {fixture}")
-        document = generate_document(args.feature, args.corpus, fixture, fixture_path, rdkit)
-        output_path = output_dir / f"{slugify_fixture(fixture)}.json.gz"
-        write_json(output_path, document)
-        print(output_path)
-    return 0
+SUBSTRUCTURE_QUERIES = (Path(__file__).parents[2] / 'queries.smarts').read_text().splitlines()
 
 
 def import_rdkit() -> dict[str, Any]:
@@ -150,208 +43,55 @@ def import_rdkit() -> dict[str, Any]:
     }
 
 
-def read_manifest(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        raise SystemExit(f"missing benchmark manifest: {path}")
-    manifest = tomllib.loads(path.read_text(encoding="utf-8"))
-    fixtures = manifest.get("fixtures")
-    if not isinstance(fixtures, list) or not all(isinstance(item, str) for item in fixtures):
-        raise SystemExit(f"{path} must define fixtures as a string array")
-    return manifest
-
-
-def selected_fixtures(manifest: dict[str, Any], requested: list[str] | None) -> list[str]:
-    fixtures = list(manifest["fixtures"])
-    if not requested:
-        return fixtures
-    unknown = sorted(set(requested) - set(fixtures))
-    if unknown:
-        raise SystemExit(f"requested fixture(s) not present in manifest: {', '.join(unknown)}")
-    return [fixture for fixture in fixtures if fixture in requested]
-
-
-def generate_document(
-    feature_id: str,
-    corpus_id: str,
-    fixture: str,
-    fixture_path: Path,
-    rdkit: dict[str, Any],
-) -> dict[str, Any]:
-    if feature_id in {"io.smiles.isomeric", "io.smiles.canonical"} and rdkit["version"] != "2026.03.6":
-        raise ValueError("SMILES stereo schema 2 requires RDKit 2026.03.6")
-    reference_evidence = None
-    if feature_id == "io.sdf.v2000.parse":
-        records = read_sdf_records(fixture_path, rdkit["Chem"])
-        expected = {"records": [sdf_record(record) for record in records]}
-    elif feature_id == "io.sdf.v2000.write":
-        records = read_records_by_suffix(fixture_path, rdkit["Chem"])
-        expected = {"records": [sdf_record(record) for record in records]}
-    elif feature_id == "io.mol.v2000.write":
-        records = read_records_by_suffix(fixture_path, rdkit["Chem"])
-        expected = {"records": [mol_record(record) for record in records]}
-    elif feature_id == "io.mol.v2000.parse":
-        records = read_records_by_suffix(fixture_path, rdkit["Chem"])
-        expected = {"records": [mol_parse_record(record) for record in records]}
-    elif feature_id == "io.mol.v3000.write":
-        records = read_records_by_suffix(fixture_path, rdkit["Chem"])
-        expected = {"records": [mol_record(record) for record in records]}
-    elif feature_id == "io.mol.v3000.parse":
-        records = read_records_by_suffix(fixture_path, rdkit["Chem"])
-        expected = {"records": [mol_parse_record(record) for record in records]}
-    elif feature_id == "descriptor.molecular":
-        records = read_sdf_records(fixture_path, rdkit["Chem"])
-        expected = {
-            "records": [
-                molecular_descriptor_record(record, rdkit["Chem"], rdkit["Descriptors"])
-                for record in records
-            ]
-        }
-    elif feature_id == "descriptor.rotatable-bonds.rdkit-strict":
-        if fixture_path.suffix.lower() in {".smi", ".smiles", ".txt"}:
-            records = read_canonical_smiles_records(
-                fixture_path, rdkit["Chem"], sanitize=False
-            )
-        else:
-            records = read_sdf_records(fixture_path, rdkit["Chem"])
-        query = rdkit["Chem"].MolFromSmarts(RDKIT_STRICT_ROTATABLE_BOND_SMARTS)
-        if query is None:
-            raise RuntimeError("RDKit strict rotatable-bond SMARTS did not parse")
-        expected = {
-            "records": [
-                rotatable_bond_record(
-                    record,
-                    rdkit["Chem"],
-                    rdkit["rdMolDescriptors"],
-                    query,
-                )
-                for record in records
-            ]
-        }
-    elif feature_id == "io.smiles.parse":
-        records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
-        expected = {"records": [smiles_parse_record(record) for record in records]}
-    elif feature_id == "io.smiles.write":
-        records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
-        expected = {"records": [smiles_write_record(record) for record in records]}
-    elif feature_id == "io.smiles.canonical":
-        records = read_canonical_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
-        expected = {"records": [canonical_smiles_record(record) for record in records]}
-    elif feature_id == "io.smiles.isomeric":
-        records = read_isomeric_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
-        reference_evidence = []
-        expected = {"records": [isomeric_smiles_record(record, reference_evidence) for record in records]}
-    elif feature_id == "query.smarts":
-        expected = {
-            "records": smarts_query_records(fixture_path, rdkit["Chem"])
-        }
-    elif feature_id == "algo.substructure.vf2":
-        records = read_sdf_records(fixture_path, rdkit["Chem"])
-        expected = {
-            "records": [
-                substructure_record(record, rdkit["Chem"]) for record in records
-            ]
-        }
-    elif feature_id == "algo.rings.fast":
-        records = read_sdf_records(fixture_path, rdkit["Chem"])
-        expected = {"records": [ring_record(record) for record in records]}
-    elif feature_id == "algo.rings.sssr":
-        records = read_sdf_records(fixture_path, rdkit["Chem"])
-        expected = {"records": [ring_set_record(record) for record in records]}
-    elif feature_id == "algo.valence.rdkit-like":
-        records = read_sdf_records(fixture_path, rdkit["Chem"])
-        expected = {"records": [valence_record(record) for record in records]}
-    elif feature_id == "chem.hydrogen-transforms":
-        records = read_sdf_records(fixture_path, rdkit["Chem"])
-        expected = {
-            "records": [hydrogen_transform_record(record) for record in records]
-        }
-    elif feature_id == "chem.perception.default":
-        records = read_sdf_records(fixture_path, rdkit["Chem"])
-        expected = {"records": [perceived_atom_record(record) for record in records]}
-    elif feature_id == "algo.aromaticity.rdkit-like":
-        records = read_sdf_records(fixture_path, rdkit["Chem"])
-        expected = {"records": [aromaticity_record(record) for record in records]}
-    elif feature_id == "algo.canonical-ranking":
-        records = read_sdf_records(fixture_path, rdkit["Chem"])
-        expected = {"records": [canonical_ranking_record(record) for record in records]}
-    elif feature_id == "stereo.cip":
-        records = read_stereo_cip_records(fixture_path, rdkit["Chem"])
-        expected = {
-            "records": [
-                expected_record
-                for record in records
-                if (expected_record := stereo_cip_record(record, rdkit["Chem"])) is not None
-            ]
-        }
-    else:
-        raise SystemExit(f"unsupported feature for RDKit generator: {feature_id}")
-
-    return {
-        "schema_version": 2 if feature_id in {"io.smiles.isomeric", "io.smiles.canonical"} else 1,
-        **({"reference_evidence": reference_evidence} if reference_evidence is not None else {}),
-        "feature_id": feature_id,
-        "corpus_id": corpus_id,
-        "fixture_id": slugify_fixture(fixture),
-        "fixture_path": fixture,
-        "input_sha256": sha256_file(fixture_path),
-        "reference": {
-            "tool": "rdkit",
-            "version": rdkit["version"],
-            "runtime_dependency": False,
-        },
-        "expected": expected,
+def evaluate(feature_id, fixture_path, rdkit):
+    # All available components are evaluated. Reference errors stay errors.
+    Chem = rdkit['Chem']
+    if feature_id == 'query.smarts':
+        return {'records': smarts_query_records(fixture_path, Chem)}
+    if feature_id == 'stereo.cip':
+        records = []
+        for index, (title, mol, fields) in enumerate(molecular_records(fixture_path)) :
+            records.append({'record_index':index,'title':title,'status':'ok','mol':mol})
+        return {'records':[stereo_cip_record(record, Chem) for record in records]}
+    records = []
+    for title, mol, fields in molecular_records(fixture_path):
+        fragments = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=False)
+        for fragment in fragments:
+            fragment.RemoveAllConformers()
+            records.append({'record_index':len(records),'title':title,'status':'ok','mol':fragment,
+                'properties':fields})
+    functions = {
+        'descriptor.molecular': lambda r: molecular_descriptor_record(r, Chem, rdkit['Descriptors']),
+        'descriptor.rotatable-bonds.rdkit-strict': lambda r: rotatable_bond_record(r, Chem, rdkit['rdMolDescriptors'], Chem.MolFromSmarts(RDKIT_STRICT_ROTATABLE_BOND_SMARTS)),
+        'algo.substructure.vf2': lambda r: substructure_record(r, Chem),
+        'algo.rings.fast': ring_record,
+        'algo.rings.sssr': ring_set_record,
+        'algo.valence.rdkit-like': valence_record,
+        'algo.aromaticity.rdkit-like': aromaticity_record,
+        'algo.canonical-ranking': canonical_ranking_record,
+        'chem.perception.default': perceived_atom_record,
+        'chem.hydrogen-transforms': hydrogen_transform_record,
     }
-
-
-def read_sdf_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    raw_records = read_sdf_blocks(fixture_path)
-    for index, raw_block in enumerate(raw_records):
-        mol = Chem.MolFromMolBlock(
-            raw_block,
-            sanitize=False,
-            removeHs=False,
-            strictParsing=False,
-        )
-        if mol is None:
-            records.append(
-                {
-                    "record_index": index,
-                    "status": "parse_error",
-                    "title": None,
-                    "mol": None,
-                    "radicals": parse_mdl_radicals(raw_block),
-                    "bond_stereo": parse_mdl_bond_stereo(raw_block),
-                    "properties": parse_sdf_data_properties(raw_block),
-                }
-            )
-            continue
-        records.append(
-            {
-                "record_index": index,
-                "status": "ok",
-                "title": mol.GetProp("_Name") if mol.HasProp("_Name") else "",
-                "mol": mol,
-                "radicals": parse_mdl_radicals(raw_block),
-                "bond_stereo": parse_mdl_bond_stereo(raw_block),
-                "properties": parse_sdf_data_properties(raw_block),
-            }
-        )
-    return records
+    if feature_id not in functions:
+        raise ValueError(f'no independent reference for {feature_id}')
+    return {'records':[functions[feature_id](record) for record in records]}
 
 
 def smarts_query_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
-        smarts = raw_line.strip()
-        if not smarts or smarts.startswith("#"):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
             continue
+        parts = line.split(maxsplit=1)
+        smarts, title = parts[0], parts[1] if len(parts) == 2 else ''
         query = Chem.MolFromSmarts(smarts)
         records.append(
             {
                 "record_index": index,
                 "status": "ok" if query is not None else "parse_error",
                 "smarts": smarts,
+                "title": title,
                 "atom_count": query.GetNumAtoms() if query is not None else None,
                 "bond_count": query.GetNumBonds() if query is not None else None,
             }
@@ -379,18 +119,11 @@ def substructure_record(record: dict[str, Any], Chem: Any) -> dict[str, Any]:
         }
 
     queries: list[dict[str, Any]] = []
-    for smarts in BOUNDED_SUBSTRUCTURE_QUERIES:
+    for smarts in SUBSTRUCTURE_QUERIES:
         query = Chem.MolFromSmarts(smarts)
         if query is None:
             raise RuntimeError(f"benchmark SMARTS did not parse in RDKit: {smarts}")
-        matches = {
-            tuple(sorted(match))
-            for match in mol.GetSubstructMatches(
-                query,
-                uniquify=True,
-                maxMatches=1000,
-            )
-        }
+        matches = mol.GetSubstructMatches(query, uniquify=False, maxMatches=0)
         queries.append(
             {
                 "smarts": smarts,
@@ -452,14 +185,12 @@ def molecular_descriptor_record(
         {"element": symbol, "isotope": isotope, "count": count}
         for (symbol, isotope), count in sorted(counts.items(), key=lambda item: hill_key(item[0]))
     ]
-    electron_mass_da = 5.485799090441e-4
     return {
         "record_index": record["record_index"],
         "status": "ok",
         "title": record["title"],
         "formula": {"terms": terms, "formal_charge": charge},
-        # RDKit MolWt uses its standard-weight table but does not correct ions.
-        "average_mass_da": Descriptors.MolWt(mol) - charge * electron_mass_da,
+        "average_mass_da": Descriptors.MolWt(mol),
         # RDKit ExactMolWt already applies its electron-mass correction.
         "monoisotopic_mass_da": Descriptors.ExactMolWt(mol),
     }
@@ -476,15 +207,6 @@ def rotatable_bond_record(
         }
 
     mol = Chem.Mol(record["mol"])
-    for atom in mol.GetAtoms():
-        atom.SetIntProp(HYDROGEN_BENCHMARK_INDEX_PROPERTY, atom.GetIdx())
-    editable = Chem.RWMol(mol)
-    hydrogen_indices = [
-        atom.GetIdx() for atom in editable.GetAtoms() if atom.GetAtomicNum() == 1
-    ]
-    for atom_index in reversed(hydrogen_indices):
-        editable.RemoveAtom(atom_index)
-    mol = editable.GetMol()
     try:
         Chem.SanitizeMol(mol)
     except Exception:
@@ -496,15 +218,8 @@ def rotatable_bond_record(
 
     bond_endpoints = sorted(
         {
-            tuple(
-                sorted(
-                    mol.GetAtomWithIdx(atom_index).GetIntProp(
-                        HYDROGEN_BENCHMARK_INDEX_PROPERTY
-                    )
-                    for atom_index in match
-                )
-            )
-            for match in mol.GetSubstructMatches(query, uniquify=True)
+            tuple(sorted(match))
+            for match in mol.GetSubstructMatches(query, uniquify=True, maxMatches=0)
         }
     )
     descriptor_count = rdMolDescriptors.CalcNumRotatableBonds(
@@ -529,361 +244,6 @@ def rotatable_bond_record(
     }
 
 
-def read_records_by_suffix(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
-    if fixture_path.suffix.lower() in {".mol", ".mdl"}:
-        raw_block = fixture_path.read_text(encoding="utf-8", errors="replace")
-        mol = Chem.MolFromMolFile(
-            str(fixture_path),
-            sanitize=False,
-            removeHs=False,
-            strictParsing=False,
-        )
-        return [
-            {
-                "record_index": 0,
-                "status": "ok" if mol is not None else "parse_error",
-                "title": mol.GetProp("_Name") if mol is not None and mol.HasProp("_Name") else "",
-                "mol": mol,
-                "radicals": parse_mdl_radicals(raw_block),
-                "bond_stereo": parse_mdl_bond_stereo(raw_block),
-            }
-        ]
-    return read_sdf_records(fixture_path, Chem)
-
-
-def read_smiles_records(fixture_path: Path, Chem: Any, sanitize: bool) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split(maxsplit=1)
-        smiles = parts[0]
-        title = parts[1] if len(parts) > 1 else ""
-        unsupported = smiles_unsupported_subset_reason(smiles)
-        if unsupported is not None:
-            records.append(
-                {
-                    "record_index": index,
-                    "status": "unsupported",
-                    "title": title,
-                    "smiles": smiles,
-                    "mol": None,
-                    "radicals": {},
-                    "bond_stereo": {},
-                }
-            )
-            continue
-        mol = Chem.MolFromSmiles(smiles, sanitize=sanitize)
-        records.append(
-            {
-                "record_index": index,
-                "status": "ok" if mol is not None else "parse_error",
-                "title": title,
-                "smiles": smiles,
-                "mol": mol,
-                "radicals": {},
-                "bond_stereo": {},
-            }
-        )
-    return records
-
-
-def read_stereo_cip_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
-    if fixture_path.suffix.lower() in {".smi", ".smiles", ".txt"}:
-        return read_stereo_cip_smiles_records(fixture_path, Chem)
-    return read_records_by_suffix(fixture_path, Chem)
-
-
-def read_stereo_cip_smiles_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split(maxsplit=1)
-        smiles = parts[0]
-        title = parts[1] if len(parts) > 1 else ""
-        unsupported = "*" in smiles
-        mol = None if unsupported else Chem.MolFromSmiles(smiles, sanitize=True)
-        records.append(
-            {
-                "record_index": index,
-                "status": (
-                    "unsupported"
-                    if unsupported
-                    else "ok"
-                    if mol is not None
-                    else "parse_error"
-                ),
-                "title": title,
-                "smiles": smiles,
-                "mol": mol,
-                "radicals": {},
-                "bond_stereo": {},
-            }
-        )
-    return records
-
-
-def read_canonical_smiles_records(
-    fixture_path: Path, Chem: Any, sanitize: bool
-) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split(maxsplit=1)
-        smiles = parts[0]
-        title = parts[1].strip() if len(parts) > 1 else ""
-        mol = Chem.MolFromSmiles(smiles, sanitize=sanitize)
-        records.append(
-            {
-                "record_index": index,
-                "status": "ok" if mol is not None else "parse_error",
-                "title": title,
-                "smiles": smiles,
-                "mol": mol,
-                "radicals": {},
-                "bond_stereo": {},
-            }
-        )
-    return records
-
-
-def read_isomeric_smiles_records(
-    fixture_path: Path, Chem: Any, sanitize: bool
-) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split(maxsplit=1)
-        smiles = parts[0]
-        title = parts[1].strip() if len(parts) > 1 else ""
-        unsupported = "*" in smiles
-        mol = None if unsupported else Chem.MolFromSmiles(smiles, sanitize=sanitize)
-        records.append(
-            {
-                "record_index": index,
-                "status": (
-                    "unsupported"
-                    if unsupported
-                    else "ok"
-                    if mol is not None
-                    else "parse_error"
-                ),
-                "title": title,
-                "smiles": smiles,
-                "mol": mol,
-                "radicals": {},
-                "bond_stereo": {},
-            }
-        )
-    return records
-
-
-def smiles_unsupported_subset_reason(smiles: str) -> str | None:
-    if any(ch in smiles for ch in ("@", "/", "\\", "*")):
-        return "unsupported"
-    return None
-
-
-def read_sdf_blocks(fixture_path: Path) -> list[str]:
-    text = fixture_path.read_text(encoding="utf-8", errors="replace")
-    blocks: list[str] = []
-    current: list[str] = []
-    for line in text.splitlines():
-        if line == "$$$$":
-            blocks.append("\n".join(current) + "\n")
-            current = []
-        else:
-            current.append(line)
-    if current:
-        blocks.append("\n".join(current) + "\n")
-    return blocks
-
-
-def parse_sdf_data_properties(block: str) -> dict[str, str]:
-    lines = block.splitlines()
-    try:
-        data_start = next(index for index, line in enumerate(lines) if line.strip() == "M  END") + 1
-    except StopIteration:
-        return {}
-
-    properties: dict[str, str] = {}
-    index = data_start
-    while index < len(lines):
-        line = lines[index]
-        if not line.lstrip().startswith(">"):
-            index += 1
-            continue
-        field_name = sdf_field_name(line)
-        if field_name is None:
-            index += 1
-            continue
-        index += 1
-        values: list[str] = []
-        while index < len(lines) and not lines[index].lstrip().startswith(">"):
-            if lines[index] == "":
-                index += 1
-                break
-            values.append(lines[index])
-            index += 1
-        properties[field_name] = "\n".join(values)
-    return dict(sorted(properties.items()))
-
-
-def sdf_field_name(line: str) -> str | None:
-    start = line.find("<")
-    if start < 0:
-        return None
-    end = line.find(">", start + 1)
-    if end < 0:
-        return None
-    name = line[start + 1 : end].strip()
-    return name or None
-
-
-def parse_mdl_radicals(block: str) -> dict[int, str]:
-    radicals: dict[int, str] = {}
-    code_to_radical = {1: "SINGLET", 2: "DOUBLET", 3: "TRIPLET"}
-    for raw_line in block.splitlines():
-        if not raw_line.startswith("M  RAD"):
-            continue
-        fields = raw_line.split()
-        if len(fields) < 4:
-            continue
-        try:
-            pair_count = int(fields[2])
-            values = [int(field) for field in fields[3:]]
-        except ValueError:
-            continue
-        for offset in range(0, min(len(values), pair_count * 2), 2):
-            if offset + 1 >= len(values):
-                break
-            atom_index = values[offset] - 1
-            radical = code_to_radical.get(values[offset + 1])
-            if atom_index >= 0 and radical is not None:
-                radicals[atom_index] = radical
-    return radicals
-
-
-def parse_mdl_bond_stereo(block: str) -> dict[int, dict[str, str]]:
-    lines = block.splitlines()
-    if len(lines) < 4 or "V2000" not in lines[3]:
-        return {}
-    try:
-        atom_count = int(lines[3][0:3])
-        bond_count = int(lines[3][3:6])
-    except ValueError:
-        count_fields = lines[3].split()
-        if len(count_fields) < 2:
-            return {}
-        try:
-            atom_count = int(count_fields[0])
-            bond_count = int(count_fields[1])
-        except ValueError:
-            return {}
-    bond_start = 4 + atom_count
-    overrides: dict[int, dict[str, str]] = {}
-    for bond_index, line in enumerate(lines[bond_start : bond_start + bond_count]):
-        try:
-            order = int(line[6:9])
-            stereo_code = int(line[9:12])
-        except ValueError:
-            fields = line.split()
-            if len(fields) < 4:
-                continue
-            try:
-                order = int(fields[2])
-                stereo_code = int(fields[3])
-            except ValueError:
-                continue
-        stereo = "STEREONONE"
-        direction = "NONE"
-        if order == 1 and stereo_code == 1:
-            direction = "BEGINWEDGE"
-        elif order == 1 and stereo_code == 4:
-            direction = "UNKNOWN"
-        elif order == 1 and stereo_code == 6:
-            direction = "BEGINDASH"
-        elif order == 2 and stereo_code == 3:
-            stereo = "STEREOANY"
-        overrides[bond_index] = {"stereo": stereo, "bond_direction": direction}
-    return overrides
-
-
-def sdf_record(record: dict[str, Any]) -> dict[str, Any]:
-    mol = record["mol"]
-    if mol is None:
-        return {
-            "record_index": record["record_index"],
-            "status": record["status"],
-        }
-    return {
-        "record_index": record["record_index"],
-        "status": "ok",
-        "title": record["title"],
-        "atom_count": mol.GetNumAtoms(),
-        "bond_count": mol.GetNumBonds(),
-        "atoms": [
-            atom_json(atom, record["radicals"].get(atom.GetIdx()))
-            for atom in mol.GetAtoms()
-        ],
-        "bonds": [
-            bond_json(bond, record["bond_stereo"].get(bond.GetIdx()))
-            for bond in mol.GetBonds()
-        ],
-        "properties": record.get("properties", molecule_properties(mol)),
-    }
-
-
-def sdf_record_basic(record: dict[str, Any]) -> dict[str, Any]:
-    mol = record["mol"]
-    if mol is None:
-        return {
-            "record_index": record["record_index"],
-            "status": record["status"],
-        }
-    return {
-        "record_index": record["record_index"],
-        "status": "ok",
-        "title": record["title"],
-        "atom_count": mol.GetNumAtoms(),
-        "bond_count": mol.GetNumBonds(),
-        "atoms": [basic_atom_json(atom) for atom in mol.GetAtoms()],
-        "bonds": [basic_bond_json(bond) for bond in mol.GetBonds()],
-        "properties": record.get("properties", molecule_properties(mol)),
-    }
-
-
-def mol_record(record: dict[str, Any]) -> dict[str, Any]:
-    mol = record["mol"]
-    if mol is None:
-        return {
-            "record_index": record["record_index"],
-            "status": record["status"],
-        }
-    return {
-        "record_index": record["record_index"],
-        "status": "ok",
-        "title": record["title"],
-        "atom_count": mol.GetNumAtoms(),
-        "bond_count": mol.GetNumBonds(),
-        "atoms": [
-            atom_json(atom, record["radicals"].get(atom.GetIdx()))
-            for atom in mol.GetAtoms()
-        ],
-        "bonds": [
-            bond_json(bond, record["bond_stereo"].get(bond.GetIdx()))
-            for bond in mol.GetBonds()
-        ],
-    }
-
-
 def ring_record(record: dict[str, Any]) -> dict[str, Any]:
     from rdkit import Chem
 
@@ -900,7 +260,7 @@ def ring_record(record: dict[str, Any]) -> dict[str, Any]:
         "status": "ok",
         "title": record["title"],
         "atom_in_ring": [atom.IsInRing() for atom in mol.GetAtoms()],
-        "bond_in_ring": [rings.NumBondRings(bond.GetIdx()) > 0 for bond in mol.GetBonds()],
+        "bond_in_ring": bond_values(mol, lambda bond: rings.NumBondRings(bond.GetIdx()) > 0),
     }
 
 
@@ -919,25 +279,6 @@ def ring_set_record(record: dict[str, Any]) -> dict[str, Any]:
         "status": "ok",
         "title": record["title"],
         "rings": rings,
-    }
-
-
-def mol_parse_record(record: dict[str, Any]) -> dict[str, Any]:
-    mol = record["mol"]
-    if mol is None:
-        return {
-            "record_index": record["record_index"],
-            "status": record["status"],
-        }
-    return {
-        "record_index": record["record_index"],
-        "status": "ok",
-        "title": record["title"],
-        "atom_count": mol.GetNumAtoms(),
-        "atoms": [
-            atom_json(atom, record["radicals"].get(atom.GetIdx()))
-            for atom in mol.GetAtoms()
-        ],
     }
 
 
@@ -967,6 +308,8 @@ def perceived_atom_record(record: dict[str, Any]) -> dict[str, Any]:
         "status": "ok",
         "title": record["title"],
         "atoms": [basic_atom_json(atom) for atom in sanitized.GetAtoms()],
+        "graph": molecular_graph(sanitized),
+        "valence": [valence_atom_json(atom) for atom in sanitized.GetAtoms()],
     }
 
 
@@ -1009,8 +352,6 @@ def hydrogen_transform_record(record: dict[str, Any]) -> dict[str, Any]:
         }
 
     original_atom_count = prepared.GetNumAtoms()
-    for atom in prepared.GetAtoms():
-        atom.SetIntProp(HYDROGEN_BENCHMARK_INDEX_PROPERTY, atom.GetIdx())
     try:
         expanded = Chem.AddHs(prepared, addCoords=False)
     except Exception:
@@ -1032,11 +373,7 @@ def hydrogen_transform_record(record: dict[str, Any]) -> dict[str, Any]:
         added_by_parent[parent] = added_by_parent.get(parent, 0) + 1
 
     try:
-        remove_options = Chem.RemoveHsParameters()
-        remove_options.removeMapped = False
-        remove_options.removeWithWedgedBond = False
-        remove_options.removeDefiningBondStereo = True
-        collapsed = Chem.RemoveHs(expanded, remove_options, sanitize=True)
+        collapsed = Chem.RemoveHs(expanded, sanitize=True)
     except Exception:
         return {
             "record_index": record["record_index"],
@@ -1053,348 +390,9 @@ def hydrogen_transform_record(record: dict[str, Any]) -> dict[str, Any]:
             {"parent_atom_index": parent, "count": count}
             for parent, count in sorted(added_by_parent.items())
         ],
-        "round_trip": hydrogen_transform_semantic_record(collapsed),
+        "round_trip": molecular_graph(collapsed),
+        "added_graph": molecular_graph(expanded),
     }
-
-
-def smiles_parse_record(record: dict[str, Any]) -> dict[str, Any]:
-    mol = record["mol"]
-    if mol is None:
-        return {
-            "record_index": record["record_index"],
-            "status": record["status"],
-            "title": record["title"],
-            "input_smiles": record["smiles"],
-        }
-    return {
-        "record_index": record["record_index"],
-        "status": "ok",
-        "title": record["title"],
-        "input_smiles": record["smiles"],
-        "raw": smiles_raw_semantic_record(mol),
-        "normalized_perceived": smiles_perceived_semantic_record(mol),
-        "write_round_trip": smiles_perceived_semantic_record(mol),
-    }
-
-
-def smiles_write_record(record: dict[str, Any]) -> dict[str, Any]:
-    mol = record["mol"]
-    if mol is None:
-        return {
-            "record_index": record["record_index"],
-            "status": record["status"],
-            "title": record["title"],
-            "input_smiles": record["smiles"],
-        }
-    return {
-        "record_index": record["record_index"],
-        "status": "ok",
-        "title": record["title"],
-        "input_smiles": record["smiles"],
-        "normalized_perceived": smiles_perceived_semantic_record(mol),
-    }
-
-
-def canonical_smiles_record(record: dict[str, Any]) -> dict[str, Any]:
-    from rdkit import Chem
-
-    mol = record["mol"]
-    if mol is None:
-        return {
-            "record_index": record["record_index"],
-            "status": record["status"],
-            "title": record["title"],
-            "input_smiles": record["smiles"],
-        }
-    canonical = Chem.MolToSmiles(
-        mol,
-        canonical=True,
-        isomericSmiles=True,
-    )
-    canonical_mol = Chem.MolFromSmiles(canonical, sanitize=False)
-    item = {
-        "record_index": record["record_index"],
-        "status": "ok",
-        "title": record["title"],
-        "input_smiles": record["smiles"],
-        "normalized_perceived": smiles_perceived_semantic_record(canonical_mol),
-        "stereo": smiles_isomeric_stereo_semantic_record(canonical_mol),
-    }
-    return item
-
-
-def required_smiles_bracket_declarations(mol: Any) -> tuple[Any, list[dict[str, Any]]]:
-    """Project only declarations that cannot be emitted in SMILES grammar.
-
-    Charge requires a bracket atom, whose hydrogen count is explicit. Chemical
-    normalization can introduce charge on an originally unbracketed atom while
-    retaining its inference declaration. Optional writer bracketing (including
-    RDKit's metal-neighbor preference) is deliberately outside this rule.
-    """
-    projected = clone_and_sanitize(mol)
-    if projected is None:
-        raise ValueError("cannot project declarations of an unsanitizable source")
-    changes = []
-    for atom in projected.GetAtoms():
-        if atom.GetFormalCharge() == 0 or atom.GetNoImplicit():
-            continue
-        source = {**valence_atom_json(atom), "no_implicit_hydrogens": atom.GetNoImplicit()}
-        total_hydrogens = atom.GetTotalNumHs()
-        atom.SetNumExplicitHs(total_hydrogens)
-        atom.SetNoImplicit(True)
-        atom.UpdatePropertyCache(strict=True)
-        changes.append({
-            "atom_index": atom.GetIdx(),
-            "reason": "SMILES charge requires a bracket atom with fixed hydrogen count",
-            "source": source,
-            "emitted": {**valence_atom_json(atom), "no_implicit_hydrogens": atom.GetNoImplicit()},
-        })
-    return projected, changes
-
-
-def isomeric_smiles_record(record: dict[str, Any], evidence: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    from rdkit import Chem
-
-    mol = record["mol"]
-    if mol is None:
-        if evidence is not None:
-            evidence.append({"record_index": record["record_index"], "status": record["status"]})
-        return {
-            "record_index": record["record_index"],
-            "status": record["status"],
-            "title": record["title"],
-            "input_smiles": record["smiles"],
-        }
-    isomeric = Chem.MolToSmiles(
-        mol,
-        canonical=False,
-        isomericSmiles=True,
-    )
-    isomeric_mol = Chem.MolFromSmiles(isomeric, sanitize=False)
-    if isomeric_mol is None:
-        return {
-            "record_index": record["record_index"],
-            "status": "write_reparse_error",
-            "title": record["title"],
-            "input_smiles": record["smiles"],
-        }
-    prepared_output = clone_and_sanitize(isomeric_mol)
-    if prepared_output is None:
-        raise ValueError("RDKit's isomeric emission cannot be sanitized")
-    source_graph = Chem.MolToSmiles(mol, canonical=True, isomericSmiles=True)
-    output_graph = Chem.MolToSmiles(prepared_output, canonical=True, isomericSmiles=True)
-    if source_graph != output_graph:
-        raise ValueError("RDKit's isomeric emission changed the whole stereochemical graph")
-    emitted_declarations, mandatory_brackets = required_smiles_bracket_declarations(mol)
-    if Chem.MolToSmiles(emitted_declarations, canonical=True, isomericSmiles=True) != source_graph:
-        raise ValueError("mandatory SMILES bracket declarations changed the chemical graph")
-    if evidence is not None:
-        evidence.append({
-            "record_index": record["record_index"],
-            "status": "ok",
-            "decoded_source": {
-                "normalized_perceived": smiles_perceived_semantic_record(mol),
-                "stereo": smiles_isomeric_stereo_semantic_record(mol),
-            },
-            "mandatory_bracket_declarations": mandatory_brackets,
-            "rdkit_emitted_smiles": isomeric,
-            "decoded_emission": {
-                "normalized_perceived": smiles_perceived_semantic_record(isomeric_mol),
-                "stereo": smiles_isomeric_stereo_semantic_record(isomeric_mol),
-            },
-            "whole_graph_check": {
-                "method": "RDKit canonical isomeric graph identity",
-                "source": source_graph,
-                "emission": output_graph,
-                "equal": source_graph == output_graph,
-            },
-        })
-    return {
-        "record_index": record["record_index"],
-        "status": "ok",
-        "title": record["title"],
-        "input_smiles": record["smiles"],
-        # The roundtrip target is source chemistry and hydrogen declarations,
-        # subject only to mandatory SMILES syntax for normalized charged atoms.
-        # RDKit's optional metal-neighbor bracketing is retained above as raw
-        # reference evidence, rather than imposed on another writer.
-        "normalized_perceived": smiles_perceived_semantic_record(emitted_declarations),
-        "stereo": smiles_isomeric_stereo_semantic_record(emitted_declarations),
-    }
-
-
-def smiles_raw_semantic_record(mol: Any) -> dict[str, Any]:
-    return {
-        "atom_count": mol.GetNumAtoms(),
-        "bond_count": mol.GetNumBonds(),
-        "atoms": [basic_atom_json(atom) for atom in mol.GetAtoms()],
-        "bonds": [basic_bond_json(bond) for bond in mol.GetBonds()],
-    }
-
-
-def smiles_perceived_semantic_record(mol: Any) -> dict[str, Any]:
-    sanitized = clone_and_sanitize(mol)
-    if sanitized is None:
-        return {"status": "normalization_or_perception_error"}
-    return {
-        "status": "ok",
-        "atom_count": sanitized.GetNumAtoms(),
-        "bond_count": sanitized.GetNumBonds(),
-        "atoms": smiles_perceived_atoms_json(sanitized),
-        "bonds": smiles_perceived_bonds_json(sanitized),
-    }
-
-
-def hydrogen_transform_semantic_record(mol: Any) -> dict[str, Any]:
-    sanitized = clone_and_sanitize(mol)
-    if sanitized is None:
-        return {"status": "normalization_or_perception_error"}
-    atoms = []
-    for atom in sanitized.GetAtoms():
-        item = {
-            "atom_index": atom.GetIntProp(HYDROGEN_BENCHMARK_INDEX_PROPERTY),
-            "atomic_number": atom.GetAtomicNum(),
-            "symbol": atom.GetSymbol(),
-            "formal_charge": atom.GetFormalCharge(),
-            "isotope": atom.GetIsotope() or None,
-            "atom_map": atom.GetAtomMapNum() or None,
-            "encoded_hydrogens": atom.GetNumExplicitHs() + atom.GetNumImplicitHs(),
-            "neighbors": sorted(
-                neighbor.GetIntProp(HYDROGEN_BENCHMARK_INDEX_PROPERTY)
-                for neighbor in atom.GetNeighbors()
-            ),
-        }
-        atoms.append(item)
-    atoms.sort(key=lambda item: item["atom_index"])
-    return {
-        "status": "ok",
-        "atom_count": sanitized.GetNumAtoms(),
-        "bond_count": sanitized.GetNumBonds(),
-        "atoms": atoms,
-    }
-
-
-def smiles_isomeric_stereo_semantic_record(mol: Any) -> dict[str, Any]:
-    from rdkit import Chem
-
-    sanitized = clone_and_sanitize(mol)
-    if sanitized is None:
-        return {"status": "normalization_or_perception_error"}
-    try:
-        Chem.AssignStereochemistry(sanitized, force=True, cleanIt=True)
-        Chem.AssignCIPLabels(sanitized)
-    except Exception:
-        return {"status": "cip_error"}
-    return {
-        "status": "ok",
-        "atom_descriptors": smiles_cip_atom_descriptor_keys(sanitized),
-        "bond_descriptors": smiles_cip_bond_descriptor_keys(sanitized),
-    }
-
-
-def smiles_cip_atom_descriptor_keys(mol: Any) -> list[dict[str, Any]]:
-    descriptors = []
-    for atom in mol.GetAtoms():
-        if atom.HasProp("_CIPCode"):
-            descriptors.append(
-                {
-                    "center_atom": smiles_perceived_atom_key(atom),
-                    "descriptor": atom.GetProp("_CIPCode"),
-                }
-            )
-    descriptors.sort(key=lambda item: json.dumps(item, sort_keys=True))
-    return descriptors
-
-
-def smiles_cip_bond_descriptor_keys(mol: Any) -> list[dict[str, Any]]:
-    descriptors = []
-    for bond in mol.GetBonds():
-        if bond.HasProp("_CIPCode"):
-            descriptors.append(
-                {
-                    "endpoint_atoms": sorted(
-                        [
-                            smiles_perceived_atom_key(bond.GetBeginAtom()),
-                            smiles_perceived_atom_key(bond.GetEndAtom()),
-                        ]
-                    ),
-                    "descriptor": bond.GetProp("_CIPCode"),
-                }
-            )
-    descriptors.sort(key=lambda item: json.dumps(item, sort_keys=True))
-    return descriptors
-
-
-def smiles_perceived_atoms_json(mol: Any) -> list[dict[str, Any]]:
-    atoms = []
-    for atom in mol.GetAtoms():
-        item = valence_atom_json(atom)
-        item.pop("index", None)
-        item["isotope"] = atom.GetIsotope() or None
-        item["atom_map"] = atom.GetAtomMapNum() or None
-        item["aromatic"] = atom.GetIsAromatic()
-        item["no_implicit_hydrogens"] = atom.GetNoImplicit()
-        neighbors = []
-        for bond in atom.GetBonds():
-            neighbor = bond.GetOtherAtom(atom)
-            neighbors.append(
-                {
-                    "atom": smiles_perceived_atom_key(neighbor),
-                    "bond_type": smiles_semantic_bond_type(bond),
-                    "is_aromatic": bond.GetIsAromatic(),
-                }
-            )
-        neighbors.sort(key=lambda neighbor: json.dumps(neighbor, sort_keys=True))
-        item["neighbors"] = neighbors
-        atoms.append((smiles_perceived_atom_sort_key(item), item))
-    atoms.sort(key=lambda item: (item[0], json.dumps(item[1], sort_keys=True)))
-    return [item for _, item in atoms]
-
-
-def smiles_perceived_atom_sort_key(atom: dict[str, Any]) -> str:
-    no_implicit = str(atom["no_implicit_hydrogens"]).lower()
-    aromatic = str(atom["aromatic"]).lower()
-    return (
-        f"{atom['atomic_number']:03}|{atom['symbol']}|{atom['formal_charge']}|"
-        f"{atom['isotope'] or 0}|"
-        f"{atom['explicit_hydrogens']}|{atom['implicit_hydrogens']}|"
-        f"{no_implicit}|{atom['explicit_valence']}|{atom['atom_map'] or 0}|{aromatic}"
-    )
-
-
-def smiles_perceived_atom_key(atom: Any) -> str:
-    item = valence_atom_json(atom)
-    item["isotope"] = atom.GetIsotope() or None
-    item["atom_map"] = atom.GetAtomMapNum() or None
-    item["aromatic"] = atom.GetIsAromatic()
-    item["no_implicit_hydrogens"] = atom.GetNoImplicit()
-    return smiles_perceived_atom_sort_key(item)
-
-
-def smiles_perceived_bonds_json(mol: Any) -> list[dict[str, Any]]:
-    bonds = [smiles_perceived_bond_json(bond) for bond in mol.GetBonds()]
-    bonds.sort(key=lambda item: json.dumps(item, sort_keys=True))
-    return bonds
-
-
-def smiles_perceived_bond_json(bond: Any) -> dict[str, Any]:
-    endpoints = sorted(
-        [
-            smiles_perceived_atom_key(bond.GetBeginAtom()),
-            smiles_perceived_atom_key(bond.GetEndAtom()),
-        ]
-    )
-    return {
-        "endpoint_atoms": endpoints,
-        "bond_type": smiles_semantic_bond_type(bond),
-        "is_aromatic": bond.GetIsAromatic(),
-    }
-
-
-def smiles_semantic_bond_type(bond: Any) -> str:
-    if bond.GetIsAromatic():
-        return "AROMATIC"
-    return str(bond.GetBondType())
 
 
 def aromaticity_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -1416,7 +414,7 @@ def aromaticity_record(record: dict[str, Any]) -> dict[str, Any]:
         "status": "ok",
         "title": record["title"],
         "atom_aromatic": [atom.GetIsAromatic() for atom in sanitized.GetAtoms()],
-        "bond_aromatic": [bond.GetIsAromatic() for bond in sanitized.GetBonds()],
+        "bond_aromatic": bond_values(sanitized, lambda bond: bond.GetIsAromatic()),
     }
 
 
@@ -1455,21 +453,31 @@ def canonical_ranking_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def stereo_cip_record(record: dict[str, Any], Chem: Any) -> dict[str, Any] | None:
+def stereo_cip_record(record: dict[str, Any], Chem: Any) -> dict[str, Any]:
+    failure = {"record_index": record["record_index"], "title": record["title"]}
     mol = record["mol"]
     if mol is None:
-        return None
+        return {**failure, "status": "parse_error"}
     prepared = clone_and_sanitize(mol)
     if prepared is None:
-        return None
+        return {**failure, "status": "sanitize_error"}
     try:
-        Chem.AssignCIPLabels(prepared)
+        Chem.AssignCIPLabels(prepared, maxRecursiveIterations=1_000_000)
     except Exception:
-        return None
+        return {**failure, "status": "cip_error"}
     atom_descriptors = cip_atom_descriptors(prepared)
     bond_descriptors = cip_bond_descriptors(prepared)
-    if not atom_descriptors and not bond_descriptors:
-        return None
+    # Kekule's topology groups connected components. Express source atom IDs in
+    # that same component order, retaining every explicit hydrogen vertex.
+    atom_index = {source: dense for dense, source in enumerate(
+        atom for component in Chem.GetMolFrags(prepared) for atom in component)}
+    for descriptor in atom_descriptors:
+        descriptor['atom_index'] = atom_index[descriptor['atom_index']]
+    for descriptor in bond_descriptors:
+        ends = sorted([atom_index[descriptor['begin_atom_index']], atom_index[descriptor['end_atom_index']]])
+        descriptor['begin_atom_index'], descriptor['end_atom_index'] = ends
+    atom_descriptors.sort(key=lambda d: d['atom_index'])
+    bond_descriptors.sort(key=lambda d: (d['begin_atom_index'], d['end_atom_index']))
     return {
         "record_index": record["record_index"],
         "status": "ok",
@@ -1522,38 +530,10 @@ def clone_and_sanitize(mol: Any) -> Any | None:
     cloned = Chem.Mol(mol)
     try:
         Chem.SanitizeMol(cloned)
+        Chem.AssignStereochemistry(cloned, cleanIt=True, force=True)
     except Exception:
         return None
     return cloned
-
-
-def atom_json(atom: Any, radical_override: str | None = None) -> dict[str, Any]:
-    radical, unpaired_electrons = radical_json(atom, radical_override)
-    return {
-        "index": atom.GetIdx(),
-        "atomic_number": atom.GetAtomicNum(),
-        "symbol": atom.GetSymbol(),
-        "formal_charge": atom.GetFormalCharge(),
-        "isotope": atom.GetIsotope() or None,
-        "explicit_hydrogens": atom.GetNumExplicitHs(),
-        "atom_map": atom.GetAtomMapNum() or None,
-        "radical": radical,
-        "unpaired_electrons": unpaired_electrons,
-        "aromatic": atom.GetIsAromatic(),
-    }
-
-
-def radical_json(atom: Any, radical_override: str | None) -> tuple[str | None, int]:
-    if radical_override is not None:
-        return radical_override, {"SINGLET": 0, "DOUBLET": 1, "TRIPLET": 2}[radical_override]
-    unpaired_electrons = atom.GetNumRadicalElectrons()
-    if unpaired_electrons == 0:
-        return None, 0
-    if unpaired_electrons == 1:
-        return "DOUBLET", 1
-    if unpaired_electrons == 2:
-        return "TRIPLET", 2
-    return None, unpaired_electrons
 
 
 def valence_atom_json(atom: Any) -> dict[str, Any]:
@@ -1570,60 +550,12 @@ def valence_atom_json(atom: Any) -> dict[str, Any]:
     }
 
 
-def bond_json(bond: Any, stereo_override: dict[str, str] | None = None) -> dict[str, Any]:
-    stereo = stereo_override["stereo"] if stereo_override else str(bond.GetStereo())
-    direction = (
-        stereo_override["bond_direction"] if stereo_override else str(bond.GetBondDir())
-    )
-    if direction == "EITHERDOUBLE":
-        direction = "NONE"
-    return {
-        "index": bond.GetIdx(),
-        "begin_atom_index": bond.GetBeginAtomIdx(),
-        "end_atom_index": bond.GetEndAtomIdx(),
-        "bond_type": str(bond.GetBondType()),
-        "is_aromatic": bond.GetIsAromatic(),
-        "stereo": stereo,
-        "bond_direction": direction,
-    }
 
-
-def basic_bond_json(bond: Any) -> dict[str, Any]:
-    return {
-        "index": bond.GetIdx(),
-        "begin_atom_index": bond.GetBeginAtomIdx(),
-        "end_atom_index": bond.GetEndAtomIdx(),
-        "bond_type": str(bond.GetBondType()),
-        "is_aromatic": bond.GetIsAromatic(),
-        "stereo": str(bond.GetStereo()),
-    }
-
-
-def molecule_properties(mol: Any) -> dict[str, str]:
-    props: dict[str, str] = {}
-    for name in sorted(mol.GetPropNames(includePrivate=False, includeComputed=False)):
-        props[name] = mol.GetProp(name)
-    return props
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def slugify_fixture(fixture: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", fixture).strip("._-")
-
-
-def write_json(path: Path, document: dict[str, Any]) -> None:
-    payload = (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    with path.open("wb") as raw:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as handle:
-            handle.write(payload)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+def bond_values(mol, value):
+    bonds=[]
+    for bond in mol.GetBonds():
+        ends=[bond.GetBeginAtomIdx(),bond.GetEndAtomIdx()]
+        if str(bond.GetBondType()) != 'DATIVE':
+            ends.sort()
+        bonds.append({'begin_atom_index':ends[0],'end_atom_index':ends[1],'value':value(bond)})
+    return sorted(bonds,key=lambda b:(b['begin_atom_index'],b['end_atom_index']))

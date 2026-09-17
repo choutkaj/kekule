@@ -4,4 +4,4 @@
 /benchmarks/reference/ @choutkaj
 /benchmarks/corpora/**/sources.lock.json @choutkaj
 /benchmarks/corpora/**/golden/ @choutkaj
-/benchmarks/corpora/**/corpus.toml @choutkaj
+/benchmarks/corpora/**/references.json @choutkaj
