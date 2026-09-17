@@ -22,6 +22,7 @@ fn unavailable_goldens_stop_the_cli_without_reporting_case_failures() {
             fs::write(&golden, b"invalid gzip file").unwrap();
         }
         let output = Command::new(env!("CARGO_BIN_EXE_kekule-bench"))
+            .env("KEKULE_BENCHMARK_RUNS_DIR", root.join("runs"))
             .args([
                 "--feature",
                 "io.smiles.parse",
@@ -62,11 +63,15 @@ fn unavailable_goldens_stop_the_cli_without_reporting_case_failures() {
             .unwrap()
             .contains("cannot load stored goldens"));
         assert_eq!(summary["results"], serde_json::json!([]));
+        assert!(root.join("runs/index.html").exists());
+        assert!(fs::read_to_string(root.join("runs/dashboard-data.js"))
+            .unwrap()
+            .contains("\"complete\":false"));
         assert_eq!(golden.exists(), !missing);
         fs::remove_file(&report).unwrap();
         fs::remove_file(&cases).unwrap();
     }
     fs::remove_file(golden).unwrap();
     fs::remove_dir(root.join("smoke")).unwrap();
-    fs::remove_dir(root).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
