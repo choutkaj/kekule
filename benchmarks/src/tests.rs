@@ -23,11 +23,61 @@ fn compare(feature: &str, mut a: Value, mut b: Value) -> bool {
 }
 
 #[test]
+fn cip_sequence_descriptors_use_reference_spelling_without_losing_pseudoasymmetry() {
+    for (source, label, ordinary) in [
+        (r"C/C=C/1\CC[C@H](C)CC1", "z", "Z"),
+        (r"C/C=C\1/CC[C@H](C)CC1", "e", "E"),
+    ] {
+        let value = output("stereo.cip", "input.smi", source);
+        assert_eq!(
+            value["records"][0]["bond_descriptors"],
+            json!([{"begin_atom_index":1,"end_atom_index":2,"descriptor":label}])
+        );
+        let mut wrong = value.clone();
+        wrong["records"][0]["bond_descriptors"][0]["descriptor"] = json!(ordinary);
+        assert!(!compare("stereo.cip", value, wrong));
+    }
+}
+
+#[test]
 fn same_local_atom_environments_do_not_hide_different_graphs() {
     let a = output("io.smiles.parse", "input.smi", "C1CCCCC1");
     let b = output("io.smiles.parse", "input.smi", "C1CC1.C1CC1");
     assert!(!compare("io.smiles.parse", a, b));
 }
+#[test]
+fn aromatic_observations_preserve_triple_bond_order() {
+    for source in ["C1=CC=CC#C1", "C1=C(C(=CC#C1)Cl)Cl"] {
+        let value = output("io.smiles.parse", "input.smi", source);
+        let bonds = value["records"][0]["components"][0]["bonds"]
+            .as_array()
+            .unwrap();
+        let triple = bonds
+            .iter()
+            .filter(|bond| bond["bond_type"] == "TRIPLE")
+            .collect::<Vec<_>>();
+        assert_eq!(triple.len(), 1, "{source}");
+        assert_eq!(triple[0]["is_aromatic"], true, "{source}");
+        assert_eq!(
+            bonds
+                .iter()
+                .filter(|bond| bond["bond_type"] == "AROMATIC")
+                .count(),
+            5
+        );
+        let mut wrong_order = value.clone();
+        for bond in wrong_order["records"][0]["components"][0]["bonds"]
+            .as_array_mut()
+            .unwrap()
+        {
+            if bond["bond_type"] == "TRIPLE" {
+                bond["bond_type"] = json!("AROMATIC");
+            }
+        }
+        assert!(!compare("io.smiles.parse", value, wrong_order));
+    }
+}
+
 #[test]
 fn query_records_separate_the_query_from_the_source_title() {
     let value = output("query.smarts", "input.smi", "[#6]-[#8]  external query");
@@ -128,6 +178,67 @@ fn mol_parse_observes_bond_order_and_coordinates() {
     ));
 }
 #[test]
+fn sdf_feature_uses_sdf_records_independently_of_file_suffix() {
+    let first = simple_sdf_record("first").replace("$$$$", ">  <_Private>\nkept\n\n$$$$");
+    let source = first + &simple_sdf_record("second");
+    let expected = output("io.sdf.parse", "input.sdf", &source);
+    assert_eq!(expected["records"].as_array().unwrap().len(), 2);
+    assert_eq!(expected["records"][0]["title"], "first");
+    assert_eq!(expected["records"][1]["title"], "second");
+    assert_eq!(
+        expected["records"][0]["properties"],
+        json!([{"name":"_Private","value":"kept"}])
+    );
+    assert_eq!(expected["records"][1]["properties"], json!([]));
+    for path in ["input.mol", "input.mdl"] {
+        assert_eq!(output("io.sdf.parse", path, &source), expected);
+    }
+    let single = simple_sdf_record("standalone");
+    let without_delimiter = single.strip_suffix("$$$$\n").unwrap();
+    assert_eq!(
+        output("io.sdf.parse", "input.mol", without_delimiter),
+        output("io.sdf.parse", "input.sdf", &single)
+    );
+    assert!(evaluate(
+        "io.sdf.parse",
+        &Input {
+            path: "input.sdf".into(),
+            text: without_delimiter.into(),
+        }
+    )
+    .is_err());
+}
+
+#[test]
+fn sdf_writer_preserves_record_boundaries_and_delimiter_like_metadata() {
+    let first = simple_sdf_record("cost $$$$ sample").replace(
+        "$$$$\n",
+        ">  <PRICE$$$$>\nfirst $$$$ line\n>  <not_a_header>\nlast line\n\n$$$$\n",
+    );
+    let source = first + &simple_sdf_record("");
+    let value = output("io.sdf.v2000.write", "input.sdf", &source);
+    let text = value["written"][0]["text"].as_str().unwrap();
+    let expected = kekule::sdf::parse_str(&source).unwrap();
+    let actual = kekule::sdf::parse_str(text).unwrap();
+    assert_eq!(actual.records().len(), 2);
+    for (actual, expected) in actual.records().iter().zip(expected.records()) {
+        assert_eq!(actual.title(), expected.title());
+        assert_eq!(
+            actual
+                .data_fields()
+                .iter()
+                .map(|f| (f.name(), f.value()))
+                .collect::<Vec<_>>(),
+            expected
+                .data_fields()
+                .iter()
+                .map(|f| (f.name(), f.value()))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
 fn duplicate_sdf_fields_are_not_overwritten() {
     let original =
         simple_sdf_record("molecule").replace("$$$$", ">  <ID>\nfirst\n\n>  <ID>\nlast\n\n$$$$");
@@ -143,6 +254,37 @@ fn duplicate_sdf_fields_are_not_overwritten() {
         output("io.sdf.parse", "input.sdf", &changed)
     ));
 }
+#[test]
+fn selected_ring_comparison_preserves_cycle_edges() {
+    let ring_set = |rings: Value| {
+        json!({"records":[{
+            "record_index":0,"status":"ok","title":"","rings":rings
+        }]})
+    };
+    let original = ring_set(json!([[0, 1, 2, 3], [4, 5, 6]]));
+    for equivalent in [
+        json!([[5, 6, 4], [2, 3, 0, 1]]),
+        json!([[0, 3, 2, 1], [6, 5, 4]]),
+    ] {
+        assert!(compare(
+            "algo.rings.sssr",
+            original.clone(),
+            ring_set(equivalent)
+        ));
+    }
+    // The same four atoms can trace a different cycle in a dense graph.
+    assert!(!compare(
+        "algo.rings.sssr",
+        original.clone(),
+        ring_set(json!([[0, 1, 3, 2], [4, 5, 6]]))
+    ));
+    assert!(!compare(
+        "algo.rings.sssr",
+        original,
+        ring_set(json!([[0, 1, 2, 3]]))
+    ));
+}
+
 #[test]
 fn disconnected_inputs_reach_molecular_algorithms() {
     for feature in [
@@ -200,6 +342,23 @@ fn mmcif_compares_all_categories_and_distinguishes_missing_tokens() {
         )
     ));
 }
+#[test]
+fn mmcif_observations_preserve_quotes_and_source_whitespace() {
+    let source = "data_x\n_x.quote 'don't stop'\n_x.text\n;  first  \n  second\t\n;\n";
+    let actual = output("io.mmcif.parse", "input.cif", source);
+    assert_eq!(
+        actual["blocks"][0]["values"]["_x.quote"],
+        json!(["don't stop"])
+    );
+    assert_eq!(
+        actual["blocks"][0]["values"]["_x.text"],
+        json!(["  first  \n  second\t"])
+    );
+    let mut trimmed = actual.clone();
+    trimmed["blocks"][0]["values"]["_x.text"] = json!(["  first\n  second"]);
+    assert!(!compare("io.mmcif.parse", actual, trimmed));
+}
+
 #[test]
 fn source_membership_includes_every_enamine_sdf_and_every_pdb() {
     for (dataset, feature, count) in [

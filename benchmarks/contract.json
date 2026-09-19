@@ -7,9 +7,10 @@
     "dssp_legacy_energy_kcal_per_mol": 0.05,
     "dssp_reported_angles_degrees": 0.05,
     "dssp_tco": 0.0005,
+    "dssp_omega_degrees": "16 * f32 epsilon * 180, for single-precision geometry versus Biopython vectors",
     "v2000_coordinate_angstrom": 0.00005,
     "other": "roundoff only; all raw differences retained; discrete fields exact"
   },
-  "dssp": "beta partner identities and Biopython CA-C-N-CA omega included; first model; original source bytes",
+  "dssp": "beta partner identities and Biopython CA-C-N-CA omega included; first model; original source bytes; polymer sequence label required but nullable for nonpolymer residues",
   "coverage": "source format determines applicability before evaluation; missing inputs, reference failures and implementation failures are distinct"
 }

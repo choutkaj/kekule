@@ -239,6 +239,11 @@ pub fn validate_stereo(mol: &Molecule) -> std::result::Result<(), StereoValidati
     }
 }
 
+/// Finds locally eligible tetrahedral and double-bond stereo sites.
+///
+/// Repeated terminal hydrogen ligands are excluded, including a graph hydrogen
+/// paired with an implicit hydrogen. General ligand equivalence and dependencies
+/// between stereo sites are not resolved; a candidate is not proof of stereogenicity.
 pub fn detect_stereo_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     let mut candidates = tetrahedral_candidates(mol);
     candidates.extend(double_bond_candidates(mol));
@@ -640,6 +645,9 @@ fn tetrahedral_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
         } else {
             continue;
         }
+        if has_repeated_hydrogen_ligands(mol, &atom_carriers) {
+            continue;
+        }
         candidates.push(StereoCandidate::Tetrahedral {
             center,
             carriers: atom_carriers,
@@ -658,7 +666,11 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
         let right = bond.b();
         let left_carriers = double_bond_endpoint_carriers(mol, left, right, bond_id);
         let right_carriers = double_bond_endpoint_carriers(mol, right, left, bond_id);
-        if !left_carriers.is_empty() && !right_carriers.is_empty() {
+        if (1..=2).contains(&left_carriers.len())
+            && (1..=2).contains(&right_carriers.len())
+            && !has_repeated_hydrogen_ligands(mol, &left_carriers)
+            && !has_repeated_hydrogen_ligands(mol, &right_carriers)
+        {
             candidates.push(StereoCandidate::DoubleBond {
                 bond: bond_id,
                 left,
@@ -673,10 +685,41 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
 
 fn double_bond_stereo_is_unsupported(mol: &Molecule, bond_id: BondId, bond: &Bond) -> bool {
     bond.order != BondOrder::Double
+        || [bond.a(), bond.b()].into_iter().any(|endpoint| {
+            mol.neighbors(endpoint)
+                .map(|neighbors| neighbors.count() > 3)
+                .unwrap_or(true)
+        })
         || mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true)
         || double_bond_between_aromatic_atoms(mol, bond)
         || super::rings::bond_in_ring_smaller_than(mol, bond_id, 8)
         || (double_bond_is_in_ring(mol, bond_id) && double_bond_has_noncarbon_endpoint(mol, bond))
+}
+
+fn has_repeated_hydrogen_ligands(mol: &Molecule, carriers: &[StereoCarrier]) -> bool {
+    let mut hydrogens = Vec::new();
+    for carrier in carriers {
+        let identity = match carrier {
+            StereoCarrier::ImplicitHydrogen => (None, 0, None),
+            StereoCarrier::Atom(id) => {
+                let Ok(atom) = mol.atom(*id) else {
+                    continue;
+                };
+                if atom.element.symbol() != "H"
+                    || mol.neighbors(*id).map(|neighbors| neighbors.count()) != Ok(1)
+                {
+                    continue;
+                }
+                (atom.isotope, atom.formal_charge, atom.radical)
+            }
+            StereoCarrier::ImplicitLonePair => continue,
+        };
+        if hydrogens.contains(&identity) {
+            return true;
+        }
+        hydrogens.push(identity);
+    }
+    false
 }
 
 pub(crate) fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {

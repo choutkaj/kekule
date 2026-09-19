@@ -3,6 +3,8 @@
 //! Assignment is a read-only analysis of one [`Model`] coordinate snapshot.
 //! It does not parse structures, choose coordinate models or alternate
 //! locations, repair hierarchy data, or install derived state in the model.
+//! Geometry uses single-precision coordinates and arithmetic, matching DSSP 4;
+//! model coordinates are unchanged and result values are exposed as `f64`.
 
 use std::collections::BTreeMap;
 use std::fmt;

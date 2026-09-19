@@ -3,6 +3,14 @@
 //! Descriptor calculation never mutates or perceives the input.
 //! Callers select explicitly whether installed implicit-hydrogen state is part
 //! of the calculation.
+//!
+//! Average masses use CIAAW 2024 abridged standard atomic weights for unlabeled
+//! atoms. Monoisotopic masses use AME 2020 atomic masses for the most abundant
+//! naturally occurring isotope selected from CIAAW 2024 compositions. Explicit
+//! isotope labels use their AME 2020 mass in either calculation. Both mass
+//! calculations subtract the aggregate formal charge times the CODATA 2022
+//! electron mass. Missing standard weights or natural isotopes are reported as
+//! structured errors; no mass-number substitute is used.
 
 mod data;
 

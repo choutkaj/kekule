@@ -262,6 +262,15 @@ struct Options {
     started_at_unix_ms: u64,
 }
 
+impl Options {
+    fn writer_python(&self) -> PathBuf {
+        self.python
+            .clone()
+            .or_else(|| env::var_os("KEKULE_WRITER_PYTHON").map(PathBuf::from))
+            .unwrap_or_else(|| "python".into())
+    }
+}
+
 fn options(args: &[String]) -> Result<Options, Box<dyn Error>> {
     let generate = args.first().is_some_and(|arg| arg == "generate");
     let args = if generate { &args[1..] } else { args };
@@ -437,6 +446,12 @@ struct BatchRun<'a> {
     evaluate: Evaluator,
 }
 
+// Large macromolecular inputs must not accumulate to 256 structures. This
+// bounds batching overhead, not the memory needed to evaluate one large input.
+fn batch_is_full(case_count: usize, input_bytes: usize) -> bool {
+    case_count >= 256 || input_bytes >= 8 * 1024 * 1024
+}
+
 impl BatchRun<'_> {
     fn batch(&mut self, cases: &[Case], row: &mut Summary) -> Result<(), Box<dyn Error>> {
         if cases.is_empty() {
@@ -481,6 +496,7 @@ impl BatchRun<'_> {
                 row.cases += 1;
                 if matches!(expected, Outcome::Error { .. }) {
                     row.errors += 1;
+                    row.reference_errors += 1;
                 }
                 self.progress.inc(1);
             }
@@ -525,33 +541,48 @@ impl BatchRun<'_> {
         if features::is_writer(&row.feature) {
             // This only reads newly written text. It never recalculates goldens.
             self.progress.set_message("validate writer output");
-            let python = self
-                .opts
-                .python
-                .clone()
-                .or_else(|| env::var_os("KEKULE_WRITER_PYTHON").map(PathBuf::from))
-                .unwrap_or_else(|| "python".into());
+            let python = self.opts.writer_python();
             let request = json!({"feature":row.feature,"written":actual});
             match (self.reference)(&python, &request, cases.len()) {
                 Ok(response) => {
                     row.reference_ms += response.time_ms;
-                    if stored.metadata.reference.as_ref()!=Some(&response.reference) {
-                        return Err(boxed_error("writer reader version differs from stored reference"));
+                    if stored.metadata.reference.as_ref() != Some(&response.reference) {
+                        return Err(boxed_error(
+                            "writer reader version differs from stored reference",
+                        ));
                     }
-                    actual = response.results;
-                },
-                Err(error) => actual = vec![Outcome::Error { message: format!("writer validation failed: {error}; select its interpreter with --writer-python or KEKULE_WRITER_PYTHON") }; cases.len()],
+                    for (outcome, validated) in actual.iter_mut().zip(response.results) {
+                        if matches!(outcome, Outcome::Ok { .. }) {
+                            *outcome = validated;
+                        }
+                    }
+                }
+                Err(error) => {
+                    for outcome in &mut actual {
+                        if matches!(outcome, Outcome::Ok { .. }) {
+                            *outcome = Outcome::Error { message: format!("writer validation failed: {error}; select its interpreter with --writer-python or KEKULE_WRITER_PYTHON") };
+                        }
+                    }
+                }
             }
         }
         for (case_index, ((case, expected), actual)) in
             cases.iter().zip(&expected).zip(&actual).enumerate()
         {
-            let (status, difference) = comparison(&row.feature, expected, actual);
+            let (status, mut difference) = comparison(&row.feature, expected, actual);
             row.cases += 1;
             row.reference_errors += usize::from(matches!(expected, Outcome::Error { .. }));
             let implementation_outcome = emitted
                 .as_ref()
                 .map_or(actual, |values| &values[case_index]);
+            if emitted.is_some() && difference.get("kekule_failed").is_some() {
+                difference["kekule_failed"] =
+                    json!(matches!(implementation_outcome, Outcome::Error { .. }));
+                difference["writer_validation_failed"] = json!(
+                    matches!(implementation_outcome, Outcome::Ok { .. })
+                        && matches!(actual, Outcome::Error { .. })
+                );
+            }
             row.kekule_errors +=
                 usize::from(matches!(implementation_outcome, Outcome::Error { .. }));
             row.writer_validation_errors += usize::from(
@@ -766,10 +797,29 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 };
                 let mut seen = BTreeSet::new();
                 let mut pending = Vec::new();
+                let mut pending_input_bytes = 0usize;
+                let mut writer_reader_checked = false;
                 for fixture in fixtures {
                     let members = dataset.members(&fixture)?;
                     if !members.iter().any(|id| selected.contains(id)) {
                         continue;
+                    }
+                    if !writer_reader_checked && features::is_writer(feature) {
+                        if let RunMode::Compare(stored) = &run.mode {
+                            let reader = reference_batch(
+                                &opts.writer_python(),
+                                &json!({"feature":feature,"describe":true}),
+                                0,
+                            ).map_err(|error| boxed_error(format!(
+                                "writer reader unavailable for {id} {feature}: {error}; select its interpreter with --writer-python or KEKULE_WRITER_PYTHON"
+                            )))?;
+                            if stored.metadata.reference.as_ref() != Some(&reader.reference) {
+                                return Err(boxed_error(
+                                    "writer reader version differs from stored reference",
+                                ));
+                            }
+                        }
+                        writer_reader_checked = true;
                     }
                     let read = (|| -> Result<_, Box<dyn Error>> {
                         let path = safe_join(&dataset.root, &fixture)?;
@@ -792,6 +842,8 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                                     continue;
                                 }
                                 seen.insert(id.clone());
+                                pending_input_bytes =
+                                    pending_input_bytes.saturating_add(text.len());
                                 pending.push(Case {
                                     id: id.clone(),
                                     fixture: fixture.clone(),
@@ -801,15 +853,17 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                                         text,
                                     },
                                 });
-                                if pending.len() == 256 {
+                                if batch_is_full(pending.len(), pending_input_bytes) {
                                     run.batch(&pending, &mut row)?;
                                     pending.clear();
+                                    pending_input_bytes = 0;
                                 }
                             }
                         }
                         Err(error) => {
                             run.batch(&pending, &mut row)?;
                             pending.clear();
+                            pending_input_bytes = 0;
                             for id in members.iter().filter(|id| selected.contains(*id)) {
                                 seen.insert(id.clone());
                                 run.input_error(&mut row, id, Some(&fixture), &error.to_string())?;

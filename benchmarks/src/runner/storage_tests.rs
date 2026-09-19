@@ -98,6 +98,15 @@ fn pool() -> rayon::ThreadPool {
 }
 
 #[test]
+fn large_structure_batches_flush_without_waiting_for_the_case_limit() {
+    assert!(batch_is_full(2, 10 * 1024 * 1024));
+    assert!(batch_is_full(1, 64 * 1024 * 1024));
+    assert!(batch_is_full(256, 1024));
+    assert!(!batch_is_full(255, 1024));
+    assert!(!batch_is_full(0, 0));
+}
+
+#[test]
 fn ordinary_options_do_not_require_python_or_generation() {
     let args = ["--feature", "io.smiles.parse", "--dataset", "smoke"].map(str::to_owned);
     let normal = options(&args).unwrap();
@@ -156,7 +165,18 @@ fn dssp_partner_identity_and_omega_are_required_observations() {
         .0,
         "disagrees"
     );
-    for field in ["omega_degrees", "beta_partners"] {
+    let mut unlabeled = value.clone();
+    unlabeled["residues"][0]["label_sequence_id"] = Value::Null;
+    let unlabeled = Outcome::Ok { value: unlabeled };
+    assert_eq!(
+        comparison("bio.secondary-structure.dssp", &expected, &unlabeled).0,
+        "disagrees"
+    );
+    assert_eq!(
+        comparison("bio.secondary-structure.dssp", &unlabeled, &unlabeled).0,
+        "agrees"
+    );
+    for field in ["omega_degrees", "beta_partners", "label_sequence_id"] {
         let mut missing = value.clone();
         missing["residues"][0]
             .as_object_mut()
@@ -274,6 +294,7 @@ fn generation_calls_reference_only_and_stores_its_errors() {
     };
     writer.finish(metadata).unwrap();
     assert_eq!((row.cases, row.errors, row.kekule_ms), (2, 1, 0.0));
+    assert_eq!((row.reference_errors, row.kekule_errors), (1, 0));
     let mut stored = fixture.load(&opts.feature).unwrap();
     assert!(matches!(
         stored.expected(&case(0)).unwrap(),
@@ -487,6 +508,82 @@ fn writer_reader_failure_is_not_misattributed_to_kekule_execution() {
         (row.errors, row.kekule_errors, row.writer_validation_errors),
         (1, 0, 1)
     );
+    drop(run);
+    let case: Value = serde_json::from_slice(&results).unwrap();
+    assert_eq!(case["difference"]["kekule_failed"], false);
+    assert_eq!(case["difference"]["writer_validation_failed"], true);
+}
+
+#[test]
+fn writer_validation_preserves_original_implementation_errors() {
+    for reader_returns_results in [false, true] {
+        let mut opts = opts(false);
+        opts.feature = "io.smiles.write".into();
+        let fixture = Fixture::new();
+        let stored = fixture.store(
+            &opts.feature,
+            &[
+                golden(&opts.feature, 0, identity()),
+                golden(&opts.feature, 1, identity()),
+            ],
+        );
+        let pool = pool();
+        let progress = ProgressBar::hidden();
+        let mut results = Vec::new();
+        let mut run = BatchRun {
+            opts: &opts,
+            pool: &pool,
+            progress: &progress,
+            mode: RunMode::Compare(stored),
+            results: &mut results,
+            evaluate: |feature, input| {
+                if input.path == Path::new("fail.smi") {
+                    Err(boxed_error("original writer failure"))
+                } else {
+                    evaluate(feature, input)
+                }
+            },
+            reference: if reader_returns_results {
+                |_, _, count| {
+                    Ok(ReferenceResponse {
+                        reference: reference(),
+                        time_ms: 0.0,
+                        results: (0..count)
+                            .map(|_| Outcome::Error {
+                                message: "reader failure".into(),
+                            })
+                            .collect(),
+                    })
+                }
+            } else {
+                |_, _, _| Err(boxed_error("reader process failed"))
+            },
+        };
+        let mut failed = case(1);
+        failed.input.path = "fail.smi".into();
+        let mut row = Summary {
+            dataset: "test".into(),
+            feature: opts.feature.clone(),
+            ..Default::default()
+        };
+        run.batch(&[case(0), failed], &mut row).unwrap();
+        assert_eq!(
+            (row.errors, row.kekule_errors, row.writer_validation_errors),
+            (2, 1, 1)
+        );
+        drop(run);
+        let cases = String::from_utf8(results)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(cases[0]["difference"]["kekule_failed"], false);
+        assert_eq!(cases[0]["difference"]["writer_validation_failed"], true);
+        assert_eq!(cases[1]["actual"]["message"], "original writer failure");
+        assert_eq!(cases[1]["actual"], cases[1]["written"]);
+        assert_eq!(cases[1]["difference"]["kekule_failed"], true);
+        assert_eq!(cases[1]["difference"]["writer_validation_failed"], false);
+    }
 }
 
 #[test]

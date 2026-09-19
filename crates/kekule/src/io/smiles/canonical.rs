@@ -105,9 +105,8 @@ fn canonical_projection_graph(
     mol: &Molecule,
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<Molecule, MolWriteError> {
-    // Ranking must see the same isotope and hydrogen projection as the output.
-    // Keep the general atom-ranking API sensitive to authoritative chemistry;
-    // only this private copy adopts the exported atom representation.
+    // Ranking and labeling must see the same isotope and hydrogen projection
+    // as the output; only this private copy adopts the exported representation.
     let mut projected = mol.clone();
     for (atom_id, atom) in mol.atoms() {
         let (payload, _, implicit_hydrogens) =

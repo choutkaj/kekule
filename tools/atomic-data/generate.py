@@ -38,7 +38,7 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).resolve().parents[3]
+        default=Path(__file__).resolve().parents[2]
         / "crates"
         / "kekule"
         / "src"

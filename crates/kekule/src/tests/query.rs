@@ -320,6 +320,98 @@ fn matcher_supports_disconnected_queries_and_non_induced_subgraphs() {
 }
 
 #[test]
+fn smarts_bonds_distinguish_aromatic_types_from_localized_orders() {
+    // Counts include both query-to-target orientations of every matching edge.
+    let queries = ["*-*", "*=*", "*#*", "*:*", "**", "*~*"];
+    for (source, expected) in [
+        ("c1ccoc1", [0, 0, 0, 10, 10, 10]),
+        ("c1ccccc1-c2ccccc2", [2, 0, 0, 24, 26, 26]),
+        ("C1=CC=CC#C1", [0, 0, 2, 10, 10, 12]),
+        ("C1=CCCCC1", [10, 2, 0, 0, 10, 12]),
+        ("CC#CC", [4, 0, 2, 0, 4, 6]),
+    ] {
+        let target = perceived(source);
+        for (smarts, count) in queries.into_iter().zip(expected) {
+            let query = parse_smarts(smarts).unwrap();
+            let matches = find_substructure_matches_with_options(
+                &target,
+                &query,
+                SubstructureMatchOptions {
+                    uniquify: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(matches.len(), count, "{source}: {smarts}");
+        }
+    }
+    let aryne = perceived("C1=CC=CC#C1");
+    assert!(
+        find_substructure_matches(&aryne, &parse_smarts("c1ccccc1").unwrap())
+            .unwrap()
+            .is_empty()
+    );
+    let benzene = perceived("c1ccccc1");
+    for smarts in ["c1ccccc-1", "c-1ccccc1"] {
+        assert!(
+            find_substructure_matches(&benzene, &parse_smarts(smarts).unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+    assert!(parse_smarts("C=1CCCCC-1").is_err());
+}
+
+#[test]
+fn programmatic_bond_predicates_keep_their_represented_meaning() {
+    let make_query = |predicate| {
+        let mut builder = QueryGraph::builder();
+        let a = builder.add_atom(AtomExpression::always()).unwrap();
+        let b = builder.add_atom(AtomExpression::always()).unwrap();
+        builder
+            .add_bond(a, b, BondExpression::predicate(predicate))
+            .unwrap();
+        builder.build().unwrap()
+    };
+    let mut raw = read_smiles("CC").unwrap();
+    let order = make_query(BondPredicate::Order(BondOrder::Single));
+    assert_eq!(find_substructure_matches(&raw, &order).unwrap().len(), 1);
+    assert_eq!(
+        find_substructure_matches(&raw, &parse_smarts("*-*").unwrap()),
+        Err(SubstructureMatchError::MissingPerception(
+            QueryPerception::Aromaticity
+        ))
+    );
+    perceive(&mut raw).unwrap();
+    assert_eq!(
+        find_substructure_matches(&raw, &parse_smarts("*-*").unwrap())
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let aryne = perceived("C1=CC=CC#C1");
+    let membership = make_query(BondPredicate::Aromatic(true));
+    assert_eq!(
+        find_substructure_matches(&aryne, &membership)
+            .unwrap()
+            .len(),
+        6
+    );
+    assert_eq!(
+        find_substructure_matches(&aryne, &parse_smarts("*:*").unwrap())
+            .unwrap()
+            .len(),
+        5
+    );
+    let benzene = perceived("c1ccccc1");
+    assert_eq!(
+        find_substructure_matches(&benzene, &order).unwrap().len(),
+        3
+    );
+}
+
+#[test]
 fn matcher_requires_only_the_perception_used_by_the_ir() {
     let mut raw = crate::core::MoleculeEditor::new();
     let first = raw.add_atom(carbon()).expect("atom identifier capacity");

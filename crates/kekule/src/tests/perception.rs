@@ -2015,6 +2015,47 @@ fn coordinate_stereo_infers_three_explicit_ligands_and_preserves_handedness() {
 }
 
 #[test]
+fn stereo_candidates_exclude_repeated_hydrogen_ligands_but_preserve_isotopes() {
+    for (input, expected) in [
+        ("C(F)Cl", 0),
+        ("[H]C([H])(F)Cl", 0),
+        ("[H]C(F)Cl", 0),
+        ("[2H]C([2H])(F)Cl", 0),
+        ("[H]C([2H])(F)Cl", 1),
+        ("[2H]C([3H])(F)Cl", 1),
+        ("C=CF", 0),
+        ("[H]C([H])=CF", 0),
+        ("[H]C([2H])=CF", 1),
+    ] {
+        let mut molecule = read_smiles(input).unwrap();
+        perceive(&mut molecule).unwrap();
+        assert_eq!(
+            stereo_api::detect_stereo_candidates(&molecule).len(),
+            expected,
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn coordinate_stereo_skips_overcoordinated_double_bond_endpoints() {
+    let mut molecule = read_smiles("CP(C)(C)=NC").unwrap();
+    perceive(&mut molecule).unwrap();
+    assert!(stereo_api::detect_stereo_candidates(&molecule).is_empty());
+    let positions = test_positions(vec![
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::origin(),
+        Point3::new(0.0, -1.0, 0.0),
+        Point3::new(0.0, 0.0, 1.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(1.0, -1.0, 0.0),
+    ]);
+    let mut editor = molecule.edit();
+    stereo_api::materialize_coordinate_stereo(&mut editor, &positions).unwrap();
+    assert_eq!(editor.finish().unwrap().stereo_elements().count(), 0);
+}
+
+#[test]
 fn coordinate_stereo_infers_fully_substituted_alkene_at_any_coordinate_scale() {
     let molecule = read_smiles("FC(Cl)=C(Br)I").unwrap();
     for scale in [1.0e-100, 1.0, 1.0e100] {
