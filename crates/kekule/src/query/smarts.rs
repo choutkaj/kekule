@@ -115,6 +115,11 @@ impl std::error::Error for SmartsParseError {}
 ///
 /// This uses [`SmartsParseOptions::default`]. Parsing does not match a target or
 /// run chemical perception.
+/// Single and double bond types exclude perceived aromatic bonds. Aromatic
+/// bond types require aromatic membership on a localized single or double bond;
+/// higher orders retain their own type. Matching single, double, or aromatic
+/// SMARTS bond types requires installed aromaticity. A programmatic
+/// [`BondPredicate::Order`] alone only inspects represented order.
 pub fn parse_smarts(input: &str) -> Result<QueryGraph, SmartsParseError> {
     parse_smarts_with_options(input, SmartsParseOptions::default())
 }
@@ -347,13 +352,15 @@ impl<'a> Parser<'a> {
             ));
         }
         let expression = match self.bytes[self.cursor] {
-            b'-' => {
+            b'-' | b'=' => {
+                let order = if self.bytes[self.cursor] == b'-' {
+                    BondOrder::Single
+                } else {
+                    BondOrder::Double
+                };
                 self.cursor += 1;
-                BondExpression::predicate(BondPredicate::Order(BondOrder::Single))
-            }
-            b'=' => {
-                self.cursor += 1;
-                BondExpression::predicate(BondPredicate::Order(BondOrder::Double))
+                non_aromatic_bond_expression(order)
+                    .map_err(|error| expression_error(start..self.cursor, error))?
             }
             b'#' => {
                 self.cursor += 1;
@@ -365,7 +372,8 @@ impl<'a> Parser<'a> {
             }
             b':' => {
                 self.cursor += 1;
-                BondExpression::predicate(BondPredicate::Aromatic(true))
+                aromatic_bond_expression()
+                    .map_err(|error| expression_error(start..self.cursor, error))?
             }
             b'~' => {
                 self.cursor += 1;
@@ -401,7 +409,7 @@ impl<'a> Parser<'a> {
 
     fn read_ring(&mut self) -> Result<(), SmartsParseError> {
         let start = self.cursor;
-        if !self.previous.can_end_atom() {
+        if !self.previous.can_end_atom() && self.previous != PreviousToken::Bond {
             return Err(SmartsParseError::syntax(
                 start..start + 1,
                 "ring label must follow an atom",
@@ -649,10 +657,30 @@ fn is_bond_start(byte: u8) -> bool {
 
 fn default_bond_expression() -> Result<BondExpression, SmartsParseError> {
     BondExpression::any([
-        BondExpression::predicate(BondPredicate::Order(BondOrder::Single)),
-        BondExpression::predicate(BondPredicate::Aromatic(true)),
+        non_aromatic_bond_expression(BondOrder::Single)
+            .map_err(|error| expression_error(0..0, error))?,
+        aromatic_bond_expression().map_err(|error| expression_error(0..0, error))?,
     ])
     .map_err(|error| expression_error(0..0, error))
+}
+
+fn non_aromatic_bond_expression(order: BondOrder) -> Result<BondExpression, QueryExpressionError> {
+    BondExpression::all([
+        BondExpression::predicate(BondPredicate::Order(order)),
+        BondExpression::predicate(BondPredicate::Aromatic(false)),
+    ])
+}
+
+fn aromatic_bond_expression() -> Result<BondExpression, QueryExpressionError> {
+    // SMARTS aromatic bond type is distinct from a localized single/double
+    // order. Higher orders retain their type even when aromaticity flags them.
+    BondExpression::all([
+        BondExpression::predicate(BondPredicate::Aromatic(true)),
+        BondExpression::any([
+            BondExpression::predicate(BondPredicate::Order(BondOrder::Single)),
+            BondExpression::predicate(BondPredicate::Order(BondOrder::Double)),
+        ])?,
+    ])
 }
 
 fn atom_element_expression(

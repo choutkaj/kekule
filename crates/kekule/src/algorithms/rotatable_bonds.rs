@@ -31,6 +31,9 @@ pub struct RotatableBondOptions {
 impl RotatableBondOptions {
     /// RDKit's strict rotatable-bond descriptor version 3.2.0, adapted to
     /// ignore graph hydrogens when evaluating terminal and symmetric groups.
+    /// Aromatic resonance exclusions use a localized five-/six-member cycle
+    /// approximation; unusual and fused systems can differ from RDKit's
+    /// aromaticity-based SMARTS evaluation.
     pub const STRICT: Self = Self {
         include_terminal_bonds: false,
         include_resonance_restricted_bonds: false,
@@ -95,7 +98,11 @@ impl RotatableBondSet {
     }
 }
 
-/// Detects rotatable bonds using the supplied options.
+/// Detects rotatable bonds using the supplied options without mutating the molecule.
+///
+/// Ring membership is reused or computed on demand. This operation does not
+/// run aromaticity perception; see [`RotatableBondOptions::STRICT`] for the
+/// limits of its localized resonance classification.
 pub fn detect_rotatable_bonds(
     molecule: &Molecule,
     options: RotatableBondOptions,
@@ -337,10 +344,8 @@ fn resonance_restricted_atoms(
             continue;
         }
 
-        let mut has_neutral_double_bond = false;
-        let mut has_cationic_nitrogen_double_bond = false;
-        let mut broad_attachments = Vec::new();
-        let mut cationic_attachments = Vec::new();
+        let mut has_heteroatom_double_bond = false;
+        let mut attachments = Vec::new();
         for (bond_id, bond) in molecule
             .incident_bonds(center)
             .expect("live atoms have valid adjacency")
@@ -353,9 +358,10 @@ fn resonance_restricted_atoms(
                 && is_nitrogen_oxygen_or_sulfur(neighbor.element)
                 && !bond_is_in_localized_aromatic_cycle(molecule, bond_id, ring_membership)
             {
-                has_neutral_double_bond |= neighbor.formal_charge == 0;
-                has_cationic_nitrogen_double_bond |=
-                    neighbor.element.atomic_number() == NITROGEN && neighbor.formal_charge > 0;
+                // The strict query's [N,O,S] tests element and aliphaticity,
+                // not charge. Charged imidates and amidines still have the
+                // same resonance-restricted linkage.
+                has_heteroatom_double_bond = true;
             }
             if bond.order != BondOrder::Single
                 || (!include_ring_bonds && ring_membership.bond_in_ring(bond_id))
@@ -370,21 +376,11 @@ fn resonance_restricted_atoms(
                 || atomic_number == OXYGEN
                 || (atomic_number == SULFUR && heavy_degree != 1)
             {
-                broad_attachments.push(neighbor_id);
-            }
-            if atomic_number == NITROGEN && heavy_degree != 1 {
-                cationic_attachments.push(neighbor_id);
+                attachments.push(neighbor_id);
             }
         }
 
-        let mut attachments = Vec::new();
-        if has_neutral_double_bond {
-            attachments.extend(broad_attachments);
-        }
-        if has_cationic_nitrogen_double_bond {
-            attachments.extend(cationic_attachments);
-        }
-        if !attachments.is_empty() {
+        if has_heteroatom_double_bond && !attachments.is_empty() {
             restricted.insert(center);
             restricted.extend(attachments);
         }

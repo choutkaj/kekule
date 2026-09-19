@@ -391,6 +391,10 @@ pub mod molfile {
     }
 
     /// Writes one geometry-bearing model as one possibly disconnected CTAB.
+    ///
+    /// V2000 rounds coordinates to four decimal places in angstroms. V3000
+    /// preserves the converted `f64` coordinates with round-trip decimal text.
+    /// Stereo is projected against the coordinates emitted by the chosen version.
     pub fn write_model(
         model: &Model,
         options: MolfileWriteOptions,
@@ -882,6 +886,11 @@ pub mod canon {
     use crate::core::Molecule;
 
     /// Computes deterministic canonical equivalence classes without mutation.
+    ///
+    /// Hydrogen comparison uses declared counts plus installed implicit counts;
+    /// equal totals are equivalent regardless of how the counts are stored.
+    /// Run valence perception first to include inferred hydrogens. Without it,
+    /// only declared hydrogens contribute. Source declarations remain unchanged.
     pub fn atom_ranking(molecule: &Molecule) -> CanonicalAtomRanking {
         crate::algorithms::canonical_atom_ranking(molecule)
     }

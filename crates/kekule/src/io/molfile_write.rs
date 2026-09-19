@@ -10,7 +10,7 @@ use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::ANGSTROM;
 
 use super::structure_documents::molfile_stereo_group_members_at_atom;
-use super::MolWriteError;
+use super::{MolWriteError, MolfileVersion};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ComponentKey {
@@ -86,7 +86,10 @@ impl<'a> MolfileRecord<'a> {
         })
     }
 
-    pub(super) fn model(model: ModelView<'a>) -> Result<Self, MolWriteError> {
+    pub(super) fn model(
+        model: ModelView<'a>,
+        version: MolfileVersion,
+    ) -> Result<Self, MolWriteError> {
         let topology = model.topology();
         let mut atoms = Vec::with_capacity(topology.atom_count());
         let mut indexes = BTreeMap::new();
@@ -100,14 +103,20 @@ impl<'a> MolfileRecord<'a> {
                 .map_err(|error| MolWriteError::invalid_model(error.to_string()))?
                 .value_in(ANGSTROM)
                 .map_err(|error| MolWriteError::invalid_model(error.to_string()))?;
-            // Parse the emitted decimal representation once so validation and
-            // rendering use exactly the same coordinates, including tie rounding.
-            let [x, y, z] = [position.x, position.y, position.z].map(|value| {
-                format!("{value:.4}")
-                    .parse()
-                    .expect("a formatted coordinate is a valid floating-point number")
-            });
-            let position = Point3::new(x, y, z);
+            // V2000 has four-place fixed-width fields. V3000 emits round-trip
+            // decimal values. Stereo projection must use each format's actual
+            // emitted coordinates, including V2000 tie rounding.
+            let position = match version {
+                MolfileVersion::V2000 => {
+                    let [x, y, z] = [position.x, position.y, position.z].map(|value| {
+                        format!("{value:.4}")
+                            .parse()
+                            .expect("a formatted coordinate is a valid floating-point number")
+                    });
+                    Point3::new(x, y, z)
+                }
+                MolfileVersion::V3000 => position,
+            };
             positions.insert(qualified, position);
             indexes.insert(
                 (

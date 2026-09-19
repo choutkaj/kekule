@@ -563,7 +563,12 @@ fn tokenize_mmcif(
                 let quote = bytes[column];
                 column += 1;
                 let value_start = column;
-                while column < bytes.len() && bytes[column] != quote {
+                // In CIF 1.1 an embedded matching quote belongs to the value
+                // unless it is followed by whitespace or the end of the line.
+                while column < bytes.len()
+                    && !(bytes[column] == quote
+                        && bytes.get(column + 1).is_none_or(u8::is_ascii_whitespace))
+                {
                     column += 1;
                 }
                 if column == bytes.len() {

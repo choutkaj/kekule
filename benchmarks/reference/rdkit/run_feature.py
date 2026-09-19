@@ -253,7 +253,7 @@ def ring_record(record: dict[str, Any]) -> dict[str, Any]:
             "record_index": record["record_index"],
             "status": record["status"],
         }
-    Chem.GetSymmSSSR(mol)
+    Chem.FastFindRings(mol)
     rings = mol.GetRingInfo()
     return {
         "record_index": record["record_index"],
@@ -324,6 +324,9 @@ def valence_record(record: dict[str, Any]) -> dict[str, Any]:
         }
     prepared = Chem.Mol(mol)
     try:
+        # Compare valence on normalized represented chemistry, as published by
+        # Kekule. Cleanup does not run aromaticity or radical perception.
+        Chem.Cleanup(prepared)
         prepared.UpdatePropertyCache(strict=False)
     except Exception:
         return {

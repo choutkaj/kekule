@@ -174,8 +174,10 @@ pub(crate) fn stereo_descriptor_json(descriptor: StereoDescriptor) -> &'static s
         StereoDescriptor::S => "S",
         StereoDescriptor::LowerR => "r",
         StereoDescriptor::LowerS => "s",
-        StereoDescriptor::SeqTrans => "seqTrans",
-        StereoDescriptor::SeqCis => "seqCis",
+        // RDKit's CIPLabeler renders these pseudoasymmetric bond descriptors
+        // as lowercase e/z; uppercase E/Z remain distinct descriptors.
+        StereoDescriptor::SeqTrans => "e",
+        StereoDescriptor::SeqCis => "z",
         StereoDescriptor::E => "E",
         StereoDescriptor::Z => "Z",
         StereoDescriptor::M => "M",

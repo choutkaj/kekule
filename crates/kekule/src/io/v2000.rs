@@ -784,7 +784,7 @@ pub fn write_mol_v2000(molecule: &Molecule) -> std::result::Result<String, MolWr
 pub(crate) fn write_model_v2000(
     model: ModelView<'_>,
 ) -> std::result::Result<String, MolWriteError> {
-    let record = MolfileRecord::model(model)?;
+    let record = MolfileRecord::model(model, MolfileVersion::V2000)?;
     render_mol_v2000(&record, "")
 }
 
@@ -905,7 +905,7 @@ pub fn write_sdf_v2000(
         for field in record.data_fields() {
             validate_sdf_data_field(field)?;
         }
-        let structural = MolfileRecord::model(record.model().view())?;
+        let structural = MolfileRecord::model(record.model().view(), MolfileVersion::V2000)?;
         out.push_str(&render_mol_v2000(&structural, record.title())?);
         for field in record.data_fields() {
             out.push_str(&format!(">  <{}>\n{}\n\n", field.name(), field.value()));

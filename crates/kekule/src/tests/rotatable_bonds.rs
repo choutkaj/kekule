@@ -63,6 +63,45 @@ fn strict_resonance_exclusions_keep_only_unrestricted_neighboring_axes() {
 }
 
 #[test]
+fn resonance_restriction_does_not_require_a_neutral_double_bond_partner() {
+    for smiles in [
+        "CC(=N)OC",
+        "CC(=[NH2+])OC",
+        "CC(=[N-])OC",
+        "CC(=[NH2+])SC",
+        "CC(=[NH2+])NC",
+    ] {
+        let mut molecule = read_smiles(smiles).expect("valid imidate or amidine");
+        let axis = molecule
+            .bond_between(AtomId::new(1), AtomId::new(3))
+            .expect("valid atoms")
+            .expect("resonance-restricted linkage");
+        for materialize in [false, true] {
+            if materialize {
+                molecule.perceive().expect("valid valence");
+                molecule.add_hydrogens().expect("materialize hydrogens");
+            }
+            assert!(
+                rotatable_bonds::detect(&molecule, RotatableBondOptions::STRICT).is_empty(),
+                "{smiles}, materialized hydrogens: {materialize}"
+            );
+            assert!(rotatable_bonds::detect(
+                &molecule,
+                RotatableBondOptions {
+                    include_resonance_restricted_bonds: true,
+                    ..RotatableBondOptions::STRICT
+                }
+            )
+            .contains(axis));
+        }
+    }
+    // The restriction does not extend to the following alkyl bond.
+    for smiles in ["CC(=[NH2+])OCC", "CC(=[NH2+])SCC"] {
+        assert_eq!(detected(smiles), vec![BondId::new(3)]);
+    }
+}
+
+#[test]
 fn localized_aromatic_ring_bonds_do_not_create_false_resonance_exclusions() {
     let molecule = read_smiles("CC1=NC(=NC(=N1)NC(C)C)NCC(C)C").expect("valid aminopyrimidine");
     let graph = molecule;
