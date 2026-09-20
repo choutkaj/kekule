@@ -31,7 +31,8 @@ pub(super) fn smarts_query_records_json(path: &Input) -> Result<Vec<Value>, Box<
         let graph = query::parse_smarts(smarts)?;
         records.push(
             json!({"record_index":record_index,"status":"ok","smarts":smarts,
-            "title":title.trim(),"atom_count":graph.atom_count(),"bond_count":graph.bond_count()}),
+            "title":title.trim(),"atom_count":graph.atom_count(),"bond_count":graph.bond_count(),
+            "behavior":super::query::observe(&graph)?}),
         );
     }
     Ok(records)

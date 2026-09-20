@@ -1,26 +1,28 @@
 # Stored reference coverage
 
-The current benchmark has 125 dataset/feature pairs: 25 features across five
+The current benchmark has 156 dataset/feature pairs: 26 features across six
 datasets. Every locked ID is accounted for, including missing formats and
 reference failures. These are reference-availability counts, not Kekule scores.
 
 | Dataset | Source IDs | Reference values | Reference errors | Missing-format cases |
 | --- | ---: | ---: | ---: | ---: |
-| pubchem-100k | 100,000 | 3,599,739 | 261 | 200,000 |
-| enamine-diversity | 50,240 | 1,808,640 | 0 | 100,480 |
-| pl-rex | 164 | 5,904 | 0 | 1,148 |
-| pdb-1000 | 1,000 | 1,756 | 244 | 23,000 |
-| smoke | 20 | 452 | 0 | 126 |
+| pubchem-100k | 100,000 | 3,799,720 | 280 | 200,000 |
+| enamine-diversity | 50,240 | 1,909,120 | 0 | 100,480 |
+| pl-rex | 164 | 6,232 | 0 | 1,148 |
+| pdb-1000 | 1,000 | 1,756 | 244 | 24,000 |
+| smoke | 20 | 477 | 0 | 127 |
+| rdkit-queries | 518 | 518 | 0 | 12,950 |
 
 An ID contributes to several features and sometimes through both SDF and SMILES.
 Missing formats are reported separately from applicable cases; they never count
 as agreement. Reference failures remain errors. Inspect each report's coverage
 before interpreting its agreement counts.
 
-The complete local compressed goldens occupy 1,848,044,849 bytes. Only the 25
-smoke archives (141,733 bytes) are tracked. The other 100 archives stay local;
-all 125 small manifests remain tracked so their expected bytes and provenance
-can be verified. No full golden archive is published by the benchmark workflow.
+The 52 smoke and RDKit-query archives are tracked. The other 104 current
+archives stay local; all 156 current manifests remain tracked so their expected
+bytes and provenance can be verified. Archived version-1 SMARTS manifests and
+their smoke payload are retained separately. No bulk golden archive is published
+by the benchmark workflow.
 
 The goldens use RDKit 2026.03.3,
 Biopython 1.87, and mkdssp 4.6.1. Adjacent schema-2 manifests pin the compressed
@@ -63,8 +65,12 @@ membership of the other datasets remain included. PubChem's historical
 preselection by format, size and RDKit success remains a sampling limitation;
 these files cannot demonstrate correctness on excluded chemistry.
 
-The 18 fixed SMARTS searches provide limited behavioral coverage. The separate
-SMARTS feature checks acceptance and graph size. The mmCIF feature checks decoded
+The 18 fixed substructure searches provide limited behavioral coverage. The
+`query.smarts` feature now additionally compares full mappings for every supplied
+query on 16 pinned targets; see [SMARTS validation](QUERY-SMARTS-VALIDATION.md).
+Its version-1 parser observations are archived rather than silently reused.
+The separate MDL feature is described in [MDL validation](MDL-VALIDATION.md).
+The mmCIF feature checks decoded
 syntax, while DSSP exercises only part of biomolecular interpretation. Agreement
 with one reference is evidence for the measured fields on these inputs, not a
 proof of general correctness.

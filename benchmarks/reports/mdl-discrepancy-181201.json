@@ -1,0 +1,241 @@
+{
+  "schema": 1,
+  "rdkit": "2026.03.3",
+  "source": {
+    "corpus": "pubchem-100k",
+    "fixture": "data/packs/pack_037.smi",
+    "record_index": 786,
+    "text": "C1=CC(=CC=[C]1)N CID:181201",
+    "input_sha256": "996c3280faa0eb065788e19dd406fcadda1b3829e31f180805c68ccb3f6cc460"
+  },
+  "case": {
+    "actual": {
+      "status": "ok",
+      "value": {
+        "records": [
+          {
+            "atom_aromatic": [
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false
+            ],
+            "bond_aromatic": [
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 1,
+                "value": false
+              },
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 5,
+                "value": false
+              },
+              {
+                "begin_atom_index": 1,
+                "end_atom_index": 2,
+                "value": false
+              },
+              {
+                "begin_atom_index": 2,
+                "end_atom_index": 3,
+                "value": false
+              },
+              {
+                "begin_atom_index": 2,
+                "end_atom_index": 6,
+                "value": false
+              },
+              {
+                "begin_atom_index": 3,
+                "end_atom_index": 4,
+                "value": false
+              },
+              {
+                "begin_atom_index": 4,
+                "end_atom_index": 5,
+                "value": false
+              }
+            ],
+            "record_index": 0,
+            "status": "ok",
+            "title": "CID:181201"
+          }
+        ]
+      }
+    },
+    "dataset": "pubchem-100k",
+    "difference": {
+      "differences": {
+        "details": [
+          {
+            "actual": false,
+            "expected": true,
+            "kind": "structure",
+            "path": "$.records[0].atom_aromatic[0]"
+          },
+          {
+            "actual": false,
+            "expected": true,
+            "kind": "structure",
+            "path": "$.records[0].atom_aromatic[1]"
+          },
+          {
+            "actual": false,
+            "expected": true,
+            "kind": "structure",
+            "path": "$.records[0].atom_aromatic[2]"
+          },
+          {
+            "actual": false,
+            "expected": true,
+            "kind": "structure",
+            "path": "$.records[0].atom_aromatic[3]"
+          },
+          {
+            "actual": false,
+            "expected": true,
+            "kind": "structure",
+            "path": "$.records[0].atom_aromatic[4]"
+          },
+          {
+            "actual": false,
+            "expected": true,
+            "kind": "structure",
+            "path": "$.records[0].atom_aromatic[5]"
+          },
+          {
+            "actual": false,
+            "expected": true,
+            "kind": "structure",
+            "path": "$.records[0].bond_aromatic[0].value"
+          },
+          {
+            "actual": false,
+            "expected": true,
+            "kind": "structure",
+            "path": "$.records[0].bond_aromatic[1].value"
+          },
+          {
+            "actual": false,
+            "expected": true,
+            "kind": "structure",
+            "path": "$.records[0].bond_aromatic[2].value"
+          },
+          {
+            "actual": false,
+            "expected": true,
+            "kind": "structure",
+            "path": "$.records[0].bond_aromatic[3].value"
+          },
+          {
+            "actual": false,
+            "expected": true,
+            "kind": "structure",
+            "path": "$.records[0].bond_aromatic[5].value"
+          },
+          {
+            "actual": false,
+            "expected": true,
+            "kind": "structure",
+            "path": "$.records[0].bond_aromatic[6].value"
+          }
+        ],
+        "numerical": 0,
+        "structural": 12,
+        "within_precision": 0
+      },
+      "exact": false
+    },
+    "expected": {
+      "status": "ok",
+      "value": {
+        "records": [
+          {
+            "atom_aromatic": [
+              true,
+              true,
+              true,
+              true,
+              true,
+              true,
+              false
+            ],
+            "bond_aromatic": [
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 1,
+                "value": true
+              },
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 5,
+                "value": true
+              },
+              {
+                "begin_atom_index": 1,
+                "end_atom_index": 2,
+                "value": true
+              },
+              {
+                "begin_atom_index": 2,
+                "end_atom_index": 3,
+                "value": true
+              },
+              {
+                "begin_atom_index": 2,
+                "end_atom_index": 6,
+                "value": false
+              },
+              {
+                "begin_atom_index": 3,
+                "end_atom_index": 4,
+                "value": true
+              },
+              {
+                "begin_atom_index": 4,
+                "end_atom_index": 5,
+                "value": true
+              }
+            ],
+            "record_index": 0,
+            "status": "ok",
+            "title": "CID:181201"
+          }
+        ]
+      }
+    },
+    "feature": "algo.aromaticity.mdl",
+    "fixture": "data/packs/pack_037.smi",
+    "id": "181201",
+    "record_index": 786,
+    "status": "disagrees",
+    "written": null
+  },
+  "implementation": {
+    "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+    "dirty": true,
+    "executable_sha256": "95fcd584da20452691c6d54924954fcf6c594ae089e3a1e5aeb12d81865cc311",
+    "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
+    "revision": "41d335b7148efccd30b2299a06dd0b121a23c91f",
+    "working_tree_status_sha256": "a6be6510e508d3fa7d7db54242f5734f2278a8d29c328f9bc2e4ead3877da8f8"
+  },
+  "reference_manifest": {
+    "cases": 200000,
+    "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+    "dataset": "pubchem-100k",
+    "feature": "algo.aromaticity.mdl",
+    "input_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
+    "origin": "independent generation",
+    "reference": {
+      "tool": "rdkit",
+      "version": "2026.03.3"
+    },
+    "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
+    "schema": 2,
+    "sha256": "5cf053135a7dc231466f2f2ad9fe773bed0d012c1c45bdbbae820024ef7663d6"
+  }
+}

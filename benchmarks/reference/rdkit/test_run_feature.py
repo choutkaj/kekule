@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 from rdkit import Chem
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -13,6 +14,64 @@ spec.loader.exec_module(runner)
 
 
 class StrictReferenceTests(unittest.TestCase):
+    def test_smarts_behavior_keeps_ordered_tags_symmetry_and_stereo(self):
+        def target(query, id):
+            value = reference.smarts_behavior(Chem.MolFromSmarts(query))
+            return next(row for row in value['targets'] if row['target'] == id)
+        value = target('[#6:2]-[#8:1]', 'smoke:cid_702')
+        self.assertEqual(value['matches'], [[1, 2]])
+        self.assertEqual(value['tagged_matches'], [[2, 1]])
+        self.assertEqual(target('[#6]=[#8]', 'smoke:cid_702')['matches'], [])
+        self.assertEqual(len(target('[c:1]1[c:2]cccc1', 'smoke:cid_241')['matches']), 12)
+        self.assertEqual(target('C[C@@H](C(=O)O)N', 'smoke:cid_5950')['matches'], [[0,1,2,3,4,5]])
+        self.assertEqual(target('C[C@H](C(=O)O)N', 'smoke:cid_5950')['matches'], [])
+        value = reference.smarts_behavior(Chem.MolFromSmarts('[#6:0]-[#8:0]'))
+        self.assertEqual(value['tags'], [{'tag': 0, 'query_atom': 0}, {'tag': 0, 'query_atom': 1}])
+
+    def test_smarts_reference_enumerates_recursion_completely_and_reports_limit(self):
+        # Toy structures test the adapter, never augment the scientific corpus.
+        molecule = Chem.MolFromSmiles('.'.join(['C'] * 1002))
+        with patch.object(reference, 'smarts_targets', return_value=(
+                {'max_matches': 2000}, [('test', molecule)])):
+            value = reference.smarts_behavior(Chem.MolFromSmarts('[$([#6])]'))
+            self.assertEqual(len(value['targets'][0]['matches']), 1002)
+        with patch.object(reference, 'smarts_targets', return_value=(
+                {'max_matches': 1000}, [('test', molecule)])):
+            with self.assertRaisesRegex(RuntimeError, 'resource limit'):
+                reference.smarts_behavior(Chem.MolFromSmarts('*'))
+
+    def test_disconnected_precheck_preserves_rdkit_full_mappings(self):
+        params = Chem.SubstructMatchParameters()
+        params.useChirality = True
+        params.uniquify = False
+        params.maxMatches = params.maxRecursiveMatches = 0
+        for text in ['O.O', '[$(CO)].O', 'C[C@@H](C(=O)O)N.O']:
+            query = Chem.MolFromSmarts(text)
+            value = reference.smarts_behavior(query)
+            for actual, (_, molecule) in zip(value['targets'], reference.smarts_targets()[1]):
+                expected = sorted(map(list, molecule.GetSubstructMatches(query, params)))
+                self.assertEqual(actual['matches'], expected)
+        # Every target lacks sulfur: a water-fragment factorial search is unnecessary.
+        hydrate = Chem.MolFromSmarts('O.O.O.O.O.O.O.O.O.O.[O-]S(=O)(=O)[O-].[Na+].[Na+]')
+        self.assertTrue(all(not row['matches'] for row in reference.smarts_behavior(hydrate)['targets']))
+
+    def test_mdl_aromaticity_clears_default_atom_and_bond_flags(self):
+        source = 'c1cc[nH]c1.c1ccccc1-c2ccccc2'
+        mdl = self.value(source, 'algo.aromaticity.mdl')['records']
+        default = self.value(source, 'algo.aromaticity.rdkit-like')['records']
+        self.assertEqual(mdl[0]['atom_aromatic'], [False] * 5)
+        self.assertTrue(all(not bond['value'] for bond in mdl[0]['bond_aromatic']))
+        self.assertEqual(default[0]['atom_aromatic'], [True] * 5)
+        self.assertTrue(all(bond['value'] for bond in default[0]['bond_aromatic']))
+        self.assertEqual(mdl[1]['atom_aromatic'], [True] * 12)
+        self.assertEqual(len(mdl[1]['bond_aromatic']), 13)
+        self.assertEqual(sum(not bond['value'] for bond in mdl[1]['bond_aromatic']), 1)
+        # The reference operates on a copy and cannot leave its input under MDL.
+        molecule = Chem.MolFromSmiles('c1cc[nH]c1')
+        reference.aromaticity_record({'record_index': 0, 'title': '', 'mol': molecule}, mdl=True)
+        self.assertTrue(all(atom.GetIsAromatic() for atom in molecule.GetAtoms()))
+        self.assertTrue(all(bond.GetIsAromatic() for bond in molecule.GetBonds()))
+
     def test_writer_version_contract_and_extensions(self):
         mol = Chem.MolFromSmiles('CCO')
         mol.AddConformer(Chem.Conformer(3))

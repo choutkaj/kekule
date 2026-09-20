@@ -26,6 +26,7 @@ COUNTS = (
 )
 HASHES = ('contract_sha256', 'input_lock_sha256', 'sha256')
 CORPORA = {
+    'rdkit-queries': 'All 518 query rows from three RDKit 2026.03.3 functional-group and reactivity tables.',
     'smoke': 'Small mixed set from PubChem, RDKit test data and the RCSB PDB.',
     'enamine-diversity': 'Enamine Discovery Diversity Set 50. All supplied records, including CXSMILES.',
     'pdb-1000': 'RCSB PDB structures: proteins, nucleic acids, complexes and multi-model entries.',
@@ -92,6 +93,14 @@ def golden_metadata(raw):
     return result
 
 
+def feature_contracts(root):
+    path = root / 'query-smarts.json'
+    if not path.exists():
+        return {}
+    value = text_hash(root / 'contract.json') + '\n' + path.read_text(encoding='utf-8').replace('\r\n', '\n')
+    return {'query.smarts': hashlib.sha256(value.encode()).hexdigest()}
+
+
 def catalogue(root=ROOT):
     datasets = []
     for path in sorted((root / 'corpora').glob('*/sources.lock.json')):
@@ -120,7 +129,8 @@ def catalogue(root=ROOT):
     expected = {f"{dataset['id']}/{feature}" for dataset in datasets for feature in features}
     require(goldens and set(goldens) == expected, 'incomplete reference catalogue')
     return {'datasets': datasets, 'features': features, 'goldens': goldens,
-            'contract_sha256': text_hash(root / 'contract.json')}
+            'contract_sha256': text_hash(root / 'contract.json'),
+            'feature_contracts': feature_contracts(root)}
 
 
 def load_report(path, catalog):
@@ -141,6 +151,10 @@ def load_report(path, catalog):
     require(identity.get('dirty') is None or type(identity['dirty']) is bool,
             'invalid worktree status')
     implementation.update(revision=revision, dirty=identity.get('dirty'))
+    contracts = identity.get('feature_contracts', {})
+    require(isinstance(contracts, dict), 'invalid feature contracts')
+    implementation['feature_contracts'] = {key: digest(value, 'feature contract')
+                                           for key, value in contracts.items()}
     require(isinstance(raw.get('results'), list), 'missing report results')
     rows, seen = [], set()
     datasets = {item['id']: item for item in catalog['datasets']}
@@ -168,11 +182,12 @@ def load_report(path, catalog):
             require(type(value) in (int, float) and math.isfinite(value) and value >= 0,
                     f'invalid workflow timing: {key}')
             row[field] = value
-        require(golden['contract_sha256'] == implementation['contract_sha256'],
+        effective_contract = implementation['feature_contracts'].get(feature, implementation['contract_sha256'])
+        require(golden['contract_sha256'] == effective_contract,
                 f'report/manifest comparison contract mismatch: {key}')
         current = (golden == catalog['goldens'][key]
                    and golden['input_lock_sha256'] == datasets[dataset]['input_lock_sha256']
-                   and implementation['contract_sha256'] == catalog['contract_sha256'])
+                   and effective_contract == catalog.get('feature_contracts', {}).get(feature, catalog['contract_sha256']))
         if current:
             require(row['source_ids'] <= datasets[dataset]['source_ids'],
                     f'selection exceeds source membership: {key}')

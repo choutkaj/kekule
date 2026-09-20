@@ -1,0 +1,278 @@
+{
+  "schema": 1,
+  "description": "Original complete run summaries, one per corpus; no outcomes excluded. Case files remain under benchmarks/runs.",
+  "runs": [
+    {
+      "cases": "benchmarks/runs/mdl-smoke.cases.jsonl",
+      "complete": true,
+      "error": null,
+      "goldens": "C:\\Users\\chout\\repos\\kekule\\benchmarks\\goldens",
+      "implementation": {
+        "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+        "dirty": true,
+        "executable_sha256": "95fcd584da20452691c6d54924954fcf6c594ae089e3a1e5aeb12d81865cc311",
+        "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
+        "revision": "41d335b7148efccd30b2299a06dd0b121a23c91f",
+        "working_tree_status_sha256": "8714f78595816a4984b82de159f52185d560400d3c657d96845953f2a108df38"
+      },
+      "mode": "compare",
+      "passed": true,
+      "results": [
+        {
+          "agrees": 25,
+          "cases": 25,
+          "dataset": "smoke",
+          "disagrees": 0,
+          "errors": 0,
+          "exact_agrees": 25,
+          "feature": "algo.aromaticity.mdl",
+          "golden": {
+            "cases": 26,
+            "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+            "dataset": "smoke",
+            "feature": "algo.aromaticity.mdl",
+            "input_lock_sha256": "f071f66843ebccd2fe0a0417db961f5ce228d01083c84943e2357afab21fedae",
+            "origin": "independent generation",
+            "reference": {
+              "tool": "rdkit",
+              "version": "2026.03.3"
+            },
+            "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
+            "schema": 2,
+            "sha256": "01dc8500bb4319569150de1e157692b3b3e989d0c05cf68f4bf7e91809bd567f"
+          },
+          "input_errors": 0,
+          "kekule_errors": 0,
+          "kekule_ms": 2.8145000000000002,
+          "not_applicable": 1,
+          "numerical_differences": 0,
+          "observation_errors": 0,
+          "reference_errors": 0,
+          "reference_ms": 0.0,
+          "source_ids": 20,
+          "structural_differences": 0,
+          "writer_validation_errors": 0
+        }
+      ],
+      "schema": 2,
+      "started_at_unix_ms": 1789926430887
+    },
+    {
+      "cases": "benchmarks/runs/mdl-pubchem-100k.cases.jsonl",
+      "complete": true,
+      "error": null,
+      "goldens": "C:\\Users\\chout\\repos\\kekule\\benchmarks\\goldens",
+      "implementation": {
+        "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+        "dirty": true,
+        "executable_sha256": "95fcd584da20452691c6d54924954fcf6c594ae089e3a1e5aeb12d81865cc311",
+        "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
+        "revision": "41d335b7148efccd30b2299a06dd0b121a23c91f",
+        "working_tree_status_sha256": "a6be6510e508d3fa7d7db54242f5734f2278a8d29c328f9bc2e4ead3877da8f8"
+      },
+      "mode": "compare",
+      "passed": false,
+      "results": [
+        {
+          "agrees": 199981,
+          "cases": 200000,
+          "dataset": "pubchem-100k",
+          "disagrees": 1,
+          "errors": 18,
+          "exact_agrees": 199981,
+          "feature": "algo.aromaticity.mdl",
+          "golden": {
+            "cases": 200000,
+            "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+            "dataset": "pubchem-100k",
+            "feature": "algo.aromaticity.mdl",
+            "input_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
+            "origin": "independent generation",
+            "reference": {
+              "tool": "rdkit",
+              "version": "2026.03.3"
+            },
+            "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
+            "schema": 2,
+            "sha256": "5cf053135a7dc231466f2f2ad9fe773bed0d012c1c45bdbbae820024ef7663d6"
+          },
+          "input_errors": 0,
+          "kekule_errors": 18,
+          "kekule_ms": 12186.443500000005,
+          "not_applicable": 0,
+          "numerical_differences": 0,
+          "observation_errors": 0,
+          "reference_errors": 18,
+          "reference_ms": 0.0,
+          "source_ids": 100000,
+          "structural_differences": 12,
+          "writer_validation_errors": 0
+        }
+      ],
+      "schema": 2,
+      "started_at_unix_ms": 1789927098636
+    },
+    {
+      "cases": "benchmarks/runs/mdl-enamine-diversity.cases.jsonl",
+      "complete": true,
+      "error": null,
+      "goldens": "C:\\Users\\chout\\repos\\kekule\\benchmarks\\goldens",
+      "implementation": {
+        "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+        "dirty": true,
+        "executable_sha256": "95fcd584da20452691c6d54924954fcf6c594ae089e3a1e5aeb12d81865cc311",
+        "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
+        "revision": "41d335b7148efccd30b2299a06dd0b121a23c91f",
+        "working_tree_status_sha256": "df7cb1ed1ec1ff1a25fe2d1515ac11f5617f0d7ec56b7f667915bb8e452dfcbf"
+      },
+      "mode": "compare",
+      "passed": false,
+      "results": [
+        {
+          "agrees": 97599,
+          "cases": 100480,
+          "dataset": "enamine-diversity",
+          "disagrees": 0,
+          "errors": 2881,
+          "exact_agrees": 97599,
+          "feature": "algo.aromaticity.mdl",
+          "golden": {
+            "cases": 100480,
+            "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+            "dataset": "enamine-diversity",
+            "feature": "algo.aromaticity.mdl",
+            "input_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+            "origin": "independent generation",
+            "reference": {
+              "tool": "rdkit",
+              "version": "2026.03.3"
+            },
+            "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
+            "schema": 2,
+            "sha256": "f5e623cac76ceab09c12b695ed92eeabe66cec96e552defe1ea692ac797464c1"
+          },
+          "input_errors": 0,
+          "kekule_errors": 2881,
+          "kekule_ms": 4320.462200000004,
+          "not_applicable": 0,
+          "numerical_differences": 0,
+          "observation_errors": 0,
+          "reference_errors": 0,
+          "reference_ms": 0.0,
+          "source_ids": 50240,
+          "structural_differences": 0,
+          "writer_validation_errors": 0
+        }
+      ],
+      "schema": 2,
+      "started_at_unix_ms": 1789926721791
+    },
+    {
+      "cases": "benchmarks/runs/mdl-pl-rex.cases.jsonl",
+      "complete": true,
+      "error": null,
+      "goldens": "C:\\Users\\chout\\repos\\kekule\\benchmarks\\goldens",
+      "implementation": {
+        "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+        "dirty": true,
+        "executable_sha256": "95fcd584da20452691c6d54924954fcf6c594ae089e3a1e5aeb12d81865cc311",
+        "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
+        "revision": "41d335b7148efccd30b2299a06dd0b121a23c91f",
+        "working_tree_status_sha256": "df7cb1ed1ec1ff1a25fe2d1515ac11f5617f0d7ec56b7f667915bb8e452dfcbf"
+      },
+      "mode": "compare",
+      "passed": true,
+      "results": [
+        {
+          "agrees": 328,
+          "cases": 328,
+          "dataset": "pl-rex",
+          "disagrees": 0,
+          "errors": 0,
+          "exact_agrees": 328,
+          "feature": "algo.aromaticity.mdl",
+          "golden": {
+            "cases": 328,
+            "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+            "dataset": "pl-rex",
+            "feature": "algo.aromaticity.mdl",
+            "input_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d",
+            "origin": "independent generation",
+            "reference": {
+              "tool": "rdkit",
+              "version": "2026.03.3"
+            },
+            "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
+            "schema": 2,
+            "sha256": "b1cc191e6a797a5472d07bc56c2eb9e6bf5afe823436dbc34eea053eb4d455e1"
+          },
+          "input_errors": 0,
+          "kekule_errors": 0,
+          "kekule_ms": 34.2364,
+          "not_applicable": 0,
+          "numerical_differences": 0,
+          "observation_errors": 0,
+          "reference_errors": 0,
+          "reference_ms": 0.0,
+          "source_ids": 164,
+          "structural_differences": 0,
+          "writer_validation_errors": 0
+        }
+      ],
+      "schema": 2,
+      "started_at_unix_ms": 1789926741401
+    },
+    {
+      "cases": "benchmarks/runs/mdl-pdb-1000.cases.jsonl",
+      "complete": true,
+      "error": null,
+      "goldens": "C:\\Users\\chout\\repos\\kekule\\benchmarks\\goldens",
+      "implementation": {
+        "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+        "dirty": true,
+        "executable_sha256": "95fcd584da20452691c6d54924954fcf6c594ae089e3a1e5aeb12d81865cc311",
+        "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
+        "revision": "41d335b7148efccd30b2299a06dd0b121a23c91f",
+        "working_tree_status_sha256": "df7cb1ed1ec1ff1a25fe2d1515ac11f5617f0d7ec56b7f667915bb8e452dfcbf"
+      },
+      "mode": "compare",
+      "passed": false,
+      "results": [
+        {
+          "agrees": 0,
+          "cases": 0,
+          "dataset": "pdb-1000",
+          "disagrees": 0,
+          "errors": 0,
+          "exact_agrees": 0,
+          "feature": "algo.aromaticity.mdl",
+          "golden": {
+            "cases": 1000,
+            "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+            "dataset": "pdb-1000",
+            "feature": "algo.aromaticity.mdl",
+            "input_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171",
+            "origin": "independent generation",
+            "reference": null,
+            "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
+            "schema": 2,
+            "sha256": "bcf539507798a440cae530c9f1636817b2a595dc1469d4b1461be2b110633110"
+          },
+          "input_errors": 0,
+          "kekule_errors": 0,
+          "kekule_ms": 0.0,
+          "not_applicable": 1000,
+          "numerical_differences": 0,
+          "observation_errors": 0,
+          "reference_errors": 0,
+          "reference_ms": 0.0,
+          "source_ids": 1000,
+          "structural_differences": 0,
+          "writer_validation_errors": 0
+        }
+      ],
+      "schema": 2,
+      "started_at_unix_ms": 1789926872020
+    }
+  ]
+}

@@ -155,6 +155,28 @@ class DashboardTests(unittest.TestCase):
         self.report['results'][0]['golden'] = dict(self.golden, sha256='f' * 64)
         self.assertEqual(self.load()['results'][0]['coverage'], 'stale')
 
+    def test_query_contract_versions_only_query_results_and_keeps_history(self):
+        panel = self.root / 'query-smarts.json'
+        panel.write_text('{"version": 2}\n')
+        self.assertEqual(self.load()['results'][0]['coverage'], 'sampled')
+        # A valid historical count-only run stays visible, but is now stale.
+        self.golden['feature'] = 'query.smarts'
+        self.report['results'][0]['feature'] = 'query.smarts'
+        self.manifest.unlink()
+        self.manifest = self.manifest.with_name('query.smarts.jsonl.meta.json')
+        self.manifest.write_text(json.dumps(self.golden))
+        self.assertEqual(self.load()['results'][0]['coverage'], 'stale')
+        new_contract = dashboard.feature_contracts(self.root)
+        self.golden['contract_sha256'] = new_contract['query.smarts']
+        self.manifest.write_text(json.dumps(self.golden))
+        self.report['implementation']['feature_contracts'] = new_contract
+        self.assertEqual(self.load()['results'][0]['coverage'], 'sampled')
+        panel.write_text('{"version": 3}\n')
+        self.assertEqual(self.load()['results'][0]['coverage'], 'stale')
+        self.report['implementation']['feature_contracts'] = {'query.smarts': 'invalid'}
+        with self.assertRaisesRegex(ValueError, 'invalid'):
+            self.load()
+
     def test_reference_identity_and_contract_mismatches_are_rejected(self):
         self.report['results'][0]['golden'] = dict(self.golden, dataset='wrong')
         with self.assertRaisesRegex(ValueError, 'identity mismatch'):

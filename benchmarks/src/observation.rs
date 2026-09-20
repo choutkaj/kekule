@@ -111,6 +111,27 @@ struct Query {
     smarts: String,
     atom_count: usize,
     bond_count: usize,
+    behavior: QueryBehavior,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QueryBehavior {
+    version: usize,
+    tags: Vec<QueryTag>,
+    targets: Vec<QueryTarget>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QueryTag {
+    tag: u32,
+    query_atom: usize,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QueryTarget {
+    target: String,
+    matches: Vec<Vec<usize>>,
+    tagged_matches: Vec<Vec<usize>>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -386,7 +407,9 @@ pub(crate) fn validate(feature: &str, value: &Value) -> Result<(), Box<dyn Error
         "algo.substructure.vf2" => read::<Records<Search>>(value),
         "algo.rings.fast" => read::<Records<RingMembership>>(value),
         "algo.rings.sssr" => read::<Records<RingSet>>(value),
-        "algo.aromaticity.rdkit-like" => read::<Records<Aromaticity>>(value),
+        "algo.aromaticity.rdkit-like" | "algo.aromaticity.mdl" => {
+            read::<Records<Aromaticity>>(value)
+        }
         "algo.valence.rdkit-like" => read::<Records<Valence>>(value),
         "algo.canonical-ranking" => read::<Records<Classes>>(value),
         "chem.perception.default" => read::<Records<Perception>>(value),

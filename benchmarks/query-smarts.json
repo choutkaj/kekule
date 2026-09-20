@@ -1,0 +1,123 @@
+{
+  "version": 2,
+  "feature": "query.smarts",
+  "semantics": "Parse each source SMARTS; compare graph sizes, tags, and complete stereo-aware injective mappings on every target. Preserve automorphisms and ordered tag tuples. Any resource exhaustion is an error.",
+  "max_matches": 100000,
+  "max_search_states": 1000000,
+  "max_candidate_pairs": 1000000,
+  "targets": [
+    {
+      "id": "smoke:cid_2244",
+      "smiles": "CC(=O)OC1=CC=CC=C1C(=O)O",
+      "source": "corpora/smoke/data/pubchem_smiles/cid_2244.txt",
+      "source_sha256": "82a1817a69733fb53afca011edb1b3f997b7cdec4f9b6b43369525e322d78226",
+      "source_record": 0
+    },
+    {
+      "id": "smoke:cid_241",
+      "smiles": "C1=CC=CC=C1",
+      "source": "corpora/smoke/data/pubchem_smiles/cid_241.txt",
+      "source_sha256": "98f18aa6aa508a02e181bf3ae532d7956b547f9de1fcebbf12fc89936c6d7aff",
+      "source_record": 0
+    },
+    {
+      "id": "smoke:cid_2519",
+      "smiles": "CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
+      "source": "corpora/smoke/data/pubchem_smiles/cid_2519.txt",
+      "source_sha256": "c5a814e578e7e6baf11adbf85c53fee7e2795bebdd5183dc08bc286c58355d7c",
+      "source_record": 0
+    },
+    {
+      "id": "smoke:cid_5462921",
+      "smiles": "C(=C\\F)\\F",
+      "source": "corpora/smoke/data/pubchem_smiles/cid_5462921.txt",
+      "source_sha256": "042ba0c10bd409ba50050f7649bb2dc254af5533d25b7f9d751fe69191c2a72c",
+      "source_record": 0
+    },
+    {
+      "id": "smoke:cid_5950",
+      "smiles": "C[C@@H](C(=O)O)N",
+      "source": "corpora/smoke/data/pubchem_smiles/cid_5950.txt",
+      "source_sha256": "42f7943b651863323d016c70571e9d66e928ae96533e4e0710d4151aa4d044b7",
+      "source_record": 0
+    },
+    {
+      "id": "smoke:cid_702",
+      "smiles": "CCO",
+      "source": "corpora/smoke/data/pubchem_smiles/cid_702.txt",
+      "source_sha256": "c5e96abe1a2a1a49fb241ad828857e5a325c2a96507679183aea685134e2c3c3",
+      "source_record": 0
+    },
+    {
+      "id": "smoke:cid_8029",
+      "smiles": "C1=COC=C1",
+      "source": "corpora/smoke/data/pubchem_smiles/cid_8029.txt",
+      "source_sha256": "15d411fec78981f5b65502d64b983e5390cf87ed827ead960733caf0ee361f2e",
+      "source_record": 0
+    },
+    {
+      "id": "smoke:cid_931",
+      "smiles": "C1=CC=C2C=CC=CC2=C1",
+      "source": "corpora/smoke/data/pubchem_smiles/cid_931.txt",
+      "source_sha256": "fe4f82050c1869a3d06618a268fc10797b9f96bc44282b5fa8d9e70d2b06fe11",
+      "source_record": 0
+    },
+    {
+      "id": "pubchem:408360",
+      "smiles": "C1=CC=C(C=C1)CNCC2=CC=CC=C2O",
+      "source": "corpora/pubchem-100k/data/packs/pack_084.smi",
+      "source_sha256": "4722081e0adb09b147edbabffc3a73288c5e3d9ec0efc9faab743065950e5888",
+      "source_record": 185
+    },
+    {
+      "id": "pubchem:335247",
+      "smiles": "CC(=O)NC(CC1=CC(=NO1)Br)C(=O)O",
+      "source": "corpora/pubchem-100k/data/packs/pack_069.smi",
+      "source_sha256": "e7c08fc873795ad24ab673061c5d46d7cbbcf080b1b13f67ace43fc7543bfad6",
+      "source_record": 574
+    },
+    {
+      "id": "pubchem:174291",
+      "smiles": "CC(CO)O.C1C=CC2C1C3CC2C=C3.C1=CC(=CC(=C1)C(=O)O)C(=O)O.C1=CC(=O)OC1=O.C(CCC(=O)O)CC(=O)O",
+      "source": "corpora/pubchem-100k/data/packs/pack_036.smi",
+      "source_sha256": "c7cbc2725ac341740cf1a1c3ff60556ee47e84d9f4bc0507457391cf84ab5357",
+      "source_record": 481
+    },
+    {
+      "id": "pubchem:254443",
+      "smiles": "CCOC(=O)CC1=C(C(=CC=C1)OC)OC",
+      "source": "corpora/pubchem-100k/data/packs/pack_052.smi",
+      "source_sha256": "941f3ce34bd218bd07ad3d43cf2ab15d03bed8eb89923b705660c595d4e61005",
+      "source_record": 795
+    },
+    {
+      "id": "pubchem:36931",
+      "smiles": "CCCCNC1=C2CCCCC2=NC3=C1C=C(C=C3)Br",
+      "source": "corpora/pubchem-100k/data/packs/pack_008.smi",
+      "source_sha256": "4f34f37a4e1064235b7be5a39d66e3d913222dd1a7a1d1e54a833f063d5fafb1",
+      "source_record": 699
+    },
+    {
+      "id": "pubchem:293287",
+      "smiles": "C1=CC=C(C=C1)OCCCOC2=CC=CC(=C2N)C(=O)O",
+      "source": "corpora/pubchem-100k/data/packs/pack_060.smi",
+      "source_sha256": "bd7701ae601095181fcb8cb86291faa7688a6bab29f38cc0620e6af2bca442ec",
+      "source_record": 804
+    },
+    {
+      "id": "pubchem:12837",
+      "smiles": "C1CCC(CC1)C(=O)C2=CC=CC=C2",
+      "source": "corpora/pubchem-100k/data/packs/pack_003.smi",
+      "source_sha256": "4af3854c0289bd2f12c35a9eb7b7f0a24fbe135aed1fdc74c33ab9fa7f813ce4",
+      "source_record": 727
+    },
+    {
+      "id": "pubchem:160485",
+      "smiles": "CC(C)([C@@H](CC1=C(C=C2C(=C1OC)C=CC(=O)O2)OC)O)O",
+      "source": "corpora/pubchem-100k/data/packs/pack_033.smi",
+      "source_sha256": "09623af12e3de814d96fbb11c55785743d900facba88a1e9e31e58e62bccd526",
+      "source_record": 822
+    }
+  ],
+  "selection": "Eight existing PubChem smoke SMILES plus eight PubChem-100k source IDs selected by ascending SHA256(query-smarts-targets-v2:ID), before either engine runs. No OFFXML or force-field semantics."
+}
