@@ -208,7 +208,10 @@ fn cip_assigns_axis_descriptor_after_coordinate_stereo_materialization() {
     let materialization_report = stereo_api::materialize_coordinate_stereo_with_options(
         &mut mol,
         &positions,
-        CoordinateStereoOptions { infer_axes: true },
+        CoordinateStereoOptions {
+            infer_axes: true,
+            ..Default::default()
+        },
     )
     .expect("coordinate axis materialization");
     assert_eq!(materialization_report.created_elements.len(), 1);
@@ -275,6 +278,75 @@ fn cip_axis_with_two_enantiomorphic_endpoint_pairs_is_absolute() {
             molecule.cip_descriptor(element).expect("axis"),
             Some(expected)
         );
+    }
+}
+
+#[test]
+fn cip_default_depth_resolves_a_remote_constitutional_difference() {
+    let smiles = format!("F[C@](Cl)({}O){}", "C".repeat(40), "C".repeat(41));
+    let mut molecule = read_smiles(&smiles).expect("long acyclic ligands");
+    perceive(&mut molecule).expect("perceive");
+    let previous = molecule.perception().clone();
+    let error = stereo_api::assign_cip_descriptors_with_options(
+        &mut molecule,
+        CipAssignmentOptions {
+            max_depth: 32,
+            ..CipAssignmentOptions::default()
+        },
+    )
+    .expect_err("the distinguishing atom is beyond depth 32");
+    assert_eq!(
+        error.issues,
+        vec![CipAssignmentIssue::DepthLimitExceeded {
+            element: StereoElementId::new(0),
+            max_depth: 32,
+        }]
+    );
+    assert_eq!(molecule.perception(), &previous);
+    // Cl > F > oxygen-terminated carbon chain > hydrocarbon chain. The
+    // represented orientation gives R, independently checked with RDKit.
+    assert_eq!(
+        assign_cip(&mut molecule).assigned,
+        vec![CipAssignment {
+            element: StereoElementId::new(0),
+            descriptor: StereoDescriptor::R,
+        }]
+    );
+}
+
+#[test]
+fn cip_stops_at_the_first_distinguishing_shell_within_the_node_budget() {
+    for smiles in ["F[C@](Cl)(CCCO)CCCC", "CCCC[C@@](Cl)(F)CCCO"] {
+        let mut molecule = read_smiles(smiles).expect("shell regression");
+        perceive(&mut molecule).expect("perceive");
+        let expected = assign_cip(&mut molecule);
+        assert_eq!(expected.assigned.len(), 1);
+        let actual = stereo_api::assign_cip_descriptors_with_options(
+            &mut molecule,
+            CipAssignmentOptions {
+                max_depth: 32,
+                max_nodes: 10,
+            },
+        )
+        .expect("ten ligand nodes suffice to reach the distinguishing oxygen");
+        assert_eq!(actual, expected);
+        let previous = molecule.perception().clone();
+        let error = stereo_api::assign_cip_descriptors_with_options(
+            &mut molecule,
+            CipAssignmentOptions {
+                max_depth: 32,
+                max_nodes: 9,
+            },
+        )
+        .expect_err("the first distinguishing shell must fit in its entirety");
+        assert_eq!(
+            error.issues,
+            vec![CipAssignmentIssue::ResourceLimitExceeded {
+                element: StereoElementId::new(0),
+                max_nodes: 9,
+            }]
+        );
+        assert_eq!(molecule.perception(), &previous);
     }
 }
 
@@ -1551,6 +1623,7 @@ fn cip_skips_equivalent_ligands_as_nonstereogenic() {
 
 #[test]
 fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
+    let chain_length = CipAssignmentOptions::default().max_depth / 2 + 2;
     let mut mol = crate::core::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let fluorine = mol
@@ -1567,7 +1640,7 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
     }
     for chain in [chain_a, chain_b] {
         let mut previous = chain;
-        for _ in 1..18 {
+        for _ in 1..chain_length {
             let next = mol.add_atom(carbon()).expect("atom identifier capacity");
             mol.add_bond(previous, next, BondOrder::Single)
                 .expect("chain bond");
@@ -1596,6 +1669,7 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
 
 #[test]
 fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() {
+    let chain_length = CipAssignmentOptions::default().max_depth / 2 + 2;
     let mut mol = crate::core::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -1619,7 +1693,7 @@ fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() 
             .expect("right carrier bond");
     }
     for chain in [chain_a, chain_b] {
-        add_carbon_chain(mol.working_mut(), chain, 18);
+        add_carbon_chain(mol.working_mut(), chain, chain_length);
     }
     assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth);
 
@@ -1641,6 +1715,7 @@ fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() 
 
 #[test]
 fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
+    let chain_length = CipAssignmentOptions::default().max_depth / 2 + 2;
     let mut mol = crate::core::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -1662,7 +1737,7 @@ fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
             .expect("right carrier bond");
     }
     for chain in [chain_a, chain_b] {
-        add_carbon_chain(mol.working_mut(), chain, 18);
+        add_carbon_chain(mol.working_mut(), chain, chain_length);
     }
     assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth);
 

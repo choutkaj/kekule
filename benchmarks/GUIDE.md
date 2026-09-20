@@ -10,24 +10,46 @@ establish correctness. Scientific runs are optional, outside CI/release gates.
 ```text
 cargo benchmark --list
 cargo benchmark --feature io.smiles.parse --dataset smoke
+cargo benchmark --feature query.smarts --dataset rdkit-queries
+cargo benchmark --feature io.sdf.parse --dataset rdkit-structures
 cargo benchmark --feature io.sdf.parse --dataset enamine-diversity
 cargo benchmark --feature all --dataset smoke --writer-python PATH_TO_RDKIT_PYTHON
 cargo benchmark generate --feature FEATURE --dataset DATASET --python PATH --goldens NEW_DIRECTORY
 ```
 
-A fresh checkout includes the smoke inputs and goldens. Full dataset inputs and
+A fresh checkout includes the smoke, `rdkit-queries` and `rdkit-structures`
+inputs and goldens. Bulk dataset inputs and
 golden archives stay local and are excluded from Git and Cargo packages; no
 download or upload is automatic. Their source locks and golden manifests remain
 tracked. To run a full dataset on another machine, supply the original inputs
 and matching golden archives locally at the paths below. Comparison verifies
 their hashes against the tracked provenance. Missing files stop the run.
 
+The small `rdkit-structures` corpus adds targeted axial stereo, drawing, 3D and
+V3000 coverage from a pinned upstream release: all 47 input variants for six
+named medicinal compounds and three ChEBI MOL files. This is representation
+coverage, not a random sample of 50 distinct molecules. Conflicting variants
+marked `Bad` are retained; generated upstream expected-output files are excluded.
+Selection precedes parser evaluation, and every input stays byte-identical.
+See its [provenance](corpora/rdkit-structures/PROVENANCE.md) and source lock.
+
 The default selects all locked source IDs. `--limit N` selects a deterministic
 subset before either engine runs; molecular subsets are nested and PDB subsets
 retain lock-file order. `--jobs N` controls Kekule concurrency. Reports and per-case
-JSONL are saved under `benchmarks/runs/`, with unique run names. `--output FILE`
+gzip-compressed JSONL are saved under `benchmarks/runs/`, with unique run names.
+Case files end in `.cases.jsonl.gz` and retain every observation and difference.
+The report's `cases` path identifies the file; older reports may point to plain
+JSONL. Compression streams to disk and is finalized before a run can be marked
+complete. `--output FILE`
 selects another report location; its summary is also archived in `benchmarks/runs/`
-without duplicating its case records. Existing reports are never overwritten.
+without duplicating its case records. A new run never overwrites an existing report.
+Progress snapshots and archived summaries are published atomically. A failed
+update leaves the previous readable snapshot in place; a new report is not
+published until its initial snapshot has been written successfully.
+On Windows, publication retries temporary access/sharing locks for at most two
+seconds. It does not repeat serialization or benchmark computation. Persistent
+failures identify the operation and report path; if recording an execution error
+also fails, the CLI retains both errors and the previous readable snapshot.
 
 Normal parser and algorithm checks need Rust and the stored goldens. Writers
 also need RDKit to read the emitted text. Select it with `--writer-python`,
@@ -94,6 +116,14 @@ No overall correctness score or cross-library speed ratio is computed. Counts
 repeat inputs across features and formats; unavailable formats stay outside the
 measured denominator.
 
+Selection coverage describes the chosen source IDs, not reference availability
+or successful completion. Selecting more inputs than a sampled reference archive
+contains leaves missing-reference errors visible in the denominator and keeps
+the run failed. Not-applicable inputs need no stored reference. An unreadable
+input can represent multiple unprocessed records; interrupted runs retain their
+partial counts. The dashboard preserves these outcomes instead of discarding
+their reports because the observation count differs from the reference archive.
+
 Only aggregate counts, source membership sizes and hashes/tool versions are
 embedded. Inputs, golden payloads, per-case observations, local paths and raw
 error messages stay local. The page can be generated without the full datasets
@@ -115,6 +145,19 @@ must satisfy the feature's schema: required fields, types and collection presenc
 are checked, and unknown fields are rejected. Nonfinite measurements fail before
 serialization. Nullable measurements distinguish an unavailable value from a
 missing required field. Coordinates occur only when a conformer exists.
+
+Observation contract 3 measures `radical_electrons` (electron occupancy) and
+`spin_multiplicity` (explicit atom-local `2S+1`, nullable when unspecified)
+separately. These replace the misleading `unpaired_electrons` name and inferred
+`radical` spin labels; both measurements remain asserted. A singlet center may
+reserve two electrons, so occupancy is not a physical unpaired-electron count.
+RDKit computes occupancy. A separate source-metadata reader preserves explicit
+CTAB/CX spin that RDKit's atom model loses, and a changed explicit occupancy is
+a reference failure. It follows the [BIOVIA CTfile specification](https://discover.3ds.com/sites/default/files/2020-08/biovia_ctfileformats_2020.pdf)
+and [Chemaxon CX radical definitions](https://docs.chemaxon.com/latest/formats_chemaxon-extended-smiles-and-smarts-cxsmiles-and-cxsmarts.html).
+Plain bracket SMILES does not assert spin. Old-contract goldens must be explicitly
+regenerated and audited; they are never accepted by silently converting fields
+during comparison. Report and archive framing remain at schema 2.
 
 Every structural difference and numerical difference is retained, with its path
 and both raw values. Discrete quantities compare exactly. For floating-point
@@ -163,6 +206,17 @@ atoms remain different rings. This compares Kekule's Figueras-style selection
 with RDKit's symmetrized selection, not a unique mathematical minimum cycle
 basis. Candidate traversal can depend on bond iteration order; such differences
 remain reported rather than being replaced by counts or cycle-space equivalence.
+For differing selections, `differences.diagnostics` additionally reports the
+number of selected cycles, covered edges and GF(2) span rank for each side,
+and whether the reported paths cover identical edges and span the same space.
+These measurements never change agreement or exactness. They describe the
+reported paths only: they do not establish validity in the source graph,
+completeness of its cycle space, or minimality of either selection.
+Independent unit regressions enumerate all simple cycles in connected graphs
+of up to five vertices and check selected paths, cyclic-edge coverage and
+membership after atom/bond reordering. Mixed zero/dative-bond assignments also
+exercise disconnected eligible subgraphs. These checks validate graph invariants
+without asserting a unique ring selection or replacing the reference comparison.
 
 RDKit-like valence compares the atoms after represented-chemistry normalization.
 The reference runs RDKit `Cleanup` on a copy before the non-strict property-cache
@@ -204,6 +258,16 @@ define double-bond stereo. Reference defaults can also lose metal-bound hydrogen
 counts when the metal has no inferred replacement valence. Such reference
 limitations remain disagreements with their raw observations intact; they are
 not a reason to discard hydrogen information in Kekule.
+For this feature, `differences.diagnostics` identifies an expanded or collapsed
+graph whose only differences are declared/inferred hydrogen storage, the
+implicit-hydrogen policy flag and the corresponding explicit-valence bookkeeping.
+It requires identical indexed atoms, bonds, isotope/charge/radical state, stereo
+and all other graph fields, equal declared-plus-inferred counts at every atom,
+and equal explicit valence after subtracting declared non-graph H. Explicit
+graph hydrogens therefore remain identical, including their isotope labels.
+Inconsistent counts and changes in hydrogen retention or atom correspondence
+are not classified this way. The diagnostic is scoped to that graph; other
+record differences and all raw comparisons remain asserted.
 
 Canonical ranking compares partitions of source atom indices, rather than the
 engines' arbitrary numeric rank labels. The reference disables tie breaking and
@@ -227,8 +291,10 @@ additional bond order.
 These are native API observations, not a pure chemical-equivalence score.
 RDKit sanitization can move inferred aromatic hydrogens into its explicit count
 and assign radicals from electron deficits. Kekule preserves source hydrogen
-declarations and does not infer radicals from bracket notation. Differences in
-these fields remain visible; matching total hydrogen counts alone does not make
+declarations and interprets bracket radical-electron occupancy without asserting
+spin multiplicity. Electron count alone is insufficient to identify a singlet or
+triplet. Differences in these fields remain visible;
+matching total hydrogen counts alone does not make
 the complete observations agree. Interpret these distinctions before attributing
 every parsing disagreement to incorrect chemistry.
 
@@ -269,6 +335,27 @@ standard weights are conventional point estimates, not exact sample masses.
 Missing standard weights or natural isotope abundances cause explicit native
 errors; no representative isotope's mass number is substituted as a weight.
 
+Optional independent mass diagnostics can reconstruct a completed descriptor
+run without changing its results. From the repository root, use the pinned
+RDKit Python environment and a checksum-verified atomic-data source cache:
+
+```text
+python benchmarks/analyze_masses.py --report PATH/TO/REPORT.json --source-cache PATH/TO/ATOMIC-DATA-CACHE --output PATH/TO/NEW-ANALYSIS.json
+```
+
+The analyzer checks the reference version, regenerates the native atomic table
+from the cached published sources, and reconstructs both masses from each
+isotope-resolved formula. It records atomic-data and charge-convention
+contributions separately, with raw values and reconstruction residuals in an
+adjacent compressed details file. Its roundoff bound covers differences in
+summation order; it is neither experimental uncertainty nor a new benchmark
+tolerance. Formula differences and unexplained masses stay explicit. Error
+and not-applicable cases are counted but cannot be reconstructed. A successful
+analysis therefore does not mean the benchmark agrees. Incomplete reports,
+wrong reference versions and existing output paths are rejected. Sources must
+already be cached; the analyzer performs no downloads. Its dependency-free
+tests run with `python -m unittest discover -s benchmarks -p test_analyze_masses.py`.
+
 Strict rotatable bonds compare every component-local bond endpoint pair as well
 as the count. The reference enumerates RDKit's strict descriptor SMARTS without
 a match cap and checks that its endpoint count equals `CalcNumRotatableBonds`
@@ -276,9 +363,10 @@ with `Strict` selected explicitly. It retains source graph hydrogens: the
 query's degree and hydrogen-count predicates can therefore change the result
 when hydrogens are materialized. Kekule deliberately uses heavy-atom degree,
 so its terminal-group classification is invariant to that representation.
-These policy differences remain visible. Kekule's localized five-/six-member
-cycle approximation for resonance classification can also differ from RDKit's
-aromaticity-based query in unusual or fused systems. This descriptor estimates
+These policy differences remain visible. Kekule uses its default aromaticity
+perception for resonance classification, reusing compatible installed state or
+perceiving a temporary copy. Valence and resource failures remain explicit
+benchmark errors. This descriptor estimates
 rotatable axes; it does not calculate rotational energy barriers.
 
 `stereo.representation` compares the complete graph after ordinary source
@@ -288,18 +376,47 @@ and parity are normalized together; double-bond and axis orientations use
 canonical endpoint carriers. Focus identity, unknown versus specified
 orientation and group membership remain significant. RDKit applies its default
 stereo cleanup and interprets Molfile coordinates according to its source-reader
-policy. Kekule preserves represented assertions and decodes source wedge and
-double-bond drawing marks without general coordinate-stereo materialization.
+policy. Kekule preserves represented assertions, decodes source wedge and
+double-bond drawing marks, and infers unmarked tetrahedral configurations from
+3D Molfile geometry using the shared eligibility and symmetry model. Explicit
+unknown assertions remain unknown. Unsupported valence retains the represented
+graph with a source diagnostic; resource exhaustion remains an error. Import
+does not install derived perception or infer unmarked stereogenic axes.
+Missing or degenerate tetrahedral wedge geometry produces a source warning and
+no configuration; atom order cannot substitute for a drawing. Conflicting axis
+wedge marks likewise produce a diagnostic and no axis configuration, retaining
+connectivity and unrelated stereo. Original marks remain in the source document.
+Coordinate-free
+Molfile export rejects specified stereo because zero coordinates cannot encode
+it. Model export checks stereo against its emitted geometry and writes unknown
+annotations wherever 3D coordinates would otherwise introduce an unasserted
+tetrahedral configuration. It fails if preservation cannot be verified.
 These distinctions, including symmetry-dependent cleanup and supported stereo
 families, remain visible. The separate `stereo.perception` feature explicitly
 materializes coordinate stereo and compares candidate detection as well.
 
-`stereo.perception` retains that complete-graph comparison. Kekule reports local
-tetrahedral and double-bond candidates, excludes repeated hydrogen ligands and
-overcoordinated double-bond endpoints, and preserves existing represented stereo
-when materializing coordinate proposals. RDKit's `FindPotentialStereo` also
-resolves ligand equivalence and stereo dependencies and can report other stereo
-families. Its preceding `AssignStereochemistryFrom3D` call uses the default policy
+`stereo.perception` retains that complete-graph comparison. Kekule explicitly
+cleans chemically ineligible and symmetry-degenerate tetrahedral/double-bond
+assertions, materializes coordinate proposals, and cleans the resulting state.
+Its candidate search proves orientation-reversing graph symmetries under the
+remaining stereo constraints, iterating when a removed site releases a dependency.
+Hydrogen representation and atom-map annotations do not distinguish ligands.
+Search exhaustion is an error. Unsupported geometries remain represented;
+enhanced-group and axial dependencies are held fixed during symmetry proofs.
+Axial assertions are preserved as unclassified by cleanup and are not returned
+as proved candidates. A represented axis or a nonzero torsion angle does not
+establish configurational stability. Complete axial and enhanced-group candidate
+handling needs joint orientation constraints in the symmetry model; copying
+represented axes into the benchmark candidate list would not establish that.
+Neutral closed-shell nitrogen with three ligand directions requires no conjugated
+attachment and either a three-membered ring or the RDKit-like selected-ring
+bridgehead criterion. This convention models inversion eligibility, not a
+calculated inversion barrier. Declared and graph hydrogen ligands are equivalent;
+RDKit's candidate result can depend on their representation. Three-coordinate
+charged/radical nitrogen is outside the native lone-pair model and existing
+assertions are preserved as unclassified.
+RDKit's `FindPotentialStereo` can report additional stereo families. Its preceding
+`AssignStereochemistryFrom3D` call uses the default policy
 for replacing existing tags on 3D conformers. The comparison keeps these
 differences visible; candidate agreement is not inferred from a count alone.
 
@@ -308,7 +425,7 @@ stereo after ordinary source preparation. It does not run the separate coordinat
 materialization workflow. Descriptor identity, focus identity and lowercase
 pseudoasymmetric labels remain significant. The adapter renders native
 `SeqCis`/`SeqTrans` as RDKit's lowercase `z`/`e`; ordinary `Z`/`E` remain distinct.
-Native assignment uses the public default bounds (depth 32 and 100,000 nodes),
+Native assignment uses the public default bounds (depth 64 and 100,000 nodes),
 while RDKit `AssignCIPLabels` is bounded at 1,000,000 recursive iterations.
 These are different algorithmic resource units, not equivalent work budgets;
 exhaustion remains an explicit error and is included in the reported coverage.
@@ -316,6 +433,9 @@ exhaustion remains an explicit error and is included in the reported coverage.
 Substructure retains every query-to-target mapping without a match
 cap. The shared 18-query input is [queries.smarts](queries.smarts).
 Mappings retain query-atom order; only the list of complete mappings is sorted.
+Both engines enforce local stereo constraints under the atom mapping (RDKit
+`useChirality=True`). The current shared queries are achiral, so these stored
+comparisons alone do not establish stereochemical matching coverage.
 Query automorphisms are included, and resource exhaustion remains an error
 rather than a partial successful match list. SMARTS single/double bond types
 exclude aromatic bonds, while aromatic bond types exclude higher represented
@@ -323,12 +443,29 @@ orders even when those bonds carry an aromaticity flag. The low-level query
 predicates for localized order and aromatic membership retain their independent
 meanings; the SMARTS parser combines them to express these bond types.
 `query.smarts` reads each text record's first whitespace-delimited token as
-SMARTS, with the remainder as its title. The current external corpus supplies
-SMILES strings to exercise the overlapping grammar; this does not validate
-molecular interpretation or CXSMILES extensions. The comparison checks syntax
+SMARTS, with the remainder as its title. Molecular corpora supply SMILES strings
+to exercise the overlapping grammar. The separate `rdkit-queries` corpus adds
+all 518 query rows from three pinned RDKit 2026.03.3 functional-group/reactivity
+tables, including recursive and other currently unsupported grammar. Its source
+tables, license, checksums and original line identities are retained; no query is
+selected or rewritten to make either parser succeed. These `.smarts` inputs are
+not used as molecules by other features. This does not validate molecular
+interpretation or CXSMILES extensions. The comparison checks syntax
 acceptance and atom/bond counts, not predicate equivalence. The behavioral
-searches above supplement this limited coverage. Unsupported stereochemical
-queries remain reported errors; they are neither stripped nor excluded.
+searches above supplement this limited coverage. Tetrahedral and directional
+stereo are supported; unsupported stereo classes or Boolean stereo expressions
+remain reported errors, neither stripped nor excluded. Directional SMARTS bonds
+use RDKit's single-or-aromatic predicate; an isolated direction adds no stereo
+relationship. Paired directions constrain local geometry. This differs from
+an explicit `-` bond, which excludes aromatic bonds.
+
+Connectivity `X` includes graph neighbors and declared/inferred nongraph
+hydrogens; degree `D` counts graph neighbors only. Ring connectivity `xN` counts
+incident bonds classified cyclic by installed ring perception, independently
+of the selected ring basis. Bare `X` means exactly one connection, whereas bare
+`x` means any ring membership. The matcher requires the corresponding perception
+even under negation. Valence `v`, hybridization, recursive queries and numeric
+selected-ring predicates remain explicitly unsupported.
 
 mmCIF compares all decoded tags/values, including non-atom categories and distinct
 `.`/`?` tokens. It does not claim full biomolecular topology interpretation
@@ -339,6 +476,13 @@ focused runtime tests. Biopython's multi-block limitation remains a reference
 limitation. Exact value comparison deliberately exposes multiline trailing-space
 differences: CIF 1.1 permits their removal, Biopython strips them, and Kekule
 preserves them. This is a formatting-policy difference, not lost chemical data.
+For differing multiline values, `differences.diagnostics` identifies pairs
+that differ only in ASCII spaces/tabs at line ends. Leading whitespace, text,
+line breaks, missing-value tokens and raw comparison results remain unchanged.
+The diagnostic is per value, so it does not explain unrelated differences in
+the same input. Single-line values are excluded because decoded observations
+do not retain enough quoting information to apply the text-field rule.
+See [CIF 1.1 paragraph 17](https://www.iucr.org/what-we-do/digital-standards/cif/cif1/file-syntax).
 DSSP uses
 the first model and original source bytes, including archive metadata. It
 compares secondary structure, backbone measurements, hydrogen-bond energies and

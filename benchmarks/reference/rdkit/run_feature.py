@@ -123,7 +123,7 @@ def substructure_record(record: dict[str, Any], Chem: Any) -> dict[str, Any]:
         query = Chem.MolFromSmarts(smarts)
         if query is None:
             raise RuntimeError(f"benchmark SMARTS did not parse in RDKit: {smarts}")
-        matches = mol.GetSubstructMatches(query, uniquify=False, maxMatches=0)
+        matches = mol.GetSubstructMatches(query, useChirality=True, uniquify=False, maxMatches=0)
         queries.append(
             {
                 "smarts": smarts,

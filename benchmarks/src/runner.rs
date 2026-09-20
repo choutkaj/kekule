@@ -16,12 +16,14 @@ use std::{
     process,
 };
 mod dashboard;
+mod report;
 #[cfg(test)]
 mod storage_tests;
 mod stored;
 use indicatif::{ProgressBar, ProgressFinish, ProgressStyle};
 use rayon::prelude::*;
-use std::io::{Read, Seek, SeekFrom};
+use report::ReportFile;
+use std::io::Read;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use stored::{GeneratedGoldens, Metadata, StoredGoldens};
 
@@ -707,13 +709,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             .create_new(true)
             .open(path)
     };
-    let mut report = create(&opts.output)?;
-    let result_path = opts.output.with_extension("cases.jsonl");
-    let mut results: Box<dyn Write + Send + Sync> = if opts.generate {
-        Box::new(std::io::sink())
-    } else {
-        Box::new(create(&result_path)?)
-    };
+    let mut report = ReportFile::new(&opts.output);
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(opts.jobs)
         .build()?;
@@ -728,6 +724,20 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         false,
         None,
     )?;
+    let result_path = opts.output.with_extension("cases.jsonl.gz");
+    let mut case_writer = if opts.generate {
+        None
+    } else {
+        Some(flate2::write::GzEncoder::new(
+            create(&result_path)?,
+            flate2::Compression::fast(),
+        ))
+    };
+    let mut discard = std::io::sink();
+    let results: &mut (dyn Write + Send + Sync) = match case_writer.as_mut() {
+        Some(writer) => writer,
+        None => &mut discard,
+    };
     let execution = (|| -> Result<(), Box<dyn Error>> {
         for id in DATASETS
             .iter()
@@ -776,7 +786,9 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                             input_lock_sha256: lock_hash,
                             sha256: String::new(),
                             reference: None,
-                            reference_code_sha256: Some(stored::reference_code_hash()?),
+                            reference_code_sha256: Some(stored::reference_code_hash(Path::new(
+                                env!("CARGO_MANIFEST_DIR"),
+                            ))?),
                             origin: "independent generation".into(),
                             cases: 0,
                         },
@@ -918,8 +930,11 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         }
         Ok(())
     })();
-    if let Err(error) = execution {
-        write_report(
+    // Finish even after a setup/evaluation error, so partial observations remain
+    // readable. A failed trailer or flush must never produce a complete report.
+    let output_completion = finish_case_output(case_writer);
+    if let Err(error) = execution.and(output_completion) {
+        let reporting = write_report(
             &mut report,
             &opts,
             &rows,
@@ -927,12 +942,13 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             false,
             false,
             Some(error.to_string()),
-        )?;
+        );
         dashboard::publish(&opts);
-        return Err(error);
+        return Err(retain_execution_error(error, reporting));
     }
+    let measured_cases = rows.iter().any(|row| row.cases > 0);
     let passed = !rows.is_empty()
-        && rows.iter().any(|row| row.cases > 0)
+        && measured_cases
         && rows.iter().all(|row| {
             if opts.generate {
                 row.errors == 0
@@ -952,13 +968,27 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     println!("Report: {}", opts.output.display());
     dashboard::publish(&opts);
     if !passed {
-        return Err(boxed_error(if opts.generate {
+        return Err(boxed_error(if !measured_cases {
+            "no applicable benchmark cases were selected; see report"
+        } else if opts.generate {
             "reference generation retained errors; see report"
         } else {
             "benchmark comparison failed; see report"
         }));
     }
     Ok(())
+}
+
+fn retain_execution_error(
+    error: Box<dyn Error>,
+    reporting: Result<(), Box<dyn Error>>,
+) -> Box<dyn Error> {
+    match reporting {
+        Ok(()) => error,
+        Err(report_error) => boxed_error(format!(
+            "{error}; additionally, the failure report could not be published: {report_error}"
+        )),
+    }
 }
 
 fn implementation_identity() -> Result<Value, Box<dyn Error>> {
@@ -977,11 +1007,20 @@ fn implementation_identity() -> Result<Value, Box<dyn Error>> {
     let status = git(&["status", "--porcelain"]);
     Ok(
         json!({"revision":git(&["rev-parse","HEAD"]),"dirty":status.as_ref().map(|status|!status.is_empty()),"working_tree_status_sha256":status.as_ref().map(|status|sha256(status.as_bytes())),
-        "executable_sha256":executable,"reference_code_sha256":stored::reference_code_hash()?,"contract_sha256":stored::contract_hash()}),
+        "executable_sha256":executable,"reference_code_sha256":stored::reference_code_hash(Path::new(env!("CARGO_MANIFEST_DIR")))?,"contract_sha256":stored::contract_hash()}),
     )
 }
+
+fn finish_case_output<W: Write>(
+    writer: Option<flate2::write::GzEncoder<W>>,
+) -> Result<(), Box<dyn Error>> {
+    if let Some(writer) = writer {
+        writer.finish()?.flush()?;
+    }
+    Ok(())
+}
 fn write_report(
-    file: &mut fs::File,
+    file: &mut ReportFile,
     opts: &Options,
     rows: &[Summary],
     implementation: &Value,
@@ -989,17 +1028,16 @@ fn write_report(
     passed: bool,
     error: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
-    file.seek(SeekFrom::Start(0))?;
-    file.set_len(0)?;
-    serde_json::to_writer_pretty(
-        &mut *file,
+    file.write(|file| {
+        serde_json::to_writer_pretty(
+        file,
         &json!({"schema":2,"mode":if opts.generate{"generate"}else{"compare"},
         "started_at_unix_ms":opts.started_at_unix_ms,
         "complete":complete,"passed":passed,"error":error,"implementation":implementation,"goldens":opts.goldens,
-        "cases":if opts.generate{None}else{Some(opts.output.with_extension("cases.jsonl"))},"results":rows}),
-    )?;
-    file.flush()?;
-    Ok(())
+        "cases":if opts.generate{None}else{Some(opts.output.with_extension("cases.jsonl.gz"))},"results":rows}),
+        )?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]

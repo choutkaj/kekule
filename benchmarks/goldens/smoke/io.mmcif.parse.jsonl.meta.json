@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "contract_sha256": "55137d7e199da4baeb425d7172467b7b5b8f0efbe0e45c5b8feca1077c546df7",
+  "contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
   "dataset": "smoke",
   "feature": "io.mmcif.parse",
   "input_lock_sha256": "f071f66843ebccd2fe0a0417db961f5ce228d01083c84943e2357afab21fedae",
@@ -10,6 +10,6 @@
     "version": "1.87"
   },
   "reference_code_sha256": null,
-  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded.",
+  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded. Contract 3 migration: this feature has no radical observations; archived outcomes retained byte-for-byte under unchanged comparison rules; original reference provenance retained.",
   "cases": 20
 }

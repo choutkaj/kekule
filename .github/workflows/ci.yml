@@ -43,6 +43,12 @@ jobs:
         run: python3 -m unittest discover -s tools/atomic-data -p test_generate.py
       - name: Check benchmark dashboard report handling
         run: python3 -m unittest discover -s benchmarks -p test_dashboard.py
+      - name: Check independent mass-analysis logic
+        run: python3 -m unittest discover -s benchmarks -p test_analyze_masses.py
+      - name: Check external query corpus provenance
+        run: python3 -m unittest discover -s benchmarks -p test_query_corpus.py
+      - name: Check external structure corpus provenance
+        run: python3 -m unittest discover -s benchmarks -p test_structure_corpus.py
       - name: Check benchmark dashboard live updates
         run: node benchmarks/test_dashboard.cjs
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked

@@ -10,6 +10,7 @@ import io
 import re
 from typing import Any
 from rdkit import Chem
+from . import source_radicals
 
 
 def ordered(value):
@@ -154,6 +155,7 @@ def records(source, *, sdf_input=False):
             mol = Chem.MolFromSmiles(line.strip(), params)
             if mol is None:
                 raise ValueError('RDKit SMILES parse failed')
+            source_radicals.attach_cx(mol)
             mol.UpdatePropertyCache(strict=False)
             Chem.SetBondStereoFromDirections(mol)
             values.append((mol.GetProp('_Name') if mol.HasProp('_Name') else '', mol, []))
@@ -169,6 +171,7 @@ def records(source, *, sdf_input=False):
             fields = []
         if mol is None:
             raise ValueError('RDKit MOL parse failed')
+        source_radicals.attach_ctab(mol, block)
         mol.UpdatePropertyCache(strict=False)
         result.append((mol.GetProp('_Name'), mol, fields))
     return result
@@ -278,7 +281,7 @@ def validate_written_format(feature, path, text):
 
 
 def atom_json(atom: Any) -> dict[str, Any]:
-    radical, unpaired_electrons = radical_json(atom)
+    electrons, spin = source_radicals.observation(atom)
     return {
         "index": atom.GetIdx(),
         "atomic_number": atom.GetAtomicNum(),
@@ -287,21 +290,10 @@ def atom_json(atom: Any) -> dict[str, Any]:
         "isotope": atom.GetIsotope() or None,
         "explicit_hydrogens": atom.GetNumExplicitHs(),
         "atom_map": atom.GetAtomMapNum() or None,
-        "radical": radical,
-        "unpaired_electrons": unpaired_electrons,
+        "radical_electrons": electrons,
+        "spin_multiplicity": spin,
         "aromatic": atom.GetIsAromatic(),
     }
-
-
-def radical_json(atom: Any) -> tuple[str | None, int]:
-    unpaired_electrons = atom.GetNumRadicalElectrons()
-    if unpaired_electrons == 0:
-        return None, 0
-    if unpaired_electrons == 1:
-        return "DOUBLET", 1
-    if unpaired_electrons == 2:
-        return "TRIPLET", 2
-    return None, unpaired_electrons
 
 
 def read_sdf_blocks(fixture_path) -> list[str]:

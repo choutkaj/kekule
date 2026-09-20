@@ -13,8 +13,8 @@ pub(crate) fn atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Value {
         "isotope": atom.isotope,
         "explicit_hydrogens": atom.hydrogens.explicit_count(),
         "atom_map": atom.atom_map,
-        "radical": atom.radical.map(radical_json),
-        "unpaired_electrons": atom.radical.map(AtomRadical::unpaired_electron_count).unwrap_or(0),
+        "spin_multiplicity": atom.radical.and_then(AtomRadical::spin_multiplicity),
+        "radical_electrons": atom.radical.map(AtomRadical::electron_count).unwrap_or(0),
         "aromatic": mol.atom_is_aromatic(id).expect("live atom"),
     })
 }
@@ -48,16 +48,6 @@ pub(crate) fn valence_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Valu
         "implicit_hydrogens": mol.implicit_hydrogens(id).expect("live atom"),
         "explicit_valence": valence::represented_valence(mol, id).expect("live atom"),
     })
-}
-
-pub(crate) fn radical_json(radical: AtomRadical) -> &'static str {
-    match radical {
-        AtomRadical::Singlet => "SINGLET",
-        AtomRadical::Doublet => "DOUBLET",
-        AtomRadical::Triplet => "TRIPLET",
-        AtomRadical::Quartet => "QUARTET",
-        AtomRadical::Quintet => "QUINTET",
-    }
 }
 
 pub(crate) fn bond_order_json(order: BondOrder) -> &'static str {

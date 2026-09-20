@@ -1,9 +1,122 @@
 use serde_json::Value;
 use std::{
     fs,
+    io::Read,
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[test]
+fn compressed_case_files_preserve_complete_records() {
+    let root = std::env::temp_dir().join(format!(
+        "kekule-compressed-cases-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let report_path = root.join("report.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_kekule-bench"))
+        .env("KEKULE_BENCHMARK_RUNS_DIR", root.join("runs"))
+        .env("KEKULE_DASHBOARD_PYTHON", root.join("no-python"))
+        .args([
+            "--feature",
+            "io.smiles.parse",
+            "--dataset",
+            "smoke",
+            "--output",
+        ])
+        .arg(&report_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+    assert_eq!(report["complete"], true);
+    assert_eq!(
+        report["cases"],
+        report_path
+            .with_extension("cases.jsonl.gz")
+            .to_str()
+            .unwrap()
+    );
+    let compressed = fs::read(report["cases"].as_str().unwrap()).unwrap();
+    let mut text = String::new();
+    // Reading to EOF checks the gzip trailer and checksum as well as its payload.
+    flate2::read::GzDecoder::new(&compressed[..])
+        .read_to_string(&mut text)
+        .unwrap();
+    assert!(compressed.len() < text.len());
+    let cases: Vec<Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let summary = &report["results"][0];
+    for (status, count) in [
+        ("agrees", "agrees"),
+        ("disagrees", "disagrees"),
+        ("error", "errors"),
+        ("not_applicable", "not_applicable"),
+    ] {
+        assert_eq!(
+            cases.iter().filter(|case| case["status"] == status).count() as u64,
+            summary[count].as_u64().unwrap()
+        );
+    }
+    assert_eq!(
+        cases.len() as u64,
+        summary["cases"].as_u64().unwrap() + summary["not_applicable"].as_u64().unwrap()
+    );
+    for case in cases.iter().filter(|case| case["status"] == "agrees") {
+        assert_eq!(case["actual"]["status"], "ok");
+        assert_eq!(case["expected"]["status"], "ok");
+        assert!(case["actual"]["value"]["records"].is_array());
+        assert!(case["expected"]["value"]["records"].is_array());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_inapplicable_selection_is_not_reported_as_reference_errors() {
+    let root = std::env::temp_dir().join(format!(
+        "kekule-no-applicable-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let report_path = root.join("report.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_kekule-bench"))
+        .env("KEKULE_BENCHMARK_RUNS_DIR", root.join("runs"))
+        .env("KEKULE_DASHBOARD_PYTHON", root.join("no-python"))
+        .args([
+            "--feature",
+            "io.mmcif.parse",
+            "--dataset",
+            "smoke",
+            "--limit",
+            "1",
+            "--output",
+        ])
+        .arg(&report_path)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("no applicable benchmark cases"), "{stderr}");
+    let report: Value = serde_json::from_slice(&fs::read(report_path).unwrap()).unwrap();
+    assert_eq!(report["complete"], true);
+    assert_eq!(report["passed"], false);
+    assert_eq!(report["results"][0]["cases"], 0);
+    assert_eq!(report["results"][0]["errors"], 0);
+    assert_eq!(report["results"][0]["not_applicable"], 1);
+    fs::remove_dir_all(root).unwrap();
+}
 
 #[test]
 fn unavailable_dashboard_python_preserves_reports_and_the_scientific_status() {
@@ -31,7 +144,7 @@ fn unavailable_dashboard_python_preserves_reports_and_the_scientific_status() {
     assert_eq!(reports.len(), 1);
     let report: Value = serde_json::from_slice(&fs::read(&reports[0]).unwrap()).unwrap();
     assert_eq!(report["passed"], true);
-    assert!(reports[0].with_extension("cases.jsonl").exists());
+    assert!(reports[0].with_extension("cases.jsonl.gz").exists());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -81,7 +194,7 @@ fn comparisons_archive_and_refresh_even_when_they_disagree() {
         assert!(history[0]["started_at_unix_ms"].as_u64().unwrap() > 0);
         assert!(runs.join("index.html").exists());
         if !passing {
-            assert!(runs.join("custom.cases.jsonl").exists());
+            assert!(runs.join("custom.cases.jsonl.gz").exists());
             assert!(
                 history[0]["started_at_unix_ms"].as_u64()
                     >= history[1]["started_at_unix_ms"].as_u64()

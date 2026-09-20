@@ -1,6 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::core::{AtomId, Bond, BondId, BondOrder, Element, Molecule};
+use crate::chemistry::PerceptionError;
+use crate::core::{
+    AromaticityModel, AtomId, Bond, BondId, BondOrder, Element, Molecule, RingBasisModel,
+    ValenceModel,
+};
 
 use super::rings::compute_ring_membership;
 
@@ -31,9 +35,7 @@ pub struct RotatableBondOptions {
 impl RotatableBondOptions {
     /// RDKit's strict rotatable-bond descriptor version 3.2.0, adapted to
     /// ignore graph hydrogens when evaluating terminal and symmetric groups.
-    /// Aromatic resonance exclusions use a localized five-/six-member cycle
-    /// approximation; unusual and fused systems can differ from RDKit's
-    /// aromaticity-based SMARTS evaluation.
+    /// Resonance exclusions use the default RDKit-like aromaticity perception.
     pub const STRICT: Self = Self {
         include_terminal_bonds: false,
         include_resonance_restricted_bonds: false,
@@ -100,13 +102,39 @@ impl RotatableBondSet {
 
 /// Detects rotatable bonds using the supplied options without mutating the molecule.
 ///
-/// Ring membership is reused or computed on demand. This operation does not
-/// run aromaticity perception; see [`RotatableBondOptions::STRICT`] for the
-/// limits of its localized resonance classification.
+/// Ring membership is reused or computed on demand. When resonance exclusions
+/// are enabled, compatible default valence, ring and aromaticity perception is
+/// reused. Otherwise the default profile is computed on a temporary copy, with
+/// valence and resource failures returned to the caller. Model-neutral or partial
+/// installed perception never changes the selected chemistry model. Neither
+/// represented chemistry nor installed perception on the source is modified.
+/// Strict valence validation also applies when reusing cached perception.
 pub fn detect_rotatable_bonds(
     molecule: &Molecule,
     options: RotatableBondOptions,
-) -> RotatableBondSet {
+) -> Result<RotatableBondSet, PerceptionError> {
+    let mut perceived;
+    let perception = molecule.perception();
+    let mut compatible = perception.valence_model() == Some(ValenceModel::RdkitLike)
+        && perception.ring_basis_model() == Some(RingBasisModel::FiguerasSssrLike)
+        && perception.aromaticity_model() == Some(AromaticityModel::RdkitLike);
+    if !options.include_resonance_restricted_bonds && compatible {
+        // Model provenance does not distinguish strict from permissive valence
+        // installation. Revalidate before reuse so cached results cannot hide a
+        // failure that an unperceived molecule would report.
+        let assignments = super::valence::rdkit_valence_assignments(molecule, Default::default())
+            .map_err(PerceptionError::Valence)?;
+        compatible = assignments
+            .iter()
+            .all(|(&atom, &count)| perception.implicit_hydrogens(atom) == Some(count));
+    }
+    let molecule = if !options.include_resonance_restricted_bonds && !compatible {
+        perceived = molecule.clone();
+        perceived.perceive()?;
+        &perceived
+    } else {
+        molecule
+    };
     let computed_membership;
     let ring_membership = match molecule.ring_membership() {
         Some(membership) => membership,
@@ -115,7 +143,7 @@ pub fn detect_rotatable_bonds(
             &computed_membership
         }
     };
-    let profiles = atom_profiles(molecule, ring_membership, options.include_ring_bonds);
+    let profiles = atom_profiles(molecule, ring_membership, options);
     let bonds = molecule
         .bonds()
         .filter_map(|(bond_id, bond)| {
@@ -124,7 +152,7 @@ pub fn detect_rotatable_bonds(
         })
         .collect();
 
-    RotatableBondSet { options, bonds }
+    Ok(RotatableBondSet { options, bonds })
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -186,7 +214,7 @@ fn endpoint_is_resonance_restricted(
 fn atom_profiles(
     molecule: &Molecule,
     ring_membership: &crate::core::RingMembership,
-    include_ring_bonds: bool,
+    options: RotatableBondOptions,
 ) -> BTreeMap<AtomId, AtomProfile> {
     let mut profiles = molecule
         .atom_ids()
@@ -239,10 +267,16 @@ fn atom_profiles(
             profile.tert_butyl_like_center = tert_butyl_like_center;
         }
     }
-    for atom in resonance_restricted_atoms(molecule, ring_membership, &profiles, include_ring_bonds)
-    {
-        if let Some(profile) = profiles.get_mut(&atom) {
-            profile.resonance_restricted = true;
+    if !options.include_resonance_restricted_bonds {
+        for atom in resonance_restricted_atoms(
+            molecule,
+            ring_membership,
+            &profiles,
+            options.include_ring_bonds,
+        ) {
+            if let Some(profile) = profiles.get_mut(&atom) {
+                profile.resonance_restricted = true;
+            }
         }
     }
     profiles
@@ -337,6 +371,7 @@ fn resonance_restricted_atoms(
             continue;
         };
         if center_atom.element.atomic_number() != CARBON
+            || molecule.perception().atom_is_aromatic(center) == Some(true)
             || profiles
                 .get(&center)
                 .is_none_or(|profile| profile.heavy_degree != 3)
@@ -356,7 +391,7 @@ fn resonance_restricted_atoms(
             };
             if bond.order == BondOrder::Double
                 && is_nitrogen_oxygen_or_sulfur(neighbor.element)
-                && !bond_is_in_localized_aromatic_cycle(molecule, bond_id, ring_membership)
+                && molecule.perception().atom_is_aromatic(neighbor_id) == Some(false)
             {
                 // The strict query's [N,O,S] tests element and aliphaticity,
                 // not charge. Charged imidates and amidines still have the
@@ -373,8 +408,8 @@ fn resonance_restricted_atoms(
                 .get(&neighbor_id)
                 .map_or(0, |profile| profile.heavy_degree);
             if atomic_number == NITROGEN
-                || atomic_number == OXYGEN
-                || (atomic_number == SULFUR && heavy_degree != 1)
+                || (molecule.perception().atom_is_aromatic(neighbor_id) == Some(false)
+                    && (atomic_number == OXYGEN || (atomic_number == SULFUR && heavy_degree != 1)))
             {
                 attachments.push(neighbor_id);
             }
@@ -386,119 +421,6 @@ fn resonance_restricted_atoms(
         }
     }
     restricted
-}
-
-fn bond_is_in_localized_aromatic_cycle(
-    molecule: &Molecule,
-    bond_id: BondId,
-    ring_membership: &crate::core::RingMembership,
-) -> bool {
-    // RDKit's SMARTS uses aliphatic `C`, while Kekule keeps canonical bond
-    // orders localized and does not require aromaticity perception here.
-    // Recognize the common localized five- and six-member conjugated cycles
-    // directly so a ring C=N bond is not mistaken for an imide-like motif.
-    ring_membership.bond_in_ring(bond_id)
-        && bond_is_in_fully_conjugated_five_or_six_member_cycle(molecule, bond_id, ring_membership)
-}
-
-fn bond_is_in_fully_conjugated_five_or_six_member_cycle(
-    molecule: &Molecule,
-    bond_id: BondId,
-    ring_membership: &crate::core::RingMembership,
-) -> bool {
-    let Ok(focus) = molecule.bond(bond_id) else {
-        return false;
-    };
-    let (start, target) = focus.endpoints();
-    if !atom_is_conjugation_capable(molecule, start)
-        || !atom_is_conjugation_capable(molecule, target)
-    {
-        return false;
-    }
-    let mut visited = vec![false; molecule.graph.atom_slot_count()];
-    visited[start.index()] = true;
-    conjugated_ring_path_exists(
-        molecule,
-        start,
-        target,
-        bond_id,
-        ring_membership,
-        0,
-        &mut visited,
-    )
-}
-
-fn conjugated_ring_path_exists(
-    molecule: &Molecule,
-    current: AtomId,
-    target: AtomId,
-    focus: BondId,
-    ring_membership: &crate::core::RingMembership,
-    depth: usize,
-    visited: &mut [bool],
-) -> bool {
-    if depth == 5 {
-        return false;
-    }
-    for (bond_id, bond) in molecule
-        .incident_bonds(current)
-        .expect("live atoms have valid adjacency")
-    {
-        if bond_id == focus || !ring_membership.bond_in_ring(bond_id) {
-            continue;
-        }
-        let neighbor = bond.other_atom(current);
-        let next_depth = depth + 1;
-        if neighbor == target {
-            if matches!(next_depth + 1, 5 | 6) {
-                return true;
-            }
-            continue;
-        }
-        if visited[neighbor.index()] || !atom_is_conjugation_capable(molecule, neighbor) {
-            continue;
-        }
-        visited[neighbor.index()] = true;
-        if conjugated_ring_path_exists(
-            molecule,
-            neighbor,
-            target,
-            focus,
-            ring_membership,
-            next_depth,
-            visited,
-        ) {
-            return true;
-        }
-        visited[neighbor.index()] = false;
-    }
-    false
-}
-
-fn atom_is_conjugation_capable(molecule: &Molecule, atom_id: AtomId) -> bool {
-    let Ok(atom) = molecule.atom(atom_id) else {
-        return false;
-    };
-    let explicit_pi_bonds = molecule
-        .incident_bonds(atom_id)
-        .expect("live atoms have valid adjacency")
-        .filter(|(_, bond)| {
-            matches!(
-                bond.order,
-                BondOrder::Double | BondOrder::Triple | BondOrder::Quadruple
-            )
-        })
-        .count();
-    if explicit_pi_bonds > 1 {
-        return false;
-    }
-    if atom.formal_charge != 0 || atom.radical.is_some() {
-        return true;
-    }
-    if matches!(atom.element.atomic_number(), NITROGEN | OXYGEN | SULFUR) {
-        return true;
-    }
-    explicit_pi_bonds == 1
 }
 
 fn is_nitrogen_oxygen_or_sulfur(element: Element) -> bool {

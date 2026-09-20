@@ -1,5 +1,151 @@
 use super::*;
 
+// Independent small-graph oracle: enumerate edge subsets, then recognize a
+// simple cycle by connectedness and degree two. No production ring search,
+// bridge traversal, or selected-ring policy participates in the expected set.
+fn reached_vertices(edges: &[(usize, usize)], selected: u64, mut reached: u64) -> u64 {
+    loop {
+        let previous = reached;
+        for (index, &(a, b)) in edges.iter().enumerate() {
+            let endpoints = (1 << a) | (1 << b);
+            if selected & (1 << index) != 0 && reached & endpoints != 0 {
+                reached |= endpoints;
+            }
+        }
+        if reached == previous {
+            return reached;
+        }
+    }
+}
+
+fn enumerated_cycles(size: usize, edges: &[(usize, usize)]) -> BTreeSet<u64> {
+    (1_u64..1 << edges.len())
+        .filter(|selected| {
+            if selected.count_ones() < 3 {
+                return false;
+            }
+            let mut degree = vec![0; size];
+            let mut vertices = 0_u64;
+            for (index, &(a, b)) in edges.iter().enumerate() {
+                if selected & (1 << index) != 0 {
+                    degree[a] += 1;
+                    degree[b] += 1;
+                    vertices |= (1 << a) | (1 << b);
+                }
+            }
+            degree.iter().all(|value| matches!(value, 0 | 2))
+                && reached_vertices(edges, *selected, 1 << vertices.trailing_zeros()) == vertices
+        })
+        .collect()
+}
+
+#[test]
+fn cycles_and_membership_match_an_independent_oracle_under_numbering_changes() {
+    let mut graphs = 0;
+    // Every connected simple graph on up to five vertices includes chains,
+    // fused/bridged/spiro cycles, chords and high-degree fallback inputs.
+    for size in 1..=5 {
+        let possible = (0..size)
+            .flat_map(|a| (a + 1..size).map(move |b| (a, b)))
+            .collect::<Vec<_>>();
+        for selected in 0_u64..1 << possible.len() {
+            if reached_vertices(&possible, selected, 1) != (1 << size) - 1 {
+                continue;
+            }
+            graphs += 1;
+            let edges = possible
+                .iter()
+                .enumerate()
+                .filter_map(|(index, edge)| (selected & (1 << index) != 0).then_some(*edge))
+                .collect::<Vec<_>>();
+            let cycles = enumerated_cycles(size, &edges);
+            let cyclic_edges = cycles.iter().fold(0_u64, |all, cycle| all | cycle);
+            for numbering in 0..3 {
+                let mut atom_order = (0..size).collect::<Vec<_>>();
+                match numbering {
+                    1 => atom_order.reverse(),
+                    2 => atom_order.rotate_left(1 % size),
+                    _ => {}
+                }
+                for reverse_edges in [false, true] {
+                    let mut editor = MoleculeEditor::new();
+                    let mut atoms = vec![AtomId::new(0); size];
+                    for original in &atom_order {
+                        atoms[*original] = editor
+                            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+                            .unwrap();
+                    }
+                    let mut edge_order = (0..edges.len()).collect::<Vec<_>>();
+                    if reverse_edges {
+                        edge_order.reverse();
+                    }
+                    let mut bonds = vec![BondId::new(0); edges.len()];
+                    for (position, &original) in edge_order.iter().enumerate() {
+                        let (mut a, mut b) = edges[original];
+                        if position % 2 == 0 {
+                            std::mem::swap(&mut a, &mut b);
+                        }
+                        bonds[original] = editor
+                            .add_bond(atoms[a], atoms[b], BondOrder::Single)
+                            .unwrap();
+                    }
+                    let mut molecule = editor.finish().unwrap();
+                    let membership = perceive_ring_membership(&mut molecule);
+                    for (index, &bond) in bonds.iter().enumerate() {
+                        assert_eq!(
+                            membership.bond_in_ring(bond),
+                            cyclic_edges & (1 << index) != 0
+                        );
+                    }
+                    for (index, &atom) in atoms.iter().enumerate() {
+                        let expected = edges.iter().enumerate().any(|(edge, &(a, b))| {
+                            cyclic_edges & (1 << edge) != 0 && (a == index || b == index)
+                        });
+                        assert_eq!(membership.atom_in_ring(atom), expected);
+                    }
+                    let rings = perceive_ring_set(&mut molecule).unwrap();
+                    assert_eq!(molecule.ring_membership(), Some(&membership));
+                    let mut selected_cycles = BTreeSet::new();
+                    for ring in rings.rings() {
+                        assert!(ring.atoms.len() >= 3);
+                        assert_eq!(
+                            ring.atoms.iter().collect::<BTreeSet<_>>().len(),
+                            ring.atoms.len()
+                        );
+                        assert_eq!(
+                            ring.bonds.iter().collect::<BTreeSet<_>>().len(),
+                            ring.bonds.len()
+                        );
+                        assert_eq!(ring.bonds.len(), ring.atoms.len());
+                        let mut path = 0_u64;
+                        for index in 0..ring.atoms.len() {
+                            let a = atom_order[ring.atoms[index].index()];
+                            let b = atom_order[ring.atoms[(index + 1) % ring.atoms.len()].index()];
+                            let edge = edges
+                                .iter()
+                                .position(|&pair| pair == (a.min(b), a.max(b)))
+                                .expect("cycle follows real edges");
+                            path |= 1 << edge;
+                        }
+                        let bond_set = ring
+                            .bonds
+                            .iter()
+                            .fold(0_u64, |mask, bond| mask | (1 << edge_order[bond.index()]));
+                        assert_eq!(path, bond_set);
+                        assert!(cycles.contains(&path), "selected ring is a simple cycle");
+                        assert!(selected_cycles.insert(path), "duplicate cycle");
+                    }
+                    let covered = selected_cycles.iter().fold(0_u64, |all, cycle| all | cycle);
+                    assert_eq!(covered, cyclic_edges, "all cyclic edges are covered");
+                    // The model promises coverage and valid paths, not one
+                    // unique or minimum cycle basis under renumbering.
+                }
+            }
+        }
+    }
+    assert_eq!(graphs, 772);
+}
+
 #[test]
 fn ring_limits_include_deleted_storage_before_allocating_scratch_arrays() {
     let mut editor = graph(4, &[(0, 1), (1, 2), (2, 0), (0, 3)]).into_editor();
@@ -85,17 +231,82 @@ fn atom_sets(rings: &RingSet) -> Vec<Vec<usize>> {
 
 #[test]
 fn short_ring_queries_use_the_default_ring_bond_policy() {
-    for order in [BondOrder::Single, BondOrder::Zero, BondOrder::Dative] {
+    for order in [
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Triple,
+        BondOrder::Quadruple,
+        BondOrder::Zero,
+        BondOrder::Dative,
+    ] {
         let mut editor = graph(3, &[(0, 1), (1, 2)]).into_editor();
         let closure = editor
             .add_bond(AtomId::new(2), AtomId::new(0), order)
             .unwrap();
         let molecule = editor.finish().unwrap();
-        let expected = order == BondOrder::Single;
+        let expected = !matches!(order, BondOrder::Zero | BondOrder::Dative);
         for bond in [BondId::new(0), BondId::new(1), closure] {
             assert_eq!(bond_in_ring_smaller_than(&molecule, bond, 4), expected);
             assert!(!bond_in_ring_smaller_than(&molecule, bond, 3));
         }
+    }
+}
+
+#[test]
+fn excluded_bonds_do_not_close_cycles_or_connect_ring_components() {
+    let edges = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
+    let all_cycles = enumerated_cycles(4, &edges);
+    // Every assignment of single, zero and dative orders on this connected
+    // molecular graph, including disconnected eligible ring subgraphs.
+    for mut pattern in 0..3_usize.pow(edges.len() as u32) {
+        let mut editor = MoleculeEditor::new();
+        let atoms = (0..4)
+            .map(|_| {
+                editor
+                    .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mut allowed = 0_u64;
+        for (index, &(a, b)) in edges.iter().enumerate() {
+            let order = match pattern % 3 {
+                0 => BondOrder::Zero,
+                1 => BondOrder::Dative,
+                _ => {
+                    allowed |= 1 << index;
+                    BondOrder::Single
+                }
+            };
+            pattern /= 3;
+            editor.add_bond(atoms[a], atoms[b], order).unwrap();
+        }
+        let cycles = all_cycles
+            .iter()
+            .copied()
+            .filter(|cycle| cycle & !allowed == 0)
+            .collect::<BTreeSet<_>>();
+        let cyclic_edges = cycles.iter().fold(0_u64, |all, cycle| all | cycle);
+        let mut molecule = editor.finish().unwrap();
+        let membership = perceive_ring_membership(&mut molecule);
+        for (index, &(a, b)) in edges.iter().enumerate() {
+            let bond = molecule.bond_between(atoms[a], atoms[b]).unwrap().unwrap();
+            assert_eq!(
+                membership.bond_in_ring(bond),
+                cyclic_edges & (1 << index) != 0
+            );
+        }
+        let rings = perceive_ring_set(&mut molecule).unwrap();
+        let mut covered = 0_u64;
+        for ring in rings.rings() {
+            let selected = ring
+                .bonds
+                .iter()
+                .fold(0_u64, |mask, bond| mask | (1 << bond.index()));
+            assert!(cycles.contains(&selected));
+            covered |= selected;
+        }
+        assert_eq!(covered, cyclic_edges);
+        assert_eq!(molecule.ring_membership(), Some(&membership));
     }
 }
 

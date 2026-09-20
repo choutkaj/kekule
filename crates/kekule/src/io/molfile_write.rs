@@ -9,7 +9,10 @@ use crate::structure::ModelView;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::ANGSTROM;
 
-use super::structure_documents::molfile_stereo_group_members_at_atom;
+use super::structure_documents::{
+    materialize_molfile_stereo_hydrogens, molfile_coordinate_tetrahedra,
+    molfile_stereo_group_members_at_atom,
+};
 use super::{MolWriteError, MolfileVersion};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -207,6 +210,37 @@ fn stereo_projections(
     molecule: &Molecule,
     geometry: Option<&dyn AtomPositionSource>,
 ) -> Result<BTreeMap<BondId, (AtomId, SourceStereoBondMarkKind)>, MolWriteError> {
+    // A 3D Molfile implicitly asserts configurations even without wedges.
+    // Add unknown annotations in detached writer state where the source graph
+    // makes no assertion, so writing a conformation cannot invent chemistry.
+    let mut staged;
+    let molecule = if let Some(geometry) = geometry {
+        let mut warnings = Vec::new();
+        let inferred = molfile_coordinate_tetrahedra(molecule, geometry, &mut warnings)
+            .map_err(|error| MolWriteError::new(error.to_string()))?;
+        if !warnings.is_empty() {
+            return Err(MolWriteError::new(format!(
+                "cannot verify 3D stereo preservation: {warnings:?}"
+            )));
+        }
+        if inferred.is_empty() {
+            molecule
+        } else {
+            staged = molecule.clone();
+            for mut element in inferred {
+                if let StereoElementKind::Tetrahedral(stereo) = &mut element.kind {
+                    materialize_molfile_stereo_hydrogens(&mut staged, [stereo.center]);
+                    stereo.orientation = None;
+                }
+                staged
+                    .add_stereo_element(element)
+                    .map_err(|error| MolWriteError::new(error.to_string()))?;
+            }
+            &staged
+        }
+    } else {
+        molecule
+    };
     Ok(project_molfile_stereo_bond_marks(molecule, geometry)
         .map_err(MolWriteError::new)?
         .into_iter()

@@ -33,16 +33,20 @@ pub(super) fn molecular(feature: &str, input: &Input) -> Result<Value, Box<dyn E
             for (molecule, positions) in record.components.iter_mut().zip(&record.positions) {
                 molecule.perceive()?;
                 if feature == "stereo.perception" {
+                    let mut editor = molecule.edit();
+                    stereo::cleanup_stereo(&mut editor, Default::default())?;
+                    *molecule = editor.finish()?;
                     if let Some(positions) = positions {
                         let mut editor = molecule.edit();
                         stereo::materialize_coordinate_stereo(&mut editor, positions)?;
+                        stereo::cleanup_stereo(&mut editor, Default::default())?;
                         *molecule = editor.finish()?;
                         molecule.perceive()?;
                     }
                 }
                 let mut value = graph(molecule, positions.as_ref())?;
                 if feature == "stereo.perception" {
-                    let mut candidates = stereo::detect_stereo_candidates(molecule)
+                    let mut candidates = stereo::detect_stereo_candidates(molecule)?
                         .iter()
                         .map(|candidate| match candidate {
                             StereoCandidate::Tetrahedral { center, .. } => {

@@ -107,6 +107,24 @@ fn canonical_ranking_uses_current_hydrogen_counts_without_changing_declarations(
 }
 
 #[test]
+fn canonical_ranking_preserves_radical_spin_assertions() {
+    let mut molecule = read_smiles("[CH]C[CH]").unwrap();
+    let left = AtomId::new(0);
+    let right = AtomId::new(2);
+    assert_eq!(
+        canon::atom_ranking(&molecule).rank_of(left),
+        canon::atom_ranking(&molecule).rank_of(right)
+    );
+    molecule.atom_mut(left).unwrap().radical = AtomRadical::new(2, Some(1));
+    molecule.atom_mut(right).unwrap().radical = AtomRadical::new(2, Some(3));
+    let ranks = canon::atom_ranking(&molecule);
+    assert_ne!(ranks.rank_of(left), ranks.rank_of(right));
+    molecule.atom_mut(right).unwrap().radical = AtomRadical::new(2, None);
+    let ranks = canon::atom_ranking(&molecule);
+    assert_ne!(ranks.rank_of(left), ranks.rank_of(right));
+}
+
+#[test]
 fn canonical_ranking_propagates_chemical_equivalence_across_hydrogen_spellings() {
     for source in ["[CH3]CC", "C[CH2]C", "CC[CH3]"] {
         let mut molecule = read_smiles(source).expect("propane parses");
