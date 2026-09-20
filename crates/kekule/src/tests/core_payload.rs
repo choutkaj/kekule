@@ -86,13 +86,13 @@ fn atom_payload_fields_can_be_set_and_read() {
     let mut atom = carbon();
     atom.isotope = Some(13);
     atom.formal_charge = -1;
-    atom.radical = Some(AtomRadical::Doublet);
+    atom.radical = AtomRadical::new(1, Some(2));
     atom.hydrogens = HydrogenDeclaration::Fixed(3);
     atom.atom_map = Some(7);
 
     assert_eq!(atom.isotope, Some(13));
     assert_eq!(atom.formal_charge, -1);
-    assert_eq!(atom.radical, Some(AtomRadical::Doublet));
+    assert_eq!(atom.radical, AtomRadical::new(1, Some(2)));
     assert_eq!(atom.hydrogens, HydrogenDeclaration::Fixed(3));
     assert_eq!(atom.atom_map, Some(7));
 }
@@ -119,12 +119,38 @@ fn hydrogen_declaration_expresses_each_canonical_policy_without_overlap() {
 }
 
 #[test]
-fn radical_multiplicity_reports_unpaired_electrons() {
-    assert_eq!(AtomRadical::Singlet.unpaired_electron_count(), 0);
-    assert_eq!(AtomRadical::Doublet.unpaired_electron_count(), 1);
-    assert_eq!(AtomRadical::Triplet.unpaired_electron_count(), 2);
-    assert_eq!(AtomRadical::Quartet.unpaired_electron_count(), 3);
-    assert_eq!(AtomRadical::Quintet.unpaired_electron_count(), 4);
+fn radical_electron_count_preserves_explicit_or_unspecified_spin() {
+    for (electrons, multiplicity) in [(2, 1), (1, 2), (2, 3), (3, 4), (4, 5), (4, 1), (4, 3)] {
+        let specified = AtomRadical::new(electrons, Some(multiplicity)).unwrap();
+        let unspecified = AtomRadical::new(electrons, None).unwrap();
+        assert_eq!(specified.electron_count(), electrons);
+        assert_eq!(unspecified.electron_count(), electrons);
+        assert_eq!(specified.spin_multiplicity(), Some(multiplicity));
+        assert_eq!(unspecified.spin_multiplicity(), None);
+        assert_ne!(specified, unspecified);
+    }
+    assert_ne!(AtomRadical::new(2, Some(1)), AtomRadical::new(2, Some(3)));
+}
+
+#[test]
+fn radical_construction_rejects_zero_counts_and_incompatible_spin() {
+    for (electrons, multiplicity) in [
+        (0, None),
+        (0, Some(1)),
+        (1, Some(0)),
+        (1, Some(1)),
+        (1, Some(3)),
+        (2, Some(2)),
+        (2, Some(5)),
+    ] {
+        assert_eq!(AtomRadical::new(electrons, multiplicity), None);
+    }
+    assert_eq!(
+        AtomRadical::new(u8::MAX, None).unwrap().electron_count(),
+        u8::MAX
+    );
+    assert!(AtomRadical::new(u8::MAX, Some(254)).is_some());
+    assert!(AtomRadical::new(u8::MAX, Some(255)).is_none());
 }
 
 #[test]

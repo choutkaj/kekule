@@ -72,7 +72,7 @@ pub fn write_mol_v3000(molecule: &Molecule) -> std::result::Result<String, MolWr
 pub(crate) fn write_model_v3000(
     model: ModelView<'_>,
 ) -> std::result::Result<String, MolWriteError> {
-    let record = MolfileRecord::model(model)?;
+    let record = MolfileRecord::model(model, MolfileVersion::V3000)?;
     render_mol_v3000(&record, "")
 }
 
@@ -97,7 +97,7 @@ pub(super) fn render_mol_v3000(
         let atom = record_atom.atom;
         let point = record_atom.position;
         out.push_str(&format!(
-            "M  V30 {index} {} {:.4} {:.4} {:.4} {}",
+            "M  V30 {index} {} {} {} {} {}",
             atom.element.symbol(),
             point.x,
             point.y,
@@ -122,16 +122,16 @@ pub(super) fn render_mol_v3000(
                 )));
             }
             HydrogenDeclaration::Fixed(explicit) => {
-                if explicit > 0 {
-                    out.push_str(&format!(" HCOUNT={explicit}"));
+                // HCOUNT is a query constraint in CTfile, not a molecular
+                // hydrogen declaration. VAL preserves the fixed total valence
+                // without turning the emitted atom into a query atom.
+                let valence =
+                    explicit_valence(record_atom.molecule, record_atom.id) + usize::from(explicit);
+                // VAL=0 means unspecified, whereas -1 explicitly means zero.
+                if valence == 0 {
+                    out.push_str(" VAL=-1");
                 } else {
-                    let valence = explicit_valence(record_atom.molecule, record_atom.id);
-                    // VAL=0 means unspecified, whereas -1 explicitly means zero.
-                    if valence == 0 {
-                        out.push_str(" VAL=-1");
-                    } else {
-                        out.push_str(&format!(" VAL={valence}"));
-                    }
+                    out.push_str(&format!(" VAL={valence}"));
                 }
             }
         }
@@ -649,10 +649,10 @@ fn interpret_v3000_atom(record: &V3000AtomSyntax) -> std::result::Result<Atom, S
             format!("unsupported V3000 atom option `{option}`"),
         ));
     }
-    let radical = record.radical.map(|radical| match radical {
-        V3000RadicalSyntax::Singlet => AtomRadical::Singlet,
-        V3000RadicalSyntax::Doublet => AtomRadical::Doublet,
-        V3000RadicalSyntax::Triplet => AtomRadical::Triplet,
+    let radical = record.radical.and_then(|radical| match radical {
+        V3000RadicalSyntax::Singlet => AtomRadical::new(2, Some(1)),
+        V3000RadicalSyntax::Doublet => AtomRadical::new(1, Some(2)),
+        V3000RadicalSyntax::Triplet => AtomRadical::new(2, Some(3)),
     });
     let explicit = interpret_v3000_count_declaration(record.hydrogen_count, "HCOUNT", record.line)?
         .unwrap_or(0);
@@ -975,10 +975,11 @@ fn apply_v3000_atom_options(
                 atom.isotope = (isotope != 0).then_some(isotope);
             }
             "RAD" => {
-                atom.radical = Some(match *value {
-                    "1" => V3000RadicalSyntax::Singlet,
-                    "2" => V3000RadicalSyntax::Doublet,
-                    "3" => V3000RadicalSyntax::Triplet,
+                atom.radical = match *value {
+                    "0" => None,
+                    "1" => Some(V3000RadicalSyntax::Singlet),
+                    "2" => Some(V3000RadicalSyntax::Doublet),
+                    "3" => Some(V3000RadicalSyntax::Triplet),
                     _ => {
                         return Err(SdfParseError::new(
                             record,
@@ -986,7 +987,7 @@ fn apply_v3000_atom_options(
                             "unsupported V3000 RAD code",
                         ))
                     }
-                });
+                };
             }
             "HCOUNT" => {
                 atom.hydrogen_count = parse_v3000_count_declaration(record, line, value, "HCOUNT")?;
@@ -1127,12 +1128,12 @@ fn v3000_bond_cfg(
 }
 
 fn v3000_radical_code(radical: AtomRadical) -> std::result::Result<u8, MolWriteError> {
-    match radical {
-        AtomRadical::Singlet => Ok(1),
-        AtomRadical::Doublet => Ok(2),
-        AtomRadical::Triplet => Ok(3),
-        AtomRadical::Quartet | AtomRadical::Quintet => Err(MolWriteError::new(
-            "V3000 writer cannot encode radical multiplicity above triplet",
+    match (radical.electron_count(), radical.spin_multiplicity()) {
+        (2, Some(1)) => Ok(1),
+        (1, Some(2)) => Ok(2),
+        (2, Some(3)) => Ok(3),
+        _ => Err(MolWriteError::new(
+            "V3000 writer requires an encodable radical electron count and explicit spin multiplicity",
         )),
     }
 }

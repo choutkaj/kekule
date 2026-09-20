@@ -12,9 +12,12 @@ type CipResult<T> = std::result::Result<T, CipAssignmentIssue>;
 pub struct CipAssignmentOptions {
     /// Maximum number of bonds explored beyond a carrier atom.
     ///
-    /// Constitutional comparisons expand progressively, stopping as soon as
-    /// Rule 1a proves the ordering. A tied, truncated digraph cannot advance to
+    /// Constitutional comparisons retain their digraphs and compare at
+    /// increasing depths, also checking the last available shell before a
+    /// bound prevents expansion. Rule 1a can prove an ordering without a
+    /// complete digraph. A tied, truncated digraph cannot advance to
     /// later sequence rules or establish that a center is nonstereogenic.
+    /// Defaults to 64; the independent node bound also applies.
     pub max_depth: usize,
     /// Maximum nodes in one ligand expansion or shared auxiliary digraph.
     pub max_nodes: usize,
@@ -23,7 +26,7 @@ pub struct CipAssignmentOptions {
 impl Default for CipAssignmentOptions {
     fn default() -> Self {
         Self {
-            max_depth: 32,
+            max_depth: 64,
             max_nodes: 100_000,
         }
     }

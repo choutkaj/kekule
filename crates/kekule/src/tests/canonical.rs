@@ -79,7 +79,7 @@ fn canonical_ranking_uses_isotope_hydrogens_and_atom_maps() {
 }
 
 #[test]
-fn canonical_ranking_distinguishes_hydrogen_declaration_policy() {
+fn canonical_ranking_uses_current_hydrogen_counts_without_changing_declarations() {
     let mut builder = crate::core::MoleculeEditor::new();
     let mut fixed = carbon();
     fixed.hydrogens = HydrogenDeclaration::Fixed(3);
@@ -89,12 +89,58 @@ fn canonical_ranking_distinguishes_hydrogen_declaration_policy() {
         .add_bond(fixed, inferred, BondOrder::Single)
         .expect("bond");
     let mut molecule = builder.finish().expect("connected graph");
+    let unperceived = canon::atom_ranking(&molecule);
+    assert_ne!(unperceived.rank_of(fixed), unperceived.rank_of(inferred));
     perceive(&mut molecule).expect("ethane-like graph perceives");
 
     assert_eq!(molecule.implicit_hydrogens(fixed), Ok(Some(0)));
     assert_eq!(molecule.implicit_hydrogens(inferred), Ok(Some(3)));
+    let before = molecule.clone();
     let ranking = canon::atom_ranking(&molecule);
-    assert_ne!(ranking.rank_of(fixed), ranking.rank_of(inferred));
+    assert_eq!(ranking.rank_of(fixed), ranking.rank_of(inferred));
+    assert_eq!(molecule, before);
+    assert_eq!(
+        molecule.atom(fixed).unwrap().hydrogens,
+        HydrogenDeclaration::Fixed(3)
+    );
+    assert!(molecule.atom(inferred).unwrap().hydrogens.allows_implicit());
+}
+
+#[test]
+fn canonical_ranking_preserves_radical_spin_assertions() {
+    let mut molecule = read_smiles("[CH]C[CH]").unwrap();
+    let left = AtomId::new(0);
+    let right = AtomId::new(2);
+    assert_eq!(
+        canon::atom_ranking(&molecule).rank_of(left),
+        canon::atom_ranking(&molecule).rank_of(right)
+    );
+    molecule.atom_mut(left).unwrap().radical = AtomRadical::new(2, Some(1));
+    molecule.atom_mut(right).unwrap().radical = AtomRadical::new(2, Some(3));
+    let ranks = canon::atom_ranking(&molecule);
+    assert_ne!(ranks.rank_of(left), ranks.rank_of(right));
+    molecule.atom_mut(right).unwrap().radical = AtomRadical::new(2, None);
+    let ranks = canon::atom_ranking(&molecule);
+    assert_ne!(ranks.rank_of(left), ranks.rank_of(right));
+}
+
+#[test]
+fn canonical_ranking_propagates_chemical_equivalence_across_hydrogen_spellings() {
+    for source in ["[CH3]CC", "C[CH2]C", "CC[CH3]"] {
+        let mut molecule = read_smiles(source).expect("propane parses");
+        perceive(&mut molecule).expect("propane perceives");
+        let ranking = canon::atom_ranking(&molecule);
+        assert_eq!(ranking.rank_count(), 2, "{source}");
+        assert_eq!(
+            ranking.rank_of(AtomId::new(0)),
+            ranking.rank_of(AtomId::new(2)),
+            "{source}"
+        );
+    }
+    let mut molecule = read_smiles("[CH2]CC").expect("different hydrogen count parses");
+    perceive(&mut molecule).expect("different hydrogen count perceives");
+    let ranking = canon::atom_ranking(&molecule);
+    assert_eq!(ranking.rank_count(), 3);
 }
 
 #[test]

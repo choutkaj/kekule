@@ -1,0 +1,737 @@
+{
+  "schema_version": 1,
+  "corpus_id": "rdkit-structures",
+  "selection_id": "rdkit-2026.03.3-medicinal-atropisomers-chebi-v1",
+  "source": "All input SDF variants of the six named medicinal compounds under atropisomers plus every root chebi_*.mol; exclude generated .expected outputs. No parser-dependent selection.",
+  "upstream_repository": {
+    "url": "https://github.com/rdkit/rdkit",
+    "tag": "Release_2026_03_3",
+    "commit": "e74e7b0a5a2fc4e7f77c04ec26a61d4b8edbf22f",
+    "test_data_tree_sha1": "63f42cde63ef746abf579508dadc4bb71a2e2238",
+    "path": "Code/GraphMol/FileParsers/test_data",
+    "license": "BSD-3-Clause"
+  },
+  "compound_families": [
+    "BMS-986142",
+    "JDQ443",
+    "Mrtx1719",
+    "RP-6306",
+    "Sotorasib",
+    "ZM374979"
+  ],
+  "upstream": [
+    {
+      "path": "upstream/tree.json",
+      "sha256": "5e30ec33ff3a09839e91140487c6b350eef9603cea0dbf193bc1a7b40aba2513"
+    },
+    {
+      "path": "upstream/commit.json",
+      "sha256": "4b1157c7576a492396ba39fcd2a1ad360ddb5d063082031e3183c300cb15a37c"
+    },
+    {
+      "path": "upstream/license.txt",
+      "sha256": "daeb8d194502cbcf34c05c39541a0d02be65bc9bada5b891c1974cd24e9fca30"
+    }
+  ],
+  "entries": [
+    {
+      "id": "RDKit:atropisomers/BMS-986142.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/BMS-986142.mol",
+          "sha256": "4ec59f13b66574dd27942d3fa24b0d1a1e2d3293a71c7082113c33986b2e1afc",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/BMS-986142.sdf",
+          "git_blob_sha1": "426465ea0c8c374b68b7d7e1873729538988aca1",
+          "size": 4056,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/BMS-986142_3d.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/BMS-986142_3d.mol",
+          "sha256": "31009281a952d35508cced2c74ddca6a1d39d20acc0fdf0a0fca40ac54adc24d",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/BMS-986142_3d.sdf",
+          "git_blob_sha1": "531923381924fc835bc7af2aee889a4b41350d90",
+          "size": 6816,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/BMS-986142_3d_chiral.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/BMS-986142_3d_chiral.mol",
+          "sha256": "26bef188f9ab7d036b17ad6476d44a3451549f0d459968ef67bf6600d20b04e5",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/BMS-986142_3d_chiral.sdf",
+          "git_blob_sha1": "88a723c6250799908d0bb12e33b6bd3eda49a547",
+          "size": 6888,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/BMS-986142_atrop1.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/BMS-986142_atrop1.mol",
+          "sha256": "8cc4e41b8ac2af782c51801c7c243cf98cba822ce4b7ab5fd719dbbd8ee3a282",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/BMS-986142_atrop1.sdf",
+          "git_blob_sha1": "4991512952807857ed1c52a9fc7b6ed6da25cdbe",
+          "size": 4056,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/BMS-986142_atrop2.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/BMS-986142_atrop2.mol",
+          "sha256": "bc7bbe0cb4efe0857b35505551aa8d98583478d83031f4c302945570045ef322",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/BMS-986142_atrop2.sdf",
+          "git_blob_sha1": "53ff0fda5316509d601c3cbf01b71fff4fd030dd",
+          "size": 4056,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/BMS-986142_atrop3.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/BMS-986142_atrop3.mol",
+          "sha256": "de155982b0bc29f886712caaac6083710e58e66ab6366465cdeac49957b7f664",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/BMS-986142_atrop3.sdf",
+          "git_blob_sha1": "a374b57b07dd078185fd9cf83a52aa172656c952",
+          "size": 4056,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/BMS-986142_atrop4.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/BMS-986142_atrop4.mol",
+          "sha256": "a8551a93d1c9dfa3778dbb7729053fcde6b4ab50173e84fc8566960f3003264f",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/BMS-986142_atrop4.sdf",
+          "git_blob_sha1": "c52fb956c15c7c1d46ff9f8dbc4b0da4ac7cae9b",
+          "size": 4056,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/BMS-986142_atrop5.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/BMS-986142_atrop5.mol",
+          "sha256": "c445f34e85f7865320082d11eab0eee61fc9a576b396e474534e78c260b340fd",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/BMS-986142_atrop5.sdf",
+          "git_blob_sha1": "64c5b43e06b610c5b82060ca99404a1061a79fe6",
+          "size": 4056,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/BMS-986142_atrop6.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/BMS-986142_atrop6.mol",
+          "sha256": "1be80cd0b0e52a9aee52aaf39a247bdb4b9a87cf6cae0a599db06ee0cb6d1507",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/BMS-986142_atrop6.sdf",
+          "git_blob_sha1": "9f16575f2d05fa1608a4059466ef221cbe320ed3",
+          "size": 4056,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/BMS-986142_atrop7.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/BMS-986142_atrop7.mol",
+          "sha256": "a1dcb2756ed8f91b8a9b20907e3532b568794a881234b09245fde6a16100d057",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/BMS-986142_atrop7.sdf",
+          "git_blob_sha1": "1766fcb4f944d24d0ab745ad0a5863a5421256b7",
+          "size": 4056,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/BMS-986142_atrop8.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/BMS-986142_atrop8.mol",
+          "sha256": "6c37cecb24111eeb173435d309003306f2b121b9314cdb06920b7ad0eb75dfd9",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/BMS-986142_atrop8.sdf",
+          "git_blob_sha1": "9f2ed9767ac9098a5b1f92ba66a243a299d8a870",
+          "size": 4056,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/BMS-986142_atropBad2.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/BMS-986142_atropBad2.mol",
+          "sha256": "226ebf1d192e62cf85186e7c4a451d5f6af187d3041980c670d000df74b0c2c4",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/BMS-986142_atropBad2.sdf",
+          "git_blob_sha1": "ed14edb8f839acf14b6964a29356432cbbb3b240",
+          "size": 2342,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/JDQ443.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/JDQ443.mol",
+          "sha256": "282950dc940596b5366bb13de1f4f42eef970cdf602db459c59690b2334bd31b",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/JDQ443.sdf",
+          "git_blob_sha1": "99c62b0f2fca8eff429f0bdf2ef97b4d6ed5158e",
+          "size": 3710,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/JDQ443_3d.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/JDQ443_3d.mol",
+          "sha256": "91b8685192c2ab3455e30a312271bed93018a2c2009b278ebfac77c1bd8f0339",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/JDQ443_3d.sdf",
+          "git_blob_sha1": "51d6dc3361b33f279ab3a20cae9440ab35b80008",
+          "size": 6286,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/JDQ443_atrop1.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/JDQ443_atrop1.mol",
+          "sha256": "9986c9264bc1bc3dd0fffb7f042ca7176eee68c3616a1938ac98653b8bc497be",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/JDQ443_atrop1.sdf",
+          "git_blob_sha1": "7f9091a3537aca0905e206fb1457fb9c8aaa2aa5",
+          "size": 3710,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/JDQ443_atrop2.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/JDQ443_atrop2.mol",
+          "sha256": "8b5378d4d5ce169435ccdc9da2d3bbcab697896cc9fb0dbafe964d498d0a99e2",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/JDQ443_atrop2.sdf",
+          "git_blob_sha1": "b25e902469e4c204eb4a2b53242a9bec8c3009f8",
+          "size": 3710,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/JDQ443_atrop3.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/JDQ443_atrop3.mol",
+          "sha256": "2f283489a179f6472a638d470f14bdd52d5309648cd40797dcab505f70efd7f7",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/JDQ443_atrop3.sdf",
+          "git_blob_sha1": "410eadd336df1a8c47ddaee346ba7d89af1c4ba4",
+          "size": 3710,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/JDQ443_atropBad1.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/JDQ443_atropBad1.mol",
+          "sha256": "1ac50d7b7ac2d94ad3343b7fb7e2b1ca87745d1a515b6bffe4007e30faa19b13",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/JDQ443_atropBad1.sdf",
+          "git_blob_sha1": "b75e7aff06a0714d512adb3e1c23053e0e001e41",
+          "size": 3710,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Mrtx1719.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Mrtx1719.mol",
+          "sha256": "e9fe8bdb47701411428188ee8aa82562256de9d082432a1b07f9bdeccbb0fa85",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Mrtx1719.sdf",
+          "git_blob_sha1": "a766d737b505b65399066262f9502122fc9d6fd3",
+          "size": 3206,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Mrtx1719_3d.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Mrtx1719_3d.mol",
+          "sha256": "a4811319f0cc5c191f579d24762cb768ca5be495700c019e894b1e948489c2be",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Mrtx1719_3d.sdf",
+          "git_blob_sha1": "06bc8066e7c85f76509a44751f8d6520e60a3fa8",
+          "size": 4862,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Mrtx1719_atrop1.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Mrtx1719_atrop1.mol",
+          "sha256": "9b5fcc65261bb57df90f38c21a3689a7005ee027584636bfb34a66901ddc1da4",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Mrtx1719_atrop1.sdf",
+          "git_blob_sha1": "5e954d9632936d7a22f675ad769696c68fa21bc0",
+          "size": 3206,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Mrtx1719_atrop2.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Mrtx1719_atrop2.mol",
+          "sha256": "2ff98a84aea5984e8d9c401d9b1ec7e57e64898daa89b0523d9649cf86e80d1b",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Mrtx1719_atrop2.sdf",
+          "git_blob_sha1": "777fa82efc487d54cf65ebd8798857c55cf70d54",
+          "size": 3206,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Mrtx1719_atrop3.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Mrtx1719_atrop3.mol",
+          "sha256": "4739d8ed1b9963d03a08d9be06eba9609c40f7f694b50677a472c9935833e7b2",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Mrtx1719_atrop3.sdf",
+          "git_blob_sha1": "d7247d4e52249fbe2a26244186b25d52a6f8b6ca",
+          "size": 3206,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Mrtx1719_atropBad1.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Mrtx1719_atropBad1.mol",
+          "sha256": "dd1a27c91ce3f00fa3310e20c140fcd3a7f7a7403eae5d7ff42a78caa1237434",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Mrtx1719_atropBad1.sdf",
+          "git_blob_sha1": "47d23c1e22d9968867dbef38821ce2715aacd527",
+          "size": 3206,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/RP-6306.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/RP-6306.mol",
+          "sha256": "55b9a316872286d6fff0a082e37e48319115f8f03352f15a7f92ede1c46705a1",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/RP-6306.sdf",
+          "git_blob_sha1": "460577c924f09e949522391cc635a0c892d157c3",
+          "size": 2334,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/RP-6306_3d.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/RP-6306_3d.mol",
+          "sha256": "212d1b680de0ff28f0d3fa9649114dfd77a43f31df4b4febe2a97a246106adb0",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/RP-6306_3d.sdf",
+          "git_blob_sha1": "4886c254c9573aea3135c5ed60d2cd240640d86f",
+          "size": 4174,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/RP-6306_atrop1.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/RP-6306_atrop1.mol",
+          "sha256": "0664008d44240e5ee59928927b152d6c57879ba94ab164f3553f34ec503fa821",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/RP-6306_atrop1.sdf",
+          "git_blob_sha1": "208bfcc0fd814591a26dee196a5a697b598239d6",
+          "size": 2334,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/RP-6306_atrop2.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/RP-6306_atrop2.mol",
+          "sha256": "e5adcffb61e5209b6948518322e299252d952e76e9c32aab4b3820c6d7a8f5f2",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/RP-6306_atrop2.sdf",
+          "git_blob_sha1": "11b5a58f2f0a662f1d92aa438a561b1271c07dbe",
+          "size": 2334,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/RP-6306_atrop3.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/RP-6306_atrop3.mol",
+          "sha256": "37d306d36ac065452bca57317c115d54ab097c5ad4b62b0c564e33e2866add53",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/RP-6306_atrop3.sdf",
+          "git_blob_sha1": "aa54302e24e3e4cc2fd9f6caeed4d43418d49c93",
+          "size": 2334,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/RP-6306_atrop4.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/RP-6306_atrop4.mol",
+          "sha256": "9d937ed904ff950d43e77aa78f788f9c1754d321a928684dc5ceefb373a3bac9",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/RP-6306_atrop4.sdf",
+          "git_blob_sha1": "4c537fa7537455e3fdabe64f0ccd3c90a0552a06",
+          "size": 2334,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/RP-6306_atrop5.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/RP-6306_atrop5.mol",
+          "sha256": "9e1004c04191ccb10b853d20a40e5d5ee231e05521ea603fa8df0da1c7ee5b83",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/RP-6306_atrop5.sdf",
+          "git_blob_sha1": "fbf68e46d5e35f29b37505432640c59efdb100b5",
+          "size": 2334,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/RP-6306_atropBad1.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/RP-6306_atropBad1.mol",
+          "sha256": "3d8242bc73fdad22f83f4d7e07cae34fc91c321cf0c5dcc3f71b37cdf8c8ca04",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/RP-6306_atropBad1.sdf",
+          "git_blob_sha1": "67b619b82e67f463349d5ea8165c18210dd17341",
+          "size": 2334,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/RP-6306_atropBad2.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/RP-6306_atropBad2.mol",
+          "sha256": "59a48e20096413abed719afeacaf0227d5ce7e40a0ca22cff62cbdaddd9b4d30",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/RP-6306_atropBad2.sdf",
+          "git_blob_sha1": "00a49fb7a7b1b1c13aa0e2a71341046de073be70",
+          "size": 2334,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Sotorasib.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Sotorasib.mol",
+          "sha256": "1080ea5c751289b1af006d797116fb1c4bdcaa8217a4386ba9ab907df442b492",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Sotorasib.sdf",
+          "git_blob_sha1": "a7fe7f8e9aca87760f17712eea8fa7a6a447d964",
+          "size": 3942,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Sotorasib_3d.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Sotorasib_3d.mol",
+          "sha256": "dd7d9fc3efa6a2a291ebfa9fa1cd448cf9594fee46c938e4ef302a428279a5b8",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Sotorasib_3d.sdf",
+          "git_blob_sha1": "67bcf66f7274b88e1fcae3240464e765423713ff",
+          "size": 6702,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Sotorasib_atrop1.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Sotorasib_atrop1.mol",
+          "sha256": "5a0ffd11fa0253a9285f346cc08bc489cdf36562669f757de746f7a4dafe22cc",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Sotorasib_atrop1.sdf",
+          "git_blob_sha1": "9e36d8ce472817d7ee6ad6685cd394f43ad946ac",
+          "size": 3942,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Sotorasib_atrop2.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Sotorasib_atrop2.mol",
+          "sha256": "92bf6f8dcf415e2638b9dddd2fe3dd68e511b4f198db46ec13641a5d7cfa3780",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Sotorasib_atrop2.sdf",
+          "git_blob_sha1": "8de295f66823bf6426751557b24277985c0fd127",
+          "size": 3942,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Sotorasib_atrop3.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Sotorasib_atrop3.mol",
+          "sha256": "8045cd31e2732a3d65c6820ec59948b13780134ad1d342c909fd7566472f3ce5",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Sotorasib_atrop3.sdf",
+          "git_blob_sha1": "963071faa7cd1e4078422596111fc9b412b09a1a",
+          "size": 3942,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Sotorasib_atrop4.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Sotorasib_atrop4.mol",
+          "sha256": "c906168b963c09c75a45a4b4f02c99a3a92c38d56acda056484b890a8894022d",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Sotorasib_atrop4.sdf",
+          "git_blob_sha1": "54bdf01a3f77c16bd9d40eee54b9152ee35ef05b",
+          "size": 3942,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Sotorasib_atrop5.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Sotorasib_atrop5.mol",
+          "sha256": "c073c914268a4e2f1fefbded999e690cbe8118092cd08d8fce414a72564dc605",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Sotorasib_atrop5.sdf",
+          "git_blob_sha1": "61d127b257b68dd327a906274b4b53248abc4b17",
+          "size": 3942,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Sotorasib_atropBad1.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Sotorasib_atropBad1.mol",
+          "sha256": "ca5181fa578f738d37d32906d30e8c7c4783d3dc3d31a87d1e739b4260f0340d",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Sotorasib_atropBad1.sdf",
+          "git_blob_sha1": "49d19cdee8090c04f1796a80a1d3c44e2160c536",
+          "size": 3942,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/Sotorasib_atropBad2.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/Sotorasib_atropBad2.mol",
+          "sha256": "a197e8630d566b649aa4d4bb39cb72c6557a53755bc1e570814ae4f4fffcc679",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/Sotorasib_atropBad2.sdf",
+          "git_blob_sha1": "88699768ef1c1ebeaa7c255daac5a3b517915fe5",
+          "size": 3942,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/ZM374979.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/ZM374979.mol",
+          "sha256": "8f2e8bd0dd8b66e0a6ec59d4e759eae80dccbb153a2126f31f38d8a00a1bb546",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/ZM374979.sdf",
+          "git_blob_sha1": "15578c2423a588dc43cb75b72a1114220ed30e8f",
+          "size": 4310,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/ZM374979_atrop1.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/ZM374979_atrop1.mol",
+          "sha256": "b49ff63d4325b76c5f4473f69a1228d7fa759a31252772fe83a4288862fad100",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/ZM374979_atrop1.sdf",
+          "git_blob_sha1": "48fa90ae4075c663906dc1fc921782c3f46aafdf",
+          "size": 4310,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/ZM374979_atrop2.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/ZM374979_atrop2.mol",
+          "sha256": "964b18b5d878c37cd9f78c09b32781042c261132733dd5481f6de5a6d7785c80",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/ZM374979_atrop2.sdf",
+          "git_blob_sha1": "630a51265da29f237233cb2da8ba60a0028d450f",
+          "size": 4310,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/ZM374979_atrop3.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/ZM374979_atrop3.mol",
+          "sha256": "b2403b23ccacf0d2f2ea8f3357bf8164711887fd4535c132f7b81111c9d03a7e",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/ZM374979_atrop3.sdf",
+          "git_blob_sha1": "c9f2d2d597e78e7c2c03e93c151a20501f4e41b5",
+          "size": 4310,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:atropisomers/ZM374979_atropBad1.sdf",
+      "category": "external-axial-stereo",
+      "files": [
+        {
+          "path": "data/atropisomers/ZM374979_atropBad1.mol",
+          "sha256": "f05161842106a5f0ae144b0f4682726cdfe7a9e34bea5afd6237042433430b81",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/atropisomers/ZM374979_atropBad1.sdf",
+          "git_blob_sha1": "0ed505771fa9347130593d84762a8c3c95bbbf23",
+          "size": 4310,
+          "format_note": "Upstream .sdf filename contains one MOL block without SDF delimiter or data fields; bytes unchanged."
+        }
+      ]
+    },
+    {
+      "id": "RDKit:chebi_15469.v3k.mol",
+      "category": "external-v3000",
+      "files": [
+        {
+          "path": "data/chebi_15469.v3k.mol",
+          "sha256": "ce224f0b2c902c8895c3106ea65d7af2d2aaf88af3419c9d49086a15f6df1762",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/chebi_15469.v3k.mol",
+          "git_blob_sha1": "4ec96db0c63feeb75960e72e745d7d2d77ccbf19",
+          "size": 2796
+        }
+      ]
+    },
+    {
+      "id": "RDKit:chebi_57262.v3k.2.mol",
+      "category": "external-v3000",
+      "files": [
+        {
+          "path": "data/chebi_57262.v3k.2.mol",
+          "sha256": "6477d83d5aa178232114aa103debb0911843e6d782162fc48133332fedf56e57",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/chebi_57262.v3k.2.mol",
+          "git_blob_sha1": "738876901c0d3082c9027b1c6b2a1b2b690b7305",
+          "size": 1288
+        }
+      ]
+    },
+    {
+      "id": "RDKit:chebi_57262.v3k.mol",
+      "category": "external-v3000",
+      "files": [
+        {
+          "path": "data/chebi_57262.v3k.mol",
+          "sha256": "a74fa0afe5869c378cd4f186c80916693153ad6e356d43a488181275e4c046e0",
+          "upstream_path": "Code/GraphMol/FileParsers/test_data/chebi_57262.v3k.mol",
+          "git_blob_sha1": "210b6c49b387c0d1c079a880b77d2dfd7d7d0ba4",
+          "size": 1300
+        }
+      ]
+    }
+  ],
+  "packs": [],
+  "input_format": "MOL. Upstream .sdf names containing only a complete MOL block are registered with .mol extensions; source bytes and upstream paths are preserved."
+}

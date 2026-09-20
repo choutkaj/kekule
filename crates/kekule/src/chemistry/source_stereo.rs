@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::{
-    atom_axis_carriers, bond_in_ring_smaller_than, compute_ring_membership, coordinates_are_planar,
-    double_bond_orientation_from_points, tetrahedral_orientation_from_points, tetrahedral_points,
-    validate_stereo, RingMembership, StereoValidationError,
+    atom_axis_carriers, compute_ring_membership, coordinates_are_planar,
+    double_bond_geometry_is_supported, double_bond_orientation_from_points,
+    tetrahedral_orientation_from_points, validate_stereo, RingMembership, StereoValidationError,
 };
 use crate::core::*;
 use crate::geometry::{Point3, Vector3};
@@ -65,7 +65,7 @@ pub(crate) fn normalize_source_stereo(
         geometry,
         &ring_membership,
         source_marks,
-        &mut issues,
+        &mut warnings,
         &mut used_marks,
     );
     let mut planned_elements = assemble_tetrahedral_wedges(
@@ -84,13 +84,11 @@ pub(crate) fn normalize_source_stereo(
     planned_elements.extend(assemble_molfile_double_bonds(
         molecule,
         geometry,
-        &ring_membership,
         source_marks,
         &mut used_marks,
     ));
     planned_elements.extend(assemble_directional_double_bonds(
         molecule,
-        &ring_membership,
         source_marks,
         &mut issues,
         &mut used_marks,
@@ -165,11 +163,9 @@ pub(crate) fn project_molfile_stereo_bond_marks(
         }
     }
     for (_, target) in molecule.stereo_elements() {
-        if matches!(&target.kind, StereoElementKind::DoubleBond(stereo) if stereo.orientation.is_some())
-            && geometry.is_none()
-        {
+        if target.is_specified() && geometry.is_none() {
             return Err(
-                "specified double-bond stereo requires a Model with coordinates for Molfile output"
+                "cannot encode specified stereo: Molfile output requires a Model with coordinates"
                     .to_owned(),
             );
         }
@@ -418,64 +414,38 @@ fn assemble_tetrahedral_wedges(
             start = end;
             continue;
         }
-        if center_marks.len() > 1 {
-            if tetrahedral_carriers_from_wedge(molecule, center, center_marks[0].carrier).is_none()
-            {
-                start = end;
-                continue;
-            }
-            used_marks.extend(center_marks.iter().map(|mark| mark.mark.bond));
-            if let Some(unknown) = center_marks.iter().find_map(|mark| {
-                (mark.mark.kind == SourceStereoBondMarkKind::WedgeEither)
-                    .then(|| {
-                        let carriers =
-                            tetrahedral_carriers_from_wedge(molecule, center, mark.carrier)?;
-                        Some(tetrahedral_element_from_wedge(
-                            geometry, mark.mark, center, carriers,
-                        ))
-                    })
-                    .flatten()
-            }) {
-                assembled.push(unknown);
-                start = end;
-                continue;
-            }
-            let candidates = geometry.and_then(|_| {
-                center_marks
-                    .iter()
-                    .map(|mark| {
-                        let carriers =
-                            tetrahedral_carriers_from_wedge(molecule, center, mark.carrier)?;
-                        tetrahedral_wedge_orientation(geometry, center, &carriers, mark.mark.kind)?;
-                        Some(tetrahedral_element_from_wedge(
-                            geometry, mark.mark, center, carriers,
-                        ))
-                    })
-                    .collect::<Option<Vec<_>>>()
-            });
-            if let Some(candidates) = candidates {
-                // Redundant wedges are valid when they decode to the same
-                // configuration in the drawing.
-                if candidates.windows(2).all(|pair| pair[0] == pair[1]) {
-                    assembled.push(candidates[0].clone());
-                    start = end;
-                    continue;
-                }
-            }
-            warnings.push(NormalizationWarning::AmbiguousTetrahedralWedgeMarks {
-                center,
-                mark_count: center_marks.len(),
-            });
+        if tetrahedral_carriers_from_wedge(molecule, center, center_marks[0].carrier).is_none() {
             start = end;
             continue;
         }
-        let mark = center_marks[0];
-        if let Some(carriers) = tetrahedral_carriers_from_wedge(molecule, center, mark.carrier) {
-            used_marks.push(mark.mark.bond);
-            assembled.push(tetrahedral_element_from_wedge(
-                geometry, mark.mark, center, carriers,
-            ));
+        used_marks.extend(center_marks.iter().map(|mark| mark.mark.bond));
+        let decode = |mark: &TetrahedralWedgeMark<'_>| {
+            let carriers = tetrahedral_carriers_from_wedge(molecule, center, mark.carrier)?;
+            tetrahedral_element_from_wedge(geometry, mark.mark, center, carriers)
+        };
+        // Explicitly unknown configuration needs no geometric orientation.
+        if let Some(unknown) = center_marks.iter().find_map(|mark| {
+            (mark.mark.kind == SourceStereoBondMarkKind::WedgeEither)
+                .then(|| decode(mark))
+                .flatten()
+        }) {
+            assembled.push(unknown);
+            start = end;
+            continue;
         }
+        if let Some(candidates) = center_marks.iter().map(decode).collect::<Option<Vec<_>>>() {
+            // A single mark still needs valid geometry. Redundant marks must
+            // independently decode to the same canonical configuration.
+            if candidates.windows(2).all(|pair| pair[0] == pair[1]) {
+                assembled.push(candidates[0].clone());
+                start = end;
+                continue;
+            }
+        }
+        warnings.push(NormalizationWarning::AmbiguousTetrahedralWedgeMarks {
+            center,
+            mark_count: center_marks.len(),
+        });
         start = end;
     }
     assembled
@@ -549,17 +519,11 @@ fn tetrahedral_element_from_wedge(
     mark: &SourceStereoBondMark,
     center: AtomId,
     mut carriers: Vec<StereoCarrier>,
-) -> StereoElement {
+) -> Option<StereoElement> {
     let mut orientation = match mark.kind {
-        SourceStereoBondMarkKind::WedgeUp | SourceStereoBondMarkKind::WedgeDown => {
-            let orientation = tetrahedral_wedge_orientation(geometry, center, &carriers, mark.kind)
-                .unwrap_or_else(|| match mark.kind {
-                    SourceStereoBondMarkKind::WedgeUp => TetrahedralOrientation::CounterClockwise,
-                    SourceStereoBondMarkKind::WedgeDown => TetrahedralOrientation::Clockwise,
-                    _ => unreachable!("wedge orientation branch received non-wedge mark"),
-                });
-            Some(orientation)
-        }
+        SourceStereoBondMarkKind::WedgeUp | SourceStereoBondMarkKind::WedgeDown => Some(
+            tetrahedral_wedge_orientation(geometry, center, &carriers, mark.kind)?,
+        ),
         SourceStereoBondMarkKind::WedgeEither => None,
         _ => unreachable!("non-wedge mark passed to tetrahedral wedge assembly"),
     };
@@ -573,11 +537,13 @@ fn tetrahedral_element_from_wedge(
         orientation = orientation.map(TetrahedralOrientation::inverted);
     }
     carriers.sort_by_key(|carrier| carrier.canonical_order_key());
-    StereoElement::new(StereoElementKind::Tetrahedral(TetrahedralStereo {
-        center,
-        carriers,
-        orientation,
-    }))
+    Some(StereoElement::new(StereoElementKind::Tetrahedral(
+        TetrahedralStereo {
+            center,
+            carriers,
+            orientation,
+        },
+    )))
 }
 
 fn tetrahedral_wedge_orientation(
@@ -592,32 +558,6 @@ fn tetrahedral_wedge_orientation(
         SourceStereoBondMarkKind::WedgeDown => -1.0,
         _ => return None,
     };
-    if let Some(atom_carriers) = carriers
-        .iter()
-        .map(|carrier| match carrier {
-            StereoCarrier::Atom(atom) => Some(*atom),
-            StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => None,
-        })
-        .collect::<Option<Vec<_>>>()
-    {
-        let mut points = tetrahedral_points(coordinates, center, &atom_carriers)?;
-        if !coordinates_are_planar(&points) {
-            return tetrahedral_orientation_from_points(points);
-        }
-        points[1].z += out_of_plane;
-        return tetrahedral_orientation_from_points(points);
-    }
-    let points =
-        tetrahedral_points_with_virtual_carrier(coordinates, center, carriers, out_of_plane)?;
-    tetrahedral_orientation_from_points(points)
-}
-
-fn tetrahedral_points_with_virtual_carrier(
-    coordinates: &dyn AtomPositionSource,
-    center: AtomId,
-    carriers: &[StereoCarrier],
-    out_of_plane: f64,
-) -> Option<[Point3; 5]> {
     (carriers.len() == 4).then_some(())?;
     let virtual_carriers = carriers
         .iter()
@@ -630,7 +570,7 @@ fn tetrahedral_points_with_virtual_carrier(
             .then_some(index)
         })
         .collect::<Vec<_>>();
-    if virtual_carriers.len() != 1 {
+    if virtual_carriers.len() > 1 {
         return None;
     }
 
@@ -642,20 +582,63 @@ fn tetrahedral_points_with_virtual_carrier(
         }
     }
 
-    let mut explicit_points = vec![center_point];
+    // Work in a translated, uniformly scaled frame: a drawing's units cannot
+    // determine its configuration or whether two bond directions overlap.
+    let scale = carrier_points
+        .iter()
+        .flatten()
+        .map(|point| (*point - center_point).norm())
+        .fold(0.0_f64, f64::max);
+    if !scale.is_finite() || scale == 0.0 {
+        return None;
+    }
+    for point in carrier_points.iter_mut().flatten() {
+        *point = Point3::origin() + (*point - center_point) / scale;
+    }
+    let mut explicit_points = vec![Point3::origin()];
     explicit_points.extend(carrier_points.iter().filter_map(|point| *point));
     if coordinates_are_planar(&explicit_points) {
-        carrier_points[0].as_mut()?.z += out_of_plane;
+        let marked = carrier_points[0].as_mut()?;
+        let reference_length = (*marked - Point3::origin()).norm();
+        // The wedge supplies the missing out-of-plane direction. A coincident
+        // projected endpoint can still denote a bond pointing at the viewer.
+        marked.z += out_of_plane
+            * 0.1
+            * if reference_length > 0.0 {
+                reference_length
+            } else {
+                1.0
+            };
     }
 
+    let mut directions = Vec::<Vector3>::new();
+    for point in carrier_points.iter().flatten() {
+        let vector = *point - Point3::origin();
+        let length = vector.norm();
+        if !length.is_finite() || length == 0.0 {
+            return None;
+        }
+        let direction = vector / length;
+        // RDKit's drawing convention rejects directions separated by less
+        // than about 1.8 degrees (squared unit-vector distance below 0.001).
+        if directions.iter().any(|other| {
+            let delta = direction - *other;
+            delta.dot(delta) < 0.001
+        }) {
+            return None;
+        }
+        directions.push(direction);
+    }
     let mut vector_sum = Vector3::zero();
     for point in carrier_points.iter().filter_map(|point| *point) {
-        vector_sum += point - center_point;
+        vector_sum += point - Point3::origin();
     }
-    carrier_points[virtual_carriers[0]] = Some(center_point - vector_sum);
+    if let Some(index) = virtual_carriers.first() {
+        carrier_points[*index] = Some(Point3::origin() - vector_sum);
+    }
 
-    Some([
-        center_point,
+    tetrahedral_orientation_from_points([
+        Point3::origin(),
         carrier_points[0]?,
         carrier_points[1]?,
         carrier_points[2]?,
@@ -668,7 +651,7 @@ fn assemble_atropisomeric_axes(
     geometry: Option<&dyn AtomPositionSource>,
     ring_membership: &RingMembership,
     source_marks: &[SourceStereoBondMark],
-    issues: &mut Vec<SourceStereoNormalizationIssue>,
+    warnings: &mut Vec<NormalizationWarning>,
     used_marks: &mut Vec<BondId>,
 ) -> Vec<StereoElement> {
     let mut axis_elements = BTreeMap::<BondId, Vec<StereoElement>>::new();
@@ -707,12 +690,10 @@ fn assemble_atropisomeric_axes(
             if elements.windows(2).all(|pair| pair[0] == pair[1]) {
                 return elements.into_iter().next();
             }
-            issues.push(
-                SourceStereoNormalizationIssue::ConflictingAtropisomericWedgeMarks {
-                    axis,
-                    mark_count: elements.len(),
-                },
-            );
+            warnings.push(NormalizationWarning::ConflictingAtropisomericWedgeMarks {
+                axis,
+                mark_count: elements.len(),
+            });
             None
         })
         .collect()
@@ -940,14 +921,13 @@ fn axis_reference_z_offset(
 
 fn assemble_directional_double_bonds(
     molecule: &Molecule,
-    ring_membership: &RingMembership,
     source_marks: &[SourceStereoBondMark],
     issues: &mut Vec<SourceStereoNormalizationIssue>,
     used_marks: &mut Vec<BondId>,
 ) -> Vec<StereoElement> {
     let mut assembled = Vec::new();
     for (bond_id, bond) in molecule.bonds() {
-        if source_double_bond_stereo_is_unsupported(molecule, ring_membership, bond_id, bond) {
+        if !double_bond_geometry_is_supported(molecule, bond_id, bond) {
             continue;
         }
         let left = bond.a();
@@ -1046,7 +1026,6 @@ fn assemble_unknown_double_bonds(
 fn assemble_molfile_double_bonds(
     molecule: &Molecule,
     geometry: Option<&dyn AtomPositionSource>,
-    rings: &RingMembership,
     marks: &[SourceStereoBondMark],
     used_marks: &mut Vec<BondId>,
 ) -> Vec<StereoElement> {
@@ -1068,7 +1047,7 @@ fn assemble_molfile_double_bonds(
         let Ok(bond) = molecule.bond(mark.bond) else {
             continue;
         };
-        if source_double_bond_stereo_is_unsupported(molecule, rings, mark.bond, bond)
+        if !double_bond_geometry_is_supported(molecule, mark.bond, bond)
             || has_double_bond_stereo(molecule, mark.bond)
             || crossed.contains(&mark.bond)
         {
@@ -1141,23 +1120,6 @@ fn assemble_molfile_double_bonds(
         )));
     }
     elements
-}
-
-fn source_double_bond_stereo_is_unsupported(
-    molecule: &Molecule,
-    ring_membership: &RingMembership,
-    bond_id: BondId,
-    bond: &Bond,
-) -> bool {
-    bond.order != BondOrder::Double
-        || bond_in_ring_smaller_than(molecule, bond_id, 8)
-        || (ring_membership.bond_in_ring(bond_id)
-            && [bond.a(), bond.b()].into_iter().any(|atom_id| {
-                molecule
-                    .atom(atom_id)
-                    .map(|atom| atom.element.symbol() != "C")
-                    .unwrap_or(true)
-            }))
 }
 
 fn source_double_bond_endpoint_carriers(

@@ -41,7 +41,12 @@ pub struct NormalizationReport {
 /// Nonfatal source-representation diagnostic emitted during normalization.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NormalizationWarning {
+    /// Wedge marks have missing/degenerate geometry or conflicting orientations.
+    /// No configuration is invented; even a single mark can be ambiguous.
     AmbiguousTetrahedralWedgeMarks { center: AtomId, mark_count: usize },
+    /// Axis wedge marks assert incompatible configurations. Connectivity and
+    /// unrelated stereo are retained, but no axis configuration is invented.
+    ConflictingAtropisomericWedgeMarks { axis: BondId, mark_count: usize },
 }
 
 /// One concrete source-stereo normalization issue.
@@ -61,10 +66,6 @@ pub enum SourceStereoNormalizationIssue {
     AmbiguousDirectionalBondMarks {
         double_bond: BondId,
         endpoint: AtomId,
-        mark_count: usize,
-    },
-    ConflictingAtropisomericWedgeMarks {
-        axis: BondId,
         mark_count: usize,
     },
     UnpairedDirectionalBondMark {
@@ -167,9 +168,6 @@ impl SourceStereoNormalizationError {
             SourceStereoNormalizationIssue::AmbiguousDirectionalBondMarks {
                 double_bond, ..
             } => Some(*double_bond),
-            SourceStereoNormalizationIssue::ConflictingAtropisomericWedgeMarks { axis, .. } => {
-                Some(*axis)
-            }
             SourceStereoNormalizationIssue::InvalidStereo(
                 StereoValidationIssue::MissingStereoBond { bond, .. }
                 | StereoValidationIssue::InvalidDoubleBondOrder { bond, .. }
@@ -270,8 +268,7 @@ fn try_localize_aromatic_component_with_limit(
         let occupied_valence = explicit_valence
             .saturating_add(implicit_hydrogens)
             .saturating_add(usize::from(
-                atom.radical
-                    .map_or(0, |radical| radical.unpaired_electron_count()),
+                atom.radical.map_or(0, |radical| radical.electron_count()),
             ));
         match target_valence.checked_sub(occupied_valence) {
             Some(0) => {}

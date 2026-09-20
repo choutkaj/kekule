@@ -7,12 +7,13 @@ use crate::chemistry::{
     SourceStereoBondMark, SourceStereoBondMarkKind,
 };
 use crate::core::{
-    Atom, AtomId, BondId, BondOrder, Element, HydrogenDeclaration, Molecule, MoleculeEditor,
-    StereoCarrier, StereoElement, StereoElementId, StereoElementKind, TetrahedralOrientation,
-    TetrahedralStereo,
+    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, HydrogenDeclaration, Molecule,
+    MoleculeEditor, StereoCarrier, StereoElement, StereoElementId, StereoElementKind,
+    TetrahedralOrientation, TetrahedralStereo,
 };
 use crate::topology::{Topology, TopologyBuildError};
 
+use super::cx::{CxFeatures, CxStereoGroup};
 use super::parse::{
     PendingStereoCarrier, PendingTetrahedral, SmilesAtomSyntax, SmilesBondToken,
     SmilesChiralityToken, SmilesDirectionToken, SmilesDocument, SmilesProgram, SmilesStereoCarrier,
@@ -20,8 +21,8 @@ use super::parse::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesInterpretError {
-    offset: usize,
-    message: String,
+    pub(super) offset: usize,
+    pub(super) message: String,
 }
 
 impl SmilesInterpretError {
@@ -73,10 +74,17 @@ impl std::error::Error for SmilesComponentCountError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesAtomMapping {
     atom: AtomId,
+    source_index: usize,
     source_span: Range<usize>,
 }
 
 impl SmilesAtomMapping {
+    /// Zero-based atom index in the complete source record, before partitioning.
+    /// CXSMILES atom references use this index, not a component-local `AtomId`.
+    pub const fn source_index(&self) -> usize {
+        self.source_index
+    }
+
     pub const fn atom(&self) -> AtomId {
         self.atom
     }
@@ -160,9 +168,27 @@ impl SmilesComponentInterpretation {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SmilesInterpretation {
     components: Vec<SmilesComponentInterpretation>,
+    name: Option<String>,
+    cx_extension: Option<String>,
+    omitted_cx_extension_span: Option<Range<usize>>,
 }
 
 impl SmilesInterpretation {
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Original extension retained as format metadata, including vertical bars.
+    pub fn cx_extension(&self) -> Option<&str> {
+        self.cx_extension.as_deref()
+    }
+
+    /// The extension omitted by an explicit base-SMILES projection, if any.
+    /// A normal, complete interpretation never silently omits an extension.
+    pub fn omitted_cx_extension_span(&self) -> Option<Range<usize>> {
+        self.omitted_cx_extension_span.clone()
+    }
+
     pub fn components(&self) -> &[SmilesComponentInterpretation] {
         &self.components
     }
@@ -248,6 +274,24 @@ impl SmilesInterpretation {
 pub fn interpret_smiles_document(
     document: &SmilesDocument,
 ) -> Result<SmilesInterpretation, SmilesInterpretError> {
+    interpret_document(document, false)
+}
+
+pub(super) fn interpret_base_smiles_document(
+    document: &SmilesDocument,
+) -> Result<SmilesInterpretation, SmilesInterpretError> {
+    interpret_document(document, true)
+}
+
+fn interpret_document(
+    document: &SmilesDocument,
+    base_only: bool,
+) -> Result<SmilesInterpretation, SmilesInterpretError> {
+    let cx = if base_only {
+        CxFeatures::default()
+    } else {
+        CxFeatures::interpret(document)?
+    };
     let component_count = document
         .program
         .atoms
@@ -284,17 +328,46 @@ pub fn interpret_smiles_document(
             .tetrahedral
             .push(*pending);
     }
+    for group in &cx.groups {
+        let mut atoms_by_component = BTreeMap::<usize, Vec<usize>>::new();
+        for &atom in &group.atoms {
+            atoms_by_component
+                .entry(document.program.atoms[atom].component)
+                .or_default()
+                .push(atom);
+        }
+        for (component, atoms) in atoms_by_component {
+            programs[component].groups.push(CxStereoGroup {
+                kind: group.kind,
+                atoms,
+                offset: group.offset,
+            });
+        }
+    }
     let mut components = Vec::with_capacity(component_count);
     for (program, source_span) in programs.iter().zip(source_spans) {
-        let (molecule, report) =
-            interpret_smiles_program_component(&document.program, program, document.source())?;
+        let (molecule, report) = interpret_smiles_program_component(
+            &document.program,
+            program,
+            document.source(),
+            &cx.radicals,
+        )?;
         components.push(SmilesComponentInterpretation {
             source_span,
             molecule,
             report,
         });
     }
-    Ok(SmilesInterpretation { components })
+    Ok(SmilesInterpretation {
+        components,
+        name: document.name().map(str::to_owned),
+        cx_extension: document.cx_extension().map(str::to_owned),
+        omitted_cx_extension_span: if base_only {
+            document.cx_extension_span()
+        } else {
+            None
+        },
+    })
 }
 
 fn fragment_source_span(
@@ -329,12 +402,14 @@ struct ComponentProgram {
     atoms: Vec<usize>,
     bonds: Vec<usize>,
     tetrahedral: Vec<PendingTetrahedral>,
+    groups: Vec<CxStereoGroup>,
 }
 
 fn interpret_smiles_program_component(
     program: &SmilesProgram,
     component: &ComponentProgram,
     source: &str,
+    radicals: &BTreeMap<usize, AtomRadical>,
 ) -> std::result::Result<(Molecule, SmilesInterpretationReport), SmilesInterpretError> {
     validate_smiles_source_aromaticity(program, component, source)?;
     let end_offset = source.len();
@@ -354,6 +429,7 @@ fn interpret_smiles_program_component(
         source_to_atom.insert(index, atom_id);
         atom_mappings.push(SmilesAtomMapping {
             atom: atom_id,
+            source_index: index,
             source_span: record.span.clone(),
         });
     }
@@ -416,6 +492,33 @@ fn interpret_smiles_program_component(
         },
     )?;
 
+    for (&source_index, &atom_id) in &source_to_atom {
+        if let Some(radical) = radicals.get(&source_index) {
+            editor
+                .atom_mut(atom_id)
+                .expect("source atom is live")
+                .radical = Some(*radical);
+            continue;
+        }
+        let molecule = editor.working();
+        let atom = molecule.atom(atom_id).expect("source atom is live");
+        if let HydrogenDeclaration::Fixed(hydrogens) = atom.hydrogens {
+            let electrons = crate::algorithms::rdkit_bracket_radical_electrons(
+                atom,
+                crate::algorithms::explicit_valence(molecule, atom_id),
+                molecule
+                    .incident_bonds(atom_id)
+                    .expect("source atom is live")
+                    .count(),
+                hydrogens,
+            );
+            editor
+                .atom_mut(atom_id)
+                .expect("source atom is live")
+                .radical = AtomRadical::new(electrons, None);
+        }
+    }
+
     add_smiles_tetrahedral_elements(
         &mut editor,
         &source_to_atom,
@@ -433,6 +536,7 @@ fn interpret_smiles_program_component(
         message: format!("could not publish canonical molecule: {error}"),
     })?;
     debug_assert!(publication_report.warnings.is_empty());
+    super::cx::install_stereo_groups(&mut editor, &source_to_atom, &component.groups)?;
     let molecule = editor.finish().map_err(|error| SmilesInterpretError {
         offset: atom_mappings
             .first()

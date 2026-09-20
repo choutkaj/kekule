@@ -125,6 +125,49 @@ fn add_hydrogens_materializes_perceived_counts_and_invalidates_perception() {
 }
 
 #[test]
+fn added_hydrogens_use_ordinary_atom_defaults_and_do_not_expand_again() {
+    for source in ["C", "N", "O", "[NH4+]", "c1cc[nH]c1", "[CH3]"] {
+        for explicit_only in [false, true] {
+            let mut molecule = perceived_smiles(source);
+            let declarations = molecule
+                .atoms()
+                .map(|(id, atom)| (id, atom.hydrogens))
+                .collect::<Vec<_>>();
+            let options = AddHydrogensOptions {
+                explicit_only,
+                ..Default::default()
+            };
+            let added = molecule.add_hydrogens_with_options(options).unwrap();
+            for entry in &added.added {
+                let atom = molecule.atom(entry.hydrogen).unwrap();
+                assert_eq!(atom.hydrogens, HydrogenDeclaration::default(), "{source}");
+                assert_eq!(molecule.neighbors(entry.hydrogen).unwrap().count(), 1);
+            }
+            for (id, declaration) in declarations {
+                assert_eq!(
+                    molecule.atom(id).unwrap().hydrogens,
+                    declaration.with_explicit_count(0),
+                    "{source}"
+                );
+            }
+            perceive(&mut molecule).unwrap();
+            for entry in &added.added {
+                assert_eq!(molecule.implicit_hydrogens(entry.hydrogen), Ok(Some(0)));
+            }
+            let atom_count = molecule.atom_count();
+            let bond_count = molecule.bond_count();
+            assert!(molecule
+                .add_hydrogens_with_options(options)
+                .unwrap()
+                .added
+                .is_empty());
+            assert_eq!(molecule.atom_count(), atom_count);
+            assert_eq!(molecule.bond_count(), bond_count);
+        }
+    }
+}
+
+#[test]
 fn add_hydrogens_is_transactional_for_missing_perception_and_resource_limits() {
     let mut unperceived = read_smiles("C").expect("methane");
     let original = unperceived.clone();
@@ -304,6 +347,36 @@ fn remove_hydrogens_preserves_aromatic_bracket_hydrogen_counts() {
             .explicit_count(),
         1
     );
+}
+
+#[test]
+fn hydrogen_collapse_preserves_counts_without_an_inferred_metal_valence() {
+    for (symbol, count) in [("Ir", 1), ("Mo", 2)] {
+        let mut editor = MoleculeEditor::new();
+        let parent = editor.add_atom(element_atom(symbol)).unwrap();
+        for _ in 0..count {
+            let hydrogen = editor.add_atom(element_atom("H")).unwrap();
+            editor
+                .add_bond(parent, hydrogen, BondOrder::Single)
+                .unwrap();
+        }
+        let mut molecule = editor.finish().unwrap();
+        perceive(&mut molecule).unwrap();
+        assert_eq!(molecule.implicit_hydrogens(parent), Ok(Some(0)));
+        assert_eq!(molecule.remove_hydrogens().unwrap().removed.len(), count);
+        assert_eq!(molecule.atom_count(), 1);
+        assert_eq!(
+            molecule.atom(parent).unwrap().hydrogens,
+            HydrogenDeclaration::Infer {
+                explicit: count as u8
+            }
+        );
+        perceive(&mut molecule).unwrap();
+        assert_eq!(molecule.implicit_hydrogens(parent), Ok(Some(0)));
+        assert_eq!(molecule.add_hydrogens().unwrap().added.len(), count);
+        assert_eq!(molecule.atom_count(), count + 1);
+        assert_eq!(molecule.bond_count(), count);
+    }
 }
 
 #[test]

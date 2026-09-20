@@ -4,6 +4,15 @@ use crate::geometry::{Point3, Vector3};
 use crate::structure::Positions;
 use std::fmt;
 
+mod eligibility;
+mod nitrogen;
+mod perception;
+mod symmetry;
+use eligibility::{
+    has_repeated_terminal_ligands, tetrahedral_carriers, unclassified_tetrahedral_geometry,
+};
+pub use perception::*;
+
 struct MoleculePositions<'a> {
     atom_to_dense: Vec<Option<usize>>,
     positions: &'a Positions,
@@ -44,6 +53,8 @@ pub struct CoordinateStereoOptions {
     /// Infer the conservative coordinate-axis subset in addition to
     /// tetrahedral and double-bond stereo.
     pub infer_axes: bool,
+    /// Bounds for chemical candidate perception before coordinate inference.
+    pub perception: StereoPerceptionOptions,
 }
 
 /// Detached coordinate-derived stereo proposed for represented materialization.
@@ -190,6 +201,7 @@ impl std::error::Error for StereoValidationError {}
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoordinateStereoError {
+    Perception(StereoPerceptionError),
     PositionCountMismatch { expected: usize, actual: usize },
     InvalidStereo(StereoValidationError),
     CouldNotCreateElement(MoleculeError),
@@ -198,6 +210,7 @@ pub enum CoordinateStereoError {
 impl fmt::Display for CoordinateStereoError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Perception(error) => error.fmt(formatter),
             Self::PositionCountMismatch { expected, actual } => write!(
                 formatter,
                 "molecule requires {expected} positions, but received {actual}"
@@ -216,6 +229,7 @@ impl fmt::Display for CoordinateStereoError {
 impl std::error::Error for CoordinateStereoError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Perception(error) => Some(error),
             Self::PositionCountMismatch { .. } => None,
             Self::InvalidStereo(error) => Some(error),
             Self::CouldNotCreateElement(error) => Some(error),
@@ -239,10 +253,14 @@ pub fn validate_stereo(mol: &Molecule) -> std::result::Result<(), StereoValidati
     }
 }
 
-pub fn detect_stereo_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
-    let mut candidates = tetrahedral_candidates(mol);
-    candidates.extend(double_bond_candidates(mol));
-    candidates
+/// Finds tetrahedral and double-bond candidates using bounded exact symmetry
+/// checks. See [`detect_stereo_candidates_with_options`] for the chemical and
+/// dependency policy. This operation never modifies represented chemistry or
+/// installs perception on the source molecule.
+pub fn detect_stereo_candidates(
+    mol: &Molecule,
+) -> std::result::Result<Vec<StereoCandidate>, StereoPerceptionError> {
+    detect_stereo_candidates_with_options(mol, StereoPerceptionOptions::default())
 }
 
 /// Infers coordinate-derived stereo without changing the molecule.
@@ -270,9 +288,13 @@ pub fn infer_coordinate_stereo_with_options(
         });
     }
     validate_stereo(mol)?;
+    let perceived = perception::prepared(mol).map_err(CoordinateStereoError::Perception)?;
+    let mol = perceived.as_ref();
+    let candidates = detect_stereo_candidates_with_options(mol, options.perception)
+        .map_err(CoordinateStereoError::Perception)?;
     let source = MoleculePositions::new(mol, positions);
     Ok(CoordinateStereoResult {
-        elements: infer_coordinate_stereo_elements(mol, &source, options.infer_axes),
+        elements: infer_coordinate_stereo_elements(mol, &source, options.infer_axes, &candidates),
     })
 }
 
@@ -601,43 +623,11 @@ fn validate_axis_carrier(
 
 fn tetrahedral_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     let mut candidates = Vec::new();
-    for (center, atom) in mol.atoms() {
-        if atom.element.symbol() == "H" {
-            continue;
-        }
-        let Ok(incident) = mol.incident_bonds(center) else {
+    for center in mol.atom_ids() {
+        let Some(atom_carriers) = tetrahedral_carriers(mol, center) else {
             continue;
         };
-        let mut atom_carriers = Vec::new();
-        let mut single_bonded = true;
-        let mut double_bonds = 0;
-        let mut ordinary_covalent = true;
-        for (_, bond) in incident {
-            single_bonded &= bond.order == BondOrder::Single;
-            double_bonds += usize::from(bond.order == BondOrder::Double);
-            ordinary_covalent &= matches!(bond.order, BondOrder::Single | BondOrder::Double);
-            atom_carriers.push(StereoCarrier::Atom(bond.other_atom(center)));
-        }
-        atom_carriers.sort_by_key(|carrier| carrier.canonical_order_key());
-        let hydrogens = atom_hydrogen_count(mol, center);
-        if ordinary_covalent
-            && double_bonds <= 1
-            && matches!(atom.element.symbol(), "S" | "Se")
-            && hydrogens == 0
-            && atom_carriers.len() == 3
-        {
-            // Three-coordinate S/Se can carry a stereogenic lone pair, as
-            // in sulfoxides and sulfonium ions. Multiple-bond duplicates are
-            // relevant to CIP ranking, not to the local carrier count.
-            atom_carriers.push(StereoCarrier::ImplicitLonePair);
-        } else if single_bonded
-            && hydrogens <= 1
-            && atom_carriers.len() + usize::from(hydrogens) == 4
-        {
-            if hydrogens == 1 {
-                atom_carriers.push(StereoCarrier::ImplicitHydrogen);
-            }
-        } else {
+        if has_repeated_terminal_ligands(mol, center, &atom_carriers) {
             continue;
         }
         candidates.push(StereoCandidate::Tetrahedral {
@@ -651,14 +641,20 @@ fn tetrahedral_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
 fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     let mut candidates = Vec::new();
     for (bond_id, bond) in mol.bonds() {
-        if double_bond_stereo_is_unsupported(mol, bond_id, bond) {
+        if !double_bond_geometry_is_supported(mol, bond_id, bond)
+            || mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true)
+        {
             continue;
         }
         let left = bond.a();
         let right = bond.b();
         let left_carriers = double_bond_endpoint_carriers(mol, left, right, bond_id);
         let right_carriers = double_bond_endpoint_carriers(mol, right, left, bond_id);
-        if !left_carriers.is_empty() && !right_carriers.is_empty() {
+        if (1..=2).contains(&left_carriers.len())
+            && (1..=2).contains(&right_carriers.len())
+            && !has_repeated_terminal_ligands(mol, left, &left_carriers)
+            && !has_repeated_terminal_ligands(mol, right, &right_carriers)
+        {
             candidates.push(StereoCandidate::DoubleBond {
                 bond: bond_id,
                 left,
@@ -671,31 +667,21 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     candidates
 }
 
-fn double_bond_stereo_is_unsupported(mol: &Molecule, bond_id: BondId, bond: &Bond) -> bool {
-    bond.order != BondOrder::Double
-        || mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true)
-        || double_bond_between_aromatic_atoms(mol, bond)
-        || super::rings::bond_in_ring_smaller_than(mol, bond_id, 8)
-        || (double_bond_is_in_ring(mol, bond_id) && double_bond_has_noncarbon_endpoint(mol, bond))
-}
-
-pub(crate) fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {
-    mol.atom_is_aromatic(bond.a()).ok().flatten() == Some(true)
-        && mol.atom_is_aromatic(bond.b()).ok().flatten() == Some(true)
-}
-
-pub(crate) fn double_bond_is_in_ring(mol: &Molecule, bond: BondId) -> bool {
-    mol.ring_membership()
-        .map(|membership| membership.bond_in_ring(bond))
-        .unwrap_or(false)
-}
-
-pub(crate) fn double_bond_has_noncarbon_endpoint(mol: &Molecule, bond: &Bond) -> bool {
-    [bond.a(), bond.b()].into_iter().any(|atom_id| {
-        mol.atom(atom_id)
-            .map(|atom| atom.element.symbol() != "C")
-            .unwrap_or(true)
-    })
+/// Shared represented-graph geometry bounds for source decoding and perception.
+/// Ring size is graph-theoretic and independent of the selected ring basis.
+/// A heteroatom endpoint does not by itself exclude cis/trans stereochemistry.
+pub(crate) fn double_bond_geometry_is_supported(
+    mol: &Molecule,
+    bond_id: BondId,
+    bond: &Bond,
+) -> bool {
+    bond.order == BondOrder::Double
+        && [bond.a(), bond.b()].into_iter().all(|endpoint| {
+            mol.neighbors(endpoint)
+                .map(|neighbors| neighbors.count() <= 3)
+                .unwrap_or(false)
+        })
+        && !super::rings::bond_in_ring_smaller_than(mol, bond_id, 8)
 }
 
 pub(crate) fn double_bond_endpoint_carriers(
@@ -765,10 +751,11 @@ fn infer_coordinate_stereo_elements(
     mol: &Molecule,
     coordinates: &dyn AtomPositionSource,
     infer_axes: bool,
+    candidates: &[StereoCandidate],
 ) -> Vec<StereoElement> {
     let mut assigned = Vec::new();
-    assigned.extend(infer_coordinate_tetrahedral(mol, coordinates));
-    assigned.extend(infer_coordinate_double_bonds(mol, coordinates));
+    assigned.extend(infer_coordinate_tetrahedral(mol, coordinates, candidates));
+    assigned.extend(infer_coordinate_double_bonds(mol, coordinates, candidates));
     if infer_axes {
         assigned.extend(infer_coordinate_axes(mol, coordinates));
     }
@@ -778,9 +765,10 @@ fn infer_coordinate_stereo_elements(
 fn infer_coordinate_tetrahedral(
     mol: &Molecule,
     coordinates: &dyn AtomPositionSource,
+    candidates: &[StereoCandidate],
 ) -> Vec<StereoElement> {
     let mut assigned = Vec::new();
-    for candidate in tetrahedral_candidates(mol) {
+    for candidate in candidates.iter().cloned() {
         let StereoCandidate::Tetrahedral { center, carriers } = candidate else {
             continue;
         };
@@ -829,9 +817,10 @@ fn infer_coordinate_tetrahedral(
 fn infer_coordinate_double_bonds(
     mol: &Molecule,
     coordinates: &dyn AtomPositionSource,
+    candidates: &[StereoCandidate],
 ) -> Vec<StereoElement> {
     let mut assigned = Vec::new();
-    for candidate in double_bond_candidates(mol) {
+    for candidate in candidates.iter().cloned() {
         let StereoCandidate::DoubleBond {
             bond,
             left,
@@ -924,21 +913,6 @@ fn first_atom_carrier(carriers: &[StereoCarrier]) -> Option<AtomId> {
         StereoCarrier::Atom(atom) => Some(*atom),
         StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => None,
     })
-}
-
-pub(crate) fn tetrahedral_points(
-    coordinates: &dyn AtomPositionSource,
-    center: AtomId,
-    carriers: &[AtomId],
-) -> Option<[Point3; 5]> {
-    (carriers.len() == 4).then_some(())?;
-    Some([
-        coordinates.position_value(center)?,
-        coordinates.position_value(carriers[0])?,
-        coordinates.position_value(carriers[1])?,
-        coordinates.position_value(carriers[2])?,
-        coordinates.position_value(carriers[3])?,
-    ])
 }
 
 fn double_bond_points(

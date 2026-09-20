@@ -47,12 +47,14 @@ pub(crate) fn molecular_descriptor_record_json(
     }))
 }
 
-pub(crate) fn rotatable_bond_record_json(record: &IndexedSmallRecord) -> Value {
+pub(crate) fn rotatable_bond_record_json(
+    record: &IndexedSmallRecord,
+) -> Result<Value, Box<dyn Error>> {
     let molecule = &record.molecule;
     let detected = kekule::rotatable_bonds::detect(
         molecule,
         kekule::rotatable_bonds::RotatableBondOptions::STRICT,
-    );
+    )?;
     let bonds = detected
         .bond_ids()
         .iter()
@@ -67,13 +69,13 @@ pub(crate) fn rotatable_bond_record_json(record: &IndexedSmallRecord) -> Value {
             })
         })
         .collect::<Vec<_>>();
-    json!({
+    Ok(json!({
         "record_index": record.record_index,
         "status": "ok",
         "title": record.title,
         "count": detected.len(),
         "bonds": bonds,
-    })
+    }))
 }
 
 pub(crate) fn ring_membership_record_json(record: &mut IndexedSmallRecord) -> Value {
