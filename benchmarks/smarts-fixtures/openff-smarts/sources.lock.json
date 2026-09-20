@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "forcefields_commit": "e2b6c5c778db03c3c6b4436fb597f2e66db43b95",
+  "toolkit_commit": "f63576a20fe8014c6b1d4c008bd43774c66a35c0",
+  "toolkit_version": "0.18.0",
+  "selection": "Complete Sage 2.2.0, TIP4P-FB, TIP5P, charge increment and ion library charge query rows; PubChem target records fetched without rewriting.",
+  "sources": [
+    {
+      "path": "openff-2.2.0.offxml",
+      "url": "https://raw.githubusercontent.com/openforcefield/openff-forcefields/e2b6c5c778db03c3c6b4436fb597f2e66db43b95/openforcefields/offxml/openff-2.2.0.offxml",
+      "sha256": "3876e26f280103cc4f37291df1fcddf7e0dd556dec2bba059282a881074abbfd"
+    },
+    {
+      "path": "tip4p_fb-1.0.1.offxml",
+      "url": "https://raw.githubusercontent.com/openforcefield/openff-forcefields/e2b6c5c778db03c3c6b4436fb597f2e66db43b95/openforcefields/offxml/tip4p_fb-1.0.1.offxml",
+      "sha256": "a2d850bac2731a039e682bd97b374fbfa1377e203a2cf014e1f6d60a985876d2"
+    },
+    {
+      "path": "tip5p-1.0.0.offxml",
+      "url": "https://raw.githubusercontent.com/openforcefield/openff-forcefields/e2b6c5c778db03c3c6b4436fb597f2e66db43b95/openforcefields/offxml/tip5p-1.0.0.offxml",
+      "sha256": "4b6dae09d6ecc5017b5507a347f537f6b85bdc923a9de0c3aeaab154972d694e"
+    },
+    {
+      "path": "chargeincrement-test.offxml",
+      "url": "https://raw.githubusercontent.com/openforcefield/openff-toolkit/f63576a20fe8014c6b1d4c008bd43774c66a35c0/openff/toolkit/data/test_forcefields/chargeincrement-test.offxml",
+      "sha256": "39bb211fd58b0b2d4380078a959ec5df8246420853478312e40c496afb2bcd9b"
+    },
+    {
+      "path": "ion_charges.offxml",
+      "url": "https://raw.githubusercontent.com/openforcefield/openff-toolkit/f63576a20fe8014c6b1d4c008bd43774c66a35c0/openff/toolkit/data/test_forcefields/ion_charges.offxml",
+      "sha256": "f9a589c9e2b8985f1da2c32112277f29fb6250b17b3146bc4e1c9984485d3dae"
+    },
+    {
+      "path": "LICENSE-forcefields",
+      "url": "https://raw.githubusercontent.com/openforcefield/openff-forcefields/e2b6c5c778db03c3c6b4436fb597f2e66db43b95/LICENSE",
+      "sha256": "8e0281df4b7dd386c0b660f7476a74e486036d6d2f2372779e5561961a36e7b7"
+    },
+    {
+      "path": "LICENSE-toolkit",
+      "url": "https://raw.githubusercontent.com/openforcefield/openff-toolkit/f63576a20fe8014c6b1d4c008bd43774c66a35c0/LICENSE",
+      "sha256": "dba1df2d41e5a60c1cfd8a4a5c3985340bc4c16825bfa4e2c7dc3a7dfba1611e"
+    },
+    {
+      "path": "cid_962.smi",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/962/property/IsomericSMILES/TXT",
+      "sha256": "19352677df76e156581cbb0133228534d9834664224a9c7d1fd912939d4c21a3"
+    },
+    {
+      "path": "cid_297.smi",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/297/property/IsomericSMILES/TXT",
+      "sha256": "12f37a8a84034d3e623d726fe10e5031f4df997ac13f4d5571b5a90c41fb84fe"
+    },
+    {
+      "path": "cid_923.smi",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/923/property/IsomericSMILES/TXT",
+      "sha256": "5ded6536b73685fc39706bf2c002fc4671b1a12f009ac16102634e3b1ed24e89"
+    },
+    {
+      "path": "cid_312.smi",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/312/property/IsomericSMILES/TXT",
+      "sha256": "85fca408e959a8b115b4348d49d4a60057467483da7d06f5447a53276e21b714"
+    }
+  ]
+}

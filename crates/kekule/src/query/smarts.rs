@@ -1,13 +1,19 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Range;
+use std::rc::Rc;
 
 use crate::core::{BondOrder, Element};
 
 use super::{
     AtomExpression, AtomPredicate, BondExpression, BondPredicate, QueryAtomId,
-    QueryExpressionError, QueryGraph, QueryGraphBuilder,
+    QueryExpressionError, QueryGraph, QueryGraphBuilder, QueryGraphError,
 };
+
+mod bond;
+mod stereo;
+use stereo::{AtomStereo, BondSyntax, StereoSyntax};
 
 /// Resource bounds for deterministic SMARTS parsing.
 ///
@@ -29,6 +35,10 @@ pub struct SmartsParseOptions {
     pub max_expression_nodes: usize,
     /// Maximum depth of each atom expression after normalization.
     pub max_expression_depth: usize,
+    /// Maximum nested recursive SMARTS depth (hard ceiling 32).
+    pub max_recursive_depth: usize,
+    /// Aggregate atom and bond expression nodes, including recursive queries.
+    pub max_total_expression_nodes: usize,
 }
 
 impl Default for SmartsParseOptions {
@@ -41,6 +51,8 @@ impl Default for SmartsParseOptions {
             max_ring_closures: 128,
             max_expression_nodes: 512,
             max_expression_depth: 32,
+            max_recursive_depth: 32,
+            max_total_expression_nodes: 16_384,
         }
     }
 }
@@ -115,6 +127,23 @@ impl std::error::Error for SmartsParseError {}
 ///
 /// This uses [`SmartsParseOptions::default`]. Parsing does not match a target or
 /// run chemical perception.
+/// `X` counts all connections, including declared and inferred hydrogens, and
+/// defaults to one. `xN` counts incident cyclic bonds; bare `x` means any ring
+/// membership. Matching these requires installed valence and ring perception,
+/// respectively. Neither predicate selects or counts a ring basis.
+/// Single and double bond types exclude perceived aromatic bonds. Aromatic
+/// bond types require aromatic membership on a localized single or double bond;
+/// higher orders retain their own type. Matching single, double, or aromatic
+/// SMARTS bond types requires installed aromaticity. A programmatic
+/// [`BondPredicate::Order`] alone only inspects represented order.
+///
+/// Tetrahedral `@`, `@@`, `@TH1`, and `@TH2` and paired `/`/`\\` bond
+/// directions retain their Boolean context and compare represented carrier order
+/// under a complete atom mapping, without CIP assignment. An isolated direction
+/// adds no stereo relationship. Unspecified and non-tetrahedral stereo syntax
+/// remain unsupported. Boolean stereo is evaluated literally; this intentionally
+/// differs from RDKit's handling of some negations and alternatives.
+/// See the crate's SMARTS capability matrix for the complete dialect contract.
 pub fn parse_smarts(input: &str) -> Result<QueryGraph, SmartsParseError> {
     parse_smarts_with_options(input, SmartsParseOptions::default())
 }
@@ -146,7 +175,7 @@ pub fn parse_smarts_with_options(
             "non-ASCII query syntax is outside the bounded SMARTS subset",
         ));
     }
-    Parser::new(input, options).parse()
+    Parser::new(input, options, Rc::new(ParseBudget::default()), 0).parse()
 }
 
 fn validate_options(options: SmartsParseOptions) -> Result<(), SmartsParseError> {
@@ -158,6 +187,11 @@ fn validate_options(options: SmartsParseOptions) -> Result<(), SmartsParseError>
         ("max_ring_closures", options.max_ring_closures),
         ("max_expression_nodes", options.max_expression_nodes),
         ("max_expression_depth", options.max_expression_depth),
+        ("max_recursive_depth", options.max_recursive_depth),
+        (
+            "max_total_expression_nodes",
+            options.max_total_expression_nodes,
+        ),
     ] {
         if value == 0 {
             return Err(SmartsParseError::new(
@@ -189,8 +223,30 @@ impl PreviousToken {
 
 struct RingOpen {
     atom: QueryAtomId,
-    bond: Option<(BondExpression, Range<usize>)>,
+    bond: Option<BondSyntax>,
     span: Range<usize>,
+}
+
+#[derive(Default)]
+struct ParseBudget {
+    atoms: Cell<usize>,
+    bonds: Cell<usize>,
+    nodes: Cell<usize>,
+}
+
+fn charge(
+    counter: &Cell<usize>,
+    amount: usize,
+    limit: usize,
+    name: &'static str,
+    span: Range<usize>,
+) -> Result<(), SmartsParseError> {
+    let observed = counter.get().saturating_add(amount);
+    if observed > limit {
+        return Err(SmartsParseError::limit(span, name, observed, limit));
+    }
+    counter.set(observed);
+    Ok(())
 }
 
 struct Parser<'a> {
@@ -199,10 +255,11 @@ struct Parser<'a> {
     options: SmartsParseOptions,
     cursor: usize,
     builder: QueryGraphBuilder,
-    atom_count: usize,
-    bond_count: usize,
+    budget: Rc<ParseBudget>,
+    recursive_depth: usize,
     current: Option<QueryAtomId>,
-    pending_bond: Option<(BondExpression, Range<usize>)>,
+    pending_bond: Option<BondSyntax>,
+    stereo: StereoSyntax,
     branches: Vec<(QueryAtomId, usize)>,
     rings: BTreeMap<u16, RingOpen>,
     ring_closure_count: usize,
@@ -210,17 +267,23 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn new(input: &'a str, options: SmartsParseOptions) -> Self {
+    fn new(
+        input: &'a str,
+        options: SmartsParseOptions,
+        budget: Rc<ParseBudget>,
+        recursive_depth: usize,
+    ) -> Self {
         Self {
             input,
             bytes: input.as_bytes(),
             options,
             cursor: 0,
             builder: QueryGraphBuilder::new(),
-            atom_count: 0,
-            bond_count: 0,
+            budget,
+            recursive_depth,
             current: None,
             pending_bond: None,
+            stereo: StereoSyntax::default(),
             branches: Vec::new(),
             rings: BTreeMap::new(),
             ring_closure_count: 0,
@@ -264,8 +327,18 @@ impl<'a> Parser<'a> {
                 "unclosed ring label",
             ));
         }
+        self.stereo.install(&mut self.builder)?;
         self.builder.build().map_err(|error| {
-            SmartsParseError::syntax(0..self.input.len(), format!("invalid query graph: {error}"))
+            let kind = if matches!(error, QueryGraphError::ResourceLimit { .. }) {
+                SmartsParseErrorKind::ResourceLimit
+            } else {
+                SmartsParseErrorKind::InvalidSyntax
+            };
+            SmartsParseError::new(
+                kind,
+                0..self.input.len(),
+                format!("invalid query graph: {error}"),
+            )
         })
     }
 
@@ -346,62 +419,27 @@ impl<'a> Parser<'a> {
                 "bond expression must follow an atom or ring label",
             ));
         }
-        let expression = match self.bytes[self.cursor] {
-            b'-' => {
-                self.cursor += 1;
-                BondExpression::predicate(BondPredicate::Order(BondOrder::Single))
-            }
-            b'=' => {
-                self.cursor += 1;
-                BondExpression::predicate(BondPredicate::Order(BondOrder::Double))
-            }
-            b'#' => {
-                self.cursor += 1;
-                BondExpression::predicate(BondPredicate::Order(BondOrder::Triple))
-            }
-            b'$' => {
-                self.cursor += 1;
-                BondExpression::predicate(BondPredicate::Order(BondOrder::Quadruple))
-            }
-            b':' => {
-                self.cursor += 1;
-                BondExpression::predicate(BondPredicate::Aromatic(true))
-            }
-            b'~' => {
-                self.cursor += 1;
-                BondExpression::always()
-            }
-            b'@' => {
-                self.cursor += 1;
-                BondExpression::predicate(BondPredicate::RingMembership(true))
-            }
-            b'!' if self.bytes.get(self.cursor + 1) == Some(&b'@') => {
-                self.cursor += 2;
-                BondExpression::predicate(BondPredicate::RingMembership(false))
-            }
-            b'/' | b'\\' => {
-                self.cursor += 1;
-                return Err(SmartsParseError::unsupported(
-                    start..self.cursor,
-                    "directional and stereochemical bond queries are not supported",
-                ));
-            }
-            _ => {
-                self.cursor += 1;
-                return Err(SmartsParseError::unsupported(
-                    start..self.cursor,
-                    "bounded SMARTS supports only -, =, #, $, :, ~, @, and !@ bond expressions",
-                ));
-            }
-        };
-        self.pending_bond = Some((expression, start..self.cursor));
+        let (expression, direction, end) = bond::parse(self.input, self.cursor, self.options)?;
+        self.cursor = end;
+        charge(
+            &self.budget.nodes,
+            expression.node_count(),
+            self.options.max_total_expression_nodes,
+            "total expression nodes",
+            start..end,
+        )?;
+        self.pending_bond = Some(BondSyntax {
+            expression,
+            direction,
+            span: start..self.cursor,
+        });
         self.previous = PreviousToken::Bond;
         Ok(())
     }
 
     fn read_ring(&mut self) -> Result<(), SmartsParseError> {
         let start = self.cursor;
-        if !self.previous.can_end_atom() {
+        if !self.previous.can_end_atom() && self.previous != PreviousToken::Bond {
             return Err(SmartsParseError::syntax(
                 start..start + 1,
                 "ring label must follow an atom",
@@ -420,18 +458,9 @@ impl<'a> Parser<'a> {
                 ));
             }
             let closing = self.pending_bond.take();
-            let expression = match (open.bond, closing) {
-                (None, None) => default_bond_expression()?,
-                (Some((expression, _)), None) | (None, Some((expression, _))) => expression,
-                (Some((left, _)), Some((right, _))) if left == right => left,
-                (Some((_, left_span)), Some((_, right_span))) => {
-                    return Err(SmartsParseError::syntax(
-                        left_span.start..right_span.end,
-                        "conflicting bond expressions on ring closure",
-                    ));
-                }
-            };
-            self.add_bond(open.atom, current, expression, span.clone())?;
+            let bond = BondSyntax::ring(open.bond, closing, span.clone())?;
+            self.add_bond(open.atom, current, bond, span.clone())?;
+            self.stereo.close_ring(open.atom, current, label);
             self.ring_closure_count = self.ring_closure_count.saturating_add(1);
             if self.ring_closure_count > self.options.max_ring_closures {
                 return Err(SmartsParseError::limit(
@@ -450,6 +479,7 @@ impl<'a> Parser<'a> {
                     self.options.max_ring_closures,
                 ));
             }
+            self.stereo.open_ring(current, label);
             self.rings.insert(
                 label,
                 RingOpen {
@@ -488,14 +518,28 @@ impl<'a> Parser<'a> {
 
     fn read_atom(&mut self) -> Result<(), SmartsParseError> {
         let start = self.cursor;
-        let expression = if self.bytes[self.cursor] == b'[' {
-            let close = self.bytes[self.cursor + 1..]
-                .iter()
-                .position(|byte| *byte == b']')
-                .map(|relative| self.cursor + 1 + relative)
-                .ok_or_else(|| {
-                    SmartsParseError::syntax(start..self.input.len(), "unclosed bracket atom")
-                })?;
+        let (expression, stereo, tag) = if self.bytes[self.cursor] == b'[' {
+            let mut level = 1usize;
+            let mut close = self.cursor + 1;
+            while close < self.bytes.len() {
+                match self.bytes[close] {
+                    b'[' => level += 1,
+                    b']' => {
+                        level -= 1;
+                        if level == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                close += 1;
+            }
+            if close == self.bytes.len() {
+                return Err(SmartsParseError::syntax(
+                    start..close,
+                    "unclosed bracket atom",
+                ));
+            }
             if close == self.cursor + 1 {
                 return Err(SmartsParseError::syntax(
                     start..close + 1,
@@ -506,33 +550,43 @@ impl<'a> Parser<'a> {
                 &self.input[self.cursor + 1..close],
                 self.cursor + 1,
                 self.options,
+                self.budget.clone(),
+                self.recursive_depth,
             )
             .parse()?;
             self.cursor = close + 1;
             expression
         } else {
-            self.parse_simple_atom()?
+            (self.parse_simple_atom()?, None, None)
         };
 
-        self.atom_count = self.atom_count.saturating_add(1);
-        if self.atom_count > self.options.max_atoms {
-            return Err(SmartsParseError::limit(
-                start..self.cursor,
-                "atoms",
-                self.atom_count,
-                self.options.max_atoms,
-            ));
-        }
+        charge(
+            &self.budget.atoms,
+            1,
+            self.options.max_atoms,
+            "atoms",
+            start..self.cursor,
+        )?;
+        charge(
+            &self.budget.nodes,
+            expression.node_count(),
+            self.options.max_total_expression_nodes,
+            "total expression nodes",
+            start..self.cursor,
+        )?;
         let atom = self.builder.add_atom(expression).map_err(|error| {
             SmartsParseError::syntax(start..self.cursor, format!("invalid query atom: {error}"))
         })?;
+        self.builder
+            .set_atom_tag(atom, tag)
+            .expect("new query atom");
+        self.stereo.add_atom(atom, self.current, stereo);
         if let Some(previous_atom) = self.current {
             let bond = self
                 .pending_bond
                 .take()
-                .map(|(expression, _)| expression)
                 .map(Ok)
-                .unwrap_or_else(default_bond_expression)?;
+                .unwrap_or_else(|| BondSyntax::default_at(start..self.cursor))?;
             self.add_bond(previous_atom, atom, bond, start..self.cursor)?;
         } else if self.pending_bond.is_some() {
             return Err(SmartsParseError::syntax(
@@ -561,15 +615,17 @@ impl<'a> Parser<'a> {
                 Ok(AtomExpression::predicate(AtomPredicate::Aromatic(true)))
             }
             byte if byte.is_ascii_uppercase() && byte != b'X' => {
-                let (element, end) =
-                    parse_element_symbol(self.input, self.cursor).ok_or_else(|| {
-                        SmartsParseError::syntax(
-                            start..start + 1,
-                            "unbracketed atom is not in the organic subset",
-                        )
-                    })?;
+                // Only Cl and Br are two-letter unbracketed elements. In
+                // `Cn`, for example, n starts a separate aromatic atom.
+                let length = if matches!(self.bytes.get(start..start + 2), Some(b"Cl" | b"Br")) {
+                    2
+                } else {
+                    1
+                };
+                let end = start + length;
+                let symbol = &self.input[start..end];
                 if !matches!(
-                    element.symbol(),
+                    symbol,
                     "B" | "C" | "N" | "O" | "P" | "S" | "F" | "Cl" | "Br" | "I"
                 ) {
                     return Err(SmartsParseError::unsupported(
@@ -577,6 +633,7 @@ impl<'a> Parser<'a> {
                         "elements outside the organic subset must be bracketed",
                     ));
                 }
+                let element = Element::from_symbol(symbol).expect("organic subset element");
                 self.cursor = end;
                 atom_element_expression(element, false, start..end)
             }
@@ -621,21 +678,27 @@ impl<'a> Parser<'a> {
         &mut self,
         a: QueryAtomId,
         b: QueryAtomId,
-        expression: BondExpression,
+        syntax: BondSyntax,
         span: Range<usize>,
     ) -> Result<(), SmartsParseError> {
-        self.bond_count = self.bond_count.saturating_add(1);
-        if self.bond_count > self.options.max_bonds {
-            return Err(SmartsParseError::limit(
-                span,
-                "bonds",
-                self.bond_count,
-                self.options.max_bonds,
-            ));
-        }
-        self.builder.add_bond(a, b, expression).map_err(|error| {
-            SmartsParseError::syntax(span, format!("invalid query bond: {error}"))
-        })?;
+        charge(
+            &self.budget.bonds,
+            1,
+            self.options.max_bonds,
+            "bonds",
+            span.clone(),
+        )?;
+        let is_double = syntax.expression
+            == non_aromatic_bond_expression(BondOrder::Double)
+                .map_err(|error| expression_error(span.clone(), error))?;
+        let id = self
+            .builder
+            .add_bond(a, b, syntax.expression)
+            .map_err(|error| {
+                SmartsParseError::syntax(span, format!("invalid query bond: {error}"))
+            })?;
+        self.stereo
+            .add_bond(id, a, b, is_double, syntax.direction, syntax.span);
         Ok(())
     }
 }
@@ -649,10 +712,30 @@ fn is_bond_start(byte: u8) -> bool {
 
 fn default_bond_expression() -> Result<BondExpression, SmartsParseError> {
     BondExpression::any([
-        BondExpression::predicate(BondPredicate::Order(BondOrder::Single)),
-        BondExpression::predicate(BondPredicate::Aromatic(true)),
+        non_aromatic_bond_expression(BondOrder::Single)
+            .map_err(|error| expression_error(0..0, error))?,
+        aromatic_bond_expression().map_err(|error| expression_error(0..0, error))?,
     ])
     .map_err(|error| expression_error(0..0, error))
+}
+
+fn non_aromatic_bond_expression(order: BondOrder) -> Result<BondExpression, QueryExpressionError> {
+    BondExpression::all([
+        BondExpression::predicate(BondPredicate::Order(order)),
+        BondExpression::predicate(BondPredicate::Aromatic(false)),
+    ])
+}
+
+fn aromatic_bond_expression() -> Result<BondExpression, QueryExpressionError> {
+    // SMARTS aromatic bond type is distinct from a localized single/double
+    // order. Higher orders retain their type even when aromaticity flags them.
+    BondExpression::all([
+        BondExpression::predicate(BondPredicate::Aromatic(true)),
+        BondExpression::any([
+            BondExpression::predicate(BondPredicate::Order(BondOrder::Single)),
+            BondExpression::predicate(BondPredicate::Order(BondOrder::Double)),
+        ])?,
+    ])
 }
 
 fn atom_element_expression(
@@ -693,22 +776,47 @@ struct BracketParser<'a> {
     cursor: usize,
     options: SmartsParseOptions,
     elemental_hydrogen: bool,
+    stereo: Option<AtomStereo>,
+    tag: Option<u32>,
+    budget: Rc<ParseBudget>,
+    recursive_depth: usize,
 }
 
 impl<'a> BracketParser<'a> {
-    fn new(source: &'a str, base: usize, options: SmartsParseOptions) -> Self {
+    fn new(
+        source: &'a str,
+        base: usize,
+        options: SmartsParseOptions,
+        budget: Rc<ParseBudget>,
+        recursive_depth: usize,
+    ) -> Self {
         Self {
             source,
             bytes: source.as_bytes(),
             base,
             cursor: 0,
             options,
-            elemental_hydrogen: is_elemental_hydrogen_expression(source),
+            elemental_hydrogen: is_elemental_hydrogen_expression(
+                source.split(':').next().unwrap_or(source),
+            ),
+            stereo: None,
+            tag: None,
+            budget,
+            recursive_depth,
         }
     }
 
-    fn parse(mut self) -> Result<AtomExpression, SmartsParseError> {
+    fn parse(
+        mut self,
+    ) -> Result<(AtomExpression, Option<AtomStereo>, Option<u32>), SmartsParseError> {
         let expression = self.parse_low_and()?;
+        if self.peek() == Some(b':') {
+            self.cursor += 1;
+            self.tag = Some(
+                u32::try_from(self.read_number("atom tag")?)
+                    .map_err(|_| self.syntax_here("atom tag exceeds u32"))?,
+            );
+        }
         if self.cursor != self.bytes.len() {
             return Err(self.syntax_here("unexpected atom-expression syntax"));
         }
@@ -728,7 +836,7 @@ impl<'a> BracketParser<'a> {
                 self.options.max_expression_depth,
             ));
         }
-        Ok(expression)
+        Ok((expression, self.stereo, self.tag))
     }
 
     fn parse_low_and(&mut self) -> Result<AtomExpression, SmartsParseError> {
@@ -852,12 +960,6 @@ impl<'a> BracketParser<'a> {
                         "isotope exceeds u16 range",
                     )
                 })?;
-                if isotope == 0 {
-                    return Err(SmartsParseError::syntax(
-                        self.absolute(start..self.cursor),
-                        "isotope must be greater than zero",
-                    ));
-                }
                 Ok(AtomExpression::predicate(AtomPredicate::Isotope(isotope)))
             }
             b'A' => {
@@ -873,6 +975,26 @@ impl<'a> BracketParser<'a> {
                 let degree = self.read_optional_u8(1, "degree")?;
                 Ok(AtomExpression::predicate(AtomPredicate::Degree(degree)))
             }
+            b'X' => {
+                self.cursor += 1;
+                let count = self.read_optional_u8(1, "total connectivity")?;
+                Ok(AtomExpression::predicate(AtomPredicate::TotalConnectivity(
+                    count,
+                )))
+            }
+            b'x' => {
+                self.cursor += 1;
+                if self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
+                    let count = self.read_optional_u8(0, "ring-bond count")?;
+                    Ok(AtomExpression::predicate(AtomPredicate::RingBondCount(
+                        count,
+                    )))
+                } else {
+                    Ok(AtomExpression::predicate(AtomPredicate::RingMembership(
+                        true,
+                    )))
+                }
+            }
             b'H' if self.elemental_hydrogen => {
                 self.cursor += 1;
                 Ok(AtomExpression::predicate(AtomPredicate::Element(
@@ -886,34 +1008,38 @@ impl<'a> BracketParser<'a> {
                     hydrogens,
                 )))
             }
-            b'R' => {
+            b'h' => {
                 self.cursor += 1;
-                let value = self.read_optional_number();
-                match value {
-                    None => Ok(AtomExpression::predicate(AtomPredicate::RingMembership(
-                        true,
-                    ))),
-                    Some(0) => Ok(AtomExpression::predicate(AtomPredicate::RingMembership(
-                        false,
-                    ))),
-                    Some(_) => Err(SmartsParseError::unsupported(
-                        self.absolute(start..self.cursor),
-                        "exact ring-membership counts are outside the bounded SMARTS subset",
-                    )),
-                }
-            }
-            b'r' => {
-                self.cursor += 1;
-                if self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
-                    self.read_optional_number();
-                    return Err(SmartsParseError::unsupported(
-                        self.absolute(start..self.cursor),
-                        "ring-size predicates are outside the bounded SMARTS subset",
-                    ));
-                }
-                Ok(AtomExpression::predicate(AtomPredicate::RingMembership(
-                    true,
+                let count = if self.peek().is_some_and(|b| b.is_ascii_digit()) {
+                    Some(self.read_optional_u8(0, "implicit hydrogens")?)
+                } else {
+                    None
+                };
+                Ok(AtomExpression::predicate(AtomPredicate::ImplicitHydrogens(
+                    count,
                 )))
+            }
+            b'v' => {
+                self.cursor += 1;
+                Ok(AtomExpression::predicate(AtomPredicate::TotalValence(
+                    self.read_optional_u8(1, "valence")?,
+                )))
+            }
+            b'R' | b'r' => {
+                self.cursor += 1;
+                if !self.peek().is_some_and(|b| b.is_ascii_digit()) {
+                    return Ok(AtomExpression::predicate(AtomPredicate::RingMembership(
+                        true,
+                    )));
+                }
+                let count = self.read_optional_u8(0, "ring predicate")?;
+                Ok(AtomExpression::predicate(if count == 0 {
+                    AtomPredicate::RingMembership(false)
+                } else if byte == b'R' {
+                    AtomPredicate::RingCount(count)
+                } else {
+                    AtomPredicate::SmallestRingSize(count)
+                }))
             }
             b'+' | b'-' => self.parse_charge(),
             b'b' | b'c' | b'n' | b'o' | b'p' | b's' => {
@@ -947,38 +1073,78 @@ impl<'a> BracketParser<'a> {
                 self.cursor = absolute_end - self.base;
                 atom_element_expression(element, false, absolute_start..absolute_end)
             }
-            b'$' | b'(' | b')' => {
+            b'$' => {
                 self.cursor += 1;
-                Err(SmartsParseError::unsupported(
-                    self.absolute(start..self.cursor),
-                    "recursive SMARTS and atom-expression grouping are not supported",
-                ))
+                if self.peek() != Some(b'(') {
+                    return Err(self.syntax_here("recursive query requires $(...)"));
+                }
+                let depth = self.recursive_depth + 1;
+                let limit = self.options.max_recursive_depth.min(32);
+                if depth > limit {
+                    return Err(SmartsParseError::limit(
+                        self.absolute(start..self.cursor),
+                        "recursive depth",
+                        depth,
+                        limit,
+                    ));
+                }
+                self.cursor += 1;
+                let begin = self.cursor;
+                let mut nesting = 1usize;
+                while let Some(b) = self.peek() {
+                    match b {
+                        b'(' => nesting += 1,
+                        b')' => {
+                            nesting -= 1;
+                            if nesting == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    self.cursor += 1;
+                }
+                if self.peek() != Some(b')') {
+                    return Err(self.syntax_here("unclosed recursive query"));
+                }
+                let query = Parser::new(
+                    &self.source[begin..self.cursor],
+                    self.options,
+                    self.budget.clone(),
+                    depth,
+                )
+                .parse()
+                .map_err(|mut e| {
+                    e.span = self.absolute(begin + e.span.start..begin + e.span.end);
+                    e
+                })?;
+                self.cursor += 1;
+                Ok(AtomExpression::predicate(AtomPredicate::Recursive(
+                    Box::new(query),
+                )))
             }
             b'@' => {
-                self.cursor += 1;
-                Err(SmartsParseError::unsupported(
-                    self.absolute(start..self.cursor),
-                    "stereochemical atom queries are not supported",
-                ))
+                let (mut stereo, end) = AtomStereo::parse(self.source, self.cursor, self.base)?;
+                let same = stereo.orientation == crate::core::TetrahedralOrientation::Clockwise;
+                stereo.orientation = crate::core::TetrahedralOrientation::Clockwise;
+                if let Some(existing) = &self.stereo {
+                    if existing.inline_hydrogen != stereo.inline_hydrogen {
+                        return Err(self.syntax_here("inconsistent inline hydrogen stereo frames"));
+                    }
+                } else {
+                    self.stereo = Some(stereo);
+                }
+                self.cursor = end;
+                Ok(AtomExpression::predicate(AtomPredicate::Tetrahedral(same)))
             }
-            b':' => {
+            b'^' => {
                 self.cursor += 1;
                 while self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
                     self.cursor += 1;
                 }
                 Err(SmartsParseError::unsupported(
                     self.absolute(start..self.cursor),
-                    "atom maps are not part of substructure predicate semantics",
-                ))
-            }
-            b'X' | b'x' | b'v' | b'^' => {
-                self.cursor += 1;
-                while self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
-                    self.cursor += 1;
-                }
-                Err(SmartsParseError::unsupported(
-                    self.absolute(start..self.cursor),
-                    "connectivity, ring-bond-count, valence, and hybridization primitives are outside the bounded SMARTS subset",
+                    "valence and hybridization primitives are outside the bounded SMARTS subset",
                 ))
             }
             _ => {
@@ -1077,7 +1243,7 @@ impl<'a> BracketParser<'a> {
     }
 
     fn at_expression_end(&self) -> bool {
-        self.cursor >= self.bytes.len() || matches!(self.peek(), Some(b',' | b';'))
+        self.cursor >= self.bytes.len() || matches!(self.peek(), Some(b',' | b';' | b':'))
     }
 
     fn absolute(&self, span: Range<usize>) -> Range<usize> {
@@ -1091,7 +1257,7 @@ impl<'a> BracketParser<'a> {
 }
 
 fn is_primitive_start(byte: u8) -> bool {
-    !matches!(byte, b',' | b';' | b'&')
+    !matches!(byte, b',' | b';' | b'&' | b':')
 }
 
 fn parse_element_symbol_at_bytes(
