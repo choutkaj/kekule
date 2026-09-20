@@ -69,6 +69,19 @@ fn staging_keeps_bulk_data_local_and_includes_bundled_inputs_and_provenance() {
             }
         }
     }
+    for dataset in ["smoke", "pubchem-100k"] {
+        for (suffix, tracked) in [("jsonl.meta.json", true), ("jsonl.gz", dataset == "smoke")] {
+            let name = format!(
+                "benchmarks/goldens/legacy/query-smarts-v1/{dataset}/query.smarts.{suffix}"
+            );
+            let path = root.join(&name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"archived reference").unwrap();
+            if tracked {
+                expected.push(name);
+            }
+        }
+    }
     fs::write(root.join("benchmarks/goldens/bundle.tar.gz"), b"fixture").unwrap();
     fs::create_dir(root.join("benchmarks/runs")).unwrap();
     for name in [

@@ -30,6 +30,17 @@ pub(super) struct Metadata {
 pub(super) fn contract_hash() -> String {
     text_hash(include_str!("../../contract.json"))
 }
+pub(super) fn feature_contract_hash(feature: &str) -> String {
+    if feature == "query.smarts" {
+        text_hash(&format!(
+            "{}\n{}",
+            contract_hash(),
+            crate::features::query::CONTRACT
+        ))
+    } else {
+        contract_hash()
+    }
+}
 pub(super) fn text_hash(text: &str) -> String {
     sha256(text.replace("\r\n", "\n").as_bytes())
 }
@@ -59,6 +70,7 @@ pub(super) fn reference_code_hash(root: &Path) -> Result<String, Box<dyn Error>>
         "reference/rdkit/source_radicals.py",
         "reference/biopython/run_feature.py",
         "queries.smarts",
+        "query-smarts.json",
     ] {
         hash.update(path.as_bytes());
         hash.update(
@@ -191,7 +203,7 @@ impl StoredGoldens {
         let read = || -> Result<Self, Box<dyn Error>> {
             let metadata: Metadata = serde_json::from_reader(fs::File::open(metadata_path(path))?)?;
             if metadata.schema != 2
-                || metadata.contract_sha256 != contract_hash()
+                || metadata.contract_sha256 != feature_contract_hash(feature)
                 || metadata.dataset != dataset
                 || metadata.feature != feature
                 || metadata.input_lock_sha256 != lock_hash

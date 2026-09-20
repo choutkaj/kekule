@@ -257,6 +257,7 @@ pub fn perceive_ring_set_with_options(
         // RDKit can exceptionally omit a cyclic bond even after reaching its
         // candidate count. Keep true cycle membership and the installed ring
         // coverage invariant rather than copying that target defect.
+        tracker.used_fallback = true;
         rings = depth_first_ring_basis(mol, &mut tracker)?;
         extras.clear();
         let uncovered_bonds = uncovered_ring_bonds(mol, &membership, &rings);
@@ -268,7 +269,11 @@ pub fn perceive_ring_set_with_options(
     let ring_set = RingSet::from_rings(rings);
     mol.install_ring_basis(
         membership,
-        RingBasisModel::FiguerasSssrLike,
+        if tracker.used_fallback {
+            RingBasisModel::DepthFirstFallback
+        } else {
+            RingBasisModel::FiguerasSssrLike
+        },
         ring_set.clone(),
     );
     Ok(ring_set)
@@ -437,6 +442,7 @@ fn figueras_sssr_candidates(
                 // RDKit falls back for the whole graph when Figueras cannot
                 // reach the fragment's cyclomatic count. Preserve that model
                 // choice instead of substituting a different shortest basis.
+                tracker.used_fallback = true;
                 return Ok((depth_first_ring_basis(mol, tracker)?, Vec::new()));
             }
         }
@@ -991,6 +997,7 @@ fn uncovered_ring_bonds(
 }
 
 struct RingWorkTracker {
+    used_fallback: bool,
     options: RingPerceptionOptions,
     candidate_cycles: usize,
     equivalent_shortest_paths: usize,
@@ -1006,6 +1013,7 @@ impl RingWorkTracker {
     ) -> std::result::Result<Self, RingPerceptionError> {
         let total_work = atom_count.saturating_add(bond_count);
         let tracker = Self {
+            used_fallback: false,
             options,
             candidate_cycles: 0,
             equivalent_shortest_paths: 0,

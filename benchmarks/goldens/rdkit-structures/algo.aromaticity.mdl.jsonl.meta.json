@@ -1,0 +1,15 @@
+{
+  "schema": 2,
+  "contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
+  "dataset": "rdkit-structures",
+  "feature": "algo.aromaticity.mdl",
+  "input_lock_sha256": "273c7f1c7316344a39d83104a57ac99c3e62fd393f6b5d37a84bee81aae3100e",
+  "sha256": "7caa3eb13fc9071d1035fa19b4738f666dcf51d3df81b14d4856738e136392ae",
+  "reference": {
+    "tool": "rdkit",
+    "version": "2026.03.3"
+  },
+  "reference_code_sha256": "e44c0b0859caf820617ab66f2249bc3da5cf2ae36732b88cc0cdaa51f072784b",
+  "origin": "independent generation",
+  "cases": 50
+}

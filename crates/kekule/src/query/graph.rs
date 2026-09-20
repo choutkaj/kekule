@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::{AtomExpression, BondExpression, QueryStereoConstraint};
+use super::{AtomExpression, AtomPredicate, BondExpression, QueryStereoConstraint};
 
 fixed_u32_id!(QueryAtomId, "qa");
 fixed_u32_id!(QueryBondId, "qb");
@@ -8,9 +8,19 @@ fixed_u32_id!(QueryBondId, "qb");
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryAtom {
     expression: AtomExpression,
+    tag: Option<u32>,
+    stereo_frame: Option<QueryStereoConstraint>,
 }
 
 impl QueryAtom {
+    /// SMARTS atom-map label. This is output metadata, not a target predicate.
+    pub const fn tag(&self) -> Option<u32> {
+        self.tag
+    }
+    pub(crate) fn stereo_frame(&self) -> Option<&QueryStereoConstraint> {
+        self.stereo_frame.as_ref()
+    }
+
     pub const fn expression(&self) -> &AtomExpression {
         &self.expression
     }
@@ -67,6 +77,70 @@ pub struct QueryGraph {
 }
 
 impl QueryGraph {
+    /// Query atoms carrying a label, in query order (duplicates are retained).
+    pub fn tagged_atoms(&self) -> impl Iterator<Item = (u32, QueryAtomId)> + '_ {
+        self.atom_ids()
+            .filter_map(|id| self.atoms[id.index()].tag.map(|tag| (tag, id)))
+    }
+
+    pub(crate) fn validate_complexity(&self) -> Result<(), QueryGraphError> {
+        let mut pending = vec![(self, 0usize)];
+        let mut atoms = 0usize;
+        let mut nodes = 0usize;
+        while let Some((query, depth)) = pending.pop() {
+            if depth > 32 {
+                return Err(QueryGraphError::ResourceLimit {
+                    resource: "recursive depth",
+                    limit: 32,
+                });
+            }
+            atoms = atoms.saturating_add(query.atom_count());
+            for atom in &query.atoms {
+                nodes = nodes.saturating_add(atom.expression.node_count());
+                for p in atom.expression.predicates() {
+                    if let AtomPredicate::Recursive(q) = p {
+                        pending.push((q, depth + 1));
+                    }
+                }
+            }
+            for bond in &query.bonds {
+                nodes = nodes.saturating_add(bond.expression.node_count());
+            }
+            if atoms > 4096 || nodes > 65536 {
+                return Err(QueryGraphError::ResourceLimit {
+                    resource: "aggregate query complexity",
+                    limit: 65536,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether all outer query atoms belong to one connected component.
+    pub fn is_connected(&self) -> bool {
+        let mut seen = vec![false; self.atom_count()];
+        let mut stack = vec![QueryAtomId::new(0)];
+        seen[0] = true;
+        while let Some(a) = stack.pop() {
+            for b in self.neighbors(a).expect("valid adjacency") {
+                if !seen[b.index()] {
+                    seen[b.index()] = true;
+                    stack.push(b);
+                }
+            }
+        }
+        seen.into_iter().all(|s| s)
+    }
+    pub(crate) fn is_component_local(&self) -> bool {
+        self.is_connected()
+            && self.atoms.iter().all(|a| {
+                a.expression.predicates().iter().all(|p| match p {
+                    AtomPredicate::Recursive(q) => q.is_component_local(),
+                    _ => true,
+                })
+            })
+    }
+
     pub fn stereo_constraints(&self) -> &[QueryStereoConstraint] {
         &self.stereo
     }
@@ -175,9 +249,42 @@ impl QueryGraphBuilder {
             }
         })?;
         let id = QueryAtomId::new(raw);
-        self.atoms.push(QueryAtom { expression });
+        self.atoms.push(QueryAtom {
+            expression,
+            tag: None,
+            stereo_frame: None,
+        });
         self.adjacency.push(Vec::new());
         Ok(id)
+    }
+
+    /// Sets an optional atom-map label without imposing tagged-projection rules.
+    pub fn set_atom_tag(
+        &mut self,
+        atom: QueryAtomId,
+        tag: Option<u32>,
+    ) -> Result<(), QueryGraphError> {
+        self.validate_atom(atom)?;
+        self.atoms[atom.index()].tag = tag;
+        Ok(())
+    }
+
+    /// Sets the local carrier frame used by Boolean tetrahedral predicates.
+    pub fn set_atom_stereo_frame(
+        &mut self,
+        atom: QueryAtomId,
+        mut frame: QueryStereoConstraint,
+    ) -> Result<(), QueryGraphError> {
+        self.validate_atom(atom)?;
+        if !matches!(&frame, QueryStereoConstraint::Tetrahedral { center, .. } if *center == atom) {
+            return Err(QueryGraphError::InvalidStereo(
+                "atom frame must have the same tetrahedral focus",
+            ));
+        }
+        frame.validate(self.atoms.len(), &self.bonds, &self.adjacency)?;
+        frame.canonicalize();
+        self.atoms[atom.index()].stereo_frame = Some(frame);
+        Ok(())
     }
 
     pub fn add_bond(
@@ -239,12 +346,28 @@ impl QueryGraphBuilder {
         for constraint in &self.stereo {
             constraint.validate(self.atoms.len(), &self.bonds, &self.adjacency)?;
         }
-        Ok(QueryGraph {
+        for atom in &self.atoms {
+            if let Some(frame) = &atom.stereo_frame {
+                frame.validate(self.atoms.len(), &self.bonds, &self.adjacency)?;
+            }
+            if atom
+                .expression
+                .contains_predicate(|p| matches!(p, AtomPredicate::Tetrahedral(_)))
+                && atom.stereo_frame.is_none()
+            {
+                return Err(QueryGraphError::InvalidStereo(
+                    "tetrahedral predicate requires a carrier frame",
+                ));
+            }
+        }
+        let graph = QueryGraph {
             atoms: self.atoms,
             bonds: self.bonds,
             adjacency: self.adjacency,
             stereo: self.stereo,
-        })
+        };
+        graph.validate_complexity()?;
+        Ok(graph)
     }
 
     fn validate_atom(&self, id: QueryAtomId) -> Result<(), QueryGraphError> {

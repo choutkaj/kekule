@@ -1,0 +1,23 @@
+[
+  {
+    "actual": {
+      "message": "SMARTS target pubchem:174291: substructure matches limit exceeded: observed 100001, limit 100000",
+      "status": "error"
+    },
+    "dataset": "pubchem-100k",
+    "difference": {
+      "kekule_failed": true,
+      "reference_failed": true
+    },
+    "expected": {
+      "message": "RuntimeError: SMARTS target pubchem:174291: match resource limit exceeded",
+      "status": "error"
+    },
+    "feature": "query.smarts",
+    "fixture": "data/packs/pack_091.smi",
+    "id": "447702",
+    "record_index": 665,
+    "status": "error",
+    "written": null
+  }
+]

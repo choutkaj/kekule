@@ -1,0 +1,4207 @@
+{
+  "schema_version": 1,
+  "corpus_id": "rdkit-queries",
+  "selection_id": "rdkit-2026.03.3-query-tables-v1",
+  "source": "Complete query rows from RDKit 2026.03.3 FunctionalGroups, Functional_Group_Hierarchy and RLewis_smarts; no parser-dependent selection.",
+  "upstream_package": {
+    "url": "https://conda.anaconda.org/conda-forge/win-64/librdkit-2026.03.3-h1c662ab_0.conda",
+    "sha256": "0e93f31a6766ee8976b8ef1d1074024cdb28e9d6e5cddd1f93c8e16ff6f27658",
+    "version": "2026.03.3",
+    "license": "BSD-3-Clause"
+  },
+  "upstream": [
+    {
+      "path": "upstream/FunctionalGroups.txt",
+      "sha256": "9faf6e0f5ace2da09eb655270c335df11193cb2b55e1b63f83cc5b2dde69fb86",
+      "package_path": "Library/share/RDKit/Data/FunctionalGroups.txt",
+      "layout": "label-tabs-query"
+    },
+    {
+      "path": "upstream/Functional_Group_Hierarchy.txt",
+      "sha256": "3f50f5169183643cd88d60e5212968277f96e4a5a7b77858d3729d58342611c3",
+      "package_path": "Library/share/RDKit/Data/Functional_Group_Hierarchy.txt",
+      "layout": "label-tabs-query"
+    },
+    {
+      "path": "upstream/RLewis_smarts.txt",
+      "sha256": "eab696e33acaaa877c24e486c80ae23ae93b419eace4a2b057db6a9766c3316e",
+      "package_path": "Library/share/RDKit/Data/SmartsLib/RLewis_smarts.txt",
+      "layout": "query-whitespace-label"
+    },
+    {
+      "path": "upstream/license.txt",
+      "sha256": "daeb8d194502cbcf34c05c39541a0d02be65bc9bada5b891c1974cd24e9fca30",
+      "package_path": "Library/share/RDKit/license.txt",
+      "layout": "license"
+    }
+  ],
+  "entries": [
+    {
+      "id": "RDKit:FunctionalGroups:16",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 16
+    },
+    {
+      "id": "RDKit:FunctionalGroups:17",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 17
+    },
+    {
+      "id": "RDKit:FunctionalGroups:18",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 18
+    },
+    {
+      "id": "RDKit:FunctionalGroups:19",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 19
+    },
+    {
+      "id": "RDKit:FunctionalGroups:20",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 20
+    },
+    {
+      "id": "RDKit:FunctionalGroups:21",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 21
+    },
+    {
+      "id": "RDKit:FunctionalGroups:22",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 22
+    },
+    {
+      "id": "RDKit:FunctionalGroups:23",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 23
+    },
+    {
+      "id": "RDKit:FunctionalGroups:27",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 27
+    },
+    {
+      "id": "RDKit:FunctionalGroups:28",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 28
+    },
+    {
+      "id": "RDKit:FunctionalGroups:29",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 29
+    },
+    {
+      "id": "RDKit:FunctionalGroups:30",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 30
+    },
+    {
+      "id": "RDKit:FunctionalGroups:31",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 31
+    },
+    {
+      "id": "RDKit:FunctionalGroups:32",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 32
+    },
+    {
+      "id": "RDKit:FunctionalGroups:33",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 33
+    },
+    {
+      "id": "RDKit:FunctionalGroups:34",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 34
+    },
+    {
+      "id": "RDKit:FunctionalGroups:35",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 35
+    },
+    {
+      "id": "RDKit:FunctionalGroups:39",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 39
+    },
+    {
+      "id": "RDKit:FunctionalGroups:40",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 40
+    },
+    {
+      "id": "RDKit:FunctionalGroups:41",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 41
+    },
+    {
+      "id": "RDKit:FunctionalGroups:42",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 42
+    },
+    {
+      "id": "RDKit:FunctionalGroups:43",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 43
+    },
+    {
+      "id": "RDKit:FunctionalGroups:44",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 44
+    },
+    {
+      "id": "RDKit:FunctionalGroups:45",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 45
+    },
+    {
+      "id": "RDKit:FunctionalGroups:46",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 46
+    },
+    {
+      "id": "RDKit:FunctionalGroups:47",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 47
+    },
+    {
+      "id": "RDKit:FunctionalGroups:48",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 48
+    },
+    {
+      "id": "RDKit:FunctionalGroups:53",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 53
+    },
+    {
+      "id": "RDKit:FunctionalGroups:54",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 54
+    },
+    {
+      "id": "RDKit:FunctionalGroups:55",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 55
+    },
+    {
+      "id": "RDKit:FunctionalGroups:56",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 56
+    },
+    {
+      "id": "RDKit:FunctionalGroups:57",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 57
+    },
+    {
+      "id": "RDKit:FunctionalGroups:61",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 61
+    },
+    {
+      "id": "RDKit:FunctionalGroups:62",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 62
+    },
+    {
+      "id": "RDKit:FunctionalGroups:63",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 63
+    },
+    {
+      "id": "RDKit:FunctionalGroups:64",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 64
+    },
+    {
+      "id": "RDKit:FunctionalGroups:65",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 65
+    },
+    {
+      "id": "RDKit:FunctionalGroups:66",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/FunctionalGroups.txt",
+      "upstream_line": 66
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:12",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 12
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:13",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 13
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:14",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 14
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:16",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 16
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:17",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 17
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:18",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 18
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:19",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 19
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:21",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 21
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:22",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 22
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:23",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 23
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:25",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 25
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:26",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 26
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:27",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 27
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:28",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 28
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:29",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 29
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:30",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 30
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:31",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 31
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:32",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 32
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:33",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 33
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:34",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 34
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:35",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 35
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:36",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 36
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:37",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 37
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:39",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 39
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:40",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 40
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:41",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 41
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:43",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 43
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:44",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 44
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:45",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 45
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:47",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 47
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:48",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 48
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:49",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 49
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:51",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 51
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:52",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 52
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:53",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 53
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:55",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 55
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:56",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 56
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:57",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 57
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:58",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 58
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:59",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 59
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:60",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 60
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:61",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 61
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:62",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 62
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:63",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 63
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:64",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 64
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:66",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 66
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:67",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 67
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:68",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 68
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:70",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 70
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:71",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 71
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:72",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 72
+    },
+    {
+      "id": "RDKit:Functional_Group_Hierarchy:74",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt",
+      "upstream_line": 74
+    },
+    {
+      "id": "RDKit:RLewis_smarts:8",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 8
+    },
+    {
+      "id": "RDKit:RLewis_smarts:9",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 9
+    },
+    {
+      "id": "RDKit:RLewis_smarts:10",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 10
+    },
+    {
+      "id": "RDKit:RLewis_smarts:11",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 11
+    },
+    {
+      "id": "RDKit:RLewis_smarts:12",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 12
+    },
+    {
+      "id": "RDKit:RLewis_smarts:13",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 13
+    },
+    {
+      "id": "RDKit:RLewis_smarts:14",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 14
+    },
+    {
+      "id": "RDKit:RLewis_smarts:15",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 15
+    },
+    {
+      "id": "RDKit:RLewis_smarts:16",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 16
+    },
+    {
+      "id": "RDKit:RLewis_smarts:17",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 17
+    },
+    {
+      "id": "RDKit:RLewis_smarts:18",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 18
+    },
+    {
+      "id": "RDKit:RLewis_smarts:19",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 19
+    },
+    {
+      "id": "RDKit:RLewis_smarts:20",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 20
+    },
+    {
+      "id": "RDKit:RLewis_smarts:21",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 21
+    },
+    {
+      "id": "RDKit:RLewis_smarts:22",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 22
+    },
+    {
+      "id": "RDKit:RLewis_smarts:23",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 23
+    },
+    {
+      "id": "RDKit:RLewis_smarts:24",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 24
+    },
+    {
+      "id": "RDKit:RLewis_smarts:25",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 25
+    },
+    {
+      "id": "RDKit:RLewis_smarts:26",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 26
+    },
+    {
+      "id": "RDKit:RLewis_smarts:27",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 27
+    },
+    {
+      "id": "RDKit:RLewis_smarts:28",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 28
+    },
+    {
+      "id": "RDKit:RLewis_smarts:29",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 29
+    },
+    {
+      "id": "RDKit:RLewis_smarts:30",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 30
+    },
+    {
+      "id": "RDKit:RLewis_smarts:31",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 31
+    },
+    {
+      "id": "RDKit:RLewis_smarts:32",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 32
+    },
+    {
+      "id": "RDKit:RLewis_smarts:33",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 33
+    },
+    {
+      "id": "RDKit:RLewis_smarts:34",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 34
+    },
+    {
+      "id": "RDKit:RLewis_smarts:35",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 35
+    },
+    {
+      "id": "RDKit:RLewis_smarts:36",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 36
+    },
+    {
+      "id": "RDKit:RLewis_smarts:37",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 37
+    },
+    {
+      "id": "RDKit:RLewis_smarts:38",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 38
+    },
+    {
+      "id": "RDKit:RLewis_smarts:41",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 41
+    },
+    {
+      "id": "RDKit:RLewis_smarts:43",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 43
+    },
+    {
+      "id": "RDKit:RLewis_smarts:44",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 44
+    },
+    {
+      "id": "RDKit:RLewis_smarts:45",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 45
+    },
+    {
+      "id": "RDKit:RLewis_smarts:46",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 46
+    },
+    {
+      "id": "RDKit:RLewis_smarts:47",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 47
+    },
+    {
+      "id": "RDKit:RLewis_smarts:48",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 48
+    },
+    {
+      "id": "RDKit:RLewis_smarts:49",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 49
+    },
+    {
+      "id": "RDKit:RLewis_smarts:50",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 50
+    },
+    {
+      "id": "RDKit:RLewis_smarts:51",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 51
+    },
+    {
+      "id": "RDKit:RLewis_smarts:52",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 52
+    },
+    {
+      "id": "RDKit:RLewis_smarts:53",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 53
+    },
+    {
+      "id": "RDKit:RLewis_smarts:54",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 54
+    },
+    {
+      "id": "RDKit:RLewis_smarts:55",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 55
+    },
+    {
+      "id": "RDKit:RLewis_smarts:56",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 56
+    },
+    {
+      "id": "RDKit:RLewis_smarts:59",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 59
+    },
+    {
+      "id": "RDKit:RLewis_smarts:60",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 60
+    },
+    {
+      "id": "RDKit:RLewis_smarts:61",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 61
+    },
+    {
+      "id": "RDKit:RLewis_smarts:62",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 62
+    },
+    {
+      "id": "RDKit:RLewis_smarts:63",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 63
+    },
+    {
+      "id": "RDKit:RLewis_smarts:64",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 64
+    },
+    {
+      "id": "RDKit:RLewis_smarts:65",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 65
+    },
+    {
+      "id": "RDKit:RLewis_smarts:66",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 66
+    },
+    {
+      "id": "RDKit:RLewis_smarts:69",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 69
+    },
+    {
+      "id": "RDKit:RLewis_smarts:70",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 70
+    },
+    {
+      "id": "RDKit:RLewis_smarts:71",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 71
+    },
+    {
+      "id": "RDKit:RLewis_smarts:72",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 72
+    },
+    {
+      "id": "RDKit:RLewis_smarts:73",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 73
+    },
+    {
+      "id": "RDKit:RLewis_smarts:74",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 74
+    },
+    {
+      "id": "RDKit:RLewis_smarts:75",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 75
+    },
+    {
+      "id": "RDKit:RLewis_smarts:76",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 76
+    },
+    {
+      "id": "RDKit:RLewis_smarts:77",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 77
+    },
+    {
+      "id": "RDKit:RLewis_smarts:78",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 78
+    },
+    {
+      "id": "RDKit:RLewis_smarts:79",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 79
+    },
+    {
+      "id": "RDKit:RLewis_smarts:80",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 80
+    },
+    {
+      "id": "RDKit:RLewis_smarts:83",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 83
+    },
+    {
+      "id": "RDKit:RLewis_smarts:84",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 84
+    },
+    {
+      "id": "RDKit:RLewis_smarts:85",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 85
+    },
+    {
+      "id": "RDKit:RLewis_smarts:86",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 86
+    },
+    {
+      "id": "RDKit:RLewis_smarts:87",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 87
+    },
+    {
+      "id": "RDKit:RLewis_smarts:88",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 88
+    },
+    {
+      "id": "RDKit:RLewis_smarts:89",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 89
+    },
+    {
+      "id": "RDKit:RLewis_smarts:90",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 90
+    },
+    {
+      "id": "RDKit:RLewis_smarts:91",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 91
+    },
+    {
+      "id": "RDKit:RLewis_smarts:92",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 92
+    },
+    {
+      "id": "RDKit:RLewis_smarts:93",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 93
+    },
+    {
+      "id": "RDKit:RLewis_smarts:94",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 94
+    },
+    {
+      "id": "RDKit:RLewis_smarts:95",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 95
+    },
+    {
+      "id": "RDKit:RLewis_smarts:96",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 96
+    },
+    {
+      "id": "RDKit:RLewis_smarts:97",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 97
+    },
+    {
+      "id": "RDKit:RLewis_smarts:98",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 98
+    },
+    {
+      "id": "RDKit:RLewis_smarts:99",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 99
+    },
+    {
+      "id": "RDKit:RLewis_smarts:100",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 100
+    },
+    {
+      "id": "RDKit:RLewis_smarts:101",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 101
+    },
+    {
+      "id": "RDKit:RLewis_smarts:102",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 102
+    },
+    {
+      "id": "RDKit:RLewis_smarts:103",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 103
+    },
+    {
+      "id": "RDKit:RLewis_smarts:104",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 104
+    },
+    {
+      "id": "RDKit:RLewis_smarts:105",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 105
+    },
+    {
+      "id": "RDKit:RLewis_smarts:106",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 106
+    },
+    {
+      "id": "RDKit:RLewis_smarts:107",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 107
+    },
+    {
+      "id": "RDKit:RLewis_smarts:108",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 108
+    },
+    {
+      "id": "RDKit:RLewis_smarts:109",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 109
+    },
+    {
+      "id": "RDKit:RLewis_smarts:110",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 110
+    },
+    {
+      "id": "RDKit:RLewis_smarts:111",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 111
+    },
+    {
+      "id": "RDKit:RLewis_smarts:112",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 112
+    },
+    {
+      "id": "RDKit:RLewis_smarts:113",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 113
+    },
+    {
+      "id": "RDKit:RLewis_smarts:114",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 114
+    },
+    {
+      "id": "RDKit:RLewis_smarts:115",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 115
+    },
+    {
+      "id": "RDKit:RLewis_smarts:116",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 116
+    },
+    {
+      "id": "RDKit:RLewis_smarts:117",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 117
+    },
+    {
+      "id": "RDKit:RLewis_smarts:118",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 118
+    },
+    {
+      "id": "RDKit:RLewis_smarts:119",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 119
+    },
+    {
+      "id": "RDKit:RLewis_smarts:120",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 120
+    },
+    {
+      "id": "RDKit:RLewis_smarts:121",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 121
+    },
+    {
+      "id": "RDKit:RLewis_smarts:122",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 122
+    },
+    {
+      "id": "RDKit:RLewis_smarts:123",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 123
+    },
+    {
+      "id": "RDKit:RLewis_smarts:124",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 124
+    },
+    {
+      "id": "RDKit:RLewis_smarts:125",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 125
+    },
+    {
+      "id": "RDKit:RLewis_smarts:126",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 126
+    },
+    {
+      "id": "RDKit:RLewis_smarts:127",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 127
+    },
+    {
+      "id": "RDKit:RLewis_smarts:128",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 128
+    },
+    {
+      "id": "RDKit:RLewis_smarts:129",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 129
+    },
+    {
+      "id": "RDKit:RLewis_smarts:130",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 130
+    },
+    {
+      "id": "RDKit:RLewis_smarts:131",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 131
+    },
+    {
+      "id": "RDKit:RLewis_smarts:132",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 132
+    },
+    {
+      "id": "RDKit:RLewis_smarts:133",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 133
+    },
+    {
+      "id": "RDKit:RLewis_smarts:134",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 134
+    },
+    {
+      "id": "RDKit:RLewis_smarts:135",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 135
+    },
+    {
+      "id": "RDKit:RLewis_smarts:136",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 136
+    },
+    {
+      "id": "RDKit:RLewis_smarts:137",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 137
+    },
+    {
+      "id": "RDKit:RLewis_smarts:138",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 138
+    },
+    {
+      "id": "RDKit:RLewis_smarts:139",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 139
+    },
+    {
+      "id": "RDKit:RLewis_smarts:140",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 140
+    },
+    {
+      "id": "RDKit:RLewis_smarts:141",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 141
+    },
+    {
+      "id": "RDKit:RLewis_smarts:142",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 142
+    },
+    {
+      "id": "RDKit:RLewis_smarts:143",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 143
+    },
+    {
+      "id": "RDKit:RLewis_smarts:144",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 144
+    },
+    {
+      "id": "RDKit:RLewis_smarts:145",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 145
+    },
+    {
+      "id": "RDKit:RLewis_smarts:146",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 146
+    },
+    {
+      "id": "RDKit:RLewis_smarts:147",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 147
+    },
+    {
+      "id": "RDKit:RLewis_smarts:148",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 148
+    },
+    {
+      "id": "RDKit:RLewis_smarts:149",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 149
+    },
+    {
+      "id": "RDKit:RLewis_smarts:150",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 150
+    },
+    {
+      "id": "RDKit:RLewis_smarts:151",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 151
+    },
+    {
+      "id": "RDKit:RLewis_smarts:152",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 152
+    },
+    {
+      "id": "RDKit:RLewis_smarts:153",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 153
+    },
+    {
+      "id": "RDKit:RLewis_smarts:154",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 154
+    },
+    {
+      "id": "RDKit:RLewis_smarts:155",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 155
+    },
+    {
+      "id": "RDKit:RLewis_smarts:156",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 156
+    },
+    {
+      "id": "RDKit:RLewis_smarts:157",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 157
+    },
+    {
+      "id": "RDKit:RLewis_smarts:158",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 158
+    },
+    {
+      "id": "RDKit:RLewis_smarts:159",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 159
+    },
+    {
+      "id": "RDKit:RLewis_smarts:160",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 160
+    },
+    {
+      "id": "RDKit:RLewis_smarts:161",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 161
+    },
+    {
+      "id": "RDKit:RLewis_smarts:162",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 162
+    },
+    {
+      "id": "RDKit:RLewis_smarts:163",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 163
+    },
+    {
+      "id": "RDKit:RLewis_smarts:164",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 164
+    },
+    {
+      "id": "RDKit:RLewis_smarts:165",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 165
+    },
+    {
+      "id": "RDKit:RLewis_smarts:166",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 166
+    },
+    {
+      "id": "RDKit:RLewis_smarts:167",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 167
+    },
+    {
+      "id": "RDKit:RLewis_smarts:168",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 168
+    },
+    {
+      "id": "RDKit:RLewis_smarts:169",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 169
+    },
+    {
+      "id": "RDKit:RLewis_smarts:170",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 170
+    },
+    {
+      "id": "RDKit:RLewis_smarts:171",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 171
+    },
+    {
+      "id": "RDKit:RLewis_smarts:172",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 172
+    },
+    {
+      "id": "RDKit:RLewis_smarts:173",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 173
+    },
+    {
+      "id": "RDKit:RLewis_smarts:174",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 174
+    },
+    {
+      "id": "RDKit:RLewis_smarts:175",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 175
+    },
+    {
+      "id": "RDKit:RLewis_smarts:176",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 176
+    },
+    {
+      "id": "RDKit:RLewis_smarts:177",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 177
+    },
+    {
+      "id": "RDKit:RLewis_smarts:178",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 178
+    },
+    {
+      "id": "RDKit:RLewis_smarts:179",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 179
+    },
+    {
+      "id": "RDKit:RLewis_smarts:180",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 180
+    },
+    {
+      "id": "RDKit:RLewis_smarts:181",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 181
+    },
+    {
+      "id": "RDKit:RLewis_smarts:182",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 182
+    },
+    {
+      "id": "RDKit:RLewis_smarts:183",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 183
+    },
+    {
+      "id": "RDKit:RLewis_smarts:184",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 184
+    },
+    {
+      "id": "RDKit:RLewis_smarts:185",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 185
+    },
+    {
+      "id": "RDKit:RLewis_smarts:186",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 186
+    },
+    {
+      "id": "RDKit:RLewis_smarts:187",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 187
+    },
+    {
+      "id": "RDKit:RLewis_smarts:188",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 188
+    },
+    {
+      "id": "RDKit:RLewis_smarts:189",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 189
+    },
+    {
+      "id": "RDKit:RLewis_smarts:190",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 190
+    },
+    {
+      "id": "RDKit:RLewis_smarts:191",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 191
+    },
+    {
+      "id": "RDKit:RLewis_smarts:192",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 192
+    },
+    {
+      "id": "RDKit:RLewis_smarts:193",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 193
+    },
+    {
+      "id": "RDKit:RLewis_smarts:194",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 194
+    },
+    {
+      "id": "RDKit:RLewis_smarts:195",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 195
+    },
+    {
+      "id": "RDKit:RLewis_smarts:196",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 196
+    },
+    {
+      "id": "RDKit:RLewis_smarts:197",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 197
+    },
+    {
+      "id": "RDKit:RLewis_smarts:198",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 198
+    },
+    {
+      "id": "RDKit:RLewis_smarts:199",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 199
+    },
+    {
+      "id": "RDKit:RLewis_smarts:200",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 200
+    },
+    {
+      "id": "RDKit:RLewis_smarts:201",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 201
+    },
+    {
+      "id": "RDKit:RLewis_smarts:202",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 202
+    },
+    {
+      "id": "RDKit:RLewis_smarts:203",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 203
+    },
+    {
+      "id": "RDKit:RLewis_smarts:204",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 204
+    },
+    {
+      "id": "RDKit:RLewis_smarts:205",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 205
+    },
+    {
+      "id": "RDKit:RLewis_smarts:206",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 206
+    },
+    {
+      "id": "RDKit:RLewis_smarts:207",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 207
+    },
+    {
+      "id": "RDKit:RLewis_smarts:208",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 208
+    },
+    {
+      "id": "RDKit:RLewis_smarts:209",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 209
+    },
+    {
+      "id": "RDKit:RLewis_smarts:210",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 210
+    },
+    {
+      "id": "RDKit:RLewis_smarts:211",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 211
+    },
+    {
+      "id": "RDKit:RLewis_smarts:212",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 212
+    },
+    {
+      "id": "RDKit:RLewis_smarts:213",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 213
+    },
+    {
+      "id": "RDKit:RLewis_smarts:214",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 214
+    },
+    {
+      "id": "RDKit:RLewis_smarts:215",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 215
+    },
+    {
+      "id": "RDKit:RLewis_smarts:216",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 216
+    },
+    {
+      "id": "RDKit:RLewis_smarts:217",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 217
+    },
+    {
+      "id": "RDKit:RLewis_smarts:218",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 218
+    },
+    {
+      "id": "RDKit:RLewis_smarts:219",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 219
+    },
+    {
+      "id": "RDKit:RLewis_smarts:220",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 220
+    },
+    {
+      "id": "RDKit:RLewis_smarts:221",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 221
+    },
+    {
+      "id": "RDKit:RLewis_smarts:222",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 222
+    },
+    {
+      "id": "RDKit:RLewis_smarts:223",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 223
+    },
+    {
+      "id": "RDKit:RLewis_smarts:224",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 224
+    },
+    {
+      "id": "RDKit:RLewis_smarts:225",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 225
+    },
+    {
+      "id": "RDKit:RLewis_smarts:226",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 226
+    },
+    {
+      "id": "RDKit:RLewis_smarts:227",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 227
+    },
+    {
+      "id": "RDKit:RLewis_smarts:228",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 228
+    },
+    {
+      "id": "RDKit:RLewis_smarts:229",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 229
+    },
+    {
+      "id": "RDKit:RLewis_smarts:230",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 230
+    },
+    {
+      "id": "RDKit:RLewis_smarts:231",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 231
+    },
+    {
+      "id": "RDKit:RLewis_smarts:232",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 232
+    },
+    {
+      "id": "RDKit:RLewis_smarts:233",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 233
+    },
+    {
+      "id": "RDKit:RLewis_smarts:234",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 234
+    },
+    {
+      "id": "RDKit:RLewis_smarts:235",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 235
+    },
+    {
+      "id": "RDKit:RLewis_smarts:236",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 236
+    },
+    {
+      "id": "RDKit:RLewis_smarts:237",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 237
+    },
+    {
+      "id": "RDKit:RLewis_smarts:238",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 238
+    },
+    {
+      "id": "RDKit:RLewis_smarts:239",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 239
+    },
+    {
+      "id": "RDKit:RLewis_smarts:240",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 240
+    },
+    {
+      "id": "RDKit:RLewis_smarts:241",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 241
+    },
+    {
+      "id": "RDKit:RLewis_smarts:242",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 242
+    },
+    {
+      "id": "RDKit:RLewis_smarts:243",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 243
+    },
+    {
+      "id": "RDKit:RLewis_smarts:244",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 244
+    },
+    {
+      "id": "RDKit:RLewis_smarts:245",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 245
+    },
+    {
+      "id": "RDKit:RLewis_smarts:246",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 246
+    },
+    {
+      "id": "RDKit:RLewis_smarts:247",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 247
+    },
+    {
+      "id": "RDKit:RLewis_smarts:248",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 248
+    },
+    {
+      "id": "RDKit:RLewis_smarts:249",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 249
+    },
+    {
+      "id": "RDKit:RLewis_smarts:250",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 250
+    },
+    {
+      "id": "RDKit:RLewis_smarts:251",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 251
+    },
+    {
+      "id": "RDKit:RLewis_smarts:252",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 252
+    },
+    {
+      "id": "RDKit:RLewis_smarts:253",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 253
+    },
+    {
+      "id": "RDKit:RLewis_smarts:254",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 254
+    },
+    {
+      "id": "RDKit:RLewis_smarts:255",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 255
+    },
+    {
+      "id": "RDKit:RLewis_smarts:256",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 256
+    },
+    {
+      "id": "RDKit:RLewis_smarts:257",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 257
+    },
+    {
+      "id": "RDKit:RLewis_smarts:258",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 258
+    },
+    {
+      "id": "RDKit:RLewis_smarts:259",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 259
+    },
+    {
+      "id": "RDKit:RLewis_smarts:260",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 260
+    },
+    {
+      "id": "RDKit:RLewis_smarts:261",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 261
+    },
+    {
+      "id": "RDKit:RLewis_smarts:262",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 262
+    },
+    {
+      "id": "RDKit:RLewis_smarts:263",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 263
+    },
+    {
+      "id": "RDKit:RLewis_smarts:264",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 264
+    },
+    {
+      "id": "RDKit:RLewis_smarts:265",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 265
+    },
+    {
+      "id": "RDKit:RLewis_smarts:266",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 266
+    },
+    {
+      "id": "RDKit:RLewis_smarts:267",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 267
+    },
+    {
+      "id": "RDKit:RLewis_smarts:268",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 268
+    },
+    {
+      "id": "RDKit:RLewis_smarts:269",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 269
+    },
+    {
+      "id": "RDKit:RLewis_smarts:270",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 270
+    },
+    {
+      "id": "RDKit:RLewis_smarts:271",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 271
+    },
+    {
+      "id": "RDKit:RLewis_smarts:272",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 272
+    },
+    {
+      "id": "RDKit:RLewis_smarts:273",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 273
+    },
+    {
+      "id": "RDKit:RLewis_smarts:274",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 274
+    },
+    {
+      "id": "RDKit:RLewis_smarts:275",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 275
+    },
+    {
+      "id": "RDKit:RLewis_smarts:276",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 276
+    },
+    {
+      "id": "RDKit:RLewis_smarts:277",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 277
+    },
+    {
+      "id": "RDKit:RLewis_smarts:278",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 278
+    },
+    {
+      "id": "RDKit:RLewis_smarts:279",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 279
+    },
+    {
+      "id": "RDKit:RLewis_smarts:280",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 280
+    },
+    {
+      "id": "RDKit:RLewis_smarts:281",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 281
+    },
+    {
+      "id": "RDKit:RLewis_smarts:282",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 282
+    },
+    {
+      "id": "RDKit:RLewis_smarts:285",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 285
+    },
+    {
+      "id": "RDKit:RLewis_smarts:288",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 288
+    },
+    {
+      "id": "RDKit:RLewis_smarts:290",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 290
+    },
+    {
+      "id": "RDKit:RLewis_smarts:292",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 292
+    },
+    {
+      "id": "RDKit:RLewis_smarts:293",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 293
+    },
+    {
+      "id": "RDKit:RLewis_smarts:294",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 294
+    },
+    {
+      "id": "RDKit:RLewis_smarts:295",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 295
+    },
+    {
+      "id": "RDKit:RLewis_smarts:296",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 296
+    },
+    {
+      "id": "RDKit:RLewis_smarts:297",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 297
+    },
+    {
+      "id": "RDKit:RLewis_smarts:298",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 298
+    },
+    {
+      "id": "RDKit:RLewis_smarts:299",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 299
+    },
+    {
+      "id": "RDKit:RLewis_smarts:301",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 301
+    },
+    {
+      "id": "RDKit:RLewis_smarts:303",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 303
+    },
+    {
+      "id": "RDKit:RLewis_smarts:305",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 305
+    },
+    {
+      "id": "RDKit:RLewis_smarts:306",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 306
+    },
+    {
+      "id": "RDKit:RLewis_smarts:309",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 309
+    },
+    {
+      "id": "RDKit:RLewis_smarts:311",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 311
+    },
+    {
+      "id": "RDKit:RLewis_smarts:314",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 314
+    },
+    {
+      "id": "RDKit:RLewis_smarts:315",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 315
+    },
+    {
+      "id": "RDKit:RLewis_smarts:317",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 317
+    },
+    {
+      "id": "RDKit:RLewis_smarts:319",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 319
+    },
+    {
+      "id": "RDKit:RLewis_smarts:321",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 321
+    },
+    {
+      "id": "RDKit:RLewis_smarts:322",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 322
+    },
+    {
+      "id": "RDKit:RLewis_smarts:323",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 323
+    },
+    {
+      "id": "RDKit:RLewis_smarts:325",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 325
+    },
+    {
+      "id": "RDKit:RLewis_smarts:327",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 327
+    },
+    {
+      "id": "RDKit:RLewis_smarts:328",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 328
+    },
+    {
+      "id": "RDKit:RLewis_smarts:329",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 329
+    },
+    {
+      "id": "RDKit:RLewis_smarts:331",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 331
+    },
+    {
+      "id": "RDKit:RLewis_smarts:333",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 333
+    },
+    {
+      "id": "RDKit:RLewis_smarts:335",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 335
+    },
+    {
+      "id": "RDKit:RLewis_smarts:339",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 339
+    },
+    {
+      "id": "RDKit:RLewis_smarts:343",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 343
+    },
+    {
+      "id": "RDKit:RLewis_smarts:344",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 344
+    },
+    {
+      "id": "RDKit:RLewis_smarts:345",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 345
+    },
+    {
+      "id": "RDKit:RLewis_smarts:346",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 346
+    },
+    {
+      "id": "RDKit:RLewis_smarts:348",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 348
+    },
+    {
+      "id": "RDKit:RLewis_smarts:350",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 350
+    },
+    {
+      "id": "RDKit:RLewis_smarts:352",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 352
+    },
+    {
+      "id": "RDKit:RLewis_smarts:354",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 354
+    },
+    {
+      "id": "RDKit:RLewis_smarts:356",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 356
+    },
+    {
+      "id": "RDKit:RLewis_smarts:358",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 358
+    },
+    {
+      "id": "RDKit:RLewis_smarts:360",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 360
+    },
+    {
+      "id": "RDKit:RLewis_smarts:362",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 362
+    },
+    {
+      "id": "RDKit:RLewis_smarts:364",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 364
+    },
+    {
+      "id": "RDKit:RLewis_smarts:366",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 366
+    },
+    {
+      "id": "RDKit:RLewis_smarts:368",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 368
+    },
+    {
+      "id": "RDKit:RLewis_smarts:370",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 370
+    },
+    {
+      "id": "RDKit:RLewis_smarts:373",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 373
+    },
+    {
+      "id": "RDKit:RLewis_smarts:374",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 374
+    },
+    {
+      "id": "RDKit:RLewis_smarts:375",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 375
+    },
+    {
+      "id": "RDKit:RLewis_smarts:376",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 376
+    },
+    {
+      "id": "RDKit:RLewis_smarts:377",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 377
+    },
+    {
+      "id": "RDKit:RLewis_smarts:378",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 378
+    },
+    {
+      "id": "RDKit:RLewis_smarts:379",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 379
+    },
+    {
+      "id": "RDKit:RLewis_smarts:380",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 380
+    },
+    {
+      "id": "RDKit:RLewis_smarts:381",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 381
+    },
+    {
+      "id": "RDKit:RLewis_smarts:382",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 382
+    },
+    {
+      "id": "RDKit:RLewis_smarts:383",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 383
+    },
+    {
+      "id": "RDKit:RLewis_smarts:384",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 384
+    },
+    {
+      "id": "RDKit:RLewis_smarts:385",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 385
+    },
+    {
+      "id": "RDKit:RLewis_smarts:386",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 386
+    },
+    {
+      "id": "RDKit:RLewis_smarts:387",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 387
+    },
+    {
+      "id": "RDKit:RLewis_smarts:388",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 388
+    },
+    {
+      "id": "RDKit:RLewis_smarts:389",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 389
+    },
+    {
+      "id": "RDKit:RLewis_smarts:390",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 390
+    },
+    {
+      "id": "RDKit:RLewis_smarts:391",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 391
+    },
+    {
+      "id": "RDKit:RLewis_smarts:392",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 392
+    },
+    {
+      "id": "RDKit:RLewis_smarts:393",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 393
+    },
+    {
+      "id": "RDKit:RLewis_smarts:394",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 394
+    },
+    {
+      "id": "RDKit:RLewis_smarts:395",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 395
+    },
+    {
+      "id": "RDKit:RLewis_smarts:396",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 396
+    },
+    {
+      "id": "RDKit:RLewis_smarts:397",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 397
+    },
+    {
+      "id": "RDKit:RLewis_smarts:398",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 398
+    },
+    {
+      "id": "RDKit:RLewis_smarts:399",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 399
+    },
+    {
+      "id": "RDKit:RLewis_smarts:400",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 400
+    },
+    {
+      "id": "RDKit:RLewis_smarts:401",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 401
+    },
+    {
+      "id": "RDKit:RLewis_smarts:402",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 402
+    },
+    {
+      "id": "RDKit:RLewis_smarts:403",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 403
+    },
+    {
+      "id": "RDKit:RLewis_smarts:404",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 404
+    },
+    {
+      "id": "RDKit:RLewis_smarts:405",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 405
+    },
+    {
+      "id": "RDKit:RLewis_smarts:406",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 406
+    },
+    {
+      "id": "RDKit:RLewis_smarts:407",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 407
+    },
+    {
+      "id": "RDKit:RLewis_smarts:408",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 408
+    },
+    {
+      "id": "RDKit:RLewis_smarts:409",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 409
+    },
+    {
+      "id": "RDKit:RLewis_smarts:410",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 410
+    },
+    {
+      "id": "RDKit:RLewis_smarts:411",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 411
+    },
+    {
+      "id": "RDKit:RLewis_smarts:412",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 412
+    },
+    {
+      "id": "RDKit:RLewis_smarts:413",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 413
+    },
+    {
+      "id": "RDKit:RLewis_smarts:414",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 414
+    },
+    {
+      "id": "RDKit:RLewis_smarts:415",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 415
+    },
+    {
+      "id": "RDKit:RLewis_smarts:416",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 416
+    },
+    {
+      "id": "RDKit:RLewis_smarts:417",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 417
+    },
+    {
+      "id": "RDKit:RLewis_smarts:418",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 418
+    },
+    {
+      "id": "RDKit:RLewis_smarts:419",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 419
+    },
+    {
+      "id": "RDKit:RLewis_smarts:420",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 420
+    },
+    {
+      "id": "RDKit:RLewis_smarts:421",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 421
+    },
+    {
+      "id": "RDKit:RLewis_smarts:422",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 422
+    },
+    {
+      "id": "RDKit:RLewis_smarts:423",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 423
+    },
+    {
+      "id": "RDKit:RLewis_smarts:424",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 424
+    },
+    {
+      "id": "RDKit:RLewis_smarts:425",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 425
+    },
+    {
+      "id": "RDKit:RLewis_smarts:426",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 426
+    },
+    {
+      "id": "RDKit:RLewis_smarts:427",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 427
+    },
+    {
+      "id": "RDKit:RLewis_smarts:428",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 428
+    },
+    {
+      "id": "RDKit:RLewis_smarts:429",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 429
+    },
+    {
+      "id": "RDKit:RLewis_smarts:430",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 430
+    },
+    {
+      "id": "RDKit:RLewis_smarts:431",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 431
+    },
+    {
+      "id": "RDKit:RLewis_smarts:432",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 432
+    },
+    {
+      "id": "RDKit:RLewis_smarts:433",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 433
+    },
+    {
+      "id": "RDKit:RLewis_smarts:434",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 434
+    },
+    {
+      "id": "RDKit:RLewis_smarts:435",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 435
+    },
+    {
+      "id": "RDKit:RLewis_smarts:436",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 436
+    },
+    {
+      "id": "RDKit:RLewis_smarts:437",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 437
+    },
+    {
+      "id": "RDKit:RLewis_smarts:438",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 438
+    },
+    {
+      "id": "RDKit:RLewis_smarts:439",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 439
+    },
+    {
+      "id": "RDKit:RLewis_smarts:440",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 440
+    },
+    {
+      "id": "RDKit:RLewis_smarts:441",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 441
+    },
+    {
+      "id": "RDKit:RLewis_smarts:442",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 442
+    },
+    {
+      "id": "RDKit:RLewis_smarts:443",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 443
+    },
+    {
+      "id": "RDKit:RLewis_smarts:444",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 444
+    },
+    {
+      "id": "RDKit:RLewis_smarts:445",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 445
+    },
+    {
+      "id": "RDKit:RLewis_smarts:446",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 446
+    },
+    {
+      "id": "RDKit:RLewis_smarts:447",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 447
+    },
+    {
+      "id": "RDKit:RLewis_smarts:448",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 448
+    },
+    {
+      "id": "RDKit:RLewis_smarts:449",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 449
+    },
+    {
+      "id": "RDKit:RLewis_smarts:450",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 450
+    },
+    {
+      "id": "RDKit:RLewis_smarts:451",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 451
+    },
+    {
+      "id": "RDKit:RLewis_smarts:452",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 452
+    },
+    {
+      "id": "RDKit:RLewis_smarts:453",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 453
+    },
+    {
+      "id": "RDKit:RLewis_smarts:454",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 454
+    },
+    {
+      "id": "RDKit:RLewis_smarts:455",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 455
+    },
+    {
+      "id": "RDKit:RLewis_smarts:456",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 456
+    },
+    {
+      "id": "RDKit:RLewis_smarts:457",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 457
+    },
+    {
+      "id": "RDKit:RLewis_smarts:458",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 458
+    },
+    {
+      "id": "RDKit:RLewis_smarts:459",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 459
+    },
+    {
+      "id": "RDKit:RLewis_smarts:460",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 460
+    },
+    {
+      "id": "RDKit:RLewis_smarts:461",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 461
+    },
+    {
+      "id": "RDKit:RLewis_smarts:462",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 462
+    },
+    {
+      "id": "RDKit:RLewis_smarts:463",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 463
+    },
+    {
+      "id": "RDKit:RLewis_smarts:464",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 464
+    },
+    {
+      "id": "RDKit:RLewis_smarts:465",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 465
+    },
+    {
+      "id": "RDKit:RLewis_smarts:466",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 466
+    },
+    {
+      "id": "RDKit:RLewis_smarts:467",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 467
+    },
+    {
+      "id": "RDKit:RLewis_smarts:468",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 468
+    },
+    {
+      "id": "RDKit:RLewis_smarts:469",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 469
+    },
+    {
+      "id": "RDKit:RLewis_smarts:470",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 470
+    },
+    {
+      "id": "RDKit:RLewis_smarts:471",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 471
+    },
+    {
+      "id": "RDKit:RLewis_smarts:472",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 472
+    },
+    {
+      "id": "RDKit:RLewis_smarts:473",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 473
+    },
+    {
+      "id": "RDKit:RLewis_smarts:474",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 474
+    },
+    {
+      "id": "RDKit:RLewis_smarts:475",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 475
+    },
+    {
+      "id": "RDKit:RLewis_smarts:476",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 476
+    },
+    {
+      "id": "RDKit:RLewis_smarts:477",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 477
+    },
+    {
+      "id": "RDKit:RLewis_smarts:478",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 478
+    },
+    {
+      "id": "RDKit:RLewis_smarts:479",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 479
+    },
+    {
+      "id": "RDKit:RLewis_smarts:480",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 480
+    },
+    {
+      "id": "RDKit:RLewis_smarts:481",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 481
+    },
+    {
+      "id": "RDKit:RLewis_smarts:482",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 482
+    },
+    {
+      "id": "RDKit:RLewis_smarts:483",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 483
+    },
+    {
+      "id": "RDKit:RLewis_smarts:484",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 484
+    },
+    {
+      "id": "RDKit:RLewis_smarts:485",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 485
+    },
+    {
+      "id": "RDKit:RLewis_smarts:486",
+      "category": "external-query",
+      "files": [],
+      "upstream_file": "upstream/RLewis_smarts.txt",
+      "upstream_line": 486
+    }
+  ],
+  "packs": [
+    {
+      "path": "data/FunctionalGroups.smarts",
+      "sha256": "bbef53747b2fd4a1bfd47c0dfc584ffa36789d5ae4b23b1355bbe96697b290f7",
+      "members": [
+        "RDKit:FunctionalGroups:16",
+        "RDKit:FunctionalGroups:17",
+        "RDKit:FunctionalGroups:18",
+        "RDKit:FunctionalGroups:19",
+        "RDKit:FunctionalGroups:20",
+        "RDKit:FunctionalGroups:21",
+        "RDKit:FunctionalGroups:22",
+        "RDKit:FunctionalGroups:23",
+        "RDKit:FunctionalGroups:27",
+        "RDKit:FunctionalGroups:28",
+        "RDKit:FunctionalGroups:29",
+        "RDKit:FunctionalGroups:30",
+        "RDKit:FunctionalGroups:31",
+        "RDKit:FunctionalGroups:32",
+        "RDKit:FunctionalGroups:33",
+        "RDKit:FunctionalGroups:34",
+        "RDKit:FunctionalGroups:35",
+        "RDKit:FunctionalGroups:39",
+        "RDKit:FunctionalGroups:40",
+        "RDKit:FunctionalGroups:41",
+        "RDKit:FunctionalGroups:42",
+        "RDKit:FunctionalGroups:43",
+        "RDKit:FunctionalGroups:44",
+        "RDKit:FunctionalGroups:45",
+        "RDKit:FunctionalGroups:46",
+        "RDKit:FunctionalGroups:47",
+        "RDKit:FunctionalGroups:48",
+        "RDKit:FunctionalGroups:53",
+        "RDKit:FunctionalGroups:54",
+        "RDKit:FunctionalGroups:55",
+        "RDKit:FunctionalGroups:56",
+        "RDKit:FunctionalGroups:57",
+        "RDKit:FunctionalGroups:61",
+        "RDKit:FunctionalGroups:62",
+        "RDKit:FunctionalGroups:63",
+        "RDKit:FunctionalGroups:64",
+        "RDKit:FunctionalGroups:65",
+        "RDKit:FunctionalGroups:66"
+      ],
+      "upstream_file": "upstream/FunctionalGroups.txt"
+    },
+    {
+      "path": "data/Functional_Group_Hierarchy.smarts",
+      "sha256": "1c93568f41e176b284f9c2552962b249d50432a8d412c874c7d08a09e8aef443",
+      "members": [
+        "RDKit:Functional_Group_Hierarchy:12",
+        "RDKit:Functional_Group_Hierarchy:13",
+        "RDKit:Functional_Group_Hierarchy:14",
+        "RDKit:Functional_Group_Hierarchy:16",
+        "RDKit:Functional_Group_Hierarchy:17",
+        "RDKit:Functional_Group_Hierarchy:18",
+        "RDKit:Functional_Group_Hierarchy:19",
+        "RDKit:Functional_Group_Hierarchy:21",
+        "RDKit:Functional_Group_Hierarchy:22",
+        "RDKit:Functional_Group_Hierarchy:23",
+        "RDKit:Functional_Group_Hierarchy:25",
+        "RDKit:Functional_Group_Hierarchy:26",
+        "RDKit:Functional_Group_Hierarchy:27",
+        "RDKit:Functional_Group_Hierarchy:28",
+        "RDKit:Functional_Group_Hierarchy:29",
+        "RDKit:Functional_Group_Hierarchy:30",
+        "RDKit:Functional_Group_Hierarchy:31",
+        "RDKit:Functional_Group_Hierarchy:32",
+        "RDKit:Functional_Group_Hierarchy:33",
+        "RDKit:Functional_Group_Hierarchy:34",
+        "RDKit:Functional_Group_Hierarchy:35",
+        "RDKit:Functional_Group_Hierarchy:36",
+        "RDKit:Functional_Group_Hierarchy:37",
+        "RDKit:Functional_Group_Hierarchy:39",
+        "RDKit:Functional_Group_Hierarchy:40",
+        "RDKit:Functional_Group_Hierarchy:41",
+        "RDKit:Functional_Group_Hierarchy:43",
+        "RDKit:Functional_Group_Hierarchy:44",
+        "RDKit:Functional_Group_Hierarchy:45",
+        "RDKit:Functional_Group_Hierarchy:47",
+        "RDKit:Functional_Group_Hierarchy:48",
+        "RDKit:Functional_Group_Hierarchy:49",
+        "RDKit:Functional_Group_Hierarchy:51",
+        "RDKit:Functional_Group_Hierarchy:52",
+        "RDKit:Functional_Group_Hierarchy:53",
+        "RDKit:Functional_Group_Hierarchy:55",
+        "RDKit:Functional_Group_Hierarchy:56",
+        "RDKit:Functional_Group_Hierarchy:57",
+        "RDKit:Functional_Group_Hierarchy:58",
+        "RDKit:Functional_Group_Hierarchy:59",
+        "RDKit:Functional_Group_Hierarchy:60",
+        "RDKit:Functional_Group_Hierarchy:61",
+        "RDKit:Functional_Group_Hierarchy:62",
+        "RDKit:Functional_Group_Hierarchy:63",
+        "RDKit:Functional_Group_Hierarchy:64",
+        "RDKit:Functional_Group_Hierarchy:66",
+        "RDKit:Functional_Group_Hierarchy:67",
+        "RDKit:Functional_Group_Hierarchy:68",
+        "RDKit:Functional_Group_Hierarchy:70",
+        "RDKit:Functional_Group_Hierarchy:71",
+        "RDKit:Functional_Group_Hierarchy:72",
+        "RDKit:Functional_Group_Hierarchy:74"
+      ],
+      "upstream_file": "upstream/Functional_Group_Hierarchy.txt"
+    },
+    {
+      "path": "data/RLewis_smarts.smarts",
+      "sha256": "ee57cee20260ae2fbf4fb71077d10db0470a680598f9cc19c0cee4dae1af93d9",
+      "members": [
+        "RDKit:RLewis_smarts:8",
+        "RDKit:RLewis_smarts:9",
+        "RDKit:RLewis_smarts:10",
+        "RDKit:RLewis_smarts:11",
+        "RDKit:RLewis_smarts:12",
+        "RDKit:RLewis_smarts:13",
+        "RDKit:RLewis_smarts:14",
+        "RDKit:RLewis_smarts:15",
+        "RDKit:RLewis_smarts:16",
+        "RDKit:RLewis_smarts:17",
+        "RDKit:RLewis_smarts:18",
+        "RDKit:RLewis_smarts:19",
+        "RDKit:RLewis_smarts:20",
+        "RDKit:RLewis_smarts:21",
+        "RDKit:RLewis_smarts:22",
+        "RDKit:RLewis_smarts:23",
+        "RDKit:RLewis_smarts:24",
+        "RDKit:RLewis_smarts:25",
+        "RDKit:RLewis_smarts:26",
+        "RDKit:RLewis_smarts:27",
+        "RDKit:RLewis_smarts:28",
+        "RDKit:RLewis_smarts:29",
+        "RDKit:RLewis_smarts:30",
+        "RDKit:RLewis_smarts:31",
+        "RDKit:RLewis_smarts:32",
+        "RDKit:RLewis_smarts:33",
+        "RDKit:RLewis_smarts:34",
+        "RDKit:RLewis_smarts:35",
+        "RDKit:RLewis_smarts:36",
+        "RDKit:RLewis_smarts:37",
+        "RDKit:RLewis_smarts:38",
+        "RDKit:RLewis_smarts:41",
+        "RDKit:RLewis_smarts:43",
+        "RDKit:RLewis_smarts:44",
+        "RDKit:RLewis_smarts:45",
+        "RDKit:RLewis_smarts:46",
+        "RDKit:RLewis_smarts:47",
+        "RDKit:RLewis_smarts:48",
+        "RDKit:RLewis_smarts:49",
+        "RDKit:RLewis_smarts:50",
+        "RDKit:RLewis_smarts:51",
+        "RDKit:RLewis_smarts:52",
+        "RDKit:RLewis_smarts:53",
+        "RDKit:RLewis_smarts:54",
+        "RDKit:RLewis_smarts:55",
+        "RDKit:RLewis_smarts:56",
+        "RDKit:RLewis_smarts:59",
+        "RDKit:RLewis_smarts:60",
+        "RDKit:RLewis_smarts:61",
+        "RDKit:RLewis_smarts:62",
+        "RDKit:RLewis_smarts:63",
+        "RDKit:RLewis_smarts:64",
+        "RDKit:RLewis_smarts:65",
+        "RDKit:RLewis_smarts:66",
+        "RDKit:RLewis_smarts:69",
+        "RDKit:RLewis_smarts:70",
+        "RDKit:RLewis_smarts:71",
+        "RDKit:RLewis_smarts:72",
+        "RDKit:RLewis_smarts:73",
+        "RDKit:RLewis_smarts:74",
+        "RDKit:RLewis_smarts:75",
+        "RDKit:RLewis_smarts:76",
+        "RDKit:RLewis_smarts:77",
+        "RDKit:RLewis_smarts:78",
+        "RDKit:RLewis_smarts:79",
+        "RDKit:RLewis_smarts:80",
+        "RDKit:RLewis_smarts:83",
+        "RDKit:RLewis_smarts:84",
+        "RDKit:RLewis_smarts:85",
+        "RDKit:RLewis_smarts:86",
+        "RDKit:RLewis_smarts:87",
+        "RDKit:RLewis_smarts:88",
+        "RDKit:RLewis_smarts:89",
+        "RDKit:RLewis_smarts:90",
+        "RDKit:RLewis_smarts:91",
+        "RDKit:RLewis_smarts:92",
+        "RDKit:RLewis_smarts:93",
+        "RDKit:RLewis_smarts:94",
+        "RDKit:RLewis_smarts:95",
+        "RDKit:RLewis_smarts:96",
+        "RDKit:RLewis_smarts:97",
+        "RDKit:RLewis_smarts:98",
+        "RDKit:RLewis_smarts:99",
+        "RDKit:RLewis_smarts:100",
+        "RDKit:RLewis_smarts:101",
+        "RDKit:RLewis_smarts:102",
+        "RDKit:RLewis_smarts:103",
+        "RDKit:RLewis_smarts:104",
+        "RDKit:RLewis_smarts:105",
+        "RDKit:RLewis_smarts:106",
+        "RDKit:RLewis_smarts:107",
+        "RDKit:RLewis_smarts:108",
+        "RDKit:RLewis_smarts:109",
+        "RDKit:RLewis_smarts:110",
+        "RDKit:RLewis_smarts:111",
+        "RDKit:RLewis_smarts:112",
+        "RDKit:RLewis_smarts:113",
+        "RDKit:RLewis_smarts:114",
+        "RDKit:RLewis_smarts:115",
+        "RDKit:RLewis_smarts:116",
+        "RDKit:RLewis_smarts:117",
+        "RDKit:RLewis_smarts:118",
+        "RDKit:RLewis_smarts:119",
+        "RDKit:RLewis_smarts:120",
+        "RDKit:RLewis_smarts:121",
+        "RDKit:RLewis_smarts:122",
+        "RDKit:RLewis_smarts:123",
+        "RDKit:RLewis_smarts:124",
+        "RDKit:RLewis_smarts:125",
+        "RDKit:RLewis_smarts:126",
+        "RDKit:RLewis_smarts:127",
+        "RDKit:RLewis_smarts:128",
+        "RDKit:RLewis_smarts:129",
+        "RDKit:RLewis_smarts:130",
+        "RDKit:RLewis_smarts:131",
+        "RDKit:RLewis_smarts:132",
+        "RDKit:RLewis_smarts:133",
+        "RDKit:RLewis_smarts:134",
+        "RDKit:RLewis_smarts:135",
+        "RDKit:RLewis_smarts:136",
+        "RDKit:RLewis_smarts:137",
+        "RDKit:RLewis_smarts:138",
+        "RDKit:RLewis_smarts:139",
+        "RDKit:RLewis_smarts:140",
+        "RDKit:RLewis_smarts:141",
+        "RDKit:RLewis_smarts:142",
+        "RDKit:RLewis_smarts:143",
+        "RDKit:RLewis_smarts:144",
+        "RDKit:RLewis_smarts:145",
+        "RDKit:RLewis_smarts:146",
+        "RDKit:RLewis_smarts:147",
+        "RDKit:RLewis_smarts:148",
+        "RDKit:RLewis_smarts:149",
+        "RDKit:RLewis_smarts:150",
+        "RDKit:RLewis_smarts:151",
+        "RDKit:RLewis_smarts:152",
+        "RDKit:RLewis_smarts:153",
+        "RDKit:RLewis_smarts:154",
+        "RDKit:RLewis_smarts:155",
+        "RDKit:RLewis_smarts:156",
+        "RDKit:RLewis_smarts:157",
+        "RDKit:RLewis_smarts:158",
+        "RDKit:RLewis_smarts:159",
+        "RDKit:RLewis_smarts:160",
+        "RDKit:RLewis_smarts:161",
+        "RDKit:RLewis_smarts:162",
+        "RDKit:RLewis_smarts:163",
+        "RDKit:RLewis_smarts:164",
+        "RDKit:RLewis_smarts:165",
+        "RDKit:RLewis_smarts:166",
+        "RDKit:RLewis_smarts:167",
+        "RDKit:RLewis_smarts:168",
+        "RDKit:RLewis_smarts:169",
+        "RDKit:RLewis_smarts:170",
+        "RDKit:RLewis_smarts:171",
+        "RDKit:RLewis_smarts:172",
+        "RDKit:RLewis_smarts:173",
+        "RDKit:RLewis_smarts:174",
+        "RDKit:RLewis_smarts:175",
+        "RDKit:RLewis_smarts:176",
+        "RDKit:RLewis_smarts:177",
+        "RDKit:RLewis_smarts:178",
+        "RDKit:RLewis_smarts:179",
+        "RDKit:RLewis_smarts:180",
+        "RDKit:RLewis_smarts:181",
+        "RDKit:RLewis_smarts:182",
+        "RDKit:RLewis_smarts:183",
+        "RDKit:RLewis_smarts:184",
+        "RDKit:RLewis_smarts:185",
+        "RDKit:RLewis_smarts:186",
+        "RDKit:RLewis_smarts:187",
+        "RDKit:RLewis_smarts:188",
+        "RDKit:RLewis_smarts:189",
+        "RDKit:RLewis_smarts:190",
+        "RDKit:RLewis_smarts:191",
+        "RDKit:RLewis_smarts:192",
+        "RDKit:RLewis_smarts:193",
+        "RDKit:RLewis_smarts:194",
+        "RDKit:RLewis_smarts:195",
+        "RDKit:RLewis_smarts:196",
+        "RDKit:RLewis_smarts:197",
+        "RDKit:RLewis_smarts:198",
+        "RDKit:RLewis_smarts:199",
+        "RDKit:RLewis_smarts:200",
+        "RDKit:RLewis_smarts:201",
+        "RDKit:RLewis_smarts:202",
+        "RDKit:RLewis_smarts:203",
+        "RDKit:RLewis_smarts:204",
+        "RDKit:RLewis_smarts:205",
+        "RDKit:RLewis_smarts:206",
+        "RDKit:RLewis_smarts:207",
+        "RDKit:RLewis_smarts:208",
+        "RDKit:RLewis_smarts:209",
+        "RDKit:RLewis_smarts:210",
+        "RDKit:RLewis_smarts:211",
+        "RDKit:RLewis_smarts:212",
+        "RDKit:RLewis_smarts:213",
+        "RDKit:RLewis_smarts:214",
+        "RDKit:RLewis_smarts:215",
+        "RDKit:RLewis_smarts:216",
+        "RDKit:RLewis_smarts:217",
+        "RDKit:RLewis_smarts:218",
+        "RDKit:RLewis_smarts:219",
+        "RDKit:RLewis_smarts:220",
+        "RDKit:RLewis_smarts:221",
+        "RDKit:RLewis_smarts:222",
+        "RDKit:RLewis_smarts:223",
+        "RDKit:RLewis_smarts:224",
+        "RDKit:RLewis_smarts:225",
+        "RDKit:RLewis_smarts:226",
+        "RDKit:RLewis_smarts:227",
+        "RDKit:RLewis_smarts:228",
+        "RDKit:RLewis_smarts:229",
+        "RDKit:RLewis_smarts:230",
+        "RDKit:RLewis_smarts:231",
+        "RDKit:RLewis_smarts:232",
+        "RDKit:RLewis_smarts:233",
+        "RDKit:RLewis_smarts:234",
+        "RDKit:RLewis_smarts:235",
+        "RDKit:RLewis_smarts:236",
+        "RDKit:RLewis_smarts:237",
+        "RDKit:RLewis_smarts:238",
+        "RDKit:RLewis_smarts:239",
+        "RDKit:RLewis_smarts:240",
+        "RDKit:RLewis_smarts:241",
+        "RDKit:RLewis_smarts:242",
+        "RDKit:RLewis_smarts:243",
+        "RDKit:RLewis_smarts:244",
+        "RDKit:RLewis_smarts:245",
+        "RDKit:RLewis_smarts:246",
+        "RDKit:RLewis_smarts:247",
+        "RDKit:RLewis_smarts:248",
+        "RDKit:RLewis_smarts:249",
+        "RDKit:RLewis_smarts:250",
+        "RDKit:RLewis_smarts:251",
+        "RDKit:RLewis_smarts:252",
+        "RDKit:RLewis_smarts:253",
+        "RDKit:RLewis_smarts:254",
+        "RDKit:RLewis_smarts:255",
+        "RDKit:RLewis_smarts:256",
+        "RDKit:RLewis_smarts:257",
+        "RDKit:RLewis_smarts:258",
+        "RDKit:RLewis_smarts:259",
+        "RDKit:RLewis_smarts:260",
+        "RDKit:RLewis_smarts:261",
+        "RDKit:RLewis_smarts:262",
+        "RDKit:RLewis_smarts:263",
+        "RDKit:RLewis_smarts:264",
+        "RDKit:RLewis_smarts:265",
+        "RDKit:RLewis_smarts:266",
+        "RDKit:RLewis_smarts:267",
+        "RDKit:RLewis_smarts:268",
+        "RDKit:RLewis_smarts:269",
+        "RDKit:RLewis_smarts:270",
+        "RDKit:RLewis_smarts:271",
+        "RDKit:RLewis_smarts:272",
+        "RDKit:RLewis_smarts:273",
+        "RDKit:RLewis_smarts:274",
+        "RDKit:RLewis_smarts:275",
+        "RDKit:RLewis_smarts:276",
+        "RDKit:RLewis_smarts:277",
+        "RDKit:RLewis_smarts:278",
+        "RDKit:RLewis_smarts:279",
+        "RDKit:RLewis_smarts:280",
+        "RDKit:RLewis_smarts:281",
+        "RDKit:RLewis_smarts:282",
+        "RDKit:RLewis_smarts:285",
+        "RDKit:RLewis_smarts:288",
+        "RDKit:RLewis_smarts:290",
+        "RDKit:RLewis_smarts:292",
+        "RDKit:RLewis_smarts:293",
+        "RDKit:RLewis_smarts:294",
+        "RDKit:RLewis_smarts:295",
+        "RDKit:RLewis_smarts:296",
+        "RDKit:RLewis_smarts:297",
+        "RDKit:RLewis_smarts:298",
+        "RDKit:RLewis_smarts:299",
+        "RDKit:RLewis_smarts:301",
+        "RDKit:RLewis_smarts:303",
+        "RDKit:RLewis_smarts:305",
+        "RDKit:RLewis_smarts:306",
+        "RDKit:RLewis_smarts:309",
+        "RDKit:RLewis_smarts:311",
+        "RDKit:RLewis_smarts:314",
+        "RDKit:RLewis_smarts:315",
+        "RDKit:RLewis_smarts:317",
+        "RDKit:RLewis_smarts:319",
+        "RDKit:RLewis_smarts:321",
+        "RDKit:RLewis_smarts:322",
+        "RDKit:RLewis_smarts:323",
+        "RDKit:RLewis_smarts:325",
+        "RDKit:RLewis_smarts:327",
+        "RDKit:RLewis_smarts:328",
+        "RDKit:RLewis_smarts:329",
+        "RDKit:RLewis_smarts:331",
+        "RDKit:RLewis_smarts:333",
+        "RDKit:RLewis_smarts:335",
+        "RDKit:RLewis_smarts:339",
+        "RDKit:RLewis_smarts:343",
+        "RDKit:RLewis_smarts:344",
+        "RDKit:RLewis_smarts:345",
+        "RDKit:RLewis_smarts:346",
+        "RDKit:RLewis_smarts:348",
+        "RDKit:RLewis_smarts:350",
+        "RDKit:RLewis_smarts:352",
+        "RDKit:RLewis_smarts:354",
+        "RDKit:RLewis_smarts:356",
+        "RDKit:RLewis_smarts:358",
+        "RDKit:RLewis_smarts:360",
+        "RDKit:RLewis_smarts:362",
+        "RDKit:RLewis_smarts:364",
+        "RDKit:RLewis_smarts:366",
+        "RDKit:RLewis_smarts:368",
+        "RDKit:RLewis_smarts:370",
+        "RDKit:RLewis_smarts:373",
+        "RDKit:RLewis_smarts:374",
+        "RDKit:RLewis_smarts:375",
+        "RDKit:RLewis_smarts:376",
+        "RDKit:RLewis_smarts:377",
+        "RDKit:RLewis_smarts:378",
+        "RDKit:RLewis_smarts:379",
+        "RDKit:RLewis_smarts:380",
+        "RDKit:RLewis_smarts:381",
+        "RDKit:RLewis_smarts:382",
+        "RDKit:RLewis_smarts:383",
+        "RDKit:RLewis_smarts:384",
+        "RDKit:RLewis_smarts:385",
+        "RDKit:RLewis_smarts:386",
+        "RDKit:RLewis_smarts:387",
+        "RDKit:RLewis_smarts:388",
+        "RDKit:RLewis_smarts:389",
+        "RDKit:RLewis_smarts:390",
+        "RDKit:RLewis_smarts:391",
+        "RDKit:RLewis_smarts:392",
+        "RDKit:RLewis_smarts:393",
+        "RDKit:RLewis_smarts:394",
+        "RDKit:RLewis_smarts:395",
+        "RDKit:RLewis_smarts:396",
+        "RDKit:RLewis_smarts:397",
+        "RDKit:RLewis_smarts:398",
+        "RDKit:RLewis_smarts:399",
+        "RDKit:RLewis_smarts:400",
+        "RDKit:RLewis_smarts:401",
+        "RDKit:RLewis_smarts:402",
+        "RDKit:RLewis_smarts:403",
+        "RDKit:RLewis_smarts:404",
+        "RDKit:RLewis_smarts:405",
+        "RDKit:RLewis_smarts:406",
+        "RDKit:RLewis_smarts:407",
+        "RDKit:RLewis_smarts:408",
+        "RDKit:RLewis_smarts:409",
+        "RDKit:RLewis_smarts:410",
+        "RDKit:RLewis_smarts:411",
+        "RDKit:RLewis_smarts:412",
+        "RDKit:RLewis_smarts:413",
+        "RDKit:RLewis_smarts:414",
+        "RDKit:RLewis_smarts:415",
+        "RDKit:RLewis_smarts:416",
+        "RDKit:RLewis_smarts:417",
+        "RDKit:RLewis_smarts:418",
+        "RDKit:RLewis_smarts:419",
+        "RDKit:RLewis_smarts:420",
+        "RDKit:RLewis_smarts:421",
+        "RDKit:RLewis_smarts:422",
+        "RDKit:RLewis_smarts:423",
+        "RDKit:RLewis_smarts:424",
+        "RDKit:RLewis_smarts:425",
+        "RDKit:RLewis_smarts:426",
+        "RDKit:RLewis_smarts:427",
+        "RDKit:RLewis_smarts:428",
+        "RDKit:RLewis_smarts:429",
+        "RDKit:RLewis_smarts:430",
+        "RDKit:RLewis_smarts:431",
+        "RDKit:RLewis_smarts:432",
+        "RDKit:RLewis_smarts:433",
+        "RDKit:RLewis_smarts:434",
+        "RDKit:RLewis_smarts:435",
+        "RDKit:RLewis_smarts:436",
+        "RDKit:RLewis_smarts:437",
+        "RDKit:RLewis_smarts:438",
+        "RDKit:RLewis_smarts:439",
+        "RDKit:RLewis_smarts:440",
+        "RDKit:RLewis_smarts:441",
+        "RDKit:RLewis_smarts:442",
+        "RDKit:RLewis_smarts:443",
+        "RDKit:RLewis_smarts:444",
+        "RDKit:RLewis_smarts:445",
+        "RDKit:RLewis_smarts:446",
+        "RDKit:RLewis_smarts:447",
+        "RDKit:RLewis_smarts:448",
+        "RDKit:RLewis_smarts:449",
+        "RDKit:RLewis_smarts:450",
+        "RDKit:RLewis_smarts:451",
+        "RDKit:RLewis_smarts:452",
+        "RDKit:RLewis_smarts:453",
+        "RDKit:RLewis_smarts:454",
+        "RDKit:RLewis_smarts:455",
+        "RDKit:RLewis_smarts:456",
+        "RDKit:RLewis_smarts:457",
+        "RDKit:RLewis_smarts:458",
+        "RDKit:RLewis_smarts:459",
+        "RDKit:RLewis_smarts:460",
+        "RDKit:RLewis_smarts:461",
+        "RDKit:RLewis_smarts:462",
+        "RDKit:RLewis_smarts:463",
+        "RDKit:RLewis_smarts:464",
+        "RDKit:RLewis_smarts:465",
+        "RDKit:RLewis_smarts:466",
+        "RDKit:RLewis_smarts:467",
+        "RDKit:RLewis_smarts:468",
+        "RDKit:RLewis_smarts:469",
+        "RDKit:RLewis_smarts:470",
+        "RDKit:RLewis_smarts:471",
+        "RDKit:RLewis_smarts:472",
+        "RDKit:RLewis_smarts:473",
+        "RDKit:RLewis_smarts:474",
+        "RDKit:RLewis_smarts:475",
+        "RDKit:RLewis_smarts:476",
+        "RDKit:RLewis_smarts:477",
+        "RDKit:RLewis_smarts:478",
+        "RDKit:RLewis_smarts:479",
+        "RDKit:RLewis_smarts:480",
+        "RDKit:RLewis_smarts:481",
+        "RDKit:RLewis_smarts:482",
+        "RDKit:RLewis_smarts:483",
+        "RDKit:RLewis_smarts:484",
+        "RDKit:RLewis_smarts:485",
+        "RDKit:RLewis_smarts:486"
+      ],
+      "upstream_file": "upstream/RLewis_smarts.txt"
+    }
+  ]
+}

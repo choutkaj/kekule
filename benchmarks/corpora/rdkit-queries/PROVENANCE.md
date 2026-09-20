@@ -19,8 +19,9 @@ contain SMARTS, a tab, and the source label. Source IDs retain table names and
 one-based original line numbers. Duplicate queries at different source rows
 remain distinct observations. Tests verify complete, unfiltered extraction.
 
-All 518 queries parse in the pinned independent reference. Native unsupported
-grammar remains an error, never an exclusion or an inferred empty query. This
-corpus measures parsing and graph size; predicate semantics require behavioral
-matching tests. The initial native result is 384 agreements and 134 explicit
-unsupported-grammar errors, with no count disagreements.
+All 518 queries are registered in the standard `query.smarts` benchmark. Each is
+parsed and matched against every target in `benchmarks/query-smarts.json`.
+Unsupported grammar and resource failures remain errors; no query is removed
+based on either engine's result. Original extraction is identical to the earlier
+`smarts-fixtures/rdkit-queries` copy, which remains available for historical runs.
+See [SMARTS benchmark validation](../../QUERY-SMARTS-VALIDATION.md).

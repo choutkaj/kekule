@@ -85,3 +85,17 @@ path = "fuzz_targets/trajectory_xtc.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "smarts"
+path = "fuzz_targets/smarts.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "smarts_match"
+path = "fuzz_targets/smarts_match.rs"
+test = false
+doc = false
+bench = false

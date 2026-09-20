@@ -20,6 +20,8 @@ mod fused_tests;
 pub enum AromaticityError {
     UnsupportedElement(AtomId),
     RingPerception(RingPerceptionError),
+    /// MDL requires an identified SSSR-like ring set, not fallback cycles.
+    IncompatibleRingBasis,
     /// Aromaticity work was exhausted; no partial assignment is installed.
     ResourceLimit {
         limit: usize,
@@ -78,6 +80,9 @@ enum AromaticElectronDonorType {
 impl fmt::Display for AromaticityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::IncompatibleRingBasis => {
+                f.write_str("MDL aromaticity requires compatible SSSR ring perception")
+            }
             Self::UnsupportedElement(id) => {
                 write!(f, "unsupported aromaticity element at atom {id}")
             }
@@ -157,13 +162,12 @@ fn perceive_aromaticity_with_options_in_place(
     model: AromaticityModel,
     options: AromaticityOptions,
 ) -> std::result::Result<(), AromaticityError> {
-    match model {
-        AromaticityModel::RdkitLike => perceive_rdkit_like_aromaticity(mol, options),
-    }
+    perceive_localized_aromaticity(mol, model, options)
 }
 
-fn perceive_rdkit_like_aromaticity(
+fn perceive_localized_aromaticity(
     mol: &mut Molecule,
+    model: AromaticityModel,
     options: AromaticityOptions,
 ) -> std::result::Result<(), AromaticityError> {
     let mut work = AromaticityWork::new(options.max_total_work);
@@ -173,6 +177,11 @@ fn perceive_rdkit_like_aromaticity(
         perceive_ring_set_with_options(mol, options.ring_options)
             .map_err(AromaticityError::RingPerception)?;
     }
+    if model == AromaticityModel::Mdl
+        && mol.perception().ring_basis_model() != Some(RingBasisModel::FiguerasSssrLike)
+    {
+        return Err(AromaticityError::IncompatibleRingBasis);
+    }
     // Charge the complete stored ring family before cloning it, including
     // expert-installed families that bypass ring enumeration limits.
     for ring in mol.ring_set().expect("rings installed").rings() {
@@ -181,15 +190,16 @@ fn perceive_rdkit_like_aromaticity(
         work.charge(ring.bonds.len())?;
     }
     let ring_set = mol.ring_set().expect("rings installed").clone();
-    assign_rdkit_like_localized_aromaticity(mol, &ring_set, &mut work)
+    assign_localized_aromaticity(mol, &ring_set, model, &mut work)
 }
 
-fn assign_rdkit_like_localized_aromaticity(
+fn assign_localized_aromaticity(
     mol: &mut Molecule,
     ring_set: &RingSet,
+    model: AromaticityModel,
     work: &mut AromaticityWork,
 ) -> std::result::Result<(), AromaticityError> {
-    mol.begin_aromaticity(AromaticityModel::RdkitLike);
+    mol.begin_aromaticity(model);
 
     let mut donors = vec![AromaticElectronDonorType::None; mol.graph.atom_slot_count()];
     let mut atom_candidates = vec![false; mol.graph.atom_slot_count()];
@@ -197,7 +207,17 @@ fn assign_rdkit_like_localized_aromaticity(
         let donor = rdkit_localized_atom_donor_type(mol, atom_id, atom);
         donors[atom_id.index()] = donor;
         atom_candidates[atom_id.index()] =
-            atom_is_rdkit_aromatic_candidate_for_donor(mol, atom_id, atom, donor);
+            atom_is_rdkit_aromatic_candidate_for_donor(mol, atom_id, atom, donor)
+                && (model != AromaticityModel::Mdl
+                    || (matches!(atom.element.atomic_number(), 6 | 7)
+                        && donor == AromaticElectronDonorType::One
+                        && atom_noncyclic_pi_neighbor(mol, atom_id).is_none()
+                        && !mol
+                            .incident_bonds(atom_id)
+                            .expect("valid atom")
+                            .any(|(_, b)| {
+                                matches!(b.order, BondOrder::Triple | BondOrder::Quadruple)
+                            })));
     }
 
     let candidates = ring_set
@@ -220,6 +240,7 @@ fn assign_rdkit_like_localized_aromaticity(
             &neighbors,
             &component,
             &donors,
+            if model == AromaticityModel::Mdl { 6 } else { 0 },
             work,
         )?;
     }
@@ -385,6 +406,7 @@ fn apply_rdkit_huckel_to_fused_component(
     neighbors: &[Vec<usize>],
     component: &[usize],
     donors: &[AromaticElectronDonorType],
+    min_ring_size: usize,
     work: &mut AromaticityWork,
 ) -> std::result::Result<(), AromaticityError> {
     let component_bonds = component
@@ -415,7 +437,9 @@ fn apply_rdkit_huckel_to_fused_component(
                     .into_iter()
                     .filter_map(|(atom, count)| (count <= 2).then_some(donors[atom.index()]))
                     .collect::<Vec<_>>();
-                if huckel_electron_count_for_donors(&subset_donors).is_none() {
+                if subset_donors.len() < min_ring_size
+                    || huckel_electron_count_for_donors(&subset_donors).is_none()
+                {
                     return Ok(ControlFlow::Continue(()));
                 }
                 mark_rdkit_aromatic_subset(mol, rings, subset, &mut done_bonds);

@@ -21,6 +21,8 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+#![doc = include_str!("dialect.md")]
+
 mod expression;
 mod graph;
 mod smarts;

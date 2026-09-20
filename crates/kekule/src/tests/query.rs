@@ -405,16 +405,9 @@ fn smarts_hydrogen_primitive_disambiguation_matches_rdkit() {
 #[test]
 fn bounded_smarts_rejects_unsupported_semantics_instead_of_approximating() {
     for (input, expected_fragment) in [
-        ("[$(C=O)]", "recursive SMARTS"),
         ("[C@AL1]", "stereochemical atom"),
         ("[C@?]", "stereochemical atom"),
-        ("[C!@]", "negated stereochemical atom"),
-        ("[C@,N]", "disjunctions containing stereochemical atom"),
-        ("C/?C=C\\C", "directional bond alternatives"),
-        ("[C:R]", "atom maps"),
-        ("[R2]", "ring-membership counts"),
-        ("[r5]", "ring-size predicates"),
-        ("[v4]", "valence"),
+        ("C/?C=C\\C", "unspecified directional"),
         ("[^2]", "hybridization"),
         ("(C.C)", "component-level"),
     ] {
@@ -442,6 +435,7 @@ fn malformed_smarts_returns_structured_syntax_errors() {
         "C11",
         "C1.C1",
         "[C,N,]",
+        "[C:R]",
         "[C@@@]",
         "[C@](F)(Cl)(Br)(I)N",
         "F/C(\\Br)=C/Cl",

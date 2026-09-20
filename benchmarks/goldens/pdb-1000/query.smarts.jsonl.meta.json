@@ -1,12 +1,12 @@
 {
   "schema": 2,
-  "contract_sha256": "55137d7e199da4baeb425d7172467b7b5b8f0efbe0e45c5b8feca1077c546df7",
+  "contract_sha256": "6968f09d5fd6ffa7b6d99640ab0392d38d5b3be6c16028818419458feb1248bc",
   "dataset": "pdb-1000",
   "feature": "query.smarts",
   "input_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171",
-  "sha256": "03f574b74e7ac259655dd89f5a3f5562bc7b554f5ba1c30a14dbbdc83ce9abc3",
+  "sha256": "c7fdbf62bfd6bf8e5057604efe14d597aef5dc51c459a34c93442fdd4015c596",
   "reference": null,
-  "reference_code_sha256": null,
-  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded.",
+  "reference_code_sha256": "d1a710884fd07f24ad9df50d22b58dfb0f7efc68a49cf8e71860a402dcfa8759",
+  "origin": "independent generation; compatibility metadata migrated from contract ce42dab909b1d83951086688eef3f866cedbd4d03fb6b2f6ebb13a64a47eea9f: observations contain no radical/spin/DSSP fields; payload and generator identity unchanged",
   "cases": 1000
 }

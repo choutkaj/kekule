@@ -432,40 +432,32 @@ exhaustion remains an explicit error and is included in the reported coverage.
 
 Substructure retains every query-to-target mapping without a match
 cap. The shared 18-query input is [queries.smarts](queries.smarts).
-Mappings retain query-atom order; only the list of complete mappings is sorted.
-Both engines enforce local stereo constraints under the atom mapping (RDKit
-`useChirality=True`). The current shared queries are achiral, so these stored
-comparisons alone do not establish stereochemical matching coverage.
-Query automorphisms are included, and resource exhaustion remains an error
-rather than a partial successful match list. SMARTS single/double bond types
-exclude aromatic bonds, while aromatic bond types exclude higher represented
-orders even when those bonds carry an aromaticity flag. The low-level query
-predicates for localized order and aromatic membership retain their independent
-meanings; the SMARTS parser combines them to express these bond types.
-`query.smarts` reads each text record's first whitespace-delimited token as
-SMARTS, with the remainder as its title. Molecular corpora supply SMILES strings
-to exercise the overlapping grammar. The separate `rdkit-queries` corpus adds
-all 518 query rows from three pinned RDKit 2026.03.3 functional-group/reactivity
-tables, including recursive and other currently unsupported grammar. Its source
-tables, license, checksums and original line identities are retained; no query is
-selected or rewritten to make either parser succeed. These `.smarts` inputs are
-not used as molecules by other features. This does not validate molecular
-interpretation or CXSMILES extensions. The comparison checks syntax
-acceptance and atom/bond counts, not predicate equivalence. The behavioral
-searches above supplement this limited coverage. Tetrahedral and directional
-stereo are supported; unsupported stereo classes or Boolean stereo expressions
-remain reported errors, neither stripped nor excluded. Directional SMARTS bonds
-use RDKit's single-or-aromatic predicate; an isolated direction adds no stereo
-relationship. Paired directions constrain local geometry. This differs from
-an explicit `-` bond, which excludes aromatic bonds.
+`query.smarts` retains syntax and graph-size checks and compares complete ordered
+query-to-target mappings on the 16 externally supplied molecules pinned in
+[query-smarts.json](query-smarts.json). Stereo is enabled; automorphisms are
+retained. Tags and their ordered projections are asserted without applying
+force-field-specific tag rules. Each source query is one case, and every target
+must agree. The `rdkit-queries` corpus contains all 518 query rows from three
+RDKit tables. Molecular SMILES inputs remain query cases as before. See
+[SMARTS benchmark validation](QUERY-SMARTS-VALIDATION.md) for coverage and limits.
 
-Connectivity `X` includes graph neighbors and declared/inferred nongraph
-hydrogens; degree `D` counts graph neighbors only. Ring connectivity `xN` counts
-incident bonds classified cyclic by installed ring perception, independently
-of the selected ring basis. Bare `X` means exactly one connection, whereas bare
-`x` means any ring membership. The matcher requires the corresponding perception
-even under negation. Valence `v`, hybridization, recursive queries and numeric
-selected-ring predicates remain explicitly unsupported.
+```text
+cargo benchmark --feature query.smarts --dataset rdkit-queries
+```
+
+`algo.aromaticity.rdkit-like` and `algo.aromaticity.mdl` are independent features.
+Both compare all indexed atom flags and all endpoint-qualified bond flags,
+exactly. The MDL adapter explicitly selects `AromaticityModel::Mdl`; the RDKit
+reference kekulizes with `clearAromaticFlags=True` before calling
+`SetAromaticity(..., AROMATICITY_MDL)`. Default perception/sanitization and the
+explicit model application are included in the timed workflow. Molecules keep
+their supplied hydrogen representation. Invalid inputs and perception failures
+remain reported errors. See [MDL results](MDL-VALIDATION.md) for measured coverage.
+
+```text
+cargo benchmark --feature algo.aromaticity.mdl --dataset smoke
+cargo benchmark --feature algo.aromaticity.mdl --dataset all
+```
 
 mmCIF compares all decoded tags/values, including non-atom categories and distinct
 `.`/`?` tokens. It does not claim full biomolecular topology interpretation
@@ -508,6 +500,18 @@ unrecorded original generator fingerprint; it has not been fabricated. The
 manifest is published only after complete generation, as the commit marker.
 Repository text fingerprints normalize CRLF to LF, so checkout line endings do
 not invalidate a run. External input bytes and compressed goldens use exact hashes.
+
+SMARTS version 2 additionally binds its target panel and limits into a
+feature-specific contract hash: SHA256 of the base contract's hex digest, a
+newline, and the LF-normalized `query-smarts.json`. Reports carry this override
+in `implementation.feature_contracts`. Count-only references fail validation;
+historical reports remain visible as stale. Other features retain the base
+contract. Previous SMARTS references are archived in
+`goldens/legacy/query-smarts-v1/`; the standard catalogue ignores that archive.
+Integration with observation contract 3 explicitly updates only the compatibility
+metadata of SMARTS mappings and MDL flags, which contain no changed radical/spin
+or DSSP fields. Payloads and original generator identities remain unchanged;
+each affected manifest records its previous contract in `origin`.
 
 Goldens are streamed with one lookahead record, ordered by fixture, record index
 and source ID. Successful records require reference and input identities; selected
@@ -558,8 +562,9 @@ that sample as unbiased. Current counts are in [GOLDENS.md](GOLDENS.md).
 
 Large inputs belong in `corpora/<dataset>/data/`; full golden archives belong in
 `goldens/<dataset>/`. Keep local bundles, alternate generations and reports under
-the ignored repository `target/` directory, or outside the checkout. Only smoke
-payloads and provenance belong in commits. `data.py verify`, `data.py pack`, and
+the ignored repository `target/` directory, or outside the checkout. Smoke and
+the small RDKit query corpus, their reference payloads, and provenance belong in
+commits. `data.py verify`, `data.py pack`, and
 `data.py unpack` operate on supplied inputs only (see `--help`).
 Do not synthesize benchmark molecules. Toy inputs belong in focused regressions.
 
