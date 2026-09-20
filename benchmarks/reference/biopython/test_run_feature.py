@@ -28,6 +28,19 @@ class BiopythonReferenceTests(unittest.TestCase):
         with self.assertRaises((ValueError,KeyError)):
             self.evaluate('data_first\n_x.a 1\ndata_second\n_x.a 2\n')
 
+    def test_embedded_quotes_follow_cif_11_delimiter_rules(self):
+        value = self.evaluate('data_x\n_x.text \'don\'t stop\'\nloop_\n_x.name\n_x.id\n"a"b" 1\n')
+        self.assertEqual(value['blocks'][0]['values'], {
+            '_x.text': ["don't stop"], '_x.name': ['a"b'], '_x.id': ['1']})
+        for literal in ["'value'junk", '"value"junk', "'value'#comment"]:
+            with self.subTest(literal=literal), self.assertRaises(ValueError):
+                self.evaluate(f'data_x\n_x.text {literal}\n')
+
+    def test_multiline_trailing_whitespace_is_biopython_policy(self):
+        value = self.evaluate('data_x\n_x.text\n;  first  \n  second\t\n;\n_x.quoted \' padded \'\n')
+        self.assertEqual(value['blocks'][0]['values'], {
+            '_x.text': ['  first\n  second'], '_x.quoted': [' padded ']})
+
     def test_dssp_receives_original_bytes_including_archive_metadata(self):
         text='data_source\n_pdbx_database_related.db_name PDB\n'
         with tempfile.TemporaryDirectory() as directory:

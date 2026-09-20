@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
   "dataset": "smoke",
   "feature": "algo.aromaticity.mdl",
   "input_lock_sha256": "f071f66843ebccd2fe0a0417db961f5ce228d01083c84943e2357afab21fedae",
@@ -10,6 +10,6 @@
     "version": "2026.03.3"
   },
   "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
-  "origin": "independent generation",
+  "origin": "independent generation; compatibility metadata migrated from contract 0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71: observations contain no radical/spin/DSSP fields; payload and generator identity unchanged",
   "cases": 26
 }

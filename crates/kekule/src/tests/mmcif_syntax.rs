@@ -266,6 +266,39 @@ fn mmcif_1ake_preserves_declared_sequence_and_polymer_connectivity() {
 }
 
 #[test]
+fn mmcif_quoted_values_allow_embedded_delimiters() {
+    for (literal, expected) in [
+        ("'don't stop'", "don't stop"),
+        ("\"a\"quoted\"word\"", "a\"quoted\"word"),
+        ("'a'#b'", "a'#b"),
+        ("'a''", "a'"),
+        ("''", ""),
+    ] {
+        for separator in [" ", "\t", "\n"] {
+            let source = format!("data_x\n_x.text {literal}{separator}_x.after yes\n");
+            let document = mmcif::parse_str(&source).unwrap();
+            let block = &document.blocks()[0];
+            assert_eq!(block.item("_x.text").unwrap().text(), expected);
+            assert_eq!(block.item("_x.after").unwrap().text(), "yes");
+        }
+    }
+    let document =
+        mmcif::parse_str("data_x\nloop_\n_x.text\n_x.id\n'don't stop' 1\n\"a\"b\" 2\n").unwrap();
+    let table = document.blocks()[0].loop_with_tag("_x.text").unwrap();
+    assert_eq!(table.value(0, "_x.text").unwrap().text(), "don't stop");
+    assert_eq!(table.value(1, "_x.text").unwrap().text(), "a\"b");
+}
+
+#[test]
+fn mmcif_quotes_must_close_before_whitespace_or_end_of_line() {
+    for literal in ["'value'junk", "\"value\"junk", "'value'#comment"] {
+        let error = mmcif::parse_str(&format!("data_x\n_x.text {literal}\n")).unwrap_err();
+        assert_eq!(error.line(), 2);
+        assert!(error.message().contains("unterminated quoted value"));
+    }
+}
+
+#[test]
 fn mmcif_semicolon_text_preserves_opening_content_and_whitespace() {
     // CIF 1.1 syntax paragraphs 17–20: the closing delimiter's preceding
     // newline is excluded; other text (including initial blank lines) remains.

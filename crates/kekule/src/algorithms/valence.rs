@@ -80,15 +80,17 @@ pub fn perceive_valence_with_options(
     model: ValenceModel,
     options: ValenceOptions,
 ) -> std::result::Result<(), ValenceError> {
-    match model {
-        ValenceModel::RdkitLike => perceive_rdkit_like_valence(mol, options),
-    }
+    let assignments = match model {
+        ValenceModel::RdkitLike => rdkit_valence_assignments(mol, options)?,
+    };
+    mol.install_valence(model, assignments);
+    Ok(())
 }
 
-fn perceive_rdkit_like_valence(
-    mol: &mut Molecule,
+pub(crate) fn rdkit_valence_assignments(
+    mol: &Molecule,
     options: ValenceOptions,
-) -> std::result::Result<(), ValenceError> {
+) -> std::result::Result<BTreeMap<AtomId, u8>, ValenceError> {
     let mut assignments = BTreeMap::new();
     let mut issues = Vec::new();
     for (atom_id, atom) in mol.atoms() {
@@ -107,8 +109,7 @@ fn perceive_rdkit_like_valence(
     if !issues.is_empty() {
         return Err(ValenceError { issues });
     }
-    mol.install_valence(ValenceModel::RdkitLike, assignments);
-    Ok(())
+    Ok(assignments)
 }
 
 /// Derive an uninstalled assignment with the same permissive behavior as
@@ -116,6 +117,64 @@ fn perceive_rdkit_like_valence(
 /// no installed hydrogen assignment.
 pub(crate) fn rdkit_implicit_hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
     rdkit_atom_implicit_hydrogen_count(mol, atom_id, atom, false).unwrap_or(0)
+}
+
+/// Radical-electron count implied by a fixed-H SMILES bracket atom after
+/// localization. Mirrors RDKit's octet/duet and allowed-valence conventions,
+/// without assigning a spin multiplicity or changing a published graph.
+/// `hydrogens` is the count that the bracket actually encodes, not a storage policy.
+pub(crate) fn rdkit_bracket_radical_electrons(
+    atom: &Atom,
+    bond_valence: usize,
+    degree: usize,
+    hydrogens: u8,
+) -> u8 {
+    // The outer-electron entries of RDKit 2026.03.3's periodic table. These
+    // belong to this valence model; they are not electronic ground states.
+    const OUTER_ELECTRONS: [u8; 119] = [
+        0, 1, 2, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+        2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 3,
+        4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 4, 5, 6, 7, 8, 9, 10, 11, 2, 3, 4, 5, 6, 7, 8, 1,
+        2, 3, 4, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, 2,
+    ];
+    let number = atom.element.atomic_number();
+    let rule = rdkit_neutral_valence_rule(number)
+        .expect("supported elements have RDKit-like valence rules");
+    let outer = i64::from(OUTER_ELECTRONS[usize::from(number)]);
+    let charge = i64::from(atom.formal_charge);
+    if rule.is_only_unrestricted() {
+        // With no preferred valence, bonded metal centers do not acquire
+        // invented radicals. Isolated atoms use only electron-count parity.
+        return if degree == 0 {
+            ((outer - charge).max(0) % 2) as u8
+        } else {
+            0
+        };
+    }
+    let Ok(occupied) = i32::try_from(bond_valence.saturating_add(usize::from(hydrogens))) else {
+        // Arbitrarily large represented valence cannot leave an octet deficit.
+        return 0;
+    };
+    let occupied = i64::from(occupied);
+    let shell = if number <= 2 { 2 } else { 8 };
+    let mut electrons = shell - outer - occupied + charge;
+    if electrons < 0 {
+        electrons = 0;
+        if rule.fixed.len() > 1 {
+            electrons = rule
+                .fixed
+                .iter()
+                .map(|valence| i64::from(*valence) - occupied + charge)
+                .find(|deficit| *deficit >= 0)
+                .unwrap_or(0);
+        }
+    }
+    let available = outer - occupied - charge;
+    if available >= 0 {
+        electrons = electrons.min(available);
+    }
+    u8::try_from(electrons).expect("octet deficits with i8 charges fit in u8")
 }
 
 fn rdkit_atom_implicit_hydrogen_count(
@@ -127,7 +186,7 @@ fn rdkit_atom_implicit_hydrogen_count(
     let explicit = explicit_valence(mol, atom_id) + usize::from(atom.hydrogens.explicit_count());
     let radical_electrons = atom
         .radical
-        .map_or(0, |radical| usize::from(radical.unpaired_electron_count()));
+        .map_or(0, |radical| usize::from(radical.electron_count()));
 
     let original_rule = rdkit_neutral_valence_rule(atom.element.atomic_number())
         .ok_or(ValenceIssue::UnsupportedElement(atom_id))?;

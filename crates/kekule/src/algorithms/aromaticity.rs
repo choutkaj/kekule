@@ -619,7 +619,7 @@ fn atom_is_rdkit_aromatic_candidate_for_donor(
 }
 
 fn atom_passes_rdkit_aromatic_radical_eligibility(atom: &Atom) -> bool {
-    let radical_electrons = atom.radical.map_or(0, AtomRadical::unpaired_electron_count);
+    let radical_electrons = atom.radical.map_or(0, AtomRadical::electron_count);
     radical_electrons == 0 || atom.element.symbol() == "C" && atom.formal_charge == 0
 }
 
@@ -651,7 +651,11 @@ fn atom_rdkit_aromatic_total_valence(mol: &Molecule, atom_id: AtomId, atom: &Ato
         .saturating_add(aromaticity_implicit_hydrogen_count(mol, atom_id, atom))
 }
 
-fn count_rdkit_like_atom_pi_electrons(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> Option<u8> {
+pub(super) fn count_rdkit_like_atom_pi_electrons(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> Option<u8> {
     let default_valence = rdkit_default_valence(atom)?;
     let degree = atom_aromatic_candidate_degree(mol, atom_id, atom);
     if default_valence <= 1 || degree > 3 {
@@ -662,7 +666,7 @@ fn count_rdkit_like_atom_pi_electrons(mol: &Molecule, atom_id: AtomId, atom: &At
         - i16::from(default_valence)
         - i16::from(atom.formal_charge))
     .max(0);
-    let radical_electrons = i16::from(atom.radical.map_or(0, AtomRadical::unpaired_electron_count));
+    let radical_electrons = i16::from(atom.radical.map_or(0, AtomRadical::electron_count));
     let mut electrons = i16::from(default_valence)
         - i16::try_from(degree).expect("candidate degree is at most three")
         + lone_pair_electrons
@@ -676,7 +680,7 @@ fn count_rdkit_like_atom_pi_electrons(mol: &Molecule, atom_id: AtomId, atom: &At
     u8::try_from(electrons).ok()
 }
 
-fn rdkit_outer_electrons(atom: &Atom) -> u8 {
+pub(super) fn rdkit_outer_electrons(atom: &Atom) -> u8 {
     // RDKit 2026.03.3 atomic_data.cpp, indexed by atomic number. All elements
     // are needed here: an exocyclic neighbor can withdraw electrons even when
     // that neighbor is not itself eligible for aromaticity.
@@ -833,7 +837,7 @@ mod tests {
         molecule
             .atom_mut(AtomId::new(5))
             .expect("source-selected radical carbon")
-            .radical = Some(AtomRadical::Doublet);
+            .radical = AtomRadical::new(1, Some(2));
         let valence = perceive_valence(&mut molecule, ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{valence:#?}");
         perceive_ring_set(&mut molecule).expect("ring perception");
@@ -950,7 +954,7 @@ mod tests {
     #[test]
     fn zero_electron_carbon_with_exocyclic_multiple_bond_is_vacant() {
         let mut molecule = crate::tests::read_smiles("C1(=O)C=CC=CC=C1").expect("tropone");
-        molecule.atom_mut(AtomId::new(0)).unwrap().radical = Some(AtomRadical::Doublet);
+        molecule.atom_mut(AtomId::new(0)).unwrap().radical = AtomRadical::new(1, Some(2));
         perceive_ring_set(&mut molecule).expect("rings");
         let atom = molecule.atom(AtomId::new(0)).unwrap();
         assert_eq!(

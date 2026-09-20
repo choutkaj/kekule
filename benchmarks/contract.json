@@ -1,15 +1,22 @@
 {
-  "schema": 2,
+  "schema": 3,
   "molecular_identity": "indexed complete component graphs; source atom correspondence; explicit stereo carriers and groups",
+  "radicals": {
+    "radical_electrons": "required nonnegative integer electron occupancy; includes the pair in an explicitly supplied singlet center; not a physical unpaired-electron measurement",
+    "spin_multiplicity": "required nullable positive integer 2S+1; only explicitly supplied atom-local spin; null when unspecified; never inferred from electron count",
+    "reference": "RDKit calculates electron occupancy; independent CTAB/CX source metadata preserves explicit spin assertions lost by RDKit; changed explicit electron counts are reference failures",
+    "migration": "replaces the misleading unpaired_electrons name and radical spin labels with separately asserted electron occupancy and numeric source spin; neither measurement is dropped"
+  },
   "model_writer": "MOL model serialization: empty title, no SDF properties; source observations retained in reports",
   "numeric_contract": {
     "roundoff": "16 * f64 epsilon * max(abs(expected), abs(actual))",
     "dssp_legacy_energy_kcal_per_mol": 0.05,
     "dssp_reported_angles_degrees": 0.05,
     "dssp_tco": 0.0005,
+    "dssp_omega_degrees": "16 * f32 epsilon * 180, for single-precision geometry versus Biopython vectors",
     "v2000_coordinate_angstrom": 0.00005,
     "other": "roundoff only; all raw differences retained; discrete fields exact"
   },
-  "dssp": "beta partner identities and Biopython CA-C-N-CA omega included; first model; original source bytes",
+  "dssp": "beta partner identities and Biopython CA-C-N-CA omega included; first model; original source bytes; polymer sequence label required but nullable for nonpolymer residues",
   "coverage": "source format determines applicability before evaluation; missing inputs, reference failures and implementation failures are distinct"
 }

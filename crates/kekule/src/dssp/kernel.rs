@@ -15,18 +15,20 @@ const MAX_HBOND_ENERGY_KCAL_PER_MOL: f64 = -0.5;
 const DSSP_COUPLING_KCAL_ANGSTROM_PER_MOL: f64 = -27.888_f32 as f64;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+// DSSP 4.6.1 evaluates points and angular geometry in float. Keep that
+// compatibility boundary local; model coordinates and public results are f64.
 struct Vec3 {
-    x: f64,
-    y: f64,
-    z: f64,
+    x: f32,
+    y: f32,
+    z: f32,
 }
 
 impl From<Point3> for Vec3 {
     fn from(value: Point3) -> Self {
         Self {
-            x: value.x,
-            y: value.y,
-            z: value.z,
+            x: value.x as f32,
+            y: value.y as f32,
+            z: value.z as f32,
         }
     }
 }
@@ -40,7 +42,7 @@ impl Vec3 {
         }
     }
 
-    fn dot(self, other: Self) -> f64 {
+    fn dot(self, other: Self) -> f32 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
@@ -52,26 +54,22 @@ impl Vec3 {
         }
     }
 
-    fn norm_squared(self) -> f64 {
+    fn norm_squared(self) -> f32 {
         self.dot(self)
     }
 
     fn is_dssp_representable(self) -> bool {
         [self.x, self.y, self.z].into_iter().all(|value| {
-            let value = value as f32;
             let cell = (value / MAX_CA_PAIR_DISTANCE_ANGSTROMS as f32).floor();
             value.is_finite() && cell > i64::MIN as f32 && cell < i64::MAX as f32
         })
     }
 }
 
-// DSSP 4.6.1 stores points and evaluates point distances in `float`. These
-// helpers preserve that narrow compatibility boundary while the public values
-// and the rest of the molecules coordinate model remain `f64`.
 fn dssp_distance_squared(first: Vec3, second: Vec3) -> f64 {
-    let dx = (first.x as f32) - (second.x as f32);
-    let dy = (first.y as f32) - (second.y as f32);
-    let dz = (first.z as f32) - (second.z as f32);
+    let dx = first.x - second.x;
+    let dy = first.y - second.y;
+    let dz = first.z - second.z;
     ((dx * dx + dy * dy) + dz * dz) as f64
 }
 
@@ -80,14 +78,14 @@ fn dssp_distance(first: Vec3, second: Vec3) -> f64 {
 }
 
 fn dssp_reconstructed_hydrogen(n: Vec3, preceding_c: Vec3, preceding_o: Vec3) -> Option<Vec3> {
-    let dx = (preceding_c.x as f32) - (preceding_o.x as f32);
-    let dy = (preceding_c.y as f32) - (preceding_o.y as f32);
-    let dz = (preceding_c.z as f32) - (preceding_o.z as f32);
+    let dx = preceding_c.x - preceding_o.x;
+    let dy = preceding_c.y - preceding_o.y;
+    let dz = preceding_c.z - preceding_o.z;
     let length = ((dx * dx + dy * dy) + dz * dz).sqrt();
     (length.is_finite() && length > f32::EPSILON).then(|| Vec3 {
-        x: ((n.x as f32) + dx / length) as f64,
-        y: ((n.y as f32) + dy / length) as f64,
-        z: ((n.z as f32) + dz / length) as f64,
+        x: n.x + dx / length,
+        y: n.y + dy / length,
+        z: n.z + dz / length,
     })
 }
 
@@ -621,7 +619,8 @@ fn calculate_geometry(
             residues[index].tco = cosine_between(
                 residues[index].c.sub(residues[index].o),
                 residues[previous].c.sub(residues[previous].o),
-            );
+            )
+            .map(f64::from);
         }
         if let Some(next) = residues[index].next {
             residues[index].psi = dihedral(
@@ -690,21 +689,30 @@ fn dihedral(p1: Vec3, p2: Vec3, p3: Vec3, p4: Vec3) -> Option<f64> {
     let y = z.cross(x);
     let x_norm_squared = x.norm_squared();
     let y_norm_squared = y.norm_squared();
-    if x_norm_squared <= f64::EPSILON || y_norm_squared <= f64::EPSILON {
+    if !x_norm_squared.is_finite()
+        || !y_norm_squared.is_finite()
+        || x_norm_squared <= 0.0
+        || y_norm_squared <= 0.0
+    {
         return None;
     }
     let u = p.dot(x) / x_norm_squared.sqrt();
     let v = p.dot(y) / y_norm_squared.sqrt();
-    (u != 0.0 || v != 0.0).then(|| v.atan2(u).to_degrees())
+    (u.is_finite() && v.is_finite() && (u != 0.0 || v != 0.0))
+        .then(|| f64::from(v.atan2(u) * 180.0 / std::f32::consts::PI))
 }
 
-fn cosine_between(first: Vec3, second: Vec3) -> Option<f64> {
+fn cosine_between(first: Vec3, second: Vec3) -> Option<f32> {
     let denominator = (first.norm_squared() * second.norm_squared()).sqrt();
-    (denominator > f64::EPSILON).then(|| (first.dot(second) / denominator).clamp(-1.0, 1.0))
+    (denominator.is_finite() && denominator > 0.0)
+        .then(|| (first.dot(second) / denominator).clamp(-1.0, 1.0))
 }
 
 fn angle_degrees(first: Vec3, second: Vec3) -> Option<f64> {
-    cosine_between(first, second).map(|cosine| cosine.acos().to_degrees())
+    cosine_between(first, second).map(|cosine| {
+        let sine = (1.0 - cosine * cosine).sqrt();
+        f64::from(sine.atan2(cosine) * (180.0 / std::f64::consts::PI) as f32)
+    })
 }
 
 fn candidate_pairs(
@@ -746,9 +754,9 @@ fn candidate_pairs(
 
 fn spatial_cell(point: Vec3) -> (i64, i64, i64) {
     (
-        ((point.x as f32) / MAX_CA_PAIR_DISTANCE_ANGSTROMS as f32).floor() as i64,
-        ((point.y as f32) / MAX_CA_PAIR_DISTANCE_ANGSTROMS as f32).floor() as i64,
-        ((point.z as f32) / MAX_CA_PAIR_DISTANCE_ANGSTROMS as f32).floor() as i64,
+        (point.x / MAX_CA_PAIR_DISTANCE_ANGSTROMS as f32).floor() as i64,
+        (point.y / MAX_CA_PAIR_DISTANCE_ANGSTROMS as f32).floor() as i64,
+        (point.z / MAX_CA_PAIR_DISTANCE_ANGSTROMS as f32).floor() as i64,
     )
 }
 
@@ -1299,22 +1307,22 @@ mod tests {
                 },
                 chain: 0,
                 n: Vec3 {
-                    x: index as f64,
+                    x: index as f32,
                     y: 0.0,
                     z: 0.0,
                 },
                 ca: Vec3 {
-                    x: index as f64,
+                    x: index as f32,
                     y: 1.0,
                     z: 0.0,
                 },
                 c: Vec3 {
-                    x: index as f64,
+                    x: index as f32,
                     y: 1.0,
                     z: 1.0,
                 },
                 o: Vec3 {
-                    x: index as f64,
+                    x: index as f32,
                     y: 1.0,
                     z: 2.0,
                 },
@@ -1357,6 +1365,36 @@ mod tests {
         assert!(residues[1..=stride]
             .iter()
             .all(|residue| residue.secondary_structure == structure));
+    }
+
+    #[test]
+    fn dssp_angles_with_overflowing_intermediates_are_undefined() {
+        let points = [
+            Point3::new(1.0e10, 0.0, 0.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0e10, 0.0),
+            Point3::new(0.0, 1.0e10, 1.0e10),
+        ]
+        .map(Vec3::from);
+        assert_eq!(dihedral(points[0], points[1], points[2], points[3]), None);
+        assert_eq!(cosine_between(points[0], points[3]), None);
+        assert_eq!(angle_degrees(points[0], points[3]), None);
+    }
+
+    #[test]
+    fn dssp_torsion_respects_single_precision_at_output_rounding_boundary() {
+        // Supplied PDB 1A2L, chain B, phi of residue 67. DSSP 4.6.1
+        // reports -52.0 degrees; evaluating the decimal coordinates in f64
+        // instead crosses the one-decimal output boundary to -51.9.
+        let points = [
+            Point3::new(69.913, 96.863, 62.518),
+            Point3::new(70.576, 95.880, 63.129),
+            Point3::new(70.017, 94.541, 63.318),
+            Point3::new(68.636, 94.556, 63.965),
+        ]
+        .map(Vec3::from);
+        let angle = dihedral(points[0], points[1], points[2], points[3]).unwrap();
+        assert_eq!(format!("{angle:.1}"), "-52.0");
     }
 
     #[test]

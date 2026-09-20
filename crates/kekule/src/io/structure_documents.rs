@@ -9,6 +9,7 @@ use crate::core::{
     MoleculeEditor, StereoElement, StereoElementId, StereoElementKind, StereoGroup,
     StereoGroupKind, TetrahedralOrientation, TetrahedralStereo,
 };
+use crate::geometry::Point3;
 use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
 use crate::topology::Topology;
 
@@ -409,6 +410,22 @@ impl MolfileInterpretationReport {
 /// Nonfatal source-representation diagnostic produced during interpretation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MolfileInterpretationWarning {
+    /// Incompatible wedge marks cannot specify an axis configuration. The
+    /// source document retains the marks; the interpreted graph omits that
+    /// assertion and preserves its connectivity and unrelated stereo.
+    ConflictingAtropisomericWedgeMarks {
+        axis: BondId,
+        source_line: usize,
+        mark_count: usize,
+    },
+    /// The represented graph is retained, but its valence is outside the
+    /// coordinate-stereo model. No new configuration is inferred. Resource
+    /// exhaustion and structural failures remain interpretation errors.
+    CoordinateStereoValenceUnsupported {
+        error: crate::algorithms::ValenceError,
+    },
+    /// Wedge geometry does not establish one configuration. A single mark may
+    /// be ambiguous; no represented stereo is created from an invalid drawing.
     AmbiguousTetrahedralWedgeMarks {
         center: AtomId,
         source_line: usize,
@@ -647,6 +664,12 @@ pub fn parse_molfile_document_with_options(
     })
 }
 
+/// Interprets source assertions and tetrahedral configurations carried by 3D
+/// coordinates. Coordinate inference uses the shared chemical eligibility and
+/// symmetry model; explicit unknown configurations remain unknown. Derived
+/// perception is temporary and is not installed on the published molecules.
+/// Unsupported valence retains the graph with a diagnostic instead of imposing
+/// strict perception on document import. Resource failures remain errors.
 pub fn interpret_molfile_document(
     document: &MolfileDocument,
 ) -> Result<MolfileInterpretation, MolfileInterpretError> {
@@ -751,6 +774,29 @@ pub fn interpret_molfile_document(
                 &raw.atom_map,
                 &atom_cfg,
             )?);
+        let mut coordinate_warnings = Vec::new();
+        let inferred = molfile_coordinate_tetrahedra(
+            editor.working(),
+            &raw.geometry,
+            &mut coordinate_warnings,
+        )?;
+        let centers = inferred.iter().filter_map(|element| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => Some(stereo.center),
+            _ => None,
+        });
+        materialize_molfile_stereo_hydrogens(editor.working_mut(), centers);
+        for element in inferred {
+            publication_report.created_stereo_elements.push(
+                editor
+                    .add_stereo_element(element)
+                    .map_err(|error| MolfileInterpretError {
+                        line: 4,
+                        message: format!(
+                            "could not materialize Molfile coordinate stereo: {error}"
+                        ),
+                    })?,
+            );
+        }
         install_molfile_stereo_groups(editor.working_mut(), &raw.atom_map, stereo_groups)?;
         let molecule = editor.finish().map_err(|error| MolfileInterpretError {
             line: raw
@@ -773,10 +819,22 @@ pub fn interpret_molfile_document(
                         .unwrap_or(1),
                     message: format!("could not retain published coordinates: {error}"),
                 })?;
-        let warnings = publication_report
+        let mut warnings = publication_report
             .warnings
             .into_iter()
             .map(|warning| match warning {
+                NormalizationWarning::ConflictingAtropisomericWedgeMarks { axis, mark_count } => {
+                    let source_line = raw
+                        .bond_map
+                        .iter()
+                        .find_map(|(old, new)| (*new == axis).then(|| bond_lines[old.index()]))
+                        .unwrap_or(1);
+                    MolfileInterpretationWarning::ConflictingAtropisomericWedgeMarks {
+                        axis,
+                        source_line,
+                        mark_count,
+                    }
+                }
                 NormalizationWarning::AmbiguousTetrahedralWedgeMarks { center, mark_count } => {
                     let source_line = raw
                         .atom_map
@@ -790,7 +848,8 @@ pub fn interpret_molfile_document(
                     }
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        warnings.extend(coordinate_warnings);
         let atom_mappings = raw
             .atom_map
             .iter()
@@ -984,7 +1043,7 @@ pub(super) fn molfile_stereo_group_members_at_atom(
         .collect()
 }
 
-fn materialize_molfile_stereo_hydrogens(
+pub(super) fn materialize_molfile_stereo_hydrogens(
     molecule: &mut Molecule,
     centers: impl IntoIterator<Item = AtomId>,
 ) {
@@ -1007,6 +1066,62 @@ fn materialize_molfile_stereo_hydrogens(
             .expect("source stereo center exists")
             .hydrogens = HydrogenDeclaration::Fixed(1);
     }
+}
+
+/// Uses the same detached inference for import and for lossless writer planning.
+/// A flat XY drawing carries tetrahedral stereo through annotations only.
+pub(super) fn molfile_coordinate_tetrahedra(
+    molecule: &Molecule,
+    geometry: &dyn crate::chemistry::AtomPositionSource,
+    warnings: &mut Vec<MolfileInterpretationWarning>,
+) -> Result<Vec<StereoElement>, MolfileInterpretError> {
+    let points = molecule
+        .atom_ids()
+        .map(|atom| {
+            geometry
+                .position_value(atom)
+                .ok_or_else(|| MolfileInterpretError {
+                    line: 4,
+                    message: format!("missing source coordinates for {atom}"),
+                })
+        })
+        .collect::<Result<Vec<Point3>, _>>()?;
+    if points
+        .first()
+        .is_none_or(|first| points.iter().all(|point| point.z == first.z))
+    {
+        return Ok(Vec::new());
+    }
+    let positions =
+        Positions::from_vec(crate::units::Quantity::new(points, crate::units::ANGSTROM)).map_err(
+            |error| MolfileInterpretError {
+                line: 4,
+                message: error.to_string(),
+            },
+        )?;
+    let inferred = match crate::algorithms::infer_coordinate_stereo(molecule, &positions) {
+        Ok(inferred) => inferred,
+        Err(crate::algorithms::CoordinateStereoError::Perception(
+            crate::algorithms::StereoPerceptionError::Perception(
+                crate::chemistry::PerceptionError::Valence(error),
+            ),
+        )) => {
+            warnings
+                .push(MolfileInterpretationWarning::CoordinateStereoValenceUnsupported { error });
+            return Ok(Vec::new());
+        }
+        Err(error) => {
+            return Err(MolfileInterpretError {
+                line: 4,
+                message: format!("could not infer Molfile coordinate stereo: {error}"),
+            })
+        }
+    };
+    Ok(inferred
+        .elements
+        .into_iter()
+        .filter(|element| matches!(element.kind, StereoElementKind::Tetrahedral(_)))
+        .collect())
 }
 
 struct RawMolfileComponent {

@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "contract_sha256": "6968f09d5fd6ffa7b6d99640ab0392d38d5b3be6c16028818419458feb1248bc",
+  "dataset": "rdkit-structures",
+  "feature": "query.smarts",
+  "input_lock_sha256": "273c7f1c7316344a39d83104a57ac99c3e62fd393f6b5d37a84bee81aae3100e",
+  "sha256": "16afe76e88994539a2c1a6364dcc1e1cd56ea78ce2eed5014cfe44e6489c5797",
+  "reference": null,
+  "reference_code_sha256": "c37e1548065aac0c229a441d1d7ff3bd98f2902a3e8f3f8ac4a904c5fba38e65",
+  "origin": "independent generation; compatibility metadata migrated from contract 6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758: observations contain no radical/spin/DSSP fields; payload and generator identity unchanged",
+  "cases": 50
+}

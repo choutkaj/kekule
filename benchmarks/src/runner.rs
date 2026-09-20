@@ -16,12 +16,14 @@ use std::{
     process,
 };
 mod dashboard;
+mod report;
 #[cfg(test)]
 mod storage_tests;
 mod stored;
 use indicatif::{ProgressBar, ProgressFinish, ProgressStyle};
 use rayon::prelude::*;
-use std::io::{Read, Seek, SeekFrom};
+use report::ReportFile;
+use std::io::Read;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use stored::{GeneratedGoldens, Metadata, StoredGoldens};
 
@@ -263,6 +265,15 @@ struct Options {
     started_at_unix_ms: u64,
 }
 
+impl Options {
+    fn writer_python(&self) -> PathBuf {
+        self.python
+            .clone()
+            .or_else(|| env::var_os("KEKULE_WRITER_PYTHON").map(PathBuf::from))
+            .unwrap_or_else(|| "python".into())
+    }
+}
+
 fn options(args: &[String]) -> Result<Options, Box<dyn Error>> {
     let generate = args.first().is_some_and(|arg| arg == "generate");
     let args = if generate { &args[1..] } else { args };
@@ -438,6 +449,12 @@ struct BatchRun<'a> {
     evaluate: Evaluator,
 }
 
+// Large macromolecular inputs must not accumulate to 256 structures. This
+// bounds batching overhead, not the memory needed to evaluate one large input.
+fn batch_is_full(case_count: usize, input_bytes: usize) -> bool {
+    case_count >= 256 || input_bytes >= 8 * 1024 * 1024
+}
+
 impl BatchRun<'_> {
     fn batch(&mut self, cases: &[Case], row: &mut Summary) -> Result<(), Box<dyn Error>> {
         if cases.is_empty() {
@@ -482,6 +499,7 @@ impl BatchRun<'_> {
                 row.cases += 1;
                 if matches!(expected, Outcome::Error { .. }) {
                     row.errors += 1;
+                    row.reference_errors += 1;
                 }
                 self.progress.inc(1);
             }
@@ -526,33 +544,48 @@ impl BatchRun<'_> {
         if features::is_writer(&row.feature) {
             // This only reads newly written text. It never recalculates goldens.
             self.progress.set_message("validate writer output");
-            let python = self
-                .opts
-                .python
-                .clone()
-                .or_else(|| env::var_os("KEKULE_WRITER_PYTHON").map(PathBuf::from))
-                .unwrap_or_else(|| "python".into());
+            let python = self.opts.writer_python();
             let request = json!({"feature":row.feature,"written":actual});
             match (self.reference)(&python, &request, cases.len()) {
                 Ok(response) => {
                     row.reference_ms += response.time_ms;
-                    if stored.metadata.reference.as_ref()!=Some(&response.reference) {
-                        return Err(boxed_error("writer reader version differs from stored reference"));
+                    if stored.metadata.reference.as_ref() != Some(&response.reference) {
+                        return Err(boxed_error(
+                            "writer reader version differs from stored reference",
+                        ));
                     }
-                    actual = response.results;
-                },
-                Err(error) => actual = vec![Outcome::Error { message: format!("writer validation failed: {error}; select its interpreter with --writer-python or KEKULE_WRITER_PYTHON") }; cases.len()],
+                    for (outcome, validated) in actual.iter_mut().zip(response.results) {
+                        if matches!(outcome, Outcome::Ok { .. }) {
+                            *outcome = validated;
+                        }
+                    }
+                }
+                Err(error) => {
+                    for outcome in &mut actual {
+                        if matches!(outcome, Outcome::Ok { .. }) {
+                            *outcome = Outcome::Error { message: format!("writer validation failed: {error}; select its interpreter with --writer-python or KEKULE_WRITER_PYTHON") };
+                        }
+                    }
+                }
             }
         }
         for (case_index, ((case, expected), actual)) in
             cases.iter().zip(&expected).zip(&actual).enumerate()
         {
-            let (status, difference) = comparison(&row.feature, expected, actual);
+            let (status, mut difference) = comparison(&row.feature, expected, actual);
             row.cases += 1;
             row.reference_errors += usize::from(matches!(expected, Outcome::Error { .. }));
             let implementation_outcome = emitted
                 .as_ref()
                 .map_or(actual, |values| &values[case_index]);
+            if emitted.is_some() && difference.get("kekule_failed").is_some() {
+                difference["kekule_failed"] =
+                    json!(matches!(implementation_outcome, Outcome::Error { .. }));
+                difference["writer_validation_failed"] = json!(
+                    matches!(implementation_outcome, Outcome::Ok { .. })
+                        && matches!(actual, Outcome::Error { .. })
+                );
+            }
             row.kekule_errors +=
                 usize::from(matches!(implementation_outcome, Outcome::Error { .. }));
             row.writer_validation_errors += usize::from(
@@ -677,13 +710,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             .create_new(true)
             .open(path)
     };
-    let mut report = create(&opts.output)?;
-    let result_path = opts.output.with_extension("cases.jsonl");
-    let mut results: Box<dyn Write + Send + Sync> = if opts.generate {
-        Box::new(std::io::sink())
-    } else {
-        Box::new(create(&result_path)?)
-    };
+    let mut report = ReportFile::new(&opts.output);
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(opts.jobs)
         .build()?;
@@ -698,6 +725,20 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         false,
         None,
     )?;
+    let result_path = opts.output.with_extension("cases.jsonl.gz");
+    let mut case_writer = if opts.generate {
+        None
+    } else {
+        Some(flate2::write::GzEncoder::new(
+            create(&result_path)?,
+            flate2::Compression::fast(),
+        ))
+    };
+    let mut discard = std::io::sink();
+    let results: &mut (dyn Write + Send + Sync) = match case_writer.as_mut() {
+        Some(writer) => writer,
+        None => &mut discard,
+    };
     let execution = (|| -> Result<(), Box<dyn Error>> {
         for id in DATASETS
             .iter()
@@ -746,7 +787,9 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                             input_lock_sha256: lock_hash,
                             sha256: String::new(),
                             reference: None,
-                            reference_code_sha256: Some(stored::reference_code_hash()?),
+                            reference_code_sha256: Some(stored::reference_code_hash(Path::new(
+                                env!("CARGO_MANIFEST_DIR"),
+                            ))?),
                             origin: "independent generation".into(),
                             cases: 0,
                         },
@@ -767,10 +810,29 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 };
                 let mut seen = BTreeSet::new();
                 let mut pending = Vec::new();
+                let mut pending_input_bytes = 0usize;
+                let mut writer_reader_checked = false;
                 for fixture in fixtures {
                     let members = dataset.members(&fixture)?;
                     if !members.iter().any(|id| selected.contains(id)) {
                         continue;
+                    }
+                    if !writer_reader_checked && features::is_writer(feature) {
+                        if let RunMode::Compare(stored) = &run.mode {
+                            let reader = reference_batch(
+                                &opts.writer_python(),
+                                &json!({"feature":feature,"describe":true}),
+                                0,
+                            ).map_err(|error| boxed_error(format!(
+                                "writer reader unavailable for {id} {feature}: {error}; select its interpreter with --writer-python or KEKULE_WRITER_PYTHON"
+                            )))?;
+                            if stored.metadata.reference.as_ref() != Some(&reader.reference) {
+                                return Err(boxed_error(
+                                    "writer reader version differs from stored reference",
+                                ));
+                            }
+                        }
+                        writer_reader_checked = true;
                     }
                     let read = (|| -> Result<_, Box<dyn Error>> {
                         let path = safe_join(&dataset.root, &fixture)?;
@@ -793,6 +855,8 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                                     continue;
                                 }
                                 seen.insert(id.clone());
+                                pending_input_bytes =
+                                    pending_input_bytes.saturating_add(text.len());
                                 pending.push(Case {
                                     id: id.clone(),
                                     fixture: fixture.clone(),
@@ -802,15 +866,17 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                                         text,
                                     },
                                 });
-                                if pending.len() == 256 {
+                                if batch_is_full(pending.len(), pending_input_bytes) {
                                     run.batch(&pending, &mut row)?;
                                     pending.clear();
+                                    pending_input_bytes = 0;
                                 }
                             }
                         }
                         Err(error) => {
                             run.batch(&pending, &mut row)?;
                             pending.clear();
+                            pending_input_bytes = 0;
                             for id in members.iter().filter(|id| selected.contains(*id)) {
                                 seen.insert(id.clone());
                                 run.input_error(&mut row, id, Some(&fixture), &error.to_string())?;
@@ -865,8 +931,11 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         }
         Ok(())
     })();
-    if let Err(error) = execution {
-        write_report(
+    // Finish even after a setup/evaluation error, so partial observations remain
+    // readable. A failed trailer or flush must never produce a complete report.
+    let output_completion = finish_case_output(case_writer);
+    if let Err(error) = execution.and(output_completion) {
+        let reporting = write_report(
             &mut report,
             &opts,
             &rows,
@@ -874,12 +943,13 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             false,
             false,
             Some(error.to_string()),
-        )?;
+        );
         dashboard::publish(&opts);
-        return Err(error);
+        return Err(retain_execution_error(error, reporting));
     }
+    let measured_cases = rows.iter().any(|row| row.cases > 0);
     let passed = !rows.is_empty()
-        && rows.iter().any(|row| row.cases > 0)
+        && measured_cases
         && rows.iter().all(|row| {
             if opts.generate {
                 row.errors == 0
@@ -899,13 +969,27 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     println!("Report: {}", opts.output.display());
     dashboard::publish(&opts);
     if !passed {
-        return Err(boxed_error(if opts.generate {
+        return Err(boxed_error(if !measured_cases {
+            "no applicable benchmark cases were selected; see report"
+        } else if opts.generate {
             "reference generation retained errors; see report"
         } else {
             "benchmark comparison failed; see report"
         }));
     }
     Ok(())
+}
+
+fn retain_execution_error(
+    error: Box<dyn Error>,
+    reporting: Result<(), Box<dyn Error>>,
+) -> Box<dyn Error> {
+    match reporting {
+        Ok(()) => error,
+        Err(report_error) => boxed_error(format!(
+            "{error}; additionally, the failure report could not be published: {report_error}"
+        )),
+    }
 }
 
 fn implementation_identity() -> Result<Value, Box<dyn Error>> {
@@ -924,11 +1008,20 @@ fn implementation_identity() -> Result<Value, Box<dyn Error>> {
     let status = git(&["status", "--porcelain"]);
     Ok(
         json!({"revision":git(&["rev-parse","HEAD"]),"dirty":status.as_ref().map(|status|!status.is_empty()),"working_tree_status_sha256":status.as_ref().map(|status|sha256(status.as_bytes())),
-        "executable_sha256":executable,"reference_code_sha256":stored::reference_code_hash()?,"contract_sha256":stored::contract_hash(),"feature_contracts":{"query.smarts":stored::feature_contract_hash("query.smarts")}}),
+        "executable_sha256":executable,"reference_code_sha256":stored::reference_code_hash(Path::new(env!("CARGO_MANIFEST_DIR")))?,"contract_sha256":stored::contract_hash(),"feature_contracts":{"query.smarts":stored::feature_contract_hash("query.smarts")}}),
     )
 }
+
+fn finish_case_output<W: Write>(
+    writer: Option<flate2::write::GzEncoder<W>>,
+) -> Result<(), Box<dyn Error>> {
+    if let Some(writer) = writer {
+        writer.finish()?.flush()?;
+    }
+    Ok(())
+}
 fn write_report(
-    file: &mut fs::File,
+    file: &mut ReportFile,
     opts: &Options,
     rows: &[Summary],
     implementation: &Value,
@@ -936,17 +1029,16 @@ fn write_report(
     passed: bool,
     error: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
-    file.seek(SeekFrom::Start(0))?;
-    file.set_len(0)?;
-    serde_json::to_writer_pretty(
-        &mut *file,
+    file.write(|file| {
+        serde_json::to_writer_pretty(
+        file,
         &json!({"schema":2,"mode":if opts.generate{"generate"}else{"compare"},
         "started_at_unix_ms":opts.started_at_unix_ms,
         "complete":complete,"passed":passed,"error":error,"implementation":implementation,"goldens":opts.goldens,
-        "cases":if opts.generate{None}else{Some(opts.output.with_extension("cases.jsonl"))},"results":rows}),
-    )?;
-    file.flush()?;
-    Ok(())
+        "cases":if opts.generate{None}else{Some(opts.output.with_extension("cases.jsonl.gz"))},"results":rows}),
+        )?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]

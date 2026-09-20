@@ -13,10 +13,12 @@ exclude = [
     "corpora/*/data/**",
     "!corpora/smoke/data/**",
     "!corpora/rdkit-queries/data/**",
+    "!corpora/rdkit-structures/data/**",
     "goldens/**",
     "!goldens/*/*.jsonl.meta.json",
     "!goldens/smoke/*.jsonl.gz",
     "!goldens/rdkit-queries/*.jsonl.gz",
+    "!goldens/rdkit-structures/*.jsonl.gz",
 ]
 
 [dependencies]

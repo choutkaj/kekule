@@ -15,6 +15,7 @@ pub(crate) const DATASETS: &[&str] = &[
     "pdb-1000",
     "smoke",
     "rdkit-queries",
+    "rdkit-structures",
 ];
 
 /// Preloaded source bytes. Timing never rereads the input file.
@@ -255,6 +256,59 @@ mod tests {
             vec!["data/smarts-example.smi"]
         );
     }
+    #[test]
+    fn external_query_corpus_is_not_used_as_molecular_input() {
+        let dataset = Dataset::open("rdkit-queries").unwrap();
+        let fixtures = dataset.fixtures("query.smarts");
+        assert_eq!(fixtures.len(), 3);
+        let mut members = BTreeSet::new();
+        for fixture in fixtures {
+            let input = Input::read(&safe_join(&dataset.root, &fixture).unwrap()).unwrap();
+            dataset.verify(&fixture, &input).unwrap();
+            let ids = dataset.members(&fixture).unwrap();
+            assert_eq!(split_records(&input, ids.len()).unwrap().len(), ids.len());
+            members.extend(ids);
+        }
+        assert_eq!(members, dataset.selection(usize::MAX).unwrap());
+        assert_eq!(members.len(), 518);
+        for feature in [
+            "io.smiles.parse",
+            "io.sdf.parse",
+            "io.mmcif.parse",
+            "stereo.perception",
+            "algo.substructure.vf2",
+        ] {
+            assert!(dataset.fixtures(feature).is_empty());
+        }
+    }
+
+    #[test]
+    fn external_structure_corpus_uses_every_supplied_molecular_input() {
+        let dataset = Dataset::open("rdkit-structures").unwrap();
+        let fixtures = dataset.fixtures("io.sdf.parse");
+        assert_eq!(fixtures.len(), 50);
+        assert!(fixtures.iter().any(|path| path.contains("Bad")));
+        let mut members = BTreeSet::new();
+        for fixture in &fixtures {
+            let input = Input::read(&safe_join(&dataset.root, fixture).unwrap()).unwrap();
+            dataset.verify(fixture, &input).unwrap();
+            let ids = dataset.members(fixture).unwrap();
+            assert_eq!(ids.len(), 1);
+            assert!(!split_records(&input, ids.len()).unwrap().is_empty());
+            members.extend(ids);
+        }
+        assert_eq!(members, dataset.selection(usize::MAX).unwrap());
+        assert_eq!(dataset.fixtures("stereo.perception"), fixtures);
+        for feature in [
+            "query.smarts",
+            "io.smiles.parse",
+            "io.mmcif.parse",
+            "bio.secondary-structure.dssp",
+        ] {
+            assert!(dataset.fixtures(feature).is_empty());
+        }
+    }
+
     #[test]
     fn molecular_selections_are_nested_and_independent_of_file_order() {
         let mut dataset = Dataset {

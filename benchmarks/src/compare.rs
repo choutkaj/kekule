@@ -2,6 +2,10 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod hydrogens;
+mod mmcif;
+mod rings;
+
 /// Raw differences remain in the report, including differences within the
 /// documented reference precision. No values are rounded or rewritten.
 #[derive(Default, Serialize)]
@@ -10,6 +14,9 @@ pub(crate) struct Differences {
     pub(crate) numerical: usize,
     pub(crate) within_precision: usize,
     pub(crate) details: Vec<Value>,
+    /// Explanatory measurements only; never affect agreement or exactness.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) diagnostics: Vec<Value>,
 }
 
 impl Differences {
@@ -68,6 +75,14 @@ pub(crate) fn differences(feature: &str, expected: &Value, actual: &Value) -> Di
     }
     let mut result = Differences::default();
     visit(feature, "$", expected, actual, &mut result);
+    if !result.exact() {
+        result.diagnostics = match feature {
+            "algo.rings.sssr" => rings::diagnostics(expected, actual),
+            "io.mmcif.parse" => mmcif::diagnostics(expected, actual),
+            "chem.hydrogen-transforms" => hydrogens::diagnostics(expected, actual),
+            _ => Vec::new(),
+        };
+    }
     result
 }
 
@@ -87,6 +102,11 @@ fn reference_precision(feature: &str, path: &str, a: f64, b: f64) -> f64 {
             .any(|key| path.ends_with(key))
         {
             0.05 // mkdssp's documented legacy/mmCIF output: one decimal place.
+        } else if path.ends_with("omega_degrees") {
+            // DSSP evaluates angles in f32; Biopython evaluates omega in f64
+            // from f32 coordinates. Allow arithmetic roundoff on the angular
+            // domain, including near zero. This is not decimal quantization.
+            16.0 * f64::from(f32::EPSILON) * 180.0
         } else if path.ends_with(".tco") {
             0.0005
         } else {
@@ -253,7 +273,26 @@ pub(crate) fn normalize_ring_set_object(object: &mut serde_json::Map<String, Val
         let Value::Array(atoms) = ring else {
             continue;
         };
-        atoms.sort_by_key(|value| value.as_u64().unwrap_or(u64::MAX));
+        // A cycle's vertices are unique. Fix its starting vertex and direction
+        // without losing the edges implied by consecutive atom indices.
+        let Some(start) = atoms
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, value)| value.as_u64())
+            .map(|(index, _)| index)
+        else {
+            continue;
+        };
+        atoms.rotate_left(start);
+        if atoms
+            .iter()
+            .skip(1)
+            .map(Value::as_u64)
+            .cmp(atoms.iter().skip(1).rev().map(Value::as_u64))
+            .is_gt()
+        {
+            atoms[1..].reverse();
+        }
     }
     rings.sort_by(|left, right| {
         let left = left
@@ -271,6 +310,19 @@ pub(crate) fn normalize_ring_set_object(object: &mut serde_json::Map<String, Val
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dssp_omega_uses_single_precision_arithmetic_without_hiding_geometry_changes() {
+        let expected = json!({"omega_degrees":179.0});
+        let actual = json!({"omega_degrees":179.0 + f64::from(f32::EPSILON) * 180.0});
+        let result = differences("bio.secondary-structure.dssp", &expected, &actual);
+        assert!(result.agrees());
+        assert!(!result.exact());
+        assert_eq!(result.details[0]["actual"], actual["omega_degrees"]);
+        let changed = json!({"omega_degrees":179.01});
+        assert!(!differences("bio.secondary-structure.dssp", &expected, &changed).agrees());
+        assert!(!differences("other.feature", &expected, &actual).agrees());
+    }
+
     #[test]
     fn precision_never_hides_raw_values_or_structural_changes() {
         let expected =

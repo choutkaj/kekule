@@ -223,9 +223,7 @@ pub(crate) fn add_hydrogens_to_molecule(
         for origin in std::iter::repeat_n(AddedHydrogenOrigin::ExplicitCount, explicit)
             .chain(std::iter::repeat_n(AddedHydrogenOrigin::Implicit, implicit))
         {
-            let mut atom = Atom::new(hydrogen);
-            atom.hydrogens = HydrogenDeclaration::Fixed(0);
-            let hydrogen_id = editor.add_atom(atom)?;
+            let hydrogen_id = editor.add_atom(Atom::new(hydrogen))?;
             editor.add_bond(parent, hydrogen_id, BondOrder::Single)?;
             added_by_parent.entry(parent).or_default().push(hydrogen_id);
             report.added.push(AddedHydrogen {

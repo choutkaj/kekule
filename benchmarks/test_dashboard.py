@@ -58,11 +58,12 @@ class DashboardTests(unittest.TestCase):
         lock['entries'][0]['files'] = [{'path': 'data/a.sdf'}, {'path': 'data/shared.txt'}]
         lock['entries'][1]['files'] = [{'path': 'data/shared.txt'}, {'path': 'data/c.cif'},
                                       {'path': 'data/d.mol'}]
-        lock['packs'] = [{'path': 'data/packs/b.sdf'}, {'path': 'data/packs/b.sdf'}]
+        lock['packs'] = [{'path': 'data/packs/b.sdf'}, {'path': 'data/packs/b.sdf'},
+                         {'path': 'data/queries.smarts'}]
         lock_path.write_text(json.dumps(lock))
         corpus = dashboard.catalogue(self.root)['datasets'][0]
         self.assertEqual(corpus['source_ids'], 2)
-        self.assertEqual(corpus['formats'], ['MOL', 'SDF', 'SMILES', 'mmCIF'])
+        self.assertEqual(corpus['formats'], ['MOL', 'SDF', 'SMARTS', 'SMILES', 'mmCIF'])
         self.assertFalse((self.root / 'corpora/example/data').exists())
 
     def test_simplified_page_has_corpora_without_removed_panels_or_logo(self):
@@ -106,6 +107,51 @@ class DashboardTests(unittest.TestCase):
         loaded = self.load()['results'][0]
         self.assertEqual(loaded['coverage'], 'full')
         self.assertEqual(loaded['agrees'] - loaded['exact_agrees'], 1)
+
+    def test_selection_can_exceed_reference_coverage_without_hiding_errors(self):
+        self.report['passed'] = False
+        self.report['results'][0].update(
+            source_ids=2, cases=7, agrees=3, exact_agrees=3,
+            errors=4, reference_errors=4, kekule_errors=1, not_applicable=2)
+        loaded = self.load()
+        self.assertFalse(loaded['passed'])
+        row = loaded['results'][0]
+        self.assertEqual(row['coverage'], 'full')
+        self.assertEqual((row['cases'], row['errors'], row['reference_errors']), (7, 4, 4))
+        html = dashboard.render([self.path], self.root)
+        embedded = html.split('<script id="benchmark-data" type="application/json">')[1].split('</script>')[0]
+        self.assertEqual(json.loads(embedded)['runs'][0]['results'][0], row)
+
+    def test_not_applicable_inputs_do_not_require_stored_reference_records(self):
+        self.report['results'][0].update(source_ids=2, not_applicable=5)
+        row = self.load()['results'][0]
+        self.assertEqual((row['cases'], row['not_applicable']), (1, 5))
+        self.assertEqual(row['coverage'], 'full')
+
+    def test_input_failure_can_replace_multiple_unreadable_records(self):
+        self.report['passed'] = False
+        self.report['results'][0].update(
+            source_ids=2, cases=1, agrees=0, exact_agrees=0,
+            errors=1, input_errors=1, not_applicable=0)
+        row = self.load()['results'][0]
+        self.assertEqual((row['cases'], row['input_errors']), (1, 1))
+
+    def test_interrupted_full_selection_can_have_unprocessed_records(self):
+        self.report.update(complete=False, passed=False, error='interrupted')
+        self.report['results'][0]['source_ids'] = 2
+        loaded = self.load()
+        self.assertFalse(loaded['complete'])
+        self.assertEqual(loaded['results'][0]['coverage'], 'full')
+
+    def test_reference_coverage_cannot_be_fabricated_by_native_errors(self):
+        for failures in ({}, {'kekule_errors': 1}, {'writer_validation_errors': 1},
+                         {'observation_errors': 1}):
+            report = copy.deepcopy(self.report)
+            report['passed'] = False
+            report['results'][0].update(cases=5, agrees=4, exact_agrees=4,
+                                         errors=1, not_applicable=0, **failures)
+            with self.subTest(failures=failures), self.assertRaises(ValueError):
+                self.load(report)
 
     def test_empty_and_partial_runs_stay_incomplete(self):
         self.report.update(complete=False, passed=False, error='C:/private/failure.txt')

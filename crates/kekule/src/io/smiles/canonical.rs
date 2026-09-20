@@ -9,9 +9,9 @@ use crate::io::MolWriteError;
 
 use super::write::{
     collect_smiles_tree, smiles_atom, smiles_atom_requires_brackets, smiles_connected_components,
-    smiles_incident_bonds_for_style, smiles_ring_closures, validate_smiles_writeable,
-    write_smiles_component, CanonicalAtomStyle, SmilesBondOrder, SmilesStereoWriteContext,
-    SmilesWritePlan, StereoWriteMode,
+    smiles_incident_bonds_for_style, smiles_ring_closures, validate_smiles_bracket_radical,
+    validate_smiles_writeable, write_smiles_component, CanonicalAtomStyle, SmilesBondOrder,
+    SmilesStereoWriteContext, SmilesWritePlan, StereoWriteMode,
 };
 
 mod labeling;
@@ -105,9 +105,8 @@ fn canonical_projection_graph(
     mol: &Molecule,
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<Molecule, MolWriteError> {
-    // Ranking must see the same isotope and hydrogen projection as the output.
-    // Keep the general atom-ranking API sensitive to authoritative chemistry;
-    // only this private copy adopts the exported atom representation.
+    // Ranking and labeling must see the same isotope and hydrogen projection
+    // as the output; only this private copy adopts the exported representation.
     let mut projected = mol.clone();
     for (atom_id, atom) in mol.atoms() {
         let (payload, _, implicit_hydrogens) =
@@ -434,6 +433,7 @@ fn canonical_smiles_atom_representation(
                 .saturating_add(implicit_hydrogens),
         );
         implicit_hydrogens = 0;
+        validate_smiles_bracket_radical(mol, atom_id, &payload, implicit_hydrogens)?;
     }
     Ok((payload, aromatic, implicit_hydrogens))
 }
