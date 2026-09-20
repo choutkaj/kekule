@@ -18,7 +18,7 @@ fn git(root: &Path, args: &[&str]) -> String {
 }
 
 #[test]
-fn staging_keeps_bulk_data_local_and_includes_smoke_and_provenance() {
+fn staging_keeps_bulk_data_local_and_includes_bundled_inputs_and_provenance() {
     let root = std::env::temp_dir().join(format!(
         "kekule-local-data-{}-{}",
         std::process::id(),
@@ -34,10 +34,17 @@ fn staging_keeps_bulk_data_local_and_includes_smoke_and_provenance() {
     )
     .unwrap();
     let mut expected = vec![".gitignore".to_owned()];
-    for dataset in ["smoke", "pubchem-100k", "future-dataset"] {
+    for dataset in [
+        "smoke",
+        "rdkit-queries",
+        "rdkit-structures",
+        "pubchem-100k",
+        "future-dataset",
+    ] {
+        let bundled = matches!(dataset, "smoke" | "rdkit-queries" | "rdkit-structures");
         for (suffix, tracked) in [
-            ("data/input.sdf", dataset == "smoke"),
-            ("data/nested/input.sdf", dataset == "smoke"),
+            ("data/input.sdf", bundled),
+            ("data/nested/input.sdf", bundled),
             ("sources.lock.json", true),
         ] {
             let name = format!("benchmarks/corpora/{dataset}/{suffix}");
@@ -49,7 +56,7 @@ fn staging_keeps_bulk_data_local_and_includes_smoke_and_provenance() {
             }
         }
         for (suffix, tracked) in [
-            ("io.sdf.parse.jsonl.gz", dataset == "smoke"),
+            ("io.sdf.parse.jsonl.gz", bundled),
             ("io.sdf.parse.jsonl.meta.json", true),
             ("interrupted.tmp", false),
         ] {
@@ -67,6 +74,7 @@ fn staging_keeps_bulk_data_local_and_includes_smoke_and_provenance() {
     for name in [
         "run.json",
         "run.cases.jsonl",
+        "run.cases.jsonl.gz",
         "index.html",
         "dashboard-data.js",
     ] {

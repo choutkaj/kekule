@@ -194,8 +194,14 @@ pub enum AtomPredicate {
     FormalCharge(i8),
     Aromatic(bool),
     Degree(u8),
+    /// Graph neighbors plus declared and inferred nongraph hydrogens (`X`).
+    /// Requires installed valence perception.
+    TotalConnectivity(u8),
     TotalHydrogens(u8),
     RingMembership(bool),
+    /// Incident bonds belonging to any cycle (`x`), independent of ring basis.
+    /// Requires installed ring membership.
+    RingBondCount(u8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "contract_sha256": "55137d7e199da4baeb425d7172467b7b5b8f0efbe0e45c5b8feca1077c546df7",
   "dataset": "pdb-1000",
   "feature": "io.mmcif.parse",
   "input_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171",

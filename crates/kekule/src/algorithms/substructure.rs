@@ -1,6 +1,7 @@
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::fmt;
+mod stereo;
 
 use crate::core::{AtomId, BondId, Molecule};
 use crate::query::{
@@ -249,7 +250,12 @@ fn require_perception(target: &Molecule, query: &QueryGraph) -> Result<(), Subst
             .atom(id)
             .expect("query atom ids are internally valid")
             .expression()
-            .contains_predicate(|predicate| matches!(predicate, AtomPredicate::TotalHydrogens(_)))
+            .contains_predicate(|predicate| {
+                matches!(
+                    predicate,
+                    AtomPredicate::TotalHydrogens(_) | AtomPredicate::TotalConnectivity(_)
+                )
+            })
     });
     if needs_valence && !target.perception().has_valence() {
         return Err(SubstructureMatchError::MissingPerception(
@@ -262,7 +268,12 @@ fn require_perception(target: &Molecule, query: &QueryGraph) -> Result<(), Subst
             .atom(id)
             .expect("query atom ids are internally valid")
             .expression()
-            .contains_predicate(|predicate| matches!(predicate, AtomPredicate::RingMembership(_)))
+            .contains_predicate(|predicate| {
+                matches!(
+                    predicate,
+                    AtomPredicate::RingMembership(_) | AtomPredicate::RingBondCount(_)
+                )
+            })
     }) || query.bond_ids().any(|id| {
         query
             .bond(id)
@@ -322,16 +333,29 @@ fn atom_matches(
         AtomPredicate::TotalHydrogens(hydrogens) => {
             total_hydrogens(target, target_atom) == usize::from(*hydrogens)
         }
+        AtomPredicate::TotalConnectivity(count) => {
+            target
+                .neighbors(target_atom)
+                .expect("target atom adjacency is internally valid")
+                .count()
+                + nongraph_hydrogens(target, target_atom)
+                == usize::from(*count)
+        }
         AtomPredicate::RingMembership(in_ring) => target
             .ring_membership()
             .is_some_and(|membership| membership.atom_in_ring(target_atom) == *in_ring),
+        AtomPredicate::RingBondCount(count) => target.ring_membership().is_some_and(|membership| {
+            target
+                .incident_bonds(target_atom)
+                .expect("target atom adjacency is internally valid")
+                .filter(|(bond, _)| membership.bond_in_ring(*bond))
+                .count()
+                == usize::from(*count)
+        }),
     })
 }
 
 fn total_hydrogens(target: &Molecule, target_atom: AtomId) -> usize {
-    let atom = target
-        .atom(target_atom)
-        .expect("target atom ids are internally valid");
     let graph_hydrogens = target
         .neighbors(target_atom)
         .expect("target atom adjacency is internally valid")
@@ -341,6 +365,13 @@ fn total_hydrogens(target: &Molecule, target_atom: AtomId) -> usize {
                 .is_ok_and(|atom| atom.element.atomic_number() == 1)
         })
         .count();
+    nongraph_hydrogens(target, target_atom) + graph_hydrogens
+}
+
+fn nongraph_hydrogens(target: &Molecule, target_atom: AtomId) -> usize {
+    let atom = target
+        .atom(target_atom)
+        .expect("target atom ids are internally valid");
     usize::from(atom.hydrogens.explicit_count())
         + usize::from(
             target
@@ -349,7 +380,6 @@ fn total_hydrogens(target: &Molecule, target_atom: AtomId) -> usize {
                 .flatten()
                 .unwrap_or(0),
         )
-        + graph_hydrogens
 }
 
 fn bond_matches(target: &Molecule, target_bond: BondId, query_bond: &QueryBond) -> bool {
@@ -507,6 +537,9 @@ impl Search<'_> {
             .iter()
             .map(|atom| atom.expect("complete mapping contains every query atom"))
             .collect::<Vec<_>>();
+        if !stereo::matches(self.target, self.query, &atoms) {
+            return;
+        }
         if self.options.uniquify {
             let mut atom_set = atoms.clone();
             atom_set.sort_unstable();

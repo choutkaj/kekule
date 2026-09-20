@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,7 +15,7 @@ fn unavailable_goldens_stop_the_cli_without_reporting_case_failures() {
     ));
     fs::create_dir(&root).unwrap();
     let report = root.join("report.json");
-    let cases = report.with_extension("cases.jsonl");
+    let cases = report.with_extension("cases.jsonl.gz");
     let golden = root.join("smoke").join("io.smiles.parse.jsonl.gz");
     for missing in [true, false] {
         if !missing {
@@ -53,7 +54,11 @@ fn unavailable_goldens_stop_the_cli_without_reporting_case_failures() {
         }
         assert!(!stdout.contains("agree"), "{stdout}");
         assert!(!stdout.contains("errors"), "{stdout}");
-        assert!(fs::read(&cases).unwrap().is_empty());
+        let mut records = String::new();
+        flate2::read::GzDecoder::new(fs::File::open(&cases).unwrap())
+            .read_to_string(&mut records)
+            .unwrap();
+        assert!(records.is_empty());
         let summary: serde_json::Value =
             serde_json::from_slice(&fs::read(&report).unwrap()).unwrap();
         assert_eq!(summary["complete"], false);

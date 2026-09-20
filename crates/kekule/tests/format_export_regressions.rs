@@ -212,7 +212,16 @@ fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_cou
     for source in [
         "[C]", "[O]", "[N]", "[H]", "[13C]", "[O-]", "[C]C", "[CH]", "C",
     ] {
-        let mut original = molecule(source);
+        // Exercise the H declaration independently of SMILES radical inference.
+        // MOL represents these atom states without a radical assertion; it cannot
+        // preserve the unspecified spin of under-coordinated bracket atoms.
+        let original = molecule(source);
+        let ids = original.atom_ids().collect::<Vec<_>>();
+        let mut editor = original.edit();
+        for id in ids {
+            editor.atom_mut(id).unwrap().radical = None;
+        }
+        let mut original = editor.finish().unwrap();
         let written = molfile::write_v3000(&original).unwrap();
         let mut restored = molfile::parse_str(&written)
             .unwrap()
@@ -234,7 +243,13 @@ fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_cou
 #[test]
 fn automatic_molfile_and_sdf_promotion_preserve_zero_hydrogens_on_reused_instances() {
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule("[C]")).unwrap();
+    let mut atom = Atom::new(Element::from_symbol("C").unwrap());
+    atom.hydrogens = HydrogenDeclaration::Fixed(0);
+    let mut editor = MoleculeEditor::new();
+    editor.add_atom(atom).unwrap();
+    let definition = builder
+        .add_molecule_definition(&editor.finish().unwrap())
+        .unwrap();
     for _ in 0..1_000 {
         builder.add_instance(definition).unwrap();
     }

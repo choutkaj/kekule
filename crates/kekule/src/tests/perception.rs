@@ -697,7 +697,7 @@ fn aromaticity_applies_rdkit_radical_candidate_rules() {
     neutral_carbon_radical
         .atom_mut(atoms[0])
         .expect("ring atom exists")
-        .radical = Some(AtomRadical::Doublet);
+        .radical = AtomRadical::new(1, Some(2));
 
     aromaticity_api::perceive_aromaticity(&mut neutral_carbon_radical, AromaticityModel::RdkitLike)
         .expect("neutral carbon radical ring should be supported");
@@ -719,7 +719,7 @@ fn aromaticity_applies_rdkit_radical_candidate_rules() {
     oxygen_radical
         .atom_mut(atoms[0])
         .expect("ring atom exists")
-        .radical = Some(AtomRadical::Doublet);
+        .radical = AtomRadical::new(1, Some(2));
 
     aromaticity_api::perceive_aromaticity(&mut oxygen_radical, AromaticityModel::RdkitLike)
         .expect("heteroatom radical ring should be supported");
@@ -744,7 +744,7 @@ fn aromaticity_applies_rdkit_radical_candidate_rules() {
             .atom_mut(atoms[0])
             .expect("ring atom exists");
         atom.formal_charge = 1;
-        atom.radical = Some(AtomRadical::Doublet);
+        atom.radical = AtomRadical::new(1, Some(2));
     }
 
     aromaticity_api::perceive_aromaticity(&mut charged_carbon_radical, AromaticityModel::RdkitLike)
@@ -1263,7 +1263,7 @@ fn stereo_candidates_use_normalized_and_perceived_hydrogen_state_without_cip_ass
     perceive(&mut molecule).expect("molecule should perceive");
 
     stereo_api::validate_stereo(&molecule).expect("stored stereo should be valid");
-    let candidates = stereo_api::detect_stereo_candidates(&molecule);
+    let candidates = stereo_api::detect_stereo_candidates(&molecule).unwrap();
 
     assert!(candidates.iter().any(|candidate| matches!(
         candidate,
@@ -1521,9 +1521,10 @@ fn canonical_tetrahedral_stereo_is_identical_across_smiles_molfile_and_manual_so
         .1
         .clone();
 
+    let model = tetrahedral_drawing(&smiles);
     for written in [
-        molfile::write_v2000(&smiles).expect("canonical stereo should project to V2000"),
-        molfile::write_v3000(&smiles).expect("canonical stereo should project to V3000"),
+        molfile::write_model_v2000(&model).expect("canonical stereo should project to V2000"),
+        molfile::write_model_v3000(&model).expect("canonical stereo should project to V3000"),
     ] {
         let interpreted = read_molfile(&written).expect("projected Molfile should interpret");
         let actual = interpreted
@@ -1627,11 +1628,24 @@ fn normalization_assembles_wedge_either_as_explicit_unknown() {
 
 #[test]
 fn alternate_tetrahedral_wedge_carriers_publish_identical_canonical_stereo() {
+    struct Drawing([Point3; 5]);
+    impl AtomPositionSource for Drawing {
+        fn position_value(&self, atom: AtomId) -> Option<Point3> {
+            self.0.get(atom.index()).copied()
+        }
+    }
     let canonicalize = |kind, bond| {
         let (mut molecule, center, _, _) = tetrahedral_marked_graph();
+        let points = Drawing([
+            Point3::origin(),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(-1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(0.0, -1.0, 0.0),
+        ]);
         let report = canonicalize_molecule_for_publication(
             molecule.working_mut(),
-            None,
+            Some(&points),
             &[SourceStereoBondMark {
                 bond,
                 from: center,
@@ -1647,7 +1661,9 @@ fn alternate_tetrahedral_wedge_carriers_publish_identical_canonical_stereo() {
     };
 
     let wedge_on_first = canonicalize(SourceStereoBondMarkKind::WedgeUp, BondId::new(0));
-    let wedge_on_second = canonicalize(SourceStereoBondMarkKind::WedgeDown, BondId::new(1));
+    // In this cross-shaped drawing, opposite bonds use the same wedge direction
+    // to encode the same configuration; carrier-list parity alone is insufficient.
+    let wedge_on_second = canonicalize(SourceStereoBondMarkKind::WedgeUp, BondId::new(1));
     assert_eq!(wedge_on_second, wedge_on_first);
 
     let unknown_on_first = canonicalize(SourceStereoBondMarkKind::WedgeEither, BondId::new(0));
@@ -1718,6 +1734,35 @@ fn normalization_reports_ambiguous_tetrahedral_wedge_marks() {
         }));
     assert!(report.created_stereo_elements.is_empty());
     assert!(mol.stereo_elements().next().is_none());
+}
+
+#[test]
+fn a_wedge_without_coordinates_does_not_define_atom_order_parity() {
+    for kind in [
+        SourceStereoBondMarkKind::WedgeUp,
+        SourceStereoBondMarkKind::WedgeDown,
+    ] {
+        let (mut molecule, center, _, bond) = tetrahedral_marked_graph();
+        let report = canonicalize_molecule_for_publication(
+            molecule.working_mut(),
+            None,
+            &[SourceStereoBondMark {
+                bond,
+                from: center,
+                kind,
+            }],
+        )
+        .unwrap();
+        assert!(report.created_stereo_elements.is_empty());
+        assert_eq!(
+            report.warnings,
+            vec![NormalizationWarning::AmbiguousTetrahedralWedgeMarks {
+                center,
+                mark_count: 1
+            }]
+        );
+        assert!(molecule.stereo_elements().next().is_none());
+    }
 }
 
 #[test]
@@ -1872,7 +1917,10 @@ fn coordinate_stereo_inference_assigns_axis_only_when_requested() {
     let inferred = stereo_api::infer_coordinate_stereo_with_options(
         &mol,
         &positions,
-        CoordinateStereoOptions { infer_axes: true },
+        CoordinateStereoOptions {
+            infer_axes: true,
+            ..Default::default()
+        },
     )
     .expect("3D axis stereo should be inferred");
     assert_eq!(mol, before);
@@ -1901,7 +1949,10 @@ fn coordinate_stereo_inference_skips_axis_without_3d_handedness() {
     let result = stereo_api::infer_coordinate_stereo_with_options(
         &mol,
         &positions,
-        CoordinateStereoOptions { infer_axes: true },
+        CoordinateStereoOptions {
+            infer_axes: true,
+            ..Default::default()
+        },
     )
     .expect("flat coordinates should be a successful non-assignment");
     assert!(result.elements.is_empty());
@@ -2015,6 +2066,156 @@ fn coordinate_stereo_infers_three_explicit_ligands_and_preserves_handedness() {
 }
 
 #[test]
+fn stereo_candidates_exclude_repeated_hydrogen_ligands_but_preserve_isotopes() {
+    for (input, expected) in [
+        ("C(F)Cl", 0),
+        ("[H]C([H])(F)Cl", 0),
+        ("[H]C(F)Cl", 0),
+        ("[2H]C([2H])(F)Cl", 0),
+        ("[H]C([2H])(F)Cl", 1),
+        ("[2H]C([3H])(F)Cl", 1),
+        ("C=CF", 0),
+        ("[H]C([H])=CF", 0),
+        ("[H]C([2H])=CF", 1),
+    ] {
+        let mut molecule = read_smiles(input).unwrap();
+        perceive(&mut molecule).unwrap();
+        assert_eq!(
+            stereo_api::detect_stereo_candidates(&molecule)
+                .unwrap()
+                .len(),
+            expected,
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn stereo_candidates_include_pyramidal_pnictogens_and_tetracoordinate_multiple_bonds() {
+    for (input, expected, virtual_h, lone_pair) in [
+        ("P(C)(CC)CCC", true, false, true),
+        ("[PH](C)CC", true, true, true),
+        ("[As](C)(CC)CCC", true, false, true),
+        ("[AsH](C)CC", true, true, true),
+        ("P(=O)(C)(CC)CCC", true, false, false),
+        ("S(=O)(C)CC", true, false, true),
+        ("[S+](C)(CC)CCC", true, false, true),
+        ("[S](C)(CC)CCC", false, false, false),
+        ("[Se](C)(CC)CCC", false, false, false),
+        ("S(=O)(=O)(C)CC", false, false, false),
+    ] {
+        let mut molecule = read_smiles(input).unwrap();
+        perceive(&mut molecule).unwrap();
+        let candidates = stereo_api::detect_stereo_candidates(&molecule).unwrap();
+        let carriers = candidates.iter().find_map(|candidate| match candidate {
+            StereoCandidate::Tetrahedral { center, carriers } if *center == AtomId::new(0) => {
+                Some(carriers)
+            }
+            _ => None,
+        });
+        assert_eq!(carriers.is_some(), expected, "{input}");
+        if let Some(carriers) = carriers {
+            assert_eq!(carriers.len(), 4);
+            assert_eq!(
+                carriers.contains(&StereoCarrier::ImplicitHydrogen),
+                virtual_h,
+                "{input}"
+            );
+            assert_eq!(
+                carriers.contains(&StereoCarrier::ImplicitLonePair),
+                lone_pair,
+                "{input}"
+            );
+        }
+    }
+}
+
+#[test]
+fn terminal_ligand_equivalence_is_hydrogen_representation_invariant() {
+    for (input, expected) in [
+        ("C(C)(C)(F)Cl", 0),
+        ("C(F)(F)(Cl)Br", 0),
+        ("C(C)([13CH3])(F)Cl", 1),
+        ("C(C)(C[2H])(F)Cl", 1),
+        ("C([C@]([H])([2H])[3H])([C@@]([H])([2H])[3H])(F)Cl", 3),
+        ("C([CH3:1])([CH3:2])(F)Cl", 0),
+        ("CC(C)=C(F)Cl", 0),
+        ("CC([13CH3])=C(F)Cl", 1),
+        ("CC=N", 1),
+        ("CC=[NH]", 1),
+        ("CC=O", 0),
+        ("CP(=O)(C)CC", 0),
+    ] {
+        let mut molecule = read_smiles(input).unwrap();
+        perceive(&mut molecule).unwrap();
+        let before = molecule.clone();
+        assert_eq!(
+            stereo_api::detect_stereo_candidates(&molecule)
+                .unwrap()
+                .len(),
+            expected,
+            "{input}"
+        );
+        assert_eq!(molecule, before, "candidate detection must be read-only");
+        crate::hydrogens::add_hydrogens(&mut molecule).unwrap();
+        perceive(&mut molecule).unwrap();
+        assert_eq!(
+            stereo_api::detect_stereo_candidates(&molecule)
+                .unwrap()
+                .len(),
+            expected,
+            "expanded {input}"
+        );
+    }
+}
+
+#[test]
+fn ring_double_bond_eligibility_depends_on_size_not_carbon_endpoints() {
+    for (input, expected) in [
+        ("C1=NCCCCC1", 0),
+        ("C1=NCCCCCC1", 1),
+        ("C1=NNCCCCC1", 1),
+        ("N1=NCCCCCC1", 1),
+        ("C1=CCCCCCC1", 1),
+    ] {
+        let mut molecule = read_smiles(input).unwrap();
+        perceive(&mut molecule).unwrap();
+        let doubles = stereo_api::detect_stereo_candidates(&molecule)
+            .unwrap()
+            .into_iter()
+            .filter(|candidate| matches!(candidate, StereoCandidate::DoubleBond { .. }))
+            .count();
+        assert_eq!(doubles, expected, "{input}");
+    }
+    let source = read_smiles(r"C1/N=C\CCCCC1").expect("eight-membered imine source geometry");
+    assert_eq!(source.stereo_elements().count(), 1);
+    assert!(
+        read_smiles(r"C1/N=C\CCCC1").is_err(),
+        "seven-membered ring remains excluded"
+    );
+}
+
+#[test]
+fn coordinate_stereo_skips_overcoordinated_double_bond_endpoints() {
+    let mut molecule = read_smiles("CP(C)(C)=NC").unwrap();
+    perceive(&mut molecule).unwrap();
+    assert!(stereo_api::detect_stereo_candidates(&molecule)
+        .unwrap()
+        .is_empty());
+    let positions = test_positions(vec![
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::origin(),
+        Point3::new(0.0, -1.0, 0.0),
+        Point3::new(0.0, 0.0, 1.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(1.0, -1.0, 0.0),
+    ]);
+    let mut editor = molecule.edit();
+    stereo_api::materialize_coordinate_stereo(&mut editor, &positions).unwrap();
+    assert_eq!(editor.finish().unwrap().stereo_elements().count(), 0);
+}
+
+#[test]
 fn coordinate_stereo_infers_fully_substituted_alkene_at_any_coordinate_scale() {
     let molecule = read_smiles("FC(Cl)=C(Br)I").unwrap();
     for scale in [1.0e-100, 1.0, 1.0e100] {
@@ -2082,7 +2283,10 @@ fn coordinate_axis_inference_does_not_treat_saturated_rings_as_sp2() {
     let result = stereo_api::infer_coordinate_stereo_with_options(
         &molecule,
         &test_positions(points),
-        CoordinateStereoOptions { infer_axes: true },
+        CoordinateStereoOptions {
+            infer_axes: true,
+            ..Default::default()
+        },
     )
     .unwrap();
     assert!(result
@@ -2105,7 +2309,10 @@ fn coordinate_axis_handedness_is_scale_and_rotation_invariant() {
         let result = stereo_api::infer_coordinate_stereo_with_options(
             &molecule,
             &test_positions(points),
-            CoordinateStereoOptions { infer_axes: true },
+            CoordinateStereoOptions {
+                infer_axes: true,
+                ..Default::default()
+            },
         )
         .unwrap();
         assert_eq!(result.elements.len(), 1);
@@ -2122,7 +2329,10 @@ fn perception_installation_rejects_a_descriptor_for_the_wrong_stereo_geometry() 
     stereo_api::materialize_coordinate_stereo_with_options(
         &mut editor,
         &positions,
-        CoordinateStereoOptions { infer_axes: true },
+        CoordinateStereoOptions {
+            infer_axes: true,
+            ..Default::default()
+        },
     )
     .unwrap();
     let axis = editor.finish().unwrap();
@@ -2386,9 +2596,10 @@ fn molfile_writers_project_tetrahedral_stereo_independent_of_bond_endpoint_stora
 
     for molecule in [&molecule, &reversed] {
         let before = molecule.clone();
+        let model = tetrahedral_drawing(molecule);
         for written in [
-            molfile::write_v2000(molecule).expect("V2000 projects tetrahedral stereo"),
-            molfile::write_v3000(molecule).expect("V3000 projects tetrahedral stereo"),
+            molfile::write_model_v2000(&model).expect("V2000 projects tetrahedral stereo"),
+            molfile::write_model_v3000(&model).expect("V3000 projects tetrahedral stereo"),
         ] {
             let (reparsed, report) =
                 read_molfile_with_report(&written).expect("projected tetrahedral stereo reparses");
@@ -2527,6 +2738,21 @@ fn tetrahedral_marked_graph() -> (MoleculeEditor, AtomId, Vec<AtomId>, BondId) {
         );
     }
     (mol, center, carriers, bonds[0])
+}
+
+fn tetrahedral_drawing(molecule: &Molecule) -> Model {
+    let points = molecule
+        .atoms()
+        .map(|(_, atom)| match atom.element.symbol() {
+            "C" => Point3::origin(),
+            "F" => Point3::new(1.0, 0.0, 0.0),
+            "Cl" => Point3::new(-1.0, 0.0, 0.0),
+            "Br" => Point3::new(0.0, 1.0, 0.0),
+            "I" => Point3::new(0.0, -1.0, 0.0),
+            _ => unreachable!("tetrahalomethane regression"),
+        })
+        .collect();
+    Model::from_molecule(molecule, &test_positions(points)).unwrap()
 }
 
 fn canonical_tetrahedral_molecule() -> Molecule {

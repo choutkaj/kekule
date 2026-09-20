@@ -42,6 +42,215 @@ fn signature(root: LigandTree) -> LigandSignature {
     }
 }
 
+fn branched_carbon_ligand(depth: usize) -> LigandTree {
+    let hydrogen = LigandTree {
+        priority: node_priority(1, 0, 0),
+        children: Vec::new(),
+    };
+    LigandTree {
+        // Repeated molecular identities deliberately represent distinct path
+        // occurrences. Their descendants must still be ranked independently.
+        priority: node_priority_with_rule6_atom(6, AtomId::new(7)),
+        children: if depth == 0 {
+            vec![hydrogen.clone(), hydrogen.clone(), hydrogen]
+        } else {
+            vec![
+                branched_carbon_ligand(depth - 1),
+                branched_carbon_ligand(depth - 1),
+                hydrogen,
+            ]
+        },
+    }
+}
+
+fn first_carbon_leaf(tree: &mut LigandTree, depth: usize) -> &mut LigandTree {
+    let mut leaf = tree;
+    for _ in 0..depth {
+        leaf = &mut leaf.children[0];
+    }
+    leaf
+}
+
+#[test]
+fn tied_branched_ligands_preserve_isotopes_and_distinct_path_occurrences() {
+    let right = branched_carbon_ligand(6);
+    let mut left = right.clone();
+    first_carbon_leaf(&mut left, 6).priority.rule2_mass = Rule2Mass::isotope(6, 13);
+    assert_eq!(
+        left.recursive_compare(&right, SequenceRule::Rule1a, None),
+        Ordering::Equal
+    );
+    assert_eq!(
+        left.recursive_compare(&right, SequenceRule::Rule2, None),
+        Ordering::Greater
+    );
+    assert_eq!(
+        right.recursive_compare(&left, SequenceRule::Rule2, None),
+        Ordering::Less
+    );
+
+    fn reverse_children(tree: &mut LigandTree) {
+        tree.children.reverse();
+        for child in &mut tree.children {
+            reverse_children(child);
+        }
+    }
+    let mut reordered = left.clone();
+    reverse_children(&mut reordered);
+    assert_eq!(
+        signature(left).compare(&signature(reordered)),
+        Ordering::Equal
+    );
+}
+
+#[test]
+fn tied_branched_ligands_do_not_share_ordering_between_rule6_references() {
+    let mut left = branched_carbon_ligand(5);
+    let mut right = left.clone();
+    let left_atom = AtomId::new(8);
+    let right_atom = AtomId::new(9);
+    first_carbon_leaf(&mut left, 5).priority.rule6_atom = Some(left_atom);
+    first_carbon_leaf(&mut right, 5).priority.rule6_atom = Some(right_atom);
+    for (reference, expected) in [
+        (Some(left_atom), Ordering::Greater),
+        (Some(right_atom), Ordering::Less),
+        (None, Ordering::Equal),
+    ] {
+        assert_eq!(
+            left.recursive_compare(&right, SequenceRule::Rule6, reference),
+            expected
+        );
+    }
+}
+
+#[test]
+fn auxiliary_ranking_stops_at_a_proven_order_but_never_promotes_a_truncated_tie() {
+    for (smiles, options, resolved) in [
+        (
+            "[C@H](F)(Cl)CCCC",
+            CipAssignmentOptions {
+                max_depth: 32,
+                max_nodes: 1,
+            },
+            true,
+        ),
+        (
+            "N[C@@H]([13CH2]CCC)CCCCO",
+            CipAssignmentOptions {
+                max_depth: 0,
+                max_nodes: 100_000,
+            },
+            false,
+        ),
+    ] {
+        let document = crate::smiles::parse_str(smiles).expect("auxiliary ligand regression");
+        let mut molecule = crate::smiles::interpret(&document)
+            .expect("interpret")
+            .into_molecules()
+            .remove(0);
+        molecule.perceive().expect("perceive");
+        let (element, stereo) = molecule
+            .stereo_elements()
+            .next()
+            .expect("tetrahedral center");
+        let StereoElementKind::Tetrahedral(stereo) = &stereo.kind else {
+            panic!("tetrahedral");
+        };
+        let fractions = cip_atomic_number_fractions(&molecule);
+        let graph = build_auxiliary_graph(
+            &molecule,
+            element,
+            molecule.atom_ids().last().expect("original root"),
+            CipAssignmentOptions::default(),
+            &fractions,
+            false,
+        )
+        .expect("complete auxiliary graph");
+        let root = graph
+            .nodes
+            .iter()
+            .position(|node| {
+                matches!(node.node,
+                    LigandNode::Atom { atom, duplicate: None, .. } if atom == stereo.center
+                )
+            })
+            .expect("reroot at the stereo occurrence");
+        let descriptors = DescriptorContext::new(element);
+        let mut context = LigandBuildContext {
+            mol: &molecule,
+            element,
+            descriptor_context: &descriptors,
+            options: CipAssignmentOptions::default(),
+            atomic_number_fractions: &fractions,
+            atropisomer_mode: false,
+        };
+        let complete = auxiliary_tetrahedral_signatures(&context, &graph, root, stereo)
+            .expect("full ligand signatures");
+        let expected = rank_carrier_signatures(element, &complete, None).expect("full ordering");
+        context.options = options;
+        let result = auxiliary_tetrahedral_signatures(&context, &graph, root, stereo);
+        if resolved {
+            let signatures = result.expect("distinct carrier elements need one node per ligand");
+            assert_eq!(
+                rank_carrier_signatures(element, &signatures, None).expect("ordering"),
+                expected
+            );
+        } else {
+            assert!(matches!(
+                result,
+                Err(CipAssignmentIssue::DepthLimitExceeded { .. })
+            ));
+        }
+    }
+}
+
+#[test]
+fn auxiliary_traversal_visits_each_occurrence_once_from_every_root() {
+    let document = crate::smiles::parse_str("CC1=CCC(C)CC1").expect("cyclic branched ligand");
+    let mut molecule = crate::smiles::interpret(&document)
+        .expect("interpret")
+        .into_molecules()
+        .remove(0);
+    molecule.perceive().expect("perceive");
+    let fractions = cip_atomic_number_fractions(&molecule);
+    let graph = build_auxiliary_graph(
+        &molecule,
+        StereoElementId::new(0),
+        molecule.atom_ids().next().expect("root atom"),
+        CipAssignmentOptions::default(),
+        &fractions,
+        false,
+    )
+    .expect("complete auxiliary digraph");
+    assert!(graph.nodes.iter().any(|node| matches!(
+        node.node,
+        LigandNode::Atom {
+            duplicate: Some(DuplicateNode::Ring { .. }),
+            ..
+        }
+    )));
+    for root in 0..graph.nodes.len() {
+        let traversal = AuxiliaryTraversal::new(&graph, root);
+        let mut pending = vec![(root, None)];
+        let mut visited = HashSet::new();
+        while let Some((node, previous)) = pending.pop() {
+            assert!(visited.insert(node), "an occurrence was reached twice");
+            // Independently root the undirected tree by excluding the edge
+            // just traversed. Original parent edges precede child edges.
+            let expected = graph.nodes[node]
+                .parent
+                .into_iter()
+                .chain(graph.nodes[node].children.iter().copied())
+                .filter(|neighbor| Some(*neighbor) != previous)
+                .collect::<Vec<_>>();
+            let outgoing = traversal.outgoing(node).collect::<Vec<_>>();
+            assert_eq!(outgoing, expected, "root {root}, occurrence {node}");
+            pending.extend(outgoing.into_iter().map(|child| (child, Some(node))));
+        }
+        assert_eq!(visited.len(), graph.nodes.len());
+    }
+}
+
 #[test]
 fn symmetric_stereo_assertions_do_not_create_cip_centers() {
     let smiles = "C1[C@H]2C[C@H]3C[C@@H]1C[C@@H](C2)C3";

@@ -1,15 +1,15 @@
 {
   "schema": 2,
-  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
   "dataset": "smoke",
   "feature": "stereo.cip",
   "input_lock_sha256": "f071f66843ebccd2fe0a0417db961f5ce228d01083c84943e2357afab21fedae",
-  "sha256": "2178ce234377619ca44ad8db181badbb841e30efd10d5170209b36d6deb8b067",
+  "sha256": "946ef915b5791972467739e23dbb1cf0419e5a908bb35f47b897e673876f5cee",
   "reference": {
     "tool": "rdkit",
     "version": "2026.03.3"
   },
-  "reference_code_sha256": null,
-  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded.",
+  "reference_code_sha256": "5c1371b7f02bebda645aca23874fb7aa95e01afd52767bb37170c3a65e30a7f2",
+  "origin": "independent generation",
   "cases": 26
 }

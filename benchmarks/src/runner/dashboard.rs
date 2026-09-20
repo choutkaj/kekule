@@ -27,11 +27,10 @@ fn refresh(opts: &Options) -> Result<(), Box<dyn Error>> {
             opts.started_at_unix_ms,
             process::id()
         ));
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(archive)?;
-        std::io::copy(&mut fs::File::open(&opts.output)?, &mut file)?;
+        ReportFile::new(&archive).write(|file| {
+            std::io::copy(&mut fs::File::open(&opts.output)?, file)?;
+            Ok(())
+        })?;
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let configured = env::var_os("KEKULE_DASHBOARD_PYTHON")

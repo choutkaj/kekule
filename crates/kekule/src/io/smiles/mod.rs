@@ -1,4 +1,5 @@
 mod canonical;
+mod cx;
 mod interpret;
 mod parse;
 mod write;

@@ -1,15 +1,15 @@
 {
   "schema": 2,
-  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "contract_sha256": "55137d7e199da4baeb425d7172467b7b5b8f0efbe0e45c5b8feca1077c546df7",
   "dataset": "enamine-diversity",
   "feature": "algo.rings.fast",
   "input_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
-  "sha256": "ca95959005cc1d29ad073bc8e00dd9fa23d70fe05d7f0c65ceaf45665d629fc1",
+  "sha256": "041d88e19bbea292745b996f58a6ab8c33498a390e4808fd8bcc9c9a9f73889a",
   "reference": {
     "tool": "rdkit",
     "version": "2026.03.3"
   },
-  "reference_code_sha256": null,
-  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded. Corrected 2881 source SMILES cases with CXSMILES extensions by independent RDKit evaluation using adapter SHA-256 18d9a3b6f0e39794720a5ca1c906d1a47c868fd4e2405bdc7506cbe369bba9e8; all other stored lines retained verbatim.",
+  "reference_code_sha256": "2ad1554f1766c2f5b82d17fef7012a81c18b290b5380a2450f701a35003d7e43",
+  "origin": "independent generation",
   "cases": 100480
 }

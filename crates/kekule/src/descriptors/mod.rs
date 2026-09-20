@@ -3,6 +3,14 @@
 //! Descriptor calculation never mutates or perceives the input.
 //! Callers select explicitly whether installed implicit-hydrogen state is part
 //! of the calculation.
+//!
+//! Average masses use CIAAW 2024 abridged standard atomic weights for unlabeled
+//! atoms. Monoisotopic masses use AME 2020 atomic masses for the most abundant
+//! naturally occurring isotope selected from CIAAW 2024 compositions. Explicit
+//! isotope labels use their AME 2020 mass in either calculation. Both mass
+//! calculations subtract the aggregate formal charge times the CODATA 2022
+//! electron mass. Missing standard weights or natural isotopes are reported as
+//! structured errors; no mass-number substitute is used.
 
 mod data;
 
@@ -533,7 +541,7 @@ mod tests {
     fn radicals_need_no_mass_correction_beyond_charge() {
         let mut graph = crate::core::MoleculeEditor::new();
         let mut carbon = Atom::new(element("C"));
-        carbon.radical = Some(AtomRadical::Doublet);
+        carbon.radical = AtomRadical::new(1, Some(2));
         graph.add_atom(carbon).expect("atom identifier capacity");
         let molecule = graph;
         assert_eq!(

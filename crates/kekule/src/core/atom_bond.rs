@@ -63,24 +63,53 @@ impl Default for HydrogenDeclaration {
     }
 }
 
+/// Nonbonding radical-electron occupancy with an optional local spin assertion.
+///
+/// Electron count and spin multiplicity are distinct. In particular, the
+/// two-electron singlet and triplet states encoded by molfiles both reserve two
+/// electrons during valence inference. A count inferred from bracket SMILES
+/// does not by itself assert the spin state. This is atom-local information,
+/// not a molecular spin multiplicity or a prediction of the electronic ground state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AtomRadical {
-    Singlet,
-    Doublet,
-    Triplet,
-    Quartet,
-    Quintet,
+pub struct AtomRadical {
+    electron_count: u8,
+    spin_multiplicity: Option<u8>,
 }
 
 impl AtomRadical {
-    pub const fn unpaired_electron_count(self) -> u8 {
-        match self {
-            Self::Singlet => 0,
-            Self::Doublet => 1,
-            Self::Triplet => 2,
-            Self::Quartet => 3,
-            Self::Quintet => 4,
+    /// Constructs a nonzero radical-electron count and optional multiplicity `2S+1`.
+    ///
+    /// Returns `None` for zero electrons or a multiplicity incompatible with
+    /// coupling that many spin-one-half electrons. An atom without radical
+    /// occupancy uses `Atom::radical = None`; an unspecified spin uses
+    /// `AtomRadical::new(electrons, None)`.
+    pub const fn new(electron_count: u8, spin_multiplicity: Option<u8>) -> Option<Self> {
+        if electron_count == 0 {
+            return None;
         }
+        if let Some(multiplicity) = spin_multiplicity {
+            if multiplicity == 0
+                || multiplicity as u16 > electron_count as u16 + 1
+                || multiplicity % 2 == electron_count % 2
+            {
+                return None;
+            }
+        }
+        Some(Self {
+            electron_count,
+            spin_multiplicity,
+        })
+    }
+
+    /// Electrons reserved from bonding, including a pair in a singlet center.
+    /// This is not the number of physically unpaired electrons.
+    pub const fn electron_count(self) -> u8 {
+        self.electron_count
+    }
+
+    /// Explicit atom-local spin multiplicity, or `None` when not specified.
+    pub const fn spin_multiplicity(self) -> Option<u8> {
+        self.spin_multiplicity
     }
 }
 
