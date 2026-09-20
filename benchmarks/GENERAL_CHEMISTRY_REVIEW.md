@@ -2747,3 +2747,144 @@ corpora), matching available substructure coverage, and complements the full
 feature-specific runs above. It is not a claim of a new all-source run for every
 feature. Fresh references, where needed for contract 3, must be generated without
 Kekule evaluation; retained references keep their original provenance and hashes.
+
+
+### Final fixed-revision validation and handoff
+
+The scoped implementation is committed and pushed on `codex/benchmark-parity`
+as `11dbce145092d5f21ac2c2ec3bd94442ece4b313`. The final benchmark ran from that
+clean revision with the retained `axis-conflicts-bench.exe` (SHA-256
+`2f5d7af079bc8a2bbac46992cc5a93a5bb3b6187063cb27ae2e05624364e6c23`).
+All later changes are documentation only; runtime, adapters, contract and input
+locks remain identical to the benchmark revision. README was not modified.
+
+The run covers all 25 features and all seven datasets, with a deterministic
+1,000-source limit: 1,000 PubChem, 1,000 Enamine, 164 PL-REx, all 1,000 PDB,
+20 smoke, all 518 RDKit query and all 50 RDKit structure source IDs. This is
+3,752 selected source IDs and 175 dataset/feature pairs. It complements the
+full-corpus feature reruns above; it does not replace them or claim a new
+all-source PubChem/Enamine evaluation of every feature. Formats and repeated
+compound representations are separate observations, not independent molecules.
+
+The frozen final reference directory is
+`target/general-chemistry-review/final-reference-11dbce14-v3`.
+It combines 131 checksum-verified retained pairs with 44 fresh independent
+reference generations under contract 3. Four retained DSSP manifests record
+an explicit contract-only migration: DSSP has no radical measurements, its
+comparison rules and archive bytes are unchanged, and its original generator
+provenance remains intact. No reference was changed using Kekule's answers.
+The 44 fresh generations were independently checked for archive checksums,
+source-lock hashes, selected-source membership, row counts, duplicate identity
+and clean-revision generation provenance. Existing archives were not overwritten.
+
+`run_final_validation.py` records the exact generation and comparison commands.
+The comparison uses `--feature all --dataset all --limit 1000 --jobs 4`, the
+frozen reference directory and the pinned RDKit 2026.03.3 writer interpreter.
+`final-reference-consolidation.json` and `final-fresh-reference-audit.json`
+record reference provenance and the independent archive audit. These and all
+following named outputs are under `target/general-chemistry-review`.
+
+The report `final-11dbce14-all-features.json` is complete with no execution error.
+It correctly returns scientific failure (exit 1): 71,326 agreements, 9,525
+raw disagreements, 923 error observations and 41,056 not-applicable observations
+remain. Native and reference error counts overlap (913 and 244 respectively).
+There are no input, writer-validation or observation-layer errors and no
+missing-reference errors. An error never contributes to agreement.
+
+| Feature | Agree | Disagree | Error | Not applicable |
+| --- | ---: | ---: | ---: | ---: |
+| `io.smiles.parse` | 1,718 | 290 | 0 | 1,744 |
+| `io.smiles.write` | 1,740 | 0 | 268 | 1,744 |
+| `io.smiles.canonical` | 1,951 | 0 | 57 | 1,744 |
+| `io.smiles.isomeric` | 1,951 | 0 | 57 | 1,744 |
+| `io.mol.parse` | 1,910 | 481 | 4 | 1,521 |
+| `io.mol.v2000.write` | 2,213 | 120 | 62 | 1,521 |
+| `io.mol.v3000.write` | 2,213 | 178 | 4 | 1,521 |
+| `io.sdf.parse` | 1,910 | 481 | 4 | 1,521 |
+| `io.sdf.v2000.write` | 2,213 | 120 | 62 | 1,521 |
+| `io.mmcif.parse` | 922 | 79 | 0 | 2,751 |
+| `algo.rings.fast` | 4,399 | 0 | 4 | 1,519 |
+| `algo.rings.sssr` | 4,399 | 0 | 4 | 1,519 |
+| `algo.valence.rdkit-like` | 4,399 | 0 | 4 | 1,519 |
+| `algo.aromaticity.rdkit-like` | 4,399 | 0 | 4 | 1,519 |
+| `algo.canonical-ranking` | 4,399 | 0 | 4 | 1,519 |
+| `algo.substructure.vf2` | 4,399 | 0 | 4 | 1,519 |
+| `query.smarts` | 2,423 | 0 | 103 | 1,226 |
+| `chem.perception.default` | 3,629 | 770 | 4 | 1,519 |
+| `chem.hydrogen-transforms` | 4,096 | 303 | 4 | 1,519 |
+| `descriptor.molecular` | 0 | 4,397 | 6 | 1,519 |
+| `descriptor.rotatable-bonds.rdkit-strict` | 3,764 | 635 | 4 | 1,519 |
+| `stereo.representation` | 3,628 | 771 | 4 | 1,519 |
+| `stereo.perception` | 3,699 | 700 | 4 | 1,519 |
+| `stereo.cip` | 4,395 | 4 | 4 | 1,519 |
+| `bio.secondary-structure.dssp` | 557 | 196 | 248 | 2,751 |
+
+The independent final audit (`audit_final_validation.py`,
+`final-11dbce14-audit.json` and its log) reads all 122,830 case records, verifies
+identity uniqueness, exact selected-source coverage and every summary count,
+and rejects any alleged agreement containing a failed native or reference
+observation. All 1,828 smoke and structure-corpus rows are identical to the
+preceding validated implementation's rows. The finalized case archive is
+`final-11dbce14-all-features.cases.jsonl.gz`, SHA-256
+`97032a41d1b4d7630b9be9c5fb7cef4b4c4b477e4e85ee94a8a5387fea7a21db`.
+No successful comparison was substituted for an unsupported operation.
+
+The final error audit distinguishes intentional format contracts from missing
+capabilities. The 268 plain-SMILES export errors reject configured stereo;
+canonical/isomeric export is tested separately. Each of those latter features
+has 57 enhanced-group export errors. V2000 likewise rejects enhanced groups
+(57 cases in each writer feature) and one out-of-range fixed-width coordinate;
+V3000 is the supported richer format. No group or configuration is discarded
+to make these comparisons pass. Two additional mass errors are missing CIAAW
+standard weights for actinium and nobelium, not fabricated numerical values.
+
+The larger work deliberately left for future model extensions remains:
+
+- Axial and enhanced-group candidate symmetry/cleanup, and charged or radical
+  heteroatom geometry. Existing represented axes remain preserved; missing
+  eligibility proofs are not replaced with a copy of the source assertions.
+- Recursive SMARTS, ring-size/ring-count and composite-bond grammar; explicit
+  v/^ semantics and enhanced-group SMILES export. Unsupported syntax stays
+  explicit, including all 103 query-corpus errors.
+- General CTAB electron-deficit radical inference with coordinated reading and
+  writing; arbitrary R/R1 chemical placeholders and unsupported atom-CFG sites.
+- The two full-corpus CIP node-limit cases and residual CIP conventions already
+  documented above. The final sample's four CIP disagreements are retained;
+  it does not establish zero disagreement outside its selection.
+- DSSP interpretation, as agreed: the full PDB run retains 196 disagreements
+  and 248 error observations, including 244 reference failures. Matching
+  no-analyzable-residue failures remain errors.
+
+The verified CIAAW/AME/CODATA mass policy, explicit/implicit hydrogen policy,
+heavy-atom rotatable-bond convention, valid alternative selected-ring basis and
+source-preserving mmCIF whitespace policy remain documented scientific choices.
+Their raw comparisons and guarded diagnostics stay visible. They are not
+silently normalized into benchmark agreement.
+
+Applicable engineering gates passed: 837 core unit tests and all workspace
+integration tests/doctests; workspace all-target/all-feature check and clippy
+with warnings denied; warnings-denied workspace docs; potentials tests/docs
+without default features; Rust 1.89 all-target/all-feature checking; verified
+core packaging; companion and benchmark package-file listings; formatting and
+whitespace checks. `run_axis_conflicts_gates.ps1` and the `axis-conflicts-*`
+logs retain exact commands. The final V3000 regression extension was separately
+rerun along with clippy and formatting. No runtime code changed afterward.
+
+At the clean implementation revision, all 98 Python tests passed: 37 benchmark,
+43 RDKit adapter, eight Biopython adapter, eight shared reference-runner and two
+atomic-data generator tests. Node dashboard checks and all six license-copy
+comparisons passed (`final-python-*.log`, `final-atomic-data.log`,
+`final-node.log`, `final-source-state.json`). No engineering check was changed
+to accept a chemistry mismatch.
+
+Not run: Linux CI/fuzz compilation and fuzz smoke, because this execution host
+is Windows; full companion publication packaging, because it resolves the
+unpublished foundational crate through crates.io. The companion package file sets were
+checked instead, as prescribed by CI. External trajectory reference runs were
+not repeated because trajectory behavior was unchanged. Documentation-only
+handoff edits do not require repeating the unchanged runtime suite.
+
+The requirement matrix above is complete within the user's explicitly limited
+reengineering scope. Remaining unsupported models and convention differences
+are reported rather than claimed fixed. Benchmark session 25308 and audit
+session 64990 are terminal; no validation process remains outstanding.

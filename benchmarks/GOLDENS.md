@@ -1,8 +1,25 @@
 # Stored reference coverage
 
-The current benchmark has 125 dataset/feature pairs: 25 features across five
-datasets. Every locked ID is accounted for, including missing formats and
-reference failures. These are reference-availability counts, not Kekule scores.
+The registry now contains 175 dataset/feature pairs: 25 features across seven
+datasets. The 75 bundled archives cover smoke, the 518-query RDKit corpus and
+the 50-file RDKit structure corpus. The latter supplies several representations
+of a small set of compounds; it is not a random sample of 50 independent molecules.
+Bulk inputs, full reference archives, reports and diagnostic outputs remain local.
+
+The general chemistry follow-up uses observation contract 3, which asserts
+radical electron occupancy and explicitly supplied spin independently. Compatible
+references and their provenance are recorded in `GENERAL_CHEMISTRY_REVIEW.md`.
+Historical full-dataset archives below are not silently migrated or regenerated
+by comparison. An archive with an old contract is rejected; generate a fresh
+independent reference into a new directory or select the audited compatible
+archive explicitly with `--goldens` as described in `GUIDE.md`.
+
+## Original five-dataset snapshot
+
+The following counts describe the original five-dataset reference inventory,
+before the general chemistry follow-up. They are reference-availability counts,
+not current Kekule scores. Every locked ID was accounted for, including missing
+formats and reference failures.
 
 | Dataset | Source IDs | Reference values | Reference errors | Missing-format cases |
 | --- | ---: | ---: | ---: | ---: |
@@ -17,10 +34,12 @@ Missing formats are reported separately from applicable cases; they never count
 as agreement. Reference failures remain errors. Inspect each report's coverage
 before interpreting its agreement counts.
 
-The complete local compressed goldens occupy 1,845,149,606 bytes. Only the 25
-smoke archives (141,639 bytes) are tracked. The other 100 archives stay local;
-all 125 small manifests remain tracked so their expected bytes and provenance
-can be verified. No full golden archive is published by the benchmark workflow.
+At that snapshot, the local compressed goldens occupied 1,845,149,606 bytes.
+The 25 smoke archives (141,639 bytes) were the only tracked payloads; the
+other 100 archives stayed local. All 125 small manifests remain tracked to
+preserve their expected bytes and provenance. The two later bundled corpora
+add 50 archives and manifests. Full golden archives are not published by the
+benchmark workflow.
 
 The goldens use RDKit 2026.03.3,
 Biopython 1.87, and mkdssp 4.6.1. Adjacent schema-2 manifests pin the compressed
