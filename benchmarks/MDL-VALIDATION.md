@@ -83,6 +83,16 @@ failed. The existing dashboard displays not-applicable counts separately.
 
 ## Regression checks
 
+After merging the general chemistry follow-up, the newly registered
+`rdkit-structures` corpus was independently generated with RDKit 2026.03.3 and
+compared in full: 46 exact agreements, zero flag disagreements and four retained
+Kekule import errors. Three structures contain unsupported `R`/`R1` atom labels;
+one supplies a V3000 atom CFG without four supported tetrahedral carriers. These
+fail before aromaticity. See the [summary](reports/mdl-structures-results.json)
+and [complete failed observations](reports/mdl-structure-errors.json).
+The earlier full-corpus results above remain historical evidence; they were not
+replaced or relabeled as a new full MDL run.
+
 Focused Rust and RDKit-adapter regressions distinguish pyrrole from biphenyl:
 MDL clears pyrrole's atom and bond flags while retaining biphenyl's aromatic
 rings and its nonaromatic connecting bond. The Rust regression proves that

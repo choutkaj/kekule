@@ -226,7 +226,8 @@ pub mod smiles {
         }
     }
 
-    /// Parses source text into a syntax-preserving SMILES document.
+    /// Parses one record, preserving base SMILES, an optional CX extension, and its name.
+    /// Extension text is retained without validating its field syntax or semantics.
     pub fn parse_str(input: &str) -> Result<SmilesDocument, SmilesParseError> {
         crate::io::parse_smiles_document(input)
     }
@@ -241,11 +242,27 @@ pub mod smiles {
 
     /// Interprets parsed syntax as canonical represented chemistry.
     ///
-    /// No perception is run implicitly.
+    /// Bracket atoms have fixed hydrogen counts. After localizing source aromatic
+    /// bonds, their valence deficits determine radical-electron occupancy using
+    /// the RDKit-like octet/duet and allowed-valence conventions. This does not
+    /// assert a spin multiplicity. No perception is installed implicitly.
+    /// Explicit CX radical declarations override inferred occupancy and preserve
+    /// specified spin. CX absolute, AND and OR groups reference source atom
+    /// indices; the `r` flag relates otherwise ungrouped tetrahedral centers.
+    /// Stereo relationships across disconnected molecules are not representable.
+    /// Unsupported CX fields return an error instead of being discarded.
     pub fn interpret(
         document: &SmilesDocument,
     ) -> Result<SmilesInterpretation, SmilesInterpretError> {
         document.interpret()
+    }
+
+    /// Explicitly interprets only the base SMILES and records the omitted CX extension.
+    /// This projection can lose chemical information, including stereochemical groups.
+    pub fn interpret_base(
+        document: &SmilesDocument,
+    ) -> Result<SmilesInterpretation, SmilesInterpretError> {
+        document.interpret_base()
     }
 
     /// Parses and interprets one SMILES record into source-ordered connected components.
@@ -268,10 +285,15 @@ pub mod smiles {
 
     /// Writes one connected molecule using ordinary non-canonical SMILES.
     ///
-    /// Preserves isotope labels and hydrogen counts. An atom that permits
-    /// inferred hydrogens and requires bracket syntax must have hydrogen
+    /// Preserves isotope labels and total hydrogen counts. Declared and inferred
+    /// counts may be combined in a bracket atom without changing the source
+    /// molecule; the original inference policy is not serialized. An atom that
+    /// permits inferred hydrogens and requires bracket syntax must have hydrogen
     /// perception installed; otherwise writing returns an error. Call
     /// [`Molecule::perceive`] explicitly before exporting such atoms.
+    /// Radical electrons may be encoded by bracket valence, but explicit spin
+    /// multiplicities cannot be represented. Writing fails if the bracket would
+    /// imply a different radical state.
     pub fn write(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_smiles(molecule)
     }
@@ -369,6 +391,11 @@ pub mod molfile {
     }
 
     /// Interprets a parsed Molfile into canonical molecules, geometry, and a report.
+    /// Unmarked tetrahedral configurations in 3D coordinates use the shared
+    /// chemical eligibility and symmetry model. Explicit unknown assertions
+    /// remain unknown; derived perception is not installed on the result.
+    /// Valence outside that model is reported as a warning without discarding
+    /// the represented graph. Resource exhaustion remains an error.
     pub fn interpret(
         document: &MolfileDocument,
     ) -> Result<MolfileInterpretation, MolfileInterpretError> {
@@ -376,16 +403,20 @@ pub mod molfile {
     }
 
     /// Writes a coordinate-free molecule as a V2000 CTAB with zero coordinates.
+    /// Specified stereo requires a geometry-bearing model; zero coordinates
+    /// cannot encode a wedge, double-bond configuration, or stereogenic axis.
     pub fn write_v2000(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_mol_v2000(molecule)
     }
 
     /// Writes a coordinate-free molecule as a V3000 CTAB with zero coordinates.
+    /// Specified stereo requires a geometry-bearing model, as in [`write_v2000`].
     pub fn write_v3000(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_mol_v3000(molecule)
     }
 
     /// Writes a coordinate-free molecule using zero coordinates.
+    /// Specified stereo requires [`write_model`] with suitable coordinates.
     pub fn write_molecule(
         molecule: &Molecule,
         options: MolfileWriteOptions,
@@ -394,6 +425,10 @@ pub mod molfile {
     }
 
     /// Writes one geometry-bearing model as one possibly disconnected CTAB.
+    ///
+    /// V2000 rounds coordinates to four decimal places in angstroms. V3000
+    /// preserves the converted `f64` coordinates with round-trip decimal text.
+    /// Stereo is projected against the coordinates emitted by the chosen version.
     pub fn write_model(
         model: &Model,
         options: MolfileWriteOptions,
@@ -866,13 +901,15 @@ pub mod perception {
 /// descriptors remain opt-in derived state.
 pub mod stereo {
     pub use crate::algorithms::{
-        assign_cip_descriptors, assign_cip_descriptors_with_options, detect_stereo_candidates,
-        infer_coordinate_stereo, infer_coordinate_stereo_with_options,
-        materialize_coordinate_stereo, materialize_coordinate_stereo_with_options, validate_stereo,
-        CipAssignment, CipAssignmentError, CipAssignmentIssue, CipAssignmentOptions,
-        CipAssignmentReport, CipSkipped, CipSkippedReason, CoordinateStereoError,
-        CoordinateStereoMaterializationReport, CoordinateStereoOptions, CoordinateStereoResult,
-        StereoCandidate, StereoValidationError, StereoValidationIssue,
+        assign_cip_descriptors, assign_cip_descriptors_with_options, cleanup_stereo,
+        detect_stereo_candidates, detect_stereo_candidates_with_options, infer_coordinate_stereo,
+        infer_coordinate_stereo_with_options, materialize_coordinate_stereo,
+        materialize_coordinate_stereo_with_options, validate_stereo, CipAssignment,
+        CipAssignmentError, CipAssignmentIssue, CipAssignmentOptions, CipAssignmentReport,
+        CipSkipped, CipSkippedReason, CoordinateStereoError, CoordinateStereoMaterializationReport,
+        CoordinateStereoOptions, CoordinateStereoResult, StereoCandidate, StereoCleanupReport,
+        StereoPerceptionError, StereoPerceptionOptions, StereoValidationError,
+        StereoValidationIssue,
     };
 }
 
@@ -885,6 +922,11 @@ pub mod canon {
     use crate::core::Molecule;
 
     /// Computes deterministic canonical equivalence classes without mutation.
+    ///
+    /// Hydrogen comparison uses declared counts plus installed implicit counts;
+    /// equal totals are equivalent regardless of how the counts are stored.
+    /// Run valence perception first to include inferred hydrogens. Without it,
+    /// only declared hydrogens contribute. Source declarations remain unchanged.
     pub fn atom_ranking(molecule: &Molecule) -> CanonicalAtomRanking {
         crate::algorithms::canonical_atom_ranking(molecule)
     }
@@ -897,11 +939,23 @@ pub mod canon {
 /// state.
 pub mod rotatable_bonds {
     pub use crate::algorithms::{RotatableBondOptions, RotatableBondSet};
+    pub use crate::chemistry::PerceptionError;
 
     use crate::core::Molecule;
 
     /// Detects rotatable bonds using the supplied options.
-    pub fn detect(molecule: &Molecule, options: RotatableBondOptions) -> RotatableBondSet {
+    ///
+    /// Resonance exclusions reuse installed RDKit-like valence and aromaticity
+    /// with the default Figueras ring model, or compute the default profile on
+    /// a temporary copy. Strict valence validation applies in either case.
+    /// Model-neutral, incomplete, or incompatible perception is not reused.
+    /// Valence and resource failures are returned without changing the source
+    /// graph or its perception. Disabling resonance exclusions requires only
+    /// graph ring membership and does not run chemical perception.
+    pub fn detect(
+        molecule: &Molecule,
+        options: RotatableBondOptions,
+    ) -> Result<RotatableBondSet, PerceptionError> {
         crate::algorithms::detect_rotatable_bonds(molecule, options)
     }
 }

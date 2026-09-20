@@ -12,6 +12,8 @@ use super::{
 };
 
 mod assignment;
+mod comparison;
+mod expansion;
 mod isotope_masses;
 
 use assignment::{
@@ -162,38 +164,7 @@ impl LigandTree {
         rule: SequenceRule,
         rule6_reference: Option<AtomId>,
     ) -> Ordering {
-        let priority = self
-            .priority
-            .compare_by_rule(&other.priority, rule, rule6_reference);
-        if priority != Ordering::Equal {
-            return priority;
-        }
-
-        let mut queue = vec![(self, other)];
-        let mut position = 0usize;
-        while position < queue.len() {
-            let (left, right) = queue[position];
-            position += 1;
-
-            let left_shallow = left.children_sorted_by_rule(rule, false, rule6_reference);
-            let right_shallow = right.children_sorted_by_rule(rule, false, rule6_reference);
-            let shallow =
-                compare_child_priorities(&left_shallow, &right_shallow, rule, rule6_reference);
-            if shallow != Ordering::Equal {
-                return shallow;
-            }
-
-            let left_deep = left.children_sorted_by_rule(rule, true, rule6_reference);
-            let right_deep = right.children_sorted_by_rule(rule, true, rule6_reference);
-            let deep = compare_child_priorities(&left_deep, &right_deep, rule, rule6_reference);
-            if deep != Ordering::Equal {
-                return deep;
-            }
-            for (left_child, right_child) in left_deep.into_iter().zip(right_deep) {
-                queue.push((left_child, right_child));
-            }
-        }
-        Ordering::Equal
+        comparison::compare(self, other, rule, rule6_reference)
     }
 
     fn compare_for_rule5_pairlist(&self, other: &Self, reference: DescriptorRef) -> Ordering {
@@ -366,41 +337,6 @@ impl LigandTree {
         }
     }
 
-    fn children_sorted_by_rule(
-        &self,
-        rule: SequenceRule,
-        deep: bool,
-        rule6_reference: Option<AtomId>,
-    ) -> Vec<&LigandTree> {
-        let mut children = self.children.iter().collect::<Vec<_>>();
-        children.sort_by(|left, right| {
-            for preceding_rule in SEQUENCE_RULES {
-                // Unreferenced Rules 4b and 5 do not rank descendants: a
-                // nested reference choice would change the comparison root.
-                if matches!(preceding_rule, SequenceRule::Rule4b | SequenceRule::Rule5) {
-                    if preceding_rule == rule {
-                        break;
-                    }
-                    continue;
-                }
-                let comparison = if deep {
-                    right
-                        .compare_by_sequence_rule(left, preceding_rule, rule6_reference)
-                        .ordering
-                } else {
-                    right
-                        .priority
-                        .compare_by_rule(&left.priority, preceding_rule, rule6_reference)
-                };
-                if comparison != Ordering::Equal || preceding_rule == rule {
-                    return comparison;
-                }
-            }
-            Ordering::Equal
-        });
-        children
-    }
-
     fn children_sorted_by_reference(&self, reference: DescriptorRef) -> Vec<&LigandTree> {
         let mut children = self.children.iter().collect::<Vec<_>>();
         children.sort_by(|left, right| right.compare_with_reference(left, reference));
@@ -443,7 +379,7 @@ fn compare_child_priorities(
     left.len().cmp(&right.len())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum SequenceRule {
     Rule1a,
     Rule1b,
@@ -863,7 +799,15 @@ fn carrier_signature(
     carrier: StereoCarrier,
     root: AtomId,
 ) -> CipResult<LigandSignature> {
-    let node = match carrier {
+    let node = carrier_node(carrier, root);
+    let mut visited_nodes = 0usize;
+    let mut truncated = false;
+    let root = ligand_tree(context, node, 0, &mut visited_nodes, &mut truncated)?;
+    Ok(LigandSignature { root, truncated })
+}
+
+fn carrier_node(carrier: StereoCarrier, root: AtomId) -> LigandNode {
+    match carrier {
         StereoCarrier::Atom(atom) => LigandNode::Atom {
             atom,
             previous: Some(root),
@@ -873,11 +817,7 @@ fn carrier_signature(
         },
         StereoCarrier::ImplicitHydrogen => LigandNode::Hydrogen,
         StereoCarrier::ImplicitLonePair => LigandNode::LonePair,
-    };
-    let mut visited_nodes = 0usize;
-    let mut truncated = false;
-    let root = ligand_tree(context, node, 0, &mut visited_nodes, &mut truncated)?;
-    Ok(LigandSignature { root, truncated })
+    }
 }
 
 fn build_auxiliary_graph(
@@ -1731,13 +1671,8 @@ fn auxiliary_bond_descriptor(
     let (left_node, right_node) = auxiliary_bond_nodes(graph, node, left, right)
         .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let rank_endpoint = |root, carriers: Vec<StereoCarrier>| {
-        let signatures = carriers
-            .into_iter()
-            .map(|carrier| {
-                auxiliary_carrier_signature(context, graph, root, carrier)
-                    .map(|signature| (carrier, signature))
-            })
-            .collect::<CipResult<Vec<_>>>()?;
+        let traversal = AuxiliaryTraversal::new(graph, root);
+        let signatures = auxiliary_carrier_signatures(context, &traversal, &carriers)?;
         rank_carrier_signatures(element, &signatures, None)
     };
     let left_ranked = rank_endpoint(left_node, left_carriers)?;
@@ -1771,82 +1706,53 @@ fn auxiliary_tetrahedral_signatures(
     root: usize,
     stereo: &TetrahedralStereo,
 ) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
-    stereo
-        .carriers
+    let traversal = AuxiliaryTraversal::new(graph, root);
+    auxiliary_carrier_signatures(context, &traversal, &stereo.carriers)
+}
+
+enum AuxiliaryLigandNode {
+    Occurrence(usize),
+    Hydrogen,
+    LonePair,
+}
+
+fn auxiliary_carrier_signatures(
+    context: &LigandBuildContext<'_>,
+    traversal: &AuxiliaryTraversal<'_>,
+    carriers: &[StereoCarrier],
+) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
+    let roots = carriers
         .iter()
         .copied()
         .map(|carrier| {
-            auxiliary_carrier_signature(context, graph, root, carrier)
-                .map(|signature| (carrier, signature))
-        })
-        .collect()
-}
-
-fn auxiliary_carrier_signature(
-    context: &LigandBuildContext<'_>,
-    graph: &AuxiliaryGraph,
-    root: usize,
-    carrier: StereoCarrier,
-) -> CipResult<LigandSignature> {
-    let root = match carrier {
-        StereoCarrier::Atom(atom) => {
-            let Some(node) = outgoing_auxiliary_graph_nodes(graph, root, root)
-                .into_iter()
-                .find(|node| auxiliary_graph_node_matches_atom(graph, *node, atom))
-            else {
-                return Err(CipAssignmentIssue::UnresolvedPriority {
-                    element: context.element,
-                });
+            let node = match carrier {
+                StereoCarrier::Atom(atom) => AuxiliaryLigandNode::Occurrence(
+                    traversal
+                        .outgoing(traversal.root)
+                        .find(|node| {
+                            auxiliary_graph_node_matches_atom(traversal.graph, *node, atom)
+                        })
+                        .ok_or(CipAssignmentIssue::UnresolvedPriority {
+                            element: context.element,
+                        })?,
+                ),
+                StereoCarrier::ImplicitHydrogen => AuxiliaryLigandNode::Hydrogen,
+                StereoCarrier::ImplicitLonePair => AuxiliaryLigandNode::LonePair,
             };
-            let mut visited_nodes = 0usize;
-            ligand_tree_from_auxiliary_graph(context, graph, root, node, 0, &mut visited_nodes)?
-        }
-        StereoCarrier::ImplicitHydrogen => LigandTree {
-            priority: LigandNode::Hydrogen.priority(context),
-            children: Vec::new(),
-        },
-        StereoCarrier::ImplicitLonePair => LigandTree {
-            priority: LigandNode::LonePair.priority(context),
-            children: Vec::new(),
-        },
-    };
-    Ok(LigandSignature {
-        root,
-        truncated: false,
+            Ok((carrier, node))
+        })
+        .collect::<CipResult<Vec<_>>>()?;
+    expansion::carrier_signatures(context, roots, |node| match node {
+        AuxiliaryLigandNode::Occurrence(node) => (
+            traversal.graph.nodes[node].node.priority(context),
+            traversal
+                .outgoing(node)
+                .map(AuxiliaryLigandNode::Occurrence)
+                .collect(),
+        ),
+        AuxiliaryLigandNode::Hydrogen => (LigandNode::Hydrogen.priority(context), Vec::new()),
+        AuxiliaryLigandNode::LonePair => (LigandNode::LonePair.priority(context), Vec::new()),
     })
-}
-
-fn ligand_tree_from_auxiliary_graph(
-    context: &LigandBuildContext<'_>,
-    graph: &AuxiliaryGraph,
-    root: usize,
-    node: usize,
-    depth: usize,
-    visited_nodes: &mut usize,
-) -> CipResult<LigandTree> {
-    *visited_nodes = visited_nodes.saturating_add(1);
-    if *visited_nodes > context.options.max_nodes {
-        return Err(CipAssignmentIssue::ResourceLimitExceeded {
-            element: context.element,
-            max_nodes: context.options.max_nodes,
-        });
-    }
-    let priority = graph.nodes[node].node.priority(context);
-    let mut children = Vec::new();
-    if depth < context.options.max_depth {
-        for child in outgoing_auxiliary_graph_nodes(graph, root, node) {
-            children.push(ligand_tree_from_auxiliary_graph(
-                context,
-                graph,
-                root,
-                child,
-                depth + 1,
-                visited_nodes,
-            )?);
-        }
-        children.sort_by(|left, right| right.priority.compare_shallow(&left.priority));
-    }
-    Ok(LigandTree { priority, children })
 }
 
 fn auxiliary_graph_node_matches_atom(graph: &AuxiliaryGraph, node: usize, atom: AtomId) -> bool {
@@ -1860,30 +1766,42 @@ fn auxiliary_graph_node_matches_atom(graph: &AuxiliaryGraph, node: usize, atom: 
     )
 }
 
-fn outgoing_auxiliary_graph_nodes(graph: &AuxiliaryGraph, root: usize, node: usize) -> Vec<usize> {
-    let mut path = Vec::new();
-    let mut cursor = Some(root);
-    while let Some(current) = cursor {
-        path.push(current);
-        cursor = graph.nodes[current].parent;
-    }
-    let path_position = path.iter().position(|candidate| *candidate == node);
-    if let Some(position) = path_position {
-        let child_toward_root = position.checked_sub(1).map(|index| path[index]);
-        let mut outgoing = Vec::new();
-        if let Some(parent) = graph.nodes[node].parent {
-            outgoing.push(parent);
+/// Reorients traversal without changing the paths that define auxiliary
+/// descriptors. Only edges on the original ancestor path need reversing.
+struct AuxiliaryTraversal<'a> {
+    graph: &'a AuxiliaryGraph,
+    root: usize,
+    toward_root: HashMap<usize, Option<usize>>,
+}
+
+impl<'a> AuxiliaryTraversal<'a> {
+    fn new(graph: &'a AuxiliaryGraph, root: usize) -> Self {
+        let mut toward_root = HashMap::new();
+        let mut cursor = Some(root);
+        let mut child = None;
+        while let Some(node) = cursor {
+            toward_root.insert(node, child);
+            child = Some(node);
+            cursor = graph.nodes[node].parent;
         }
-        outgoing.extend(
-            graph.nodes[node]
+        Self {
+            graph,
+            root,
+            toward_root,
+        }
+    }
+
+    fn outgoing(&self, node: usize) -> impl Iterator<Item = usize> + '_ {
+        let ancestor = self.toward_root.get(&node);
+        let parent = ancestor.and(self.graph.nodes[node].parent);
+        let child_toward_root = ancestor.copied().flatten();
+        parent.into_iter().chain(
+            self.graph.nodes[node]
                 .children
                 .iter()
                 .copied()
-                .filter(|child| Some(*child) != child_toward_root),
-        );
-        outgoing
-    } else {
-        graph.nodes[node].children.clone()
+                .filter(move |child| Some(*child) != child_toward_root),
+        )
     }
 }
 

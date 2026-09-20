@@ -14,14 +14,20 @@ __pycache__/
 .mypy_cache/
 fuzz/artifacts/
 fuzz/target/
-# Full scientific datasets stay local; only smoke payloads and provenance travel.
+# Bulk datasets stay local; small bundled inputs and provenance travel.
 /benchmarks/corpora/*/data/
 !/benchmarks/corpora/smoke/data/
 !/benchmarks/corpora/smoke/data/**
+!/benchmarks/corpora/rdkit-queries/data/
+!/benchmarks/corpora/rdkit-queries/data/**
+!/benchmarks/corpora/rdkit-structures/data/
+!/benchmarks/corpora/rdkit-structures/data/**
 /benchmarks/goldens/**
 !/benchmarks/goldens/*/
 !/benchmarks/goldens/*/*.jsonl.meta.json
 !/benchmarks/goldens/smoke/*.jsonl.gz
+!/benchmarks/goldens/rdkit-queries/*.jsonl.gz
+!/benchmarks/goldens/rdkit-structures/*.jsonl.gz
 tools/atomic-data/cache/
 
 # Small externally supplied SMARTS corpus and its complete reference outcomes.

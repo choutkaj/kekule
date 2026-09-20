@@ -1,0 +1,58 @@
+{
+  "cases": "target/core-smarts-merged-mdl-structures.cases.jsonl.gz",
+  "complete": true,
+  "error": null,
+  "goldens": "C:\\Users\\chout\\repos\\kekule\\benchmarks\\goldens",
+  "implementation": {
+    "contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
+    "dirty": true,
+    "executable_sha256": "b4f1e8e22c144554bc27300eb37dbc1d6822290cd31e3b8aef992172b9ec3e9c",
+    "feature_contracts": {
+      "query.smarts": "6968f09d5fd6ffa7b6d99640ab0392d38d5b3be6c16028818419458feb1248bc"
+    },
+    "reference_code_sha256": "e44c0b0859caf820617ab66f2249bc3da5cf2ae36732b88cc0cdaa51f072784b",
+    "revision": "9ed896ee3491a5d4b4039b900b749aa47dbd7d8d",
+    "working_tree_status_sha256": "32c1a5fb42e557858d7ddfc49fd1d00bd096359fd98e284584aabc9a3020d163"
+  },
+  "mode": "compare",
+  "passed": false,
+  "results": [
+    {
+      "agrees": 46,
+      "cases": 50,
+      "dataset": "rdkit-structures",
+      "disagrees": 0,
+      "errors": 4,
+      "exact_agrees": 46,
+      "feature": "algo.aromaticity.mdl",
+      "golden": {
+        "cases": 50,
+        "contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
+        "dataset": "rdkit-structures",
+        "feature": "algo.aromaticity.mdl",
+        "input_lock_sha256": "273c7f1c7316344a39d83104a57ac99c3e62fd393f6b5d37a84bee81aae3100e",
+        "origin": "independent generation",
+        "reference": {
+          "tool": "rdkit",
+          "version": "2026.03.3"
+        },
+        "reference_code_sha256": "e44c0b0859caf820617ab66f2249bc3da5cf2ae36732b88cc0cdaa51f072784b",
+        "schema": 2,
+        "sha256": "7caa3eb13fc9071d1035fa19b4738f666dcf51d3df81b14d4856738e136392ae"
+      },
+      "input_errors": 0,
+      "kekule_errors": 4,
+      "kekule_ms": 4.844399999999999,
+      "not_applicable": 0,
+      "numerical_differences": 0,
+      "observation_errors": 0,
+      "reference_errors": 0,
+      "reference_ms": 0.0,
+      "source_ids": 50,
+      "structural_differences": 0,
+      "writer_validation_errors": 0
+    }
+  ],
+  "schema": 2,
+  "started_at_unix_ms": 1789931066525
+}

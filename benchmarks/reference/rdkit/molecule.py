@@ -10,6 +10,7 @@ import io
 import re
 from typing import Any
 from rdkit import Chem
+from . import source_radicals
 
 
 def ordered(value):
@@ -98,10 +99,34 @@ def graph(mol):
             'atoms': atoms, 'bonds': bonds, 'stereo': elements, 'groups': groups}
 
 
+def sdf_field_names(block, *, strict=False):
+    # Headers belong after the CTAB and outside field values. A title or a
+    # multiline value may itself contain text that looks like a field header.
+    lines = iter(block.splitlines()[4:])
+    if not any(line.strip() == 'M  END' for line in lines):
+        if strict:
+            raise ValueError('SDF record is missing M  END')
+        return []
+    names = []
+    for line in lines:
+        if not line.strip():
+            continue
+        header = re.match(r'^>\s*.*?<([^>]+)>', line)
+        if header is None:
+            if strict:
+                raise ValueError('unexpected content outside an SDF data field')
+            continue
+        names.append(header.group(1))
+        for value_line in lines:
+            if not value_line:
+                break
+    return names
+
+
 def sdf_record(block):
     # RDKit stores SDF properties by name. Repeated names cannot be represented
     # faithfully by that API, so retain this case as a reference failure.
-    headers = re.findall(r'^>\s*.*?<([^>]+)>', block, re.MULTILINE)
+    headers = sdf_field_names(block)
     if len(headers) != len(set(headers)):
         raise ValueError('RDKit cannot preserve duplicate SDF property names')
     supplier = Chem.ForwardSDMolSupplier(io.BytesIO(block.encode('utf-8')),
@@ -110,12 +135,15 @@ def sdf_record(block):
     if len(molecules) != 1 or molecules[0] is None:
         raise ValueError('RDKit SDF parse failed')
     mol = molecules[0]
-    fields = [{'name': name, 'value': mol.GetProp(name)} for name in mol.GetPropNames()]
+    # Source fields may start with an underscore, which GetPropNames() hides
+    # by default. Select the source names in order so private fields survive
+    # without including RDKit's internal properties (such as _MolFileInfo).
+    fields = [{'name': name, 'value': mol.GetProp(name)} for name in headers]
     return mol, fields
 
 
-def records(source):
-    if source.suffix.lower() in ('.smi', '.smiles', '.txt'):
+def records(source, *, sdf_input=False):
+    if not sdf_input and source.suffix.lower() in ('.smi', '.smiles', '.txt'):
         params = Chem.SmilesParserParams()
         params.sanitize = False
         params.removeHs = False
@@ -127,28 +155,34 @@ def records(source):
             mol = Chem.MolFromSmiles(line.strip(), params)
             if mol is None:
                 raise ValueError('RDKit SMILES parse failed')
+            source_radicals.attach_cx(mol)
             mol.UpdatePropertyCache(strict=False)
             Chem.SetBondStereoFromDirections(mol)
             values.append((mol.GetProp('_Name') if mol.HasProp('_Name') else '', mol, []))
         return values
-    blocks = read_sdf_blocks(source) if source.suffix.lower() == '.sdf' else [source.read_text()]
+    is_sdf = sdf_input or source.suffix.lower() == '.sdf'
+    blocks = read_sdf_blocks(source) if is_sdf else [source.read_text()]
     result = []
     for block in blocks:
-        if source.suffix.lower() == '.sdf':
+        if is_sdf:
             mol, fields = sdf_record(block)
         else:
             mol = Chem.MolFromMolBlock(block, sanitize=False, removeHs=False, strictParsing=True)
             fields = []
         if mol is None:
             raise ValueError('RDKit MOL parse failed')
+        source_radicals.attach_ctab(mol, block)
         mol.UpdatePropertyCache(strict=False)
         result.append((mol.GetProp('_Name'), mol, fields))
     return result
 
 
-def evaluate(feature, source):
+def evaluate(feature, source, *, reject_queries=False):
     outputs = []
-    for index, (title, mol, fields) in enumerate(records(source)):
+    for index, (title, mol, fields) in enumerate(records(source, sdf_input=feature == 'io.sdf.parse')):
+        if reject_queries and (any(atom.HasQuery() for atom in mol.GetAtoms())
+                               or any(bond.HasQuery() for bond in mol.GetBonds())):
+            raise ValueError('molecular writer must not emit query atoms or bonds')
         Chem.SanitizeMol(mol)
         Chem.AssignStereochemistry(mol, cleanIt=True, force=True)
         if feature == 'stereo.perception':
@@ -209,7 +243,12 @@ def read_written(feature, value, memory_input):
         if set(item) != {'path', 'text'}:
             raise ValueError('invalid writer result')
         validate_written_format(feature, item['path'], item['text'])
-        outputs.extend(writer_value(feature, memory_input(item['path'], item['text']))['records'])
+        source = memory_input(item['path'], item['text'])
+        if feature.startswith('io.smiles.'):
+            observed = writer_value(feature, source)
+        else:
+            observed = evaluate(feature, source, reject_queries=True)
+        outputs.extend(observed['records'])
     for index, output in enumerate(outputs):
         output['record_index'] = index
     return {'records': outputs}
@@ -226,20 +265,23 @@ def validate_written_format(feature, path, text):
     if suffix != ('.sdf' if sdf else '.mol'):
         raise ValueError('writer emitted the wrong file format')
     version = 'V3000' if '.v3000.' in feature else 'V2000'
-    blocks = text.split('$$$$') if sdf else [text]
-    if sdf and (not text.rstrip().endswith('$$$$') or not blocks[:-1]):
-        raise ValueError('SDF writer must terminate each record with $$$$')
-    for index, block in enumerate(blocks[:-1] if sdf else blocks):
-        # Only the separator newline is removed; blank titles are significant.
-        if index:
-            block = block.removeprefix('\r\n').removeprefix('\n')
+    blocks = split_sdf_blocks(text, require_delimiters=True) if sdf else [text]
+    for block in blocks:
         lines = block.splitlines()
         if len(lines) < 4 or not lines[3].rstrip().endswith(version):
             raise ValueError(f'writer must emit {version}')
+        if sdf:
+            sdf_field_names(block, strict=True)
+        else:
+            # MolFromMolBlock stops at M  END and silently ignores trailing
+            # records or SDF data. Validate the complete emitted MOL file.
+            end = next((i for i in range(4, len(lines)) if lines[i].strip() == 'M  END'), None)
+            if end is None or any(line.strip() for line in lines[end + 1:]):
+                raise ValueError('MOL writer must emit exactly one complete MOL record without trailing data')
 
 
 def atom_json(atom: Any) -> dict[str, Any]:
-    radical, unpaired_electrons = radical_json(atom)
+    electrons, spin = source_radicals.observation(atom)
     return {
         "index": atom.GetIdx(),
         "atomic_number": atom.GetAtomicNum(),
@@ -248,25 +290,17 @@ def atom_json(atom: Any) -> dict[str, Any]:
         "isotope": atom.GetIsotope() or None,
         "explicit_hydrogens": atom.GetNumExplicitHs(),
         "atom_map": atom.GetAtomMapNum() or None,
-        "radical": radical,
-        "unpaired_electrons": unpaired_electrons,
+        "radical_electrons": electrons,
+        "spin_multiplicity": spin,
         "aromatic": atom.GetIsAromatic(),
     }
 
 
-def radical_json(atom: Any) -> tuple[str | None, int]:
-    unpaired_electrons = atom.GetNumRadicalElectrons()
-    if unpaired_electrons == 0:
-        return None, 0
-    if unpaired_electrons == 1:
-        return "DOUBLET", 1
-    if unpaired_electrons == 2:
-        return "TRIPLET", 2
-    return None, unpaired_electrons
-
-
 def read_sdf_blocks(fixture_path) -> list[str]:
-    text = fixture_path.read_text(encoding="utf-8", errors="replace")
+    return split_sdf_blocks(fixture_path.read_text(encoding="utf-8", errors="replace"))
+
+
+def split_sdf_blocks(text, *, require_delimiters=False) -> list[str]:
     blocks: list[str] = []
     current: list[str] = []
     for line in text.splitlines():
@@ -275,6 +309,10 @@ def read_sdf_blocks(fixture_path) -> list[str]:
             current = []
         else:
             current.append(line)
-    if current:
+    if any(line.strip() for line in current):
+        if require_delimiters:
+            raise ValueError('SDF writer must terminate each record with a $$$$ line')
         blocks.append("\n".join(current) + "\n")
+    if require_delimiters and not blocks:
+        raise ValueError('SDF writer must emit at least one complete record')
     return blocks

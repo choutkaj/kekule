@@ -28,13 +28,16 @@ HASHES = ('contract_sha256', 'input_lock_sha256', 'sha256')
 CORPORA = {
     'rdkit-queries': 'All 518 query rows from three RDKit 2026.03.3 functional-group and reactivity tables.',
     'smoke': 'Small mixed set from PubChem, RDKit test data and the RCSB PDB.',
+    'rdkit-queries': 'Complete query rows from three pinned RDKit functional-group/reactivity tables; includes unsupported grammar.',
+    'rdkit-structures': 'Pinned RDKit input variants for six medicinal compounds with axial stereo and ChEBI V3000 structures; includes invalid stereo variants.',
     'enamine-diversity': 'Enamine Discovery Diversity Set 50. All supplied records, including CXSMILES.',
     'pdb-1000': 'RCSB PDB structures: proteins, nucleic acids, complexes and multi-model entries.',
     'pl-rex': 'Primary refined ligands from PL-REX 1.0.1.',
     'pubchem-100k': 'PubChem sample preselected for V2000, size and RDKit success.',
 }
 FORMATS = {'.sdf': 'SDF', '.mol': 'MOL', '.cif': 'mmCIF',
-           '.txt': 'SMILES', '.smi': 'SMILES', '.smiles': 'SMILES'}
+           '.txt': 'SMILES', '.smi': 'SMILES', '.smiles': 'SMILES',
+           '.smarts': 'SMARTS', '.sma': 'SMARTS'}
 
 
 def require(condition, message):
@@ -172,11 +175,18 @@ def load_report(path, catalog):
         require(row['cases'] == row['agrees'] + row['disagrees'] + row['errors'],
                 f'outcome counts do not sum to cases: {key}')
         require(row['exact_agrees'] <= row['agrees'], f'exact agreements exceed agreements: {key}')
-        require(row['source_ids'] > 0 and row['cases'] + row['not_applicable'] <= golden['cases'],
-                f'invalid selection counts: {key}')
+        require(row['source_ids'] > 0, f'invalid selection counts: {key}')
         for field in ('input_errors', 'reference_errors', 'kekule_errors',
                       'writer_validation_errors', 'observation_errors'):
             require(row[field] <= row['errors'], f'{field} exceeds error cases: {key}')
+        # A selection may extend beyond a sampled reference archive. Missing
+        # references and unreadable inputs remain errors; unavailable formats
+        # are counted independently of reference lookup. Other applicable cases
+        # still require stored reference records. These aggregate error counts
+        # include stored reference failures and can overlap, so give a bound.
+        unreferenced_bound = min(row['errors'], row['reference_errors'] + row['input_errors'])
+        require(row['cases'] - unreferenced_bound <= golden['cases'],
+                f'applicable cases exceed reference coverage: {key}')
         for field in ('kekule_ms', 'reference_ms'):
             value = item.get(field)
             require(type(value) in (int, float) and math.isfinite(value) and value >= 0,
@@ -192,8 +202,11 @@ def load_report(path, catalog):
             require(row['source_ids'] <= datasets[dataset]['source_ids'],
                     f'selection exceeds source membership: {key}')
             full = row['source_ids'] == datasets[dataset]['source_ids']
-            require(not full or row['cases'] + row['not_applicable'] == golden['cases'],
-                    f'full selection does not account for every golden record: {key}')
+            # Full describes source selection, not reference coverage or run
+            # completion. One input failure can replace many unreadable records.
+            if full and raw['complete'] and row['input_errors'] == 0:
+                require(row['cases'] + row['not_applicable'] >= golden['cases'],
+                        f'full selection does not account for every golden record: {key}')
         row.update(dataset=dataset, feature=feature, golden=golden,
                    coverage=('full' if full else 'sampled') if current else 'stale')
         rows.append(row)

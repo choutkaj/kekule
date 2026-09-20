@@ -61,13 +61,13 @@ pub(super) fn file_hash(path: &Path) -> Result<String, Box<dyn Error>> {
         .map(|byte| format!("{byte:02x}"))
         .collect())
 }
-pub(super) fn reference_code_hash() -> Result<String, Box<dyn Error>> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+pub(super) fn reference_code_hash(root: &Path) -> Result<String, Box<dyn Error>> {
     let mut hash = Sha256::new();
     for path in [
         "reference/run.py",
         "reference/rdkit/run_feature.py",
         "reference/rdkit/molecule.py",
+        "reference/rdkit/source_radicals.py",
         "reference/biopython/run_feature.py",
         "queries.smarts",
         "query-smarts.json",

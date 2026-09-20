@@ -111,6 +111,26 @@ cargo benchmark generate --feature query.smarts --dataset rdkit-queries --golden
 
 ## Implementation checks
 
+### Integration with current main
+
+After merging the general chemistry follow-up (`e4f8054b`), the complete query
+comparison was rerun across all seven registered corpora. It retains 150,765
+exact agreements, no mapping disagreements and the same CID 447702 resource
+error. The new structure corpus contributes 50 additional not-applicable query
+cases (1,226 total). See the [post-merge report](reports/query-smarts-merged-results.json).
+
+Contract 3 changes radical/spin and DSSP observations. SMARTS mappings and MDL
+atom/bond flags contain none of those changed fields, so their compatibility
+metadata was explicitly migrated. All 12 preexisting SMARTS/MDL manifests retain
+exactly their payload digest, generator digest, source lock, reference identity
+and case count. Each migrated manifest records its prior contract in `origin`.
+Historical reports retain their original hashes and remain distinguishable.
+
+Full merged-tree runtime, packaging and fuzz-build checks are recorded in
+[core SMARTS integration validation](CORE-SMARTS-MERGE-VALIDATION.md).
+
+### Earlier benchmark-only checks
+
 Passed: benchmark-package formatting, check, clippy with warnings denied,
 46 Rust unit tests and four integration tests, documentation with warnings
 denied, Rust 1.89 check, and the nonpublished benchmark package's file-list check.

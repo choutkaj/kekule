@@ -245,6 +245,8 @@ pub(super) fn charged_atom(symbol: &str, formal_charge: i8) -> Atom {
 }
 
 pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, Positions, BondId) {
+    // Explicit sp2 endpoints: Br-C(=O)-C(=S)-Cl. This tests the opted-in
+    // coordinate axis geometry without inventing aromatic perception flags.
     let mut mol = crate::core::MoleculeEditor::new();
     let left = mol
         .add_atom(aromatic_carbon_no_hydrogens())
@@ -256,22 +258,22 @@ pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, Posit
         .add_atom(element_atom("Br"))
         .expect("atom identifier capacity");
     let left_other = mol
-        .add_atom(element_atom("F"))
+        .add_atom(element_atom("O"))
         .expect("atom identifier capacity");
     let right_reference = mol
         .add_atom(element_atom("Cl"))
         .expect("atom identifier capacity");
     let right_other = mol
-        .add_atom(element_atom("F"))
+        .add_atom(element_atom("S"))
         .expect("atom identifier capacity");
     let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
     mol.add_bond(left, left_reference, BondOrder::Single)
         .expect("left reference");
-    mol.add_bond(left, left_other, BondOrder::Single)
+    mol.add_bond(left, left_other, BondOrder::Double)
         .expect("left other");
     mol.add_bond(right, right_reference, BondOrder::Single)
         .expect("right reference");
-    mol.add_bond(right, right_other, BondOrder::Single)
+    mol.add_bond(right, right_other, BondOrder::Double)
         .expect("right other");
     let right_reference_point = if three_dimensional {
         Point3::new(1.0, 0.0, 1.0)
@@ -295,10 +297,7 @@ pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, Posit
         crate::units::ANGSTROM,
     ))
     .unwrap();
-    let mut mol = mol.finish().expect("connected axis molecule");
-    mol.begin_aromaticity(AromaticityModel::RdkitLike);
-    mol.set_atom_aromatic(left, true);
-    mol.set_atom_aromatic(right, true);
+    let mol = mol.finish().expect("connected axis molecule");
     (mol, positions, axis)
 }
 
@@ -540,6 +539,7 @@ mod query;
 mod ring_limits;
 mod rotatable_bonds;
 mod smiles;
+mod stereo_symmetry;
 mod v2000;
 mod v3000;
 mod valence;

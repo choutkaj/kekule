@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "contract_sha256": "ce42dab909b1d83951086688eef3f866cedbd4d03fb6b2f6ebb13a64a47eea9f",
+  "contract_sha256": "6968f09d5fd6ffa7b6d99640ab0392d38d5b3be6c16028818419458feb1248bc",
   "dataset": "pubchem-100k",
   "feature": "query.smarts",
   "input_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
@@ -10,6 +10,6 @@
     "version": "2026.03.3"
   },
   "reference_code_sha256": "03e7711c2f31d6d365c01db2f90d369fb742b3deee5e51fb66472cd1078bcbe9",
-  "origin": "independent generation",
+  "origin": "independent generation; compatibility metadata migrated from contract ce42dab909b1d83951086688eef3f866cedbd4d03fb6b2f6ebb13a64a47eea9f: observations contain no radical/spin/DSSP fields; payload and generator identity unchanged",
   "cases": 100000
 }

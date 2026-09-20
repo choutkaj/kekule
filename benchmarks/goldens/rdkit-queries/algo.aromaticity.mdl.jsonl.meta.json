@@ -1,12 +1,12 @@
 {
   "schema": 2,
-  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
   "dataset": "rdkit-queries",
   "feature": "algo.aromaticity.mdl",
   "input_lock_sha256": "ba6d425d51558a2bcdff89b0e9d26f59a75f0e7776198cf9784b4ebc9ff500a2",
   "sha256": "0931d6cb7d99422318c71f48aae1aa7db87c4f93430576259aa4884d66185999",
   "reference": null,
   "reference_code_sha256": "d1a710884fd07f24ad9df50d22b58dfb0f7efc68a49cf8e71860a402dcfa8759",
-  "origin": "independent generation",
+  "origin": "independent generation; compatibility metadata migrated from contract 0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71: observations contain no radical/spin/DSSP fields; payload and generator identity unchanged",
   "cases": 518
 }

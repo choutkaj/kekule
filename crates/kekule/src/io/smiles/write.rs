@@ -155,14 +155,12 @@ pub(super) fn validate_smiles_writeable(
         StereoWriteMode::Reject => {}
     }
     for (_, atom) in mol.atoms() {
-        if atom.radical.is_some() {
+        if atom
+            .radical
+            .is_some_and(|radical| radical.spin_multiplicity().is_some())
+        {
             return Err(MolWriteError::new(
-                "SMILES writer cannot encode radicals without an explicit radical token",
-            ));
-        }
-        if matches!(atom.hydrogens, HydrogenDeclaration::Infer { explicit } if explicit > 0) {
-            return Err(MolWriteError::new(
-                "SMILES cannot encode represented hydrogens while leaving implicit-H inference enabled",
+                "SMILES writer cannot encode explicit radical spin multiplicity",
             ));
         }
     }
@@ -1370,7 +1368,39 @@ fn smiles_atom_with_style_and_chirality(
             "SMILES bracket atom {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
         )));
     }
+    if written.starts_with('[') {
+        validate_smiles_bracket_radical(mol, atom_id, atom, implicit_hydrogens)?;
+    }
     Ok(written)
+}
+
+pub(super) fn validate_smiles_bracket_radical(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+    implicit_hydrogens: u8,
+) -> std::result::Result<(), MolWriteError> {
+    let hydrogens = atom
+        .hydrogens
+        .explicit_count()
+        .checked_add(implicit_hydrogens)
+        .ok_or_else(|| {
+            MolWriteError::new("hydrogen count exceeds the SMILES representation limit")
+        })?;
+    let electrons = crate::algorithms::rdkit_bracket_radical_electrons(
+        atom,
+        crate::algorithms::explicit_valence(mol, atom_id),
+        mol.incident_bonds(atom_id)
+            .map_err(|error| MolWriteError::new(error.to_string()))?
+            .count(),
+        hydrogens,
+    );
+    if atom.radical != AtomRadical::new(electrons, None) {
+        return Err(MolWriteError::new(format!(
+            "SMILES bracket atom {atom_id} would change radical electron count or spin"
+        )));
+    }
+    Ok(())
 }
 
 fn smiles_atom_explicit_hydrogens(atom: &Atom, aromatic: bool, implicit_hydrogens: u8) -> u8 {
@@ -1387,6 +1417,7 @@ fn smiles_atom_explicit_hydrogens(atom: &Atom, aromatic: bool, implicit_hydrogen
 
 fn smiles_atom_is_organic_subset(atom: &Atom) -> bool {
     atom.isotope.is_none()
+        && atom.radical.is_none()
         && atom.formal_charge == 0
         && atom.hydrogens.allows_implicit()
         && atom.atom_map.is_none()

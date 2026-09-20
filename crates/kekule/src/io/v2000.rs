@@ -357,10 +357,10 @@ pub(super) fn interpret_v2000_syntax(
 }
 
 fn interpret_v2000_atom(record: &V2000AtomSyntax) -> std::result::Result<Atom, SdfParseError> {
-    let radical = record.radical.map(|radical| match radical {
-        V2000RadicalSyntax::Singlet => AtomRadical::Singlet,
-        V2000RadicalSyntax::Doublet => AtomRadical::Doublet,
-        V2000RadicalSyntax::Triplet => AtomRadical::Triplet,
+    let radical = record.radical.and_then(|radical| match radical {
+        V2000RadicalSyntax::Singlet => AtomRadical::new(2, Some(1)),
+        V2000RadicalSyntax::Doublet => AtomRadical::new(1, Some(2)),
+        V2000RadicalSyntax::Triplet => AtomRadical::new(2, Some(3)),
     });
     let explicit = record.hydrogen_count.unwrap_or(0);
     let hydrogens = if record.hydrogen_count.is_some() || record.valence.is_some() {
@@ -611,8 +611,20 @@ fn parse_m_records(
     atoms: &mut [V2000AtomSyntax],
     lines: &[&str],
 ) -> std::result::Result<(), SdfParseError> {
+    let mut replaced_legacy_charge_and_radical = false;
     for (offset, line) in lines.iter().enumerate() {
         let fields = line.split_whitespace().collect::<Vec<_>>();
+        if matches!(fields.as_slice(), ["M", "CHG" | "RAD", ..])
+            && !replaced_legacy_charge_and_radical
+        {
+            // CTfile properties replace the entire legacy charge/radical block.
+            // Clear once: later property lines accumulate independent entries.
+            for atom in atoms.iter_mut() {
+                atom.formal_charge = 0;
+                atom.radical = None;
+            }
+            replaced_legacy_charge_and_radical = true;
+        }
         match fields.as_slice() {
             ["M", "CHG", count, rest @ ..] => {
                 parse_atom_value_pairs(
@@ -648,12 +660,13 @@ fn parse_m_records(
                     rest,
                     atoms,
                     |atom, value| {
-                        atom.radical = Some(match value {
-                            1 => V2000RadicalSyntax::Singlet,
-                            2 => V2000RadicalSyntax::Doublet,
-                            3 => V2000RadicalSyntax::Triplet,
+                        atom.radical = match value {
+                            0 => None,
+                            1 => Some(V2000RadicalSyntax::Singlet),
+                            2 => Some(V2000RadicalSyntax::Doublet),
+                            3 => Some(V2000RadicalSyntax::Triplet),
                             _ => return Err("unsupported M  RAD code"),
-                        });
+                        };
                         Ok(())
                     },
                 )?;
@@ -784,7 +797,7 @@ pub fn write_mol_v2000(molecule: &Molecule) -> std::result::Result<String, MolWr
 pub(crate) fn write_model_v2000(
     model: ModelView<'_>,
 ) -> std::result::Result<String, MolWriteError> {
-    let record = MolfileRecord::model(model)?;
+    let record = MolfileRecord::model(model, MolfileVersion::V2000)?;
     render_mol_v2000(&record, "")
 }
 
@@ -905,7 +918,7 @@ pub fn write_sdf_v2000(
         for field in record.data_fields() {
             validate_sdf_data_field(field)?;
         }
-        let structural = MolfileRecord::model(record.model().view())?;
+        let structural = MolfileRecord::model(record.model().view(), MolfileVersion::V2000)?;
         out.push_str(&render_mol_v2000(&structural, record.title())?);
         for field in record.data_fields() {
             out.push_str(&format!(">  <{}>\n{}\n\n", field.name(), field.value()));
@@ -1026,12 +1039,12 @@ fn v2000_bond_stereo_code(
 }
 
 fn v2000_radical_code(radical: AtomRadical) -> std::result::Result<i32, MolWriteError> {
-    match radical {
-        AtomRadical::Singlet => Ok(1),
-        AtomRadical::Doublet => Ok(2),
-        AtomRadical::Triplet => Ok(3),
-        AtomRadical::Quartet | AtomRadical::Quintet => Err(MolWriteError::new(
-            "V2000 writer cannot encode radical multiplicity above triplet",
+    match (radical.electron_count(), radical.spin_multiplicity()) {
+        (2, Some(1)) => Ok(1),
+        (1, Some(2)) => Ok(2),
+        (2, Some(3)) => Ok(3),
+        _ => Err(MolWriteError::new(
+            "V2000 writer requires an encodable radical electron count and explicit spin multiplicity",
         )),
     }
 }

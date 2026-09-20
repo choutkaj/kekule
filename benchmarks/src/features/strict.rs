@@ -17,52 +17,65 @@ use serde_json::{json, Value};
 use std::{collections::BTreeMap, error::Error};
 
 pub(super) fn molecular(feature: &str, input: &Input) -> Result<Value, Box<dyn Error>> {
-    let mut records = read_stereo_perception_records_by_suffix(input)?;
-    let properties = if input.extension().is_some_and(|s| s == "sdf") {
-        sdf::parse_str(&input.text)?
-            .records()
-            .iter()
-            .map(|r| {
-                r.data_fields()
-                    .iter()
-                    .map(|f| json!({"name":f.name(),"value":f.value()}))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>()
+    let mut records = if feature == "io.sdf.parse" {
+        super::io::read_sdf_records(input)?
     } else {
-        vec![Vec::new(); records.len()]
+        read_stereo_perception_records_by_suffix(input)?
     };
-    let values = records.iter_mut().enumerate().map(|(index, record)| {
-        if record.components.is_empty() { return Err(boxed_error("no parsed molecular components")); }
-        let mut components = Vec::new();
-        for (molecule, positions) in record.components.iter_mut().zip(&record.positions) {
-            molecule.perceive()?;
-            if feature == "stereo.perception" {
-                if let Some(positions) = positions {
+    let values = records
+        .iter_mut()
+        .enumerate()
+        .map(|(index, record)| {
+            if record.components.is_empty() {
+                return Err(boxed_error("no parsed molecular components"));
+            }
+            let mut components = Vec::new();
+            for (molecule, positions) in record.components.iter_mut().zip(&record.positions) {
+                molecule.perceive()?;
+                if feature == "stereo.perception" {
                     let mut editor = molecule.edit();
-                    stereo::materialize_coordinate_stereo(&mut editor, positions)?;
+                    stereo::cleanup_stereo(&mut editor, Default::default())?;
                     *molecule = editor.finish()?;
-                    molecule.perceive()?;
-                }
-            }
-            let mut value = graph(molecule, positions.as_ref())?;
-            if feature == "stereo.perception" {
-                let mut candidates = stereo::detect_stereo_candidates(molecule).iter().map(|candidate| match candidate {
-                    StereoCandidate::Tetrahedral { center, .. } => json!({"type":"tetrahedral","focus":[center.raw()]}),
-                    StereoCandidate::DoubleBond { bond, .. } => {
-                        let bond = molecule.bond(*bond).expect("live candidate bond");
-                        let mut ends = [bond.a().raw(), bond.b().raw()]; ends.sort();
-                        json!({"type":"double_bond","focus":ends})
+                    if let Some(positions) = positions {
+                        let mut editor = molecule.edit();
+                        stereo::materialize_coordinate_stereo(&mut editor, positions)?;
+                        stereo::cleanup_stereo(&mut editor, Default::default())?;
+                        *molecule = editor.finish()?;
+                        molecule.perceive()?;
                     }
-                }).collect::<Vec<_>>();
-                candidates.sort_by_key(Value::to_string);
-                value["candidates"] = json!(candidates);
+                }
+                let mut value = graph(molecule, positions.as_ref())?;
+                if feature == "stereo.perception" {
+                    let mut candidates = stereo::detect_stereo_candidates(molecule)?
+                        .iter()
+                        .map(|candidate| match candidate {
+                            StereoCandidate::Tetrahedral { center, .. } => {
+                                json!({"type":"tetrahedral","focus":[center.raw()]})
+                            }
+                            StereoCandidate::DoubleBond { bond, .. } => {
+                                let bond = molecule.bond(*bond).expect("live candidate bond");
+                                let mut ends = [bond.a().raw(), bond.b().raw()];
+                                ends.sort();
+                                json!({"type":"double_bond","focus":ends})
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    candidates.sort_by_key(Value::to_string);
+                    value["candidates"] = json!(candidates);
+                }
+                components.push(value);
             }
-            components.push(value);
-        }
-        Ok(json!({"record_index":index,"status":"ok","title":record.title,
-            "components":components,"properties":properties.get(index).ok_or("missing record properties")?}))
-    }).collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+            let properties = record
+                .properties
+                .iter()
+                .map(|field| json!({"name":field.name(),"value":field.value()}))
+                .collect::<Vec<_>>();
+            Ok(
+                json!({"record_index":index,"status":"ok","title":record.title,
+            "components":components,"properties":properties}),
+            )
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
     Ok(json!({"records":values}))
 }
 
@@ -98,8 +111,12 @@ pub(super) fn graph(
     let bonds = mol.bonds().map(|(id,bond)| {
         let mut ends = [index[&bond.a()],index[&bond.b()]];
         if bond.order != BondOrder::Dative { ends.sort(); }
+        // RDKit marks aromatic single/double bonds as AROMATIC, but retains
+        // higher bond orders (e.g. an aryne's TRIPLE) alongside the flag.
         Ok(json!({"begin_atom_index":ends[0],"end_atom_index":ends[1],
-            "bond_type":if mol.bond_is_aromatic(id)? == Some(true) { "AROMATIC" } else { bond_order_json(bond.order) },"is_aromatic":mol.bond_is_aromatic(id)?}))
+            "bond_type":if mol.bond_is_aromatic(id)? == Some(true)
+                && matches!(bond.order, BondOrder::Single | BondOrder::Double)
+            { "AROMATIC" } else { bond_order_json(bond.order) },"is_aromatic":mol.bond_is_aromatic(id)?}))
     }).collect::<Result<Vec<_>, Box<dyn Error>>>()?;
     let carrier = |c: &StereoCarrier| match c {
         StereoCarrier::Atom(id) => index[id],

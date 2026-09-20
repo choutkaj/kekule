@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
   "dataset": "smoke",
   "feature": "bio.secondary-structure.dssp",
   "input_lock_sha256": "f071f66843ebccd2fe0a0417db961f5ce228d01083c84943e2357afab21fedae",
@@ -10,6 +10,6 @@
     "version": "Biopython 1.87 / mkdssp version 4.6.1"
   },
   "reference_code_sha256": "5f170c7e0c14ecb363d445749643e8a1bd2aae9bd96ce6b82bf3358380c0e6e9",
-  "origin": "Independent Biopython/mkdssp generation of expanded DSSP observation; no Kekule output used.",
+  "origin": "Independent Biopython/mkdssp generation of expanded DSSP observation; no Kekule output used. Contract 3 migration: this feature has no radical observations; archived outcomes retained byte-for-byte under unchanged comparison rules; original reference provenance retained.",
   "cases": 20
 }

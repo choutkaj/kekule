@@ -16,6 +16,7 @@ pub(crate) struct IndexedStereoPerceptionRecord {
     pub(crate) title: String,
     pub(crate) components: Vec<Molecule>,
     pub(crate) positions: Vec<Option<kekule::structure::Positions>>,
+    pub(crate) properties: Vec<sdf::SdfDataField>,
 }
 
 const BOUNDED_SUBSTRUCTURE_QUERIES: &str = include_str!("../../queries.smarts");
@@ -98,11 +99,6 @@ pub(crate) fn read_small_records_by_suffix(
     Ok(values)
 }
 
-fn interpret_smiles_components(input: &str) -> Result<Vec<Molecule>, Box<dyn Error>> {
-    let document = smiles::parse_str(input)?;
-    Ok(smiles::interpret(&document)?.into_molecules())
-}
-
 pub(crate) fn read_smiles_records(
     path: &Input,
 ) -> Result<Vec<IndexedStereoPerceptionRecord>, Box<dyn Error>> {
@@ -112,20 +108,16 @@ pub(crate) fn read_smiles_records(
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let mut parts = line.splitn(2, char::is_whitespace);
-        let smiles = parts.next().unwrap_or_default().to_owned();
-        let title = parts.next().unwrap_or_default().trim().to_owned();
-        if title.starts_with('|') {
-            return Err(boxed_error(
-                "CXSMILES extensions are not supported by Kekule; refusing to discard them",
-            ));
-        }
-        let components = interpret_smiles_components(&smiles)?;
+        let document = smiles::parse_str(raw_line)?;
+        let interpretation = document.interpret()?;
+        let title = interpretation.name().unwrap_or_default().to_owned();
+        let components = interpretation.into_molecules();
         records.push(IndexedStereoPerceptionRecord {
             record_index: index,
             title,
             positions: vec![None; components.len()],
             components,
+            properties: Vec::new(),
         });
     }
     Ok(records)
@@ -147,11 +139,34 @@ pub(crate) fn read_stereo_perception_records_by_suffix(
     ) {
         return Ok(vec![stereo_molfile_record(0, &molfile::parse_str(input)?)?]);
     }
-    sdf::parse_str(input)?
+    read_sdf_records(path)
+}
+
+pub(crate) fn read_sdf_records(
+    path: &Input,
+) -> Result<Vec<IndexedStereoPerceptionRecord>, Box<dyn Error>> {
+    // A standalone MOL is one SDF record terminated by EOF. Actual SDF
+    // inputs retain the public parser's default delimiter requirements.
+    let options = sdf::SdfParseOptions {
+        allow_missing_final_delimiter: matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("mol" | "mdl")
+        ),
+        ..Default::default()
+    };
+    sdf::parse_str_with_options(&path.text, options)?
         .records()
         .iter()
         .enumerate()
-        .map(|(index, record)| stereo_molfile_record(index, record.molfile()))
+        .map(|(index, record)| {
+            let interpreted = record.interpret()?;
+            stereo_model_record(
+                index,
+                interpreted.title(),
+                interpreted.model(),
+                interpreted.data_fields(),
+            )
+        })
         .collect()
 }
 
@@ -160,8 +175,22 @@ fn stereo_molfile_record(
     document: &molfile::MolfileDocument,
 ) -> Result<IndexedStereoPerceptionRecord, Box<dyn Error>> {
     let interpretation = molfile::interpret(document)?;
-    let model = interpretation.model();
+    stereo_model_record(
+        record_index,
+        document.header().title(),
+        interpretation.model(),
+        &[],
+    )
+}
+
+fn stereo_model_record(
+    record_index: usize,
+    title: &str,
+    model: &kekule::structure::Model,
+    properties: &[sdf::SdfDataField],
+) -> Result<IndexedStereoPerceptionRecord, Box<dyn Error>> {
     let mut positions = Vec::new();
+    let mut components = Vec::new();
     for instance in model.topology().molecules() {
         let points = instance
             .molecule()
@@ -180,11 +209,13 @@ fn stereo_molfile_record(
         positions.push(Some(kekule::structure::Positions::new(
             kekule::units::Quantity::new(points, kekule::units::ANGSTROM),
         )?));
+        components.push(instance.molecule().clone());
     }
     Ok(IndexedStereoPerceptionRecord {
         record_index,
-        title: document.header().title().to_owned(),
+        title: title.to_owned(),
         positions,
-        components: interpretation.into_molecules(),
+        components,
+        properties: properties.to_vec(),
     })
 }

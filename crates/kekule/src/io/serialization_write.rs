@@ -8,7 +8,7 @@ use super::molfile_write::MolfileRecord;
 use super::sdf_document::SdfRecordInterpretation;
 use super::v2000::{render_mol_v2000, validate_sdf_data_field, validate_sdf_title};
 use super::v3000::render_mol_v3000;
-use super::MolWriteError;
+use super::{MolWriteError, MolfileVersion};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -83,7 +83,7 @@ pub fn write_molfile_model(
     model: ModelView<'_>,
     options: MolfileWriteOptions,
 ) -> Result<String, MolWriteError> {
-    render_molfile_record(&MolfileRecord::model(model)?, "", options.version)
+    render_molfile_model(model, "", options.version)
 }
 
 pub fn write_molfile_model_to(
@@ -107,6 +107,25 @@ fn render_molfile_record(
         MolfileWriteVersion::Auto => {
             render_mol_v2000(record, title).or_else(|_| render_mol_v3000(record, title))
         }
+    }
+}
+
+fn render_molfile_model(
+    model: ModelView<'_>,
+    title: &str,
+    version: MolfileWriteVersion,
+) -> Result<String, MolWriteError> {
+    match version {
+        MolfileWriteVersion::V2000 => {
+            render_mol_v2000(&MolfileRecord::model(model, MolfileVersion::V2000)?, title)
+        }
+        MolfileWriteVersion::V3000 => {
+            render_mol_v3000(&MolfileRecord::model(model, MolfileVersion::V3000)?, title)
+        }
+        // A fallback must rebuild its stereo projection from the V3000
+        // coordinates, not reuse a rounded V2000 drawing.
+        MolfileWriteVersion::Auto => render_molfile_model(model, title, MolfileWriteVersion::V2000)
+            .or_else(|_| render_molfile_model(model, title, MolfileWriteVersion::V3000)),
     }
 }
 
@@ -219,8 +238,7 @@ fn write_sdf_record_to<'a>(
     fields: impl IntoIterator<Item = (&'a str, &'a str)>,
     options: SdfWriteOptions,
 ) -> Result<(), SdfWriteError> {
-    let structural = MolfileRecord::model(model)?;
-    let ctab = render_molfile_record(&structural, title, options.version)?;
+    let ctab = render_molfile_model(model, title, options.version)?;
     writer.write_all(ctab.as_bytes()).map_err(sdf_io)?;
     for (name, value) in fields {
         writeln!(writer, ">  <{name}>\n{value}\n").map_err(sdf_io)?;
