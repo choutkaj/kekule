@@ -12,9 +12,11 @@ exclude = [
     ".dashboard-python",
     "corpora/*/data/**",
     "!corpora/smoke/data/**",
+    "!corpora/rdkit-queries/data/**",
     "goldens/**",
     "!goldens/*/*.jsonl.meta.json",
     "!goldens/smoke/*.jsonl.gz",
+    "!goldens/rdkit-queries/*.jsonl.gz",
 ]
 
 [dependencies]

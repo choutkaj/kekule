@@ -1,0 +1,15 @@
+{
+  "schema": 2,
+  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "dataset": "enamine-diversity",
+  "feature": "algo.aromaticity.mdl",
+  "input_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+  "sha256": "f5e623cac76ceab09c12b695ed92eeabe66cec96e552defe1ea692ac797464c1",
+  "reference": {
+    "tool": "rdkit",
+    "version": "2026.03.3"
+  },
+  "reference_code_sha256": "75d0ae5d460971e51c7b98bf31dc34e0d23145e949e7f7dd8261a3eff7cfecdc",
+  "origin": "independent generation",
+  "cases": 100480
+}

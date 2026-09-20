@@ -40,6 +40,7 @@ const FEATURES: &[&str] = &[
     "algo.rings.sssr",
     "algo.valence.rdkit-like",
     "algo.aromaticity.rdkit-like",
+    "algo.aromaticity.mdl",
     "algo.canonical-ranking",
     "algo.substructure.vf2",
     "query.smarts",
@@ -739,7 +740,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                         writer: GeneratedGoldens::create(&golden_path)?,
                         metadata: Metadata {
                             schema: 2,
-                            contract_sha256: stored::contract_hash(),
+                            contract_sha256: stored::feature_contract_hash(feature),
                             dataset: id.to_string(),
                             feature: feature.to_string(),
                             input_lock_sha256: lock_hash,
@@ -923,7 +924,7 @@ fn implementation_identity() -> Result<Value, Box<dyn Error>> {
     let status = git(&["status", "--porcelain"]);
     Ok(
         json!({"revision":git(&["rev-parse","HEAD"]),"dirty":status.as_ref().map(|status|!status.is_empty()),"working_tree_status_sha256":status.as_ref().map(|status|sha256(status.as_bytes())),
-        "executable_sha256":executable,"reference_code_sha256":stored::reference_code_hash()?,"contract_sha256":stored::contract_hash()}),
+        "executable_sha256":executable,"reference_code_sha256":stored::reference_code_hash()?,"contract_sha256":stored::contract_hash(),"feature_contracts":{"query.smarts":stored::feature_contract_hash("query.smarts")}}),
     )
 }
 fn write_report(

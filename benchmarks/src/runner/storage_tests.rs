@@ -37,7 +37,7 @@ impl Drop for Fixture {
 fn metadata(feature: &str, cases: usize) -> Metadata {
     Metadata {
         schema: 2,
-        contract_sha256: stored::contract_hash(),
+        contract_sha256: stored::feature_contract_hash(feature),
         dataset: "test".into(),
         feature: feature.into(),
         input_lock_sha256: "lock".into(),
@@ -108,6 +108,28 @@ fn ordinary_options_do_not_require_python_or_generation() {
     let generate = options(&args).unwrap();
     assert!(generate.generate);
     assert_eq!(generate.python, Some("python".into()));
+}
+
+#[test]
+fn query_contract_rejects_count_only_goldens_without_invalidating_other_features() {
+    assert_eq!(
+        stored::feature_contract_hash("algo.aromaticity.mdl"),
+        stored::contract_hash()
+    );
+    assert_ne!(
+        stored::feature_contract_hash("query.smarts"),
+        stored::contract_hash()
+    );
+    let fixture = Fixture::new();
+    fixture.store("query.smarts", &[]);
+    let path = fixture.path().with_extension("meta.json");
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    manifest["contract_sha256"] = json!(stored::contract_hash());
+    fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let Err(error) = fixture.load("query.smarts") else {
+        panic!("accepted parser-only golden")
+    };
+    assert!(error.to_string().contains("stale schema, contract"));
 }
 
 #[test]

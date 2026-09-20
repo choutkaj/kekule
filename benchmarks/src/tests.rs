@@ -36,6 +36,101 @@ fn query_records_separate_the_query_from_the_source_title() {
     assert_eq!(value["records"][0]["atom_count"], 2);
 }
 
+fn query_target(value: &Value, id: &str) -> Value {
+    value["records"][0]["behavior"]["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["target"] == id)
+        .unwrap()
+        .clone()
+}
+
+#[test]
+fn smarts_observations_assert_mappings_tags_and_automorphisms() {
+    let feature = "query.smarts";
+    let single = output(feature, "input.smarts", "[#6:2]-[#8:1]");
+    let double = output(feature, "input.smarts", "[#6:2]=[#8:1]");
+    assert_eq!(
+        single["records"][0]["atom_count"],
+        double["records"][0]["atom_count"]
+    );
+    let ethanol = query_target(&single, "smoke:cid_702");
+    assert_eq!(ethanol["matches"], json!([[1, 2]]));
+    assert_eq!(ethanol["tagged_matches"], json!([[2, 1]]));
+    assert_eq!(query_target(&double, "smoke:cid_702")["matches"], json!([]));
+    assert_eq!(
+        single["records"][0]["behavior"]["tags"],
+        json!([
+            {"tag": 1, "query_atom": 1}, {"tag": 2, "query_atom": 0}
+        ])
+    );
+    let benzene = output(feature, "input.smarts", "[c:1]1[c:2]cccc1");
+    let matches = query_target(&benzene, "smoke:cid_241");
+    assert_eq!(matches["matches"].as_array().unwrap().len(), 12);
+    assert_eq!(matches["tagged_matches"].as_array().unwrap().len(), 12);
+    let mut wrong = single.clone();
+    wrong["records"][0]["behavior"]["targets"][5]["matches"] = json!([[2, 1]]);
+    assert!(!compare(feature, single.clone(), wrong));
+    let mut wrong = single.clone();
+    wrong["records"][0]["behavior"]["targets"][5]["tagged_matches"] = json!([[1, 2]]);
+    assert!(!compare(feature, single.clone(), wrong));
+    let mut missing = single;
+    missing["records"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("behavior");
+    assert!(crate::observation::validate(feature, &missing).is_err());
+}
+
+#[test]
+fn smarts_observations_measure_recursion_disconnection_and_stereo() {
+    let matches = |query: &str, target: &str| {
+        query_target(&output("query.smarts", "input.smarts", query), target)["matches"].clone()
+    };
+    assert_eq!(matches("[$([#6]-[#8])]", "smoke:cid_702"), json!([[1]]));
+    assert_eq!(matches("[#6;!$([#6]-[#8])]", "smoke:cid_702"), json!([[0]]));
+    assert_eq!(
+        matches("[#8].[#6]", "smoke:cid_702"),
+        json!([[2, 0], [2, 1]])
+    );
+    assert_eq!(
+        matches("C[C@@H](C(=O)O)N", "smoke:cid_5950"),
+        json!([[0, 1, 2, 3, 4, 5]])
+    );
+    assert_eq!(matches("C[C@H](C(=O)O)N", "smoke:cid_5950"), json!([]));
+    assert_eq!(matches("F/C=C/F", "smoke:cid_5462921"), json!([]));
+    assert_eq!(
+        matches("F/C=C\\F", "smoke:cid_5462921")
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn smarts_observations_keep_more_than_one_thousand_matches_and_fail_on_exhaustion() {
+    let value = output("query.smarts", "input.smarts", "*.*.*");
+    assert!(
+        query_target(&value, "pubchem:174291")["matches"]
+            .as_array()
+            .unwrap()
+            .len()
+            > 1000
+    );
+    let error = evaluate(
+        "query.smarts",
+        &Input {
+            path: "input.smarts".into(),
+            text: "*.*.*.*.*.*".into(),
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("matches limit exceeded"), "{error}");
+}
+
 #[test]
 fn cxsmiles_is_never_silently_reduced_to_plain_smiles() {
     for feature in [
@@ -333,4 +428,37 @@ fn package_metadata_is_release_consistent() {
             "{relative_path} must require the workspace release version of {dependency}"
         );
     }
+}
+
+#[test]
+fn mdl_benchmark_selects_its_model_and_asserts_atoms_and_bonds() {
+    let feature = "algo.aromaticity.mdl";
+    let source = "c1cc[nH]c1.c1ccccc1-c2ccccc2";
+    let mdl = output(feature, "input.smi", source);
+    let default = output("algo.aromaticity.rdkit-like", "input.smi", source);
+    assert_eq!(mdl["records"][0]["atom_aromatic"], json!(vec![false; 5]));
+    assert_eq!(default["records"][0]["atom_aromatic"], json!(vec![true; 5]));
+    assert!(mdl["records"][0]["bond_aromatic"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|b| b["value"] == false));
+    let biphenyl = &mdl["records"][1];
+    assert_eq!(biphenyl["atom_aromatic"], json!(vec![true; 12]));
+    let bonds = biphenyl["bond_aromatic"].as_array().unwrap();
+    assert_eq!(bonds.len(), 13);
+    assert_eq!(bonds.iter().filter(|b| b["value"] == false).count(), 1);
+    crate::observation::validate(feature, &mdl).unwrap();
+    let mut changed = mdl.clone();
+    changed["records"][0]["atom_aromatic"][0] = json!(true);
+    assert!(!compare(feature, mdl.clone(), changed));
+    let mut changed = mdl.clone();
+    changed["records"][0]["bond_aromatic"][0]["value"] = json!(true);
+    assert!(!compare(feature, mdl.clone(), changed));
+    let mut missing = mdl;
+    missing["records"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("bond_aromatic");
+    assert!(crate::observation::validate(feature, &missing).is_err());
 }

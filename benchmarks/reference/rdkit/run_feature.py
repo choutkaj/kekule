@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from reference.rdkit import molecule
@@ -68,6 +69,7 @@ def evaluate(feature_id, fixture_path, rdkit):
         'algo.rings.sssr': ring_set_record,
         'algo.valence.rdkit-like': valence_record,
         'algo.aromaticity.rdkit-like': aromaticity_record,
+        'algo.aromaticity.mdl': lambda r: aromaticity_record(r, mdl=True),
         'algo.canonical-ranking': canonical_ranking_record,
         'chem.perception.default': perceived_atom_record,
         'chem.hydrogen-transforms': hydrogen_transform_record,
@@ -75,6 +77,54 @@ def evaluate(feature_id, fixture_path, rdkit):
     if feature_id not in functions:
         raise ValueError(f'no independent reference for {feature_id}')
     return {'records':[functions[feature_id](record) for record in records]}
+
+
+@lru_cache(maxsize=1)
+def smarts_targets():
+    from rdkit import Chem
+    contract = json.loads((Path(__file__).parents[2] / 'query-smarts.json').read_text())
+    params = Chem.SmilesParserParams()
+    params.removeHs = False
+    targets = []
+    for row in contract['targets']:
+        molecule = Chem.MolFromSmiles(row['smiles'], params)
+        if molecule is None:
+            raise ValueError(f"SMARTS target preparation failed: {row['id']}")
+        targets.append((row['id'], molecule))
+    return contract, targets
+
+
+def smarts_behavior(query):
+    from rdkit import Chem
+    contract, targets = smarts_targets()
+    tags = sorted((a.GetAtomMapNum(), a.GetIdx()) for a in query.GetAtoms()
+                  if a.HasProp('molAtomMapNumber'))
+    observations = []
+    params = Chem.SubstructMatchParameters()
+    params.useChirality = True
+    params.uniquify = False
+    # Both limits must be zero: otherwise nested recursive predicates can be
+    # silently incomplete even when the outer result is below its limit.
+    # The reference worker's process deadline bounds this independent search.
+    params.maxMatches = 0
+    params.maxRecursiveMatches = 0
+    # A necessary-condition check using RDKit itself avoids factorial searches
+    # through many interchangeable disconnected fragments (e.g. hydrate waters)
+    # when another fragment cannot match at all. Keep the original query for
+    # the actual full mapping; do not combine fragment embeddings ourselves.
+    fragments = Chem.GetMolFrags(query, asMols=True, sanitizeFrags=False)
+    for target_id, molecule in targets:
+        if len(fragments) > 1 and any(
+                not molecule.GetSubstructMatches(fragment, params) for fragment in fragments):
+            matches = []
+        else:
+            matches = sorted(molecule.GetSubstructMatches(query, params))
+        if len(matches) > contract['max_matches']:
+            raise RuntimeError(f"SMARTS target {target_id}: match resource limit exceeded")
+        observations.append(dict(target=target_id, matches=[list(m) for m in matches],
+                                 tagged_matches=[[m[i] for _, i in tags] for m in matches]))
+    return dict(version=2, tags=[dict(tag=tag, query_atom=i) for tag, i in tags],
+                targets=observations)
 
 
 def smarts_query_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
@@ -94,6 +144,7 @@ def smarts_query_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
                 "title": title,
                 "atom_count": query.GetNumAtoms() if query is not None else None,
                 "bond_count": query.GetNumBonds() if query is not None else None,
+                "behavior": smarts_behavior(query) if query is not None else None,
             }
         )
     return records
@@ -395,7 +446,7 @@ def hydrogen_transform_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def aromaticity_record(record: dict[str, Any]) -> dict[str, Any]:
+def aromaticity_record(record: dict[str, Any], *, mdl: bool = False) -> dict[str, Any]:
     mol = record["mol"]
     if mol is None:
         return {
@@ -409,6 +460,12 @@ def aromaticity_record(record: dict[str, Any]) -> dict[str, Any]:
             "status": "normalization_or_perception_error",
             "title": record["title"],
         }
+    if mdl:
+        from rdkit import Chem
+        # Clear the default model before installing MDL, including aromatic bonds.
+        # Exceptions propagate to the reference protocol as errors.
+        Chem.Kekulize(sanitized, clearAromaticFlags=True)
+        Chem.SetAromaticity(sanitized, Chem.AromaticityModel.AROMATICITY_MDL)
     return {
         "record_index": record["record_index"],
         "status": "ok",

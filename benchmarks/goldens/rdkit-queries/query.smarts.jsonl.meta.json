@@ -1,0 +1,15 @@
+{
+  "schema": 2,
+  "contract_sha256": "ce42dab909b1d83951086688eef3f866cedbd4d03fb6b2f6ebb13a64a47eea9f",
+  "dataset": "rdkit-queries",
+  "feature": "query.smarts",
+  "input_lock_sha256": "ba6d425d51558a2bcdff89b0e9d26f59a75f0e7776198cf9784b4ebc9ff500a2",
+  "sha256": "545af368cbc0f01ed58e00df5db357163b3bd59960b07a90eaaa81b8abddd006",
+  "reference": {
+    "tool": "rdkit",
+    "version": "2026.03.3"
+  },
+  "reference_code_sha256": "d1a710884fd07f24ad9df50d22b58dfb0f7efc68a49cf8e71860a402dcfa8759",
+  "origin": "independent generation",
+  "cases": 518
+}

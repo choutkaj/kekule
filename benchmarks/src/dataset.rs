@@ -14,6 +14,7 @@ pub(crate) const DATASETS: &[&str] = &[
     "pl-rex",
     "pdb-1000",
     "smoke",
+    "rdkit-queries",
 ];
 
 /// Preloaded source bytes. Timing never rereads the input file.

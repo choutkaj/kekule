@@ -34,10 +34,11 @@ fn staging_keeps_bulk_data_local_and_includes_smoke_and_provenance() {
     )
     .unwrap();
     let mut expected = vec![".gitignore".to_owned()];
-    for dataset in ["smoke", "pubchem-100k", "future-dataset"] {
+    for dataset in ["smoke", "rdkit-queries", "pubchem-100k", "future-dataset"] {
+        let supplied_small_corpus = matches!(dataset, "smoke" | "rdkit-queries");
         for (suffix, tracked) in [
-            ("data/input.sdf", dataset == "smoke"),
-            ("data/nested/input.sdf", dataset == "smoke"),
+            ("data/input.sdf", supplied_small_corpus),
+            ("data/nested/input.sdf", supplied_small_corpus),
             ("sources.lock.json", true),
         ] {
             let name = format!("benchmarks/corpora/{dataset}/{suffix}");
@@ -49,7 +50,7 @@ fn staging_keeps_bulk_data_local_and_includes_smoke_and_provenance() {
             }
         }
         for (suffix, tracked) in [
-            ("io.sdf.parse.jsonl.gz", dataset == "smoke"),
+            ("io.sdf.parse.jsonl.gz", supplied_small_corpus),
             ("io.sdf.parse.jsonl.meta.json", true),
             ("interrupted.tmp", false),
         ] {
@@ -57,6 +58,19 @@ fn staging_keeps_bulk_data_local_and_includes_smoke_and_provenance() {
             let path = root.join(&name);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, b"fixture").unwrap();
+            if tracked {
+                expected.push(name);
+            }
+        }
+    }
+    for dataset in ["smoke", "pubchem-100k"] {
+        for (suffix, tracked) in [("jsonl.meta.json", true), ("jsonl.gz", dataset == "smoke")] {
+            let name = format!(
+                "benchmarks/goldens/legacy/query-smarts-v1/{dataset}/query.smarts.{suffix}"
+            );
+            let path = root.join(&name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"archived reference").unwrap();
             if tracked {
                 expected.push(name);
             }

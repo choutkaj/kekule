@@ -1,15 +1,15 @@
 {
   "schema": 2,
-  "contract_sha256": "0972bf589ddfde8d6a29093a3248b54714762127a743b626cb60e18a8a703a71",
+  "contract_sha256": "ce42dab909b1d83951086688eef3f866cedbd4d03fb6b2f6ebb13a64a47eea9f",
   "dataset": "pubchem-100k",
   "feature": "query.smarts",
   "input_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
-  "sha256": "40e136f3232c7cbec3f5f774871aff7927f6b82582d3615a7690d79fee69436f",
+  "sha256": "fc66ac47861320ea93bf8dd81178863da1fb167421f2d9f491e9103331926958",
   "reference": {
     "tool": "rdkit",
     "version": "2026.03.3"
   },
-  "reference_code_sha256": null,
-  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded.",
+  "reference_code_sha256": "03e7711c2f31d6d365c01db2f90d369fb742b3deee5e51fb66472cd1078bcbe9",
+  "origin": "independent generation",
   "cases": 100000
 }
