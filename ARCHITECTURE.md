@@ -336,6 +336,15 @@ Exact capability and numerical policies live with
 
 ## Identity and reconstruction
 
+Molecular queries own predicate graphs, recursive subqueries, output tags, and
+local stereo carrier frames; they do not reuse represented molecular graphs.
+Matching reads explicit target perception without installing or changing it.
+Prepared molecular targets borrow their source; topology matches retain the
+exact shared snapshot. Connected component-local searches may be reused per
+definition and expanded to instances. Disconnected queries use qualified
+occurrence identities without creating bonds between molecules. See the
+[SMARTS contract](crates/kekule/src/query/dialect.md).
+
 Molecular equality compares authoritative represented chemistry, excluding
 perception, annotations, hierarchy, and topology classification. Topology layout
 equality is separate: it includes definitions, instances, classifications,
