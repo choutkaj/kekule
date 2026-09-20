@@ -2,6 +2,10 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod hydrogens;
+mod mmcif;
+mod rings;
+
 /// Raw differences remain in the report, including differences within the
 /// documented reference precision. No values are rounded or rewritten.
 #[derive(Default, Serialize)]
@@ -10,6 +14,9 @@ pub(crate) struct Differences {
     pub(crate) numerical: usize,
     pub(crate) within_precision: usize,
     pub(crate) details: Vec<Value>,
+    /// Explanatory measurements only; never affect agreement or exactness.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) diagnostics: Vec<Value>,
 }
 
 impl Differences {
@@ -68,6 +75,14 @@ pub(crate) fn differences(feature: &str, expected: &Value, actual: &Value) -> Di
     }
     let mut result = Differences::default();
     visit(feature, "$", expected, actual, &mut result);
+    if !result.exact() {
+        result.diagnostics = match feature {
+            "algo.rings.sssr" => rings::diagnostics(expected, actual),
+            "io.mmcif.parse" => mmcif::diagnostics(expected, actual),
+            "chem.hydrogen-transforms" => hydrogens::diagnostics(expected, actual),
+            _ => Vec::new(),
+        };
+    }
     result
 }
 

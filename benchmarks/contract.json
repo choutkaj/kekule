@@ -1,6 +1,12 @@
 {
-  "schema": 2,
+  "schema": 3,
   "molecular_identity": "indexed complete component graphs; source atom correspondence; explicit stereo carriers and groups",
+  "radicals": {
+    "radical_electrons": "required nonnegative integer electron occupancy; includes the pair in an explicitly supplied singlet center; not a physical unpaired-electron measurement",
+    "spin_multiplicity": "required nullable positive integer 2S+1; only explicitly supplied atom-local spin; null when unspecified; never inferred from electron count",
+    "reference": "RDKit calculates electron occupancy; independent CTAB/CX source metadata preserves explicit spin assertions lost by RDKit; changed explicit electron counts are reference failures",
+    "migration": "replaces the misleading unpaired_electrons name and radical spin labels with separately asserted electron occupancy and numeric source spin; neither measurement is dropped"
+  },
   "model_writer": "MOL model serialization: empty title, no SDF properties; source observations retained in reports",
   "numeric_contract": {
     "roundoff": "16 * f64 epsilon * max(abs(expected), abs(actual))",

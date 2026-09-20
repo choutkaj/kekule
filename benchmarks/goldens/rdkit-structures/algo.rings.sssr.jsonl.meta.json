@@ -1,0 +1,15 @@
+{
+  "schema": 2,
+  "contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
+  "dataset": "rdkit-structures",
+  "feature": "algo.rings.sssr",
+  "input_lock_sha256": "273c7f1c7316344a39d83104a57ac99c3e62fd393f6b5d37a84bee81aae3100e",
+  "sha256": "e40bdfa0fcdda7f7de6fb5ff911dd0b1b2a3f02faf58738dfde731ba96cd962c",
+  "reference": {
+    "tool": "rdkit",
+    "version": "2026.03.3"
+  },
+  "reference_code_sha256": "c37e1548065aac0c229a441d1d7ff3bd98f2902a3e8f3f8ac4a904c5fba38e65",
+  "origin": "independent generation",
+  "cases": 50
+}

@@ -1,11 +1,337 @@
 use super::*;
 use crate::properties::{PropertyKey, PropertyValue};
 
+fn coordinate_tetrahedron(v3000: bool, points: &[[f64; 3]], mark: u8) -> String {
+    let symbols = ["C", "F", "Cl", "Br", "I"];
+    let mut source = if v3000 {
+        format!("coordinate stereo\nkekule\n\n  0  0  0     0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS {} {} 0 0 0\nM  V30 BEGIN ATOM\n", points.len(), points.len() - 1)
+    } else {
+        format!(
+            "coordinate stereo\nkekule\n\n{:3}{:3}  0  0  0  0            999 V2000\n",
+            points.len(),
+            points.len() - 1
+        )
+    };
+    for (index, [x, y, z]) in points.iter().enumerate() {
+        if v3000 {
+            source += &format!("M  V30 {} {} {x} {y} {z} 0\n", index + 1, symbols[index]);
+        } else {
+            source += &format!(
+                "{x:10.4}{y:10.4}{z:10.4} {:<3} 0  0  0  0  0  0\n",
+                symbols[index]
+            );
+        }
+    }
+    if v3000 {
+        source += "M  V30 END ATOM\nM  V30 BEGIN BOND\n";
+    }
+    for index in 1..points.len() {
+        let mark = if index == 1 { mark } else { 0 };
+        if v3000 {
+            source += &format!(
+                "M  V30 {index} 1 1 {}{}\n",
+                index + 1,
+                if mark == 0 {
+                    String::new()
+                } else {
+                    format!(" CFG={mark}")
+                }
+            );
+        } else {
+            source += &format!("  1{:3}  1{mark:3}  0  0  0\n", index + 1);
+        }
+    }
+    if v3000 {
+        source += "M  V30 END BOND\nM  V30 END CTAB\n";
+    }
+    source + "M  END\n"
+}
+
+#[test]
+fn molfile_unmarked_3d_tetrahedra_use_shared_geometry_without_installing_perception() {
+    for v3000 in [false, true] {
+        for explicit_count in [3, 4] {
+            let mut descriptors = Vec::new();
+            for reflected in [false, true] {
+                let sign = if reflected { -1.0 } else { 1.0 };
+                let points = [
+                    [0.0, 0.0, 0.0],
+                    [sign, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [-sign, -1.0, -1.0],
+                ];
+                let source = coordinate_tetrahedron(v3000, &points[..=explicit_count], 0);
+                let (mut molecule, report) = read_molfile_with_report(&source).unwrap();
+                assert_eq!(report.created_stereo_elements().len(), 1);
+                assert!(!molecule.perception().has_valence());
+                assert!(report.warnings().is_empty());
+                if explicit_count == 3 {
+                    assert_eq!(
+                        molecule.atom(AtomId::new(0)).unwrap().hydrogens,
+                        HydrogenDeclaration::Fixed(1)
+                    );
+                }
+                perceive(&mut molecule).unwrap();
+                let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+                assert_eq!(assigned.assigned.len(), 1);
+                let descriptor = assigned.assigned[0].descriptor;
+                // Independently checked with RDKit 2026.03.3 from these CTAB
+                // coordinates, including the omitted fourth hydrogen.
+                let expected = if (explicit_count == 3) != reflected {
+                    StereoDescriptor::R
+                } else {
+                    StereoDescriptor::S
+                };
+                assert_eq!(descriptor, expected);
+                descriptors.push(descriptor);
+            }
+            assert_ne!(descriptors[0], descriptors[1]);
+        }
+    }
+}
+
+#[test]
+fn molfile_3d_tetrahedral_inference_is_scale_rotation_and_translation_invariant() {
+    for scale in [1.0e-100, 1.0, 1.0e100] {
+        for rotated in [false, true] {
+            let points = [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+            .map(|[x, y, z]| {
+                let [x, y, z] = if rotated { [z, x, y] } else { [x, y, z] };
+                [scale * (x + 2.0), scale * (y - 3.0), scale * (z + 4.0)]
+            });
+            let source = coordinate_tetrahedron(true, &points, 0);
+            let (mut molecule, _) = read_molfile_with_report(&source).unwrap();
+            perceive(&mut molecule).unwrap();
+            let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+            assert_eq!(assigned.assigned.len(), 1);
+            assert_eq!(assigned.assigned[0].descriptor, StereoDescriptor::R);
+        }
+    }
+}
+
+#[test]
+fn molfile_3d_inference_preserves_unknown_and_rejects_degenerate_or_symmetric_sites() {
+    for v3000 in [false, true] {
+        let points = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ];
+        let unknown = coordinate_tetrahedron(v3000, &points, if v3000 { 2 } else { 4 });
+        let (molecule, _) = read_molfile_with_report(&unknown).unwrap();
+        assert_eq!(molecule.stereo_elements().count(), 1);
+        assert!(molecule
+            .stereo_elements()
+            .all(|(_, element)| !element.is_specified()));
+        let source = coordinate_tetrahedron(v3000, &points, 0);
+        let symmetric = source.replace("Cl", "F ");
+        assert!(read_molfile_with_report(&symmetric)
+            .unwrap()
+            .0
+            .stereo_elements()
+            .next()
+            .is_none());
+        let flat = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 1.0],
+            [0.0, 1.0, 1.0],
+            [-1.0, -1.0, -2.0],
+        ];
+        let source = coordinate_tetrahedron(v3000, &flat, 0);
+        assert!(read_molfile_with_report(&source)
+            .unwrap()
+            .0
+            .stereo_elements()
+            .next()
+            .is_none());
+    }
+}
+
+#[test]
+fn molfile_writers_preserve_unasserted_3d_tetrahedra_as_unknown() {
+    for smiles in ["C(F)(Cl)Br", "C(F)(Cl)(Br)I"] {
+        let molecule = read_smiles(smiles).unwrap();
+        let points = [
+            Point3::origin(),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(0.0, 0.0, 1.0),
+            Point3::new(-1.0, -1.0, -1.0),
+        ];
+        let positions = test_positions(points[..molecule.atom_count()].to_vec());
+        let model = Model::from_molecule(&molecule, &positions).unwrap();
+        let before = model.clone();
+        for source in [
+            molfile::write_model_v2000(&model).unwrap(),
+            molfile::write_model_v3000(&model).unwrap(),
+        ] {
+            let (parsed, _) = read_molfile_with_report(&source).unwrap();
+            assert_eq!(parsed.stereo_elements().count(), 1);
+            assert!(parsed
+                .stereo_elements()
+                .all(|(_, element)| !element.is_specified()));
+        }
+        assert_eq!(model, before);
+    }
+}
+
 fn wedged_tetrahedron(symbol: &str, charge_code: u8, mirror: bool) -> String {
     let y = if mirror { -1.0 } else { 1.0 };
     format!(
         "stereo drawing\nkekule\n\n  4  3  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 {symbol:<3} 0  {charge_code}  0  0  0  0\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000{y:10.4}    0.0000 Br  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
     )
+}
+
+fn wedge_drawing(points: &[[f64; 2]], scale: f64, mirror: f64, v3000: bool) -> String {
+    let symbols = ["C", "F", "Cl", "Br", "I"];
+    let mut source = format!(
+        "drawing\nkekule\n\n{:3}{:3}  0  0  0  0            999 V2000\n",
+        points.len(),
+        points.len() - 1
+    );
+    if v3000 {
+        source = format!("drawing\nkekule\n\n  0  0  0     0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS {} {} 0 0 0\nM  V30 BEGIN ATOM\n", points.len(), points.len() - 1);
+    }
+    for (index, [x, y]) in points.iter().enumerate() {
+        let (x, y) = (scale * (x + 3.0), scale * (mirror * y - 2.0));
+        if v3000 {
+            source += &format!("M  V30 {} {} {x} {y} 0 0\n", index + 1, symbols[index]);
+        } else {
+            source += &format!(
+                "{x:10.4}{y:10.4}    0.0000 {:<3} 0  0  0  0  0  0\n",
+                symbols[index]
+            );
+        }
+    }
+    if v3000 {
+        source += "M  V30 END ATOM\nM  V30 BEGIN BOND\n";
+    }
+    for index in 1..points.len() {
+        if v3000 {
+            source += &format!(
+                "M  V30 {index} 1 1 {}{}\n",
+                index + 1,
+                if index == 1 { " CFG=1" } else { "" }
+            );
+        } else {
+            source += &format!(
+                "  1{:3}  1{:3}  0  0  0\n",
+                index + 1,
+                usize::from(index == 1)
+            );
+        }
+    }
+    if v3000 {
+        source += "M  V30 END BOND\nM  V30 END CTAB\n";
+    }
+    source + "M  END\n"
+}
+
+#[test]
+fn molfile_ambiguous_wedge_geometry_never_invents_a_configuration() {
+    for points in [
+        // Coincident and almost coincident unmarked directions, even with
+        // different bond lengths, do not establish a drawing order.
+        vec![[0.0, 0.0], [1.0, 0.0], [-1.0, 1.0], [-2.0, 2.0]],
+        vec![[0.0, 0.0], [1.0, 0.0], [-1.0, 1.0], [-2.0, 2.01]],
+        vec![[0.0, 0.0], [1.0, 0.0], [0.0, 0.0], [0.0, 1.0]],
+        vec![[0.0, 0.0]; 4],
+        vec![
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [-1.0, 0.0],
+            [-2.0, 0.0],
+            [-3.0, 0.0],
+        ],
+    ] {
+        for v3000 in [false, true] {
+            for scale in [0.1, 1.0, 10.0] {
+                for mirror in [-1.0, 1.0] {
+                    let source = wedge_drawing(&points, scale, mirror, v3000);
+                    let (molecule, report) = read_molfile_with_report(&source).unwrap();
+                    assert!(molecule.stereo_elements().next().is_none(), "{source}");
+                    assert_eq!(report.warnings().len(), 1, "{source}");
+                    assert!(report.created_stereo_elements().is_empty());
+                    assert!(!molecule.perception().has_valence());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn molfile_specified_tetrahedral_export_requires_a_drawing() {
+    let molecule = read_smiles("F[C@](Cl)(Br)I").unwrap();
+    for result in [
+        molfile::write_v2000(&molecule),
+        molfile::write_v3000(&molecule),
+    ] {
+        assert!(
+            result.is_err(),
+            "zero coordinates cannot encode a wedge configuration"
+        );
+    }
+    let model = test_model(&molecule);
+    for result in [
+        molfile::write_model_v2000(&model),
+        molfile::write_model_v3000(&model),
+    ] {
+        assert!(
+            result.is_err(),
+            "a degenerate drawing cannot preserve specified stereo"
+        );
+    }
+}
+
+#[test]
+fn molfile_valid_wedge_geometry_is_scale_and_reflection_consistent() {
+    // RDKit 2026.03.3 independently checks all 48 drawing variants.
+    for (points, original) in [
+        (
+            vec![[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0]],
+            StereoDescriptor::S,
+        ),
+        (
+            vec![[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]],
+            StereoDescriptor::R,
+        ),
+        (
+            vec![[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [0.0, 1.0]],
+            StereoDescriptor::R,
+        ),
+        (
+            vec![[0.0, 0.0], [0.0, 0.0], [-1.0, 0.0], [0.0, 1.0]],
+            StereoDescriptor::S,
+        ),
+    ] {
+        for v3000 in [false, true] {
+            for scale in [0.1, 1.0, 10.0] {
+                for mirror in [-1.0, 1.0] {
+                    let source = wedge_drawing(&points, scale, mirror, v3000);
+                    let (mut molecule, report) = read_molfile_with_report(&source).unwrap();
+                    assert!(report.warnings().is_empty(), "{source}");
+                    perceive(&mut molecule).unwrap();
+                    let assignment = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+                    let expected = if mirror > 0.0 {
+                        original
+                    } else if original == StereoDescriptor::R {
+                        StereoDescriptor::S
+                    } else {
+                        StereoDescriptor::R
+                    };
+                    assert_eq!(assignment.assigned.len(), 1, "{source}");
+                    assert_eq!(assignment.assigned[0].descriptor, expected, "{source}");
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -190,13 +516,14 @@ fn v3000_round_trips_atropisomeric_bond_group_members() {
 #[test]
 fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo() {
     let source = rdkit_rp6306_atrop_molblock().replace("  9 12  1  6", "  9 12  1  0");
+    let unmarked = read_molfile(&source).unwrap();
     let marked = |left, right| {
         source
             .replace("  3  7  1  0", &format!("  3  7  1  {left}"))
             .replace("  3 10  1  0", &format!("  3 10  1  {right}"))
     };
-    // RDKit 2026.03.5 accepts opposite directions at one end and rejects
-    // two wedges or two hashes at that end.
+    // Opposite directions at one end specify an axis. Two wedges or two
+    // hashes conflict: preserve the structure without guessing a configuration.
     for (left, right, expected) in [(1, 6, StereoDescriptor::M), (6, 1, StereoDescriptor::P)] {
         let mut molecule = read_molfile(&marked(left, right)).unwrap();
         perceive(&mut molecule).unwrap();
@@ -205,11 +532,71 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
         assert_eq!(assigned.assigned[0].descriptor, expected);
     }
     for direction in [1, 6] {
-        let document = molfile::parse_str(&marked(direction, direction)).unwrap();
-        let error = molfile::interpret(&document).unwrap_err();
-        assert!(error
-            .message()
-            .contains("ConflictingAtropisomericWedgeMarks"));
+        let source = marked(direction, direction);
+        let (molecule, report) = read_molfile_with_report(&source).unwrap();
+        assert_eq!(molecule, unmarked);
+        assert!(molecule.stereo_elements().next().is_none());
+        assert!(!molecule.perception().has_valence());
+        assert!(report.created_stereo_elements().is_empty());
+        let [molfile::MolfileInterpretationWarning::ConflictingAtropisomericWedgeMarks {
+            axis,
+            source_line,
+            mark_count,
+        }] = report.warnings()
+        else {
+            panic!("missing conflict diagnostic")
+        };
+        assert_eq!(*axis, BondId::new(3));
+        assert_eq!(*mark_count, 2);
+        assert_eq!(
+            *source_line,
+            report
+                .bond_mappings()
+                .iter()
+                .find(|mapping| mapping.bond() == *axis)
+                .unwrap()
+                .source_line()
+        );
+    }
+    let model = molfile::parse_str(&source).unwrap().interpret().unwrap();
+    let v3000 = molfile::write_model_v3000(model.model()).unwrap();
+    let unmarked_v3000 = read_molfile(&v3000).unwrap();
+    for cfg in [1, 3] {
+        let conflicting = v3000
+            .lines()
+            .map(|line| {
+                if line.starts_with("M  V30 ")
+                    && (line.ends_with(" 1 3 7") || line.ends_with(" 1 3 10"))
+                {
+                    format!("{line} CFG={cfg}\n")
+                } else {
+                    format!("{line}\n")
+                }
+            })
+            .collect::<String>();
+        let document = molfile::parse_str(&conflicting).unwrap();
+        let interpretation = document.interpret().unwrap();
+        assert_eq!(document.source(), conflicting);
+        assert_eq!(interpretation.molecules().next().unwrap(), &unmarked_v3000);
+        let report = &interpretation.reports()[0];
+        let [molfile::MolfileInterpretationWarning::ConflictingAtropisomericWedgeMarks {
+            axis,
+            source_line,
+            mark_count,
+        }] = report.warnings()
+        else {
+            panic!("missing V3000 conflict diagnostic")
+        };
+        assert_eq!(*mark_count, 2);
+        assert_eq!(
+            *source_line,
+            report
+                .bond_mappings()
+                .iter()
+                .find(|mapping| mapping.bond() == *axis)
+                .unwrap()
+                .source_line()
+        );
     }
     for (left, right) in [(4, 0), (4, 1), (4, 6), (1, 4), (6, 4), (4, 4)] {
         let mut molecule = read_molfile(&marked(left, right)).unwrap();
@@ -285,7 +672,19 @@ fn v3000_stereo_groups_validate_members_and_preserve_source_ids_and_continuation
 #[test]
 fn v3000_repeated_group_ids_preserve_one_relation() {
     let molecule = read_smiles("F[C@H](Cl)[C@H](Br)I").unwrap();
-    let source = molfile::write_v3000(&molecule).unwrap();
+    let model = Model::from_molecule(
+        &molecule,
+        &test_positions(vec![
+            Point3::new(-1.0, 1.0, 0.0),
+            Point3::origin(),
+            Point3::new(-1.0, -1.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(2.0, 1.0, 0.0),
+            Point3::new(2.0, -1.0, 0.0),
+        ]),
+    )
+    .unwrap();
+    let source = molfile::write_model_v3000(&model).unwrap();
     for kind in ["STEREL", "STERAC"] {
         for number in ["1", "01"] {
             let grouped = source.replace("M  V30 END CTAB", &format!("M  V30 BEGIN COLLECTION\nM  V30 MDLV30/{kind}1 ATOMS=(1 2)\nM  V30 MDLV30/{kind}{number} ATOMS=(1 4)\nM  V30 END COLLECTION\nM  V30 END CTAB"));
@@ -748,7 +1147,7 @@ M  END
     let atom0 = small.atom(AtomId::new(0)).expect("atom exists");
     let atom1 = small.atom(AtomId::new(1)).expect("atom exists");
     assert_eq!(atom0.formal_charge, 1);
-    assert_eq!(atom0.radical, Some(AtomRadical::Doublet));
+    assert_eq!(atom0.radical, AtomRadical::new(1, Some(2)));
     assert_eq!(atom0.atom_map, Some(7));
     assert_eq!(atom1.isotope, Some(13));
     assert_eq!(small.atom_count(), 2);
@@ -768,7 +1167,51 @@ M  END
     let molecule = read_molfile(input).expect("atom-block doublet radical should parse");
     let atom = molecule.atom(AtomId::new(0)).expect("radical atom");
     assert_eq!(atom.formal_charge, 0);
-    assert_eq!(atom.radical, Some(AtomRadical::Doublet));
+    assert_eq!(atom.radical, AtomRadical::new(1, Some(2)));
+}
+
+#[test]
+fn v2000_charge_and_radical_properties_replace_all_legacy_values() {
+    let prefix = "precedence\nkekule\n\n  3  2  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  3  0  0  0  0\n    1.0000    0.0000    0.0000 C   0  5  0  0  0  0\n    2.0000    0.0000    0.0000 C   0  4  0  0  0  0\n  1  2  1  0\n  2  3  1  0\n";
+    for (properties, expected) in [
+        ("M  CHG  1   1  -1\n", [(-1, None), (0, None), (0, None)]),
+        (
+            "M  RAD  1   1   1\n",
+            [(0, AtomRadical::new(2, Some(1))), (0, None), (0, None)],
+        ),
+        ("M  RAD  1   3   0\n", [(0, None); 3]),
+    ] {
+        let molecule = read_molfile(&format!("{prefix}{properties}M  END\n")).unwrap();
+        let observed = molecule
+            .atoms()
+            .map(|(_, atom)| (atom.formal_charge, atom.radical))
+            .collect::<Vec<_>>();
+        assert_eq!(observed, expected, "{properties}");
+    }
+
+    let entries = [
+        "M  CHG  1   1   1",
+        "M  CHG  1   2  -1",
+        "M  RAD  1   1   2",
+        "M  RAD  1   3   3",
+    ];
+    for order in [[0, 1, 2, 3], [3, 2, 1, 0], [2, 0, 3, 1]] {
+        let properties = order.map(|i| entries[i]).join("\n");
+        let molecule = read_molfile(&format!("{prefix}{properties}\nM  END\n")).unwrap();
+        let observed = molecule
+            .atoms()
+            .map(|(_, atom)| (atom.formal_charge, atom.radical))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            observed,
+            [
+                (1, AtomRadical::new(1, Some(2))),
+                (-1, None),
+                (0, AtomRadical::new(2, Some(3)))
+            ],
+            "{properties}"
+        );
+    }
 }
 
 #[test]
@@ -814,9 +1257,9 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
 #[test]
 fn v2000_radical_codes_round_trip_exact_multiplicity() {
     for (code, expected) in [
-        (1, AtomRadical::Singlet),
-        (2, AtomRadical::Doublet),
-        (3, AtomRadical::Triplet),
+        (1, AtomRadical::new(2, Some(1)).unwrap()),
+        (2, AtomRadical::new(1, Some(2)).unwrap()),
+        (3, AtomRadical::new(2, Some(3)).unwrap()),
     ] {
         let input = format!(
                 "radical {code}\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  RAD  1   1   {code}\nM  END\n"
@@ -902,6 +1345,8 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
             let document = molfile::parse_str(&input).expect("source syntax parses");
             let interpreted = molfile::interpret(&document).expect("source declaration interprets");
             assert_eq!(interpreted.report().created_stereo_elements().len(), 1);
+            let written = molfile::write_model_v2000(interpreted.model())
+                .expect("canonical stereo should project with its drawing");
             let molecule = interpreted.into_molecule();
             let center = molecule.atom(AtomId::new(0)).expect("stereo center");
             assert_eq!(
@@ -920,7 +1365,6 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
                 expected_specified
             );
 
-            let written = molfile::write_v2000(&molecule).expect("canonical stereo should project");
             let (reparsed, report) =
                 read_molfile_with_report(&written).expect("projected stereo should re-interpret");
             assert_eq!(report.created_stereo_elements().len(), 1);
@@ -1103,7 +1547,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         let mut atom = carbon();
         atom.formal_charge = 1;
         atom.isotope = Some(13 + index as u16);
-        atom.radical = Some(AtomRadical::Doublet);
+        atom.radical = AtomRadical::new(1, Some(2));
         atom.atom_map = Some(index + 1);
         let atom_id = graph_builder
             .add_atom(atom)
@@ -1165,7 +1609,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
             let atom = record.molecule().atom(AtomId::new(index)).expect("atom");
             assert_eq!(atom.formal_charge, 1);
             assert_eq!(atom.isotope, Some(13 + index as u16));
-            assert_eq!(atom.radical, Some(AtomRadical::Doublet));
+            assert_eq!(atom.radical, AtomRadical::new(1, Some(2)));
             assert_eq!(atom.atom_map, Some(index + 1));
         }
     }

@@ -14,6 +14,19 @@ spec.loader.exec_module(runner)
 
 
 class StrictReferenceTests(unittest.TestCase):
+    def test_radical_observation_contract_keeps_count_and_source_spin(self):
+        from reference.rdkit.test_source_radicals import mol_block
+        atom = self.value('[CH2]')['records'][0]['components'][0]['atoms'][0]
+        self.assertEqual((atom['radical_electrons'], atom['spin_multiplicity']), (2, None))
+        for code, spin in [(1, 1), (3, 3)]:
+            for version in (False, True):
+                block = mol_block(code, version)
+                for feature, path, text in [('io.mol.parse', 'input.mol', block),
+                                            ('io.sdf.parse', 'input.sdf', block + '$$$$\n')]:
+                    with self.subTest(code=code, version=version, feature=feature):
+                        atom = self.value(text, feature, path)['records'][0]['components'][0]['atoms'][0]
+                        self.assertEqual((atom['radical_electrons'], atom['spin_multiplicity']), (2, spin))
+
     def test_valence_prepares_oxohalogens_before_property_cache(self):
         for halogen in ['Cl', 'Br', 'I']:
             for oxo_count in [1, 2, 3]:
@@ -256,6 +269,20 @@ class StrictReferenceTests(unittest.TestCase):
         carbon_bond=next(q for q in value['queries'] if q['smarts']=='C!@C')
         self.assertIn([0,1],carbon_bond['matches'])
         self.assertIn([1,0],carbon_bond['matches'])
+
+    def test_query_matching_enforces_stereo_without_restricting_achiral_queries(self):
+        for query, same, opposite, unspecified in [
+            ('N[C@H](F)Cl', 'N[C@H](F)Cl', 'N[C@@H](F)Cl', 'NC(F)Cl'),
+            ('F/C=C/Cl', 'F/C=C/Cl', 'F/C=C\\Cl', 'FC=CCl'),
+        ]:
+            with patch.object(reference, 'SUBSTRUCTURE_QUERIES', [query, unspecified]):
+                for target, expected in [(same, True), (opposite, False), (unspecified, False)]:
+                    with self.subTest(query=query, target=target):
+                        record = {'record_index': 0, 'title': '', 'status': 'ok',
+                                  'mol': Chem.MolFromSmiles(target)}
+                        values = reference.substructure_record(record, Chem)['queries']
+                        self.assertEqual(bool(values[0]['matches']), expected)
+                        self.assertTrue(values[1]['matches'])
 
     def test_tetrahedral_parity_has_a_fixed_carrier_convention(self):
         value=self.value('F[C@H](Cl)Br')['records'][0]['components'][0]['stereo']

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::{AtomExpression, BondExpression};
+use super::{AtomExpression, BondExpression, QueryStereoConstraint};
 
 fixed_u32_id!(QueryAtomId, "qa");
 fixed_u32_id!(QueryBondId, "qb");
@@ -63,9 +63,14 @@ pub struct QueryGraph {
     atoms: Vec<QueryAtom>,
     bonds: Vec<QueryBond>,
     adjacency: Vec<Vec<QueryBondId>>,
+    stereo: Vec<QueryStereoConstraint>,
 }
 
 impl QueryGraph {
+    pub fn stereo_constraints(&self) -> &[QueryStereoConstraint] {
+        &self.stereo
+    }
+
     pub fn builder() -> QueryGraphBuilder {
         QueryGraphBuilder::new()
     }
@@ -140,6 +145,7 @@ pub struct QueryGraphBuilder {
     atoms: Vec<QueryAtom>,
     bonds: Vec<QueryBond>,
     adjacency: Vec<Vec<QueryBondId>>,
+    stereo: Vec<QueryStereoConstraint>,
 }
 
 impl QueryGraphBuilder {
@@ -148,6 +154,7 @@ impl QueryGraphBuilder {
             atoms: Vec::new(),
             bonds: Vec::new(),
             adjacency: Vec::new(),
+            stereo: Vec::new(),
         }
     }
 
@@ -156,6 +163,7 @@ impl QueryGraphBuilder {
             atoms: Vec::with_capacity(atoms),
             bonds: Vec::with_capacity(bonds),
             adjacency: Vec::with_capacity(atoms),
+            stereo: Vec::new(),
         }
     }
 
@@ -202,14 +210,40 @@ impl QueryGraphBuilder {
         Ok(id)
     }
 
+    /// Adds a checked local stereo constraint after its query bonds exist.
+    /// Later graph additions are revalidated at publication.
+    pub fn add_stereo_constraint(
+        &mut self,
+        mut constraint: QueryStereoConstraint,
+    ) -> Result<(), QueryGraphError> {
+        constraint.validate(self.atoms.len(), &self.bonds, &self.adjacency)?;
+        if self
+            .stereo
+            .iter()
+            .any(|existing| existing.focus() == constraint.focus())
+        {
+            return Err(QueryGraphError::InvalidStereo(
+                "duplicate query stereo focus",
+            ));
+        }
+        constraint.canonicalize();
+        self.stereo.push(constraint);
+        self.stereo.sort_by_key(QueryStereoConstraint::focus);
+        Ok(())
+    }
+
     pub fn build(self) -> Result<QueryGraph, QueryGraphError> {
         if self.atoms.is_empty() {
             return Err(QueryGraphError::EmptyGraph);
+        }
+        for constraint in &self.stereo {
+            constraint.validate(self.atoms.len(), &self.bonds, &self.adjacency)?;
         }
         Ok(QueryGraph {
             atoms: self.atoms,
             bonds: self.bonds,
             adjacency: self.adjacency,
+            stereo: self.stereo,
         })
     }
 
@@ -228,6 +262,7 @@ pub enum QueryGraphError {
     EmptyGraph,
     InvalidAtomId(QueryAtomId),
     InvalidBondId(QueryBondId),
+    InvalidStereo(&'static str),
     SelfBond(QueryAtomId),
     DuplicateBond {
         a: QueryAtomId,
@@ -245,6 +280,7 @@ impl fmt::Display for QueryGraphError {
             Self::EmptyGraph => f.write_str("query graph must contain at least one atom"),
             Self::InvalidAtomId(id) => write!(f, "invalid query atom id: {id}"),
             Self::InvalidBondId(id) => write!(f, "invalid query bond id: {id}"),
+            Self::InvalidStereo(message) => write!(f, "invalid query stereo: {message}"),
             Self::SelfBond(id) => write!(f, "cannot create a query bond from {id} to itself"),
             Self::DuplicateBond { a, b } => write!(f, "duplicate query bond between {a} and {b}"),
             Self::ResourceLimit { resource, limit } => {

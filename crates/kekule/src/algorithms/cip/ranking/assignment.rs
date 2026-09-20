@@ -535,7 +535,7 @@ fn carrier_signatures(
         return Ok(signatures);
     }
     let descriptor_context = DescriptorContext::new(element);
-    let mut build_context = LigandBuildContext {
+    let build_context = LigandBuildContext {
         mol,
         element,
         descriptor_context: &descriptor_context,
@@ -543,23 +543,24 @@ fn carrier_signatures(
         atomic_number_fractions: &atomic_number_fractions,
         atropisomer_mode,
     };
-    let mut depth = 0;
-    loop {
-        build_context.options.max_depth = depth;
-        let signatures = build_carrier_signatures(&build_context, root, carriers)?;
-        if signatures.iter().all(|(_, signature)| !signature.truncated)
-            || rank_carrier_signatures(element, &signatures, None).is_ok()
-        {
-            return Ok(signatures);
-        }
-        if depth == options.max_depth {
-            return Err(CipAssignmentIssue::DepthLimitExceeded {
-                element,
-                max_depth: options.max_depth,
-            });
-        }
-        depth = depth.saturating_mul(2).max(1).min(options.max_depth);
-    }
+    expansion::carrier_signatures(
+        &build_context,
+        carriers
+            .iter()
+            .copied()
+            .map(|carrier| (carrier, carrier_node(carrier, root))),
+        |node| {
+            let priority = node.priority(&build_context);
+            let mut children = Vec::new();
+            node.extend(
+                mol,
+                &atomic_number_fractions,
+                atropisomer_mode,
+                &mut children,
+            );
+            (priority, children)
+        },
+    )
 }
 
 fn build_carrier_signatures(

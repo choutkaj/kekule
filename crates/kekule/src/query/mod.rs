@@ -5,6 +5,10 @@
 //! [`crate::substructure`] matching facade. Parsing a query and matching it
 //! against a molecule are separate operations; matching does not perceive the
 //! target implicitly.
+//! Stereo constraints compare represented local configuration under the atom
+//! mapping before match deduplication or limits. They do not compare CIP labels
+//! or interpret enhanced stereo group relationships. An achiral query places no
+//! restriction on the target's stereochemistry.
 //!
 //! ```
 //! use kekule::{query::parse_smarts, smiles, substructure};
@@ -20,7 +24,9 @@
 mod expression;
 mod graph;
 mod smarts;
+mod stereo;
 
 pub use expression::*;
 pub use graph::*;
 pub use smarts::*;
+pub use stereo::*;

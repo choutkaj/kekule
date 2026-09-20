@@ -44,8 +44,8 @@ struct Atom {
     #[serde(deserialize_with = "required_option")]
     atom_map: Option<u32>,
     #[serde(deserialize_with = "required_option")]
-    radical: Option<String>,
-    unpaired_electrons: u32,
+    spin_multiplicity: Option<std::num::NonZeroU32>,
+    radical_electrons: u32,
     aromatic: bool,
     implicit_hydrogens: u32,
     explicit_valence: u32,

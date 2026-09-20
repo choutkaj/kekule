@@ -541,7 +541,7 @@ mod tests {
     fn radicals_need_no_mass_correction_beyond_charge() {
         let mut graph = crate::core::MoleculeEditor::new();
         let mut carbon = Atom::new(element("C"));
-        carbon.radical = Some(AtomRadical::Doublet);
+        carbon.radical = AtomRadical::new(1, Some(2));
         graph.add_atom(carbon).expect("atom identifier capacity");
         let molecule = graph;
         assert_eq!(

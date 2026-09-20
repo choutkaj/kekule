@@ -24,16 +24,31 @@ fn quadruple_bonds_contribute_four_to_both_endpoint_valences() {
 fn isolated_valence_state(
     symbol: &str,
     formal_charge: i8,
-    radical: AtomRadical,
+    radical: Option<AtomRadical>,
     hydrogens: HydrogenDeclaration,
 ) -> (Molecule, AtomId) {
     let mut editor = MoleculeEditor::new();
     let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
     atom.formal_charge = formal_charge;
-    atom.radical = Some(radical);
+    atom.radical = radical;
     atom.hydrogens = hydrogens;
     let id = editor.add_atom(atom).unwrap();
     (editor.finish().unwrap(), id)
+}
+
+#[test]
+fn singlet_and_triplet_two_electron_centers_have_the_same_valence_occupancy() {
+    for radical in [
+        AtomRadical::new(2, Some(1)),
+        AtomRadical::new(2, Some(3)),
+        AtomRadical::new(2, None),
+    ] {
+        let (mut molecule, atom) =
+            isolated_valence_state("C", 0, radical, HydrogenDeclaration::Infer { explicit: 0 });
+        valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike).unwrap();
+        assert_eq!(molecule.implicit_hydrogens(atom), Ok(Some(2)));
+        assert_eq!(molecule.atom(atom).unwrap().radical, radical);
+    }
 }
 
 #[test]
@@ -45,7 +60,8 @@ fn disabling_implicit_hydrogens_skips_radical_occupancy_checks() {
         (HydrogenDeclaration::Fixed(4), true),
         (HydrogenDeclaration::Infer { explicit: 4 }, false),
     ] {
-        let (mut molecule, atom) = isolated_valence_state("C", 0, AtomRadical::Doublet, hydrogens);
+        let (mut molecule, atom) =
+            isolated_valence_state("C", 0, AtomRadical::new(1, Some(2)), hydrogens);
         let represented = represented_molecule_snapshot(&molecule);
         let result = valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike);
         assert_eq!(result.is_ok(), succeeds);
@@ -74,19 +90,12 @@ fn strict_valence_rejects_excess_occupancy_even_without_bonds_or_declared_hydrog
         (
             "O",
             0,
-            AtomRadical::Quintet,
+            AtomRadical::new(4, Some(5)),
             HydrogenDeclaration::Infer { explicit: 0 },
             0,
             2,
         ),
-        (
-            "P",
-            -8,
-            AtomRadical::Singlet,
-            HydrogenDeclaration::Fixed(0),
-            8,
-            5,
-        ),
+        ("P", -8, None, HydrogenDeclaration::Fixed(0), 8, 5),
     ] {
         let (mut molecule, atom) = isolated_valence_state(symbol, charge, radical, hydrogens);
         let error = valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
@@ -96,7 +105,7 @@ fn strict_valence_rejects_excess_occupancy_even_without_bonds_or_declared_hydrog
             [ValenceIssue::ValenceOccupancyExceeded {
                 atom,
                 explicit_valence: 0,
-                radical_electrons: usize::from(radical.unpaired_electron_count()),
+                radical_electrons: radical.map_or(0, |state| usize::from(state.electron_count())),
                 charge_offset,
                 max_allowed,
             }]
@@ -114,7 +123,7 @@ fn strict_valence_rejects_excess_occupancy_even_without_bonds_or_declared_hydrog
 
 #[test]
 fn original_unrestricted_and_noble_gas_valences_do_not_gain_radical_limits() {
-    for (symbol, radical) in [("Li", AtomRadical::Singlet), ("He", AtomRadical::Doublet)] {
+    for (symbol, radical) in [("Li", None), ("He", AtomRadical::new(1, Some(2)))] {
         let (mut molecule, atom) = isolated_valence_state(
             symbol,
             1,
@@ -133,7 +142,7 @@ fn isolated_hydrogen_charge_validation_is_specific_to_hydrogen_inference() {
         let (mut molecule, atom) = isolated_valence_state(
             "H",
             charge,
-            AtomRadical::Singlet,
+            None,
             HydrogenDeclaration::Infer { explicit: 0 },
         );
         let error =
@@ -153,12 +162,8 @@ fn isolated_hydrogen_charge_validation_is_specific_to_hydrogen_inference() {
         .unwrap();
         assert_eq!(molecule.implicit_hydrogens(atom), Ok(Some(0)));
 
-        let (mut fixed, atom) = isolated_valence_state(
-            "H",
-            charge,
-            AtomRadical::Singlet,
-            HydrogenDeclaration::Fixed(0),
-        );
+        let (mut fixed, atom) =
+            isolated_valence_state("H", charge, None, HydrogenDeclaration::Fixed(0));
         valence_api::perceive_valence(&mut fixed, ValenceModel::RdkitLike).unwrap();
         assert_eq!(fixed.implicit_hydrogens(atom), Ok(Some(0)));
     }
@@ -167,12 +172,8 @@ fn isolated_hydrogen_charge_validation_is_specific_to_hydrogen_inference() {
 #[test]
 fn hypervalent_anions_mapping_to_unrestricted_elements_do_not_infer_hydrogen() {
     for symbol in ["S", "Se"] {
-        let (mut molecule, atom) = isolated_valence_state(
-            symbol,
-            -5,
-            AtomRadical::Singlet,
-            HydrogenDeclaration::Infer { explicit: 0 },
-        );
+        let (mut molecule, atom) =
+            isolated_valence_state(symbol, -5, None, HydrogenDeclaration::Infer { explicit: 0 });
         valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike).unwrap();
         assert_eq!(molecule.implicit_hydrogens(atom), Ok(Some(0)));
     }
@@ -184,7 +185,7 @@ fn extreme_charge_adjustments_are_bounded_without_overflow() {
         let (mut molecule, atom) = isolated_valence_state(
             "C",
             charge,
-            AtomRadical::Singlet,
+            None,
             HydrogenDeclaration::Infer { explicit: 0 },
         );
         valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike).unwrap();
@@ -198,7 +199,7 @@ fn hydride_explicit_valence_compatibility_does_not_override_implicit_valence_rul
         (HydrogenDeclaration::Fixed(2), true),
         (HydrogenDeclaration::Infer { explicit: 2 }, false),
     ] {
-        let (mut molecule, atom) = isolated_valence_state("H", -1, AtomRadical::Singlet, hydrogens);
+        let (mut molecule, atom) = isolated_valence_state("H", -1, None, hydrogens);
         let result = valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike);
         assert_eq!(result.is_ok(), succeeds);
         valence_api::perceive_valence_with_options(
@@ -353,7 +354,7 @@ fn normalized_aromatic_systems_perceive_valence_before_rings_and_aromaticity() {
     let mut radical = read_smiles("c1ccccc1").expect("radical fixture syntax should interpret");
     {
         let mut radical_carbon = radical.atom_mut(AtomId::new(0)).expect("radical carbon");
-        radical_carbon.radical = Some(AtomRadical::Doublet);
+        radical_carbon.radical = AtomRadical::new(1, Some(2));
         radical_carbon.hydrogens = HydrogenDeclaration::Fixed(0);
     }
     assert_aromatic_valence_pipeline_for_molecule(

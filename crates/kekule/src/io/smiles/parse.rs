@@ -2,9 +2,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::Range;
 
+/// One source record: base SMILES, an optional CX extension, and an optional name.
+///
+/// Spaces or tabs separate these fields. The document retains the complete source
+/// and original byte spans; its tokens describe only the base SMILES. CX extension
+/// text is preserved opaquely, without claiming that its field syntax or chemical
+/// semantics are supported. Newlines belong to the enclosing record reader.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SmilesDocument {
     source: String,
+    smiles_span: Range<usize>,
+    cx_extension_span: Option<Range<usize>>,
+    name_span: Option<Range<usize>>,
     tokens: Vec<SmilesDocumentToken>,
     fragments: Vec<Range<usize>>,
     pub(super) program: SmilesProgram,
@@ -15,8 +24,38 @@ impl SmilesDocument {
         &self.source
     }
 
+    /// Tokens of the base SMILES. Record metadata has separate source spans.
     pub fn tokens(&self) -> &[SmilesDocumentToken] {
         &self.tokens
+    }
+
+    pub fn base_smiles(&self) -> &str {
+        &self.source[self.smiles_span.clone()]
+    }
+
+    pub fn base_smiles_span(&self) -> Range<usize> {
+        self.smiles_span.clone()
+    }
+
+    /// Original CXSMILES extension, including its enclosing vertical bars.
+    /// Preserving this text does not imply support for its chemical features.
+    pub fn cx_extension(&self) -> Option<&str> {
+        self.cx_extension_span
+            .clone()
+            .map(|span| &self.source[span])
+    }
+
+    pub fn cx_extension_span(&self) -> Option<Range<usize>> {
+        self.cx_extension_span.clone()
+    }
+
+    /// Optional record name, excluding surrounding horizontal whitespace.
+    pub fn name(&self) -> Option<&str> {
+        self.name_span.clone().map(|span| &self.source[span])
+    }
+
+    pub fn name_span(&self) -> Option<Range<usize>> {
+        self.name_span.clone()
     }
 
     /// Dot-delimited source fragments; ring closures may connect fragments.
@@ -28,11 +67,26 @@ impl SmilesDocument {
     ///
     /// This is the authoritative method-form entry point; namespace helpers
     /// delegate to the same implementation.
+    /// Supports CX radical declarations, tetrahedral enhanced stereo groups,
+    /// and the record-level relative configuration flag. Other chemical fields
+    /// return an unsupported-feature error; no extension is silently discarded.
     pub fn interpret(
         &self,
     ) -> Result<super::interpret::SmilesInterpretation, super::interpret::SmilesInterpretError>
     {
         super::interpret::interpret_smiles_document(self)
+    }
+
+    /// Explicitly projects the base SMILES, omitting all extension semantics.
+    ///
+    /// CXSMILES can change represented chemistry. This is a lossy projection,
+    /// not a fallback for full interpretation. The returned interpretation
+    /// retains the extension text and reports the omitted source span.
+    pub fn interpret_base(
+        &self,
+    ) -> Result<super::interpret::SmilesInterpretation, super::interpret::SmilesInterpretError>
+    {
+        super::interpret::interpret_base_smiles_document(self)
     }
 
     /// Interprets this source document as connected canonical molecules.
@@ -205,10 +259,14 @@ pub fn parse_smiles_document_with_options(
             "input exceeds configured byte limit",
         ));
     }
-    if input.is_empty() {
-        return Err(SmilesParseError::new(0, "empty SMILES document"));
-    }
-    let chars = input.char_indices().collect::<Vec<_>>();
+    let source = input;
+    let record = split_smiles_record(source)?;
+    // Keep original byte offsets while excluding metadata from the grammar.
+    let input = &source[..record.smiles.end];
+    let chars = input
+        .char_indices()
+        .filter(|(offset, _)| *offset >= record.smiles.start)
+        .collect::<Vec<_>>();
     let mut tokens = Vec::new();
     let mut components = Vec::new();
     let mut component_start = 0usize;
@@ -294,10 +352,61 @@ pub fn parse_smiles_document_with_options(
     components.push(component_start..tokens.len());
     let program = parse_smiles_program(input, &chars, options)?;
     Ok(SmilesDocument {
-        source: input.to_owned(),
+        source: source.to_owned(),
+        smiles_span: record.smiles,
+        cx_extension_span: record.extension,
+        name_span: record.name,
         tokens,
         fragments: components,
         program,
+    })
+}
+
+struct SmilesRecordSpans {
+    smiles: Range<usize>,
+    extension: Option<Range<usize>>,
+    name: Option<Range<usize>>,
+}
+
+fn split_smiles_record(input: &str) -> Result<SmilesRecordSpans, SmilesParseError> {
+    if let Some(offset) = input.find(['\r', '\n']) {
+        return Err(SmilesParseError::new(
+            offset,
+            "a SMILES document must contain one record",
+        ));
+    }
+    let skip_space =
+        |offset: usize| input.len() - input[offset..].trim_start_matches([' ', '\t']).len();
+    let start = skip_space(0);
+    let end = input[start..]
+        .find([' ', '\t'])
+        .map_or(input.len(), |offset| start + offset);
+    if start == end {
+        return Err(SmilesParseError::new(start, "empty SMILES document"));
+    }
+    let mut suffix = skip_space(end);
+    let extension = if input[suffix..].starts_with('|') {
+        let close = input[suffix + 1..]
+            .find('|')
+            .map(|offset| suffix + 1 + offset)
+            .ok_or_else(|| SmilesParseError::new(suffix, "unclosed CXSMILES extension"))?;
+        let span = suffix..close + 1;
+        suffix = skip_space(close + 1);
+        if suffix < input.len() && suffix == close + 1 {
+            return Err(SmilesParseError::new(
+                suffix,
+                "record name must be separated from the CXSMILES extension by whitespace",
+            ));
+        }
+        Some(span)
+    } else {
+        None
+    };
+    let name_end = input.trim_end_matches([' ', '\t']).len();
+    Ok(SmilesRecordSpans {
+        smiles: start..end,
+        extension,
+        name: (suffix < name_end).then_some(suffix..name_end),
     })
 }
 

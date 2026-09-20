@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::{
     fs,
+    io::Read,
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -41,8 +42,12 @@ fn unavailable_writer_reader_stops_before_measuring_cases() {
         .unwrap()
         .contains("writer reader unavailable"));
     assert!(report["results"].as_array().unwrap().is_empty());
-    assert!(fs::read(report_path.with_extension("cases.jsonl"))
-        .unwrap()
-        .is_empty());
+    let mut cases = String::new();
+    flate2::read::GzDecoder::new(
+        fs::File::open(report_path.with_extension("cases.jsonl.gz")).unwrap(),
+    )
+    .read_to_string(&mut cases)
+    .unwrap();
+    assert!(cases.is_empty());
     fs::remove_dir_all(root).unwrap();
 }

@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
+  "dataset": "rdkit-queries",
+  "feature": "io.mol.v2000.write",
+  "input_lock_sha256": "ba6d425d51558a2bcdff89b0e9d26f59a75f0e7776198cf9784b4ebc9ff500a2",
+  "sha256": "ab3754ced45342b2041146ac93a893acbcf5384b1e21c27ff7f247745a9399d0",
+  "reference": null,
+  "reference_code_sha256": "c37e1548065aac0c229a441d1d7ff3bd98f2902a3e8f3f8ac4a904c5fba38e65",
+  "origin": "independent generation",
+  "cases": 518
+}

@@ -98,11 +98,6 @@ pub(crate) fn read_small_records_by_suffix(
     Ok(values)
 }
 
-fn interpret_smiles_components(input: &str) -> Result<Vec<Molecule>, Box<dyn Error>> {
-    let document = smiles::parse_str(input)?;
-    Ok(smiles::interpret(&document)?.into_molecules())
-}
-
 pub(crate) fn read_smiles_records(
     path: &Input,
 ) -> Result<Vec<IndexedStereoPerceptionRecord>, Box<dyn Error>> {
@@ -112,15 +107,10 @@ pub(crate) fn read_smiles_records(
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let mut parts = line.splitn(2, char::is_whitespace);
-        let smiles = parts.next().unwrap_or_default().to_owned();
-        let title = parts.next().unwrap_or_default().trim().to_owned();
-        if title.starts_with('|') {
-            return Err(boxed_error(
-                "CXSMILES extensions are not supported by Kekule; refusing to discard them",
-            ));
-        }
-        let components = interpret_smiles_components(&smiles)?;
+        let document = smiles::parse_str(raw_line)?;
+        let interpretation = document.interpret()?;
+        let title = interpretation.name().unwrap_or_default().to_owned();
+        let components = interpretation.into_molecules();
         records.push(IndexedStereoPerceptionRecord {
             record_index: index,
             title,

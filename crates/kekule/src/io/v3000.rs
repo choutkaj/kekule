@@ -649,10 +649,10 @@ fn interpret_v3000_atom(record: &V3000AtomSyntax) -> std::result::Result<Atom, S
             format!("unsupported V3000 atom option `{option}`"),
         ));
     }
-    let radical = record.radical.map(|radical| match radical {
-        V3000RadicalSyntax::Singlet => AtomRadical::Singlet,
-        V3000RadicalSyntax::Doublet => AtomRadical::Doublet,
-        V3000RadicalSyntax::Triplet => AtomRadical::Triplet,
+    let radical = record.radical.and_then(|radical| match radical {
+        V3000RadicalSyntax::Singlet => AtomRadical::new(2, Some(1)),
+        V3000RadicalSyntax::Doublet => AtomRadical::new(1, Some(2)),
+        V3000RadicalSyntax::Triplet => AtomRadical::new(2, Some(3)),
     });
     let explicit = interpret_v3000_count_declaration(record.hydrogen_count, "HCOUNT", record.line)?
         .unwrap_or(0);
@@ -975,10 +975,11 @@ fn apply_v3000_atom_options(
                 atom.isotope = (isotope != 0).then_some(isotope);
             }
             "RAD" => {
-                atom.radical = Some(match *value {
-                    "1" => V3000RadicalSyntax::Singlet,
-                    "2" => V3000RadicalSyntax::Doublet,
-                    "3" => V3000RadicalSyntax::Triplet,
+                atom.radical = match *value {
+                    "0" => None,
+                    "1" => Some(V3000RadicalSyntax::Singlet),
+                    "2" => Some(V3000RadicalSyntax::Doublet),
+                    "3" => Some(V3000RadicalSyntax::Triplet),
                     _ => {
                         return Err(SdfParseError::new(
                             record,
@@ -986,7 +987,7 @@ fn apply_v3000_atom_options(
                             "unsupported V3000 RAD code",
                         ))
                     }
-                });
+                };
             }
             "HCOUNT" => {
                 atom.hydrogen_count = parse_v3000_count_declaration(record, line, value, "HCOUNT")?;
@@ -1127,12 +1128,12 @@ fn v3000_bond_cfg(
 }
 
 fn v3000_radical_code(radical: AtomRadical) -> std::result::Result<u8, MolWriteError> {
-    match radical {
-        AtomRadical::Singlet => Ok(1),
-        AtomRadical::Doublet => Ok(2),
-        AtomRadical::Triplet => Ok(3),
-        AtomRadical::Quartet | AtomRadical::Quintet => Err(MolWriteError::new(
-            "V3000 writer cannot encode radical multiplicity above triplet",
+    match (radical.electron_count(), radical.spin_multiplicity()) {
+        (2, Some(1)) => Ok(1),
+        (1, Some(2)) => Ok(2),
+        (2, Some(3)) => Ok(3),
+        _ => Err(MolWriteError::new(
+            "V3000 writer requires an encodable radical electron count and explicit spin multiplicity",
         )),
     }
 }

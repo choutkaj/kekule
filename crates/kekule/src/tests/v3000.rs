@@ -5,7 +5,21 @@ use crate::properties::{PropertyKey, PropertyValue};
 fn v3000_fixed_hydrogens_use_molecular_valence_not_query_constraints() {
     for source in ["[CH4]", "[NH4+]", "[nH]1cccc1", "F[C@H](Cl)Br"] {
         let original = read_smiles(source).unwrap();
-        let written = molfile::write_v3000(&original).unwrap();
+        let written = if source == "F[C@H](Cl)Br" {
+            let model = Model::from_molecule(
+                &original,
+                &test_positions(vec![
+                    Point3::new(1.0, 0.0, 0.0),
+                    Point3::origin(),
+                    Point3::new(-1.0, 0.0, 0.0),
+                    Point3::new(0.0, 1.0, 0.0),
+                ]),
+            )
+            .unwrap();
+            molfile::write_model_v3000(&model).unwrap()
+        } else {
+            molfile::write_v3000(&original).unwrap()
+        };
         assert!(!written.contains("HCOUNT="), "{written}");
         assert!(written.contains("VAL="), "{written}");
         let actual = read_molfile(&written).unwrap();
@@ -152,9 +166,11 @@ fn v3000_atom_cfg_preserves_parity_unknown_and_atom_block_order() {
                 };
                 assert_eq!(assigned.assigned[0].descriptor, expected);
             }
+            let document = molfile::parse_str(&source).unwrap();
+            let interpreted = molfile::interpret(&document).unwrap();
             for output in [
-                molfile::write_v2000(&molecule).unwrap(),
-                molfile::write_v3000(&molecule).unwrap(),
+                molfile::write_model_v2000(interpreted.model()).unwrap(),
+                molfile::write_model_v3000(interpreted.model()).unwrap(),
             ] {
                 let mut reread = read_molfile(&output).unwrap();
                 perceive(&mut reread).unwrap();
@@ -179,7 +195,9 @@ fn v3000_atom_cfg_preserves_parity_unknown_and_atom_block_order() {
 fn v3000_atom_cfg_checks_redundant_wedges_and_unknown_precedence() {
     let source = atom_cfg_tetrahedron(1, None);
     let molecule = read_molfile(&source).unwrap();
-    let wedged = molfile::write_v3000(&molecule).unwrap();
+    let document = molfile::parse_str(&source).unwrap();
+    let interpreted = molfile::interpret(&document).unwrap();
+    let wedged = molfile::write_model_v3000(interpreted.model()).unwrap();
     let atom_line = wedged
         .lines()
         .find(|line| line.starts_with("M  V30 1 C "))
@@ -306,6 +324,30 @@ fn molfile_model_preserves_drawn_e_z_and_rejects_inconsistent_or_degenerate_outp
                     .contains("emitted coordinates"));
             }
         }
+    }
+}
+
+#[test]
+fn molfile_model_preserves_drawn_stereo_on_large_ring_imines() {
+    let molecule = read_smiles("C1/N=C\\CCCCC1").unwrap();
+    let points = (0..8)
+        .map(|index| {
+            let angle = f64::from(index) * std::f64::consts::TAU / 8.0;
+            Point3::new(angle.cos(), angle.sin(), 0.0)
+        })
+        .collect();
+    let model = Model::from_molecule(&molecule, &test_positions(points)).unwrap();
+    for output in [
+        molfile::write_model_v2000(&model).unwrap(),
+        molfile::write_model_v3000(&model).unwrap(),
+    ] {
+        let actual = read_molfile(&output).unwrap();
+        assert_eq!(actual.stereo_elements().count(), 1);
+        assert_eq!(
+            actual.stereo_elements().next().unwrap().1,
+            molecule.stereo_elements().next().unwrap().1
+        );
+        assert!(!actual.perception().has_valence());
     }
 }
 
@@ -462,7 +504,13 @@ M  V30 END CTAB
 M  END
 ";
 
-    let small = read_molfile(input).expect("V3000 should parse");
+    let (small, report) = read_molfile_with_report(input).expect("V3000 should parse");
+    assert!(matches!(
+        report.warnings(),
+        [molfile::MolfileInterpretationWarning::CoordinateStereoValenceUnsupported { .. }]
+    ));
+    assert!(small.stereo_elements().next().is_none());
+    assert!(!small.perception().has_valence());
     let mol = small;
 
     assert_eq!(mol.atom_count(), 3);
@@ -476,7 +524,7 @@ M  END
     let atom2 = mol.atom(AtomId::new(2)).expect("atom exists");
     assert_eq!(atom0.element.symbol(), "N");
     assert_eq!(atom0.formal_charge, 1);
-    assert_eq!(atom0.radical, Some(AtomRadical::Doublet));
+    assert_eq!(atom0.radical, AtomRadical::new(1, Some(2)));
     assert_eq!(atom0.atom_map, Some(7));
     assert_eq!(atom1.isotope, Some(13));
     assert_eq!(atom2.formal_charge, -1);
@@ -569,7 +617,10 @@ M  END
             expected_specified
         );
 
-        let written = molfile::write_v3000(&parsed).expect("canonical stereo should project");
+        let document = molfile::parse_str(&input).unwrap();
+        let interpreted = molfile::interpret(&document).unwrap();
+        let written = molfile::write_model_v3000(interpreted.model())
+            .expect("canonical stereo should project with its drawing");
         let (reparsed, report) =
             read_molfile_with_report(&written).expect("projected V3000 stereo should re-interpret");
         assert_eq!(report.created_stereo_elements().len(), 1);
@@ -903,7 +954,7 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
 
     let mut nitrogen = Atom::new(Element::from_symbol("N").expect("N"));
     nitrogen.formal_charge = 1;
-    nitrogen.radical = Some(AtomRadical::Doublet);
+    nitrogen.radical = AtomRadical::new(1, Some(2));
     nitrogen.atom_map = Some(42);
     let n = molecule
         .add_atom(nitrogen)
@@ -942,7 +993,7 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
     );
     assert_eq!(
         reparsed.atom(AtomId::new(0)).expect("atom").radical,
-        Some(AtomRadical::Doublet)
+        AtomRadical::new(1, Some(2))
     );
     assert_eq!(
         reparsed.atom(AtomId::new(0)).expect("atom").atom_map,
@@ -953,6 +1004,44 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
         Some(13)
     );
     assert_eq!(reparsed.atom_count(), 3);
+}
+
+#[test]
+fn mol_writers_reject_radical_states_that_require_guessing_or_losing_spin() {
+    for radical in [
+        AtomRadical::new(1, None).unwrap(),
+        AtomRadical::new(2, None).unwrap(),
+        AtomRadical::new(4, Some(3)).unwrap(),
+        AtomRadical::new(3, Some(4)).unwrap(),
+    ] {
+        let mut atom = carbon();
+        atom.radical = Some(radical);
+        atom.hydrogens = HydrogenDeclaration::Fixed(0);
+        let mut editor = MoleculeEditor::new();
+        editor.add_atom(atom).unwrap();
+        let molecule = editor.finish().unwrap();
+        for result in [
+            molfile::write_v2000(&molecule),
+            molfile::write_v3000(&molecule),
+        ] {
+            assert!(result
+                .unwrap_err()
+                .message()
+                .contains("electron count and explicit spin"));
+        }
+        assert_eq!(molecule.atoms().next().unwrap().1.radical, Some(radical));
+    }
+}
+
+#[test]
+fn v3000_explicit_zero_radical_matches_the_default() {
+    let molecule = read_smiles("CC").unwrap();
+    let source = molfile::write_v3000(&molecule).unwrap();
+    let explicit = source.replace("M  V30 1 C 0 0 0 0", "M  V30 1 C 0 0 0 0 RAD=0");
+    assert_ne!(source, explicit, "fixture must contain an explicit RAD=0");
+    let parsed = read_molfile(&explicit).expect("RAD=0 is a supported nonradical atom");
+    assert!(parsed.atoms().all(|(_, atom)| atom.radical.is_none()));
+    assert_eq!(molfile::write_v3000(&parsed).unwrap(), source);
 }
 
 #[test]
@@ -1012,7 +1101,7 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
     assert!(molfile::write_v3000(molecule.working())
         .expect_err("specified double-bond stereo should be rejected")
         .message
-        .contains("specified double-bond stereo"));
+        .contains("specified stereo"));
 
     let element = molecule
         .stereo_element_ids()

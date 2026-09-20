@@ -44,7 +44,7 @@ pub(crate) fn evaluate(feature: &str, input: &Input) -> Result<Value, Box<dyn Er
         .map(|record| {
             Ok(match feature {
                 "descriptor.molecular" => molecular_descriptor_record_json(record)?,
-                "descriptor.rotatable-bonds.rdkit-strict" => rotatable_bond_record_json(record),
+                "descriptor.rotatable-bonds.rdkit-strict" => rotatable_bond_record_json(record)?,
                 "algo.rings.fast" => ring_membership_record_json(record),
                 "algo.rings.sssr" => ring_set_record_json(record)?,
                 "algo.valence.rdkit-like" => valence_record_json(record)?,

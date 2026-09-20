@@ -87,6 +87,50 @@ fn query_records_separate_the_query_from_the_source_title() {
 }
 
 #[test]
+fn smiles_records_use_library_record_names_and_preserve_record_order() {
+    let value = output(
+        "io.smiles.parse",
+        "input.smi",
+        "# source records\n\t[Na+].[Cl-] ||  sůl | sample \n\n CC\tsecond\tname\n",
+    );
+    let records = value["records"].as_array().unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["record_index"], 0);
+    assert_eq!(records[0]["title"], "sůl | sample");
+    assert_eq!(records[0]["components"].as_array().unwrap().len(), 2);
+    assert_eq!(records[1]["record_index"], 1);
+    assert_eq!(records[1]["title"], "second\tname");
+}
+
+#[test]
+fn cxsmiles_supported_chemistry_remains_asserted_in_benchmark_observations() {
+    let value = output(
+        "io.smiles.parse",
+        "input.smi",
+        "F[C@H](Cl)Br |&1:1,r| grouped",
+    );
+    assert_eq!(value["records"][0]["title"], "grouped");
+    assert_eq!(
+        value["records"][0]["components"][0]["groups"],
+        json!([
+            {"kind":"and", "members":[{"type":"tetrahedral","focus":[1]}]}
+        ])
+    );
+    let relative = output("io.smiles.parse", "input.smi", "F[C@H](Cl)Br |r|");
+    assert_eq!(
+        relative["records"][0]["components"][0]["groups"][0]["kind"],
+        "relative"
+    );
+    let radical = output("io.smiles.parse", "input.smi", "[CH2] |^3:0|");
+    let atom = &radical["records"][0]["components"][0]["atoms"][0];
+    assert_eq!(atom["radical_electrons"], 2);
+    assert_eq!(atom["spin_multiplicity"], 1);
+    let mut omitted = value.clone();
+    omitted["records"][0]["components"][0]["groups"] = json!([]);
+    assert!(!compare("io.smiles.parse", value, omitted));
+}
+
+#[test]
 fn cxsmiles_is_never_silently_reduced_to_plain_smiles() {
     for feature in [
         "io.smiles.parse",
@@ -96,7 +140,7 @@ fn cxsmiles_is_never_silently_reduced_to_plain_smiles() {
     ] {
         let input = Input {
             path: "input.smi".into(),
-            text: "F[C@H](Cl)Br |&1:1| name".into(),
+            text: "F[C@H](Cl)Br |unsupported:1| name".into(),
         };
         assert!(evaluate(feature, &input)
             .unwrap_err()
@@ -109,7 +153,12 @@ fn cxsmiles_is_never_silently_reduced_to_plain_smiles() {
 fn observation_schema_requires_measured_nullable_fields_and_rejects_extras() {
     let original = output("io.smiles.parse", "input.smi", "CC");
     crate::observation::validate("io.smiles.parse", &original).unwrap();
-    for field in ["isotope", "atom_map", "radical"] {
+    for field in [
+        "isotope",
+        "atom_map",
+        "spin_multiplicity",
+        "radical_electrons",
+    ] {
         let mut value = original.clone();
         value["records"][0]["components"][0]["atoms"][0]
             .as_object_mut()
@@ -127,6 +176,45 @@ fn observation_schema_requires_measured_nullable_fields_and_rejects_extras() {
         assert!(crate::observation::finite(value).is_err());
     }
 }
+#[test]
+fn radical_observations_assert_electron_count_and_source_spin_separately() {
+    use kekule::core::{AtomRadical, HydrogenDeclaration};
+    for spin in [None, Some(1), Some(3)] {
+        let molecule = smiles::to_molecules("[CH2]").unwrap().pop().unwrap();
+        let id = molecule.atom_ids().next().unwrap();
+        let mut editor = molecule.into_editor();
+        {
+            let mut atom = editor.atom_mut(id).unwrap();
+            atom.hydrogens = HydrogenDeclaration::Fixed(2);
+            atom.radical = AtomRadical::new(2, spin);
+        }
+        let molecule = editor.finish().unwrap();
+        let value = if spin.is_none() {
+            output("io.smiles.parse", "input.smi", "[CH2]")
+        } else {
+            output(
+                "io.mol.parse",
+                "input.mol",
+                &molfile::write_v3000(&molecule).unwrap(),
+            )
+        };
+        let atom = &value["records"][0]["components"][0]["atoms"][0];
+        assert_eq!(atom["radical_electrons"], 2);
+        assert_eq!(atom["spin_multiplicity"], json!(spin));
+        for (field, wrong) in [
+            ("radical_electrons", json!(1)),
+            ("spin_multiplicity", json!(2)),
+        ] {
+            let mut changed = value.clone();
+            changed["records"][0]["components"][0]["atoms"][0][field] = wrong;
+            assert!(!compare("io.mol.parse", value.clone(), changed));
+        }
+        let mut invalid = value;
+        invalid["records"][0]["components"][0]["atoms"][0]["spin_multiplicity"] = json!(0);
+        assert!(crate::observation::validate("io.mol.parse", &invalid).is_err());
+    }
+}
+
 #[test]
 fn stereo_and_coordinate_units_match_the_reference_conventions() {
     let value = output("io.smiles.parse", "input.smi", "F[C@H](Cl)Br");

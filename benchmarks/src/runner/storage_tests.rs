@@ -1,15 +1,199 @@
 use super::*;
 
+#[test]
+fn report_snapshots_preserve_existing_files_and_publish_complete_updates() {
+    let fixture = Fixture::new();
+    let path = fixture.0.join("report.json");
+    let mut report = ReportFile::new(&path);
+    for complete in [false, true] {
+        report
+            .write(|file| {
+                serde_json::to_writer(file, &json!({"complete": complete}))?;
+                Ok(())
+            })
+            .unwrap();
+        let snapshot: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(snapshot, json!({"complete": complete}));
+        assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 1);
+    }
+    let previous = fs::read(&path).unwrap();
+    let error = ReportFile::new(&path)
+        .write(|file| {
+            file.write_all(b"replacement from another run")?;
+            Ok(())
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::AlreadyExists
+    );
+    assert_eq!(fs::read(&path).unwrap(), previous);
+    assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 1);
+}
+
+#[test]
+fn failed_report_writes_leave_no_partial_snapshot() {
+    let fixture = Fixture::new();
+    let path = fixture.0.join("report.json");
+    let mut report = ReportFile::new(&path);
+    for published in [false, true] {
+        if published {
+            report
+                .write(|file| {
+                    file.write_all(b"{\"complete\":false}")?;
+                    Ok(())
+                })
+                .unwrap();
+        }
+        let error = report
+            .write(|file| {
+                file.write_all(b"{\"incomplete")?;
+                Err(boxed_error("injected output failure"))
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("injected output failure"));
+        assert_eq!(path.exists(), published);
+        assert_eq!(
+            fs::read_dir(&fixture.0).unwrap().count(),
+            usize::from(published)
+        );
+        if published {
+            assert_eq!(fs::read(&path).unwrap(), b"{\"complete\":false}");
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn report_publication_recovers_when_a_reader_releases_its_lock() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let fixture = Fixture::new();
+    let path = fixture.0.join("report.json");
+    let mut report = ReportFile::new(&path);
+    report
+        .write(|file| {
+            file.write_all(b"old snapshot")?;
+            Ok(())
+        })
+        .unwrap();
+    let reader = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&path)
+        .unwrap();
+    let mut releases = None;
+    let mut writes = 0;
+    let result = report.write(|file| {
+        writes += 1;
+        file.write_all(b"new snapshot")?;
+        releases = Some(std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(reader);
+        }));
+        Ok(())
+    });
+    releases.unwrap().join().unwrap();
+    result.unwrap();
+    assert_eq!(
+        writes, 1,
+        "publication retries must not rerun serialization"
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"new snapshot");
+    assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn failed_report_publication_preserves_the_previous_snapshot() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let fixture = Fixture::new();
+    let path = fixture.0.join("report.json");
+    let mut report = ReportFile::new(&path);
+    report
+        .write(|file| {
+            file.write_all(b"{\"complete\":false}")?;
+            Ok(())
+        })
+        .unwrap();
+    // A reader that denies delete sharing prevents replacement on Windows.
+    let reader = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&path)
+        .unwrap();
+    let publication_error = report
+        .write(|file| {
+            file.write_all(b"{\"complete\":true}")?;
+            Ok(())
+        })
+        .unwrap_err();
+    assert!(publication_error
+        .to_string()
+        .contains("cannot replace report"));
+    assert!(publication_error
+        .to_string()
+        .contains(&path.display().to_string()));
+    let error = retain_execution_error(
+        boxed_error("cannot load stored goldens: missing reference"),
+        Err(publication_error),
+    );
+    assert!(error.to_string().contains("cannot load stored goldens"));
+    assert!(error
+        .to_string()
+        .contains("failure report could not be published"));
+    assert!(error.to_string().contains("cannot replace report"));
+    assert_eq!(fs::read(&path).unwrap(), b"{\"complete\":false}");
+    assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 1);
+    drop(reader);
+    report
+        .write(|file| {
+            file.write_all(b"{\"complete\":true}")?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"{\"complete\":true}");
+}
+
+#[test]
+fn compressed_case_finalization_propagates_write_and_flush_failures() {
+    struct FailingOutput {
+        fail_write: bool,
+    }
+    impl Write for FailingOutput {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.fail_write {
+                Err(std::io::Error::other("case output write failed"))
+            } else {
+                Ok(bytes.len())
+            }
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("case output flush failed"))
+        }
+    }
+    for (fail_write, expected) in [(true, "write failed"), (false, "flush failed")] {
+        let writer = flate2::write::GzEncoder::new(
+            FailingOutput { fail_write },
+            flate2::Compression::fast(),
+        );
+        // No input is needed: even an empty result stream must be finalized.
+        let error = finish_case_output(Some(writer)).unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let path = env::temp_dir().join(format!(
-            "kekule-golden-test-{}-{}",
+            "kekule-golden-test-{}-{}-{}",
             process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         fs::create_dir(&path).unwrap();
         Self(path)
@@ -28,6 +212,51 @@ impl Fixture {
     fn load(&self, feature: &str) -> Result<StoredGoldens, Box<dyn Error>> {
         StoredGoldens::load(&self.path(), "test", feature, "lock")
     }
+}
+
+#[test]
+fn reference_fingerprint_covers_source_radical_semantics() {
+    let fixture = Fixture::new();
+    for path in [
+        "reference/run.py",
+        "reference/rdkit/run_feature.py",
+        "reference/rdkit/molecule.py",
+        "reference/rdkit/source_radicals.py",
+        "reference/biopython/run_feature.py",
+        "queries.smarts",
+    ] {
+        let target = fixture.0.join(path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join(path), target).unwrap();
+    }
+    let original = stored::reference_code_hash(&fixture.0).unwrap();
+    assert_eq!(
+        original,
+        stored::reference_code_hash(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap()
+    );
+    fs::write(
+        fixture.0.join("reference/rdkit/source_radicals.py"),
+        "changed semantics",
+    )
+    .unwrap();
+    assert_ne!(original, stored::reference_code_hash(&fixture.0).unwrap());
+}
+
+#[test]
+fn parallel_fixtures_do_not_share_directories() {
+    let fixtures = std::thread::scope(|scope| {
+        (0..16)
+            .map(|_| scope.spawn(|| (0..4).map(|_| Fixture::new()).collect::<Vec<_>>()))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .flat_map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    let paths = fixtures
+        .iter()
+        .map(|fixture| &fixture.0)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(paths.len(), fixtures.len());
 }
 impl Drop for Fixture {
     fn drop(&mut self) {

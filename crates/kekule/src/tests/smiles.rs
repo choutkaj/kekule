@@ -204,6 +204,444 @@ fn smiles_parse_options_bound_input_atoms_and_bonds() {
 }
 
 #[test]
+fn smiles_record_preserves_name_extension_and_original_byte_spans() {
+    let source = " \t[Na+].[Cl-]\t|$ion&#124;label;$,unknown:0|  sůl | sample\t ";
+    let document = smiles_api::parse_str(source).unwrap();
+    assert_eq!(document.source(), source);
+    assert_eq!(document.base_smiles(), "[Na+].[Cl-]");
+    assert_eq!(document.base_smiles_span(), 2..13);
+    assert_eq!(
+        document.cx_extension(),
+        Some("|$ion&#124;label;$,unknown:0|")
+    );
+    assert_eq!(document.name(), Some("sůl | sample"));
+    assert_eq!(&source[document.name_span().unwrap()], "sůl | sample");
+    assert_eq!(
+        &source[document.cx_extension_span().unwrap()],
+        document.cx_extension().unwrap()
+    );
+    assert_eq!(
+        document
+            .tokens()
+            .iter()
+            .map(|token| &source[token.span()])
+            .collect::<Vec<_>>(),
+        ["[Na+]", ".", "[Cl-]"]
+    );
+    let error = document.interpret().unwrap_err();
+    assert_eq!(
+        error.offset(),
+        document.cx_extension_span().unwrap().start + 1
+    );
+    assert!(error.message().contains("CXSMILES"));
+    assert!(document.to_molecules().is_err());
+
+    let projected = smiles_api::interpret_base(&document).unwrap();
+    assert_eq!(projected, document.interpret_base().unwrap());
+    assert_eq!(projected.name(), document.name());
+    assert_eq!(projected.cx_extension(), document.cx_extension());
+    assert_eq!(
+        projected.omitted_cx_extension_span(),
+        document.cx_extension_span()
+    );
+    assert_eq!(projected.components().len(), 2);
+    for (index, component) in projected.components().iter().enumerate() {
+        assert_eq!(component.molecule().atom_count(), 1);
+        let mapping = &component.report().atom_mappings()[0];
+        assert_eq!(mapping.source_index(), index);
+        assert_eq!(mapping.atom(), AtomId::new(0));
+        assert_eq!(&source[mapping.source_span()], ["[Na+]", "[Cl-]"][index]);
+        assert!(!component.molecule().perception().has_valence());
+    }
+}
+
+#[test]
+fn smiles_record_metadata_does_not_change_source_atom_order_or_connectivity() {
+    for (base, indices) in [
+        ("C(.O)N", vec![vec![0, 2], vec![1]]),
+        ("C1.C1", vec![vec![0, 1]]),
+    ] {
+        let source = format!("\t{base}  molécula\twith a name ");
+        let document = smiles_api::parse_str(&source).unwrap();
+        let interpreted = document.interpret().unwrap();
+        assert_eq!(interpreted, document.interpret_base().unwrap());
+        assert_eq!(interpreted.name(), Some("molécula\twith a name"));
+        assert_eq!(interpreted.cx_extension(), None);
+        assert_eq!(interpreted.omitted_cx_extension_span(), None);
+        let bare = smiles_api::parse_str(base).unwrap().interpret().unwrap();
+        for ((component, expected_indices), bare_component) in interpreted
+            .components()
+            .iter()
+            .zip(indices)
+            .zip(bare.components())
+        {
+            assert_eq!(component.molecule(), bare_component.molecule());
+            let mappings = component.report().atom_mappings();
+            assert_eq!(
+                mappings
+                    .iter()
+                    .map(|mapping| mapping.source_index())
+                    .collect::<Vec<_>>(),
+                expected_indices
+            );
+            for (mapping, original) in mappings.iter().zip(bare_component.report().atom_mappings())
+            {
+                assert_eq!(
+                    mapping.source_span(),
+                    original.source_span().start + 1..original.source_span().end + 1
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn smiles_full_interpretation_never_silently_drops_unsupported_cx_extensions() {
+    for extension in ["|a:0|", "|(0,0,0)|", "|futureField:0|", "|r:0|"] {
+        let source = format!("C {extension} name");
+        let document = smiles_api::parse_str(&source).unwrap();
+        assert!(document.interpret().is_err(), "{source}");
+        assert!(smiles_api::to_molecules(&source).is_err(), "{source}");
+        let projection = document.interpret_base().unwrap();
+        assert_eq!(projection.cx_extension(), Some(extension));
+        assert_eq!(
+            projection.omitted_cx_extension_span(),
+            document.cx_extension_span()
+        );
+    }
+    for source in ["C ||", "C | \t | name"] {
+        let document = smiles_api::parse_str(source).unwrap();
+        assert_eq!(
+            document.interpret().unwrap().omitted_cx_extension_span(),
+            None
+        );
+        assert_eq!(
+            document
+                .interpret_base()
+                .unwrap()
+                .omitted_cx_extension_span(),
+            document.cx_extension_span()
+        );
+    }
+}
+
+#[test]
+fn cxsmiles_radicals_preserve_electron_occupancy_and_explicit_spin() {
+    for (code, electrons, spin) in [
+        (1, 1, None),
+        (2, 2, None),
+        (3, 2, Some(1)),
+        (4, 2, Some(3)),
+        (5, 3, None),
+        (6, 3, Some(2)),
+        (7, 3, Some(4)),
+    ] {
+        for base in ["C".to_owned(), format!("[CH{}]", 4 - electrons)] {
+            let source = format!("{base} |^{code}:0| radical");
+            let interpretation = smiles_api::parse_str(&source).unwrap().interpret().unwrap();
+            assert_eq!(interpretation.omitted_cx_extension_span(), None);
+            let mut molecule = interpretation.into_molecule().unwrap();
+            let atom = molecule.atom(AtomId::new(0)).unwrap();
+            assert_eq!(atom.radical, AtomRadical::new(electrons, spin), "{source}");
+            assert!(!molecule.perception().has_valence());
+            perceive(&mut molecule).unwrap();
+            assert_eq!(
+                molecule
+                    .atom(AtomId::new(0))
+                    .unwrap()
+                    .hydrogens
+                    .explicit_count()
+                    + molecule
+                        .implicit_hydrogens(AtomId::new(0))
+                        .unwrap()
+                        .unwrap(),
+                4 - electrons
+            );
+        }
+    }
+    let source = "C(.O)N |^1:2,^2:1|";
+    let interpreted = smiles_api::parse_str(source).unwrap().interpret().unwrap();
+    assert_eq!(
+        interpreted.components()[0]
+            .molecule()
+            .atom(AtomId::new(1))
+            .unwrap()
+            .radical,
+        AtomRadical::new(1, None)
+    );
+    assert_eq!(
+        interpreted.components()[1]
+            .molecule()
+            .atom(AtomId::new(0))
+            .unwrap()
+            .radical,
+        AtomRadical::new(2, None)
+    );
+    assert_eq!(
+        interpreted.components()[0]
+            .molecule()
+            .atom(AtomId::new(0))
+            .unwrap()
+            .radical,
+        None
+    );
+    let document = smiles_api::parse_str("C |^1:0|").unwrap();
+    assert_eq!(
+        document
+            .interpret_base()
+            .unwrap()
+            .molecule()
+            .unwrap()
+            .atom(AtomId::new(0))
+            .unwrap()
+            .radical,
+        None
+    );
+}
+
+#[test]
+fn cxsmiles_radicals_override_inference_without_overwriting_source_assertions() {
+    for source in ["c1ccccc1 |^1:0|", "[c]1ccccc1 |^1:0|"] {
+        let mut molecule = read_smiles(source).unwrap();
+        perceive(&mut molecule).unwrap();
+        assert_eq!(
+            molecule.atom(AtomId::new(0)).unwrap().radical,
+            AtomRadical::new(1, None)
+        );
+        assert_eq!(
+            molecule.implicit_hydrogens(AtomId::new(0)).unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            molecule
+                .atom(AtomId::new(0))
+                .unwrap()
+                .hydrogens
+                .explicit_count(),
+            0
+        );
+        assert_eq!(aromatic_atom_count(&molecule), 6);
+    }
+    // Import and perception must not silently rewrite contradictory source
+    // assertions. The RDKit-like fixed-H valence policy is not a general
+    // electronic-state validator.
+    let mut molecule = read_smiles("[CH4] |^1:0|").unwrap();
+    assert_eq!(
+        molecule.atom(AtomId::new(0)).unwrap().radical,
+        AtomRadical::new(1, None)
+    );
+    assert_eq!(
+        molecule.atom(AtomId::new(0)).unwrap().hydrogens,
+        HydrogenDeclaration::Fixed(4)
+    );
+    molecule.perceive().unwrap();
+    assert_eq!(
+        molecule.atom(AtomId::new(0)).unwrap().radical,
+        AtomRadical::new(1, None)
+    );
+}
+
+#[test]
+fn cxsmiles_enhanced_groups_preserve_members_and_legacy_relative_configuration() {
+    let base = "F[C@H](Cl)[C@@H](Br)I";
+    for (fields, kinds, centers) in [
+        ("a:1,3", vec![StereoGroupKind::Absolute], vec![vec![1, 3]]),
+        ("&17:1,3,r", vec![StereoGroupKind::And], vec![vec![1, 3]]),
+        ("r,o17:1,3", vec![StereoGroupKind::Or], vec![vec![1, 3]]),
+        ("&1:1,&1:3", vec![StereoGroupKind::And], vec![vec![1, 3]]),
+        (
+            "&1:1,o1:3",
+            vec![StereoGroupKind::And, StereoGroupKind::Or],
+            vec![vec![1], vec![3]],
+        ),
+        ("r", vec![StereoGroupKind::Relative], vec![vec![1, 3]]),
+        (
+            "a:1,r",
+            vec![StereoGroupKind::Absolute, StereoGroupKind::Relative],
+            vec![vec![1], vec![3]],
+        ),
+    ] {
+        let source = format!("{base} |{fields}|");
+        let molecule = read_smiles(&source).unwrap();
+        assert!(!molecule.perception().has_valence());
+        let groups = molecule.stereo_groups().collect::<Vec<_>>();
+        assert_eq!(groups.len(), kinds.len(), "{source}");
+        for (((group_id, group), kind), expected_centers) in
+            groups.into_iter().zip(kinds).zip(centers)
+        {
+            assert_eq!(group.kind, kind, "{source}");
+            let actual_centers = group
+                .members
+                .iter()
+                .map(|id| {
+                    let element = molecule.stereo_element(*id).unwrap();
+                    assert_eq!(element.group, Some(group_id));
+                    let StereoElementKind::Tetrahedral(stereo) = &element.kind else {
+                        panic!("tetrahedral member")
+                    };
+                    stereo.center.raw()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual_centers, expected_centers, "{source}");
+        }
+        assert!(
+            smiles_api::write_isomeric(&molecule).is_err(),
+            "plain SMILES cannot carry these groups"
+        );
+    }
+    let molecule = read_smiles("F/C=C/F |r|").unwrap();
+    assert_eq!(molecule.stereo_elements().count(), 1);
+    assert_eq!(
+        molecule.stereo_groups().count(),
+        0,
+        "relative chirality does not invert alkene geometry"
+    );
+}
+
+#[test]
+fn cxsmiles_stereo_references_use_source_indices_and_respect_component_ownership() {
+    let source = "F(.O)[C@H:17](Cl)Br |o1:2|";
+    let interpreted = smiles_api::parse_str(source).unwrap().interpret().unwrap();
+    let molecule = interpreted.components()[0].molecule();
+    let group = molecule.stereo_groups().next().unwrap().1;
+    let StereoElementKind::Tetrahedral(stereo) =
+        &molecule.stereo_element(group.members[0]).unwrap().kind
+    else {
+        panic!("tetrahedral member")
+    };
+    assert_eq!(stereo.center, AtomId::new(1));
+    assert_eq!(molecule.atom(stereo.center).unwrap().atom_map, Some(17));
+    assert_eq!(
+        interpreted.components()[1]
+            .molecule()
+            .stereo_groups()
+            .count(),
+        0
+    );
+
+    let base = "F[C@H](Cl)Br.F[C@H](Cl)I";
+    let document = smiles_api::parse_str(&format!("{base} |a:1,5|")).unwrap();
+    let absolute = document.interpret().unwrap();
+    assert!(absolute
+        .molecules()
+        .all(|molecule| molecule.stereo_groups().count() == 1));
+    for field in ["&1:1,5", "o1:1,5", "r"] {
+        let document = smiles_api::parse_str(&format!("{base} |{field}|")).unwrap();
+        assert!(document
+            .interpret()
+            .unwrap_err()
+            .message()
+            .contains("disconnected"));
+    }
+    assert!(smiles_api::parse_str(&format!("{base} |&1:1,o1:5|"))
+        .unwrap()
+        .interpret()
+        .is_ok());
+}
+
+#[test]
+fn cxsmiles_rejects_ambiguous_invalid_and_unsupported_chemical_fields() {
+    for fields in [
+        "^0:1",
+        "^8:1",
+        "^1:",
+        "^1:4",
+        "^1:-1",
+        "^1:1,1",
+        "^1:1,^2:1",
+        "a:1,1",
+        "a:1,&2:1",
+        "a:0",
+        "&:1",
+        "&999999999999999999999999999999:1",
+        "&1:1,",
+        "&1:1,,r",
+        "r,r",
+        "r:0",
+        "&1:1,unknown:0",
+        "w:0.0",
+        "C:0.0",
+        "(0,0,0)",
+    ] {
+        let source = format!("F[C@H](Cl)Br |{fields}|");
+        let document = smiles_api::parse_str(&source).unwrap();
+        let error = document.interpret().unwrap_err();
+        let span = document.cx_extension_span().unwrap();
+        assert!(span.contains(&error.offset()), "{source}: {error}");
+        assert!(error.message().contains("CXSMILES"), "{source}: {error}");
+        assert!(
+            document.interpret_base().is_ok(),
+            "explicit projection retains original fields"
+        );
+    }
+}
+
+#[test]
+fn smiles_record_rejects_malformed_framing_and_multiple_records() {
+    for (source, offset) in [
+        ("C |r", 2),
+        ("C |r|name", 5),
+        ("C ||||", 4),
+        (" \t", 2),
+        ("C\nO", 1),
+        ("C |$line\nbreak$|", 8),
+        ("C name\rnext", 6),
+    ] {
+        let error = smiles_api::parse_str(source).unwrap_err();
+        assert_eq!(error.offset(), offset, "{source:?}: {error}");
+    }
+    assert!(smiles_api::parse_str("C|r|").is_err());
+    let named = smiles_api::parse_str("C a name |with literal bars|").unwrap();
+    assert_eq!(named.cx_extension(), None);
+    assert_eq!(named.name(), Some("a name |with literal bars|"));
+}
+
+#[test]
+fn smiles_record_limits_cover_metadata_and_syntax_errors_point_into_base() {
+    let source = "\tCC |unknown:999| molecule";
+    let options = SmilesParseOptions {
+        max_input_bytes: source.len(),
+        max_atoms: 2,
+        max_bonds: 1,
+    };
+    assert!(smiles_api::parse_str_with_options(source, options).is_ok());
+    for (options, message) in [
+        (
+            SmilesParseOptions {
+                max_input_bytes: source.len() - 1,
+                ..options
+            },
+            "byte limit",
+        ),
+        (
+            SmilesParseOptions {
+                max_atoms: 1,
+                ..options
+            },
+            "atom count",
+        ),
+        (
+            SmilesParseOptions {
+                max_bonds: 0,
+                ..options
+            },
+            "bond count",
+        ),
+    ] {
+        assert!(smiles_api::parse_str_with_options(source, options)
+            .unwrap_err()
+            .message()
+            .contains(message));
+    }
+    assert_eq!(smiles_api::parse_str("\tC( title").unwrap_err().offset(), 3);
+    assert_eq!(
+        smiles_api::parse_str("\t[CH3 title").unwrap_err().offset(),
+        1
+    );
+    assert_eq!(smiles_api::parse_str("\tC. title").unwrap_err().offset(), 3);
+}
+
+#[test]
 fn smiles_document_preserves_spans_and_dot_boundaries_before_interpretation() {
     let input = "[Na+].[Cl-]";
     let document = smiles_api::parse_str(input).expect("document parses");
@@ -2883,17 +3321,17 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .expect("remove atom stereo");
     {
         let mut atom = molecule.atom_mut(a).expect("atom");
-        atom.radical = Some(AtomRadical::Doublet);
+        atom.radical = AtomRadical::new(1, Some(2));
         atom.hydrogens = HydrogenDeclaration::Fixed(2);
     }
     assert!(smiles_api::write(molecule.working())
-        .expect_err("the supported SMILES grammar has no explicit radical token")
+        .expect_err("ordinary SMILES cannot preserve an explicit spin assertion")
         .message
-        .contains("explicit radical token"));
+        .contains("explicit radical spin"));
 
     {
         let mut atom = molecule.atom_mut(a).expect("atom");
-        atom.radical = None;
+        atom.radical = AtomRadical::new(1, None);
         atom.hydrogens = HydrogenDeclaration::Fixed(0);
     }
     let written =
@@ -2937,7 +3375,7 @@ fn all_smiles_writers_round_trip_lossless_hydrogen_declarations() {
 }
 
 #[test]
-fn all_smiles_writers_reject_represented_hydrogens_with_inference_enabled() {
+fn all_smiles_writers_require_known_total_for_declared_and_inferred_hydrogens() {
     let mut atom = carbon();
     atom.hydrogens = HydrogenDeclaration::Infer { explicit: 1 };
     let mut graph = crate::core::MoleculeEditor::new();
@@ -2956,22 +3394,76 @@ fn all_smiles_writers_reject_represented_hydrogens_with_inference_enabled() {
             ),
         };
         assert!(
-            error.message().contains("implicit-H inference enabled"),
+            error.message().contains("hydrogen perception"),
             "{writer}: {error}"
         );
     }
 }
 
 #[test]
-fn bracket_atoms_do_not_infer_radicals_from_a_valence_model() {
-    for (smiles, atom_index) in [
-        ("[C]", 0),
-        ("[C]C", 0),
-        ("C=[C]", 1),
-        ("C#[C]", 1),
-        ("[N]", 0),
-        ("[O]", 0),
-        ("[c]1ccccc1", 0),
+fn all_smiles_writers_preserve_total_declared_and_inferred_hydrogens() {
+    for (symbol, declared, total) in [("C", 1, 4), ("C", 4, 4), ("N", 1, 3), ("O", 1, 2)] {
+        let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
+        atom.hydrogens = HydrogenDeclaration::Infer { explicit: declared };
+        let mut editor = MoleculeEditor::new();
+        let id = editor.add_atom(atom).unwrap();
+        let mut molecule = editor.finish().unwrap();
+        perceive(&mut molecule).unwrap();
+        assert_eq!(molecule.implicit_hydrogens(id), Ok(Some(total - declared)));
+        let before = molecule.clone();
+        for written in [
+            smiles_api::write(&molecule),
+            smiles_api::write_isomeric(&molecule),
+            smiles_api::write_canonical(&molecule),
+        ] {
+            let written = written.unwrap();
+            let mut reparsed = read_smiles(&written).unwrap();
+            perceive(&mut reparsed).unwrap();
+            let (id, atom) = reparsed.atoms().next().unwrap();
+            assert_eq!(
+                atom.hydrogens.explicit_count() + reparsed.implicit_hydrogens(id).unwrap().unwrap(),
+                total,
+                "{symbol}: {written}"
+            );
+            assert_eq!(atom.element.symbol(), symbol);
+            assert_eq!(atom.formal_charge, 0);
+            assert_eq!(atom.radical, None);
+            assert_eq!(molecule, before);
+            assert_eq!(molecule.perception(), before.perception());
+        }
+    }
+}
+
+#[test]
+fn bracket_atoms_interpret_radical_electrons_without_asserting_spin() {
+    for (smiles, atom_index, electrons) in [
+        ("[C]", 0, 4),
+        ("[C]C", 0, 3),
+        ("C=[C]", 1, 2),
+        ("C#[C]", 1, 1),
+        ("[N]", 0, 3),
+        ("[O]", 0, 2),
+        ("[c]1ccccc1", 0, 1),
+        ("[CH4]", 0, 0),
+        ("[NH4+]", 0, 0),
+        ("[CH2-]", 0, 1),
+        ("[Co]", 0, 1),
+        ("[Co+]", 0, 0),
+        ("[Co]C", 0, 0),
+        ("[H]", 0, 1),
+        ("[He]", 0, 0),
+        ("[BH2]", 0, 1),
+        ("[BH4-]", 0, 0),
+        ("[F]", 0, 1),
+        ("[Cl]", 0, 1),
+        ("[PH4]", 0, 1),
+        ("[SH3]", 0, 1),
+        ("[SH]", 0, 1),
+        ("[Na+]", 0, 0),
+        ("[CoH]", 0, 1),
+        ("[Co+127]", 0, 0),
+        ("[C+127]", 0, 131),
+        ("[C-128]", 0, 0),
     ] {
         let molecule = read_smiles(smiles).expect("bracket SMILES should interpret");
         assert_eq!(
@@ -2979,7 +3471,7 @@ fn bracket_atoms_do_not_infer_radicals_from_a_valence_model() {
                 .atom(AtomId::new(atom_index))
                 .expect("bracket atom")
                 .radical,
-            None,
+            AtomRadical::new(electrons, None),
             "{smiles}"
         );
     }
@@ -2989,6 +3481,92 @@ fn bracket_atoms_do_not_infer_radicals_from_a_valence_model() {
         .expect_err("unsupported core element belongs to interpretation")
         .message()
         .contains("unsupported element"));
+}
+
+#[test]
+fn smiles_writers_round_trip_bracket_radical_electrons_and_unspecified_spin() {
+    for source in [
+        "[C]", "[CH]", "[CH2]", "[CH3]", "[13CH3]", "[CH2-]", "[NH2]", "[OH]", "[Co]",
+    ] {
+        let molecule = read_smiles(source).unwrap();
+        let before = molecule.clone();
+        let original = molecule.atoms().next().unwrap().1;
+        assert!(original.radical.is_some(), "{source}");
+        for written in [
+            smiles_api::write(&molecule),
+            smiles_api::write_isomeric(&molecule),
+            smiles_api::write_canonical(&molecule),
+        ] {
+            let written = written.unwrap();
+            let reparsed = read_smiles(&written).unwrap();
+            let atom = reparsed.atoms().next().unwrap().1;
+            assert_eq!(atom, original, "{source} -> {written}");
+            assert_eq!(molecule, before);
+            assert_eq!(molecule.perception(), before.perception());
+        }
+    }
+}
+
+#[test]
+fn bracket_radicals_are_consistent_across_aromatic_and_localized_notation() {
+    for (aromatic, localized) in [
+        ("[c]1ccccc1", "[C]1=CC=CC=C1"),
+        ("[c]1ccncc1", "[C]1=CC=NC=C1"),
+    ] {
+        let mut canonical = Vec::new();
+        for source in [aromatic, localized] {
+            let mut molecule = read_smiles(source).unwrap();
+            perceive(&mut molecule).unwrap();
+            assert_eq!(
+                molecule.atom(AtomId::new(0)).unwrap().radical,
+                AtomRadical::new(1, None),
+                "{source}"
+            );
+            let expected = smiles_api::write_canonical(&molecule).unwrap();
+            for written in [
+                smiles_api::write(&molecule).unwrap(),
+                smiles_api::write_isomeric(&molecule).unwrap(),
+                expected.clone(),
+            ] {
+                let mut restored = read_smiles(&written).unwrap();
+                perceive(&mut restored).unwrap();
+                assert_eq!(
+                    smiles_api::write_canonical(&restored).unwrap(),
+                    expected,
+                    "{source} -> {written}"
+                );
+                let radicals = restored
+                    .atoms()
+                    .filter_map(|(_, atom)| atom.radical)
+                    .collect::<Vec<_>>();
+                assert_eq!(radicals, vec![AtomRadical::new(1, None).unwrap()]);
+            }
+            canonical.push(expected);
+        }
+        assert_eq!(canonical[0], canonical[1]);
+    }
+}
+
+#[test]
+fn smiles_writers_reject_brackets_that_would_change_radical_occupancy() {
+    for (hydrogens, radical) in [(0, None), (2, AtomRadical::new(1, None))] {
+        let mut atom = carbon();
+        atom.hydrogens = HydrogenDeclaration::Fixed(hydrogens);
+        atom.radical = radical;
+        let mut editor = MoleculeEditor::new();
+        editor.add_atom(atom).unwrap();
+        let molecule = editor.finish().unwrap();
+        for result in [
+            smiles_api::write(&molecule),
+            smiles_api::write_isomeric(&molecule),
+            smiles_api::write_canonical(&molecule),
+        ] {
+            assert!(result
+                .unwrap_err()
+                .message()
+                .contains("radical electron count or spin"));
+        }
+    }
 }
 
 #[test]
