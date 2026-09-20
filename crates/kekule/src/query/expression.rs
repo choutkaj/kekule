@@ -1,5 +1,6 @@
 use std::fmt;
 
+use super::QueryGraph;
 use crate::core::{BondOrder, Element};
 
 /// Maximum size of one programmatically constructed query expression.
@@ -109,6 +110,113 @@ impl<P> QueryExpression<P> {
         evaluate_node(&self.root, &mut predicate)
     }
 
+    /// Fallible, short-circuiting evaluation. Predicate errors survive negation.
+    pub fn try_evaluate_with<E>(
+        &self,
+        mut predicate: impl FnMut(&P) -> Result<bool, E>,
+    ) -> Result<bool, E> {
+        fn eval<P, E>(
+            node: &ExpressionNode<P>,
+            f: &mut impl FnMut(&P) -> Result<bool, E>,
+        ) -> Result<bool, E> {
+            Ok(match node {
+                ExpressionNode::Constant(v) => *v,
+                ExpressionNode::Predicate(p) => return f(p),
+                ExpressionNode::Not(n) => !eval(n, f)?,
+                ExpressionNode::And(ns) => {
+                    for n in ns {
+                        if !eval(n, f)? {
+                            return Ok(false);
+                        }
+                    }
+                    true
+                }
+                ExpressionNode::Or(ns) => {
+                    for n in ns {
+                        if eval(n, f)? {
+                            return Ok(true);
+                        }
+                    }
+                    false
+                }
+            })
+        }
+        eval(&self.root, &mut predicate)
+    }
+
+    pub(crate) fn possible_with<E>(
+        &self,
+        mut predicate: impl FnMut(&P) -> Result<Option<bool>, E>,
+    ) -> Result<bool, E> {
+        fn eval<P, E>(
+            node: &ExpressionNode<P>,
+            f: &mut impl FnMut(&P) -> Result<Option<bool>, E>,
+        ) -> Result<(bool, bool), E> {
+            Ok(match node {
+                ExpressionNode::Constant(v) => (!v, *v),
+                ExpressionNode::Predicate(p) => match f(p)? {
+                    Some(v) => (!v, v),
+                    None => (true, true),
+                },
+                ExpressionNode::Not(n) => {
+                    let (a, b) = eval(n, f)?;
+                    (b, a)
+                }
+                ExpressionNode::And(ns) => {
+                    let mut r = (false, true);
+                    for n in ns {
+                        let v = eval(n, f)?;
+                        r = (r.0 || v.0, r.1 && v.1);
+                    }
+                    r
+                }
+                ExpressionNode::Or(ns) => {
+                    let mut r = (true, false);
+                    for n in ns {
+                        let v = eval(n, f)?;
+                        r = (r.0 && v.0, r.1 || v.1);
+                    }
+                    r
+                }
+            })
+        }
+        Ok(eval(&self.root, &mut predicate)?.1)
+    }
+
+    pub(crate) fn predicates(&self) -> Vec<&P> {
+        fn visit<'a, P>(n: &'a ExpressionNode<P>, out: &mut Vec<&'a P>) {
+            match n {
+                ExpressionNode::Predicate(p) => out.push(p),
+                ExpressionNode::Not(n) => visit(n, out),
+                ExpressionNode::And(ns) | ExpressionNode::Or(ns) => {
+                    for n in ns {
+                        visit(n, out);
+                    }
+                }
+                ExpressionNode::Constant(_) => {}
+            }
+        }
+        let mut result = Vec::new();
+        visit(&self.root, &mut result);
+        result
+    }
+
+    pub(crate) fn map_predicates(&mut self, mut f: impl FnMut(&mut P)) {
+        fn visit<P>(node: &mut ExpressionNode<P>, f: &mut impl FnMut(&mut P)) {
+            match node {
+                ExpressionNode::Predicate(p) => f(p),
+                ExpressionNode::Not(n) => visit(n, f),
+                ExpressionNode::And(ns) | ExpressionNode::Or(ns) => {
+                    for n in ns {
+                        visit(n, f);
+                    }
+                }
+                ExpressionNode::Constant(_) => {}
+            }
+        }
+        visit(&mut self.root, &mut f);
+    }
+
     /// Return whether any primitive in the expression satisfies a predicate.
     ///
     /// Negation does not suppress traversal; this is intended for capability
@@ -186,7 +294,7 @@ fn any_predicate<P>(node: &ExpressionNode<P>, predicate: &mut impl FnMut(&P) -> 
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AtomPredicate {
     Element(Element),
@@ -198,6 +306,19 @@ pub enum AtomPredicate {
     /// Requires installed valence perception.
     TotalConnectivity(u8),
     TotalHydrogens(u8),
+    /// Nongraph hydrogens (declared plus inferred); `None` means at least one.
+    ImplicitHydrogens(Option<u8>),
+    /// Localized bond-order sum plus nongraph hydrogens.
+    TotalValence(u8),
+    /// Number of selected symmetrized SSSR rings containing the atom.
+    RingCount(u8),
+    /// Smallest selected SSSR ring size, or zero for an acyclic atom.
+    SmallestRingSize(u8),
+    /// Existential subquery anchored at its first atom.
+    Recursive(Box<QueryGraph>),
+    /// Mapping-dependent tetrahedral parity relative to the query's carrier frame.
+    /// `true` denotes the frame orientation, `false` its inverse.
+    Tetrahedral(bool),
     RingMembership(bool),
     /// Incident bonds belonging to any cycle (`x`), independent of ring basis.
     /// Requires installed ring membership.
@@ -207,6 +328,9 @@ pub enum AtomPredicate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum BondPredicate {
+    /// Relative SMARTS direction in a query bond carrier frame.
+    /// Evaluated jointly with other directions under a complete mapping.
+    Direction(bool),
     /// Matches a canonical localized represented order.
     Order(BondOrder),
     /// Matches perceived aromatic bond membership.

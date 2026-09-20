@@ -1,15 +1,15 @@
 {
   "schema": 2,
-  "contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
+  "contract_sha256": "6968f09d5fd6ffa7b6d99640ab0392d38d5b3be6c16028818419458feb1248bc",
   "dataset": "rdkit-queries",
   "feature": "query.smarts",
   "input_lock_sha256": "ba6d425d51558a2bcdff89b0e9d26f59a75f0e7776198cf9784b4ebc9ff500a2",
-  "sha256": "3f956dbd9c3630f9bf0e4a9fd2a38b006cc6bc5f01eca80eef39e94fb9df5953",
+  "sha256": "545af368cbc0f01ed58e00df5db357163b3bd59960b07a90eaaa81b8abddd006",
   "reference": {
     "tool": "rdkit",
     "version": "2026.03.3"
   },
-  "reference_code_sha256": "c37e1548065aac0c229a441d1d7ff3bd98f2902a3e8f3f8ac4a904c5fba38e65",
-  "origin": "independent generation",
+  "reference_code_sha256": "d1a710884fd07f24ad9df50d22b58dfb0f7efc68a49cf8e71860a402dcfa8759",
+  "origin": "independent generation; compatibility metadata migrated from contract ce42dab909b1d83951086688eef3f866cedbd4d03fb6b2f6ebb13a64a47eea9f: observations contain no radical/spin/DSSP fields; payload and generator identity unchanged",
   "cases": 518
 }

@@ -5,6 +5,7 @@ mod bio;
 mod chemistry;
 mod descriptors;
 mod io;
+pub(crate) mod query;
 mod stereo;
 mod strict;
 use descriptors::*;
@@ -48,7 +49,12 @@ pub(crate) fn evaluate(feature: &str, input: &Input) -> Result<Value, Box<dyn Er
                 "algo.rings.fast" => ring_membership_record_json(record),
                 "algo.rings.sssr" => ring_set_record_json(record)?,
                 "algo.valence.rdkit-like" => valence_record_json(record)?,
-                "algo.aromaticity.rdkit-like" => aromaticity_record_json(record)?,
+                "algo.aromaticity.rdkit-like" => {
+                    aromaticity_record_json(record, kekule::core::AromaticityModel::RdkitLike)?
+                }
+                "algo.aromaticity.mdl" => {
+                    aromaticity_record_json(record, kekule::core::AromaticityModel::Mdl)?
+                }
                 "algo.canonical-ranking" => canonical_ranking_record_json(record)?,
                 "algo.substructure.vf2" => io::substructure_record_json(record)?,
                 "chem.perception.default" => default_perception_atom_record_json(record)?,

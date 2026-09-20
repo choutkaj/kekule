@@ -1,5 +1,6 @@
 # Provenance-pinned external fixtures must retain byte-exact source checksums.
 benchmarks/corpora/*/data/** binary
+benchmarks/smarts-fixtures/** -text
 benchmarks/corpora/rdkit-queries/upstream/** binary
 benchmarks/corpora/rdkit-structures/upstream/** binary
 crates/kekule-traj/tests/fixtures/*.xyz binary

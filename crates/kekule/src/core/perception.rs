@@ -22,6 +22,8 @@ pub enum ValenceModel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AromaticityModel {
     RdkitLike,
+    /// MDL model as implemented by RDKit (the OpenFF OEAroModel_MDL profile).
+    Mdl,
 }
 
 /// The algorithm used to select an installed ring set.
@@ -33,6 +35,8 @@ pub enum RingBasisModel {
     /// This follows the selected-ring model rather than promising a minimum
     /// cycle basis or that the selected rings span the complete cycle space.
     FiguerasSssrLike,
+    /// Deterministic cycle fallback; unsuitable for exact SMARTS R/r predicates.
+    DepthFirstFallback,
 }
 
 /// Cycle membership over the stable atom and bond slots of a molecule.

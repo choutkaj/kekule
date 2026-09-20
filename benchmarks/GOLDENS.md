@@ -1,7 +1,7 @@
 # Stored reference coverage
 
-The registry now contains 175 dataset/feature pairs: 25 features across seven
-datasets. The 75 bundled archives cover smoke, the 518-query RDKit corpus and
+The registry now contains 182 dataset/feature pairs: 26 features across seven
+datasets. The 78 bundled archives cover smoke, the 518-query RDKit corpus and
 the 50-file RDKit structure corpus. The latter supplies several representations
 of a small set of compounds; it is not a random sample of 50 independent molecules.
 Bulk inputs, full reference archives, reports and diagnostic outputs remain local.
@@ -164,3 +164,13 @@ SMARTS feature checks acceptance and graph size. The mmCIF feature checks decode
 syntax, while DSSP exercises only part of biomolecular interpretation. Agreement
 with one reference is evidence for the measured fields on these inputs, not a
 proof of general correctness.
+
+## Core SMARTS and MDL additions
+
+The query feature now asserts full stereo-aware mappings against 16 pinned
+external targets. Its previous parser-only references remain archived, and the
+new contract is feature-specific. MDL aromaticity is an independent feature.
+See [SMARTS validation](QUERY-SMARTS-VALIDATION.md) and
+[MDL validation](MDL-VALIDATION.md) for recorded observations and limitations.
+These reports predate the merge of the general chemistry follow-up and remain
+historical evidence with their original contract and implementation hashes.

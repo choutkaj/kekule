@@ -1,5 +1,5 @@
 use super::{default_bond_expression, BondExpression, SmartsParseError};
-use crate::core::{DoubleBondOrientation, TetrahedralOrientation};
+use crate::core::TetrahedralOrientation;
 use crate::query::{QueryAtomId, QueryBondId, QueryGraphBuilder, QueryStereoConstraint};
 use std::ops::Range;
 
@@ -27,6 +27,11 @@ impl BondSyntax {
         // Closing notation is written in the opposite direction to the edge.
         let closing = closing.map(|mut bond| {
             bond.direction = bond.direction.map(|up| !up);
+            bond.expression.map_predicates(|p| {
+                if let super::BondPredicate::Direction(up) = p {
+                    *up = !*up;
+                }
+            });
             bond
         });
         match (opening, closing) {
@@ -49,8 +54,8 @@ impl BondSyntax {
 }
 
 pub(super) struct AtomStereo {
-    orientation: TetrahedralOrientation,
-    inline_hydrogen: bool,
+    pub(super) orientation: TetrahedralOrientation,
+    pub(super) inline_hydrogen: bool,
     span: Range<usize>,
 }
 
@@ -71,6 +76,12 @@ impl AtomStereo {
         } else {
             false
         };
+        if bytes.get(end) == Some(&b'@') {
+            return Err(SmartsParseError::syntax(
+                base + start..base + end + 1,
+                "duplicate stereochemical atom query",
+            ));
+        }
         if bytes
             .get(end)
             .is_some_and(|byte| *byte == b'?' || byte.is_ascii_digit())
@@ -225,34 +236,23 @@ impl StereoSyntax {
                 stereo.orientation
             };
             builder
-                .add_stereo_constraint(QueryStereoConstraint::Tetrahedral {
-                    center: QueryAtomId::new(index as u32),
-                    carriers,
-                    orientation,
-                })
+                .set_atom_stereo_frame(
+                    QueryAtomId::new(index as u32),
+                    QueryStereoConstraint::Tetrahedral {
+                        center: QueryAtomId::new(index as u32),
+                        carriers,
+                        orientation,
+                    },
+                )
                 .map_err(|error| {
                     SmartsParseError::syntax(stereo.span.clone(), error.to_string())
                 })?;
         }
-        for (bond, a, b) in &self.doubles {
-            let left = self.directed_neighbor(*a, *b)?;
-            let right = self.directed_neighbor(*b, *a)?;
-            if let (Some((left_carrier, left_up, span)), Some((right_carrier, right_up, _))) =
-                (left, right)
-            {
-                builder
-                    .add_stereo_constraint(QueryStereoConstraint::DoubleBond {
-                        bond: *bond,
-                        left_carrier,
-                        right_carrier,
-                        orientation: if left_up == right_up {
-                            DoubleBondOrientation::Together
-                        } else {
-                            DoubleBondOrientation::Opposite
-                        },
-                    })
-                    .map_err(|error| SmartsParseError::syntax(span, error.to_string()))?;
-            }
+        // Direction predicates stay in the bond expression. Validate contradictory
+        // literal syntax here; evaluate Boolean alternatives jointly during matching.
+        for (_, a, b) in &self.doubles {
+            self.directed_neighbor(*a, *b)?;
+            self.directed_neighbor(*b, *a)?;
         }
         // A lone direction carries no cis/trans relationship. As in RDKit,
         // it contributes only the single-or-aromatic predicate in that case.

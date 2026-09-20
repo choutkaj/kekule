@@ -1,0 +1,993 @@
+[
+  {
+    "actual": {
+      "message": "Molfile interpretation error at line 15: V3000 atom CFG requires four supported tetrahedral carriers",
+      "status": "error"
+    },
+    "dataset": "rdkit-structures",
+    "difference": {
+      "kekule_failed": true,
+      "reference_failed": false
+    },
+    "expected": {
+      "status": "ok",
+      "value": {
+        "records": [
+          {
+            "atom_aromatic": [
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              true,
+              true,
+              false,
+              false,
+              true,
+              true,
+              true,
+              true,
+              true,
+              true,
+              false,
+              true,
+              true,
+              false,
+              true,
+              true,
+              false,
+              false,
+              true,
+              true,
+              true,
+              false,
+              true,
+              true,
+              true
+            ],
+            "bond_aromatic": [
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 23,
+                "value": false
+              },
+              {
+                "begin_atom_index": 1,
+                "end_atom_index": 39,
+                "value": false
+              },
+              {
+                "begin_atom_index": 2,
+                "end_atom_index": 13,
+                "value": false
+              },
+              {
+                "begin_atom_index": 3,
+                "end_atom_index": 27,
+                "value": false
+              },
+              {
+                "begin_atom_index": 4,
+                "end_atom_index": 33,
+                "value": false
+              },
+              {
+                "begin_atom_index": 5,
+                "end_atom_index": 34,
+                "value": false
+              },
+              {
+                "begin_atom_index": 6,
+                "end_atom_index": 15,
+                "value": false
+              },
+              {
+                "begin_atom_index": 6,
+                "end_atom_index": 18,
+                "value": false
+              },
+              {
+                "begin_atom_index": 7,
+                "end_atom_index": 29,
+                "value": false
+              },
+              {
+                "begin_atom_index": 7,
+                "end_atom_index": 33,
+                "value": false
+              },
+              {
+                "begin_atom_index": 7,
+                "end_atom_index": 34,
+                "value": false
+              },
+              {
+                "begin_atom_index": 8,
+                "end_atom_index": 27,
+                "value": false
+              },
+              {
+                "begin_atom_index": 9,
+                "end_atom_index": 34,
+                "value": false
+              },
+              {
+                "begin_atom_index": 9,
+                "end_atom_index": 36,
+                "value": false
+              },
+              {
+                "begin_atom_index": 9,
+                "end_atom_index": 38,
+                "value": false
+              },
+              {
+                "begin_atom_index": 10,
+                "end_atom_index": 11,
+                "value": false
+              },
+              {
+                "begin_atom_index": 10,
+                "end_atom_index": 12,
+                "value": false
+              },
+              {
+                "begin_atom_index": 10,
+                "end_atom_index": 13,
+                "value": false
+              },
+              {
+                "begin_atom_index": 11,
+                "end_atom_index": 14,
+                "value": false
+              },
+              {
+                "begin_atom_index": 12,
+                "end_atom_index": 15,
+                "value": false
+              },
+              {
+                "begin_atom_index": 13,
+                "end_atom_index": 19,
+                "value": false
+              },
+              {
+                "begin_atom_index": 13,
+                "end_atom_index": 20,
+                "value": false
+              },
+              {
+                "begin_atom_index": 14,
+                "end_atom_index": 16,
+                "value": false
+              },
+              {
+                "begin_atom_index": 15,
+                "end_atom_index": 16,
+                "value": false
+              },
+              {
+                "begin_atom_index": 16,
+                "end_atom_index": 17,
+                "value": false
+              },
+              {
+                "begin_atom_index": 17,
+                "end_atom_index": 18,
+                "value": true
+              },
+              {
+                "begin_atom_index": 17,
+                "end_atom_index": 21,
+                "value": true
+              },
+              {
+                "begin_atom_index": 18,
+                "end_atom_index": 22,
+                "value": true
+              },
+              {
+                "begin_atom_index": 21,
+                "end_atom_index": 23,
+                "value": true
+              },
+              {
+                "begin_atom_index": 21,
+                "end_atom_index": 24,
+                "value": false
+              },
+              {
+                "begin_atom_index": 22,
+                "end_atom_index": 25,
+                "value": true
+              },
+              {
+                "begin_atom_index": 22,
+                "end_atom_index": 27,
+                "value": false
+              },
+              {
+                "begin_atom_index": 23,
+                "end_atom_index": 25,
+                "value": true
+              },
+              {
+                "begin_atom_index": 24,
+                "end_atom_index": 26,
+                "value": true
+              },
+              {
+                "begin_atom_index": 24,
+                "end_atom_index": 28,
+                "value": true
+              },
+              {
+                "begin_atom_index": 26,
+                "end_atom_index": 29,
+                "value": true
+              },
+              {
+                "begin_atom_index": 26,
+                "end_atom_index": 30,
+                "value": false
+              },
+              {
+                "begin_atom_index": 28,
+                "end_atom_index": 31,
+                "value": true
+              },
+              {
+                "begin_atom_index": 29,
+                "end_atom_index": 32,
+                "value": true
+              },
+              {
+                "begin_atom_index": 31,
+                "end_atom_index": 32,
+                "value": true
+              },
+              {
+                "begin_atom_index": 33,
+                "end_atom_index": 35,
+                "value": false
+              },
+              {
+                "begin_atom_index": 35,
+                "end_atom_index": 36,
+                "value": true
+              },
+              {
+                "begin_atom_index": 35,
+                "end_atom_index": 37,
+                "value": true
+              },
+              {
+                "begin_atom_index": 36,
+                "end_atom_index": 39,
+                "value": true
+              },
+              {
+                "begin_atom_index": 37,
+                "end_atom_index": 40,
+                "value": true
+              },
+              {
+                "begin_atom_index": 39,
+                "end_atom_index": 41,
+                "value": true
+              },
+              {
+                "begin_atom_index": 40,
+                "end_atom_index": 41,
+                "value": true
+              }
+            ],
+            "record_index": 0,
+            "status": "ok",
+            "title": ""
+          }
+        ]
+      }
+    },
+    "feature": "algo.aromaticity.mdl",
+    "fixture": "data/atropisomers/BMS-986142_atropBad2.mol",
+    "id": "RDKit:atropisomers/BMS-986142_atropBad2.sdf",
+    "record_index": 0,
+    "status": "error",
+    "written": null
+  },
+  {
+    "actual": {
+      "message": "Molfile interpretation error at line 60: unsupported element symbol `R`",
+      "status": "error"
+    },
+    "dataset": "rdkit-structures",
+    "difference": {
+      "kekule_failed": true,
+      "reference_failed": false
+    },
+    "expected": {
+      "status": "ok",
+      "value": {
+        "records": [
+          {
+            "atom_aromatic": [
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              true,
+              false,
+              true,
+              true,
+              false,
+              true,
+              true,
+              true,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false
+            ],
+            "bond_aromatic": [
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 1,
+                "value": false
+              },
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 2,
+                "value": false
+              },
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 37,
+                "value": false
+              },
+              {
+                "begin_atom_index": 1,
+                "end_atom_index": 3,
+                "value": false
+              },
+              {
+                "begin_atom_index": 2,
+                "end_atom_index": 4,
+                "value": false
+              },
+              {
+                "begin_atom_index": 2,
+                "end_atom_index": 5,
+                "value": false
+              },
+              {
+                "begin_atom_index": 3,
+                "end_atom_index": 4,
+                "value": false
+              },
+              {
+                "begin_atom_index": 3,
+                "end_atom_index": 31,
+                "value": false
+              },
+              {
+                "begin_atom_index": 4,
+                "end_atom_index": 32,
+                "value": false
+              },
+              {
+                "begin_atom_index": 6,
+                "end_atom_index": 7,
+                "value": false
+              },
+              {
+                "begin_atom_index": 6,
+                "end_atom_index": 8,
+                "value": false
+              },
+              {
+                "begin_atom_index": 7,
+                "end_atom_index": 47,
+                "value": false
+              },
+              {
+                "begin_atom_index": 8,
+                "end_atom_index": 9,
+                "value": false
+              },
+              {
+                "begin_atom_index": 9,
+                "end_atom_index": 10,
+                "value": false
+              },
+              {
+                "begin_atom_index": 9,
+                "end_atom_index": 12,
+                "value": false
+              },
+              {
+                "begin_atom_index": 11,
+                "end_atom_index": 12,
+                "value": false
+              },
+              {
+                "begin_atom_index": 11,
+                "end_atom_index": 13,
+                "value": false
+              },
+              {
+                "begin_atom_index": 13,
+                "end_atom_index": 15,
+                "value": false
+              },
+              {
+                "begin_atom_index": 14,
+                "end_atom_index": 15,
+                "value": false
+              },
+              {
+                "begin_atom_index": 15,
+                "end_atom_index": 20,
+                "value": false
+              },
+              {
+                "begin_atom_index": 16,
+                "end_atom_index": 18,
+                "value": false
+              },
+              {
+                "begin_atom_index": 16,
+                "end_atom_index": 22,
+                "value": false
+              },
+              {
+                "begin_atom_index": 17,
+                "end_atom_index": 18,
+                "value": false
+              },
+              {
+                "begin_atom_index": 18,
+                "end_atom_index": 19,
+                "value": false
+              },
+              {
+                "begin_atom_index": 18,
+                "end_atom_index": 20,
+                "value": false
+              },
+              {
+                "begin_atom_index": 20,
+                "end_atom_index": 21,
+                "value": false
+              },
+              {
+                "begin_atom_index": 22,
+                "end_atom_index": 29,
+                "value": false
+              },
+              {
+                "begin_atom_index": 23,
+                "end_atom_index": 29,
+                "value": false
+              },
+              {
+                "begin_atom_index": 23,
+                "end_atom_index": 30,
+                "value": false
+              },
+              {
+                "begin_atom_index": 24,
+                "end_atom_index": 30,
+                "value": false
+              },
+              {
+                "begin_atom_index": 24,
+                "end_atom_index": 31,
+                "value": false
+              },
+              {
+                "begin_atom_index": 25,
+                "end_atom_index": 29,
+                "value": false
+              },
+              {
+                "begin_atom_index": 26,
+                "end_atom_index": 29,
+                "value": false
+              },
+              {
+                "begin_atom_index": 27,
+                "end_atom_index": 30,
+                "value": false
+              },
+              {
+                "begin_atom_index": 28,
+                "end_atom_index": 30,
+                "value": false
+              },
+              {
+                "begin_atom_index": 32,
+                "end_atom_index": 35,
+                "value": false
+              },
+              {
+                "begin_atom_index": 33,
+                "end_atom_index": 35,
+                "value": false
+              },
+              {
+                "begin_atom_index": 34,
+                "end_atom_index": 35,
+                "value": false
+              },
+              {
+                "begin_atom_index": 35,
+                "end_atom_index": 36,
+                "value": false
+              },
+              {
+                "begin_atom_index": 37,
+                "end_atom_index": 38,
+                "value": false
+              },
+              {
+                "begin_atom_index": 37,
+                "end_atom_index": 39,
+                "value": false
+              },
+              {
+                "begin_atom_index": 38,
+                "end_atom_index": 40,
+                "value": true
+              },
+              {
+                "begin_atom_index": 38,
+                "end_atom_index": 41,
+                "value": true
+              },
+              {
+                "begin_atom_index": 39,
+                "end_atom_index": 42,
+                "value": false
+              },
+              {
+                "begin_atom_index": 40,
+                "end_atom_index": 42,
+                "value": false
+              },
+              {
+                "begin_atom_index": 40,
+                "end_atom_index": 43,
+                "value": true
+              },
+              {
+                "begin_atom_index": 41,
+                "end_atom_index": 44,
+                "value": true
+              },
+              {
+                "begin_atom_index": 43,
+                "end_atom_index": 45,
+                "value": true
+              },
+              {
+                "begin_atom_index": 43,
+                "end_atom_index": 46,
+                "value": false
+              },
+              {
+                "begin_atom_index": 44,
+                "end_atom_index": 45,
+                "value": true
+              },
+              {
+                "begin_atom_index": 47,
+                "end_atom_index": 49,
+                "value": false
+              },
+              {
+                "begin_atom_index": 48,
+                "end_atom_index": 49,
+                "value": false
+              },
+              {
+                "begin_atom_index": 49,
+                "end_atom_index": 50,
+                "value": false
+              },
+              {
+                "begin_atom_index": 50,
+                "end_atom_index": 51,
+                "value": false
+              },
+              {
+                "begin_atom_index": 51,
+                "end_atom_index": 52,
+                "value": false
+              }
+            ],
+            "record_index": 0,
+            "status": "ok",
+            "title": "CHEBI:15469"
+          }
+        ]
+      }
+    },
+    "feature": "algo.aromaticity.mdl",
+    "fixture": "data/chebi_15469.v3k.mol",
+    "id": "RDKit:chebi_15469.v3k.mol",
+    "record_index": 0,
+    "status": "error",
+    "written": null
+  },
+  {
+    "actual": {
+      "message": "Molfile interpretation error at line 26: unsupported element symbol `R1`",
+      "status": "error"
+    },
+    "dataset": "rdkit-structures",
+    "difference": {
+      "kekule_failed": true,
+      "reference_failed": false
+    },
+    "expected": {
+      "status": "ok",
+      "value": {
+        "records": [
+          {
+            "atom_aromatic": [
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false
+            ],
+            "bond_aromatic": [
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 1,
+                "value": false
+              },
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 2,
+                "value": false
+              },
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 3,
+                "value": false
+              },
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 4,
+                "value": false
+              },
+              {
+                "begin_atom_index": 3,
+                "end_atom_index": 16,
+                "value": false
+              },
+              {
+                "begin_atom_index": 4,
+                "end_atom_index": 7,
+                "value": false
+              },
+              {
+                "begin_atom_index": 5,
+                "end_atom_index": 6,
+                "value": false
+              },
+              {
+                "begin_atom_index": 5,
+                "end_atom_index": 8,
+                "value": false
+              },
+              {
+                "begin_atom_index": 6,
+                "end_atom_index": 7,
+                "value": false
+              },
+              {
+                "begin_atom_index": 6,
+                "end_atom_index": 11,
+                "value": false
+              },
+              {
+                "begin_atom_index": 8,
+                "end_atom_index": 9,
+                "value": false
+              },
+              {
+                "begin_atom_index": 9,
+                "end_atom_index": 10,
+                "value": false
+              },
+              {
+                "begin_atom_index": 9,
+                "end_atom_index": 18,
+                "value": false
+              },
+              {
+                "begin_atom_index": 11,
+                "end_atom_index": 19,
+                "value": false
+              },
+              {
+                "begin_atom_index": 12,
+                "end_atom_index": 13,
+                "value": false
+              },
+              {
+                "begin_atom_index": 13,
+                "end_atom_index": 14,
+                "value": false
+              },
+              {
+                "begin_atom_index": 13,
+                "end_atom_index": 17,
+                "value": false
+              },
+              {
+                "begin_atom_index": 14,
+                "end_atom_index": 15,
+                "value": false
+              },
+              {
+                "begin_atom_index": 14,
+                "end_atom_index": 16,
+                "value": false
+              },
+              {
+                "begin_atom_index": 19,
+                "end_atom_index": 20,
+                "value": false
+              },
+              {
+                "begin_atom_index": 19,
+                "end_atom_index": 21,
+                "value": false
+              }
+            ],
+            "record_index": 0,
+            "status": "ok",
+            "title": "CHEBI:57262"
+          }
+        ]
+      }
+    },
+    "feature": "algo.aromaticity.mdl",
+    "fixture": "data/chebi_57262.v3k.2.mol",
+    "id": "RDKit:chebi_57262.v3k.2.mol",
+    "record_index": 0,
+    "status": "error",
+    "written": null
+  },
+  {
+    "actual": {
+      "message": "Molfile interpretation error at line 26: unsupported element symbol `R`",
+      "status": "error"
+    },
+    "dataset": "rdkit-structures",
+    "difference": {
+      "kekule_failed": true,
+      "reference_failed": false
+    },
+    "expected": {
+      "status": "ok",
+      "value": {
+        "records": [
+          {
+            "atom_aromatic": [
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+              false
+            ],
+            "bond_aromatic": [
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 1,
+                "value": false
+              },
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 2,
+                "value": false
+              },
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 3,
+                "value": false
+              },
+              {
+                "begin_atom_index": 0,
+                "end_atom_index": 4,
+                "value": false
+              },
+              {
+                "begin_atom_index": 3,
+                "end_atom_index": 16,
+                "value": false
+              },
+              {
+                "begin_atom_index": 4,
+                "end_atom_index": 7,
+                "value": false
+              },
+              {
+                "begin_atom_index": 5,
+                "end_atom_index": 6,
+                "value": false
+              },
+              {
+                "begin_atom_index": 5,
+                "end_atom_index": 8,
+                "value": false
+              },
+              {
+                "begin_atom_index": 6,
+                "end_atom_index": 7,
+                "value": false
+              },
+              {
+                "begin_atom_index": 6,
+                "end_atom_index": 11,
+                "value": false
+              },
+              {
+                "begin_atom_index": 8,
+                "end_atom_index": 9,
+                "value": false
+              },
+              {
+                "begin_atom_index": 9,
+                "end_atom_index": 10,
+                "value": false
+              },
+              {
+                "begin_atom_index": 9,
+                "end_atom_index": 18,
+                "value": false
+              },
+              {
+                "begin_atom_index": 11,
+                "end_atom_index": 19,
+                "value": false
+              },
+              {
+                "begin_atom_index": 12,
+                "end_atom_index": 13,
+                "value": false
+              },
+              {
+                "begin_atom_index": 13,
+                "end_atom_index": 14,
+                "value": false
+              },
+              {
+                "begin_atom_index": 13,
+                "end_atom_index": 17,
+                "value": false
+              },
+              {
+                "begin_atom_index": 14,
+                "end_atom_index": 15,
+                "value": false
+              },
+              {
+                "begin_atom_index": 14,
+                "end_atom_index": 16,
+                "value": false
+              },
+              {
+                "begin_atom_index": 19,
+                "end_atom_index": 20,
+                "value": false
+              },
+              {
+                "begin_atom_index": 19,
+                "end_atom_index": 21,
+                "value": false
+              }
+            ],
+            "record_index": 0,
+            "status": "ok",
+            "title": "CHEBI:57262"
+          }
+        ]
+      }
+    },
+    "feature": "algo.aromaticity.mdl",
+    "fixture": "data/chebi_57262.v3k.mol",
+    "id": "RDKit:chebi_57262.v3k.mol",
+    "record_index": 0,
+    "status": "error",
+    "written": null
+  }
+]

@@ -1,6 +1,6 @@
 use kekule::{
     canon,
-    core::{BondOrder, Molecule},
+    core::{AromaticityModel, BondOrder, Molecule},
     hydrogens,
     perception::{
         rings,
@@ -168,8 +168,12 @@ pub(crate) fn hydrogen_transform_record_json(
 
 pub(crate) fn aromaticity_record_json(
     record: &mut IndexedSmallRecord,
+    model: AromaticityModel,
 ) -> Result<Value, Box<dyn Error>> {
     record.molecule.perceive()?;
+    if model != AromaticityModel::RdkitLike {
+        kekule::perception::aromaticity::perceive_aromaticity(&mut record.molecule, model)?;
+    }
     let mol = &record.molecule;
     Ok(json!({
         "record_index": record.record_index,
