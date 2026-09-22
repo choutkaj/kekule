@@ -7,3 +7,4 @@ benchmarks/corpora/rdkit-queries/sources.lock.json -text whitespace=blank-at-eol
 benchmarks/corpora/rdkit-structures/upstream/** binary
 crates/kekule-traj/tests/fixtures/*.xyz binary
 crates/kekule/tests/fixtures/cip/*.sdf binary
+crates/kekule/src/structure/solvation/data/*.bin binary

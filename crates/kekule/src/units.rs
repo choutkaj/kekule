@@ -631,6 +631,8 @@ pub const PICOSECOND: Unit = Unit::named(Dimension::TIME, 1.0e-12, "ps");
 pub const FEMTOSECOND: Unit = Unit::named(Dimension::TIME, 1.0e-15, "fs");
 
 pub const KELVIN: Unit = Unit::named(Dimension::TEMPERATURE, 1.0, "K");
+/// Amount concentration: one mole per liter (1000 mol/m^3).
+pub const MOLAR: Unit = Unit::named(Dimension::new([-3, 0, 0, 0, 1, 0, 0]), 1000.0, "M");
 pub const MOLE: Unit = Unit::named(Dimension::AMOUNT, 1.0, "mol");
 
 pub const COULOMB: Unit = Unit::named(Dimension::CHARGE, 1.0, "C");

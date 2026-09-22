@@ -16,6 +16,8 @@ pub mod measure;
 mod model;
 mod model_editor;
 mod positions;
+mod solvation;
+pub use solvation::*;
 
 pub use ensemble::*;
 pub use model::*;
