@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "recorded": "2026-09-22",
+  "environment": {
+    "python": "3.12",
+    "rdkit": "2026.03.3",
+    "openff_toolkit": "0.19.0",
+    "openff_nagl": "0.6.1",
+    "openff_nagl_models": "2026.09.0",
+    "openff_interchange": "0.5.5",
+    "openmm": "8.6.1",
+    "pytorch": "2.10.0",
+    "numpy": "2.5.3",
+    "potentials": "0.1.0"
+  },
+  "artifacts": [
+    {
+      "path": "robustness-inputs.json.gz",
+      "sha256": "5fc588cc2f693843b2f38d0a69b5875c32e85d5822e82548aea97d3f3470740b"
+    },
+    {
+      "path": "robustness-reference.json.gz",
+      "sha256": "bd33a90326d54651e0b5ea79a0ac831e31d81d0d03e55c2d7c646148bcf78ac7"
+    },
+    {
+      "path": "robustness-native-before-fixes.json.gz",
+      "sha256": "a57337d9eb6726259ee373b62f34df4e23c8f872bbf9be77ccc89f3b563f1198"
+    },
+    {
+      "path": "robustness-native.json.gz",
+      "sha256": "cc8586c6c9061baa1b66beb91f17864ae5c2b562c5accd6739416e5256af8f1e"
+    },
+    {
+      "path": "robustness-original-66-recheck.json.gz",
+      "sha256": "d2857ea67af80a9d7ebbcadde45bb95de952695238cbc623a04373c2926e63db"
+    }
+  ],
+  "final_source_sha256_lf": {
+    "Cargo.lock": "0ac3b56b8fa171a01e939e4e2bd6dc9904351c91c9b64cbc9fe6ebd0a3634662",
+    "crates/kekule/src/algorithms/substructure/engine.rs": "d679aa82a41bd481bbe34e7abcf3faf5b93f313c18dcbe48f1723cfd09567bbb",
+    "benchmarks/src/bin/openff_parameterize.rs": "bea815df467eb7087d954dfbd68d7e08cd93c2c777189003b5c0f212baabfcbf",
+    "benchmarks/src/bin/openff_parameterize/energy.rs": "b7c738f5e52679833588cea3cb1362340c7157610f59c062e66b9aff11bb183e",
+    "benchmarks/openff/prepare_robustness.py": "7d672540a482bb5c3c241057085a4ad5e46cef78820e4946b4350abd5bb4aa0a",
+    "benchmarks/openff/robustness.py": "c8d1e1817cea34679dd3bd38e44ee8b80357e2f5f61860fcb33427e7bed8cebd",
+    "crates/kekule-openff/src/assignment.rs": "8476c8bce6797224e7c6711bb3c08366106e7fe419aedb2e4753af01de8e7e85",
+    "crates/kekule-openff/src/identity.rs": "d8978789040863f4db989a2d8c567088a47b2a018d7329e42b6847b10eb16e91",
+    "crates/kekule-openff/src/lib.rs": "08e9a4a372288a47aa5c315a2c169bd69587c812310cd601c4b938fad7e5e7f1",
+    "crates/kekule-openff/src/nagl/features.rs": "994bd8e071fae5efea2a48275527afb6ee3a615a41dbf02c369dd7c0836a6ac0",
+    "crates/kekule-openff/src/nagl.rs": "150bfd535e344203afa591cd618e45fc950608c7c62957f3ec9373da2e926fff",
+    "crates/kekule-openff/src/offxml.rs": "a3fdfe13c9ee3bcb2092f85d3aee66d70b9d45f67e7d1c41d29dff1f90d51f6e",
+    "crates/kekule-openff/src/parameters.rs": "83d01ad2894be19fd8046d4caf114f044f98ce83f7e5913fba08722175e58b8b",
+    "crates/kekule-openff/src/preparation.rs": "22c8b521b7a422939c92e239ef50cf3b651e2363ec81a3543d79f9f18c97e30b"
+  }
+}

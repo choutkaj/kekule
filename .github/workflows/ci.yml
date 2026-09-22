@@ -45,6 +45,8 @@ jobs:
         run: python3 -m unittest discover -s benchmarks -p test_dashboard.py
       - name: Check SMARTS comparison contract and fixture provenance
         run: python3 -m unittest discover -s benchmarks -p test_smarts_conformance.py
+      - name: Check OpenFF audit contract and fixture provenance
+        run: python3 -m unittest discover -s benchmarks/openff -p "test_*.py"
       - name: Check independent mass-analysis logic
         run: python3 -m unittest discover -s benchmarks -p test_analyze_masses.py
       - name: Check external query corpus provenance
@@ -62,7 +64,7 @@ jobs:
       - run: RUSTDOCFLAGS="-D warnings" cargo doc -p kekule-potentials --no-default-features --no-deps --locked
       - name: Check packaged license copies
         run: |
-          for package in kekule kekule-potentials kekule-traj; do
+          for package in kekule kekule-potentials kekule-traj kekule-openff; do
             cmp LICENSE-APACHE "crates/$package/LICENSE-APACHE"
             cmp LICENSE-MIT "crates/$package/LICENSE-MIT"
           done
@@ -72,6 +74,7 @@ jobs:
       # validate each exact package file set.
       - run: cargo package -p kekule-potentials --locked --list
       - run: cargo package -p kekule-traj --locked --list
+      - run: cargo package -p kekule-openff --locked --list
 
   windows:
     name: Windows checks

@@ -1,0 +1,279 @@
+{
+  "source_sha256": {
+    "robustness-inputs.json.gz": "5fc588cc2f693843b2f38d0a69b5875c32e85d5822e82548aea97d3f3470740b",
+    "robustness-reference.json.gz": "bd33a90326d54651e0b5ea79a0ac831e31d81d0d03e55c2d7c646148bcf78ac7",
+    "robustness-native-before-fixes.json.gz": "a57337d9eb6726259ee373b62f34df4e23c8f872bbf9be77ccc89f3b563f1198",
+    "robustness-native.json.gz": "cc8586c6c9061baa1b66beb91f17864ae5c2b562c5accd6739416e5256af8f1e",
+    "robustness-original-66-recheck.json.gz": "d2857ea67af80a9d7ebbcadde45bb95de952695238cbc623a04373c2926e63db"
+  },
+  "timing_sha256": "b0d5b45d5f5f4893891def3a029390c8c13c1de0018c5b2b19999a65a8125952",
+  "renderer": {
+    "matplotlib": "3.11.2",
+    "numpy": "2.5.3"
+  },
+  "parameters": {
+    "charge": {
+      "count": 29252,
+      "max_abs": 2.2289653611728966e-07,
+      "rmse": 2.6914343542159745e-08,
+      "mean_signed": -1.4802962295312052e-18
+    },
+    "feature": {
+      "count": 643544,
+      "max_abs": 9.934107481068821e-09,
+      "rmse": 1.918427329033627e-10,
+      "mean_signed": 3.51953635755083e-12
+    },
+    "Bonds.length": {
+      "count": 29712,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "Bonds.k": {
+      "count": 29712,
+      "max_abs": 2.3283064365386963e-10,
+      "rmse": 4.233093902446081e-11,
+      "mean_signed": -2.747070709482642e-11
+    },
+    "Angles.angle": {
+      "count": 53358,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "Angles.k": {
+      "count": 53358,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "Constraints.distance": {
+      "count": 14408,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ProperTorsions.k": {
+      "count": 108504,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ProperTorsions.phase": {
+      "count": 108504,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ProperTorsions.periodicity": {
+      "count": 108504,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ProperTorsions.idivf": {
+      "count": 108504,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ImproperTorsions.k": {
+      "count": 18624,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ImproperTorsions.phase": {
+      "count": 18624,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ImproperTorsions.periodicity": {
+      "count": 18624,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ImproperTorsions.idivf": {
+      "count": 18624,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "vdW.sigma": {
+      "count": 29252,
+      "max_abs": 5.551115123125783e-17,
+      "rmse": 1.2609591807086242e-17,
+      "mean_signed": 2.776316636514775e-18
+    },
+    "vdW.epsilon": {
+      "count": 29252,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    }
+  },
+  "energies": {
+    "reference_charges.Bonds": {
+      "count": 660,
+      "max_abs": 3.026798367500305e-09,
+      "rmse": 1.356141683866853e-10,
+      "mean_signed": 4.8633541638309904e-12
+    },
+    "reference_charges.Angles": {
+      "count": 660,
+      "max_abs": 7.639755494892597e-11,
+      "rmse": 6.067963254871514e-12,
+      "mean_signed": 1.674842083203161e-13
+    },
+    "reference_charges.ProperTorsions": {
+      "count": 660,
+      "max_abs": 4.18367562815547e-11,
+      "rmse": 2.823534156244e-12,
+      "mean_signed": 9.803303401599114e-14
+    },
+    "reference_charges.ImproperTorsions": {
+      "count": 660,
+      "max_abs": 3.467448550509289e-12,
+      "rmse": 1.9928976273513433e-13,
+      "mean_signed": -7.022877511653954e-15
+    },
+    "reference_charges.vdW": {
+      "count": 660,
+      "max_abs": 3.0240698833949864e-10,
+      "rmse": 2.3548889132121553e-11,
+      "mean_signed": -1.237255415965206e-12
+    },
+    "reference_charges.Electrostatics": {
+      "count": 660,
+      "max_abs": 6.05359673500061e-09,
+      "rmse": 3.406606593712448e-10,
+      "mean_signed": -2.602885852981575e-11
+    },
+    "reference_charges.Total": {
+      "count": 660,
+      "max_abs": 6.170012056827545e-09,
+      "rmse": 3.344948967432242e-10,
+      "mean_signed": -2.265647333043682e-11
+    },
+    "native_charges.Bonds": {
+      "count": 660,
+      "max_abs": 3.026798367500305e-09,
+      "rmse": 1.356141683866853e-10,
+      "mean_signed": 4.8633541638309904e-12
+    },
+    "native_charges.Angles": {
+      "count": 660,
+      "max_abs": 7.639755494892597e-11,
+      "rmse": 6.067963254871514e-12,
+      "mean_signed": 1.674842083203161e-13
+    },
+    "native_charges.ProperTorsions": {
+      "count": 660,
+      "max_abs": 4.18367562815547e-11,
+      "rmse": 2.823534156244e-12,
+      "mean_signed": 9.803303401599114e-14
+    },
+    "native_charges.ImproperTorsions": {
+      "count": 660,
+      "max_abs": 3.467448550509289e-12,
+      "rmse": 1.9928976273513433e-13,
+      "mean_signed": -7.022877511653954e-15
+    },
+    "native_charges.vdW": {
+      "count": 660,
+      "max_abs": 3.0240698833949864e-10,
+      "rmse": 2.3548889132121553e-11,
+      "mean_signed": -1.237255415965206e-12
+    },
+    "native_charges.Electrostatics": {
+      "count": 660,
+      "max_abs": 0.0006011471332385554,
+      "rmse": 9.790314109579735e-05,
+      "mean_signed": 2.15318035560751e-05
+    },
+    "native_charges.Total": {
+      "count": 660,
+      "max_abs": 0.0006011469959048554,
+      "rmse": 9.790313980163438e-05,
+      "mean_signed": 2.153180712593937e-05
+    }
+  },
+  "cpu_timings": [
+    {
+      "id": "pubchem-11642",
+      "atoms": 8,
+      "median_ms": {
+        "features_ms": 0.1744,
+        "inference_including_features_ms": 2.862,
+        "assign_charges_ms": 0.0919,
+        "full_parameterization_ms": 0.6322
+      }
+    },
+    {
+      "id": "pubchem-111320",
+      "atoms": 27,
+      "median_ms": {
+        "features_ms": 0.5378,
+        "inference_including_features_ms": 4.6782,
+        "assign_charges_ms": 4.8426,
+        "full_parameterization_ms": 6.2207
+      }
+    },
+    {
+      "id": "pubchem-446684",
+      "atoms": 38,
+      "median_ms": {
+        "features_ms": 0.7335,
+        "inference_including_features_ms": 5.0225,
+        "assign_charges_ms": 5.3432,
+        "full_parameterization_ms": 7.587899999999999
+      }
+    },
+    {
+      "id": "pubchem-476793",
+      "atoms": 102,
+      "median_ms": {
+        "features_ms": 1.8075,
+        "inference_including_features_ms": 12.072899999999999,
+        "assign_charges_ms": 12.260200000000001,
+        "full_parameterization_ms": 16.948700000000002
+      }
+    },
+    {
+      "id": "pdb-6EE9-X",
+      "atoms": 378,
+      "median_ms": {
+        "features_ms": 9.083400000000001,
+        "inference_including_features_ms": 39.4743,
+        "assign_charges_ms": 41.9385,
+        "full_parameterization_ms": 56.3201
+      }
+    },
+    {
+      "id": "pdb-1W1F-A",
+      "atoms": 974,
+      "median_ms": {
+        "features_ms": 24.9266,
+        "inference_including_features_ms": 100.5548,
+        "assign_charges_ms": 100.1425,
+        "full_parameterization_ms": 139.7641
+      }
+    },
+    {
+      "id": "pdb-3ABD-A",
+      "atoms": 2940,
+      "median_ms": {
+        "features_ms": 97.01010000000001,
+        "inference_including_features_ms": 324.51869999999997,
+        "assign_charges_ms": 320.8334,
+        "full_parameterization_ms": 447.8303
+      }
+    }
+  ],
+  "cases": 220,
+  "parameterization_passed": 220,
+  "all_checks_passed": 214
+}
