@@ -315,6 +315,13 @@ layout. Malformed rows in unselected models still fail validation. Ensemble
 assembly releases redundant topologies while transferring realization payloads;
 multiple coordinate models do not imply temporal trajectory semantics.
 
+mmCIF alternate rows remain in the source document. Interpretation selects whole
+residue alternatives or explicitly constrained groups and records its choices in
+the format report. Occupancy ranks representatives, not whole-structure
+probabilities. Coordinate-model ensemble conversion never expands alternate
+labels; caller-supplied conformation selections must pass the same identity and
+topology checks and do not acquire inferred statistical weights.
+
 Interpretations own format reports, metadata, and source correspondence. Borrowed
 projections reuse canonical owners; consuming projections explicitly discard richer
 information. Document-level reports borrow record reports instead of duplicating

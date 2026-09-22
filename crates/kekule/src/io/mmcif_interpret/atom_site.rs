@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::core::Element;
@@ -7,8 +6,7 @@ use crate::geometry::Point3;
 use super::super::mmcif_category::MmcifCategory;
 use super::super::{MmcifBlock, MmcifValue};
 use super::types::{
-    MmcifAltLocPolicy, MmcifEntityKind, MmcifInterpretError, MmcifInterpretIssue,
-    MmcifInterpretationReport,
+    MmcifEntityKind, MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretationReport,
 };
 
 pub(super) fn coordinate_model_ids(block: &MmcifBlock) -> Result<Vec<String>, MmcifInterpretError> {
@@ -73,7 +71,8 @@ pub(super) fn read_asym_entities(
 #[derive(Debug, Clone)]
 pub(super) struct AtomRow {
     pub(super) line: usize,
-    row_index: usize,
+    pub(super) row_index: usize,
+    pub(super) site_order: usize,
     pub(super) model_id: String,
     pub(super) entity_id: Option<String>,
     pub(super) kind: MmcifEntityKind,
@@ -239,6 +238,7 @@ pub(super) fn read_atom_rows(
         rows.push(AtomRow {
             line: type_value.line(),
             row_index: row,
+            site_order: row,
             model_id,
             entity_id,
             kind,
@@ -290,99 +290,6 @@ fn canonical_mmcif_element_symbol(symbol: &str) -> String {
     let mut canonical = first.to_ascii_uppercase().to_string();
     canonical.extend(chars.flat_map(char::to_lowercase));
     canonical
-}
-
-pub(super) fn select_alt_locations(
-    rows: &[AtomRow],
-    policy: &MmcifAltLocPolicy,
-    report: &mut MmcifInterpretationReport,
-) -> Result<Vec<AtomRow>, MmcifInterpretError> {
-    let mut grouped = BTreeMap::<(String, String, String), Vec<&AtomRow>>::new();
-    for row in rows {
-        grouped
-            .entry((
-                row.instance_key.clone(),
-                row.atom_key(),
-                row.model_id.clone(),
-            ))
-            .or_default()
-            .push(row);
-    }
-    let mut selected = Vec::new();
-    for (_, mut candidates) in grouped {
-        candidates.sort_by_key(|row| row.row_index);
-        let mut identities = BTreeSet::new();
-        if let Some(duplicate) = candidates
-            .iter()
-            .find(|row| !identities.insert(row.alt_id.clone()))
-        {
-            return Err(MmcifInterpretError::new(
-                Some(duplicate.line),
-                format!(
-                    "atom `{}` has duplicate records for one alternate location",
-                    duplicate.atom_name
-                ),
-            ));
-        }
-        let labels = candidates
-            .iter()
-            .filter_map(|row| row.alt_id.clone())
-            .collect::<BTreeSet<_>>();
-        if candidates.len() > 1
-            && !labels.is_empty()
-            && matches!(policy, MmcifAltLocPolicy::ErrorOnAlternateLocations)
-        {
-            return Err(MmcifInterpretError::new(
-                Some(candidates[0].line),
-                format!("atom `{}` has alternate locations", candidates[0].atom_name),
-            ));
-        }
-        let chosen = match policy {
-            MmcifAltLocPolicy::HighestOccupancy => candidates
-                .iter()
-                .max_by(|left, right| {
-                    left.occupancy
-                        .unwrap_or(0.0)
-                        .partial_cmp(&right.occupancy.unwrap_or(0.0))
-                        .unwrap_or(Ordering::Equal)
-                        .then_with(|| right.alt_id.cmp(&left.alt_id))
-                })
-                .map(|row| (**row).clone()),
-            MmcifAltLocPolicy::SelectLabel(label) => candidates
-                .iter()
-                .find(|row| row.alt_id.as_deref() == Some(label.as_str()))
-                .map(|row| (**row).clone())
-                .or_else(|| {
-                    candidates
-                        .iter()
-                        .find(|row| row.alt_id.is_none())
-                        .map(|row| (**row).clone())
-                }),
-            MmcifAltLocPolicy::ErrorOnAlternateLocations => {
-                candidates.first().map(|row| (**row).clone())
-            }
-        };
-        let Some(chosen) = chosen else {
-            return Err(MmcifInterpretError::new(
-                None,
-                "requested alternate-location label is unavailable",
-            ));
-        };
-        for omitted in candidates
-            .iter()
-            .filter(|candidate| candidate.row_index != chosen.row_index)
-        {
-            report
-                .issues
-                .push(MmcifInterpretIssue::AlternateLocationOmitted {
-                    atom_name: omitted.atom_name.clone(),
-                    alt_id: omitted.alt_id.clone(),
-                });
-        }
-        selected.push(chosen);
-    }
-    selected.sort_by_key(|row| row.row_index);
-    Ok(selected)
 }
 
 pub(super) fn required<'a>(

@@ -530,6 +530,7 @@ mod core_payload;
 mod graph;
 mod hierarchy;
 mod hydrogens;
+mod mmcif_altloc;
 mod mmcif_contents;
 pub(crate) mod mmcif_syntax;
 mod normalization;

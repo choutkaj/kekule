@@ -7,7 +7,7 @@ use super::super::{MmcifBlock, MmcifDocument};
 use super::atom_site::coordinate_model_ids;
 use super::types::{
     MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
-    MmcifInterpretationReport,
+    MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport,
 };
 use super::PreparedBlock;
 
@@ -17,18 +17,21 @@ pub(crate) fn interpret_mmcif_ensemble(
     document: &MmcifDocument,
     options: MmcifEnsembleInterpretOptions,
 ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
-    let blocks = document
+    interpret_mmcif_ensemble_block(atom_site_block(document)?, options)
+}
+
+fn atom_site_block(document: &MmcifDocument) -> Result<&MmcifBlock, MmcifEnsembleInterpretError> {
+    let mut blocks = document
         .blocks()
         .iter()
-        .filter(|block| block.has_category("_atom_site"))
-        .collect::<Vec<_>>();
-    if blocks.is_empty() {
-        return Err(MmcifEnsembleInterpretError::NoCoordinateModels);
-    }
-    if blocks.len() > 1 {
+        .filter(|block| block.has_category("_atom_site"));
+    let block = blocks
+        .next()
+        .ok_or(MmcifEnsembleInterpretError::NoCoordinateModels)?;
+    if blocks.next().is_some() {
         return Err(MmcifEnsembleInterpretError::MultipleAtomSiteBlocks);
     }
-    interpret_mmcif_ensemble_block(blocks[0], options)
+    Ok(block)
 }
 
 /// Interprets explicitly selected or all coordinate models in one block as
@@ -83,6 +86,41 @@ pub(crate) fn interpret_mmcif_ensemble_block(
             error,
         }
     })?;
+    let remaining = selected.map(|model_id| {
+        prepared
+            .interpret_model(&model_id)
+            .map_err(|error| MmcifEnsembleInterpretError::Model { model_id, error })
+    });
+    assemble(first, remaining)
+}
+
+/// Explicit caller-selected realizations, never automatic altloc enumeration.
+pub(crate) fn interpret_mmcif_conformations(
+    document: &MmcifDocument,
+    selections: &[MmcifInterpretOptions],
+) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+    interpret_mmcif_conformations_block(atom_site_block(document)?, selections)
+}
+
+pub(crate) fn interpret_mmcif_conformations_block(
+    block: &MmcifBlock,
+    selections: &[MmcifInterpretOptions],
+) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+    if selections.is_empty() {
+        return Err(MmcifEnsembleInterpretError::EmptyConformationSelection);
+    }
+    let mut interpreted = selections.iter().enumerate().map(|(selection, options)| {
+        super::interpret_mmcif_block(block, options.clone())
+            .map_err(|error| MmcifEnsembleInterpretError::Conformation { selection, error })
+    });
+    let first = interpreted.next().expect("validated nonempty selections")?;
+    assemble(first, interpreted)
+}
+
+fn assemble(
+    first: MmcifInterpretation,
+    remaining: impl Iterator<Item = Result<MmcifInterpretation, MmcifEnsembleInterpretError>>,
+) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
     let shared_topology = first.model.shared_topology();
     let shared_atom_identity = provenance_identity(&first.report);
     let mut ensemble = Ensemble::new(Arc::clone(&shared_topology));
@@ -91,14 +129,12 @@ pub(crate) fn interpret_mmcif_ensemble_block(
         .push(EnsembleMember::from_model(first_model))
         .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
     let mut reports = vec![first_report];
-    for model_id in selected {
-        let (model, report) = prepared
-            .interpret_model(&model_id)
-            .map_err(|error| MmcifEnsembleInterpretError::Model {
-                model_id: model_id.clone(),
-                error,
-            })?
-            .into_parts();
+    for interpreted in remaining {
+        let (model, report) = interpreted?.into_parts();
+        let model_id = report
+            .selected_model()
+            .expect("interpreted model has a source ID")
+            .to_owned();
         let atom_identity = provenance_identity(&report);
         if atom_identity != shared_atom_identity {
             let error = if atom_identity.sorted_atoms() != shared_atom_identity.sorted_atoms() {

@@ -14,10 +14,12 @@ mod v3000;
 
 pub use mmcif_document::*;
 pub use mmcif_interpret::{
-    MmcifAltLocPolicy, MmcifAtomProvenance, MmcifConnectionResolutionReason,
-    MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
-    MmcifEntityKind, MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue,
-    MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport, MmcifModelSelection,
+    MmcifAltLocDecision, MmcifAltLocPolicy, MmcifAltLocPreference, MmcifAltLocResidue,
+    MmcifAltLocSelection, MmcifAltLocSelectionReason, MmcifAtomProvenance,
+    MmcifConnectionResolutionReason, MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions,
+    MmcifEnsembleInterpretation, MmcifEntityKind, MmcifInstanceProvenance, MmcifInterpretError,
+    MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport,
+    MmcifModelSelection, MmcifResidueId, MmcifResiduePosition,
 };
 pub use mmcif_write::*;
 pub use sdf_document::*;

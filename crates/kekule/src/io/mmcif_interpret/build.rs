@@ -107,6 +107,7 @@ struct BuiltAtomProvenance {
     atom: AtomId,
     type_symbol: String,
     source_line: usize,
+    source_order: usize,
     atom_site_id: Option<String>,
     label_atom_name: Option<String>,
     atom_name: String,
@@ -153,6 +154,7 @@ impl BuiltMoleculeProvenance {
                         atom: qualified,
                         type_symbol: atom.type_symbol,
                         source_line: atom.source_line,
+                        source_order: atom.source_order,
                         atom_site_id: atom.atom_site_id,
                         label_atom_name: atom.label_atom_name,
                         atom_name: atom.atom_name,
@@ -407,6 +409,7 @@ pub(super) fn build_molecule(
             atom: atoms[key],
             type_symbol: row.element.symbol().to_owned(),
             source_line: row.line,
+            source_order: row.site_order,
             atom_site_id: row.atom_site_id.clone(),
             label_atom_name: row.label_atom_name.clone(),
             atom_name: row.atom_name.clone(),
@@ -587,7 +590,7 @@ pub(super) fn build_topology_hierarchy(
         .iter()
         .flat_map(|instance| instance.atoms.iter())
         .collect::<Vec<_>>();
-    atoms.sort_by_key(|atom| atom.source_line);
+    atoms.sort_by_key(|atom| atom.source_order);
     let mut chain_authors = BTreeMap::<String, Option<String>>::new();
     let mut residue_metadata = BTreeMap::<(String, String), ResidueMetadata>::new();
     for atom in &atoms {
