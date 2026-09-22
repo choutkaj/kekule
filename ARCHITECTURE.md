@@ -167,8 +167,11 @@ See the [append contract](crates/kekule/src/structure/model_editor/append.rs) fo
 cell comparison tolerances, property transfer, and examples.
 
 Selections bind to one exact shared topology, including empty selections and set
-operations. They contain unique atoms in authoritative dense order. Whole-residue
-expansion retains selected atoms without residue assignments. Structural subsets
+operations. Atom and bond selections independently contain unique entities in
+authoritative dense order. Atom-to-bond conversion explicitly chooses both,
+either, or exactly one selected endpoint; bond-to-atom conversion selects both
+endpoints. Whole-residue and whole-chain expansion retain selected atoms without
+hierarchy assignments. Structural subsets
 may cut molecules and must repartition the induced graph into connected output
 definitions. The same operation-specific mapping transfers hierarchy,
 classification, properties, and every realization array. Do not add a universal
