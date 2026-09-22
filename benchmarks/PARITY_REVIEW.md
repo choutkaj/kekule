@@ -1,5 +1,9 @@
 # Benchmark parity review — 2026-09-17
 
+Historical report: results and unresolved items below describe the revisions
+recorded here. Later work supersedes parts of this backlog; consult the
+[current capability index](../docs/capabilities.md) for present support.
+
 Work proceeds one feature per turn on `codex/benchmark-parity`.
 The baseline is the completed local run `run-1789652366683-27088.json`
 (started 2026-09-17), with 25 features across five datasets. Its recorded revision

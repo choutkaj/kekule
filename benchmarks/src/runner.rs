@@ -281,7 +281,7 @@ fn options(args: &[String]) -> Result<Options, Box<dyn Error>> {
     if !args.len().is_multiple_of(2) {
         return Err(boxed_error("each option requires a value"));
     }
-    for pair in args.chunks_exact(2) {
+    for pair in args.as_chunks::<2>().0 {
         if ![
             "--feature",
             "--dataset",
@@ -1044,6 +1044,27 @@ fn write_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn option_pairs_preserve_validation() {
+        let args = |values: &[&str]| values.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>();
+        let valid = args(&["--feature", "all", "--dataset", "smoke"]);
+        let parsed = options(&valid).unwrap();
+        assert_eq!(parsed.feature, "all");
+        assert_eq!(parsed.dataset, "smoke");
+        for (input, message) in [
+            (vec!["--feature"], "each option requires a value"),
+            (vec!["--unknown", "all"], "unknown option"),
+            (
+                vec!["--feature", "all", "--feature", "all"],
+                "duplicate option",
+            ),
+        ] {
+            let error = options(&args(&input))
+                .err()
+                .expect("invalid options must fail");
+            assert!(error.to_string().contains(message), "{error}");
+        }
+    }
     #[test]
     fn errors_empty_records_and_extra_fields_never_pass() {
         for value in [

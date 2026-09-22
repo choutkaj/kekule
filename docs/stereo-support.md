@@ -10,8 +10,9 @@ stereogenic. CIP assignment does not invent an unasserted configuration.
 | Represented geometry | Tetrahedral centers, single double bonds, and atropisomeric axes on a single bond |
 | CIP assignment | Complete supported assertions using ordered sequence rules and local rooted-digraph auxiliary descriptors; R/S, r/s, E/Z, sequential cis/trans, M/P, and m/p as appropriate |
 | Unknown configuration | Preserved as unknown; no specified CIP descriptor is inferred from it |
-| Enhanced groups | Molecule-local Absolute, OR, and AND membership; relative membership does not become an absolute configuration |
-| Isomeric and canonical SMILES | Tetrahedral and ordinary double-bond stereo, isotope labels, and disconnected component projections |
+| Enhanced groups | Molecule-local Absolute, OR, AND, Relative, and Racemic membership; relative membership does not become an absolute configuration |
+| Isomeric and canonical SMILES | Tetrahedral and ordinary double-bond stereo, isotope labels, disconnected component projections, and supported tetrahedral groups through CXSMILES |
+| SMARTS stereo | Tetrahedral and directional double-bond predicates, Boolean stereo expressions, and enhanced tetrahedral group matching; see the [current dialect](../crates/kekule/src/query/dialect.md) |
 | V2000/V3000 Model output | Coordinate-consistent tetrahedral, double-bond, and atropisomer stereo; validation uses coordinates rounded to the emitted precision |
 | Specified E/Z Model output | Supplied coordinates must encode the assertion; conflicting or degenerate drawings fail explicitly |
 | Molfile output of an unasserted alkene | Crossed/either syntax prevents a nondegenerate drawing from inventing specified E/Z; rereading may introduce an explicit unknown element |
@@ -26,11 +27,15 @@ encode double-bond group members or ambiguous endpoint membership. Absolute grou
 may be partitioned across connected components. Cross-component OR/AND relations
 are rejected because molecule-local ownership cannot represent their relationship.
 
-Plain isomeric and canonical SMILES reject axial stereo, explicit unknown configurations, and
-enhanced groups. A successful ordinary isomeric SMILES write is therefore not a
-claim that every represented geometry has a SMILES encoding. Chiral SMARTS is
-unsupported. Canonical output preserves supported stereo and isotopes and is
-invariant under atom numbering. Ordinary SMILES rejects stereo assertions.
+Isomeric and canonical writers preserve tetrahedral Absolute, AND, OR, and
+Relative groups using CXSMILES `a`, `&`, `o`, and `r` fields. They reject axial
+stereo, explicit unknown configurations, unsupported group-member geometries,
+quantitative Racemic groups, and multiple independent Relative groups. A global
+`r` flag shields unrelated specified centers with explicit absolute membership.
+Canonical output preserves supported stereo and isotopes, is invariant under
+atom numbering, and normalizes simultaneous inversion within a non-absolute
+group. It does not remove chemically redundant source stereo assertions.
+Ordinary SMILES writing rejects stereo assertions.
 Directional bonds must reconstruct exactly the asserted alkene configurations;
 unrepresentable partial assignments fail rather than inventing stereo.
 
@@ -44,7 +49,7 @@ need additional represented geometry types. Unsupported source assertions reject
 the whole input when they cannot be preserved, including other supported centers
 in the same input. Wildcard/query atoms are a separate syntax/model boundary.
 
-Assignment limits are explicit. The default expansion depth is 32 and the node
+Assignment limits are explicit. The default expansion depth is 64 and the node
 bound is 100,000 per ligand or auxiliary graph. Depth and node exhaustion are
 errors, never ties or evidence of nonstereogenicity. Failed assignment leaves the
 previous installed perception intact. Callers requiring different bounds must
