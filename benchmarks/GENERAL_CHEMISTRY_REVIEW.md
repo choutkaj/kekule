@@ -7,6 +7,11 @@ are authorized when needed for a clean implementation. No case-specific runtime
 rules, discarded benchmark assertions, or silent resource-limit successes are
 acceptable.
 
+This is a historical implementation and validation record. Later SMARTS,
+enhanced-stereo, and hydrogen work supersedes some remaining-work entries below.
+See the [current capability index](../docs/capabilities.md) for present support;
+the measurements and provenance recorded here remain unchanged.
+
 ## Required work
 
 - Hydrogen/radical semantics: retain graph, declared and perceived hydrogen

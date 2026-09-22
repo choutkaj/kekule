@@ -1,6 +1,8 @@
 # Architecture
 
 This document defines ownership boundaries and invariants for contributors.
+The [current capability index](docs/capabilities.md) links supported features and
+their explicit limits; dated audits describe their recorded revisions.
 Detailed API contracts, algorithms, numerical policies, and examples belong in
 Rustdoc beside their implementations. The links below point to those sources;
 `cargo doc --workspace --all-features --no-deps --locked` builds the API reference.
