@@ -1011,10 +1011,14 @@ pub(crate) fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
     let Ok(payload) = mol.atom(atom) else {
         return 0;
     };
-    payload
-        .hydrogens
-        .explicit_count()
-        .saturating_add(mol.implicit_hydrogens(atom).ok().flatten().unwrap_or(0))
+    let count = mol
+        .implicit_hydrogens(atom)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| usize::from(payload.hydrogens.specified_count()));
+    // Stereo eligibility only needs small ligand counts. Preserve the existing
+    // saturation for oversized expert-supplied perception assignments.
+    u8::try_from(count).unwrap_or(u8::MAX)
 }
 
 fn bond_connects(bond: &Bond, a: AtomId, b: AtomId) -> bool {

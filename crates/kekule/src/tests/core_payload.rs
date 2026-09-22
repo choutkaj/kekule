@@ -77,7 +77,7 @@ fn atom_new_sets_chemically_general_defaults() {
     assert_eq!(atom.isotope, None);
     assert_eq!(atom.formal_charge, 0);
     assert_eq!(atom.radical, None);
-    assert_eq!(atom.hydrogens, HydrogenDeclaration::Infer { explicit: 0 });
+    assert_eq!(atom.hydrogens, HydrogenDeclaration::Infer { specified: 0 });
     assert_eq!(atom.atom_map, None);
 }
 
@@ -99,18 +99,18 @@ fn atom_payload_fields_can_be_set_and_read() {
 
 #[test]
 fn hydrogen_declaration_expresses_each_canonical_policy_without_overlap() {
-    for (declaration, explicit, allows_implicit) in [
-        (HydrogenDeclaration::Infer { explicit: 0 }, 0, true),
-        (HydrogenDeclaration::Infer { explicit: 2 }, 2, true),
+    for (declaration, explicit, allows_inference) in [
+        (HydrogenDeclaration::Infer { specified: 0 }, 0, true),
+        (HydrogenDeclaration::Infer { specified: 2 }, 2, true),
         (HydrogenDeclaration::Fixed(0), 0, false),
         (HydrogenDeclaration::Fixed(3), 3, false),
     ] {
-        assert_eq!(declaration.explicit_count(), explicit);
-        assert_eq!(declaration.allows_implicit(), allows_implicit);
+        assert_eq!(declaration.specified_count(), explicit);
+        assert_eq!(declaration.allows_inference(), allows_inference);
         assert_eq!(
-            declaration.with_explicit_count(7),
-            if allows_implicit {
-                HydrogenDeclaration::Infer { explicit: 7 }
+            declaration.with_specified_count(7),
+            if allows_inference {
+                HydrogenDeclaration::Infer { specified: 7 }
             } else {
                 HydrogenDeclaration::Fixed(7)
             }

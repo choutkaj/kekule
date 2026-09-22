@@ -16,8 +16,7 @@ pub enum DreidingPrepareError {
     /// Hydrogens are represented as counts instead of coordinate-bearing atoms.
     CountedHydrogens {
         atom: InstanceAtomId,
-        explicit: u8,
-        implicit: u8,
+        implicit: usize,
     },
     /// No supported DREIDING radical parameterization is available.
     RadicalAtom { atom: InstanceAtomId },
@@ -72,11 +71,10 @@ impl fmt::Display for DreidingPrepareError {
             ),
             Self::CountedHydrogens {
                 atom,
-                explicit,
                 implicit,
             } => write!(
                 f,
-                "atom {atom} has {explicit} explicit-count and {implicit} implicit hydrogen(s); DREIDING preparation requires coordinate-bearing hydrogen atoms"
+                "atom {atom} has {implicit} implicit hydrogen(s); DREIDING preparation requires coordinate-bearing explicit hydrogen atoms"
             ),
             Self::RadicalAtom { atom } => {
                 write!(

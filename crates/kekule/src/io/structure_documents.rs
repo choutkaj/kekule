@@ -1055,9 +1055,9 @@ pub(super) fn materialize_molfile_stereo_hydrogens(
         // its atom valence permits one. Resolve that format convention into a
         // fixed carrier before the represented-only normalization kernel runs.
         // No installed perception or unmarked coordinate inference is involved.
-        if !atom.hydrogens.allows_implicit()
+        if !atom.hydrogens.allows_inference()
             || molecule.incident_bonds(center).ok().map(Iterator::count) != Some(3)
-            || crate::algorithms::rdkit_implicit_hydrogen_count(molecule, center, atom) != 1
+            || crate::algorithms::rdkit_inferred_hydrogen_count(molecule, center, atom) != 1
         {
             continue;
         }

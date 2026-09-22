@@ -632,23 +632,23 @@ fn atom_aromatic_candidate_degree(mol: &Molecule, atom_id: AtomId, atom: &Atom) 
         .filter(|(_, bond)| !matches!(bond.order, BondOrder::Zero | BondOrder::Dative))
         .count();
     bonded_degree
-        .saturating_add(usize::from(atom.hydrogens.explicit_count()))
-        .saturating_add(aromaticity_implicit_hydrogen_count(mol, atom_id, atom))
+        .saturating_add(usize::from(atom.hydrogens.specified_count()))
+        .saturating_add(aromaticity_inferred_hydrogen_count(mol, atom_id, atom))
 }
 
-fn aromaticity_implicit_hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> usize {
-    if let Some(hydrogens) = mol.implicit_hydrogens(atom_id).ok().flatten() {
+fn aromaticity_inferred_hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> usize {
+    if let Some(hydrogens) = mol.inferred_hydrogens(atom_id).ok().flatten() {
         return usize::from(hydrogens);
     }
-    usize::from(super::valence::rdkit_implicit_hydrogen_count(
+    usize::from(super::valence::rdkit_inferred_hydrogen_count(
         mol, atom_id, atom,
     ))
 }
 
 fn atom_rdkit_aromatic_total_valence(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> usize {
     explicit_valence(mol, atom_id)
-        .saturating_add(usize::from(atom.hydrogens.explicit_count()))
-        .saturating_add(aromaticity_implicit_hydrogen_count(mol, atom_id, atom))
+        .saturating_add(usize::from(atom.hydrogens.specified_count()))
+        .saturating_add(aromaticity_inferred_hydrogen_count(mol, atom_id, atom))
 }
 
 pub(super) fn count_rdkit_like_atom_pi_electrons(
@@ -726,7 +726,7 @@ fn atom_explicit_unsaturation(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u
     // Negative values behave like zero for both comparisons that use this.
     let degree = mol.incident_bonds(atom_id).map_or(0, Iterator::count);
     explicit_valence(mol, atom_id)
-        .saturating_add(usize::from(atom.hydrogens.explicit_count()))
+        .saturating_add(usize::from(atom.hydrogens.specified_count()))
         .saturating_sub(degree)
 }
 
@@ -805,7 +805,7 @@ mod tests {
         let valence_nitrogens = molecule
             .atoms()
             .filter(|(_, atom)| atom.element.symbol() == "N")
-            .map(|(atom_id, _)| molecule.implicit_hydrogens(atom_id))
+            .map(|(atom_id, _)| molecule.inferred_hydrogens(atom_id))
             .collect::<Vec<_>>();
         assert_eq!(valence_nitrogens, vec![Ok(Some(1)), Ok(Some(1))]);
         assert!(!molecule.perception().has_aromaticity());
@@ -817,7 +817,7 @@ mod tests {
             .map(|(atom_id, _)| {
                 (
                     molecule.atom_is_aromatic(atom_id),
-                    molecule.implicit_hydrogens(atom_id),
+                    molecule.inferred_hydrogens(atom_id),
                 )
             })
             .collect::<Vec<_>>();

@@ -110,12 +110,12 @@ fn implicit_hydrogen_update_preserves_rings_and_rebuilds_downstream_sections() {
         .expect("installed rings")
         .clone();
     let atom = AtomId::new(0);
-    assert_eq!(molecule.implicit_hydrogens(atom), Ok(Some(1)));
+    assert_eq!(molecule.inferred_hydrogens(atom), Ok(Some(1)));
 
-    molecule.set_implicit_hydrogens(atom, 0);
+    molecule.set_inferred_hydrogens(atom, 0);
 
     let perception = molecule.perception();
-    assert_eq!(perception.implicit_hydrogens(atom), Some(0));
+    assert_eq!(perception.inferred_hydrogens(atom), Some(0));
     assert_eq!(perception.ring_state(), Some(&rings));
     assert!(!perception.has_aromaticity());
     assert!(!perception.has_stereo());
@@ -315,8 +315,8 @@ fn molecule_perception_queries_read_the_installed_state_directly() {
     let graph = molecule;
     for atom in graph.atom_ids() {
         assert_eq!(
-            graph.implicit_hydrogens(atom).expect("live atom"),
-            graph.perception().implicit_hydrogens(atom)
+            graph.inferred_hydrogens(atom).expect("live atom"),
+            graph.perception().inferred_hydrogens(atom)
         );
         assert_eq!(
             graph.atom_is_aromatic(atom).expect("live atom"),
@@ -623,7 +623,7 @@ fn aromaticity_supports_explicit_nitrogen_lone_pair_donor_ring() {
             .expect("ring nitrogen should exist");
         nitrogen.hydrogens = HydrogenDeclaration::Fixed(1);
     }
-    pyrrole_like.set_implicit_hydrogens(atoms[0], 0);
+    pyrrole_like.set_inferred_hydrogens(atoms[0], 0);
 
     aromaticity_api::perceive_aromaticity(&mut pyrrole_like, AromaticityModel::RdkitLike)
         .expect("pyrrole-like ring should be supported");
@@ -801,7 +801,7 @@ fn aromaticity_rejects_protonated_saturated_ring_nitrogen_donor() {
         nitrogen.formal_charge = 1;
         nitrogen.hydrogens = HydrogenDeclaration::Fixed(1);
     }
-    mol.set_implicit_hydrogens(atoms[0], 0);
+    mol.set_inferred_hydrogens(atoms[0], 0);
 
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("protonated saturated ring nitrogen should be supported");
@@ -821,7 +821,7 @@ fn aromaticity_accepts_cyclopropenyl_cation_two_electron_ring() {
         cation.formal_charge = 1;
         cation.hydrogens = HydrogenDeclaration::Fixed(1);
     }
-    mol.set_implicit_hydrogens(atoms[0], 0);
+    mol.set_inferred_hydrogens(atoms[0], 0);
 
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("cyclopropenyl cation should be supported");
@@ -847,7 +847,7 @@ fn aromaticity_requires_every_atom_to_be_candidate_before_huckel_count() {
         let mut saturated = mol.atom_mut(atoms[0]).expect("ring atom exists");
         saturated.hydrogens = HydrogenDeclaration::Fixed(2);
     }
-    mol.set_implicit_hydrogens(atoms[0], 0);
+    mol.set_inferred_hydrogens(atoms[0], 0);
 
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("over-valent candidate rejection should be supported");

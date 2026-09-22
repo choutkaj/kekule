@@ -263,10 +263,10 @@ fn try_localize_aromatic_component_with_limit(
             return Ok(false);
         };
         let explicit_valence =
-            baseline_bond_valence.saturating_add(usize::from(atom.hydrogens.explicit_count()));
-        let implicit_hydrogens = source_aromatic_implicit_hydrogens(atom, explicit_valence);
+            baseline_bond_valence.saturating_add(usize::from(atom.hydrogens.specified_count()));
+        let inferred_hydrogens = source_aromatic_inferred_hydrogens(atom, explicit_valence);
         let occupied_valence = explicit_valence
-            .saturating_add(implicit_hydrogens)
+            .saturating_add(inferred_hydrogens)
             .saturating_add(usize::from(
                 atom.radical.map_or(0, |radical| radical.electron_count()),
             ));
@@ -419,14 +419,14 @@ fn represented_bond_valence(order: BondOrder) -> usize {
     }
 }
 
-fn source_aromatic_implicit_hydrogens(atom: &Atom, explicit_valence: usize) -> usize {
-    if !atom.hydrogens.allows_implicit() {
+fn source_aromatic_inferred_hydrogens(atom: &Atom, explicit_valence: usize) -> usize {
+    if !atom.hydrogens.allows_inference() {
         return 0;
     }
     let target = match atom.element.symbol() {
         "B" | "C" => 3,
         "N" | "O" | "S" | "Se" | "Te" => {
-            if atom.hydrogens.explicit_count() > 0 || atom.formal_charge > 0 {
+            if atom.hydrogens.specified_count() > 0 || atom.formal_charge > 0 {
                 3
             } else {
                 2
@@ -448,8 +448,8 @@ fn aromatic_localization_target_valence(
         ("B", 1) => 2,
         ("C", -1 | 1) => 3,
         ("C", 0)
-            if !atom.hydrogens.allows_implicit()
-                && atom.hydrogens.explicit_count() == 0
+            if !atom.hydrogens.allows_inference()
+                && atom.hydrogens.specified_count() == 0
                 && baseline_bond_valence == 2 =>
         {
             3

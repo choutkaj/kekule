@@ -65,7 +65,7 @@ fn normalization_is_idempotent() {
 #[test]
 fn oxohalogen_cleanup_matches_rdkit_for_ester_and_declared_hydrogen_forms() {
     // Full represented charges and bond orders verified against RDKit 2026.03.3.
-    for (source, charges, implicit_hydrogens) in [
+    for (source, charges, inferred_hydrogens) in [
         (
             "CC(C)(C)OCl(=O)(=O)=O",
             vec![0, 0, 0, 0, 0, 3, -1, -1, -1],
@@ -92,9 +92,9 @@ fn oxohalogen_cleanup_matches_rdkit_for_ester_and_declared_hydrogen_forms() {
         assert_eq!(
             molecule
                 .atom_ids()
-                .map(|atom| molecule.implicit_hydrogens(atom).unwrap().unwrap())
+                .map(|atom| molecule.inferred_hydrogens(atom).unwrap().unwrap())
                 .collect::<Vec<_>>(),
-            implicit_hydrogens,
+            inferred_hydrogens,
             "{source}"
         );
         assert_eq!(molecule, represented, "perception must preserve {source}");

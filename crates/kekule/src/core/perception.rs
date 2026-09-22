@@ -139,7 +139,7 @@ pub struct RingBasisState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValencePerception {
     pub(super) model: Option<ValenceModel>,
-    pub(super) implicit_hydrogens: BTreeMap<AtomId, u8>,
+    pub(super) inferred_hydrogens: BTreeMap<AtomId, u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,11 +178,11 @@ impl ValencePerception {
         self.model
     }
 
-    /// Iterates every installed implicit-hydrogen assignment.
-    pub fn implicit_hydrogens(
+    /// Iterates every installed inferred-hydrogen assignment.
+    pub fn inferred_hydrogens(
         &self,
     ) -> impl ExactSizeIterator<Item = (AtomId, u8)> + DoubleEndedIterator + '_ {
-        self.implicit_hydrogens
+        self.inferred_hydrogens
             .iter()
             .map(|(atom, count)| (*atom, *count))
     }
@@ -334,10 +334,12 @@ impl Perception {
         self.valence.as_ref().and_then(|state| state.model)
     }
 
-    pub fn implicit_hydrogens(&self, atom: AtomId) -> Option<u8> {
+    /// Reads the inferred contribution only. The parent molecule combines it
+    /// with specified counts through [`Molecule::implicit_hydrogens`].
+    pub fn inferred_hydrogens(&self, atom: AtomId) -> Option<u8> {
         self.valence
             .as_ref()
-            .and_then(|state| state.implicit_hydrogens.get(&atom).copied())
+            .and_then(|state| state.inferred_hydrogens.get(&atom).copied())
     }
 
     pub fn ring_membership(&self) -> Option<&RingMembership> {
@@ -390,7 +392,8 @@ pub struct PerceptionBuilder {
 }
 
 impl PerceptionBuilder {
-    /// Installs an exact valence section on the detached state.
+    /// Installs exact inferred contributions on the detached state.
+    /// Assignments exclude specified counts and graph hydrogen neighbors.
     pub fn with_valence(
         mut self,
         model: Option<ValenceModel>,
@@ -398,17 +401,17 @@ impl PerceptionBuilder {
     ) -> std::result::Result<Self, PerceptionBuildError> {
         check_perception_component_capacity(
             assignments.len(),
-            PerceptionComponent::ImplicitHydrogens,
+            PerceptionComponent::InferredHydrogens,
         )?;
-        let mut implicit_hydrogens = BTreeMap::new();
+        let mut inferred_hydrogens = BTreeMap::new();
         for (atom, count) in assignments {
-            if implicit_hydrogens.insert(atom, count).is_some() {
-                return Err(PerceptionBuildError::DuplicateImplicitHydrogen(atom));
+            if inferred_hydrogens.insert(atom, count).is_some() {
+                return Err(PerceptionBuildError::DuplicateInferredHydrogen(atom));
             }
         }
         self.state.valence = Some(ValencePerception {
             model,
-            implicit_hydrogens,
+            inferred_hydrogens,
         });
         Ok(self)
     }
@@ -492,8 +495,8 @@ pub enum PerceptionComponent {
     RingAtoms,
     /// Bond references in one installed ring.
     RingBonds,
-    /// Atom-wise implicit-hydrogen assignments.
-    ImplicitHydrogens,
+    /// Atom-wise inferred-hydrogen assignments.
+    InferredHydrogens,
     /// Aromatic atom references.
     AromaticAtoms,
     /// Aromatic bond references.
@@ -510,7 +513,7 @@ impl fmt::Display for PerceptionComponent {
             Self::Rings => "installed rings",
             Self::RingAtoms => "installed ring atom references",
             Self::RingBonds => "installed ring bond references",
-            Self::ImplicitHydrogens => "implicit-hydrogen assignments",
+            Self::InferredHydrogens => "inferred-hydrogen assignments",
             Self::AromaticAtoms => "aromatic atom references",
             Self::AromaticBonds => "aromatic bond references",
             Self::CipDescriptors => "CIP descriptor assignments",
@@ -524,8 +527,8 @@ impl fmt::Display for PerceptionComponent {
 pub enum PerceptionBuildError {
     /// A component contains more entries than fixed-width stable IDs can address.
     ComponentCapacityExceeded(PerceptionComponent),
-    /// One atom has more than one implicit-hydrogen assignment.
-    DuplicateImplicitHydrogen(AtomId),
+    /// One atom has more than one inferred-hydrogen assignment.
+    DuplicateInferredHydrogen(AtomId),
     /// One aromatic atom is listed more than once.
     DuplicateAromaticAtom(AtomId),
     /// One aromatic bond is listed more than once.
@@ -540,10 +543,10 @@ impl fmt::Display for PerceptionBuildError {
             Self::ComponentCapacityExceeded(component) => {
                 write!(formatter, "{component} capacity exceeded")
             }
-            Self::DuplicateImplicitHydrogen(atom) => {
+            Self::DuplicateInferredHydrogen(atom) => {
                 write!(
                     formatter,
-                    "duplicate implicit-hydrogen assignment for {atom}"
+                    "duplicate inferred-hydrogen assignment for {atom}"
                 )
             }
             Self::DuplicateAromaticAtom(atom) => {
@@ -726,7 +729,7 @@ pub(super) fn validate_perception(
     state: &Perception,
 ) -> std::result::Result<(), PerceptionInstallError> {
     if let Some(valence) = &state.valence {
-        for atom in valence.implicit_hydrogens.keys().copied() {
+        for atom in valence.inferred_hydrogens.keys().copied() {
             if molecule
                 .graph
                 .atoms

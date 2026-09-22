@@ -479,8 +479,24 @@ impl MoleculeEditor {
         self.working.perception()
     }
 
-    pub fn implicit_hydrogens(&self, atom: AtomId) -> Result<Option<u8>> {
+    /// See [`Molecule::explicit_hydrogens`].
+    pub fn explicit_hydrogens(&self, atom: AtomId) -> Result<usize> {
+        self.working.explicit_hydrogens(atom)
+    }
+
+    /// See [`Molecule::implicit_hydrogens`]. Chemical edits invalidate inference.
+    pub fn implicit_hydrogens(&self, atom: AtomId) -> Result<Option<usize>> {
         self.working.implicit_hydrogens(atom)
+    }
+
+    /// See [`Molecule::total_hydrogens`].
+    pub fn total_hydrogens(&self, atom: AtomId) -> Result<Option<usize>> {
+        self.working.total_hydrogens(atom)
+    }
+
+    /// Reads the inferred contribution only; see [`Molecule::inferred_hydrogens`].
+    pub fn inferred_hydrogens(&self, atom: AtomId) -> Result<Option<u8>> {
+        self.working.inferred_hydrogens(atom)
     }
 
     pub fn atom_is_aromatic(&self, atom: AtomId) -> Result<Option<bool>> {
@@ -795,7 +811,7 @@ fn is_rdkit_oxohalogen(molecule: &Molecule, atom_id: AtomId, atom: &Atom) -> boo
     // explicit valence 3, 5 or 7. Bridging ester oxygen is allowed. This reads
     // represented bond/H contributions, never installed perception.
     let explicit = crate::algorithms::explicit_valence(molecule, atom_id)
-        + usize::from(atom.hydrogens.explicit_count());
+        + usize::from(atom.hydrogens.specified_count());
     if !matches!(explicit, 3 | 5 | 7) {
         return false;
     }

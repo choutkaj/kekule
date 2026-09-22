@@ -853,7 +853,7 @@ pub mod perception {
 
     /// Expert valence perception for canonical represented chemistry.
     ///
-    /// The RDKit-like model derives complete implicit-hydrogen assignments
+    /// The RDKit-like model derives the inferred contribution to implicit H
     /// from ordinary localized bond orders and represented atom state. It does
     /// not require installed ring or aromaticity perception. Source aromatic
     /// bonds are localized during format interpretation before this layer is
@@ -967,10 +967,16 @@ pub mod rotatable_bonds {
 
 /// Explicit small-molecule hydrogen topology transforms.
 ///
-/// These functions never interpret or perceive chemistry implicitly. Addition
-/// consumes current valence assignments unless `explicit_only` is selected,
-/// and removal requires current valence assignments. Successful topology
-/// changes invalidate perception state.
+/// Explicit hydrogens are graph atoms; implicit hydrogens are represented by
+/// specified counts and/or valence inference. Addition converts implicit H to
+/// explicit atoms; removal suppresses eligible explicit atoms without losing
+/// chemical information. These operations do not change protonation states.
+///
+/// Addition requires current inference for inference-enabled atoms, unless
+/// `specified_only` is selected. Fixed counts need no perception. Removal needs
+/// current inference on affected parents when their counts are not fixed.
+/// Successful topology changes invalidate perception state; recompute it before
+/// reading inferred counts. Removal verifies its plan on a temporary copy.
 pub mod hydrogens {
     pub use crate::algorithms::{
         AddHydrogensOptions, AddHydrogensReport, AddedHydrogen, AddedHydrogenOrigin,
@@ -981,7 +987,7 @@ pub mod hydrogens {
     use crate::algorithms::{add_hydrogens_to_molecule, remove_hydrogens_from_molecule};
     use crate::core::Molecule;
 
-    /// Materialize stored explicit counts and perceived implicit hydrogens.
+    /// Convert all resolved implicit hydrogens into explicit atoms and bonds.
     pub fn add_hydrogens(
         molecule: &mut Molecule,
     ) -> Result<AddHydrogensReport, HydrogenTransformError> {

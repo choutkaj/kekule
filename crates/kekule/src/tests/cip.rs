@@ -1020,8 +1020,8 @@ fn add_enantiomorphic_tetrahedral_carriers(mol: &mut Molecule, parent: AtomId) -
     )))
     .expect("S child stereo element");
 
-    mol.set_implicit_hydrogens(child_r, 1);
-    mol.set_implicit_hydrogens(child_s, 1);
+    mol.set_inferred_hydrogens(child_r, 1);
+    mol.set_inferred_hydrogens(child_s, 1);
 
     (child_r, child_s)
 }
@@ -1106,9 +1106,9 @@ fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands
         )))
         .expect("parent pseudoasymmetric stereo element");
 
-    mol.working_mut().set_implicit_hydrogens(center, 0);
-    mol.working_mut().set_implicit_hydrogens(child_r, 1);
-    mol.working_mut().set_implicit_hydrogens(child_s, 1);
+    mol.working_mut().set_inferred_hydrogens(center, 0);
+    mol.working_mut().set_inferred_hydrogens(child_r, 1);
+    mol.working_mut().set_inferred_hydrogens(child_s, 1);
 
     assign_cip(mol.working_mut());
 
@@ -1442,7 +1442,7 @@ fn cip_applies_recursive_rule1a_before_isotope_priority() {
         )))
         .expect("stereo element");
 
-    mol.working_mut().set_implicit_hydrogens(center, 1);
+    mol.working_mut().set_inferred_hydrogens(center, 1);
 
     let report = assign_cip(mol.working_mut());
 

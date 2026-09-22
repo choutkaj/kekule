@@ -366,7 +366,9 @@ fn interpret_v2000_atom(record: &V2000AtomSyntax) -> std::result::Result<Atom, S
     let hydrogens = if record.hydrogen_count.is_some() || record.valence.is_some() {
         HydrogenDeclaration::Fixed(explicit)
     } else {
-        HydrogenDeclaration::Infer { explicit }
+        HydrogenDeclaration::Infer {
+            specified: explicit,
+        }
     };
     interpret_molfile_atom_fields(
         &record.symbol,
@@ -987,8 +989,8 @@ fn v2000_valence_code(
     atom_id: AtomId,
     atom: &Atom,
 ) -> std::result::Result<u8, MolWriteError> {
-    let explicit_hydrogens = match atom.hydrogens {
-        HydrogenDeclaration::Infer { explicit: 0 } => return Ok(0),
+    let specified_hydrogens = match atom.hydrogens {
+        HydrogenDeclaration::Infer { specified: 0 } => return Ok(0),
         HydrogenDeclaration::Infer { .. } => {
             return Err(MolWriteError::new(format!(
                 "V2000 cannot encode represented hydrogens while leaving implicit-H inference enabled for atom {}",
@@ -997,7 +999,7 @@ fn v2000_valence_code(
         }
         HydrogenDeclaration::Fixed(explicit) => explicit,
     };
-    let valence = explicit_valence(mol, atom_id) + usize::from(explicit_hydrogens);
+    let valence = explicit_valence(mol, atom_id) + usize::from(specified_hydrogens);
     match valence {
         0 => Ok(15),
         1..=14 => Ok(u8::try_from(valence).expect("range checked")),
