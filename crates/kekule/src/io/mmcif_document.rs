@@ -7,9 +7,10 @@ use crate::structure::Model;
 use crate::topology::Topology;
 
 use super::mmcif_interpret::{
-    interpret_mmcif, interpret_mmcif_block, interpret_mmcif_ensemble,
-    interpret_mmcif_ensemble_block, MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions,
-    MmcifEnsembleInterpretation, MmcifInterpretError, MmcifInterpretOptions, MmcifInterpretation,
+    interpret_mmcif, interpret_mmcif_block, interpret_mmcif_conformations,
+    interpret_mmcif_conformations_block, interpret_mmcif_ensemble, interpret_mmcif_ensemble_block,
+    MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
+    MmcifInterpretError, MmcifInterpretOptions, MmcifInterpretation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +84,17 @@ impl MmcifDocument {
         &self.blocks
     }
 
+    /// Interprets caller-supplied selections as an unweighted ensemble, in the
+    /// supplied order. Repeated selections are retained. Exactly one atom-site
+    /// block is required; atom identities, chemistry and topology layout must
+    /// agree between selections. No combinations or statistical weights are inferred.
+    pub fn interpret_conformations(
+        &self,
+        selections: &[MmcifInterpretOptions],
+    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+        interpret_mmcif_conformations(self, selections)
+    }
+
     pub fn block(&self, name: &str) -> Option<&MmcifBlock> {
         self.blocks
             .iter()
@@ -130,8 +142,26 @@ impl MmcifBlock {
         &self.name
     }
 
+    /// Interprets explicit selections from this block as an unweighted ensemble.
+    /// See [`MmcifDocument::interpret_conformations`] for compatibility requirements.
+    pub fn interpret_conformations(
+        &self,
+        selections: &[MmcifInterpretOptions],
+    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+        interpret_mmcif_conformations_block(self, selections)
+    }
+
     pub fn entries(&self) -> &[MmcifEntry] {
         &self.entries
+    }
+
+    /// Inventories alternate labels and stable residue identities without
+    /// selecting coordinates or changing the source document. Identities can be
+    /// used in [`super::MmcifAltLocSelection`] overrides and residue groups.
+    pub fn alternate_locations(
+        &self,
+    ) -> Result<Vec<super::MmcifAltLocResidue>, MmcifInterpretError> {
+        super::mmcif_interpret::alternate_location_inventory(self)
     }
 
     pub fn item(&self, tag: &str) -> Option<&MmcifValue> {
