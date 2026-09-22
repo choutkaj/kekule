@@ -16,6 +16,7 @@ at their stated revisions and are not a current list of missing features.
 | mmCIF | Independent blocks, coherent residue altloc selection and overrides, compatible coordinate/conformer ensembles, hierarchy/source reports, and model/ensemble output | [Alternate locations](mmcif-alternate-locations.md), [interpretation](../crates/kekule/src/io/mmcif_interpret/mod.rs), [writer](../crates/kekule/src/io/mmcif_write.rs) |
 | Trajectories | Fixed topology, XYZ/DCD/TRR/XTC, streaming, periodic transformations and analyses | [Trajectory I/O](../crates/kekule-traj/src/io/mod.rs), [analysis](../crates/kekule-traj/src/analysis.rs) |
 | DSSP | Read-only analysis of selected model coordinates; conformer, residue eligibility and chain policies matter to reference comparisons | [Analysis contract](../crates/kekule/src/dssp/mod.rs) |
+| Solvation | Periodic box sizing, TIP3P water packing, monovalent counterions and salt; no force-field assignment or equilibration | [Solvation contract](../crates/kekule/src/structure/solvation/mod.rs), [box sizing](../crates/kekule/src/structure/solvation/boxes.rs) |
 | Potentials | Explicit DREIDING preparation and evaluation on the same topology; current adapter is nonperiodic | [DREIDING contract](../crates/kekule-potentials/src/dreiding/mod.rs) |
 
 The DSSP investigation and force-field scalability/periodicity extensions remain
