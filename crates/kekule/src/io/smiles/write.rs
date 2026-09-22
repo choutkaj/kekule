@@ -196,9 +196,6 @@ fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), Mo
                         "isomeric SMILES writer cannot encode invalid tetrahedral stereo",
                     ));
                 }
-                let atom = mol
-                    .atom(stereo.center)
-                    .map_err(|error| MolWriteError::new(error.to_string()))?;
                 let hydrogen_count = stereo
                     .carriers
                     .iter()
@@ -212,14 +209,10 @@ fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), Mo
                 let implicit = mol
                     .implicit_hydrogens(stereo.center)
                     .map_err(|error| MolWriteError::new(error.to_string()))?;
-                if atom.hydrogens.allows_implicit() && implicit.is_none() {
-                    return Err(MolWriteError::new(
-                        "SMILES stereo atom requires installed hydrogen perception",
-                    ));
-                }
-                if usize::from(atom.hydrogens.explicit_count()) + usize::from(implicit.unwrap_or(0))
-                    != hydrogen_count
-                {
+                let implicit = implicit.ok_or_else(|| {
+                    MolWriteError::new("SMILES stereo atom requires installed hydrogen perception")
+                })?;
+                if implicit != hydrogen_count {
                     return Err(MolWriteError::new(
                         "SMILES tetrahedral hydrogen carriers disagree with the atom hydrogen count",
                     ));
@@ -275,14 +268,10 @@ fn validate_isomeric_double_bond_endpoint(
             }
         }
         StereoCarrier::ImplicitHydrogen => {
-            let atom = mol
-                .atom(endpoint)
+            let hydrogens = mol
+                .implicit_hydrogens(endpoint)
                 .map_err(|error| MolWriteError::new(error.to_string()))?;
-            let hydrogens = atom
-                .hydrogens
-                .explicit_count()
-                .saturating_add(mol.implicit_hydrogens(endpoint).ok().flatten().unwrap_or(0));
-            if hydrogens == 0 {
+            if hydrogens.is_none_or(|count| count == 0) {
                 return Err(MolWriteError::new(
                     "isomeric SMILES writer cannot encode unavailable implicit double-bond hydrogen carrier",
                 ));
@@ -1271,24 +1260,24 @@ fn smiles_bond_between_with_direction(
     smiles_bond_between(mol, order, left, right)
 }
 
-pub(super) fn smiles_atom(atom: &Atom, aromatic: bool, implicit_hydrogens: u8) -> String {
-    smiles_atom_with_chirality(atom, aromatic, implicit_hydrogens, None, false)
+pub(super) fn smiles_atom(atom: &Atom, aromatic: bool, inferred_hydrogens: u8) -> String {
+    smiles_atom_with_chirality(atom, aromatic, inferred_hydrogens, None, false)
 }
 
 fn smiles_atom_with_chirality(
     atom: &Atom,
     aromatic: bool,
-    implicit_hydrogens: u8,
+    inferred_hydrogens: u8,
     chirality: Option<TetrahedralOrientation>,
     force_hydrogen: bool,
 ) -> String {
-    let explicit_hydrogens = if force_hydrogen {
-        smiles_atom_explicit_hydrogens(atom, aromatic, implicit_hydrogens).max(1)
+    let specified_hydrogens = if force_hydrogen {
+        smiles_atom_specified_hydrogens(atom, aromatic, inferred_hydrogens).max(1)
     } else {
-        smiles_atom_explicit_hydrogens(atom, aromatic, implicit_hydrogens)
+        smiles_atom_specified_hydrogens(atom, aromatic, inferred_hydrogens)
     };
     let organic =
-        explicit_hydrogens == 0 && chirality.is_none() && smiles_atom_is_organic_subset(atom);
+        specified_hydrogens == 0 && chirality.is_none() && smiles_atom_is_organic_subset(atom);
     if organic {
         if aromatic {
             atom.element.symbol().to_ascii_lowercase()
@@ -1299,11 +1288,11 @@ fn smiles_atom_with_chirality(
         // Bracket atoms do not infer hydrogens in SMILES. Metadata (isotopes,
         // maps, charge or stereo) can require brackets even when the stored
         // atom permits inference, so materialize the installed count here.
-        let explicit_hydrogens = atom
+        let specified_hydrogens = atom
             .hydrogens
-            .explicit_count()
-            .saturating_add(implicit_hydrogens)
-            .max(explicit_hydrogens);
+            .specified_count()
+            .saturating_add(inferred_hydrogens)
+            .max(specified_hydrogens);
         let mut out = String::from("[");
         if let Some(isotope) = atom.isotope {
             out.push_str(&isotope.to_string());
@@ -1319,10 +1308,10 @@ fn smiles_atom_with_chirality(
                 out.push('@');
             }
         }
-        if explicit_hydrogens > 0 {
+        if specified_hydrogens > 0 {
             out.push('H');
-            if explicit_hydrogens > 1 {
-                out.push_str(&explicit_hydrogens.to_string());
+            if specified_hydrogens > 1 {
+                out.push_str(&specified_hydrogens.to_string());
             }
         }
         if atom.formal_charge > 0 {
@@ -1355,23 +1344,23 @@ fn smiles_atom_with_style_and_chirality(
 ) -> std::result::Result<String, MolWriteError> {
     let aromatic = mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true);
     let perceived_hydrogens = mol
-        .implicit_hydrogens(atom_id)
+        .inferred_hydrogens(atom_id)
         .map_err(|error| MolWriteError::new(error.to_string()))?;
-    let implicit_hydrogens = perceived_hydrogens.unwrap_or(0);
+    let inferred_hydrogens = perceived_hydrogens.unwrap_or(0);
     atom.hydrogens
-        .explicit_count()
-        .checked_add(implicit_hydrogens)
+        .specified_count()
+        .checked_add(inferred_hydrogens)
         .ok_or_else(|| {
             MolWriteError::new("hydrogen count exceeds the SMILES representation limit")
         })?;
     let written = if matches!(atom_style, CanonicalAtomStyle::StoredKekule) && aromatic {
         let mut normalized = atom.clone();
-        let mut normalized_implicit = implicit_hydrogens;
-        if !matches!(atom.element.symbol(), "B" | "C") && implicit_hydrogens > 0 {
+        let mut normalized_implicit = inferred_hydrogens;
+        if !matches!(atom.element.symbol(), "B" | "C") && inferred_hydrogens > 0 {
             normalized.hydrogens = HydrogenDeclaration::Fixed(
                 atom.hydrogens
-                    .explicit_count()
-                    .saturating_add(implicit_hydrogens),
+                    .specified_count()
+                    .saturating_add(inferred_hydrogens),
             );
             normalized_implicit = 0;
         }
@@ -1386,19 +1375,21 @@ fn smiles_atom_with_style_and_chirality(
         smiles_atom_with_chirality(
             atom,
             aromatic,
-            implicit_hydrogens,
+            inferred_hydrogens,
             chirality,
             force_hydrogen,
         )
     };
-    if atom.hydrogens.allows_implicit() && perceived_hydrogens.is_none() && written.starts_with('[')
+    if atom.hydrogens.allows_inference()
+        && perceived_hydrogens.is_none()
+        && written.starts_with('[')
     {
         return Err(MolWriteError::new(format!(
             "SMILES bracket atom {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
         )));
     }
     if written.starts_with('[') {
-        validate_smiles_bracket_radical(mol, atom_id, atom, implicit_hydrogens)?;
+        validate_smiles_bracket_radical(mol, atom_id, atom, inferred_hydrogens)?;
     }
     Ok(written)
 }
@@ -1407,12 +1398,12 @@ pub(super) fn validate_smiles_bracket_radical(
     mol: &Molecule,
     atom_id: AtomId,
     atom: &Atom,
-    implicit_hydrogens: u8,
+    inferred_hydrogens: u8,
 ) -> std::result::Result<(), MolWriteError> {
     let hydrogens = atom
         .hydrogens
-        .explicit_count()
-        .checked_add(implicit_hydrogens)
+        .specified_count()
+        .checked_add(inferred_hydrogens)
         .ok_or_else(|| {
             MolWriteError::new("hydrogen count exceeds the SMILES representation limit")
         })?;
@@ -1432,15 +1423,15 @@ pub(super) fn validate_smiles_bracket_radical(
     Ok(())
 }
 
-fn smiles_atom_explicit_hydrogens(atom: &Atom, aromatic: bool, implicit_hydrogens: u8) -> u8 {
+fn smiles_atom_specified_hydrogens(atom: &Atom, aromatic: bool, inferred_hydrogens: u8) -> u8 {
     if atom.element.symbol() == "N"
         && aromatic
-        && atom.hydrogens.explicit_count() == 0
-        && implicit_hydrogens == 1
+        && atom.hydrogens.specified_count() == 0
+        && inferred_hydrogens == 1
     {
         1
     } else {
-        atom.hydrogens.explicit_count()
+        atom.hydrogens.specified_count()
     }
 }
 
@@ -1448,7 +1439,7 @@ fn smiles_atom_is_organic_subset(atom: &Atom) -> bool {
     atom.isotope.is_none()
         && atom.radical.is_none()
         && atom.formal_charge == 0
-        && atom.hydrogens.allows_implicit()
+        && atom.hydrogens.allows_inference()
         && atom.atom_map.is_none()
         && matches!(
             atom.element.symbol(),
@@ -1459,8 +1450,8 @@ fn smiles_atom_is_organic_subset(atom: &Atom) -> bool {
 pub(super) fn smiles_atom_requires_brackets(
     atom: &Atom,
     aromatic: bool,
-    implicit_hydrogens: u8,
+    inferred_hydrogens: u8,
 ) -> bool {
     !smiles_atom_is_organic_subset(atom)
-        || smiles_atom_explicit_hydrogens(atom, aromatic, implicit_hydrogens) > 0
+        || smiles_atom_specified_hydrogens(atom, aromatic, inferred_hydrogens) > 0
 }

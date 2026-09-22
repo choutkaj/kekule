@@ -11,7 +11,7 @@ fn interpretation_and_default_perception_are_separate() {
     assert!(small.perception().has_rings());
     assert!(small.perception().has_aromaticity());
     assert_eq!(
-        small.implicit_hydrogens(AtomId::new(2)).expect("oxygen"),
+        small.inferred_hydrogens(AtomId::new(2)).expect("oxygen"),
         Some(1)
     );
 }
@@ -329,7 +329,7 @@ fn valence_reports_excess_common_valence() {
         ValenceOptions { strict: false },
     )
     .expect("permissive valence inspection should succeed");
-    assert_eq!(mol.implicit_hydrogens(c).expect("carbon"), Some(0));
+    assert_eq!(mol.inferred_hydrogens(c).expect("carbon"), Some(0));
 }
 
 #[test]
@@ -375,7 +375,7 @@ fn failed_strict_valence_perception_preserves_complete_previous_perception_state
         [ValenceIssue::ValenceExceeded { atom, .. }] if *atom == carbon
     ));
     assert_eq!(mol.perception(), &previous);
-    assert_eq!(mol.implicit_hydrogens(carbon).unwrap(), Some(2));
+    assert_eq!(mol.inferred_hydrogens(carbon).unwrap(), Some(2));
 }
 
 #[test]
@@ -387,7 +387,7 @@ fn valence_charge_adjustment_clamps_to_the_rdkit_periodic_table() {
 
     valence_api::perceive_valence(molecule.working_mut(), ValenceModel::RdkitLike)
         .expect("RDKit UpdatePropertyCache clamps the effective atomic number even when strict");
-    assert_eq!(molecule.implicit_hydrogens(carbon).unwrap(), Some(0));
+    assert_eq!(molecule.inferred_hydrogens(carbon).unwrap(), Some(0));
 
     valence_api::perceive_valence_with_options(
         molecule.working_mut(),
@@ -396,7 +396,7 @@ fn valence_charge_adjustment_clamps_to_the_rdkit_periodic_table() {
     )
     .expect("permissive inspection should install");
     assert!(molecule.perception().has_valence());
-    assert_eq!(molecule.implicit_hydrogens(carbon).unwrap(), Some(0));
+    assert_eq!(molecule.inferred_hydrogens(carbon).unwrap(), Some(0));
 }
 
 #[test]
@@ -424,12 +424,12 @@ fn valence_counts_high_degree_atoms_without_narrowing_or_panicking() {
             max_allowed: 4,
         }]
     );
-    assert_eq!(mol.implicit_hydrogens(carbon).expect("carbon"), None);
+    assert_eq!(mol.inferred_hydrogens(carbon).expect("carbon"), None);
 }
 
 #[test]
 fn valence_uses_rdkit_periodic_table_rules_for_electropositive_atoms() {
-    for (symbol, expected_implicit_hydrogens) in [
+    for (symbol, expected_inferred_hydrogens) in [
         ("Li", 1),
         ("Be", 2),
         ("Na", 1),
@@ -452,8 +452,8 @@ fn valence_uses_rdkit_periodic_table_rules_for_electropositive_atoms() {
 
         assert!(report.is_ok(), "neutral {symbol} should be supported");
         assert_eq!(
-            mol.implicit_hydrogens(atom_id).expect("atom"),
-            Some(expected_implicit_hydrogens),
+            mol.inferred_hydrogens(atom_id).expect("atom"),
+            Some(expected_inferred_hydrogens),
             "neutral {symbol} implicit hydrogens"
         );
     }
@@ -557,7 +557,7 @@ fn valence_accepts_rdkit_phosphorus_minus_one_and_hydride_compatibility_cases() 
 
 #[test]
 fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
-    for (symbol, charge, expected_implicit_hydrogens) in [
+    for (symbol, charge, expected_inferred_hydrogens) in [
         ("H", 1, 0),
         ("H", -1, 0),
         ("Rb", 1, 0),
@@ -580,8 +580,8 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
 
         assert!(report.is_ok(), "{symbol}{charge:+} should be supported");
         assert_eq!(
-            mol.implicit_hydrogens(atom_id).expect("atom"),
-            Some(expected_implicit_hydrogens),
+            mol.inferred_hydrogens(atom_id).expect("atom"),
+            Some(expected_inferred_hydrogens),
             "{symbol}{charge:+} implicit hydrogens"
         );
     }
@@ -599,7 +599,7 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
             "isolated unsupported spectator {symbol} should be accepted"
         );
         assert_eq!(
-            mol.implicit_hydrogens(atom_id).expect("atom"),
+            mol.inferred_hydrogens(atom_id).expect("atom"),
             Some(0),
             "{symbol} implicit hydrogens"
         );
@@ -628,7 +628,7 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
     assert!(report.is_ok(), "tetracyanomercurate should be supported");
     assert_eq!(
         mercury_cyanide
-            .implicit_hydrogens(mercury)
+            .inferred_hydrogens(mercury)
             .expect("mercury"),
         Some(0)
     );
@@ -655,7 +655,7 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
     );
     assert_eq!(
         covalent_aluminum
-            .implicit_hydrogens(aluminum)
+            .inferred_hydrogens(aluminum)
             .expect("aluminum"),
         Some(0)
     );
@@ -682,7 +682,7 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
     );
     assert_eq!(
         neutral_magnesium
-            .implicit_hydrogens(magnesium)
+            .inferred_hydrogens(magnesium)
             .expect("magnesium"),
         Some(0)
     );

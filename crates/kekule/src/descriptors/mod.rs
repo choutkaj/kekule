@@ -1,7 +1,7 @@
 //! Read-only small-molecule formula and mass descriptors.
 //!
 //! Descriptor calculation never mutates or perceives the input.
-//! Callers select explicitly whether installed implicit-hydrogen state is part
+//! Callers select explicitly whether installed inferred-hydrogen state is part
 //! of the calculation.
 //!
 //! Average masses use CIAAW 2024 abridged standard atomic weights for unlabeled
@@ -27,9 +27,11 @@ use data::{exact_isotope_mass, most_abundant_isotope, standard_atomic_weight};
 /// Selects which non-atom hydrogen counts contribute to a descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HydrogenCountPolicy {
-    /// Count live hydrogen atoms and stored explicit-hydrogen declarations.
+    /// Count explicit graph hydrogens and specified implicit counts only.
+    /// This can describe a partial composition when inference is enabled.
     StoredOnly,
-    /// Also count installed implicit-hydrogen perception state.
+    /// Count explicit hydrogens and the complete implicit hydrogen count.
+    /// Requires perception for atoms whose declarations enable inference.
     IncludePerceived,
 }
 
@@ -277,20 +279,16 @@ fn visit_constituents(
     let hydrogen = Element::from_atomic_number(1).expect("hydrogen is a supported element");
     for (atom_id, atom) in graph.atoms() {
         visit(atom_id, atom.element, atom.isotope, 1)?;
-        let explicit_hydrogens = atom.hydrogens.explicit_count();
-        if explicit_hydrogens != 0 {
-            visit(atom_id, hydrogen, None, u64::from(explicit_hydrogens))?;
-        }
-        if hydrogen_policy == HydrogenCountPolicy::IncludePerceived
-            && atom.hydrogens.allows_implicit()
-        {
-            let implicit = graph
+        let implicit = match hydrogen_policy {
+            HydrogenCountPolicy::StoredOnly => usize::from(atom.hydrogens.specified_count()),
+            HydrogenCountPolicy::IncludePerceived => graph
                 .implicit_hydrogens(atom_id)
                 .expect("a live atom identifier remains valid during read-only traversal")
-                .ok_or(MolecularDescriptorError::MissingImplicitHydrogens { atom: atom_id })?;
-            if implicit != 0 {
-                visit(atom_id, hydrogen, None, u64::from(implicit))?;
-            }
+                .ok_or(MolecularDescriptorError::MissingImplicitHydrogens { atom: atom_id })?,
+        };
+        if implicit != 0 {
+            // At most two u8 contributions, widened by the public count API.
+            visit(atom_id, hydrogen, None, implicit as u64)?;
         }
     }
     Ok(())
@@ -387,7 +385,7 @@ mod tests {
     #[test]
     fn represented_hydrogens_can_coexist_with_perceived_hydrogens() {
         let mut atom = Atom::new(element("C"));
-        atom.hydrogens = HydrogenDeclaration::Infer { explicit: 1 };
+        atom.hydrogens = HydrogenDeclaration::Infer { specified: 1 };
         let mut graph = crate::core::MoleculeEditor::new();
         graph.add_atom(atom).expect("carbon");
         let mut molecule = graph.finish().expect("single atom");
@@ -407,7 +405,7 @@ mod tests {
         );
         assert_eq!(
             molecule.atom(AtomId::new(0)).expect("carbon").hydrogens,
-            HydrogenDeclaration::Infer { explicit: 1 }
+            HydrogenDeclaration::Infer { specified: 1 }
         );
     }
 

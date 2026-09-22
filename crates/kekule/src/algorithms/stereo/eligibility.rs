@@ -117,12 +117,7 @@ pub(super) fn has_repeated_terminal_ligands(
 
 fn terminal_ligand(mol: &Molecule, center: AtomId, carrier: AtomId) -> Option<TerminalLigand> {
     let atom = mol.atom(carrier).ok()?;
-    let count = match atom.hydrogens {
-        HydrogenDeclaration::Fixed(count) => usize::from(count),
-        HydrogenDeclaration::Infer { explicit } => {
-            usize::from(explicit) + usize::from(mol.implicit_hydrogens(carrier).ok()??)
-        }
-    };
+    let count = mol.implicit_hydrogens(carrier).ok()??;
     let mut hydrogens: Vec<_> = (0..count).map(|_| AtomIdentity::hydrogen()).collect();
     let mut attachment = None;
     for (_, bond) in mol.incident_bonds(carrier).ok()? {

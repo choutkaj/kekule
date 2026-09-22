@@ -275,7 +275,9 @@ fn is_explicit_water_atoms(atoms: &[&crate::core::Atom]) -> bool {
         .filter(|atom| atom.element.atomic_number() == 8)
         .map(|atom| match atom.hydrogens {
             HydrogenDeclaration::Fixed(count) => usize::from(count),
-            HydrogenDeclaration::Infer { explicit } => usize::from(explicit),
+            HydrogenDeclaration::Infer {
+                specified: explicit,
+            } => usize::from(explicit),
         })
         .sum::<usize>();
     oxygen_count == 1

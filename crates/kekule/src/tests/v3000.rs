@@ -723,7 +723,7 @@ M  END
         .into_molecule();
     assert_eq!(
         molecule.atom(AtomId::new(0)).expect("carbon").hydrogens,
-        HydrogenDeclaration::Infer { explicit: 0 }
+        HydrogenDeclaration::Infer { specified: 0 }
     );
 
     let unsupported = valence.replace("1 C 0 0 0 0 VAL=4", "1 Xx 0 0 0 0");

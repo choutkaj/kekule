@@ -426,9 +426,46 @@ impl Molecule {
         Ok(())
     }
 
-    pub fn implicit_hydrogens(&self, atom: AtomId) -> Result<Option<u8>> {
+    /// Counts explicit hydrogen atoms among this atom's graph neighbors.
+    /// Includes isotopic and charged hydrogen neighbors; requires no perception.
+    pub fn explicit_hydrogens(&self, atom: AtomId) -> Result<usize> {
+        Ok(self
+            .neighbors(atom)?
+            .filter(|neighbor| {
+                self.atom(*neighbor)
+                    .expect("live graph neighbor")
+                    .element
+                    .atomic_number()
+                    == 1
+            })
+            .count())
+    }
+
+    /// Counts all implicit hydrogens: specified plus inferred, excluding graph H.
+    /// Fixed counts are available without perception. For inference-enabled atoms,
+    /// `None` means the additional count has not been perceived or was invalidated
+    /// by a chemical edit. This method never runs perception implicitly.
+    pub fn implicit_hydrogens(&self, atom: AtomId) -> Result<Option<usize>> {
+        Ok(self
+            .atom(atom)?
+            .hydrogens
+            .implicit_count(self.perception.inferred_hydrogens(atom)))
+    }
+
+    /// Counts explicit hydrogen neighbors plus all implicit hydrogens.
+    /// Returns `None` when the implicit count is unresolved.
+    pub fn total_hydrogens(&self, atom: AtomId) -> Result<Option<usize>> {
+        let explicit = self.explicit_hydrogens(atom)?;
+        Ok(self
+            .implicit_hydrogens(atom)?
+            .map(|implicit| explicit + implicit))
+    }
+
+    /// Reads only the installed valence-inferred contribution, for model diagnostics.
+    /// For chemical hydrogen counts use [`Self::implicit_hydrogens`] instead.
+    pub fn inferred_hydrogens(&self, atom: AtomId) -> Result<Option<u8>> {
         self.atom(atom)?;
-        Ok(self.perception.implicit_hydrogens(atom))
+        Ok(self.perception.inferred_hydrogens(atom))
     }
 
     pub fn atom_is_aromatic(&self, atom: AtomId) -> Result<Option<bool>> {
@@ -687,23 +724,23 @@ impl Molecule {
     pub(crate) fn install_valence(
         &mut self,
         model: ValenceModel,
-        implicit_hydrogens: BTreeMap<AtomId, u8>,
+        inferred_hydrogens: BTreeMap<AtomId, u8>,
     ) {
         self.perception.valence = Some(ValencePerception {
             model: Some(model),
-            implicit_hydrogens,
+            inferred_hydrogens,
         });
         self.invalidate_aromaticity();
     }
 
-    pub(crate) fn set_implicit_hydrogens(&mut self, atom: AtomId, count: u8) {
+    pub(crate) fn set_inferred_hydrogens(&mut self, atom: AtomId, count: u8) {
         self.perception
             .valence
             .get_or_insert_with(|| ValencePerception {
                 model: None,
-                implicit_hydrogens: BTreeMap::new(),
+                inferred_hydrogens: BTreeMap::new(),
             })
-            .implicit_hydrogens
+            .inferred_hydrogens
             .insert(atom, count);
         self.invalidate_aromaticity();
     }

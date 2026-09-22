@@ -114,7 +114,7 @@ pub(super) fn render_mol_v3000(
             out.push_str(&format!(" RAD={}", v3000_radical_code(radical)?));
         }
         match atom.hydrogens {
-            HydrogenDeclaration::Infer { explicit: 0 } => {}
+            HydrogenDeclaration::Infer { specified: 0 } => {}
             HydrogenDeclaration::Infer { .. } => {
                 return Err(MolWriteError::new(format!(
                     "V3000 cannot encode represented hydrogens while leaving implicit-H inference enabled for atom {}",
@@ -659,7 +659,9 @@ fn interpret_v3000_atom(record: &V3000AtomSyntax) -> std::result::Result<Atom, S
     let hydrogens = if record.hydrogen_count.is_some() || record.valence.is_some() {
         HydrogenDeclaration::Fixed(explicit)
     } else {
-        HydrogenDeclaration::Infer { explicit }
+        HydrogenDeclaration::Infer {
+            specified: explicit,
+        }
     };
     interpret_molfile_atom_fields(
         &record.symbol,
@@ -727,7 +729,7 @@ fn apply_v3000_declared_hydrogens(
                 .atom(atom_id)
                 .expect("interpreted V3000 atom remains live")
                 .hydrogens
-                .explicit_count()
+                .specified_count()
         });
         apply_molfile_declared_valence(
             molecule,

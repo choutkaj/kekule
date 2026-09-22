@@ -940,11 +940,39 @@ impl Topology {
             .map(move |(bond, payload)| (InstanceBondId::new(atom.molecule, bond), payload)))
     }
 
-    pub fn implicit_hydrogens(&self, atom: InstanceAtomId) -> Result<Option<u8>, TopologyError> {
+    /// Counts explicit graph hydrogen neighbors in this atom's molecule instance.
+    pub fn explicit_hydrogens(&self, atom: InstanceAtomId) -> Result<usize, TopologyError> {
+        self.atom(atom)?;
+        self.molecule(atom.molecule)?
+            .molecule()
+            .explicit_hydrogens(atom.atom)
+            .map_err(|_| TopologyError::InvalidAtomId(atom))
+    }
+
+    /// Counts all implicit hydrogens; see [`Molecule::implicit_hydrogens`].
+    pub fn implicit_hydrogens(&self, atom: InstanceAtomId) -> Result<Option<usize>, TopologyError> {
         self.atom(atom)?;
         self.molecule(atom.molecule)?
             .molecule()
             .implicit_hydrogens(atom.atom)
+            .map_err(|_| TopologyError::InvalidAtomId(atom))
+    }
+
+    /// Counts explicit and implicit hydrogens; see [`Molecule::total_hydrogens`].
+    pub fn total_hydrogens(&self, atom: InstanceAtomId) -> Result<Option<usize>, TopologyError> {
+        self.atom(atom)?;
+        self.molecule(atom.molecule)?
+            .molecule()
+            .total_hydrogens(atom.atom)
+            .map_err(|_| TopologyError::InvalidAtomId(atom))
+    }
+
+    /// Reads only the inferred contribution, for valence-model diagnostics.
+    pub fn inferred_hydrogens(&self, atom: InstanceAtomId) -> Result<Option<u8>, TopologyError> {
+        self.atom(atom)?;
+        self.molecule(atom.molecule)?
+            .molecule()
+            .inferred_hydrogens(atom.atom)
             .map_err(|_| TopologyError::InvalidAtomId(atom))
     }
 

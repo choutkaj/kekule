@@ -127,7 +127,7 @@ struct AtomSignature {
     isotope: u16,
     formal_charge: i8,
     radical: Option<(u8, Option<u8>)>,
-    total_hydrogens: usize,
+    implicit_hydrogens: usize,
     atom_map: u32,
     degree: usize,
 }
@@ -140,8 +140,10 @@ fn atom_signature(mol: &Molecule, atom_id: AtomId, atom: &Atom, degree: usize) -
         radical: atom
             .radical
             .map(|radical| (radical.electron_count(), radical.spin_multiplicity())),
-        total_hydrogens: usize::from(atom.hydrogens.explicit_count())
-            + usize::from(mol.implicit_hydrogens(atom_id).ok().flatten().unwrap_or(0)),
+        implicit_hydrogens: mol
+            .implicit_hydrogens(atom_id)
+            .expect("live atom")
+            .unwrap_or_else(|| usize::from(atom.hydrogens.specified_count())),
         atom_map: atom.atom_map.unwrap_or(0),
         degree,
     }
