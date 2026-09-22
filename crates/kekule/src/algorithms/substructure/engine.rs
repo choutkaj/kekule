@@ -20,6 +20,7 @@ pub(super) struct AtomFacts {
 pub(super) struct TargetAtom<'a> {
     pub molecule: &'a Molecule,
     pub local: AtomId,
+    pub occurrence: usize,
     pub neighbors: Vec<(usize, BondId)>,
     facts: Arc<AtomFacts>,
 }
@@ -33,7 +34,7 @@ impl<'a> TargetData<'a> {
     pub fn new(molecules: impl IntoIterator<Item = &'a Molecule>) -> Self {
         let mut atoms = Vec::new();
         let mut facts_cache = BTreeMap::new();
-        for molecule in molecules {
+        for (occurrence, molecule) in molecules.into_iter().enumerate() {
             let offset = atoms.len();
             let indices: BTreeMap<_, _> = molecule
                 .atom_ids()
@@ -98,6 +99,7 @@ impl<'a> TargetData<'a> {
                     .map(|(id, b)| (indices[&if b.a() == local { b.b() } else { b.a() }], id))
                     .collect();
                 atoms.push(TargetAtom {
+                    occurrence,
                     molecule,
                     local,
                     neighbors,
@@ -572,6 +574,8 @@ impl Context<'_, '_> {
             .iter()
             .map(|&a| self.data.atoms[a].local)
             .collect::<Vec<_>>();
+        let enhanced = self.options.use_enhanced_stereo || !state.query.stereo_groups().is_empty();
+        let mut relationships = stereo::GroupMatches::default();
         for constraint in state.query.stereo_constraints() {
             let focus = match constraint {
                 QueryStereoConstraint::Tetrahedral { center, .. } => center.index(),
@@ -579,12 +583,33 @@ impl Context<'_, '_> {
                     state.query.bond(*bond).expect("query bond").a().index()
                 }
             };
-            if !stereo::matches_constraint(
+            let matches = stereo::matches_constraint(
                 self.data.atoms[mapping[focus]].molecule,
                 state.query,
                 &locals,
                 constraint,
-            ) {
+            );
+            if enhanced && matches!(constraint, QueryStereoConstraint::Tetrahedral { .. }) {
+                let target = &self.data.atoms[mapping[focus]];
+                let mut opposite = constraint.clone();
+                if let QueryStereoConstraint::Tetrahedral { orientation, .. } = &mut opposite {
+                    *orientation = orientation.inverted();
+                }
+                let inverse_matches =
+                    stereo::matches_constraint(target.molecule, state.query, &locals, &opposite);
+                if (!matches && !inverse_matches)
+                    || !relationships.add(
+                        target.molecule,
+                        target.local,
+                        target.occurrence,
+                        state.query,
+                        crate::query::QueryAtomId::new(focus as u32),
+                        (matches != inverse_matches).then_some(!matches),
+                    )
+                {
+                    return Ok(false);
+                }
+            } else if !matches {
                 return Ok(false);
             }
         }
@@ -600,17 +625,47 @@ impl Context<'_, '_> {
                 continue;
             }
             let target = &self.data.atoms[mapping[qa.index()]];
+            let grouped = state
+                .query
+                .stereo_groups()
+                .iter()
+                .any(|g| g.members.contains(&qa));
             let specified=target.molecule.stereo_elements().any(|(_,s)|matches!(&s.kind,StereoElementKind::Tetrahedral(t) if t.center==target.local && t.orientation.is_some()));
+            if grouped && !specified {
+                return Ok(false);
+            }
             let parity = stereo::matches_constraint(
                 target.molecule,
                 state.query,
                 &locals,
                 atom.stereo_frame().expect("validated frame"),
             );
-            if !atom.expression().try_evaluate_with(|p| match p {
+            let matched = atom.expression().try_evaluate_with(|p| match p {
                 AtomPredicate::Tetrahedral(same) => Ok(specified && parity == *same),
                 _ => self.predicate(p, mapping[qa.index()]),
-            })? {
+            })?;
+            if enhanced && specified {
+                let flexible = matches!(atom.stereo_frame(), Some(QueryStereoConstraint::Tetrahedral { carriers, .. }) if carriers.len() < 3);
+                let inverted = atom.expression().try_evaluate_with(|p| match p {
+                    AtomPredicate::Tetrahedral(same) => {
+                        Ok((if flexible { parity } else { !parity }) == *same)
+                    }
+                    _ => self.predicate(p, mapping[qa.index()]),
+                })?;
+                if (!matched && !inverted)
+                    || ((grouped || matched != inverted)
+                        && !relationships.add(
+                            target.molecule,
+                            target.local,
+                            target.occurrence,
+                            state.query,
+                            qa,
+                            (matched != inverted).then_some(!matched),
+                        ))
+                {
+                    return Ok(false);
+                }
+            } else if !matched {
                 return Ok(false);
             }
         }

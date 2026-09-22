@@ -33,10 +33,11 @@ to implement every Daylight, RDKit, or CXSMARTS extension.
 | `:n` | Query label, never a test of target atom maps | `tags_are_outputs_and_do_not_match_target_map_values` |
 | `@`, `@@`, `@TH1`, `@TH2` | Local represented tetrahedral configuration, checked under atom mapping | `query`, `boolean_stereo_keeps_atom_expression_context` |
 | `/`, `\` | Relative bond directions, jointly evaluated under a complete mapping; lone directions impose no stereo relationship | `query`, `directional_alternatives_keep_boolean_context` |
+| CX `a`, `oN`, `&N`, `r` | Enhanced tetrahedral groups, zero-based atom indices; shared inversion within each group | `enhanced_stereo` |
 
 ### Explicit boundaries
 
-- Reactions, component grouping such as `(C).(C)`, CXSMARTS, `@?`, `/?`,
+- Reactions, component grouping such as `(C).(C)`, other CXSMARTS fields, `@?`, `/?`,
   non-tetrahedral classes, hybridization predicates, numeric ranges, and directed
   dative extensions are outside this dialect. Valid recognized unsupported
   syntax reports `Unsupported`; malformed syntax reports `InvalidSyntax`.
@@ -60,7 +61,18 @@ to implement every Daylight, RDKit, or CXSMARTS extension.
   An unnegated stereo primitive requires specified target stereo.
 - Stereo alternatives on one atom must share the same inline-hydrogen carrier
   convention. Conflicting frames and contradictory literal directions are
-  rejected. CIP descriptors and enhanced stereo groups do not affect matching.
+  rejected. CIP descriptors do not affect matching.
+- Query enhanced groups enable group-aware matching. For plain SMARTS, set
+  `use_enhanced_stereo: true` to interpret target groups; the default retains
+  literal local configuration matching. Absolute queries may match a configuration
+  in an OR or AND target; OR queries may match OR or AND, and AND queries require
+  AND. Relative and quantitative racemic queries require the same group kind.
+  Every matched member of a target group must agree on one shared inversion;
+  independent query groups cannot collapse into one correlated target group.
+  An incomplete carrier frame imposes no orientation relationship. Group members
+  still require specified stereo and compatible group kinds, even in a Boolean
+  expression that accepts both orientations. Separate topology occurrences have
+  independent group identities. Recursive queries keep their own group scope.
 
 ### Enumeration and errors
 

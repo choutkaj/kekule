@@ -5,29 +5,32 @@ use crate::core::Molecule;
 use crate::core::*;
 use crate::io::MolWriteError;
 
+use super::emit::Emission;
 use super::parse::SmilesDirectionToken;
 
 pub fn write_smiles(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
-    write_source_order_smiles(
+    write_source_order_emission(
         molecule,
         StereoWriteMode::Reject,
         CanonicalAtomStyle::Aromatic,
-    )
+    )?
+    .render()
 }
 
 pub fn write_isomeric_smiles(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
-    write_source_order_smiles(
+    write_source_order_emission(
         molecule,
         StereoWriteMode::Encode,
         CanonicalAtomStyle::StoredKekule,
-    )
+    )?
+    .render()
 }
 
-fn write_source_order_smiles(
+pub(super) fn write_source_order_emission(
     mol: &Molecule,
     mode: StereoWriteMode,
     style: CanonicalAtomStyle,
-) -> std::result::Result<String, MolWriteError> {
+) -> std::result::Result<Emission, MolWriteError> {
     let plan = plan_smiles_write(mol, mode)?;
     let stereo = (mode == StereoWriteMode::Encode)
         .then(|| SmilesStereoWriteContext::new(mol, AtomId::index))
@@ -40,6 +43,7 @@ fn write_source_order_smiles(
             &plan,
             stereo.as_ref(),
             style,
+            false,
             |_, children| {
                 children.sort_by_key(|(bond, _, atom)| (*atom, *bond));
                 children
@@ -52,7 +56,7 @@ fn write_source_order_smiles(
             },
         )?);
     }
-    Ok(parts.join("."))
+    Ok(Emission::join(parts))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,11 +182,7 @@ pub(super) fn validate_smiles_writeable(
 }
 
 fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), MolWriteError> {
-    if mol.stereo_groups().next().is_some() {
-        return Err(MolWriteError::new(
-            "isomeric SMILES writer cannot encode enhanced stereo groups",
-        ));
-    }
+    super::emit::validate_groups(mol)?;
     for (_, element) in mol.stereo_elements() {
         if !element.is_specified() {
             return Err(MolWriteError::new(
@@ -975,8 +975,9 @@ pub(super) fn write_smiles_component(
     plan: &SmilesWritePlan,
     stereo: Option<&SmilesStereoWriteContext>,
     atom_style: CanonicalAtomStyle,
+    canonical_groups: bool,
     order_children: impl Fn(AtomId, &mut Vec<(BondId, SmilesBondOrder, AtomId)>) -> Option<usize>,
-) -> std::result::Result<String, MolWriteError> {
+) -> std::result::Result<Emission, MolWriteError> {
     enum Action {
         Node {
             atom: AtomId,
@@ -993,6 +994,22 @@ pub(super) fn write_smiles_component(
     }
 
     let mut out = String::new();
+    let mut atom_order = Vec::new();
+    let mut group_inversions = BTreeMap::new();
+    let grouped_centers: BTreeMap<_, _> = mol
+        .stereo_elements()
+        .filter_map(|(_, e)| {
+            let group = e.group?;
+            if mol.stereo_group(group).ok()?.kind == StereoGroupKind::Absolute {
+                return None;
+            }
+            if let StereoElementKind::Tetrahedral(s) = &e.kind {
+                Some((s.center, group))
+            } else {
+                None
+            }
+        })
+        .collect();
     let mut phases = BTreeMap::new();
     let mut open_rings = BTreeMap::new();
     let mut available_rings = (0..=99u64).collect::<BTreeSet<_>>();
@@ -1034,11 +1051,23 @@ pub(super) fn write_smiles_component(
                     })
                     .collect::<Vec<_>>();
                 let main_child_index = order_children(atom, &mut children);
-                let chirality = stereo
+                atom_order.push(atom);
+                let mut chirality = stereo
                     .and_then(|context| {
                         context.atom_chirality(atom, parent, closures, &children, main_child_index)
                     })
                     .transpose()?;
+                if canonical_groups {
+                    if let (Some(group), Some(state)) = (grouped_centers.get(&atom), &mut chirality)
+                    {
+                        let invert = *group_inversions
+                            .entry(*group)
+                            .or_insert(state.orientation == TetrahedralOrientation::Clockwise);
+                        if invert {
+                            state.orientation = state.orientation.inverted();
+                        }
+                    }
+                }
                 out.push_str(&smiles_atom_with_style_and_chirality(
                     mol,
                     atom,
@@ -1130,7 +1159,7 @@ pub(super) fn write_smiles_component(
             }
         }
     }
-    Ok(out)
+    Ok(Emission::new(mol, out, &atom_order))
 }
 
 fn smiles_incident_bonds(

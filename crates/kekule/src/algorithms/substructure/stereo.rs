@@ -1,6 +1,73 @@
 use crate::core::{AtomId, Molecule, StereoCarrier, StereoElementKind};
 use crate::query::{QueryGraph, QueryStereoConstraint};
 
+/// Test inclusion of the query's correlated configuration choices in the target's.
+/// Each target group supplies one shared inversion variable. Distinct query
+/// variables cannot satisfy a target correlation for all query configurations.
+#[derive(Default)]
+pub(super) struct GroupMatches {
+    target_variables:
+        std::collections::BTreeMap<(usize, crate::core::StereoGroupId), (Option<usize>, bool)>,
+}
+
+impl GroupMatches {
+    pub fn add(
+        &mut self,
+        target: &Molecule,
+        center: AtomId,
+        occurrence: usize,
+        query: &QueryGraph,
+        query_center: crate::query::QueryAtomId,
+        inverted: Option<bool>,
+    ) -> bool {
+        use crate::core::StereoGroupKind as K;
+        let Some(element) = target.stereo_elements().find_map(|(_, e)| match &e.kind {
+            StereoElementKind::Tetrahedral(s) if s.center == center && s.orientation.is_some() => {
+                Some(e)
+            }
+            _ => None,
+        }) else {
+            return false;
+        };
+        let qgroup = query
+            .stereo_groups()
+            .iter()
+            .enumerate()
+            .find(|(_, g)| g.members.contains(&query_center));
+        let qkind = qgroup.map_or(K::Absolute, |(_, g)| g.kind);
+        let tgroup = element
+            .group
+            .map(|id| (id, target.stereo_group(id).expect("validated stereo group")));
+        let tkind = tgroup.map_or(K::Absolute, |(_, g)| g.kind);
+        let compatible = match qkind {
+            K::Absolute => true,
+            K::Or => matches!(tkind, K::Or | K::And),
+            K::And => tkind == K::And,
+            K::Relative => tkind == K::Relative,
+            K::Racemic => tkind == K::Racemic,
+        };
+        if !compatible {
+            return false;
+        }
+        if tkind == K::Absolute {
+            return qkind == K::Absolute && inverted != Some(true);
+        }
+        let Some(inverted) = inverted else {
+            return true;
+        };
+        let qvariable = qgroup.and_then(|(i, g)| (g.kind != K::Absolute).then_some(i));
+        let key = (occurrence, tgroup.unwrap().0);
+        let value = (qvariable, inverted);
+        match self.target_variables.get(&key) {
+            Some(previous) => *previous == value,
+            None => {
+                self.target_variables.insert(key, value);
+                true
+            }
+        }
+    }
+}
+
 pub(super) fn matches_constraint(
     target: &Molecule,
     query: &QueryGraph,

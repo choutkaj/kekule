@@ -314,21 +314,22 @@ pub mod smiles {
     ///
     /// Reused definitions are emitted once per occurrence and joined with `.`.
     /// Canonical mode sorts components; other modes preserve instance order.
+    /// Enhanced groups share one CX extension with record-global atom indices
+    /// and independent group numbers for every occurrence.
     pub fn write_topology(
         topology: &Topology,
         options: SmilesWriteOptions,
     ) -> Result<String, MolWriteError> {
-        let mut components = topology
-            .molecules()
-            .map(|occurrence| write_molecule(occurrence.molecule(), options))
-            .collect::<Result<Vec<_>, _>>()?;
-        if options.mode == SmilesWriteMode::Canonical {
-            components.sort();
-        }
-        Ok(components.join("."))
+        crate::io::smiles::write_topology(topology, options)
     }
 
     /// Writes one connected molecule while preserving represented stereo.
+    ///
+    /// Tetrahedral absolute, AND, OR and relative groups are emitted as CXSMILES
+    /// (`a`, `&`, `o`, `r`). Unsupported member geometries, quantitative racemic
+    /// groups and multiple independent relative groups return an error rather
+    /// than losing relationships. The global `r` flag shields other specified
+    /// centers with explicit absolute membership.
     ///
     /// Directional encoding is bounded by 4,096 carrier combinations and
     /// 50,000,000 graph visits. Exceeding either returns a resource-limit error.
@@ -346,6 +347,10 @@ pub mod smiles {
     /// Supplied local stereo assertions are retained even when CIP perception
     /// finds no stereogenic unit. Canonicalization does not clean source tags.
     /// Ranking uses the emitted projection so parse/perceive/write is stable.
+    /// Enhanced groups use the CX encoding described by [`write_isomeric`].
+    /// Group numbering and member order are canonical, and simultaneous inversion
+    /// of all members of a non-absolute group produces the same output. Independent
+    /// groups remain independent; flipping only part of a group is not normalized.
     /// Inferred hydrogen counts must be installed when the projection requires
     /// brackets or collapses a hydrogen vertex into an atom that permits
     /// inference; writing otherwise returns an error rather than assuming zero.

@@ -984,7 +984,7 @@ fn compact_subset_projects_tombstoned_properties_bonds_and_model_positions() {
 }
 
 #[test]
-fn compact_subset_remaps_stereo_and_splits_groups_while_pruning_lost_carriers() {
+fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_carriers() {
     use crate::core::{
         AxisOrientation, AxisStereo, DoubleBondOrientation, DoubleBondStereo, MoleculeEditor,
         StereoCarrier, StereoElement, StereoElementId, StereoElementKind, StereoGroup,
@@ -1059,7 +1059,7 @@ fn compact_subset_remaps_stereo_and_splits_groups_while_pruning_lost_carriers() 
     .collect();
     editor
         .add_stereo_group(StereoGroup {
-            kind: StereoGroupKind::Relative,
+            kind: StereoGroupKind::Absolute,
             members: elements,
         })
         .unwrap();
@@ -1115,7 +1115,7 @@ fn compact_subset_remaps_stereo_and_splits_groups_while_pruning_lost_carriers() 
         assert_eq!(
             molecule.stereo_group(StereoGroupId::new(0)).unwrap(),
             &StereoGroup {
-                kind: StereoGroupKind::Relative,
+                kind: StereoGroupKind::Absolute,
                 members: vec![StereoElementId::new(0)]
             }
         );

@@ -81,6 +81,42 @@ impl CanonicalOrder {
                 Ok(neighbors)
             })
             .collect::<Result<Vec<_>, MolWriteError>>()?;
+        let element_indices: BTreeMap<_, _> = molecule
+            .stereo_elements()
+            .enumerate()
+            .map(|(i, (id, _))| (id, i))
+            .collect();
+        let mut groups: Vec<_> = molecule
+            .stereo_groups()
+            .filter(|(_, group)| group.kind != StereoGroupKind::Absolute)
+            .map(|(_, group)| {
+                (
+                    group.kind,
+                    group.members.iter().map(|id| element_indices[id]).collect(),
+                )
+            })
+            .collect();
+        // Match the emitted projection: CX has one absolute set, and `r`
+        // requires explicit shielding of otherwise ungrouped tetrahedra.
+        let relative = groups
+            .iter()
+            .any(|(kind, _)| *kind == StereoGroupKind::Relative);
+        let absolute: Vec<_> = molecule
+            .stereo_elements()
+            .filter_map(|(id, element)| {
+                let is_absolute = element.group.is_some_and(|g| {
+                    molecule.stereo_group(g).unwrap().kind == StereoGroupKind::Absolute
+                });
+                (is_absolute
+                    || (relative
+                        && element.group.is_none()
+                        && matches!(&element.kind, StereoElementKind::Tetrahedral(_))))
+                .then_some(element_indices[&id])
+            })
+            .collect();
+        if !absolute.is_empty() {
+            groups.push((StereoGroupKind::Absolute, absolute));
+        }
         let stereo = molecule
             .stereo_elements()
             .map(|(_, element)| {
@@ -119,6 +155,7 @@ impl CanonicalOrder {
         let mut search = Search {
             adjacency,
             stereo,
+            groups,
             stereo_atoms,
             initial,
             states: 0,
@@ -141,7 +178,11 @@ impl CanonicalOrder {
     }
 }
 
-type Certificate = (Vec<(usize, Vec<(usize, u8)>)>, Vec<Vec<usize>>);
+type Certificate = (
+    Vec<(usize, Vec<(usize, u8)>)>,
+    Vec<Vec<usize>>,
+    Vec<(u8, Vec<Vec<usize>>)>,
+);
 
 enum LabelStereo {
     Tetrahedral {
@@ -160,6 +201,7 @@ enum LabelStereo {
 
 struct Search {
     stereo: Vec<LabelStereo>,
+    groups: Vec<(StereoGroupKind, Vec<usize>)>,
     stereo_atoms: Vec<bool>,
     adjacency: Vec<Vec<(usize, u8)>>,
     initial: Vec<usize>,
@@ -428,8 +470,31 @@ impl Search {
                 }
             })
             .collect::<Vec<_>>();
+        let mut groups = Vec::new();
+        for (kind, members) in &self.groups {
+            // A non-absolute group represents a correlated choice of a whole
+            // configuration and its inverse, not independent choices per site.
+            if *kind != StereoGroupKind::Absolute {
+                let first = *members
+                    .iter()
+                    .min_by_key(|&&i| &stereo[i][..stereo[i].len() - 1])
+                    .expect("validated nonempty group");
+                if stereo[first].last() == Some(&1) {
+                    for &i in members {
+                        *stereo[i].last_mut().unwrap() ^= 1;
+                    }
+                }
+            }
+            let mut values = members
+                .iter()
+                .map(|&i| stereo[i][..stereo[i].len() - 1].to_vec())
+                .collect::<Vec<_>>();
+            values.sort();
+            groups.push((*kind as u8, values));
+        }
+        groups.sort();
         stereo.sort_unstable();
-        let certificate = (certificate, stereo);
+        let certificate = (certificate, stereo, groups);
         if let Some((best, representative)) = &self.best {
             if *best == certificate {
                 // Equal complete certificates prove a graph-and-stereo
