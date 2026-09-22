@@ -14,7 +14,7 @@ class QuerySmartsTests(unittest.TestCase):
         lock = json.loads((standard / 'sources.lock.json').read_text())
         self.assertEqual(len(lock['entries']), 518)
         for relative in ['sources.lock.json'] + [p['path'] for p in lock['packs'] + lock['upstream']]:
-            self.assertEqual((original / relative).read_bytes(), (standard / relative).read_bytes())
+            self.assertEqual((original / relative).read_bytes(), (standard / relative).read_bytes(), relative)
         for item in lock['packs'] + lock['upstream']:
             self.assertEqual(hashlib.sha256((standard / item['path']).read_bytes()).hexdigest(), item['sha256'])
 
