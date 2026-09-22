@@ -53,7 +53,11 @@ pub(crate) fn sha256(bytes: &[u8]) -> String {
 }
 
 pub(crate) fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, Box<dyn Error>> {
+    // Source locks use portable slash-separated names. Reject Windows prefixes
+    // and separators before host-specific Path parsing: on Unix, `C:\\file`
+    // otherwise looks like an ordinary filename rather than an absolute path.
     if relative.is_empty()
+        || relative.contains(['\\', ':', '\0'])
         || Path::new(relative)
             .components()
             .any(|c| !matches!(c, std::path::Component::Normal(_)))
@@ -335,8 +339,31 @@ mod tests {
     }
     #[test]
     fn rejects_escaping_paths() {
-        for path in ["../secret", "/absolute", "C:\\secret", "a/../../b", ""] {
-            assert!(safe_join(Path::new("data"), path).is_err());
+        for path in [
+            "../secret",
+            "/absolute",
+            "C:\\secret",
+            "C:/secret",
+            "C:secret",
+            "\\\\server\\share\\secret",
+            "a\\..\\secret",
+            "a\\b",
+            "a/file:stream",
+            "a/../../b",
+            "a/../b",
+            ".",
+            "./a",
+            "a\0b",
+            "",
+        ] {
+            assert!(safe_join(Path::new("data"), path).is_err(), "{path:?}");
+        }
+    }
+    #[test]
+    fn joins_portable_nested_paths_without_changing_names() {
+        let root = Path::new("corpus");
+        for path in ["data/input.sdf", "data/a.b/c-d_2.smi", "data/žluťoučký.cif"] {
+            assert_eq!(safe_join(root, path).unwrap(), root.join(path));
         }
     }
     #[test]

@@ -2,6 +2,8 @@
 benchmarks/corpora/*/data/** binary
 benchmarks/smarts-fixtures/** -text
 benchmarks/corpora/rdkit-queries/upstream/** binary
+# This copied source lock must remain byte-identical to the historical copy.
+benchmarks/corpora/rdkit-queries/sources.lock.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 benchmarks/corpora/rdkit-structures/upstream/** binary
 crates/kekule-traj/tests/fixtures/*.xyz binary
 crates/kekule/tests/fixtures/cip/*.sdf binary
