@@ -45,7 +45,7 @@ pub use hierarchy::{
 };
 pub use lookup::HierarchyLookupError;
 pub use perception::TopologyPerceptionError;
-pub use selection::{AtomSelection, SelectionError};
+pub use selection::{AtomSelection, BondSelection, BondSelectionMode, SelectionError};
 
 fixed_u32_id!(MoleculeDefinitionId, "definition");
 fixed_u32_id!(MoleculeInstanceId, "molecule");

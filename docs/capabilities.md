@@ -7,6 +7,7 @@ at their stated revisions and are not a current list of missing features.
 | Area | Current support and boundaries | Authoritative contract |
 | --- | --- | --- |
 | Chemistry ownership | Connected molecules; systems, coordinates, and derived perception have separate owners | [Architecture](../ARCHITECTURE.md) |
+| Selections | Snapshot-bound atom and bond sets; checked picking, set algebra, hierarchy and graph expansion, predicates, query matches, and Cartesian proximity | [Atom selection contract](../crates/kekule/src/topology/selection.rs), [bond selection contract](../crates/kekule/src/topology/selection/bonds.rs), [spatial selection](../crates/kekule/src/structure/measure.rs) |
 | Hydrogens | Explicit graph atoms and implicit counts; specified counts survive reperception; conversions preserve information and stereo | [Hydrogen semantics](hydrogen-semantics.md) |
 | SMILES | Parsing, interpretation, plain/isomeric/canonical writing, and supported CX radical/group input and tetrahedral group output; unsupported content fails explicitly | [Public format API](../crates/kekule/src/lib.rs), [stereo support](stereo-support.md) |
 | SMARTS | Recursive queries, Boolean atom/bond logic, connectivity/valence/ring predicates, tetrahedral and alkene stereo, enhanced tetrahedral groups, tagged and topology matching | [Dialect and explicit exclusions](../crates/kekule/src/query/dialect.md) |
