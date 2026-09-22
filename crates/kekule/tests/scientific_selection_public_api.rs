@@ -119,6 +119,21 @@ fn residue_expansion_crosses_instances_and_preserves_unassigned_atoms() {
 }
 
 #[test]
+fn chain_expansion_crosses_residues_and_instances_but_retains_unassigned_atoms() {
+    let top = topology();
+    let ids = top.atom_ids();
+    let selected = AtomSelection::from_atoms(&top, [ids[0], ids[4]]).unwrap();
+    let expanded = selected.expand_to_chains();
+    assert_eq!(expanded.atom_ids().collect::<Vec<_>>(), ids[..5]);
+    assert_eq!(expanded.expand_to_chains(), expanded);
+    assert!(Arc::ptr_eq(&expanded.shared_topology(), &top));
+    let bare = AtomSelection::from_atoms(&top, [ids[5]]).unwrap();
+    assert_eq!(bare.expand_to_chains(), bare);
+    let empty = AtomSelection::empty(&top);
+    assert_eq!(empty.expand_to_chains(), empty);
+}
+
+#[test]
 fn lookup_respects_identifier_namespace_scope_insertion_and_ambiguity() {
     let top = topology();
     let chain = top.chain_by_label("L").unwrap();
