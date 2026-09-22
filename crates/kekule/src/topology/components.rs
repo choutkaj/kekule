@@ -112,6 +112,11 @@ pub(super) fn build_component_definitions(
                     .push(target_element);
             }
         }
+        if members_by_component.len() > 1 && group.kind != crate::core::StereoGroupKind::Absolute {
+            return Err(MoleculeError::InvalidStereoReference(
+                "splitting this molecule would separate a correlated stereo group across components",
+            ).into());
+        }
         for (component, members) in members_by_component {
             components[component].editor.add_stereo_group(StereoGroup {
                 kind: group.kind,

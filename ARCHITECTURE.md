@@ -44,6 +44,9 @@ required focus bond order and consistent assertions and groups. Validate these
 conditions before canonicalization. Changing a focus order or deleting a carrier
 bond prunes invalid stereo and group membership, even if an alternate graph path
 keeps the molecule connected. Unaffected assertions survive.
+Enhanced stereo groups belong to a connected molecule. Splitting a correlated
+group across components is rejected at publication; absolute memberships may
+split independently. Formats that cannot encode a relationship fail explicitly.
 
 `Perception` is reconstructible state derived from the exact represented graph
 under an explicit model or policy. It contains fundamental chemistry such as

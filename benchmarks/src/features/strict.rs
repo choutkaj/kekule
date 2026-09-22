@@ -237,18 +237,11 @@ pub(super) fn write(feature: &str, input: &Input) -> Result<Value, Box<dyn Error
                 _ => smiles::SmilesWriteMode::default(),
             };
             let mut components = record.components;
-            let mut output = Vec::new();
             for molecule in &mut components {
                 molecule.perceive()?;
-                output.push(smiles::write_molecule(
-                    molecule,
-                    smiles::SmilesWriteOptions { mode },
-                )?);
             }
-            if mode == smiles::SmilesWriteMode::Canonical {
-                output.sort();
-            }
-            let text = output.join(".");
+            let topology = kekule::topology::Topology::from_molecules(&components)?;
+            let text = smiles::write_topology(&topology, smiles::SmilesWriteOptions { mode })?;
             if feature == "io.smiles.canonical" {
                 // Canonical text must be invariant to atom numbering and a fixed
                 // point of reading/writing. These checks supplement RDKit identity.

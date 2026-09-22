@@ -7,8 +7,10 @@
 //! target implicitly.
 //! Stereo constraints compare represented local configuration under the atom
 //! mapping before match deduplication or limits. They do not compare CIP labels
-//! or interpret enhanced stereo group relationships. An achiral query places no
-//! restriction on the target's stereochemistry.
+//! or require CIP assignment. CXSMARTS `a`, `o`, `&` and `r` fields construct
+//! enhanced groups. These enable correlated matching automatically; plain queries
+//! may opt in through [`crate::substructure::SubstructureMatchOptions::use_enhanced_stereo`].
+//! An achiral query places no restriction on the target's stereochemistry.
 //!
 //! ```
 //! use kekule::{query::parse_smarts, smiles, substructure};

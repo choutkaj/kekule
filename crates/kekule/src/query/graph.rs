@@ -1,6 +1,8 @@
 use std::fmt;
 
-use super::{AtomExpression, AtomPredicate, BondExpression, QueryStereoConstraint};
+use super::{
+    AtomExpression, AtomPredicate, BondExpression, QueryStereoConstraint, QueryStereoGroup,
+};
 
 fixed_u32_id!(QueryAtomId, "qa");
 fixed_u32_id!(QueryBondId, "qb");
@@ -74,9 +76,24 @@ pub struct QueryGraph {
     bonds: Vec<QueryBond>,
     adjacency: Vec<Vec<QueryBondId>>,
     stereo: Vec<QueryStereoConstraint>,
+    stereo_groups: Vec<QueryStereoGroup>,
 }
 
 impl QueryGraph {
+    pub fn stereo_groups(&self) -> &[QueryStereoGroup] {
+        &self.stereo_groups
+    }
+
+    /// A detached builder preserving all query predicates and stereo relationships.
+    pub fn to_builder(&self) -> QueryGraphBuilder {
+        QueryGraphBuilder {
+            atoms: self.atoms.clone(),
+            bonds: self.bonds.clone(),
+            adjacency: self.adjacency.clone(),
+            stereo: self.stereo.clone(),
+            stereo_groups: self.stereo_groups.clone(),
+        }
+    }
     /// Query atoms carrying a label, in query order (duplicates are retained).
     pub fn tagged_atoms(&self) -> impl Iterator<Item = (u32, QueryAtomId)> + '_ {
         self.atom_ids()
@@ -220,6 +237,7 @@ pub struct QueryGraphBuilder {
     bonds: Vec<QueryBond>,
     adjacency: Vec<Vec<QueryBondId>>,
     stereo: Vec<QueryStereoConstraint>,
+    stereo_groups: Vec<QueryStereoGroup>,
 }
 
 impl QueryGraphBuilder {
@@ -229,6 +247,7 @@ impl QueryGraphBuilder {
             bonds: Vec::new(),
             adjacency: Vec::new(),
             stereo: Vec::new(),
+            stereo_groups: Vec::new(),
         }
     }
 
@@ -238,6 +257,7 @@ impl QueryGraphBuilder {
             bonds: Vec::with_capacity(bonds),
             adjacency: Vec::with_capacity(atoms),
             stereo: Vec::new(),
+            stereo_groups: Vec::new(),
         }
     }
 
@@ -365,9 +385,48 @@ impl QueryGraphBuilder {
             bonds: self.bonds,
             adjacency: self.adjacency,
             stereo: self.stereo,
+            stereo_groups: self.stereo_groups,
         };
         graph.validate_complexity()?;
         Ok(graph)
+    }
+
+    /// Adds one enhanced stereo relationship. No member may occur in two groups.
+    pub fn add_stereo_group(&mut self, mut group: QueryStereoGroup) -> Result<(), QueryGraphError> {
+        if group.members.is_empty() {
+            return Err(QueryGraphError::InvalidStereo("empty query stereo group"));
+        }
+        group.members.sort_unstable();
+        if group.members.windows(2).any(|p| p[0] == p[1]) {
+            return Err(QueryGraphError::InvalidStereo(
+                "duplicate query stereo group member",
+            ));
+        }
+        for &member in &group.members {
+            self.validate_atom(member)?;
+            if self
+                .stereo_groups
+                .iter()
+                .any(|g| g.members.contains(&member))
+            {
+                return Err(QueryGraphError::InvalidStereo(
+                    "query stereo member already grouped",
+                ));
+            }
+            let atom = &self.atoms[member.index()];
+            let has_frame = atom.stereo_frame.is_some()
+                && atom
+                    .expression
+                    .contains_predicate(|p| matches!(p, AtomPredicate::Tetrahedral(_)));
+            let has_constraint = self.stereo.iter().any(|s| matches!(s, QueryStereoConstraint::Tetrahedral { center, .. } if *center == member));
+            if !has_frame && !has_constraint {
+                return Err(QueryGraphError::InvalidStereo(
+                    "query stereo group member requires a tetrahedral carrier frame",
+                ));
+            }
+        }
+        self.stereo_groups.push(group);
+        Ok(())
     }
 
     fn validate_atom(&self, id: QueryAtomId) -> Result<(), QueryGraphError> {
