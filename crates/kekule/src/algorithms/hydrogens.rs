@@ -13,9 +13,9 @@ const DEFAULT_MAX_ADDED_HYDROGENS: usize = 1_000_000;
 /// Controls which encoded hydrogens are materialized and bounds graph growth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AddHydrogensOptions {
-    /// Materialize only bracket-style hydrogen counts and leave perceived
-    /// implicit hydrogens implicit.
-    pub explicit_only: bool,
+    /// Materialize only the specified contribution to implicit hydrogens.
+    /// Leave the inferred contribution implicit; this mode needs no perception.
+    pub specified_only: bool,
     /// Bound topology growth before any mutation is committed.
     pub max_added_hydrogens: usize,
 }
@@ -23,7 +23,7 @@ pub struct AddHydrogensOptions {
 impl Default for AddHydrogensOptions {
     fn default() -> Self {
         Self {
-            explicit_only: false,
+            specified_only: false,
             max_added_hydrogens: DEFAULT_MAX_ADDED_HYDROGENS,
         }
     }
@@ -32,8 +32,10 @@ impl Default for AddHydrogensOptions {
 /// Identifies the count representation consumed for an added hydrogen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddedHydrogenOrigin {
-    ExplicitCount,
-    Implicit,
+    /// The implicit hydrogen came from a specified count.
+    Specified,
+    /// The implicit hydrogen came from valence inference.
+    Inferred,
 }
 
 /// Stable-ID mapping for one materialized hydrogen.
@@ -86,8 +88,14 @@ pub struct RetainedHydrogen {
 pub struct HydrogenCountAdjustment {
     pub parent: AtomId,
     pub removed_graph_hydrogens: usize,
-    pub explicit_hydrogens: u8,
-    pub implicit_hydrogens: u8,
+    /// Explicit graph hydrogen neighbors retained on the parent.
+    pub explicit_hydrogens: usize,
+    /// Complete implicit count after suppression.
+    pub implicit_hydrogens: usize,
+    /// Specified contribution, retained for transformation diagnostics.
+    pub specified_hydrogens: u8,
+    /// Inferred contribution, retained for transformation diagnostics.
+    pub inferred_hydrogens: u8,
 }
 
 /// Complete topology mapping and count reconstruction from removal.
@@ -185,25 +193,24 @@ pub(crate) fn add_hydrogens_to_molecule(
     molecule: &mut Molecule,
     options: AddHydrogensOptions,
 ) -> Result<AddHydrogensReport, HydrogenTransformError> {
-    if !options.explicit_only && !molecule.perception().has_valence() {
-        return Err(HydrogenTransformError::MissingValencePerception);
-    }
-
     let plan = molecule
         .atoms()
         .map(|(parent, atom)| {
-            let explicit = usize::from(atom.hydrogens.explicit_count());
-            let implicit = if options.explicit_only {
+            let specified = usize::from(atom.hydrogens.specified_count());
+            let inferred = if options.specified_only {
                 0
             } else {
-                usize::from(molecule.implicit_hydrogens(parent)?.unwrap_or(0))
+                molecule
+                    .implicit_hydrogens(parent)?
+                    .ok_or(HydrogenTransformError::MissingValencePerception)?
+                    - specified
             };
-            Ok((parent, explicit, implicit))
+            Ok((parent, specified, inferred))
         })
-        .collect::<Result<Vec<_>, MoleculeError>>()?;
+        .collect::<Result<Vec<_>, HydrogenTransformError>>()?;
     let requested_hydrogens = plan
         .iter()
-        .map(|(_, explicit, implicit)| explicit + implicit)
+        .map(|(_, specified, inferred)| specified + inferred)
         .sum::<usize>();
     if requested_hydrogens > options.max_added_hydrogens {
         return Err(HydrogenTransformError::ResourceLimit {
@@ -212,16 +219,16 @@ pub(crate) fn add_hydrogens_to_molecule(
         });
     }
 
-    validate_materialized_stereo_hydrogens(molecule, &plan, options.explicit_only)?;
+    validate_materialized_stereo_hydrogens(molecule, &plan, options.specified_only)?;
 
     let mut editor = molecule.edit();
     let hydrogen = Element::from_atomic_number(1).expect("hydrogen is a periodic-table element");
     let mut report = AddHydrogensReport::default();
     let mut added_by_parent = BTreeMap::<AtomId, Vec<AtomId>>::new();
 
-    for (parent, explicit, implicit) in plan {
-        for origin in std::iter::repeat_n(AddedHydrogenOrigin::ExplicitCount, explicit)
-            .chain(std::iter::repeat_n(AddedHydrogenOrigin::Implicit, implicit))
+    for (parent, specified, inferred) in plan {
+        for origin in std::iter::repeat_n(AddedHydrogenOrigin::Specified, specified)
+            .chain(std::iter::repeat_n(AddedHydrogenOrigin::Inferred, inferred))
         {
             let hydrogen_id = editor.add_atom(Atom::new(hydrogen))?;
             editor.add_bond(parent, hydrogen_id, BondOrder::Single)?;
@@ -232,9 +239,9 @@ pub(crate) fn add_hydrogens_to_molecule(
                 origin,
             });
         }
-        if explicit > 0 {
+        if specified > 0 {
             let mut atom = editor.atom_mut(parent)?;
-            atom.hydrogens = atom.hydrogens.with_explicit_count(0);
+            atom.hydrogens = atom.hydrogens.with_specified_count(0);
         }
     }
 
@@ -291,20 +298,14 @@ pub(crate) fn remove_hydrogens_from_molecule(
 
     let mut expected_totals = BTreeMap::<AtomId, usize>::new();
     for (parent, hydrogens) in &by_parent {
-        let atom = molecule.atom(*parent)?;
-        let perceived = molecule.implicit_hydrogens(*parent)?;
-        if atom.hydrogens.allows_implicit() && perceived.is_none() {
-            return Err(HydrogenTransformError::MissingValencePerception);
-        }
-        let implicit = usize::from(perceived.unwrap_or(0));
-        expected_totals.insert(
-            *parent,
-            usize::from(atom.hydrogens.explicit_count()) + implicit + hydrogens.len(),
-        );
+        let implicit = molecule
+            .implicit_hydrogens(*parent)?
+            .ok_or(HydrogenTransformError::MissingValencePerception)?;
+        expected_totals.insert(*parent, implicit + hydrogens.len());
     }
 
-    let mut explicit_count_parents = stereo_hydrogen_parents(molecule, &removable);
-    explicit_count_parents.extend(by_parent.keys().copied().filter(|parent| {
+    let mut specified_count_parents = stereo_hydrogen_parents(molecule, &removable);
+    specified_count_parents.extend(by_parent.keys().copied().filter(|parent| {
         molecule.atom(*parent).is_ok_and(|atom| {
             atom.element.symbol() == "N"
                 && atom.formal_charge == 0
@@ -335,7 +336,7 @@ pub(crate) fn remove_hydrogens_from_molecule(
         &mut editor,
         &expected_totals,
         &by_parent,
-        &explicit_count_parents,
+        &specified_count_parents,
     )?;
     report.adjustments =
         verify_collapsed_hydrogen_counts(editor.working(), &expected_totals, &by_parent)?;
@@ -350,7 +351,7 @@ pub(crate) fn remove_hydrogens_from_molecule(
 fn validate_materialized_stereo_hydrogens(
     molecule: &Molecule,
     plan: &[(AtomId, usize, usize)],
-    explicit_only: bool,
+    specified_only: bool,
 ) -> Result<(), HydrogenTransformError> {
     let totals = plan
         .iter()
@@ -369,7 +370,7 @@ fn validate_materialized_stereo_hydrogens(
                     stereo.center,
                     implicit,
                     totals.get(&stereo.center).copied().unwrap_or(0),
-                    explicit_only,
+                    specified_only,
                 )?;
             }
             StereoElementKind::DoubleBond(stereo) => {
@@ -383,7 +384,7 @@ fn validate_materialized_stereo_hydrogens(
                         parent,
                         implicit,
                         totals.get(&parent).copied().unwrap_or(0),
-                        explicit_only,
+                        specified_only,
                     )?;
                 }
             }
@@ -408,11 +409,12 @@ fn validate_implicit_stereo_count(
     atom: AtomId,
     implicit_carriers: usize,
     added_hydrogens: usize,
-    explicit_only: bool,
+    specified_only: bool,
 ) -> Result<(), HydrogenTransformError> {
     if implicit_carriers > 1
         || (implicit_carriers == 1
-            && ((!explicit_only && added_hydrogens != 1) || (explicit_only && added_hydrogens > 1)))
+            && ((!specified_only && added_hydrogens != 1)
+                || (specified_only && added_hydrogens > 1)))
     {
         return Err(HydrogenTransformError::InconsistentStereoHydrogen { element, atom });
     }
@@ -491,7 +493,7 @@ fn removable_hydrogen(
     if atom.radical.is_some() {
         return Ok(Err(RetainedHydrogenReason::Radical));
     }
-    if atom.hydrogens.explicit_count() != 0 {
+    if atom.hydrogens.specified_count() != 0 {
         return Ok(Err(RetainedHydrogenReason::EncodedHydrogenCount));
     }
     if molecule
@@ -670,7 +672,7 @@ fn adjust_collapsed_hydrogen_counts(
     editor: &mut MoleculeEditor,
     expected_totals: &BTreeMap<AtomId, usize>,
     by_parent: &BTreeMap<AtomId, Vec<AtomId>>,
-    explicit_count_parents: &BTreeSet<AtomId>,
+    specified_count_parents: &BTreeSet<AtomId>,
 ) -> Result<(), HydrogenTransformError> {
     let mut probe = editor.working().clone();
     let _ = perceive_valence_with_options(
@@ -679,7 +681,7 @@ fn adjust_collapsed_hydrogen_counts(
         ValenceOptions { strict: false },
     );
     for (parent, expected) in expected_totals {
-        if explicit_count_parents.contains(parent) {
+        if specified_count_parents.contains(parent) {
             let adjusted = u8::try_from(*expected).map_err(|_| {
                 HydrogenTransformError::HydrogenCountOverflow {
                     atom: *parent,
@@ -687,14 +689,14 @@ fn adjust_collapsed_hydrogen_counts(
                 }
             })?;
             let mut atom = editor.atom_mut(*parent)?;
-            atom.hydrogens = atom.hydrogens.with_explicit_count(adjusted);
+            atom.hydrogens = atom.hydrogens.with_specified_count(adjusted);
             continue;
         }
-        let explicit = usize::from(editor.working().atom(*parent)?.hydrogens.explicit_count());
-        let implicit = usize::from(probe.implicit_hydrogens(*parent)?.unwrap_or(0));
-        let actual = explicit + implicit;
+        let specified = usize::from(editor.working().atom(*parent)?.hydrogens.specified_count());
+        let inferred = usize::from(probe.inferred_hydrogens(*parent)?.unwrap_or(0));
+        let actual = specified + inferred;
         if actual < *expected {
-            let adjusted = explicit + (*expected - actual);
+            let adjusted = specified + (*expected - actual);
             let adjusted = u8::try_from(adjusted).map_err(|_| {
                 HydrogenTransformError::HydrogenCountOverflow {
                     atom: *parent,
@@ -702,7 +704,7 @@ fn adjust_collapsed_hydrogen_counts(
                 }
             })?;
             let mut atom = editor.atom_mut(*parent)?;
-            atom.hydrogens = atom.hydrogens.with_explicit_count(adjusted);
+            atom.hydrogens = atom.hydrogens.with_specified_count(adjusted);
         } else if actual > *expected {
             let adjusted = u8::try_from(*expected).map_err(|_| {
                 HydrogenTransformError::HydrogenCountOverflow {
@@ -731,9 +733,9 @@ fn verify_collapsed_hydrogen_counts(
     );
     let mut adjustments = Vec::new();
     for (parent, expected) in expected_totals {
-        let explicit = molecule.atom(*parent)?.hydrogens.explicit_count();
-        let implicit = probe.implicit_hydrogens(*parent)?.unwrap_or(0);
-        let actual = usize::from(explicit) + usize::from(implicit);
+        let specified = molecule.atom(*parent)?.hydrogens.specified_count();
+        let inferred = probe.inferred_hydrogens(*parent)?.unwrap_or(0);
+        let actual = usize::from(specified) + usize::from(inferred);
         if actual != *expected {
             return Err(HydrogenTransformError::HydrogenCountNotPreserved {
                 atom: *parent,
@@ -744,8 +746,10 @@ fn verify_collapsed_hydrogen_counts(
         adjustments.push(HydrogenCountAdjustment {
             parent: *parent,
             removed_graph_hydrogens: by_parent[parent].len(),
-            explicit_hydrogens: explicit,
-            implicit_hydrogens: implicit,
+            explicit_hydrogens: molecule.explicit_hydrogens(*parent)?,
+            implicit_hydrogens: actual,
+            specified_hydrogens: specified,
+            inferred_hydrogens: inferred,
         });
     }
     Ok(adjustments)

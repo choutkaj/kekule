@@ -302,11 +302,12 @@ pub enum AtomPredicate {
     FormalCharge(i8),
     Aromatic(bool),
     Degree(u8),
-    /// Graph neighbors plus declared and inferred nongraph hydrogens (`X`).
+    /// Graph neighbors plus all implicit hydrogens (`X`).
     /// Requires installed valence perception.
     TotalConnectivity(u8),
+    /// Explicit graph hydrogen neighbors plus all implicit hydrogens (`H`).
     TotalHydrogens(u8),
-    /// Nongraph hydrogens (declared plus inferred); `None` means at least one.
+    /// All implicit hydrogens (specified plus inferred); `None` means at least one.
     ImplicitHydrogens(Option<u8>),
     /// Localized bond-order sum plus nongraph hydrogens.
     TotalValence(u8),

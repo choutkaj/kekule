@@ -282,7 +282,7 @@ fn resonance_detection_is_independent_of_installed_perception() {
             .perception()
             .valence_state()
             .unwrap()
-            .implicit_hydrogens()
+            .inferred_hydrogens()
             .map(|(id, count)| (id, if id == AtomId::new(0) { 0 } else { count }))
             .collect::<Vec<_>>();
         let neutral = crate::core::Perception::builder()

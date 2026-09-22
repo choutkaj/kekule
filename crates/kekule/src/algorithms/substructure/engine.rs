@@ -45,10 +45,12 @@ impl<'a> TargetData<'a> {
                 let facts = facts_cache
                     .entry((molecule as *const Molecule as usize, local))
                     .or_insert_with(|| {
-                        let nongraph_hydrogens = usize::from(atom.hydrogens.explicit_count())
-                            + usize::from(
-                                molecule.perception().implicit_hydrogens(local).unwrap_or(0),
-                            );
+                        // Unperceived targets retain the existing partial-facts
+                        // policy: only the specified contribution is known.
+                        let nongraph_hydrogens = molecule
+                            .implicit_hydrogens(local)
+                            .expect("valid atom")
+                            .unwrap_or_else(|| usize::from(atom.hydrogens.specified_count()));
                         let neighbors = molecule
                             .neighbors(local)
                             .expect("valid atom")
@@ -66,17 +68,7 @@ impl<'a> TargetData<'a> {
                             degree: neighbors.len(),
                             nongraph_hydrogens,
                             hydrogens: nongraph_hydrogens
-                                + neighbors
-                                    .iter()
-                                    .filter(|a| {
-                                        molecule
-                                            .atom(**a)
-                                            .expect("neighbor")
-                                            .element
-                                            .atomic_number()
-                                            == 1
-                                    })
-                                    .count(),
+                                + molecule.explicit_hydrogens(local).expect("valid atom"),
                             valence: crate::algorithms::valence::explicit_valence(molecule, local)
                                 + nongraph_hydrogens,
                             ring_count: rings.len(),

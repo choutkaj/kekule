@@ -40,7 +40,7 @@ fn standalone_aromaticity_uses_the_same_charged_hydrogen_rules_as_default_percep
     let sulfur = standalone.atom_ids().next().unwrap();
     let mut complete = standalone.clone();
     complete.perceive().unwrap();
-    assert_eq!(complete.implicit_hydrogens(sulfur).unwrap(), Some(1));
+    assert_eq!(complete.inferred_hydrogens(sulfur).unwrap(), Some(1));
     assert!(complete
         .atoms()
         .all(|(atom, _)| complete.atom_is_aromatic(atom).unwrap() == Some(true)));

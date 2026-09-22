@@ -511,7 +511,7 @@ fn negatively_charged_mancude_part_has_one_complete_fraction() {
                 .expect("ring bond");
         }
         for atom in &atoms {
-            mol.working_mut().set_implicit_hydrogens(*atom, 1);
+            mol.working_mut().set_inferred_hydrogens(*atom, 1);
         }
         let fractions = cip_atomic_number_fractions(mol.working());
         assert_eq!(fractions, vec![AtomicNumberFraction::new(24, 5); 5]);
@@ -1005,7 +1005,7 @@ fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
     }
     for (index, atom) in atoms.iter().copied().enumerate() {
         mol.working_mut()
-            .set_implicit_hydrogens(atom, if index == 3 { 0 } else { 1 });
+            .set_inferred_hydrogens(atom, if index == 3 { 0 } else { 1 });
     }
 
     let fractions = cip_atomic_number_fractions(mol.working());
@@ -1258,7 +1258,7 @@ fn negative_fractional_atoms_create_duplicate_nodes() {
             .expect("ring bond");
     }
     for atom in &atoms {
-        mol.working_mut().set_implicit_hydrogens(*atom, 1);
+        mol.working_mut().set_inferred_hydrogens(*atom, 1);
     }
 
     let mut fractions =

@@ -93,9 +93,10 @@ pub(super) fn graph(
         .map(|(id, atom)| {
             let mut value = atom_json(mol, id, atom);
             value["index"] = json!(index[&id]);
-            value["implicit_hydrogens"] = json!(mol.implicit_hydrogens(id)?);
+            // External RDKit field: inferred contribution, not Kekule's total implicit H.
+            value["implicit_hydrogens"] = json!(mol.inferred_hydrogens(id)?);
             value["explicit_valence"] = json!(valence::represented_valence(mol, id)?);
-            value["no_implicit_hydrogens"] = json!(!atom.hydrogens.allows_implicit());
+            value["no_implicit_hydrogens"] = json!(!atom.hydrogens.allows_inference());
             if let Some(positions) = positions {
                 let point = positions
                     .position_at(id.index())?

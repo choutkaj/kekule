@@ -18,7 +18,9 @@ impl Molecule {
         perceive_molecule(self)
     }
 
-    /// Materialize stored and perceived hydrogens as graph atoms.
+    /// Convert resolved implicit hydrogens into explicit graph atoms.
+    /// Fixed counts require no perception; inference-enabled counts must be
+    /// perceived first. Success invalidates perception but preserves composition.
     pub fn add_hydrogens(&mut self) -> Result<AddHydrogensReport, HydrogenTransformError> {
         self.add_hydrogens_with_options(AddHydrogensOptions::default())
     }

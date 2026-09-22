@@ -661,10 +661,10 @@ fn interpret_smiles_atom(
     atom.isotope = syntax.isotope;
     atom.formal_charge = syntax.formal_charge;
     atom.hydrogens = if syntax.bracketed {
-        HydrogenDeclaration::Fixed(syntax.explicit_hydrogens)
+        HydrogenDeclaration::Fixed(syntax.specified_hydrogens)
     } else {
         HydrogenDeclaration::Infer {
-            explicit: syntax.explicit_hydrogens,
+            specified: syntax.specified_hydrogens,
         }
     };
     atom.atom_map = syntax.atom_map;

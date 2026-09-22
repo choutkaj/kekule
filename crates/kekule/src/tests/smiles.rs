@@ -152,8 +152,8 @@ fn aromatic_bond(molecule: &Molecule, bond: BondId) -> bool {
     molecule.bond_is_aromatic(bond).expect("bond exists") == Some(true)
 }
 
-fn implicit_hydrogens(molecule: &Molecule, atom: AtomId) -> Option<u8> {
-    molecule.implicit_hydrogens(atom).expect("atom exists")
+fn inferred_hydrogens(molecule: &Molecule, atom: AtomId) -> Option<u8> {
+    molecule.inferred_hydrogens(atom).expect("atom exists")
 }
 
 fn aromatic_atom_count(molecule: &Molecule) -> usize {
@@ -350,9 +350,9 @@ fn cxsmiles_radicals_preserve_electron_occupancy_and_explicit_spin() {
                     .atom(AtomId::new(0))
                     .unwrap()
                     .hydrogens
-                    .explicit_count()
+                    .specified_count()
                     + molecule
-                        .implicit_hydrogens(AtomId::new(0))
+                        .inferred_hydrogens(AtomId::new(0))
                         .unwrap()
                         .unwrap(),
                 4 - electrons
@@ -409,7 +409,7 @@ fn cxsmiles_radicals_override_inference_without_overwriting_source_assertions() 
             AtomRadical::new(1, None)
         );
         assert_eq!(
-            molecule.implicit_hydrogens(AtomId::new(0)).unwrap(),
+            molecule.inferred_hydrogens(AtomId::new(0)).unwrap(),
             Some(0)
         );
         assert_eq!(
@@ -417,7 +417,7 @@ fn cxsmiles_radicals_override_inference_without_overwriting_source_assertions() 
                 .atom(AtomId::new(0))
                 .unwrap()
                 .hydrogens
-                .explicit_count(),
+                .specified_count(),
             0
         );
         assert_eq!(aromatic_atom_count(&molecule), 6);
@@ -731,7 +731,7 @@ fn smiles_interprets_branches_rings_brackets_and_fragments_canonically_without_p
 #[test]
 fn smiles_brackets_publish_exact_hydrogen_declarations() {
     for (source, declaration, perceived_implicit) in [
-        ("C", HydrogenDeclaration::Infer { explicit: 0 }, 4),
+        ("C", HydrogenDeclaration::Infer { specified: 0 }, 4),
         ("[C]", HydrogenDeclaration::Fixed(0), 0),
         ("[CH]", HydrogenDeclaration::Fixed(1), 0),
         ("[NH4+]", HydrogenDeclaration::Fixed(4), 0),
@@ -752,7 +752,7 @@ fn smiles_brackets_publish_exact_hydrogen_declarations() {
             "perception must not rewrite {source}"
         );
         assert_eq!(
-            molecule.implicit_hydrogens(AtomId::new(0)),
+            molecule.inferred_hydrogens(AtomId::new(0)),
             Ok(Some(perceived_implicit)),
             "{source}"
         );
@@ -779,8 +779,8 @@ fn metal_bound_organic_subset_halogen_keeps_rdkit_no_implicit_state() {
         .filter(|(_, atom)| atom.element.symbol() == "Br")
         .map(|(atom_id, atom)| {
             (
-                !atom.hydrogens.allows_implicit(),
-                implicit_hydrogens(&small, atom_id).unwrap_or(0),
+                !atom.hydrogens.allows_inference(),
+                inferred_hydrogens(&small, atom_id).unwrap_or(0),
             )
         })
         .collect::<Vec<_>>();
@@ -792,7 +792,7 @@ fn metal_bound_organic_subset_halogen_keeps_rdkit_no_implicit_state() {
         .atoms()
         .find_map(|(_, atom)| (atom.element.symbol() == "Br").then_some(atom))
         .expect("bromine atom");
-    assert!(bromine.hydrogens.allows_implicit());
+    assert!(bromine.hydrogens.allows_inference());
 }
 
 #[test]
@@ -813,9 +813,9 @@ fn metal_bound_organic_subset_atoms_rely_on_valence_hydrogens() {
             .then_some((id, atom))
         })
         .expect("aryl carbon bound to mercury");
-    assert!(aryl_mercury_carbon.1.hydrogens.allows_implicit());
+    assert!(aryl_mercury_carbon.1.hydrogens.allows_inference());
     assert_eq!(
-        implicit_hydrogens(&aryl_mercury, aryl_mercury_carbon.0),
+        inferred_hydrogens(&aryl_mercury, aryl_mercury_carbon.0),
         Some(0)
     );
 
@@ -824,8 +824,8 @@ fn metal_bound_organic_subset_atoms_rely_on_valence_hydrogens() {
         .atoms()
         .find_map(|(id, atom)| (atom.element.symbol() == "C").then_some((id, atom)))
         .expect("carbon atom");
-    assert!(carbon.1.hydrogens.allows_implicit());
-    assert_eq!(implicit_hydrogens(&methyl_sodium, carbon.0), None);
+    assert!(carbon.1.hydrogens.allows_inference());
+    assert_eq!(inferred_hydrogens(&methyl_sodium, carbon.0), None);
 }
 
 #[test]
@@ -840,7 +840,7 @@ fn aromatic_chalcogen_bracket_atoms_localize_without_perceiving() {
         .map(|(_, atom)| {
             (
                 atom.element.symbol().to_owned(),
-                !atom.hydrogens.allows_implicit(),
+                !atom.hydrogens.allows_inference(),
             )
         })
         .collect::<Vec<_>>();
@@ -1080,15 +1080,15 @@ fn aromatic_smiles_omitted_bonds_perceive_with_expected_hydrogens() {
     );
     perceive(&mut benzene).expect("benzene should perceive");
     for atom_id in benzene.atom_ids() {
-        assert_eq!(implicit_hydrogens(&benzene, atom_id), Some(1));
+        assert_eq!(inferred_hydrogens(&benzene, atom_id), Some(1));
         assert!(aromatic_atom(&benzene, atom_id));
     }
 
     let mut pyridine = read_smiles("n1ccccc1").expect("pyridine should parse");
     perceive(&mut pyridine).expect("pyridine should perceive");
-    assert_eq!(implicit_hydrogens(&pyridine, AtomId::new(0)), Some(0));
+    assert_eq!(inferred_hydrogens(&pyridine, AtomId::new(0)), Some(0));
     for atom_id in 1..6 {
-        assert_eq!(implicit_hydrogens(&pyridine, AtomId::new(atom_id)), Some(1));
+        assert_eq!(inferred_hydrogens(&pyridine, AtomId::new(atom_id)), Some(1));
     }
 
     let mut pyridinium = read_smiles("[nH+]1ccccc1").expect("pyridinium should parse");
@@ -1098,7 +1098,7 @@ fn aromatic_smiles_omitted_bonds_perceive_with_expected_hydrogens() {
     assert_eq!(nitrogen.formal_charge, 1);
     assert_eq!(nitrogen.radical, None);
     assert_eq!(nitrogen.hydrogens, HydrogenDeclaration::Fixed(1));
-    assert_eq!(implicit_hydrogens(&pyridinium, AtomId::new(0)), Some(0));
+    assert_eq!(inferred_hydrogens(&pyridinium, AtomId::new(0)), Some(0));
     assert_eq!(aromatic_bond_count(&pyridinium), pyridinium.bond_count());
     assert_eq!(
         pyridinium
@@ -1252,7 +1252,7 @@ fn fused_chalcogen_bridge_does_not_over_aromatize_hetero_bridge() {
 }
 
 #[test]
-fn bracket_carbon_suppresses_implicit_hydrogens() {
+fn bracket_carbon_suppresses_inferred_hydrogens() {
     let mut molecule = read_smiles("C1=CC=C2C(=C1)[CH]C3=CC=CC=C32")
         .expect("bracket carbon fused aromatic should parse");
 
@@ -1261,7 +1261,7 @@ fn bracket_carbon_suppresses_implicit_hydrogens() {
     let bracket_carbon_id = AtomId::new(6);
     let bracket_carbon = molecule.atom(bracket_carbon_id).expect("bracket carbon");
     assert_eq!(bracket_carbon.hydrogens, HydrogenDeclaration::Fixed(1));
-    assert_eq!(implicit_hydrogens(&molecule, bracket_carbon_id), Some(0));
+    assert_eq!(inferred_hydrogens(&molecule, bracket_carbon_id), Some(0));
 }
 
 #[test]
@@ -1603,8 +1603,8 @@ fn canonical_fused_quinone_cn_core_round_trip_matches_aromatic_shape() {
                 && aromatic_atom(&reparsed, *atom_id)
                 && atom
                     .hydrogens
-                    .explicit_count()
-                    .saturating_add(implicit_hydrogens(&reparsed, *atom_id).unwrap_or(0))
+                    .specified_count()
+                    .saturating_add(inferred_hydrogens(&reparsed, *atom_id).unwrap_or(0))
                     == 1
         })
         .count();
@@ -1867,12 +1867,12 @@ fn charged_bracket_halogen_and_bismuth_salt_perceives() {
     assert_eq!(protonated_chlorine.element.symbol(), "Cl");
     assert_eq!(protonated_chlorine.formal_charge, 1);
     assert_eq!(protonated_chlorine.hydrogens, HydrogenDeclaration::Fixed(2));
-    assert_eq!(implicit_hydrogens(&components[2], AtomId::new(0)), Some(0));
+    assert_eq!(inferred_hydrogens(&components[2], AtomId::new(0)), Some(0));
 
     let bismuth = components[4].atom(AtomId::new(0)).expect("bismuth");
     assert_eq!(bismuth.element.symbol(), "Bi");
     assert_eq!(bismuth.formal_charge, 3);
-    assert_eq!(implicit_hydrogens(&components[4], AtomId::new(0)), Some(0));
+    assert_eq!(inferred_hydrogens(&components[4], AtomId::new(0)), Some(0));
 }
 
 #[test]
@@ -1888,7 +1888,7 @@ fn oxide_dianion_transition_metal_salt_perceives() {
         let oxygen = oxide.atom(AtomId::new(0)).expect("oxide");
         assert_eq!(oxygen.element.symbol(), "O");
         assert_eq!(oxygen.formal_charge, -2);
-        assert_eq!(implicit_hydrogens(oxide, AtomId::new(0)), Some(0));
+        assert_eq!(inferred_hydrogens(oxide, AtomId::new(0)), Some(0));
     }
 }
 
@@ -1904,7 +1904,7 @@ fn hydroxide_niobium_v_salt_perceives() {
     let niobium = components[1].atom(AtomId::new(0)).expect("niobium");
     assert_eq!(niobium.element.symbol(), "Nb");
     assert_eq!(niobium.formal_charge, 5);
-    assert_eq!(implicit_hydrogens(&components[1], AtomId::new(0)), Some(0));
+    assert_eq!(inferred_hydrogens(&components[1], AtomId::new(0)), Some(0));
 }
 
 #[test]
@@ -1919,7 +1919,7 @@ fn formate_indium_salt_perceives() {
     let indium = components[3].atom(AtomId::new(0)).expect("indium");
     assert_eq!(indium.element.symbol(), "In");
     assert_eq!(indium.formal_charge, 3);
-    assert_eq!(implicit_hydrogens(&components[3], AtomId::new(0)), Some(0));
+    assert_eq!(inferred_hydrogens(&components[3], AtomId::new(0)), Some(0));
 }
 
 #[test]
@@ -1931,7 +1931,7 @@ fn periodate_cleanup_perceives_iodine_plus_three() {
     let iodine = molecule.atom(AtomId::new(1)).expect("iodine");
     assert_eq!(iodine.element.symbol(), "I");
     assert_eq!(iodine.formal_charge, 3);
-    assert_eq!(implicit_hydrogens(&molecule, AtomId::new(1)), Some(0));
+    assert_eq!(inferred_hydrogens(&molecule, AtomId::new(1)), Some(0));
 }
 
 #[test]
@@ -2001,7 +2001,7 @@ fn uranyl_beta_diketonate_salt_perceives() {
     let uranium = components[2].atom(AtomId::new(1)).expect("uranium");
     assert_eq!(uranium.element.symbol(), "U");
     assert_eq!(uranium.formal_charge, 2);
-    assert_eq!(implicit_hydrogens(&components[2], AtomId::new(1)), Some(0));
+    assert_eq!(inferred_hydrogens(&components[2], AtomId::new(1)), Some(0));
 }
 
 #[test]
@@ -2097,7 +2097,7 @@ fn canonical_saturated_fused_ring_round_trip_stays_aliphatic() {
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
-                && implicit_hydrogens(&reparsed, *id) == Some(2)
+                && inferred_hydrogens(&reparsed, *id) == Some(2)
                 && reparsed
                     .incident_bonds(*id)
                     .is_ok_and(|bonds| bonds.count() == 2)
@@ -2175,7 +2175,7 @@ fn fused_saturated_carbonyl_bridge_round_trip_stays_aliphatic() {
     assert!(reparsed.atoms().any(|(id, atom)| {
         atom.element.symbol() == "C"
             && !aromatic_atom(&reparsed, id)
-            && implicit_hydrogens(&reparsed, id) == Some(0)
+            && inferred_hydrogens(&reparsed, id) == Some(0)
             && reparsed.incident_bonds(id).is_ok_and(|bonds| {
                 let bonds = bonds.collect::<Vec<_>>();
                 bonds.len() == 3
@@ -2214,7 +2214,7 @@ fn canonical_tellurophene_round_trip_preserves_aromatic_chalcogen() {
         .find_map(|(atom_id, atom)| (atom.element.symbol() == "Te").then_some((atom_id, atom)))
         .expect("tellurium atom");
     assert!(aromatic_atom(&reparsed, tellurium.0), "{written}");
-    assert!(!tellurium.1.hydrogens.allows_implicit(), "{written}");
+    assert!(!tellurium.1.hydrogens.allows_inference(), "{written}");
 }
 
 #[test]
@@ -2243,11 +2243,11 @@ fn canonical_aryl_mercury_round_trip_preserves_no_implicit_aromatic_carbon() {
         "{written}"
     );
     assert!(
-        !mercury_bound_carbon.1.hydrogens.allows_implicit(),
+        !mercury_bound_carbon.1.hydrogens.allows_inference(),
         "{written}"
     );
     assert_eq!(
-        implicit_hydrogens(&reparsed, mercury_bound_carbon.0),
+        inferred_hydrogens(&reparsed, mercury_bound_carbon.0),
         Some(0),
         "{written}"
     );
@@ -2295,7 +2295,7 @@ fn cationic_fused_imide_round_trip_clears_carbonyl_ring_atoms() {
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
                 && !aromatic_atom(&reparsed, *id)
-                && implicit_hydrogens(&reparsed, *id) == Some(0)
+                && inferred_hydrogens(&reparsed, *id) == Some(0)
                 && reparsed.incident_bonds(*id).is_ok_and(|bonds| {
                     let bonds = bonds.collect::<Vec<_>>();
                     bonds.len() == 3
@@ -2671,8 +2671,8 @@ fn tetrahydroporphyrin_marks_each_conjugated_pyrrole_ring_aromatic() {
                     (
                         atom.index(),
                         payload.element.symbol(),
-                        payload.hydrogens.explicit_count(),
-                        implicit_hydrogens(&molecule, *atom),
+                        payload.hydrogens.specified_count(),
+                        inferred_hydrogens(&molecule, *atom),
                     )
                 })
                 .collect::<Vec<_>>()
@@ -2961,7 +2961,7 @@ fn canonical_smiles_preserves_metal_bound_bracket_hydrogens() {
         metal_bound_carbon.1.hydrogens,
         HydrogenDeclaration::Fixed(2)
     );
-    assert_eq!(implicit_hydrogens(&reparsed, metal_bound_carbon.0), Some(0));
+    assert_eq!(inferred_hydrogens(&reparsed, metal_bound_carbon.0), Some(0));
 
     let mut thallium = read_smiles("C[Tl](C)C").expect("organothallium SMILES parses");
     perceive(&mut thallium).expect("organothallium SMILES perceives");
@@ -2997,8 +2997,8 @@ fn canonical_smiles_materializes_hydrogen_on_bracketed_hypervalent_phosphorus() 
         .find(|(_, atom)| atom.element.symbol() == "P")
         .expect("phosphorus should remain");
     assert_eq!(phosphorus.1.hydrogens, HydrogenDeclaration::Fixed(1));
-    assert_eq!(implicit_hydrogens(&reparsed, phosphorus.0), Some(0));
-    assert!(!phosphorus.1.hydrogens.allows_implicit());
+    assert_eq!(inferred_hydrogens(&reparsed, phosphorus.0), Some(0));
+    assert!(!phosphorus.1.hydrogens.allows_inference());
 }
 
 #[test]
@@ -3074,7 +3074,7 @@ fn canonical_aryl_germanium_round_trip_preserves_no_implicit_aromatic_carbon() {
         .expect("canonical output should retain an aryl germanium bond")
         .1;
     assert!(
-        !germanium_bound_carbon.hydrogens.allows_implicit(),
+        !germanium_bound_carbon.hydrogens.allows_inference(),
         "{written}"
     );
 }
@@ -3107,8 +3107,8 @@ fn canonical_aryl_tin_round_trip_preserves_no_implicit_aromatic_carbons() {
     assert!(
         tin_bound_aromatic_carbons
             .iter()
-            .all(|(atom_id, atom)| !atom.hydrogens.allows_implicit()
-                && implicit_hydrogens(&reparsed, *atom_id) == Some(0)),
+            .all(|(atom_id, atom)| !atom.hydrogens.allows_inference()
+                && inferred_hydrogens(&reparsed, *atom_id) == Some(0)),
         "{written}"
     );
 }
@@ -3172,10 +3172,10 @@ fn canonical_substituted_pyrrole_uses_perceived_nitrogen_hydrogen_without_feedba
     assert_eq!(molecule.atom_is_aromatic(nitrogen_id), Ok(Some(true)));
     assert_eq!(
         nitrogen.hydrogens,
-        HydrogenDeclaration::Infer { explicit: 0 }
+        HydrogenDeclaration::Infer { specified: 0 }
     );
-    assert_eq!(molecule.implicit_hydrogens(nitrogen_id), Ok(Some(1)));
-    assert!(nitrogen.hydrogens.allows_implicit());
+    assert_eq!(molecule.inferred_hydrogens(nitrogen_id), Ok(Some(1)));
+    assert!(nitrogen.hydrogens.allows_inference());
 
     let (written, _) = canonical_smiles_round_trip(&molecule);
 
@@ -3236,11 +3236,11 @@ fn test_atom_state_signature(
         atom.element.atomic_number(),
         atom.formal_charge,
         atom.isotope.unwrap_or_default(),
-        atom.hydrogens.explicit_count(),
-        mol.implicit_hydrogens(atom_id)
+        atom.hydrogens.specified_count(),
+        mol.inferred_hydrogens(atom_id)
             .expect("atom should be live")
             .unwrap_or_default(),
-        !atom.hydrogens.allows_implicit(),
+        !atom.hydrogens.allows_inference(),
         mol.atom_is_aromatic(atom_id) == Ok(Some(true)),
     )
 }
@@ -3346,13 +3346,13 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     let reparsed = read_smiles(&written).expect("writer output should parse");
     assert!(reparsed
         .atoms()
-        .any(|(_, atom)| !atom.hydrogens.allows_implicit()));
+        .any(|(_, atom)| !atom.hydrogens.allows_inference()));
 }
 
 #[test]
 fn all_smiles_writers_round_trip_lossless_hydrogen_declarations() {
     for (source, expected) in [
-        ("C", HydrogenDeclaration::Infer { explicit: 0 }),
+        ("C", HydrogenDeclaration::Infer { specified: 0 }),
         ("[C]", HydrogenDeclaration::Fixed(0)),
         ("[CH]", HydrogenDeclaration::Fixed(1)),
         ("[NH4+]", HydrogenDeclaration::Fixed(4)),
@@ -3383,7 +3383,7 @@ fn all_smiles_writers_round_trip_lossless_hydrogen_declarations() {
 #[test]
 fn all_smiles_writers_require_known_total_for_declared_and_inferred_hydrogens() {
     let mut atom = carbon();
-    atom.hydrogens = HydrogenDeclaration::Infer { explicit: 1 };
+    atom.hydrogens = HydrogenDeclaration::Infer { specified: 1 };
     let mut graph = crate::core::MoleculeEditor::new();
     graph.add_atom(atom).expect("carbon");
     let molecule = graph.finish().expect("single atom molecule");
@@ -3410,12 +3410,14 @@ fn all_smiles_writers_require_known_total_for_declared_and_inferred_hydrogens() 
 fn all_smiles_writers_preserve_total_declared_and_inferred_hydrogens() {
     for (symbol, declared, total) in [("C", 1, 4), ("C", 4, 4), ("N", 1, 3), ("O", 1, 2)] {
         let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
-        atom.hydrogens = HydrogenDeclaration::Infer { explicit: declared };
+        atom.hydrogens = HydrogenDeclaration::Infer {
+            specified: declared,
+        };
         let mut editor = MoleculeEditor::new();
         let id = editor.add_atom(atom).unwrap();
         let mut molecule = editor.finish().unwrap();
         perceive(&mut molecule).unwrap();
-        assert_eq!(molecule.implicit_hydrogens(id), Ok(Some(total - declared)));
+        assert_eq!(molecule.inferred_hydrogens(id), Ok(Some(total - declared)));
         let before = molecule.clone();
         for written in [
             smiles_api::write(&molecule),
@@ -3427,7 +3429,8 @@ fn all_smiles_writers_preserve_total_declared_and_inferred_hydrogens() {
             perceive(&mut reparsed).unwrap();
             let (id, atom) = reparsed.atoms().next().unwrap();
             assert_eq!(
-                atom.hydrogens.explicit_count() + reparsed.implicit_hydrogens(id).unwrap().unwrap(),
+                atom.hydrogens.specified_count()
+                    + reparsed.inferred_hydrogens(id).unwrap().unwrap(),
                 total,
                 "{symbol}: {written}"
             );
@@ -3630,9 +3633,9 @@ fn isomeric_smiles_materializes_required_tetrahedral_hydrogen_without_mutating_s
     let center = AtomId::new(1);
     assert_eq!(
         molecule.atom(center).expect("center").hydrogens,
-        HydrogenDeclaration::Infer { explicit: 0 }
+        HydrogenDeclaration::Infer { specified: 0 }
     );
-    assert_eq!(molecule.implicit_hydrogens(center), Ok(Some(1)));
+    assert_eq!(molecule.inferred_hydrogens(center), Ok(Some(1)));
     molecule
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
@@ -3660,7 +3663,7 @@ fn isomeric_smiles_materializes_required_tetrahedral_hydrogen_without_mutating_s
     }
     assert_eq!(
         molecule.atom(center).expect("center").hydrogens,
-        HydrogenDeclaration::Infer { explicit: 0 }
+        HydrogenDeclaration::Infer { specified: 0 }
     );
 }
 
@@ -3796,11 +3799,11 @@ fn isomeric_smiles_round_trips_pubchem_anthraquinone_aromatic_shape() {
     assert_eq!(
         reparsed
             .atoms()
-            .filter(|(_, atom)| !atom.hydrogens.allows_implicit())
+            .filter(|(_, atom)| !atom.hydrogens.allows_inference())
             .count(),
         molecule
             .atoms()
-            .filter(|(_, atom)| !atom.hydrogens.allows_implicit())
+            .filter(|(_, atom)| !atom.hydrogens.allows_inference())
             .count(),
         "{written}"
     );
@@ -3856,8 +3859,8 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
                 },
             )))
             .expect("double-bond stereo");
-        molecule.working_mut().set_implicit_hydrogens(left, 1);
-        molecule.working_mut().set_implicit_hydrogens(right, 1);
+        molecule.working_mut().set_inferred_hydrogens(left, 1);
+        molecule.working_mut().set_inferred_hydrogens(right, 1);
 
         let written = smiles_api::write_isomeric(molecule.working())
             .expect("implicit-carrier stereo should write");
@@ -3939,8 +3942,8 @@ fn smiles_aromatic_arsenic_round_trip() {
         let hydrogens = |mol: &Molecule| {
             mol.atoms()
                 .map(|(id, atom)| {
-                    usize::from(atom.hydrogens.explicit_count())
-                        + usize::from(mol.implicit_hydrogens(id).unwrap().unwrap_or(0))
+                    usize::from(atom.hydrogens.specified_count())
+                        + usize::from(mol.inferred_hydrogens(id).unwrap().unwrap_or(0))
                 })
                 .sum::<usize>()
         };
