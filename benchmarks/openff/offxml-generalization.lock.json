@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "recorded": "2026-09-22",
+  "toolkit_version": "0.19.0",
+  "generator": "benchmarks/openff/reference_offxml.py",
+  "artifacts": [
+    {
+      "path": "crates/kekule-openff/data/rosemary.offxml",
+      "sha256": "13040a7d2dd0e993010e2ec9da8ca2ee21cd8b141ce369b4300d74f2b7a31d57"
+    },
+    {
+      "path": "crates/kekule-openff/tests/fixtures/offxml-generalization.json.gz",
+      "sha256": "591eb043278325fbf19bc36f81a56f1d977e05952f2becab6f4976435f78c25f"
+    },
+    {
+      "path": "benchmarks/openff/offxml-rosemary-recheck.json.gz",
+      "sha256": "2f90e5f45106677a46786e6448d4196d25bf9d5ac2c7e20a3c676cbf2d437286"
+    }
+  ],
+  "source_sha256_lf": {
+    "crates/kekule-openff/src/offxml.rs": "ecf388d5600c6dfa5f8c5f9a25478dc6904f3ad15765e27f0def766a9a24b662",
+    "crates/kekule-openff/src/offxml/quantity.rs": "55120baa05afeac0fb5e0826fae3709bf210e21b456b9f3b1cc0bf3fe9b28f64",
+    "crates/kekule-openff/src/parameters.rs": "602535b31b574d55f0253c04ace56f71bf32cc01cbf2bec64233d2926b9f53c2",
+    "crates/kekule-openff/src/lib.rs": "39667a980ce2f570ed7e721269b4d95e41b3709adf7c7ac58f0eee80639a850f",
+    "benchmarks/openff/reference_offxml.py": "71b411e0a4a70ee0a7b400adab4ef073c0c471edbb0c6e414e7a2d504bd73ae8"
+  }
+}

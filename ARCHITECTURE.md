@@ -408,3 +408,12 @@ The unpublished `kekule-bench` workspace package calls public APIs to compare
 scientific outputs and measure explicitly scoped workflows. Dataset provenance,
 reference-tool adapters and benchmark reports stay outside the runtime crates.
 See the [benchmark guide](benchmarks/GUIDE.md) for the optional execution workflow.
+
+`kekule-openff` owns compiled SMIRNOFF rules, frozen NAGL inference, and typed
+`ParameterizedTopology` results bound to the caller's exact `Arc<Topology>`.
+It prepares temporary per-definition chemistry and expands assignments to
+instance-qualified atoms without mutating the topology or adding hydrogens.
+All numeric parameters carry canonical units. Complete force-field state stays
+in this result rather than unstructured molecule properties. The official C
+InChI dependency is confined to this companion crate's lookup boundary; Python
+reference tools and checkpoint conversion remain in `benchmarks/openff`.

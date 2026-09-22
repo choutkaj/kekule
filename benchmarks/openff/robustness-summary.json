@@ -1,0 +1,159 @@
+{
+  "molecules": 110,
+  "cases": 220,
+  "parameterization_passed": 220,
+  "all_checks_passed": 214,
+  "energy_evaluations": 660,
+  "paired_atoms": 29252,
+  "charge_max_error_e": 2.2289653611728966e-07,
+  "charge_sum_max_error_e": 5.595524044110789e-14,
+  "feature_max_error": 9.934107481068821e-09,
+  "energy_shared_charge_max_error_kj_mol": {
+    "Bonds": 3.026798367500305e-09,
+    "Angles": 7.639755494892597e-11,
+    "ProperTorsions": 4.18367562815547e-11,
+    "ImproperTorsions": 3.467448550509289e-12,
+    "vdW": 3.0240698833949864e-10,
+    "Electrostatics": 6.05359673500061e-09,
+    "Total": 6.170012056827545e-09
+  },
+  "energy_native_charge_max_error_kj_mol": {
+    "Electrostatics": 0.0006011471332385554,
+    "Total": 0.0006011469959048554
+  },
+  "parameter_rules": {
+    "Bonds": 66,
+    "Angles": 35,
+    "ProperTorsions": 116,
+    "ImproperTorsions": 7,
+    "vdW": 23,
+    "Constraints": 1
+  },
+  "charge_sources": {
+    "Inference": 218,
+    "Lookup": 2
+  },
+  "remaining_failures": [
+    {
+      "id": "pdb-3ABD-A",
+      "permutation": "original",
+      "errors": [
+        {
+          "identity": "invalid structure: too many atoms (2940 > 1024)"
+        }
+      ]
+    },
+    {
+      "id": "pdb-3ABD-A",
+      "permutation": "reversed",
+      "errors": [
+        {
+          "identity": "invalid structure: too many atoms (2940 > 1024)"
+        }
+      ]
+    },
+    {
+      "id": "pdb-9B3P-B",
+      "permutation": "original",
+      "errors": [
+        {
+          "identity": "invalid structure: too many atoms (1281 > 1024)"
+        }
+      ]
+    },
+    {
+      "id": "pdb-9B3P-B",
+      "permutation": "reversed",
+      "errors": [
+        {
+          "identity": "invalid structure: too many atoms (1281 > 1024)"
+        }
+      ]
+    },
+    {
+      "id": "pdb-8J90-E",
+      "permutation": "original",
+      "errors": [
+        {
+          "identity": "invalid structure: too many atoms (1274 > 1024)"
+        }
+      ]
+    },
+    {
+      "id": "pdb-8J90-E",
+      "permutation": "reversed",
+      "errors": [
+        {
+          "identity": "invalid structure: too many atoms (1274 > 1024)"
+        }
+      ]
+    }
+  ],
+  "proteins": [
+    {
+      "id": "pdb-1PJV-A",
+      "residues": 32,
+      "atoms": 507,
+      "formal_charge": 6
+    },
+    {
+      "id": "pdb-2JUC-A",
+      "residues": 55,
+      "atoms": 937,
+      "formal_charge": -6
+    },
+    {
+      "id": "pdb-1IWC-A",
+      "residues": 34,
+      "atoms": 504,
+      "formal_charge": 2
+    },
+    {
+      "id": "pdb-3ABD-A",
+      "residues": 180,
+      "atoms": 2940,
+      "formal_charge": -7
+    },
+    {
+      "id": "pdb-2N4H-A",
+      "residues": 50,
+      "atoms": 700,
+      "formal_charge": 1
+    },
+    {
+      "id": "pdb-9B3P-B",
+      "residues": 78,
+      "atoms": 1281,
+      "formal_charge": 10
+    },
+    {
+      "id": "pdb-2F52-A",
+      "residues": 67,
+      "atoms": 1014,
+      "formal_charge": -6
+    },
+    {
+      "id": "pdb-8J90-E",
+      "residues": 77,
+      "atoms": 1274,
+      "formal_charge": 3
+    },
+    {
+      "id": "pdb-6EE9-X",
+      "residues": 25,
+      "atoms": 378,
+      "formal_charge": 0
+    },
+    {
+      "id": "pdb-1W1F-A",
+      "residues": 60,
+      "atoms": 974,
+      "formal_charge": 0
+    }
+  ],
+  "sha256": {
+    "inputs": "5fc588cc2f693843b2f38d0a69b5875c32e85d5822e82548aea97d3f3470740b",
+    "reference": "bd33a90326d54651e0b5ea79a0ac831e31d81d0d03e55c2d7c646148bcf78ac7",
+    "native": "cc8586c6c9061baa1b66beb91f17864ae5c2b562c5accd6739416e5256af8f1e"
+  }
+}

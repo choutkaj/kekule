@@ -1,6 +1,10 @@
 # Provenance-pinned external fixtures must retain byte-exact source checksums.
 benchmarks/corpora/*/data/** binary
 benchmarks/smarts-fixtures/** -text
+benchmarks/openff/fixtures/** -text
+# The validation figure summary pins this timing archive's exact checksum.
+benchmarks/openff/cpu-timings.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+crates/kekule-openff/data/** -text
 benchmarks/corpora/rdkit-queries/upstream/** binary
 # This copied source lock must remain byte-identical to the historical copy.
 benchmarks/corpora/rdkit-queries/sources.lock.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
