@@ -8,6 +8,9 @@ use super::*;
 /// stereo payload.
 /// Each atom or bond focus has at most one assertion; changing a configuration
 /// uses [`MoleculeEditor::replace_stereo_element`].
+/// Structural equality compares the stored assertion and group ID. It does not
+/// identify equivalent enhanced-group representatives under joint inversion;
+/// canonical SMILES normalizes that equivalence for supported encodings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StereoElement {
     pub kind: StereoElementKind,
@@ -256,11 +259,25 @@ pub struct StereoGroup {
     pub members: Vec<StereoElementId>,
 }
 
+/// Relationship between the specified configurations of group members.
+///
+/// Group identifiers and member order are not chemical information. For a
+/// non-absolute group the reference configuration may be inverted jointly at
+/// every member without changing the relationship; inverting only some members
+/// generally changes the represented diastereomer relationship. Separate groups
+/// make independent choices. The kinds remain distinct even when they admit the
+/// same pair of configurations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StereoGroupKind {
+    /// Every member has the specified absolute configuration.
     Absolute,
+    /// Relative configuration only, without asserting purity or composition.
     Relative,
+    /// An equal mixture of the represented configuration and its enantiomer.
+    /// Standard CX AND groups do not specify this quantitative composition.
     Racemic,
+    /// A mixture containing the correlated configurations; proportions unspecified.
     And,
+    /// One of the correlated configurations, without specifying which one.
     Or,
 }

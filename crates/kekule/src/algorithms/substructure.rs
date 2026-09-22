@@ -24,6 +24,10 @@ pub struct SubstructureMatchOptions {
     pub max_candidate_pairs: usize,
     /// Collapse query-automorphism duplicates by target atom set.
     pub uniquify: bool,
+    /// Honor target enhanced groups as correlated configuration choices.
+    /// Query stereo groups always enable this behavior. Plain SMARTS retains
+    /// literal local-parity matching by default for backward compatibility.
+    pub use_enhanced_stereo: bool,
 }
 
 impl Default for SubstructureMatchOptions {
@@ -34,6 +38,7 @@ impl Default for SubstructureMatchOptions {
             max_query_atoms: MAX_SUBSTRUCTURE_QUERY_ATOMS,
             max_candidate_pairs: 2_000_000,
             uniquify: true,
+            use_enhanced_stereo: false,
         }
     }
 }

@@ -6,7 +6,7 @@ mod mmcif_write;
 mod molfile_write;
 mod sdf_document;
 mod serialization_write;
-mod smiles;
+pub(crate) mod smiles;
 mod staged_coordinates;
 mod structure_documents;
 mod v2000;

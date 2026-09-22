@@ -143,6 +143,9 @@ impl std::error::Error for SmartsParseError {}
 /// adds no stereo relationship. Unspecified and non-tetrahedral stereo syntax
 /// remain unsupported. Boolean stereo is evaluated literally; this intentionally
 /// differs from RDKit's handling of some negations and alternatives.
+/// An optional separated CX extension supports tetrahedral `a`, `oN`, `&N`
+/// groups and the `r` flag, with zero-based query atom indices. Other CX fields
+/// are rejected. Enhanced groups compare correlated configurations during matching.
 /// See the crate's SMARTS capability matrix for the complete dialect contract.
 pub fn parse_smarts(input: &str) -> Result<QueryGraph, SmartsParseError> {
     parse_smarts_with_options(input, SmartsParseOptions::default())
@@ -175,7 +178,116 @@ pub fn parse_smarts_with_options(
             "non-ASCII query syntax is outside the bounded SMARTS subset",
         ));
     }
+    if let Some(start) = input.find('|') {
+        if start == 0
+            || start + 1 >= input.len()
+            || !input.as_bytes()[start - 1].is_ascii_whitespace()
+            || !input.ends_with('|')
+        {
+            return Err(SmartsParseError::syntax(
+                start..input.len(),
+                "CXSMARTS requires a separated, terminated extension",
+            ));
+        }
+        let query = Parser::new(
+            input[..start].trim_end(),
+            options,
+            Rc::new(ParseBudget::default()),
+            0,
+        )
+        .parse()?;
+        return install_cx_groups(
+            query,
+            &input[start + 1..input.len() - 1],
+            start..input.len(),
+        );
+    }
     Parser::new(input, options, Rc::new(ParseBudget::default()), 0).parse()
+}
+
+fn install_cx_groups(
+    query: QueryGraph,
+    fields: &str,
+    span: Range<usize>,
+) -> Result<QueryGraph, SmartsParseError> {
+    if fields.trim().is_empty() {
+        return Ok(query);
+    }
+    use crate::core::StereoGroupKind as K;
+    let fail = |message| SmartsParseError::syntax(span.clone(), message);
+    let mut groups = BTreeMap::<(u8, usize), (K, Vec<QueryAtomId>)>::new();
+    let mut current = None;
+    let mut relative = false;
+    for part in fields.split(',').map(str::trim) {
+        if part == "r" {
+            if relative {
+                return Err(fail("duplicate CXSMARTS relative flag"));
+            }
+            relative = true;
+            current = None;
+            continue;
+        }
+        let atom = if let Some((header, atom)) = part.split_once(':') {
+            let (tag, number, kind) = if header == "a" {
+                (b'a', 0, K::Absolute)
+            } else if header.starts_with('o') || header.starts_with('&') {
+                if header.len() == 1 || !header[1..].bytes().all(|b| b.is_ascii_digit()) {
+                    return Err(fail("invalid CXSMARTS stereo group number"));
+                }
+                let number = header[1..]
+                    .parse::<usize>()
+                    .map_err(|_| fail("invalid CXSMARTS stereo group number"))?;
+                let tag = header.as_bytes()[0];
+                (tag, number, if tag == b'o' { K::Or } else { K::And })
+            } else {
+                return Err(SmartsParseError::unsupported(
+                    span.clone(),
+                    "unsupported CXSMARTS field",
+                ));
+            };
+            current = Some((tag, number));
+            groups
+                .entry((tag, number))
+                .or_insert_with(|| (kind, Vec::new()));
+            atom
+        } else {
+            part
+        };
+        let key = current.ok_or_else(|| fail("expected CXSMARTS stereo group field"))?;
+        if atom.is_empty() || !atom.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(fail("invalid CXSMARTS member index"));
+        }
+        let index = atom
+            .parse::<u32>()
+            .map_err(|_| fail("CXSMARTS member index out of range"))?;
+        groups
+            .get_mut(&key)
+            .unwrap()
+            .1
+            .push(QueryAtomId::new(index));
+    }
+    if relative {
+        let grouped: std::collections::BTreeSet<_> = groups
+            .values()
+            .flat_map(|(_, m)| m.iter().copied())
+            .collect();
+        let members = query
+            .atom_ids()
+            .filter(|id| !grouped.contains(id) && query.atom(*id).unwrap().stereo_frame().is_some())
+            .collect::<Vec<_>>();
+        if !members.is_empty() {
+            groups.insert((b'r', 0), (K::Relative, members));
+        }
+    }
+    let mut builder = query.to_builder();
+    for (_, (kind, members)) in groups {
+        builder
+            .add_stereo_group(super::QueryStereoGroup { kind, members })
+            .map_err(|e| SmartsParseError::syntax(span.clone(), e.to_string()))?;
+    }
+    builder
+        .build()
+        .map_err(|e| SmartsParseError::syntax(span.clone(), e.to_string()))
 }
 
 fn validate_options(options: SmartsParseOptions) -> Result<(), SmartsParseError> {
