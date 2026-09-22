@@ -1399,7 +1399,7 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
     let molecule = read_molfile(undeclared).expect("undeclared V2000 atom interprets");
     assert_eq!(
         molecule.atom(AtomId::new(0)).expect("carbon").hydrogens,
-        HydrogenDeclaration::Infer { explicit: 0 }
+        HydrogenDeclaration::Infer { specified: 0 }
     );
 }
 

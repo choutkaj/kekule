@@ -126,7 +126,7 @@ pub fn detect_rotatable_bonds(
             .map_err(PerceptionError::Valence)?;
         compatible = assignments
             .iter()
-            .all(|(&atom, &count)| perception.implicit_hydrogens(atom) == Some(count));
+            .all(|(&atom, &count)| perception.inferred_hydrogens(atom) == Some(count));
     }
     let molecule = if !options.include_resonance_restricted_bonds && !compatible {
         perceived = molecule.clone();
@@ -351,8 +351,8 @@ fn is_methyl_like(
         return false;
     }
 
-    let represented = usize::from(atom.hydrogens.explicit_count());
-    if atom.hydrogens.allows_implicit() {
+    let represented = usize::from(atom.hydrogens.specified_count());
+    if atom.hydrogens.allows_inference() {
         graph_hydrogens.saturating_add(represented) <= 3
     } else {
         graph_hydrogens.saturating_add(represented) == 3

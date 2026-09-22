@@ -462,7 +462,23 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
             model.view(),
             DreidingPrepareOptions::default(),
         ),
-        Err(DreidingPrepareError::CountedHydrogens { .. })
+        Err(DreidingPrepareError::CountedHydrogens { implicit: 1, .. })
+    ));
+
+    let mut molecule = kekule::smiles::to_molecules("C").unwrap().remove(0);
+    let id = molecule.atom_ids().next().unwrap();
+    let mut editor = molecule.into_editor();
+    editor.atom_mut(id).unwrap().hydrogens = HydrogenDeclaration::Infer { specified: 1 };
+    molecule = editor.finish().unwrap();
+    molecule.perceive().unwrap();
+    let model = Model::from_molecule(&molecule, &Positions::zeros(1)).unwrap();
+    assert!(matches!(
+        DreidingPotential::prepare(
+            &model.shared_topology(),
+            model.view(),
+            DreidingPrepareOptions::default(),
+        ),
+        Err(DreidingPrepareError::CountedHydrogens { implicit: 4, .. })
     ));
 }
 

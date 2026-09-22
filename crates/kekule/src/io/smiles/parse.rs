@@ -120,7 +120,7 @@ pub(super) struct SmilesProgramAtom {
 pub(super) struct SmilesAtomSyntax {
     pub(super) symbol: String,
     pub(super) isotope: Option<u16>,
-    pub(super) explicit_hydrogens: u8,
+    pub(super) specified_hydrogens: u8,
     pub(super) formal_charge: i8,
     pub(super) atom_map: Option<u32>,
     pub(super) aromatic: bool,
@@ -594,7 +594,7 @@ fn parse_smiles_program(
             }
             '[' => {
                 let (atom, aromatic, chirality, next_cursor) = parse_bracket_atom(chars, cursor)?;
-                let explicit_hydrogens = atom.explicit_hydrogens;
+                let specified_hydrogens = atom.specified_hydrogens;
                 let atom_id = next_smiles_atom_index(atoms.len(), offset, options.max_atoms)?;
                 let end = chars
                     .get(next_cursor)
@@ -615,7 +615,7 @@ fn parse_smiles_program(
                     });
                     tetrahedral_carriers.insert(
                         atom_id,
-                        initial_tetrahedral_carriers(current, explicit_hydrogens),
+                        initial_tetrahedral_carriers(current, specified_hydrogens),
                     );
                 }
                 if let Some(previous) = current {
@@ -828,7 +828,7 @@ fn add_smiles_program_bond(
 
 fn initial_tetrahedral_carriers(
     previous: Option<usize>,
-    explicit_hydrogens: u8,
+    specified_hydrogens: u8,
 ) -> Vec<PendingStereoCarrier> {
     let mut carriers = Vec::new();
     if let Some(previous) = previous {
@@ -836,7 +836,7 @@ fn initial_tetrahedral_carriers(
             previous,
         )));
     }
-    for _ in 0..explicit_hydrogens {
+    for _ in 0..specified_hydrogens {
         carriers.push(PendingStereoCarrier::Resolved(
             SmilesStereoCarrier::ImplicitHydrogen,
         ));
@@ -981,7 +981,7 @@ fn parse_organic_atom(
         SmilesAtomSyntax {
             symbol,
             isotope: None,
-            explicit_hydrogens: 0,
+            specified_hydrogens: 0,
             formal_charge: 0,
             atom_map: None,
             aromatic,
@@ -1056,7 +1056,7 @@ fn parse_bracket_atom(
             "bracket atom missing element",
         ));
     };
-    let mut explicit_hydrogens = 0;
+    let mut specified_hydrogens = 0;
     let mut formal_charge = 0;
     let mut atom_map = None;
     let mut saw_chirality = false;
@@ -1086,7 +1086,7 @@ fn parse_bracket_atom(
                 saw_hydrogen = true;
                 index += 1;
                 let digit_end = ascii_digits_end(bytes, index);
-                explicit_hydrogens = if digit_end == index {
+                specified_hydrogens = if digit_end == index {
                     1
                 } else {
                     let value = text[index..digit_end].parse::<u8>().map_err(|_| {
@@ -1164,7 +1164,7 @@ fn parse_bracket_atom(
         SmilesAtomSyntax {
             symbol: canonical_symbol,
             isotope,
-            explicit_hydrogens,
+            specified_hydrogens,
             formal_charge,
             atom_map,
             aromatic,

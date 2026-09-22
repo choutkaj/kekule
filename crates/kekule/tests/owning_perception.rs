@@ -136,7 +136,7 @@ fn perceived_topology_preserves_sparse_ids_reuse_hierarchy_and_annotations() {
     assert_eq!(first.molecule(), &molecule);
     assert_eq!(first.molecule().properties(), molecule.properties());
     assert_eq!(
-        first.molecule().implicit_hydrogens(carbon).unwrap(),
+        first.molecule().inferred_hydrogens(carbon).unwrap(),
         Some(2)
     );
     assert_eq!(

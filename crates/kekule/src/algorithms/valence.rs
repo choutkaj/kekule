@@ -56,7 +56,7 @@ impl fmt::Display for ValenceError {
 
 impl std::error::Error for ValenceError {}
 
-/// Installs implicit-hydrogen assignments from localized bonds and represented
+/// Installs inferred-hydrogen assignments from localized bonds and represented
 /// atom state using the selected model's strict valence rules.
 ///
 /// Success replaces installed valence and clears dependent aromaticity and CIP
@@ -94,7 +94,7 @@ pub(crate) fn rdkit_valence_assignments(
     let mut assignments = BTreeMap::new();
     let mut issues = Vec::new();
     for (atom_id, atom) in mol.atoms() {
-        let implicit = match rdkit_atom_implicit_hydrogen_count(mol, atom_id, atom, options.strict)
+        let implicit = match rdkit_atom_inferred_hydrogen_count(mol, atom_id, atom, options.strict)
         {
             Ok(implicit) => implicit,
             Err(issue) => {
@@ -115,8 +115,8 @@ pub(crate) fn rdkit_valence_assignments(
 /// Derive an uninstalled assignment with the same permissive behavior as
 /// non-strict valence perception. Aromaticity uses this only when the atom has
 /// no installed hydrogen assignment.
-pub(crate) fn rdkit_implicit_hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
-    rdkit_atom_implicit_hydrogen_count(mol, atom_id, atom, false).unwrap_or(0)
+pub(crate) fn rdkit_inferred_hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
+    rdkit_atom_inferred_hydrogen_count(mol, atom_id, atom, false).unwrap_or(0)
 }
 
 /// Radical-electron count implied by a fixed-H SMILES bracket atom after
@@ -177,13 +177,13 @@ pub(crate) fn rdkit_bracket_radical_electrons(
     u8::try_from(electrons).expect("octet deficits with i8 charges fit in u8")
 }
 
-fn rdkit_atom_implicit_hydrogen_count(
+fn rdkit_atom_inferred_hydrogen_count(
     mol: &Molecule,
     atom_id: AtomId,
     atom: &Atom,
     strict: bool,
 ) -> std::result::Result<u8, ValenceIssue> {
-    let explicit = explicit_valence(mol, atom_id) + usize::from(atom.hydrogens.explicit_count());
+    let explicit = explicit_valence(mol, atom_id) + usize::from(atom.hydrogens.specified_count());
     let radical_electrons = atom
         .radical
         .map_or(0, |radical| usize::from(radical.electron_count()));
@@ -247,7 +247,7 @@ fn rdkit_atom_implicit_hydrogen_count(
 
     // RDKit skips the implicit-valence calculation completely when H inference
     // is disabled, including its radical occupancy check.
-    if !atom.hydrogens.allows_implicit() {
+    if !atom.hydrogens.allows_inference() {
         return Ok(0);
     }
     if atom.element.atomic_number() == 1 && explicit == 0 && radical_electrons == 0 {
@@ -355,7 +355,7 @@ fn can_be_rdkit_hypervalent_anion(atom: &Atom, effective_atomic_number: u8) -> b
 ///
 /// Returns an error if `atom` is not live in `mol`.
 pub fn represented_valence(mol: &Molecule, atom: AtomId) -> Result<usize> {
-    let declaration = mol.atom(atom)?.hydrogens.explicit_count();
+    let declaration = mol.atom(atom)?.hydrogens.specified_count();
     Ok(explicit_valence(mol, atom) + usize::from(declaration))
 }
 

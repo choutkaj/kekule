@@ -490,10 +490,10 @@ pub(crate) fn source_tetrahedral_carriers(
     }
     carriers.sort_by_key(|carrier| carrier.canonical_order_key());
 
-    // Only a primary explicit-H declaration can assert a virtual carrier here.
+    // Only a primary specified-H declaration can assert a virtual carrier here.
     // Installed implicit-H assignments are deliberately invisible to this
     // normalization kernel.
-    let declared_hydrogens = atom.hydrogens.explicit_count();
+    let declared_hydrogens = atom.hydrogens.specified_count();
     if declared_hydrogens == 0
         && carriers.len() == 3
         && stable_tetrahedral_lone_pair_center(atom.element.symbol())
@@ -821,7 +821,7 @@ fn source_atom_is_atropisomeric_sp2_endpoint(
     // perceived implicit hydrogens do not.
     let total_degree = incident
         .len()
-        .saturating_add(usize::from(atom.hydrogens.explicit_count()));
+        .saturating_add(usize::from(atom.hydrogens.specified_count()));
     if !(2..=3).contains(&total_degree) {
         return false;
     }
@@ -1145,7 +1145,7 @@ fn source_double_bond_endpoint_carriers(
     // explicitly declares exactly one hydrogen.
     if molecule
         .atom(endpoint)
-        .is_ok_and(|atom| atom.hydrogens.explicit_count() == 1)
+        .is_ok_and(|atom| atom.hydrogens.specified_count() == 1)
     {
         carriers.push(StereoCarrier::ImplicitHydrogen);
     }
