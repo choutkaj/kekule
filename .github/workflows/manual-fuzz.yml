@@ -13,6 +13,8 @@ on:
           - mol_v3000
           - sdf_v2000
           - smiles
+          - smarts
+          - smarts_match
           - mmcif
           - trajectory_detection
           - trajectory_xyz
@@ -37,6 +39,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-fuzz
+      - name: Seed SMILES with the supplied PubChem smoke inputs
+        if: inputs.target == 'smiles'
+        run: cp benchmarks/corpora/smoke/data/pubchem_smiles/*.txt fuzz/corpus/smiles/
       - name: Run bounded campaign
         env:
           TARGET: ${{ inputs.target }}
