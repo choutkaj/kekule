@@ -15,6 +15,7 @@ use super::write::{
 };
 
 mod labeling;
+use super::emit::Emission;
 use labeling::CanonicalOrder;
 
 const MAX_CANDIDATE_VISITS: usize = 50_000_000;
@@ -29,6 +30,20 @@ fn write_canonical_smiles_with_limits(
     max_candidate_visits: usize,
     max_graph_slots: usize,
 ) -> std::result::Result<String, MolWriteError> {
+    write_canonical_emission_with_limits(molecule, max_candidate_visits, max_graph_slots)?.render()
+}
+
+pub(super) fn write_canonical_emission(
+    molecule: &Molecule,
+) -> std::result::Result<Emission, MolWriteError> {
+    write_canonical_emission_with_limits(molecule, MAX_CANDIDATE_VISITS, MAX_GRAPH_SLOTS)
+}
+
+fn write_canonical_emission_with_limits(
+    molecule: &Molecule,
+    max_candidate_visits: usize,
+    max_graph_slots: usize,
+) -> std::result::Result<Emission, MolWriteError> {
     // Check before cloning, ranking or constructing any candidate. A sparse
     // graph can have many deleted slots, so live atom counts alone do not bound
     // the dense scratch arrays used by ranking and labeling.
@@ -73,18 +88,18 @@ fn write_canonical_smiles_with_limits(
                 let candidate = write_canonical_smiles_component(
                     mol, *root, &order, preference, atom_style, &stereo,
                 )?;
-                let key = canonical_smiles_candidate_key(candidate);
-                if best.as_ref().is_none_or(|best| key < *best) {
-                    best = Some(key);
+                let key = canonical_smiles_candidate_key(candidate.render()?);
+                if best.as_ref().is_none_or(|(best, _)| key < *best) {
+                    best = Some((key, candidate));
                 }
             }
         }
-        if let Some((_, _, _, candidate)) = best {
+        if let Some((_, candidate)) = best {
             components.push(candidate);
         }
     }
-    components.sort();
-    Ok(components.join("."))
+    // A published Molecule is connected; topology writing orders occurrences.
+    Ok(Emission::join(components))
 }
 
 fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, MolWriteError> {
@@ -234,7 +249,7 @@ fn write_canonical_smiles_component(
     preference: CanonicalBondTraversal,
     atom_style: CanonicalAtomStyle,
     stereo: &SmilesStereoWriteContext,
-) -> std::result::Result<String, MolWriteError> {
+) -> std::result::Result<Emission, MolWriteError> {
     let plan = plan_canonical_smiles_component(mol, root, ranking, preference, atom_style)?;
     write_canonical_smiles_component_with_plan(
         mol, root, &plan, ranking, preference, atom_style, stereo,
@@ -308,13 +323,14 @@ fn write_canonical_smiles_component_with_plan(
     preference: CanonicalBondTraversal,
     atom_style: CanonicalAtomStyle,
     stereo: &SmilesStereoWriteContext,
-) -> std::result::Result<String, MolWriteError> {
+) -> std::result::Result<Emission, MolWriteError> {
     write_smiles_component(
         mol,
         root,
         plan,
         Some(stereo),
         atom_style,
+        true,
         |atom, children| {
             children.sort_by_key(|(_, order, child)| {
                 (

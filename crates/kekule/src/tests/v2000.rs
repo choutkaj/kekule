@@ -448,6 +448,13 @@ fn v3000_round_trips_absolute_or_and_stereo_groups_and_promotes_auto_output() {
             .1;
         assert_eq!(group.kind, expected);
         assert_eq!(group.members.len(), 1);
+        let mut molecule = interpreted.molecules().next().unwrap().clone();
+        molecule.perceive().unwrap();
+        let cx = crate::smiles::write_canonical(&molecule).unwrap();
+        let mut restored = crate::smiles::to_molecules(&cx).unwrap().pop().unwrap();
+        restored.perceive().unwrap();
+        assert_eq!(restored.stereo_groups().next().unwrap().1.kind, expected);
+        assert_eq!(crate::smiles::write_canonical(&restored).unwrap(), cx);
         assert!(interpreted.reports()[0].ignored_record_lines().is_empty());
         let written =
             molfile::write_model(interpreted.model(), molfile::MolfileWriteOptions::default())

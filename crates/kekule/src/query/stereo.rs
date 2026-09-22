@@ -2,6 +2,15 @@ use crate::core::{DoubleBondOrientation, TetrahedralOrientation};
 
 use super::{QueryAtomId, QueryBond, QueryBondId, QueryGraphError};
 
+/// A correlated configuration predicate over tetrahedral query centers.
+/// Members refer to checked local stereo constraints or Boolean carrier frames.
+/// Distinct groups are independent; group order has no matching significance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryStereoGroup {
+    pub kind: crate::core::StereoGroupKind,
+    pub members: Vec<QueryAtomId>,
+}
+
 /// A stereochemical predicate evaluated under a complete query-to-target mapping.
 ///
 /// These constraints describe local configuration, not CIP labels or enhanced

@@ -170,6 +170,7 @@ struct Site {
     carriers: Vec<Vec<usize>>,
     parity: Option<bool>,
     fixed: bool,
+    group: Option<(StereoGroupId, StereoGroupKind)>,
 }
 
 fn odd_permutation(from: &[usize], to: &[usize]) -> Option<bool> {
@@ -216,13 +217,15 @@ impl Site {
             carriers,
             parity: None,
             fixed: true,
+            group: None,
         };
         if let Some((id, element)) = element {
             site.parity = site.represented_parity(graph, element);
-            site.fixed = site.parity.is_none()
-                || mol.stereo_groups().any(|(_, group)| {
-                    group.kind != StereoGroupKind::Absolute && group.members.contains(&id)
-                });
+            site.group = mol.stereo_groups().find_map(|(group_id, group)| {
+                (group.kind != StereoGroupKind::Absolute && group.members.contains(&id))
+                    .then_some((group_id, group.kind))
+            });
+            site.fixed = site.parity.is_none();
         }
         site
     }
@@ -303,10 +306,25 @@ pub(super) fn filter(
     options: StereoPerceptionOptions,
 ) -> Result<Vec<StereoCandidate>, StereoPerceptionError> {
     let graph = AnalysisGraph::new(mol, options)?;
-    let sites: Vec<_> = candidates
+    let mut sites: Vec<_> = candidates
         .iter()
         .map(|candidate| Site::new(mol, &graph, candidate))
         .collect();
+    // Keep a group fixed when some of its members are outside the classified
+    // candidate families. A partial group must never prove a false symmetry.
+    for (id, group) in mol.stereo_groups() {
+        let classified = sites
+            .iter()
+            .filter(|s| s.group.is_some_and(|(g, _)| g == id) && s.parity.is_some())
+            .count();
+        if group.kind != StereoGroupKind::Absolute && classified != group.members.len() {
+            for site in &mut sites {
+                if site.group.is_some_and(|(g, _)| g == id) {
+                    site.fixed = true;
+                }
+            }
+        }
+    }
     let mut active = vec![true; sites.len()];
     let mut work = 0;
     loop {
@@ -421,6 +439,8 @@ impl<'a> Search<'a> {
     }
 
     fn stereo_matches(&self) -> bool {
+        let mut groups = BTreeMap::new();
+        let mut inverse_groups = BTreeMap::new();
         for (i, site) in self
             .sites
             .iter()
@@ -436,6 +456,15 @@ impl<'a> Search<'a> {
                 {
                     return false;
                 }
+                if let Some((id, _)) = site.group {
+                    if groups
+                        .insert(id, (id, false))
+                        .is_some_and(|v| v != (id, false))
+                        || inverse_groups.insert(id, id).is_some_and(|v| v != id)
+                    {
+                        return false;
+                    }
+                }
             } else {
                 let Some(target) = self.sites.iter().enumerate().find_map(|(j, target)| {
                     (self.active[j]
@@ -448,8 +477,21 @@ impl<'a> Search<'a> {
                 let Some(parity) = site.mapped_parity(target, &self.mapping) else {
                     return false;
                 };
-                if site.parity.map(|value| value ^ parity) != target.parity {
-                    return false;
+                let delta = site.parity.unwrap() ^ parity ^ target.parity.unwrap();
+                match (site.group, target.group) {
+                    (None, None) if !delta => {}
+                    (Some((source, kind)), Some((dest, target_kind))) if kind == target_kind => {
+                        if groups
+                            .insert(source, (dest, delta))
+                            .is_some_and(|v| v != (dest, delta))
+                            || inverse_groups
+                                .insert(dest, source)
+                                .is_some_and(|v| v != source)
+                        {
+                            return false;
+                        }
+                    }
+                    _ => return false,
                 }
             }
         }

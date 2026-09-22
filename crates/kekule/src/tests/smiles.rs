@@ -484,9 +484,15 @@ fn cxsmiles_enhanced_groups_preserve_members_and_legacy_relative_configuration()
                 .collect::<Vec<_>>();
             assert_eq!(actual_centers, expected_centers, "{source}");
         }
+        let written = smiles_api::write_isomeric(&molecule).unwrap();
+        let restored = read_smiles(&written).unwrap();
+        assert_eq!(
+            restored.stereo_groups().count(),
+            molecule.stereo_groups().count()
+        );
         assert!(
-            smiles_api::write_isomeric(&molecule).is_err(),
-            "plain SMILES cannot carry these groups"
+            smiles_api::write(&molecule).is_err(),
+            "ordinary mode rejects represented stereo"
         );
     }
     let molecule = read_smiles("F/C=C/F |r|").unwrap();

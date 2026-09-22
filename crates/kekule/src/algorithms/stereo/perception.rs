@@ -96,8 +96,11 @@ pub(super) fn prepared(mol: &Molecule) -> Result<Cow<'_, Molecule>, StereoPercep
 /// including their local orientation, so dependent ring stereo is retained.
 /// Removed sites cease to constrain subsequent rounds. Specified absolute
 /// centers can be exchanged only with matching configuration; this distinguishes
-/// homomorphic and enantiomorphic ligands. Enhanced-group and axial assertions
-/// are conservatively held fixed pending their complete dependency analysis.
+/// homomorphic and enantiomorphic ligands. Enhanced groups may be exchanged only
+/// as whole groups of the same kind, with a consistent joint inversion. The group
+/// containing the tested site remains fixed while testing that site's redundancy.
+/// Axial assertions and groups containing unclassified members are conservatively
+/// held fixed; these cannot provide a proof based on only part of a relationship.
 /// Exhaustion is an error, never evidence of equivalence or stereogenicity.
 pub fn detect_stereo_candidates_with_options(
     mol: &Molecule,
