@@ -567,13 +567,14 @@ pub mod sdf {
 /// overrides.
 pub mod mmcif {
     pub use crate::io::{
-        MmcifAltLocPolicy, MmcifAtomProvenance, MmcifBlock, MmcifConnectionResolutionReason,
-        MmcifDocument, MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions,
-        MmcifEnsembleInterpretation, MmcifEntityClassifications, MmcifEntityKind, MmcifEntry,
-        MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions,
-        MmcifInterpretation, MmcifInterpretationReport, MmcifItem, MmcifLoopTable,
-        MmcifModelSelection, MmcifParseError, MmcifParseOptions, MmcifValue, MmcifWriteError,
-        MmcifWriteOptions,
+        MmcifAltLocDecision, MmcifAltLocPolicy, MmcifAltLocPreference, MmcifAltLocResidue,
+        MmcifAltLocSelection, MmcifAltLocSelectionReason, MmcifAtomProvenance, MmcifBlock,
+        MmcifConnectionResolutionReason, MmcifDocument, MmcifEnsembleInterpretError,
+        MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation, MmcifEntityClassifications,
+        MmcifEntityKind, MmcifEntry, MmcifInstanceProvenance, MmcifInterpretError,
+        MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport,
+        MmcifItem, MmcifLoopTable, MmcifModelSelection, MmcifParseError, MmcifParseOptions,
+        MmcifResidueId, MmcifResiduePosition, MmcifValue, MmcifWriteError, MmcifWriteOptions,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular meaning.
@@ -628,6 +629,24 @@ pub mod mmcif {
         options: MmcifEnsembleInterpretOptions,
     ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
         block.interpret_ensemble_with_options(options)
+    }
+
+    /// Builds an unweighted ensemble from explicit coordinate-model and altloc
+    /// selections. No alternate configurations are enumerated automatically.
+    /// Selections must produce identical atom identities and compatible topology.
+    pub fn interpret_conformations(
+        document: &MmcifDocument,
+        selections: &[MmcifInterpretOptions],
+    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+        document.interpret_conformations(selections)
+    }
+
+    /// Builds an unweighted ensemble from explicit selections within one block.
+    pub fn interpret_conformations_block(
+        block: &MmcifBlock,
+        selections: &[MmcifInterpretOptions],
+    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+        block.interpret_conformations(selections)
     }
 
     /// Writes a model using entity semantics derived from canonical topology classification.
