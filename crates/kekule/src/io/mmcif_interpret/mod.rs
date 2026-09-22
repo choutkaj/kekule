@@ -1,3 +1,4 @@
+mod altloc;
 mod atom_site;
 mod build;
 mod ensemble;
@@ -8,18 +9,27 @@ use crate::structure::ModelBuilder;
 use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};
 
 use super::{MmcifBlock, MmcifDocument};
-use atom_site::{read_asym_entities, read_atom_rows, read_entity_types, select_alt_locations};
+use altloc::select_alt_locations;
+use atom_site::{read_asym_entities, read_atom_rows, read_entity_types};
 use build::{
     build_molecule, build_topology_hierarchy, graph_error, group_rows, polymer_asym_order,
 };
 use struct_conn::{read_connections, InstanceUnion};
 
-pub(crate) use ensemble::{interpret_mmcif_ensemble, interpret_mmcif_ensemble_block};
+pub(crate) use altloc::inventory as alternate_location_inventory;
+pub use altloc::{
+    MmcifAltLocDecision, MmcifAltLocPolicy, MmcifAltLocPreference, MmcifAltLocResidue,
+    MmcifAltLocSelection, MmcifAltLocSelectionReason, MmcifResidueId, MmcifResiduePosition,
+};
+pub(crate) use ensemble::{
+    interpret_mmcif_conformations, interpret_mmcif_conformations_block, interpret_mmcif_ensemble,
+    interpret_mmcif_ensemble_block,
+};
 pub use types::{
-    MmcifAltLocPolicy, MmcifAtomProvenance, MmcifConnectionResolutionReason,
-    MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
-    MmcifEntityKind, MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue,
-    MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport, MmcifModelSelection,
+    MmcifAtomProvenance, MmcifConnectionResolutionReason, MmcifEnsembleInterpretError,
+    MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation, MmcifEntityKind,
+    MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions,
+    MmcifInterpretation, MmcifInterpretationReport, MmcifModelSelection,
 };
 
 pub(crate) fn interpret_mmcif(
@@ -121,26 +131,26 @@ impl<'a> PreparedBlock<'a> {
         )?;
         // Alternate-location validation still covers the complete source block,
         // including models omitted from the eventual projection.
-        let selected = select_alt_locations(&rows, altloc_policy, &mut report)?;
+        let selected = select_alt_locations(block, &rows, altloc_policy, &mut report)?;
         let mut models = std::collections::BTreeMap::<String, ModelRows>::new();
+        let mut model_ids = Vec::new();
         for row in rows {
             let model = models.entry(row.model_id.clone()).or_default();
+            if model.all.is_empty() {
+                model_ids.push(row.model_id.clone());
+            }
             model.all.push(row);
         }
-        let mut model_ids = Vec::new();
         for row in selected {
             let model = models
                 .get_mut(&row.model_id)
                 .expect("selected row has a source model");
-            if model.selected.is_empty() {
-                model_ids.push(row.model_id.clone());
-            }
             model.selected.push(row);
         }
         let model_sizes = model_ids
             .into_iter()
             .map(|id| {
-                let count = models[&id].selected.len();
+                let count = models[&id].all.len();
                 (id, count)
             })
             .collect::<Vec<_>>();
@@ -176,6 +186,21 @@ impl<'a> PreparedBlock<'a> {
         }
         let mut report = self.report.clone();
         report.selected_model = Some(model_id.to_owned());
+        report
+            .alternate_locations
+            .retain(|choice| choice.residue.model_id == model_id);
+        report.issues.retain(|issue| match issue {
+            MmcifInterpretIssue::AlternateLocationOmitted { residue, .. }
+            | MmcifInterpretIssue::AlternateLocationIncomplete { residue, .. }
+            | MmcifInterpretIssue::AlternateLocationCombinationRejected { residue, .. }
+            | MmcifInterpretIssue::AlternateLocationOccupancyMissing { residue, .. } => {
+                residue.model_id == model_id
+            }
+            MmcifInterpretIssue::AlternateLocationOccupancyTie { residues, .. } => {
+                residues.iter().any(|residue| residue.model_id == model_id)
+            }
+            _ => true,
+        });
         for (ignored, count) in &self.model_sizes {
             if ignored != model_id {
                 report.ignored_coordinate_models.push(ignored.clone());

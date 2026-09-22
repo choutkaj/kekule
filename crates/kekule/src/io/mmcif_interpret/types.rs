@@ -1,16 +1,10 @@
 use std::fmt;
 use std::sync::Arc;
 
+use super::altloc::{MmcifAltLocDecision, MmcifAltLocPolicy, MmcifResidueId};
 use crate::core::Molecule;
 use crate::structure::{Ensemble, EnsembleError, Model};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MmcifAltLocPolicy {
-    HighestOccupancy,
-    SelectLabel(String),
-    ErrorOnAlternateLocations,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MmcifModelSelection {
@@ -99,6 +93,32 @@ pub enum MmcifInterpretIssue {
     AlternateLocationOmitted {
         atom_name: String,
         alt_id: Option<String>,
+        residue: MmcifResidueId,
+        source_line: usize,
+    },
+    /// An alternative lacks sites present in another alternative of the same
+    /// chemical component. It is excluded rather than completed from other labels.
+    AlternateLocationIncomplete {
+        residue: MmcifResidueId,
+        alternative: String,
+        missing_atoms: Vec<String>,
+    },
+    AlternateLocationOccupancyMissing {
+        residue: MmcifResidueId,
+        source_lines: Vec<usize>,
+    },
+    /// A source-declared combination cannot represent this residue (for example,
+    /// it omits every label or includes overlapping sites). Other declared
+    /// combinations can still be considered; the rejected one is never repaired.
+    AlternateLocationCombinationRejected {
+        residue: MmcifResidueId,
+        alternative: String,
+        reason: String,
+    },
+    /// Equal heuristic scores, resolved by lexical alternative identifier.
+    AlternateLocationOccupancyTie {
+        residues: Vec<MmcifResidueId>,
+        alternatives: Vec<String>,
     },
     ConnectivityCandidatesInferred {
         atom_count: usize,
@@ -160,6 +180,7 @@ pub struct MmcifAtomProvenance {
     pub(crate) atom: InstanceAtomId,
     pub(crate) type_symbol: String,
     pub(crate) source_line: usize,
+    pub(crate) source_order: usize,
     pub(crate) atom_site_id: Option<String>,
     pub(crate) label_atom_name: Option<String>,
     pub(crate) atom_name: String,
@@ -334,6 +355,7 @@ pub struct MmcifInterpretationReport {
     pub(crate) applied_connections: usize,
     pub(crate) connectivity_candidates: usize,
     pub(crate) instances: Vec<MmcifInstanceProvenance>,
+    pub(crate) alternate_locations: Vec<MmcifAltLocDecision>,
     pub(crate) issues: Vec<MmcifInterpretIssue>,
 }
 
@@ -381,6 +403,12 @@ impl MmcifInterpretationReport {
 
     pub fn instances(&self) -> &[MmcifInstanceProvenance] {
         &self.instances
+    }
+
+    /// Decisions for the selected source coordinate model only. The source
+    /// document retains every alternative, including omitted rows and metadata.
+    pub fn alternate_locations(&self) -> &[MmcifAltLocDecision] {
+        &self.alternate_locations
     }
 
     /// Returns source-aware non-fatal interpretation issues.
@@ -481,6 +509,9 @@ impl fmt::Display for MmcifInterpretError {
 
 impl std::error::Error for MmcifInterpretError {}
 
+/// Converts deposited coordinate models to members, applying `altloc_policy`
+/// within each model. Alternate locations never generate additional members or
+/// statistical weights. A single coordinate model yields a single member.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifEnsembleInterpretOptions {
     pub strict_entity_metadata: bool,
@@ -501,7 +532,7 @@ impl Default for MmcifEnsembleInterpretOptions {
 }
 
 #[derive(Debug, Clone)]
-/// One shared-topology ensemble and one mmCIF report per coordinate model.
+/// One shared-topology ensemble and one mmCIF report per selected realization.
 pub struct MmcifEnsembleInterpretation {
     pub(super) ensemble: Ensemble,
     pub(super) reports: Vec<MmcifInterpretationReport>,
@@ -534,6 +565,12 @@ impl MmcifEnsembleInterpretation {
 pub enum MmcifEnsembleInterpretError {
     NoCoordinateModels,
     EmptyModelSelection,
+    EmptyConformationSelection,
+    /// A zero-based caller-supplied conformation selection failed.
+    Conformation {
+        selection: usize,
+        error: MmcifInterpretError,
+    },
     /// Document-level interpretation found more than one atom-site block.
     MultipleAtomSiteBlocks,
     DuplicateRequestedModel(String),
@@ -557,6 +594,8 @@ pub enum MmcifEnsembleInterpretError {
 impl fmt::Display for MmcifEnsembleInterpretError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EmptyConformationSelection => formatter.write_str("explicit mmCIF conformation selection is empty"),
+            Self::Conformation { selection, error } => write!(formatter, "cannot interpret conformation selection {selection}: {error}"),
             Self::NoCoordinateModels => {
                 formatter.write_str("mmCIF input contains no coordinate models")
             }
