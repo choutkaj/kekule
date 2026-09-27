@@ -159,7 +159,7 @@ fn check_connectivity(
     Ok(())
 }
 
-fn norm(vector: Vector3) -> Result<f64, MeasurementError> {
+pub(super) fn norm(vector: Vector3) -> Result<f64, MeasurementError> {
     let value = vector.x.hypot(vector.y).hypot(vector.z);
     if !value.is_finite() {
         return Err(MeasurementError::NumericalFailure);
@@ -167,7 +167,7 @@ fn norm(vector: Vector3) -> Result<f64, MeasurementError> {
     Ok(value)
 }
 
-fn normalized(vector: Vector3) -> Result<Vector3, MeasurementError> {
+pub(super) fn normalized(vector: Vector3) -> Result<Vector3, MeasurementError> {
     let length = norm(vector)?;
     if length == 0.0 {
         return Err(MeasurementError::DegenerateGeometry);
@@ -215,13 +215,16 @@ pub fn angle(
     b: InstanceAtomId,
     c: InstanceAtomId,
 ) -> Result<Quantity<f64>, MeasurementError> {
-    let b = point(view, b)?;
-    let u = normalized(point(view, a)? - b)?;
-    let v = normalized(point(view, c)? - b)?;
     Ok(Quantity::new(
-        norm(u.cross(v))?.atan2(u.dot(v)),
+        angle_points(point(view, a)?, point(view, b)?, point(view, c)?)?,
         CANONICAL_ANGLE_UNIT,
     ))
+}
+
+pub(super) fn angle_points(a: Point3, b: Point3, c: Point3) -> Result<f64, MeasurementError> {
+    let u = normalized(a - b)?;
+    let v = normalized(c - b)?;
+    Ok(norm(u.cross(v))?.atan2(u.dot(v)))
 }
 
 /// Measures [`angle`] with an explicit [`ConnectivityCheck`] policy.
@@ -255,15 +258,24 @@ pub fn dihedral(
         point(view, c)?,
         point(view, d)?,
     ];
+    Ok(Quantity::new(
+        dihedral_points(a, b, c, d)?,
+        CANONICAL_ANGLE_UNIT,
+    ))
+}
+
+pub(super) fn dihedral_points(
+    a: Point3,
+    b: Point3,
+    c: Point3,
+    d: Point3,
+) -> Result<f64, MeasurementError> {
     let u = normalized(b - a)?;
     let v = normalized(c - b)?;
     let w = normalized(d - c)?;
     let n0 = normalized(u.cross(v))?;
     let n1 = normalized(v.cross(w))?;
-    Ok(Quantity::new(
-        n0.cross(n1).dot(v).atan2(n0.dot(n1)),
-        CANONICAL_ANGLE_UNIT,
-    ))
+    Ok(n0.cross(n1).dot(v).atan2(n0.dot(n1)))
 }
 
 /// Measures [`dihedral`] with an explicit [`ConnectivityCheck`] policy.
