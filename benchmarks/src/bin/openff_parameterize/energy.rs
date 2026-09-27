@@ -1,14 +1,30 @@
 //! Optional validation consumer, not a production dynamics backend.
 //! nm, kJ/mol, e; vacuum NoCutoff; retain constrained valence forces.
+//! Optional Cartesian gradients are dE/dx in kJ/mol/nm, not forces.
+//! Near-linear derivatives are not capped to mimic a reference backend.
 use kekule::topology::InstanceAtomId;
 use kekule_openff::ParameterizedTopology;
-use potentials::base::{Potential2, Potential3, Potential4};
+use potentials::base::{Potential2, Potential4};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 // OpenMM's electrostatic conversion, kJ mol^-1 nm e^-2.
 const COULOMB: f64 = 138.935_457_644_381_98;
 type Xyz = [f64; 3];
+const COMPONENTS: [&str; 6] = [
+    "Bonds",
+    "Angles",
+    "ProperTorsions",
+    "ImproperTorsions",
+    "vdW",
+    "Electrostatics",
+];
+
+fn add(gradient: &mut [Xyz], atom: usize, vector: Xyz, scale: f64) {
+    for (g, v) in gradient[atom].iter_mut().zip(vector) {
+        *g += scale * v;
+    }
+}
 fn sub(a: Xyz, b: Xyz) -> Xyz {
     std::array::from_fn(|i| a[i] - b[i])
 }
@@ -28,22 +44,73 @@ fn dihedral([a, b, c, d]: [Xyz; 4]) -> Result<(f64, f64), String> {
     if norm < 1e-12 {
         return Err("degenerate torsion axis".into());
     }
-    let axis = axis.map(|v| v / norm);
     let v = sub(a, b);
     let w = sub(d, c);
-    let v = sub(v, axis.map(|x| x * dot(v, axis)));
-    let w = sub(w, axis.map(|x| x * dot(w, axis)));
+    let v = cross(axis, v);
+    let w = cross(axis, w);
     let scale = (dot(v, v) * dot(w, w)).sqrt();
-    if scale < 1e-18 {
+    if scale < 1e-18 * norm * norm {
         return Err("degenerate torsion plane".into());
     }
     Ok((
         (dot(v, w) / scale).clamp(-1.0, 1.0),
-        (dot(cross(axis, v), w) / scale).clamp(-1.0, 1.0),
+        (dot(axis, cross(v, w)) / (norm * scale)).clamp(-1.0, 1.0),
     ))
 }
 
-fn evaluate(system: &ParameterizedTopology, xyz: &[Xyz], charges: &[f64]) -> Result<Value, String> {
+fn dihedral_gradient([a, b, c, d]: [Xyz; 4]) -> [Xyz; 4] {
+    let left = sub(a, b);
+    let axis = sub(c, b);
+    let right = sub(d, c);
+    let axis_sq = dot(axis, axis);
+    let n0 = cross(left, axis);
+    let n3 = cross(axis, right);
+    let g0 = n0.map(|v| v * axis_sq.sqrt() / dot(n0, n0));
+    let g3 = n3.map(|v| v * axis_sq.sqrt() / dot(n3, n3));
+    let alpha = dot(left, axis) / axis_sq;
+    let beta = dot(right, axis) / axis_sq;
+    [
+        g0,
+        std::array::from_fn(|i| (alpha - 1.0) * g0[i] + beta * g3[i]),
+        std::array::from_fn(|i| -alpha * g0[i] - (beta + 1.0) * g3[i]),
+        g3,
+    ]
+}
+
+fn angle([a, b, c]: [Xyz; 3], k: f64, theta0: f64) -> Result<(f64, [Xyz; 3]), String> {
+    let u = sub(a, b);
+    let v = sub(c, b);
+    let r1 = dot(u, u);
+    let r2 = dot(v, v);
+    if r1 * r2 < 1e-24 {
+        return Err("degenerate angle".into());
+    }
+    let normal = cross(u, v);
+    let norm = dot(normal, normal).sqrt();
+    // atan2 avoids acos roundoff near linearity. The harmonic energy is
+    // unchanged mathematically. Neither its gradient nor its normal is capped.
+    let delta = norm.atan2(dot(u, v)) - theta0;
+    let energy = 0.5 * k * delta * delta;
+    if norm == 0.0 {
+        if delta.abs() > 1e-12 && k != 0.0 {
+            return Err("undefined gradient at a nonstationary linear angle".into());
+        }
+        return Ok((energy, [[0.; 3]; 3]));
+    }
+    let normal = normal.map(|x| x / norm);
+    let da = cross(u, normal).map(|x| k * delta * x / r1);
+    let dc = cross(normal, v).map(|x| k * delta * x / r2);
+    Ok((energy, [da, std::array::from_fn(|i| -da[i] - dc[i]), dc]))
+}
+
+fn evaluate(
+    system: &ParameterizedTopology,
+    xyz: &[Xyz],
+    charges: &[f64],
+    derivatives: bool,
+) -> Result<Value, String> {
+    let mut gradients: [Vec<Xyz>; 6] =
+        std::array::from_fn(|_| vec![[0.0; 3]; if derivatives { xyz.len() } else { 0 }]);
     let index: BTreeMap<InstanceAtomId, usize> = system
         .topology()
         .atom_ids()
@@ -59,43 +126,59 @@ fn evaluate(system: &ParameterizedTopology, xyz: &[Xyz], charges: &[f64]) -> Res
     let mut bonds = 0.0;
     for term in system.bonds() {
         let [a, b] = term.atoms.map(|a| index[&a]);
-        bonds += potentials::bond::Harm::<f64>::new(
+        let p = potentials::bond::Harm::<f64>::new(
             *term.parameter.k.value() / 2.0,
             *term.parameter.length.value(),
-        )
-        .energy(distance(a, b));
+        );
+        let r2 = distance(a, b);
+        bonds += p.energy(r2);
+        if derivatives {
+            if r2 < 1e-24 {
+                return Err("coincident bonded atoms".into());
+            }
+            let force = p.force_factor(r2);
+            add(&mut gradients[0], a, sub(xyz[a], xyz[b]), -force);
+            add(&mut gradients[0], b, sub(xyz[a], xyz[b]), force);
+        }
     }
     let mut angles = 0.0;
     for term in system.angles() {
         let [a, b, c] = term.atoms.map(|a| index[&a]);
-        let u = sub(xyz[a], xyz[b]);
-        let v = sub(xyz[c], xyz[b]);
-        let r1 = dot(u, u);
-        let r2 = dot(v, v);
-        if r1 * r2 < 1e-24 {
-            return Err("degenerate angle".into());
-        }
-        let cosine = (dot(u, v) / (r1 * r2).sqrt()).clamp(-1.0, 1.0);
-        angles += potentials::angle::Harm::<f64>::new(
-            *term.parameter.k.value() / 2.0,
+        let (energy, gradient) = angle(
+            [xyz[a], xyz[b], xyz[c]],
+            *term.parameter.k.value(),
             *term.parameter.angle.value(),
-        )
-        .energy(r1, r2, cosine);
+        )?;
+        angles += energy;
+        if derivatives {
+            for (atom, vector) in [a, b, c].into_iter().zip(gradient) {
+                add(&mut gradients[1], atom, vector, 1.0);
+            }
+        }
     }
     let mut torsions = [0.0; 2];
-    for (sum, terms) in torsions
+    for (component, (sum, terms)) in torsions
         .iter_mut()
         .zip([system.proper_torsions(), system.improper_torsions()])
+        .enumerate()
     {
         for term in terms {
-            let (cosine, sine) = dihedral(term.atoms.map(|a| xyz[index[&a]]))?;
+            let atoms = term.atoms.map(|a| index[&a]);
+            let points = atoms.map(|a| xyz[a]);
+            let (cosine, sine) = dihedral(points)?;
             for p in &term.parameter.terms {
-                *sum += potentials::torsion::Cos::<f64>::new(
+                let p = potentials::torsion::Cos::<f64>::new(
                     *p.k.value() / p.idivf,
                     p.periodicity as i32,
                     *p.phase.value(),
-                )
-                .energy(cosine, sine);
+                );
+                *sum += p.energy(cosine, sine);
+                if derivatives {
+                    let derivative = p.derivative(cosine, sine);
+                    for (atom, vector) in atoms.into_iter().zip(dihedral_gradient(points)) {
+                        add(&mut gradients[component + 2], atom, vector, derivative);
+                    }
+                }
             }
         }
     }
@@ -124,12 +207,22 @@ fn evaluate(system: &ParameterizedTopology, xyz: &[Xyz], charges: &[f64]) -> Res
             if vs != 0.0 {
                 let sigma = (a.sigma.value() + b.sigma.value()) / 2.0;
                 let epsilon = (a.epsilon.value() * b.epsilon.value()).sqrt();
-                vdw += vs * potentials::pair::Lj::<f64>::new(epsilon, sigma).energy(r2);
+                let p = potentials::pair::Lj::<f64>::new(epsilon, sigma);
+                vdw += vs * p.energy(r2);
+                if derivatives {
+                    let force = vs * p.force_factor(r2);
+                    add(&mut gradients[4], i, sub(xyz[i], xyz[j]), -force);
+                    add(&mut gradients[4], j, sub(xyz[i], xyz[j]), force);
+                }
             }
             if qs != 0.0 {
-                electrostatics +=
-                    potentials::pair::Coul::<f64>::new(COULOMB * charges[i] * charges[j] * qs)
-                        .energy(r2);
+                let p = potentials::pair::Coul::<f64>::new(COULOMB * charges[i] * charges[j] * qs);
+                electrostatics += p.energy(r2);
+                if derivatives {
+                    let force = p.force_factor(r2);
+                    add(&mut gradients[5], i, sub(xyz[i], xyz[j]), -force);
+                    add(&mut gradients[5], j, sub(xyz[i], xyz[j]), force);
+                }
             }
         }
     }
@@ -137,9 +230,22 @@ fn evaluate(system: &ParameterizedTopology, xyz: &[Xyz], charges: &[f64]) -> Res
     if components.iter().any(|v| !v.is_finite()) {
         return Err("nonfinite energy".into());
     }
-    Ok(
-        json!({"Bonds":bonds,"Angles":angles,"ProperTorsions":torsions[0],"ImproperTorsions":torsions[1],"vdW":vdw,"Electrostatics":electrostatics,"Total":components.iter().sum::<f64>()}),
-    )
+    let mut result = json!({"Bonds":bonds,"Angles":angles,"ProperTorsions":torsions[0],"ImproperTorsions":torsions[1],"vdW":vdw,"Electrostatics":electrostatics,"Total":components.iter().sum::<f64>()});
+    if derivatives {
+        if gradients.iter().flatten().flatten().any(|v| !v.is_finite()) {
+            return Err("nonfinite gradient".into());
+        }
+        let total: Vec<Xyz> = (0..xyz.len())
+            .map(|i| std::array::from_fn(|j| gradients.iter().map(|g| g[i][j]).sum::<f64>()))
+            .collect();
+        let mut values = serde_json::Map::new();
+        for (name, gradient) in COMPONENTS.into_iter().zip(gradients) {
+            values.insert(name.into(), json!(gradient));
+        }
+        values.insert("Total".into(), json!(total));
+        result["gradients"] = Value::Object(values);
+    }
+    Ok(result)
 }
 
 pub(super) fn observe(
@@ -170,7 +276,44 @@ pub(super) fn observe(
             return Err("invalid coordinates".into());
         }
         let xyz: Vec<_> = maps.iter().map(|&m| frame[m as usize - 1]).collect();
-        result.push(json!({"native_charges":evaluate(system,&xyz,system.charges().value())?,"reference_charges":evaluate(system,&xyz,&reference)?}));
+        let derivatives = request["gradients"].as_bool().unwrap_or(false);
+        let mut observed = json!({"native_charges":evaluate(system,&xyz,system.charges().value(),derivatives)?,"reference_charges":evaluate(system,&xyz,&reference,derivatives)?});
+        if let Some(directions) = request["directions"].as_array() {
+            let mut differences = vec![];
+            for direction in directions {
+                let direction: Vec<Xyz> =
+                    serde_json::from_value(direction.clone()).map_err(|e| e.to_string())?;
+                if direction.len() != n || direction.iter().flatten().any(|x| !x.is_finite()) {
+                    return Err("invalid finite difference direction".into());
+                }
+                let direction: Vec<_> = maps.iter().map(|&m| direction[m as usize - 1]).collect();
+                let mut steps = vec![];
+                let step_sizes: Vec<f64> = if request["finite_difference_steps_nm"].is_null() {
+                    vec![1e-5, 5e-6]
+                } else {
+                    serde_json::from_value(request["finite_difference_steps_nm"].clone())
+                        .map_err(|e| e.to_string())?
+                };
+                if step_sizes.is_empty() || step_sizes.iter().any(|h| !h.is_finite() || *h <= 0.0) {
+                    return Err("invalid finite difference steps".into());
+                }
+                for h in step_sizes {
+                    let mut energies = vec![];
+                    for sign in [-1.0, 1.0] {
+                        let shifted: Vec<Xyz> = xyz
+                            .iter()
+                            .zip(&direction)
+                            .map(|(x, d)| std::array::from_fn(|j| x[j] + sign * h * d[j]))
+                            .collect();
+                        energies.push(evaluate(system, &shifted, &reference, false)?);
+                    }
+                    steps.push(json!({"step_nm":h,"minus":energies[0],"plus":energies[1]}));
+                }
+                differences.push(json!(steps));
+            }
+            observed["finite_differences"] = json!(differences);
+        }
+        result.push(observed);
     }
     Ok(json!(result))
 }
@@ -178,6 +321,59 @@ pub(super) fn observe(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn externally_sourced_near_linear_angle_differentiates_its_energy() {
+        // PubChem CID 443915, unchanged geometry from the full validation panel.
+        // This catches both the sin(theta) floor and acos cancellation.
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/openff/data/reference.json.gz"
+        ))
+        .unwrap();
+        let reference: Value =
+            serde_json::from_reader(flate2::read::GzDecoder::new(&bytes[..])).unwrap();
+        let case = reference["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == "pubchem-443915")
+            .unwrap();
+        let parameter = case["parameters"]["Angles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["atoms"] == json!([16, 17, 18]))
+            .unwrap();
+        let points: [Xyz; 3] = std::array::from_fn(|i| {
+            serde_json::from_value(case["coordinates_nm"][0][15 + i].clone()).unwrap()
+        });
+        let k = parameter["values"]["k"].as_f64().unwrap();
+        let theta0 = parameter["values"]["angle"].as_f64().unwrap();
+        let (_, gradient) = angle(points, k, theta0).unwrap();
+        for atom in 0..3 {
+            for axis in 0..3 {
+                let estimates: Vec<_> = [1e-7, 5e-8]
+                    .into_iter()
+                    .map(|h| {
+                        let mut plus = points;
+                        let mut minus = points;
+                        plus[atom][axis] += h;
+                        minus[atom][axis] -= h;
+                        (angle(plus, k, theta0).unwrap().0 - angle(minus, k, theta0).unwrap().0)
+                            / (2.0 * h)
+                    })
+                    .collect();
+                let numerical = (4.0 * estimates[1] - estimates[0]) / 3.0;
+                assert!(
+                    (gradient[atom][axis] - numerical).abs() < 2e-4 + 1e-7 * numerical.abs(),
+                    "{atom}/{axis}: analytic={} numerical={numerical}",
+                    gradient[atom][axis]
+                );
+            }
+        }
+        assert!(angle([[0., 0., 0.], [1., 0., 0.], [2., 0., 0.]], k, theta0).is_err());
+    }
+
     #[test]
     fn signed_dihedral_and_phase_are_preserved() {
         let (c, s) = dihedral([[1., 0., 0.], [0., 0., 0.], [0., 0., 1.], [0., 1., 1.]]).unwrap();

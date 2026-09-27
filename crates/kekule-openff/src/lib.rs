@@ -1,11 +1,13 @@
-//! Rosemary SMIRNOFF parameter assignment and Ash NAGL charge inference.
+//! SMIRNOFF parameter assignment and configurable NAGL charge inference.
 //!
 //! Parameterization consumes explicit-hydrogen molecular graphs. It perceives
 //! private copies using MDL aromaticity and never rewrites the input topology.
 //! Results retain the exact topology snapshot and use Kekule's canonical units:
 //! nm, kJ/mol, radians, and elementary charges. Force evaluation is a separate task.
 //! Use [`ForceField::from_file`] or [`ForceField::from_offxml`] for custom rules
-//! within the supported SMIRNOFF subset. Charge inference remains pinned to Ash.
+//! within the supported SMIRNOFF subset. [`NaglModel`] loads a compatible model
+//! bundle; its checkpoint identity must match the OFFXML charge handler.
+//! Rosemary and Ash remain the independently validated presets.
 //!
 //! ```no_run
 //! use kekule::{hydrogens, smiles};
@@ -28,7 +30,7 @@ mod nagl;
 mod offxml;
 mod parameters;
 
-pub use nagl::{ChargeAssignment, ChargeSource, NaglModel};
+pub use nagl::{ChargeAssignment, ChargeSource, ModelIdentity, NaglModel};
 pub use offxml::ForceField;
 pub use parameters::*;
 
@@ -56,7 +58,9 @@ pub(crate) fn explicit(molecule: &kekule::core::Molecule) -> Result<kekule::core
             )));
         }
         if atom.radical.is_some() {
-            return Err(error("radicals are outside the supported Rosemary domain"));
+            return Err(error(
+                "radicals are outside the supported parameterization domain",
+            ));
         }
     }
     Ok(copy)

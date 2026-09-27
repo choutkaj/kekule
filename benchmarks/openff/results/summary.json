@@ -1,0 +1,1465 @@
+{
+  "source_sha256": {
+    "data/inputs.json.gz": "5fc588cc2f693843b2f38d0a69b5875c32e85d5822e82548aea97d3f3470740b",
+    "data/reference.json.gz": "a006679a31ff8d52ac46e16283923b7d4bb0eac612177ab89296eafe2925ccc9",
+    "results/native.json.gz": "1b44ddb5000d1e1122105db2cc21f020c1b79ef95ee5d4a579c903886149cc75",
+    "results/timings.json": "a103219b46625ade95501aba7726eb3e53315fb366b08bbc1c8a10f57f1a92fc",
+    "results/models.json.gz": "d6505cdb86699beaa1ae01531c78bd1235e1ab297229e631ca6b0172f47e579e",
+    "data/models.lock.json": "1f21fdaa7c537de261a05d5a17dc5cad9c9884f09527314960a94de251d28d50",
+    "archive/previous-validation.zip": "af235600e80a5538e1a34575a43c65ecae06fa45c1073d5341c4bf6bb3125e03"
+  },
+  "robustness": {
+    "molecules": 110,
+    "cases": 220,
+    "parameterization_passed": 220,
+    "all_checks_passed": 214,
+    "energy_evaluations": 660,
+    "paired_atoms": 29252,
+    "charge_max_error_e": 2.2289653611728966e-07,
+    "charge_sum_max_error_e": 5.595524044110789e-14,
+    "feature_max_error": 9.934107481068821e-09,
+    "energy_shared_charge_max_error_kj_mol": {
+      "Bonds": 3.026798367500305e-09,
+      "Angles": 7.639755494892597e-11,
+      "ProperTorsions": 4.18367562815547e-11,
+      "ImproperTorsions": 3.467448550509289e-12,
+      "vdW": 3.0240698833949864e-10,
+      "Electrostatics": 6.05359673500061e-09,
+      "Total": 6.170012056827545e-09
+    },
+    "energy_native_charge_max_error_kj_mol": {
+      "Electrostatics": 0.0006011471332385554,
+      "Total": 0.0006011469959048554
+    },
+    "parameter_rules": {
+      "Bonds": 66,
+      "Angles": 35,
+      "ProperTorsions": 116,
+      "ImproperTorsions": 7,
+      "vdW": 23,
+      "Constraints": 1
+    },
+    "charge_sources": {
+      "Inference": 218,
+      "Lookup": 2
+    },
+    "remaining_failures": [
+      {
+        "id": "pdb-3ABD-A",
+        "permutation": "original",
+        "errors": [
+          {
+            "identity": "invalid structure: too many atoms (2940 > 1024)"
+          }
+        ]
+      },
+      {
+        "id": "pdb-3ABD-A",
+        "permutation": "reversed",
+        "errors": [
+          {
+            "identity": "invalid structure: too many atoms (2940 > 1024)"
+          }
+        ]
+      },
+      {
+        "id": "pdb-9B3P-B",
+        "permutation": "original",
+        "errors": [
+          {
+            "identity": "invalid structure: too many atoms (1281 > 1024)"
+          }
+        ]
+      },
+      {
+        "id": "pdb-9B3P-B",
+        "permutation": "reversed",
+        "errors": [
+          {
+            "identity": "invalid structure: too many atoms (1281 > 1024)"
+          }
+        ]
+      },
+      {
+        "id": "pdb-8J90-E",
+        "permutation": "original",
+        "errors": [
+          {
+            "identity": "invalid structure: too many atoms (1274 > 1024)"
+          }
+        ]
+      },
+      {
+        "id": "pdb-8J90-E",
+        "permutation": "reversed",
+        "errors": [
+          {
+            "identity": "invalid structure: too many atoms (1274 > 1024)"
+          }
+        ]
+      }
+    ],
+    "proteins": [
+      {
+        "id": "pdb-1PJV-A",
+        "residues": 32,
+        "atoms": 507,
+        "formal_charge": 6
+      },
+      {
+        "id": "pdb-2JUC-A",
+        "residues": 55,
+        "atoms": 937,
+        "formal_charge": -6
+      },
+      {
+        "id": "pdb-1IWC-A",
+        "residues": 34,
+        "atoms": 504,
+        "formal_charge": 2
+      },
+      {
+        "id": "pdb-3ABD-A",
+        "residues": 180,
+        "atoms": 2940,
+        "formal_charge": -7
+      },
+      {
+        "id": "pdb-2N4H-A",
+        "residues": 50,
+        "atoms": 700,
+        "formal_charge": 1
+      },
+      {
+        "id": "pdb-9B3P-B",
+        "residues": 78,
+        "atoms": 1281,
+        "formal_charge": 10
+      },
+      {
+        "id": "pdb-2F52-A",
+        "residues": 67,
+        "atoms": 1014,
+        "formal_charge": -6
+      },
+      {
+        "id": "pdb-8J90-E",
+        "residues": 77,
+        "atoms": 1274,
+        "formal_charge": 3
+      },
+      {
+        "id": "pdb-6EE9-X",
+        "residues": 25,
+        "atoms": 378,
+        "formal_charge": 0
+      },
+      {
+        "id": "pdb-1W1F-A",
+        "residues": 60,
+        "atoms": 974,
+        "formal_charge": 0
+      }
+    ]
+  },
+  "timing_sha256": "a103219b46625ade95501aba7726eb3e53315fb366b08bbc1c8a10f57f1a92fc",
+  "renderer": {
+    "matplotlib": "3.11.2",
+    "numpy": "2.5.3"
+  },
+  "parameters": {
+    "charge": {
+      "count": 29252,
+      "max_abs": 2.2289653611728966e-07,
+      "rmse": 2.6914343542159745e-08,
+      "mean_signed": -1.4802962295312052e-18
+    },
+    "feature": {
+      "count": 643544,
+      "max_abs": 9.934107481068821e-09,
+      "rmse": 1.918427329033627e-10,
+      "mean_signed": 3.51953635755083e-12
+    },
+    "Bonds.length": {
+      "count": 29712,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "Bonds.k": {
+      "count": 29712,
+      "max_abs": 2.3283064365386963e-10,
+      "rmse": 4.233093902446081e-11,
+      "mean_signed": -2.747070709482642e-11
+    },
+    "Angles.angle": {
+      "count": 53358,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "Angles.k": {
+      "count": 53358,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "Constraints.distance": {
+      "count": 14408,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ProperTorsions.k": {
+      "count": 108504,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ProperTorsions.phase": {
+      "count": 108504,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ProperTorsions.periodicity": {
+      "count": 108504,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ProperTorsions.idivf": {
+      "count": 108504,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ImproperTorsions.k": {
+      "count": 18624,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ImproperTorsions.phase": {
+      "count": 18624,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ImproperTorsions.periodicity": {
+      "count": 18624,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "ImproperTorsions.idivf": {
+      "count": 18624,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    },
+    "vdW.sigma": {
+      "count": 29252,
+      "max_abs": 5.551115123125783e-17,
+      "rmse": 1.2609591807086242e-17,
+      "mean_signed": 2.776316636514775e-18
+    },
+    "vdW.epsilon": {
+      "count": 29252,
+      "max_abs": 0.0,
+      "rmse": 0.0,
+      "mean_signed": 0.0
+    }
+  },
+  "energies": {
+    "reference_charges.Bonds": {
+      "count": 660,
+      "max_abs": 3.026798367500305e-09,
+      "rmse": 1.356141683866853e-10,
+      "mean_signed": 4.8633541638309904e-12
+    },
+    "reference_charges.Angles": {
+      "count": 660,
+      "max_abs": 7.639755494892597e-11,
+      "rmse": 6.067963254871514e-12,
+      "mean_signed": 1.674842083203161e-13
+    },
+    "reference_charges.ProperTorsions": {
+      "count": 660,
+      "max_abs": 4.18367562815547e-11,
+      "rmse": 2.823534156244e-12,
+      "mean_signed": 9.803303401599114e-14
+    },
+    "reference_charges.ImproperTorsions": {
+      "count": 660,
+      "max_abs": 3.467448550509289e-12,
+      "rmse": 1.9928976273513433e-13,
+      "mean_signed": -7.022877511653954e-15
+    },
+    "reference_charges.vdW": {
+      "count": 660,
+      "max_abs": 3.0240698833949864e-10,
+      "rmse": 2.3548889132121553e-11,
+      "mean_signed": -1.237255415965206e-12
+    },
+    "reference_charges.Electrostatics": {
+      "count": 660,
+      "max_abs": 6.05359673500061e-09,
+      "rmse": 3.406606593712448e-10,
+      "mean_signed": -2.602885852981575e-11
+    },
+    "reference_charges.Total": {
+      "count": 660,
+      "max_abs": 6.170012056827545e-09,
+      "rmse": 3.344948967432242e-10,
+      "mean_signed": -2.265647333043682e-11
+    },
+    "native_charges.Bonds": {
+      "count": 660,
+      "max_abs": 3.026798367500305e-09,
+      "rmse": 1.356141683866853e-10,
+      "mean_signed": 4.8633541638309904e-12
+    },
+    "native_charges.Angles": {
+      "count": 660,
+      "max_abs": 7.639755494892597e-11,
+      "rmse": 6.067963254871514e-12,
+      "mean_signed": 1.674842083203161e-13
+    },
+    "native_charges.ProperTorsions": {
+      "count": 660,
+      "max_abs": 4.18367562815547e-11,
+      "rmse": 2.823534156244e-12,
+      "mean_signed": 9.803303401599114e-14
+    },
+    "native_charges.ImproperTorsions": {
+      "count": 660,
+      "max_abs": 3.467448550509289e-12,
+      "rmse": 1.9928976273513433e-13,
+      "mean_signed": -7.022877511653954e-15
+    },
+    "native_charges.vdW": {
+      "count": 660,
+      "max_abs": 3.0240698833949864e-10,
+      "rmse": 2.3548889132121553e-11,
+      "mean_signed": -1.237255415965206e-12
+    },
+    "native_charges.Electrostatics": {
+      "count": 660,
+      "max_abs": 0.0006011471332385554,
+      "rmse": 9.790314109579735e-05,
+      "mean_signed": 2.15318035560751e-05
+    },
+    "native_charges.Total": {
+      "count": 660,
+      "max_abs": 0.0006011469959048554,
+      "rmse": 9.790313980163438e-05,
+      "mean_signed": 2.153180712593937e-05
+    }
+  },
+  "cpu_timings": [
+    {
+      "id": "pubchem-470654",
+      "atoms": 60,
+      "median_ms": {
+        "features_ms": 1.2592,
+        "inference_including_features_ms": 8.3111,
+        "assign_charges_ms": 7.9741,
+        "full_parameterization_ms": 11.16
+      }
+    },
+    {
+      "id": "pubchem-302418",
+      "atoms": 44,
+      "median_ms": {
+        "features_ms": 1.1447,
+        "inference_including_features_ms": 7.033099999999999,
+        "assign_charges_ms": 6.4475,
+        "full_parameterization_ms": 9.159799999999999
+      }
+    },
+    {
+      "id": "pubchem-203489",
+      "atoms": 21,
+      "median_ms": {
+        "features_ms": 0.4325,
+        "inference_including_features_ms": 4.146999999999999,
+        "assign_charges_ms": 4.284,
+        "full_parameterization_ms": 5.5946
+      }
+    },
+    {
+      "id": "pubchem-143783",
+      "atoms": 15,
+      "median_ms": {
+        "features_ms": 0.2897,
+        "inference_including_features_ms": 3.5193999999999996,
+        "assign_charges_ms": 3.3764,
+        "full_parameterization_ms": 4.3163
+      }
+    },
+    {
+      "id": "pubchem-216890",
+      "atoms": 40,
+      "median_ms": {
+        "features_ms": 0.8314,
+        "inference_including_features_ms": 5.5291999999999994,
+        "assign_charges_ms": 5.6997,
+        "full_parameterization_ms": 8.2615
+      }
+    },
+    {
+      "id": "pubchem-389576",
+      "atoms": 51,
+      "median_ms": {
+        "features_ms": 1.1219999999999999,
+        "inference_including_features_ms": 6.935700000000001,
+        "assign_charges_ms": 6.995699999999999,
+        "full_parameterization_ms": 9.8031
+      }
+    },
+    {
+      "id": "pubchem-419887",
+      "atoms": 36,
+      "median_ms": {
+        "features_ms": 0.6113,
+        "inference_including_features_ms": 5.1934,
+        "assign_charges_ms": 7.080699999999999,
+        "full_parameterization_ms": 9.7293
+      }
+    },
+    {
+      "id": "pubchem-180187",
+      "atoms": 34,
+      "median_ms": {
+        "features_ms": 0.7446,
+        "inference_including_features_ms": 5.2793,
+        "assign_charges_ms": 4.8475,
+        "full_parameterization_ms": 7.8045
+      }
+    },
+    {
+      "id": "pubchem-60205",
+      "atoms": 90,
+      "median_ms": {
+        "features_ms": 1.6374,
+        "inference_including_features_ms": 11.1556,
+        "assign_charges_ms": 10.130500000000001,
+        "full_parameterization_ms": 13.8567
+      }
+    },
+    {
+      "id": "pubchem-181389",
+      "atoms": 64,
+      "median_ms": {
+        "features_ms": 1.1275,
+        "inference_including_features_ms": 7.5264,
+        "assign_charges_ms": 7.3178,
+        "full_parameterization_ms": 11.154499999999999
+      }
+    },
+    {
+      "id": "pubchem-460336",
+      "atoms": 96,
+      "median_ms": {
+        "features_ms": 1.7756,
+        "inference_including_features_ms": 10.3313,
+        "assign_charges_ms": 11.2296,
+        "full_parameterization_ms": 14.786000000000001
+      }
+    },
+    {
+      "id": "pubchem-489600",
+      "atoms": 74,
+      "median_ms": {
+        "features_ms": 2.0252999999999997,
+        "inference_including_features_ms": 8.4299,
+        "assign_charges_ms": 8.655299999999999,
+        "full_parameterization_ms": 12.0655
+      }
+    },
+    {
+      "id": "pubchem-293904",
+      "atoms": 45,
+      "median_ms": {
+        "features_ms": 1.2612,
+        "inference_including_features_ms": 6.4458,
+        "assign_charges_ms": 6.8434,
+        "full_parameterization_ms": 8.5188
+      }
+    },
+    {
+      "id": "pubchem-476793",
+      "atoms": 102,
+      "median_ms": {
+        "features_ms": 1.6804000000000001,
+        "inference_including_features_ms": 11.0052,
+        "assign_charges_ms": 12.1091,
+        "full_parameterization_ms": 15.5316
+      }
+    },
+    {
+      "id": "pubchem-134772",
+      "atoms": 39,
+      "median_ms": {
+        "features_ms": 0.7397,
+        "inference_including_features_ms": 5.6513,
+        "assign_charges_ms": 5.3147,
+        "full_parameterization_ms": 7.1699
+      }
+    },
+    {
+      "id": "pubchem-382462",
+      "atoms": 30,
+      "median_ms": {
+        "features_ms": 0.7385,
+        "inference_including_features_ms": 4.236,
+        "assign_charges_ms": 3.9249,
+        "full_parameterization_ms": 5.7478
+      }
+    },
+    {
+      "id": "pubchem-11642",
+      "atoms": 8,
+      "median_ms": {
+        "features_ms": 0.1776,
+        "inference_including_features_ms": 2.1456,
+        "assign_charges_ms": 0.0882,
+        "full_parameterization_ms": 0.7368
+      }
+    },
+    {
+      "id": "pubchem-382458",
+      "atoms": 31,
+      "median_ms": {
+        "features_ms": 0.5952000000000001,
+        "inference_including_features_ms": 4.2924,
+        "assign_charges_ms": 4.5002,
+        "full_parameterization_ms": 6.2952
+      }
+    },
+    {
+      "id": "pubchem-132024",
+      "atoms": 70,
+      "median_ms": {
+        "features_ms": 1.4108,
+        "inference_including_features_ms": 7.904299999999999,
+        "assign_charges_ms": 7.9875,
+        "full_parameterization_ms": 11.638499999999999
+      }
+    },
+    {
+      "id": "pubchem-366741",
+      "atoms": 56,
+      "median_ms": {
+        "features_ms": 1.1674,
+        "inference_including_features_ms": 6.1183000000000005,
+        "assign_charges_ms": 6.431100000000001,
+        "full_parameterization_ms": 9.5745
+      }
+    },
+    {
+      "id": "pubchem-443915",
+      "atoms": 61,
+      "median_ms": {
+        "features_ms": 1.2053,
+        "inference_including_features_ms": 7.0299000000000005,
+        "assign_charges_ms": 6.9041,
+        "full_parameterization_ms": 10.5649
+      }
+    },
+    {
+      "id": "pubchem-76008",
+      "atoms": 15,
+      "median_ms": {
+        "features_ms": 0.2995,
+        "inference_including_features_ms": 2.9046,
+        "assign_charges_ms": 2.9359,
+        "full_parameterization_ms": 3.3847
+      }
+    },
+    {
+      "id": "pubchem-308827",
+      "atoms": 31,
+      "median_ms": {
+        "features_ms": 0.6943,
+        "inference_including_features_ms": 4.3553999999999995,
+        "assign_charges_ms": 4.3926,
+        "full_parameterization_ms": 6.418100000000001
+      }
+    },
+    {
+      "id": "pubchem-449565",
+      "atoms": 29,
+      "median_ms": {
+        "features_ms": 0.47140000000000004,
+        "inference_including_features_ms": 3.7624999999999997,
+        "assign_charges_ms": 3.941,
+        "full_parameterization_ms": 5.8906
+      }
+    },
+    {
+      "id": "pubchem-129626",
+      "atoms": 80,
+      "median_ms": {
+        "features_ms": 1.4955,
+        "inference_including_features_ms": 8.6982,
+        "assign_charges_ms": 8.780899999999999,
+        "full_parameterization_ms": 12.8773
+      }
+    },
+    {
+      "id": "pubchem-389883",
+      "atoms": 48,
+      "median_ms": {
+        "features_ms": 0.9819,
+        "inference_including_features_ms": 5.5405999999999995,
+        "assign_charges_ms": 6.091799999999999,
+        "full_parameterization_ms": 9.5766
+      }
+    },
+    {
+      "id": "pubchem-339196",
+      "atoms": 24,
+      "median_ms": {
+        "features_ms": 0.4876,
+        "inference_including_features_ms": 3.2672,
+        "assign_charges_ms": 3.3041,
+        "full_parameterization_ms": 4.9259
+      }
+    },
+    {
+      "id": "pubchem-131099",
+      "atoms": 48,
+      "median_ms": {
+        "features_ms": 0.8432,
+        "inference_including_features_ms": 6.441,
+        "assign_charges_ms": 6.289000000000001,
+        "full_parameterization_ms": 8.1356
+      }
+    },
+    {
+      "id": "pubchem-36137",
+      "atoms": 37,
+      "median_ms": {
+        "features_ms": 0.6605,
+        "inference_including_features_ms": 4.714,
+        "assign_charges_ms": 5.659,
+        "full_parameterization_ms": 6.3543
+      }
+    },
+    {
+      "id": "pubchem-389337",
+      "atoms": 32,
+      "median_ms": {
+        "features_ms": 0.639,
+        "inference_including_features_ms": 4.1147,
+        "assign_charges_ms": 4.3024,
+        "full_parameterization_ms": 5.8761
+      }
+    },
+    {
+      "id": "pubchem-13432",
+      "atoms": 23,
+      "median_ms": {
+        "features_ms": 0.5265,
+        "inference_including_features_ms": 3.2864999999999998,
+        "assign_charges_ms": 3.4036,
+        "full_parameterization_ms": 4.999499999999999
+      }
+    },
+    {
+      "id": "pubchem-77458",
+      "atoms": 28,
+      "median_ms": {
+        "features_ms": 0.4653,
+        "inference_including_features_ms": 3.8508,
+        "assign_charges_ms": 3.6752,
+        "full_parameterization_ms": 5.475899999999999
+      }
+    },
+    {
+      "id": "pubchem-25811",
+      "atoms": 14,
+      "median_ms": {
+        "features_ms": 0.2881,
+        "inference_including_features_ms": 2.6327,
+        "assign_charges_ms": 2.5966,
+        "full_parameterization_ms": 3.8653
+      }
+    },
+    {
+      "id": "pubchem-329829",
+      "atoms": 66,
+      "median_ms": {
+        "features_ms": 1.1595,
+        "inference_including_features_ms": 7.1855,
+        "assign_charges_ms": 7.5316,
+        "full_parameterization_ms": 10.8637
+      }
+    },
+    {
+      "id": "pubchem-284724",
+      "atoms": 40,
+      "median_ms": {
+        "features_ms": 0.8765999999999999,
+        "inference_including_features_ms": 5.0464,
+        "assign_charges_ms": 4.796,
+        "full_parameterization_ms": 8.7356
+      }
+    },
+    {
+      "id": "pubchem-364695",
+      "atoms": 28,
+      "median_ms": {
+        "features_ms": 0.5733999999999999,
+        "inference_including_features_ms": 3.8646000000000003,
+        "assign_charges_ms": 3.885,
+        "full_parameterization_ms": 7.4214
+      }
+    },
+    {
+      "id": "pubchem-197360",
+      "atoms": 82,
+      "median_ms": {
+        "features_ms": 1.5428,
+        "inference_including_features_ms": 9.1527,
+        "assign_charges_ms": 9.0624,
+        "full_parameterization_ms": 14.227
+      }
+    },
+    {
+      "id": "pubchem-408082",
+      "atoms": 55,
+      "median_ms": {
+        "features_ms": 0.9668,
+        "inference_including_features_ms": 6.1332,
+        "assign_charges_ms": 6.1305,
+        "full_parameterization_ms": 8.7276
+      }
+    },
+    {
+      "id": "pubchem-195214",
+      "atoms": 67,
+      "median_ms": {
+        "features_ms": 1.2227,
+        "inference_including_features_ms": 7.190300000000001,
+        "assign_charges_ms": 7.6952,
+        "full_parameterization_ms": 13.4815
+      }
+    },
+    {
+      "id": "pubchem-317058",
+      "atoms": 43,
+      "median_ms": {
+        "features_ms": 1.444,
+        "inference_including_features_ms": 5.5164,
+        "assign_charges_ms": 5.412100000000001,
+        "full_parameterization_ms": 7.6832
+      }
+    },
+    {
+      "id": "pubchem-375118",
+      "atoms": 31,
+      "median_ms": {
+        "features_ms": 0.662,
+        "inference_including_features_ms": 4.3297,
+        "assign_charges_ms": 3.9421999999999997,
+        "full_parameterization_ms": 5.9908
+      }
+    },
+    {
+      "id": "pubchem-375904",
+      "atoms": 27,
+      "median_ms": {
+        "features_ms": 0.5676,
+        "inference_including_features_ms": 4.4204,
+        "assign_charges_ms": 4.2138,
+        "full_parameterization_ms": 5.6887
+      }
+    },
+    {
+      "id": "pubchem-283880",
+      "atoms": 25,
+      "median_ms": {
+        "features_ms": 0.43829999999999997,
+        "inference_including_features_ms": 3.6955999999999998,
+        "assign_charges_ms": 3.8592,
+        "full_parameterization_ms": 5.6586
+      }
+    },
+    {
+      "id": "pubchem-110872",
+      "atoms": 42,
+      "median_ms": {
+        "features_ms": 0.8019000000000001,
+        "inference_including_features_ms": 5.122599999999999,
+        "assign_charges_ms": 5.3907,
+        "full_parameterization_ms": 7.7348
+      }
+    },
+    {
+      "id": "pubchem-24471",
+      "atoms": 30,
+      "median_ms": {
+        "features_ms": 0.5537,
+        "inference_including_features_ms": 3.8337000000000003,
+        "assign_charges_ms": 3.8701999999999996,
+        "full_parameterization_ms": 5.721900000000001
+      }
+    },
+    {
+      "id": "pubchem-381721",
+      "atoms": 35,
+      "median_ms": {
+        "features_ms": 0.6426999999999999,
+        "inference_including_features_ms": 4.4468,
+        "assign_charges_ms": 4.4527,
+        "full_parameterization_ms": 6.5295
+      }
+    },
+    {
+      "id": "pubchem-87536",
+      "atoms": 19,
+      "median_ms": {
+        "features_ms": 0.3512,
+        "inference_including_features_ms": 3.1864,
+        "assign_charges_ms": 3.1517,
+        "full_parameterization_ms": 4.5219
+      }
+    },
+    {
+      "id": "pubchem-118109",
+      "atoms": 31,
+      "median_ms": {
+        "features_ms": 0.5077,
+        "inference_including_features_ms": 3.7658,
+        "assign_charges_ms": 4.046799999999999,
+        "full_parameterization_ms": 5.8063
+      }
+    },
+    {
+      "id": "pubchem-356593",
+      "atoms": 56,
+      "median_ms": {
+        "features_ms": 1.2342,
+        "inference_including_features_ms": 6.146999999999999,
+        "assign_charges_ms": 6.274,
+        "full_parameterization_ms": 9.8484
+      }
+    },
+    {
+      "id": "pubchem-348772",
+      "atoms": 36,
+      "median_ms": {
+        "features_ms": 0.5835,
+        "inference_including_features_ms": 4.3498,
+        "assign_charges_ms": 4.3529,
+        "full_parameterization_ms": 6.3995
+      }
+    },
+    {
+      "id": "pubchem-346737",
+      "atoms": 35,
+      "median_ms": {
+        "features_ms": 0.666,
+        "inference_including_features_ms": 4.8139,
+        "assign_charges_ms": 4.9746,
+        "full_parameterization_ms": 6.6702
+      }
+    },
+    {
+      "id": "pubchem-425819",
+      "atoms": 44,
+      "median_ms": {
+        "features_ms": 0.9353,
+        "inference_including_features_ms": 6.1568,
+        "assign_charges_ms": 5.6195,
+        "full_parameterization_ms": 9.349
+      }
+    },
+    {
+      "id": "pubchem-446684",
+      "atoms": 38,
+      "median_ms": {
+        "features_ms": 0.643,
+        "inference_including_features_ms": 4.4383,
+        "assign_charges_ms": 4.7735,
+        "full_parameterization_ms": 7.045100000000001
+      }
+    },
+    {
+      "id": "pubchem-67484",
+      "atoms": 27,
+      "median_ms": {
+        "features_ms": 0.638,
+        "inference_including_features_ms": 3.9758,
+        "assign_charges_ms": 3.8844000000000003,
+        "full_parameterization_ms": 6.4910000000000005
+      }
+    },
+    {
+      "id": "pubchem-31724",
+      "atoms": 43,
+      "median_ms": {
+        "features_ms": 0.9775,
+        "inference_including_features_ms": 6.1634,
+        "assign_charges_ms": 5.3933,
+        "full_parameterization_ms": 8.5197
+      }
+    },
+    {
+      "id": "pubchem-4883",
+      "atoms": 41,
+      "median_ms": {
+        "features_ms": 0.7529,
+        "inference_including_features_ms": 5.0619000000000005,
+        "assign_charges_ms": 5.496499999999999,
+        "full_parameterization_ms": 7.4864
+      }
+    },
+    {
+      "id": "pubchem-376229",
+      "atoms": 42,
+      "median_ms": {
+        "features_ms": 0.9610000000000001,
+        "inference_including_features_ms": 5.2978000000000005,
+        "assign_charges_ms": 5.4655,
+        "full_parameterization_ms": 8.301400000000001
+      }
+    },
+    {
+      "id": "pubchem-395461",
+      "atoms": 24,
+      "median_ms": {
+        "features_ms": 0.6664,
+        "inference_including_features_ms": 3.3568000000000002,
+        "assign_charges_ms": 3.4898,
+        "full_parameterization_ms": 4.8707
+      }
+    },
+    {
+      "id": "pubchem-314630",
+      "atoms": 18,
+      "median_ms": {
+        "features_ms": 0.3422,
+        "inference_including_features_ms": 2.9215999999999998,
+        "assign_charges_ms": 2.9883,
+        "full_parameterization_ms": 4.4402
+      }
+    },
+    {
+      "id": "pubchem-38937",
+      "atoms": 38,
+      "median_ms": {
+        "features_ms": 0.7636999999999999,
+        "inference_including_features_ms": 4.894500000000001,
+        "assign_charges_ms": 4.6766000000000005,
+        "full_parameterization_ms": 6.9271
+      }
+    },
+    {
+      "id": "pubchem-47368",
+      "atoms": 24,
+      "median_ms": {
+        "features_ms": 0.5215000000000001,
+        "inference_including_features_ms": 3.3403,
+        "assign_charges_ms": 4.590999999999999,
+        "full_parameterization_ms": 5.1464
+      }
+    },
+    {
+      "id": "pubchem-289642",
+      "atoms": 43,
+      "median_ms": {
+        "features_ms": 0.914,
+        "inference_including_features_ms": 5.466,
+        "assign_charges_ms": 5.8139,
+        "full_parameterization_ms": 7.7803
+      }
+    },
+    {
+      "id": "pubchem-137783",
+      "atoms": 17,
+      "median_ms": {
+        "features_ms": 0.3331,
+        "inference_including_features_ms": 3.2243,
+        "assign_charges_ms": 3.1933000000000002,
+        "full_parameterization_ms": 4.252599999999999
+      }
+    },
+    {
+      "id": "pubchem-474455",
+      "atoms": 45,
+      "median_ms": {
+        "features_ms": 0.9433,
+        "inference_including_features_ms": 5.8071,
+        "assign_charges_ms": 5.5794,
+        "full_parameterization_ms": 8.3331
+      }
+    },
+    {
+      "id": "pubchem-26479",
+      "atoms": 31,
+      "median_ms": {
+        "features_ms": 0.6822,
+        "inference_including_features_ms": 4.132000000000001,
+        "assign_charges_ms": 4.1108,
+        "full_parameterization_ms": 5.9073
+      }
+    },
+    {
+      "id": "pubchem-245084",
+      "atoms": 55,
+      "median_ms": {
+        "features_ms": 0.9863000000000001,
+        "inference_including_features_ms": 5.9563999999999995,
+        "assign_charges_ms": 6.7898000000000005,
+        "full_parameterization_ms": 9.0606
+      }
+    },
+    {
+      "id": "pubchem-150062",
+      "atoms": 43,
+      "median_ms": {
+        "features_ms": 0.8867,
+        "inference_including_features_ms": 5.5346,
+        "assign_charges_ms": 5.976,
+        "full_parameterization_ms": 7.7922
+      }
+    },
+    {
+      "id": "pubchem-466019",
+      "atoms": 47,
+      "median_ms": {
+        "features_ms": 0.9464,
+        "inference_including_features_ms": 5.2691,
+        "assign_charges_ms": 5.5959,
+        "full_parameterization_ms": 9.1728
+      }
+    },
+    {
+      "id": "pubchem-180885",
+      "atoms": 36,
+      "median_ms": {
+        "features_ms": 0.6766,
+        "inference_including_features_ms": 5.2696000000000005,
+        "assign_charges_ms": 4.810700000000001,
+        "full_parameterization_ms": 6.7989
+      }
+    },
+    {
+      "id": "pubchem-414294",
+      "atoms": 66,
+      "median_ms": {
+        "features_ms": 2.5213,
+        "inference_including_features_ms": 9.0283,
+        "assign_charges_ms": 9.1139,
+        "full_parameterization_ms": 13.3181
+      }
+    },
+    {
+      "id": "pubchem-230051",
+      "atoms": 24,
+      "median_ms": {
+        "features_ms": 0.5902999999999999,
+        "inference_including_features_ms": 3.3574,
+        "assign_charges_ms": 3.7514,
+        "full_parameterization_ms": 4.9513
+      }
+    },
+    {
+      "id": "pubchem-497251",
+      "atoms": 30,
+      "median_ms": {
+        "features_ms": 1.3751,
+        "inference_including_features_ms": 4.6764,
+        "assign_charges_ms": 5.7047,
+        "full_parameterization_ms": 6.6610000000000005
+      }
+    },
+    {
+      "id": "pubchem-367075",
+      "atoms": 26,
+      "median_ms": {
+        "features_ms": 0.5382,
+        "inference_including_features_ms": 3.7205,
+        "assign_charges_ms": 3.7607999999999997,
+        "full_parameterization_ms": 6.26
+      }
+    },
+    {
+      "id": "pubchem-120410",
+      "atoms": 67,
+      "median_ms": {
+        "features_ms": 1.1787,
+        "inference_including_features_ms": 7.2896,
+        "assign_charges_ms": 7.6602,
+        "full_parameterization_ms": 11.0283
+      }
+    },
+    {
+      "id": "pubchem-138461",
+      "atoms": 18,
+      "median_ms": {
+        "features_ms": 0.48529999999999995,
+        "inference_including_features_ms": 3.3679,
+        "assign_charges_ms": 3.2958000000000003,
+        "full_parameterization_ms": 4.586200000000001
+      }
+    },
+    {
+      "id": "pubchem-239408",
+      "atoms": 27,
+      "median_ms": {
+        "features_ms": 0.5463,
+        "inference_including_features_ms": 4.011299999999999,
+        "assign_charges_ms": 4.5184999999999995,
+        "full_parameterization_ms": 5.755599999999999
+      }
+    },
+    {
+      "id": "pubchem-271803",
+      "atoms": 28,
+      "median_ms": {
+        "features_ms": 0.6351,
+        "inference_including_features_ms": 3.9431,
+        "assign_charges_ms": 3.9711,
+        "full_parameterization_ms": 5.884
+      }
+    },
+    {
+      "id": "pubchem-289459",
+      "atoms": 28,
+      "median_ms": {
+        "features_ms": 0.9632,
+        "inference_including_features_ms": 4.417199999999999,
+        "assign_charges_ms": 4.1497,
+        "full_parameterization_ms": 6.046
+      }
+    },
+    {
+      "id": "pubchem-406742",
+      "atoms": 63,
+      "median_ms": {
+        "features_ms": 1.0518999999999998,
+        "inference_including_features_ms": 6.8589,
+        "assign_charges_ms": 7.605899999999999,
+        "full_parameterization_ms": 12.4621
+      }
+    },
+    {
+      "id": "pubchem-272685",
+      "atoms": 28,
+      "median_ms": {
+        "features_ms": 0.7036,
+        "inference_including_features_ms": 5.6156,
+        "assign_charges_ms": 4.9372,
+        "full_parameterization_ms": 5.8126999999999995
+      }
+    },
+    {
+      "id": "pubchem-127216",
+      "atoms": 58,
+      "median_ms": {
+        "features_ms": 1.0384,
+        "inference_including_features_ms": 6.6587,
+        "assign_charges_ms": 6.9757,
+        "full_parameterization_ms": 10.2127
+      }
+    },
+    {
+      "id": "pubchem-224734",
+      "atoms": 45,
+      "median_ms": {
+        "features_ms": 0.9641,
+        "inference_including_features_ms": 5.5154000000000005,
+        "assign_charges_ms": 7.639,
+        "full_parameterization_ms": 8.2618
+      }
+    },
+    {
+      "id": "pubchem-218142",
+      "atoms": 42,
+      "median_ms": {
+        "features_ms": 0.8339000000000001,
+        "inference_including_features_ms": 5.4677,
+        "assign_charges_ms": 6.1267,
+        "full_parameterization_ms": 8.429300000000001
+      }
+    },
+    {
+      "id": "pubchem-70549",
+      "atoms": 27,
+      "median_ms": {
+        "features_ms": 0.7441,
+        "inference_including_features_ms": 4.2374,
+        "assign_charges_ms": 3.9269,
+        "full_parameterization_ms": 8.033900000000001
+      }
+    },
+    {
+      "id": "pubchem-188644",
+      "atoms": 40,
+      "median_ms": {
+        "features_ms": 0.8220999999999999,
+        "inference_including_features_ms": 4.8718,
+        "assign_charges_ms": 4.9969,
+        "full_parameterization_ms": 7.1287
+      }
+    },
+    {
+      "id": "pubchem-184120",
+      "atoms": 79,
+      "median_ms": {
+        "features_ms": 1.3597,
+        "inference_including_features_ms": 8.9851,
+        "assign_charges_ms": 8.2222,
+        "full_parameterization_ms": 12.4382
+      }
+    },
+    {
+      "id": "pubchem-243154",
+      "atoms": 41,
+      "median_ms": {
+        "features_ms": 0.8991,
+        "inference_including_features_ms": 7.1249,
+        "assign_charges_ms": 5.4119,
+        "full_parameterization_ms": 7.9914
+      }
+    },
+    {
+      "id": "pubchem-111320",
+      "atoms": 27,
+      "median_ms": {
+        "features_ms": 0.6103999999999999,
+        "inference_including_features_ms": 4.3579,
+        "assign_charges_ms": 3.8551,
+        "full_parameterization_ms": 5.38
+      }
+    },
+    {
+      "id": "pubchem-29375",
+      "atoms": 24,
+      "median_ms": {
+        "features_ms": 0.4802,
+        "inference_including_features_ms": 3.2546,
+        "assign_charges_ms": 3.3037,
+        "full_parameterization_ms": 4.8426
+      }
+    },
+    {
+      "id": "pubchem-43298",
+      "atoms": 33,
+      "median_ms": {
+        "features_ms": 0.7958000000000001,
+        "inference_including_features_ms": 4.547899999999999,
+        "assign_charges_ms": 5.687,
+        "full_parameterization_ms": 6.5747
+      }
+    },
+    {
+      "id": "pubchem-221592",
+      "atoms": 72,
+      "median_ms": {
+        "features_ms": 1.4704,
+        "inference_including_features_ms": 7.7132,
+        "assign_charges_ms": 9.1879,
+        "full_parameterization_ms": 11.832199999999998
+      }
+    },
+    {
+      "id": "pubchem-212160",
+      "atoms": 41,
+      "median_ms": {
+        "features_ms": 0.8140000000000001,
+        "inference_including_features_ms": 5.4643,
+        "assign_charges_ms": 5.4163,
+        "full_parameterization_ms": 7.3884
+      }
+    },
+    {
+      "id": "pubchem-475959",
+      "atoms": 81,
+      "median_ms": {
+        "features_ms": 1.5908,
+        "inference_including_features_ms": 9.471200000000001,
+        "assign_charges_ms": 9.3748,
+        "full_parameterization_ms": 13.730300000000002
+      }
+    },
+    {
+      "id": "pubchem-452205",
+      "atoms": 37,
+      "median_ms": {
+        "features_ms": 1.0747,
+        "inference_including_features_ms": 4.7204999999999995,
+        "assign_charges_ms": 4.8558,
+        "full_parameterization_ms": 7.2442
+      }
+    },
+    {
+      "id": "pubchem-13783",
+      "atoms": 41,
+      "median_ms": {
+        "features_ms": 0.8026,
+        "inference_including_features_ms": 5.4395,
+        "assign_charges_ms": 5.2865,
+        "full_parameterization_ms": 7.986
+      }
+    },
+    {
+      "id": "pubchem-380021",
+      "atoms": 53,
+      "median_ms": {
+        "features_ms": 1.1107,
+        "inference_including_features_ms": 6.2225,
+        "assign_charges_ms": 6.3185,
+        "full_parameterization_ms": 9.3942
+      }
+    },
+    {
+      "id": "pubchem-295814",
+      "atoms": 22,
+      "median_ms": {
+        "features_ms": 0.4878,
+        "inference_including_features_ms": 3.4518,
+        "assign_charges_ms": 3.2375,
+        "full_parameterization_ms": 5.056500000000001
+      }
+    },
+    {
+      "id": "pubchem-65093",
+      "atoms": 22,
+      "median_ms": {
+        "features_ms": 0.4507,
+        "inference_including_features_ms": 3.2597,
+        "assign_charges_ms": 3.441,
+        "full_parameterization_ms": 4.697299999999999
+      }
+    },
+    {
+      "id": "pubchem-188419",
+      "atoms": 22,
+      "median_ms": {
+        "features_ms": 0.5762999999999999,
+        "inference_including_features_ms": 3.467,
+        "assign_charges_ms": 4.6159,
+        "full_parameterization_ms": 4.975099999999999
+      }
+    },
+    {
+      "id": "pubchem-403417",
+      "atoms": 25,
+      "median_ms": {
+        "features_ms": 0.5115000000000001,
+        "inference_including_features_ms": 3.7533000000000003,
+        "assign_charges_ms": 3.7591,
+        "full_parameterization_ms": 5.2086
+      }
+    },
+    {
+      "id": "pdb-1PJV-A",
+      "atoms": 507,
+      "median_ms": {
+        "features_ms": 13.313,
+        "inference_including_features_ms": 54.0643,
+        "assign_charges_ms": 54.718999999999994,
+        "full_parameterization_ms": 76.7321
+      }
+    },
+    {
+      "id": "pdb-2JUC-A",
+      "atoms": 937,
+      "median_ms": {
+        "features_ms": 24.1934,
+        "inference_including_features_ms": 101.1497,
+        "assign_charges_ms": 100.5826,
+        "full_parameterization_ms": 157.8476
+      }
+    },
+    {
+      "id": "pdb-1IWC-A",
+      "atoms": 504,
+      "median_ms": {
+        "features_ms": 12.8391,
+        "inference_including_features_ms": 55.60530000000001,
+        "assign_charges_ms": 54.205000000000005,
+        "full_parameterization_ms": 80.10499999999999
+      }
+    },
+    {
+      "id": "pdb-3ABD-A",
+      "atoms": 2940,
+      "median_ms": {
+        "features_ms": 94.8432,
+        "inference_including_features_ms": 324.8338,
+        "assign_charges_ms": 328.67600000000004,
+        "full_parameterization_ms": 462.13149999999996
+      }
+    },
+    {
+      "id": "pdb-2N4H-A",
+      "atoms": 700,
+      "median_ms": {
+        "features_ms": 16.2439,
+        "inference_including_features_ms": 74.1195,
+        "assign_charges_ms": 72.6605,
+        "full_parameterization_ms": 103.4303
+      }
+    },
+    {
+      "id": "pdb-9B3P-B",
+      "atoms": 1281,
+      "median_ms": {
+        "features_ms": 31.602400000000003,
+        "inference_including_features_ms": 141.15259999999998,
+        "assign_charges_ms": 136.2525,
+        "full_parameterization_ms": 184.1281
+      }
+    },
+    {
+      "id": "pdb-2F52-A",
+      "atoms": 1014,
+      "median_ms": {
+        "features_ms": 24.8889,
+        "inference_including_features_ms": 104.1696,
+        "assign_charges_ms": 107.20259999999999,
+        "full_parameterization_ms": 151.2886
+      }
+    },
+    {
+      "id": "pdb-8J90-E",
+      "atoms": 1274,
+      "median_ms": {
+        "features_ms": 31.4831,
+        "inference_including_features_ms": 138.0036,
+        "assign_charges_ms": 130.61139999999997,
+        "full_parameterization_ms": 203.7729
+      }
+    },
+    {
+      "id": "pdb-6EE9-X",
+      "atoms": 378,
+      "median_ms": {
+        "features_ms": 8.763399999999999,
+        "inference_including_features_ms": 39.9961,
+        "assign_charges_ms": 39.5182,
+        "full_parameterization_ms": 55.7193
+      }
+    },
+    {
+      "id": "pdb-1W1F-A",
+      "atoms": 974,
+      "median_ms": {
+        "features_ms": 24.7225,
+        "inference_including_features_ms": 100.81429999999999,
+        "assign_charges_ms": 103.2364,
+        "full_parameterization_ms": 152.8032
+      }
+    }
+  ],
+  "cases": 220,
+  "parameterization_passed": 220,
+  "all_checks_passed": 214
+}

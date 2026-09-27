@@ -7,7 +7,7 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Rosemary SMIRNOFF parameter assignment and native NAGL inference for Kekule."
+description = "SMIRNOFF parameter assignment and native NAGL inference for Kekule."
 
 [dependencies]
 kekule = { version = "0.2.1", path = "../kekule" }

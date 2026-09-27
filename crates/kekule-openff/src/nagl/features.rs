@@ -1,4 +1,5 @@
-//! Ash's feature schema and the pinned NAGL normalization/resonance algorithm.
+//! Configurable atom features using the versioned NAGL normalization/resonance profile.
+use super::config::Feature;
 use crate::{error, Result};
 use kekule::{
     core::{AtomId, BondOrder, Molecule, RingBasisModel},
@@ -332,42 +333,69 @@ pub(crate) fn average_charges(input: &Molecule) -> Result<Vec<f32>> {
     Ok(average)
 }
 
-pub(crate) fn features(molecule: &Molecule) -> Result<ndarray::Array2<f32>> {
+pub(super) fn features(
+    molecule: &Molecule,
+    specifications: &[Feature],
+) -> Result<ndarray::Array2<f32>> {
     if molecule.perception().ring_basis_model() != Some(RingBasisModel::FiguerasSssrLike) {
         return Err(error("NAGL requires the selected SSSR ring basis"));
     }
-    let averages = average_charges(molecule)?;
-    let mut result = ndarray::Array2::zeros((molecule.atom_count(), 22));
-    const ELEMENTS: [u8; 10] = [6, 8, 1, 7, 16, 9, 35, 17, 53, 15];
+    let averages = if specifications
+        .iter()
+        .any(|f| matches!(f, Feature::AverageFormalCharge))
+    {
+        average_charges(molecule)?
+    } else {
+        Vec::new()
+    };
+    let mut result = ndarray::Array2::zeros((
+        molecule.atom_count(),
+        specifications.iter().map(Feature::width).sum(),
+    ));
     for (i, (id, atom)) in molecule.atoms().enumerate() {
-        let element = ELEMENTS
-            .iter()
-            .position(|z| *z == atom.element.atomic_number())
-            .ok_or_else(|| {
-                error(format!(
-                    "element {} is outside the Ash domain",
-                    atom.element
-                ))
-            })?;
-        let degree = molecule.neighbors(id).map_err(error)?.count();
-        if degree > 6 {
-            return Err(error("Ash only supports atom connectivity 0..6"));
-        }
-        result[(i, element)] = 1.0;
-        result[(i, 10 + degree)] = 1.0;
-        result[(i, 17)] = averages[i];
-        for size in 3..=6 {
-            result[(i, 18 + size - 3)] = if molecule
-                .ring_set()
-                .unwrap()
-                .rings()
-                .iter()
-                .any(|r| r.atoms.len() == size && r.atoms.contains(&id))
-            {
-                1.0
-            } else {
-                0.0
-            };
+        let mut offset = 0;
+        for feature in specifications {
+            match feature {
+                Feature::Element { categories } => {
+                    let column = categories
+                        .iter()
+                        .position(|s| kekule::core::Element::from_symbol(s) == Some(atom.element))
+                        .ok_or_else(|| {
+                            error(format!(
+                                "element {} absent from NAGL feature categories",
+                                atom.element
+                            ))
+                        })?;
+                    result[(i, offset + column)] = 1.0;
+                }
+                Feature::Connectivity { categories } => {
+                    let degree = molecule.neighbors(id).map_err(error)?.count();
+                    let column = categories
+                        .iter()
+                        .position(|&n| n == degree)
+                        .ok_or_else(|| {
+                            error(format!(
+                                "connectivity {degree} absent from NAGL feature categories"
+                            ))
+                        })?;
+                    result[(i, offset + column)] = 1.0;
+                }
+                Feature::AverageFormalCharge => result[(i, offset)] = averages[i],
+                Feature::Ring { ring_size } => {
+                    result[(i, offset)] = if molecule
+                        .ring_set()
+                        .unwrap()
+                        .rings()
+                        .iter()
+                        .any(|r| r.atoms.len() == *ring_size && r.atoms.contains(&id))
+                    {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                }
+            }
+            offset += feature.width();
         }
     }
     Ok(result)
@@ -415,7 +443,13 @@ mod tests {
                 .unwrap()
                 .remove(0);
             let m = crate::explicit(&m).unwrap();
-            let actual = super::features(&m).unwrap();
+            let specs = r["features"]["values"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| serde_json::from_value(f["config"].clone()).unwrap())
+                .collect::<Vec<_>>();
+            let actual = super::features(&m, &specs).unwrap();
             for (i, (_, atom)) in m.atoms().enumerate() {
                 let index = atom.atom_map.unwrap() as usize - 1;
                 let expected = r["features"]["values"]

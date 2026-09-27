@@ -17,7 +17,7 @@ at their stated revisions and are not a current list of missing features.
 | Trajectories | Fixed topology, XYZ/DCD/TRR/XTC, streaming, periodic transformations and analyses | [Trajectory I/O](../crates/kekule-traj/src/io/mod.rs), [analysis](../crates/kekule-traj/src/analysis.rs) |
 | DSSP | Read-only analysis of selected model coordinates; conformer, residue eligibility and chain policies matter to reference comparisons | [Analysis contract](../crates/kekule/src/dssp/mod.rs) |
 | Potentials | Explicit DREIDING preparation and evaluation on the same topology; current adapter is nonperiodic | [DREIDING contract](../crates/kekule-potentials/src/dreiding/mod.rs) |
-| OpenFF | Rosemary preset or custom OFFXML within the supported SMIRNOFF subset, typed topology-bound parameters, fixed-H InChI lookup, native Ash NAGL CPU inference; explicit H and separately exported model required | [OpenFF contract](../crates/kekule-openff/CONTRACT.md) |
+| OpenFF | Rosemary preset or custom OFFXML within the supported SMIRNOFF subset, typed topology-bound parameters, fixed-H InChI lookup, configurable native NAGL CPU inference with OFFXML model identity checks; explicit H and compatible exported bundle required | [OpenFF contract](../crates/kekule-openff/CONTRACT.md) |
 
 The DSSP investigation and force-field scalability/periodicity extensions remain
 deferred. Raw reference disagreements are not automatically defects: comparisons
@@ -30,12 +30,8 @@ execution and provenance rules are in the [benchmark guide](../benchmarks/GUIDE.
 The manually dispatched [reference-adapter tests](../.github/workflows/reference-tests.yml)
 exercise pinned RDKit and Biopython integrations separately from ordinary CI.
 
-The OpenFF companion crate has a separate
-[prerequisite audit](../benchmarks/openff/AUDIT.md), including executable Rosemary
-matching and NAGL reference cases. Its dated findings precede the implementation;
-the current contract lists supported handlers, reference coverage, and limitations.
-The [validation report](../benchmarks/openff/VALIDATION.md) presents parity plots,
-numerical differences, and CPU timings. The
-[110-molecule robustness panel](../benchmarks/openff/ROBUSTNESS.md) adds
-protein-sized graphs and independent OpenMM energy comparisons, with raw
-failures and remaining identifier limits retained.
+The OpenFF [validation report](../benchmarks/openff/VALIDATION.md) presents parity
+plots, numerical differences, CPU timings and reproduction commands for the
+110-molecule panel and two-model NAGL checks. Protein-sized graphs and independent
+OpenMM energies are covered; raw failures, identifier limits and the historical
+prerequisite audit remain available. The crate contract defines current support.
