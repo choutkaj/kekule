@@ -18,6 +18,7 @@ at their stated revisions and are not a current list of missing features.
 | DSSP | Read-only analysis of selected model coordinates; conformer, residue eligibility and chain policies matter to reference comparisons | [Analysis contract](../crates/kekule/src/dssp/mod.rs) |
 | Solvation | Periodic box sizing, TIP3P water packing, monovalent counterions and salt; no force-field assignment or equilibration | [Solvation contract](../crates/kekule/src/structure/solvation/mod.rs), [box sizing](../crates/kekule/src/structure/solvation/boxes.rs) |
 | Potentials | Explicit DREIDING preparation and evaluation on the same topology; current adapter is nonperiodic | [DREIDING contract](../crates/kekule-potentials/src/dreiding/mod.rs) |
+| OpenFF | Rosemary preset or custom OFFXML within the supported SMIRNOFF subset, typed topology-bound parameters, fixed-H InChI lookup, configurable native NAGL CPU inference with OFFXML model identity checks; explicit H and compatible exported bundle required | [OpenFF contract](../crates/kekule-openff/CONTRACT.md) |
 
 The DSSP investigation and force-field scalability/periodicity extensions remain
 deferred. Raw reference disagreements are not automatically defects: comparisons
@@ -29,3 +30,9 @@ For maintenance validation, see [CI](../.github/workflows/ci.yml) and
 execution and provenance rules are in the [benchmark guide](../benchmarks/GUIDE.md).
 The manually dispatched [reference-adapter tests](../.github/workflows/reference-tests.yml)
 exercise pinned RDKit and Biopython integrations separately from ordinary CI.
+
+The OpenFF [validation report](../benchmarks/openff/VALIDATION.md) presents parity
+plots, numerical differences, CPU timings and reproduction commands for the
+110-molecule panel and two-model NAGL checks. Protein-sized graphs and independent
+OpenMM energies are covered; raw failures, identifier limits and the historical
+prerequisite audit remain available. The crate contract defines current support.

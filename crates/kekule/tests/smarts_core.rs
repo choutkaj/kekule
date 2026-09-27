@@ -5,6 +5,36 @@ use kekule::{
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
+#[test]
+fn connected_query_extensions_scale_with_local_adjacency() {
+    // Visiting length-three windows must not retry every remote atom at each
+    // extension. This bounded test used to exhaust its search-state budget.
+    let m = smiles::to_molecules(&"C".repeat(1500)).unwrap().remove(0);
+    let q = parse_smarts("[#6:1]~[#6:2]~[#6:3]").unwrap();
+    let matches = find_substructure_matches_complete(
+        &m,
+        &q,
+        SubstructureMatchOptions {
+            max_matches: 10_000,
+            max_search_states: 30_000,
+            uniquify: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(matches.len(), 2 * (1500 - 2));
+    let ids = m.atom_ids().collect::<Vec<_>>();
+    let actual = matches
+        .iter()
+        .map(|m| m.atoms().to_vec())
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected = ids
+        .windows(3)
+        .flat_map(|a| [a.to_vec(), a.iter().rev().copied().collect()])
+        .collect();
+    assert_eq!(actual, expected);
+}
+
 fn molecule(source: &str) -> Molecule {
     let mut m = smiles::to_molecules(source).unwrap().pop().unwrap();
     m.perceive().unwrap();

@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "sources": [
+    {
+      "name": "cyclopropane",
+      "path": "fixtures/pubchem/0.json",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/cyclopropane/property/IsomericSMILES/JSON",
+      "sha256": "4b459b5e15f6e4b906b8ae798e5ac8dcb4c9fe9b55d04d3301f7d62b07e146bb"
+    },
+    {
+      "name": "cyclobutane",
+      "path": "fixtures/pubchem/1.json",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/cyclobutane/property/IsomericSMILES/JSON",
+      "sha256": "7bb6e5d943659f40efe57a82e1f1137c72a8fd3e031e6da3f5c7f2646b122a9d"
+    },
+    {
+      "name": "cubane",
+      "path": "fixtures/pubchem/2.json",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/cubane/property/IsomericSMILES/JSON",
+      "sha256": "fcc29a6f7bb6bb1c212e090e261745565d7846f88a73787c25ef0d940904da9e"
+    },
+    {
+      "name": "norbornane",
+      "path": "fixtures/pubchem/3.json",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/norbornane/property/IsomericSMILES/JSON",
+      "sha256": "23143c5a49d992a518a2860991cb818a532b17fba81580587c164fc3009f68ba"
+    },
+    {
+      "name": "naphthalene",
+      "path": "fixtures/pubchem/4.json",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/naphthalene/property/IsomericSMILES/JSON",
+      "sha256": "22a881f61f6d414f1657eba724fa9b05583ecc4ee15b4b06e3018e4e57cfed0f"
+    },
+    {
+      "name": "cis-2-butene",
+      "path": "fixtures/pubchem/5.json",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/cis-2-butene/property/IsomericSMILES/JSON",
+      "sha256": "5f591cb9225cd4b6d58158450d61278f65c87010ba2a918f66a1f5c9bd664e21"
+    },
+    {
+      "name": "trans-2-butene",
+      "path": "fixtures/pubchem/6.json",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/trans-2-butene/property/IsomericSMILES/JSON",
+      "sha256": "312855155ee5e8b64e66412ce5d5f166a7e148edb9b68e241ab1c06bc05292b9"
+    },
+    {
+      "name": "D-glucose",
+      "path": "fixtures/pubchem/7.json",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/D-glucose/property/IsomericSMILES/JSON",
+      "sha256": "5ab825081d0eabfd4e9891fc1df0733509e42d6625852413b97addc8a99746a5"
+    },
+    {
+      "name": "L-cysteine",
+      "path": "fixtures/pubchem/8.json",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/L-cysteine/property/IsomericSMILES/JSON",
+      "sha256": "a51f4ca0b9dff26a1f0c54653baa0ebbb32069e52d4808f66a40c378d9f41037"
+    },
+    {
+      "name": "dimethyl sulfoxide",
+      "path": "fixtures/pubchem/9.json",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/dimethyl%20sulfoxide/property/IsomericSMILES/JSON",
+      "sha256": "e414f70099456e212be2b7f2d89bf54eca2da078f0a519333be2f45d345685e3"
+    }
+  ]
+}
