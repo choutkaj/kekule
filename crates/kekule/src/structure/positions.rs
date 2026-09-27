@@ -16,6 +16,25 @@ pub struct Positions {
 }
 
 impl Positions {
+    /// Publishes a checked sparse batch without cloning the complete array.
+    pub(super) fn set_canonical_batch(
+        &mut self,
+        values: &[(usize, Point3)],
+    ) -> Result<(), PositionError> {
+        for &(index, point) in values {
+            if index >= self.values.len() {
+                return Err(PositionError::InvalidIndex { index });
+            }
+            if !point.is_finite() {
+                return Err(PositionError::NonFinitePosition { index });
+            }
+        }
+        for &(index, point) in values {
+            self.values[index] = point;
+        }
+        Ok(())
+    }
+
     pub(crate) fn into_canonical_values(self) -> Vec<Point3> {
         self.values
     }
