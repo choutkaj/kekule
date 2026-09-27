@@ -39,12 +39,13 @@ impl Network {
         mut tensors: BTreeMap<String, Tensor>,
         raw: &[u8],
     ) -> Result<Self> {
-        if !raw.len().is_multiple_of(4) {
+        let (words, remainder) = raw.as_chunks::<4>();
+        if !remainder.is_empty() {
             return Err(error("NAGL weights must be little-endian float32"));
         }
-        let weights = raw
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        let weights = words
+            .iter()
+            .map(|&b| f32::from_le_bytes(b))
             .collect::<Vec<_>>();
         if weights.iter().any(|v| !v.is_finite()) {
             return Err(error("nonfinite NAGL weights"));

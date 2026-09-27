@@ -470,8 +470,19 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
         .unwrap_err()
         .to_string()
         .contains("lookup charge array"));
-    std::fs::write(scratch.0.join("weights.bin"), [0u8; 3]).unwrap();
-    assert!(NaglModel::load(&scratch.0).is_err());
+    // Match the checksum so truncated float32 storage reaches the decoder.
+    let truncated = [0u8; 3];
+    changed["weights_sha256"] = json!(format!("{:x}", Sha256::digest(truncated)));
+    std::fs::write(
+        scratch.0.join("model.json"),
+        serde_json::to_vec(&changed).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(scratch.0.join("weights.bin"), truncated).unwrap();
+    assert!(NaglModel::load(&scratch.0)
+        .unwrap_err()
+        .to_string()
+        .contains("weights must be little-endian float32"));
     std::fs::remove_file(scratch.0.join("weights.bin")).unwrap();
     assert!(NaglModel::load(&scratch.0).is_err());
     std::fs::File::create(scratch.0.join("model.json"))
