@@ -10,6 +10,8 @@
 //! optionally require direct bonds between consecutive atoms using
 //! [`ConnectivityCheck::ConsecutiveBonds`]. Connectivity comes from the topology,
 //! never from coordinate proximity; geometric validity is checked separately.
+//! [`bond_dihedral`] selects a deterministic quartet for one bond; prepare a
+//! [`BondDihedral`] once to reuse its topology-bound references across frames.
 //!
 //! ```
 //! use kekule::structure::{measure::{self, ConnectivityCheck}, Model};
@@ -55,6 +57,9 @@ use crate::topology::{AtomSelection, InstanceAtomId, SelectionError};
 use crate::units::{Quantity, UnitError, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
 
 use super::ModelView;
+
+mod bond_dihedrals;
+pub use bond_dihedrals::*;
 
 /// Optional topology validation for Cartesian measurements.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
