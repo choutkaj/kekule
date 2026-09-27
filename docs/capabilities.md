@@ -7,7 +7,7 @@ at their stated revisions and are not a current list of missing features.
 | Area | Current support and boundaries | Authoritative contract |
 | --- | --- | --- |
 | Chemistry ownership | Connected molecules; systems, coordinates, and derived perception have separate owners | [Architecture](../ARCHITECTURE.md) |
-| Measurements | Cartesian distances, angles, and signed dihedrals on borrowed realizations; optional consecutive-bond validation; periodic preprocessing is explicit | [Measurement contract](../crates/kekule/src/structure/measure.rs) |
+| Measurements | Cartesian distances, angles, and signed dihedrals; optional consecutive-bond validation; deterministic bond dihedrals use CIP priority and atom-ID ties with fixed references and optional values; periodic preprocessing is explicit | [Measurement contract](../crates/kekule/src/structure/measure.rs), [bond dihedrals](../crates/kekule/src/structure/measure/bond_dihedrals.rs) |
 | Selections | Snapshot-bound atom and bond sets; checked picking, set algebra, hierarchy and graph expansion, predicates, query matches, and Cartesian proximity | [Atom selection contract](../crates/kekule/src/topology/selection.rs), [bond selection contract](../crates/kekule/src/topology/selection/bonds.rs), [spatial selection](../crates/kekule/src/structure/measure.rs) |
 | Hydrogens | Explicit graph atoms and implicit counts; specified counts survive reperception; conversions preserve information and stereo | [Hydrogen semantics](hydrogen-semantics.md) |
 | SMILES | Parsing, interpretation, plain/isomeric/canonical writing, and supported CX radical/group input and tetrahedral group output; unsupported content fails explicitly | [Public format API](../crates/kekule/src/lib.rs), [stereo support](stereo-support.md) |

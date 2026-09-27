@@ -159,7 +159,6 @@ fn auxiliary_ranking_stops_at_a_proven_order_but_never_promotes_a_truncated_tie(
         let fractions = cip_atomic_number_fractions(&molecule);
         let graph = build_auxiliary_graph(
             &molecule,
-            element,
             molecule.atom_ids().last().expect("original root"),
             CipAssignmentOptions::default(),
             &fractions,
@@ -178,7 +177,6 @@ fn auxiliary_ranking_stops_at_a_proven_order_but_never_promotes_a_truncated_tie(
         let descriptors = DescriptorContext::new(element);
         let mut context = LigandBuildContext {
             mol: &molecule,
-            element,
             descriptor_context: &descriptors,
             options: CipAssignmentOptions::default(),
             atomic_number_fractions: &fractions,
@@ -198,7 +196,7 @@ fn auxiliary_ranking_stops_at_a_proven_order_but_never_promotes_a_truncated_tie(
         } else {
             assert!(matches!(
                 result,
-                Err(CipAssignmentIssue::DepthLimitExceeded { .. })
+                Err(CipRankingError::DepthLimitExceeded { .. })
             ));
         }
     }
@@ -215,7 +213,6 @@ fn auxiliary_traversal_visits_each_occurrence_once_from_every_root() {
     let fractions = cip_atomic_number_fractions(&molecule);
     let graph = build_auxiliary_graph(
         &molecule,
-        StereoElementId::new(0),
         molecule.atom_ids().next().expect("root atom"),
         CipAssignmentOptions::default(),
         &fractions,
@@ -302,7 +299,6 @@ fn trogers_base_retains_the_published_bridged_nitrogen_configuration() {
         let descriptors = DescriptorContext::new(element);
         let context = LigandBuildContext {
             mol: &molecule,
-            element,
             descriptor_context: &descriptors,
             options: CipAssignmentOptions::default(),
             atomic_number_fractions: &fractions,
@@ -1061,7 +1057,6 @@ fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
     let descriptor_context = DescriptorContext::new(element);
     let build_context = LigandBuildContext {
         mol: mol.working(),
-        element,
         descriptor_context: &descriptor_context,
         options: CipAssignmentOptions::default(),
         atomic_number_fractions: &fractions,
@@ -1206,15 +1201,8 @@ fn axial_auxiliary_labels_are_derived_from_the_local_digraph() {
         let primary = StereoElementId::new(element.raw() + 1);
         let fractions = cip_atomic_number_fractions(molecule.working());
         let options = CipAssignmentOptions::default();
-        let graph = build_auxiliary_graph(
-            molecule.working(),
-            primary,
-            root,
-            options,
-            &fractions,
-            false,
-        )
-        .unwrap();
+        let graph =
+            build_auxiliary_graph(molecule.working(), root, options, &fractions, false).unwrap();
         let mut descriptors = DescriptorContext::new(primary);
         precompute_auxiliary_descriptors(
             molecule.working(),

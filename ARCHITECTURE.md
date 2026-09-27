@@ -239,7 +239,10 @@ invariants immediately, including when a guard is forgotten.
 
 Measurements and spatial selections operate on borrowed realizations. Cartesian
 measurements do not silently apply periodic imaging. A spatial selection is one
-realization's result; reevaluating it across frames is explicit. Numerical
+realization's result; reevaluating it across frames is explicit. Prepared bond
+dihedrals bind topology-selected references to the exact shared snapshot. CIP
+priority and atom-ID ties choose the references without coordinates; undefined
+geometry yields an absent value rather than substituting references. Numerical
 policies and supported geometries live with
 [positions](crates/kekule/src/structure/positions.rs),
 [models](crates/kekule/src/structure/model.rs),
