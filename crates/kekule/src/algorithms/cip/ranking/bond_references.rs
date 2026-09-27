@@ -80,12 +80,7 @@ fn reference(
         atropisomer_mode: true,
     };
     let mut signatures = signatures(&context, root, candidates)?;
-    let tied = signatures.iter().enumerate().any(|(i, (_, left))| {
-        signatures[i + 1..]
-            .iter()
-            .any(|(_, right)| left.compare(right) == Ordering::Equal)
-    });
-    if tied
+    if signatures.len() > 1
         && mol
             .stereo_elements()
             .any(|(_, stereo)| stereo.is_specified())
@@ -108,27 +103,32 @@ fn reference(
         {
             return Err(CipRankingError::UnresolvedPriority);
         }
+        let candidates = signatures
+            .iter()
+            .map(|(carrier, _)| match carrier {
+                StereoCarrier::Atom(atom) => *atom,
+                _ => unreachable!("bond references are explicit atoms"),
+            })
+            .collect::<Vec<_>>();
         signatures = self::signatures(
             &LigandBuildContext {
                 descriptor_context: &descriptors,
                 ..context
             },
             root,
-            candidates,
+            &candidates,
         )?;
     }
-    // Expansion only returns an unfinished digraph when all comparisons are
-    // already decided by Rule 1a. Thus an equality here is a completed ranking.
-    let mut best = 0;
-    for i in 1..signatures.len() {
-        let ordering = signatures[i].1.compare(&signatures[best].1);
-        if ordering == Ordering::Greater
-            || (ordering == Ordering::Equal && candidates[i] < candidates[best])
-        {
-            best = i;
-        }
-    }
-    Ok(candidates[best])
+    // Expansion returns either a unique maximum or completed, tied maxima.
+    // Preserve carrier identities when lower-priority candidates are removed.
+    Ok(signatures
+        .iter()
+        .map(|(carrier, _)| match carrier {
+            StereoCarrier::Atom(atom) => *atom,
+            _ => unreachable!("bond references are explicit atoms"),
+        })
+        .min()
+        .expect("nonempty reference candidates"))
 }
 
 fn signatures(
@@ -136,7 +136,7 @@ fn signatures(
     root: AtomId,
     candidates: &[AtomId],
 ) -> RankingResult<Vec<(StereoCarrier, LigandSignature)>> {
-    expansion::carrier_signatures(
+    expansion::maximal_carrier_signatures(
         context,
         candidates.iter().map(|&atom| {
             let carrier = StereoCarrier::Atom(atom);

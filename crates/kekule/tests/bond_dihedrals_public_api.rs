@@ -237,6 +237,86 @@ fn geometry_absence_is_distinct_from_overflow_and_foreign_topologies() {
 }
 
 #[test]
+fn losing_reference_ties_do_not_exhaust_ranking_bounds() {
+    // The ethyl reference wins after one shell, regardless of its position
+    // among the two tied methyl references.
+    for (smiles, b, a) in [
+        ("CC(C)(CC)CO", 1, 3),
+        ("CC(CC)(C)CO", 1, 2),
+        ("CCC(C)(C)CO", 2, 1),
+    ] {
+        let model = make_model(smiles, true);
+        let ids = model.atom_ids();
+        for options in [
+            CipAssignmentOptions {
+                max_depth: 1,
+                ..Default::default()
+            },
+            CipAssignmentOptions {
+                max_nodes: 4,
+                ..Default::default()
+            },
+        ] {
+            let selected =
+                BondDihedral::with_options(&model.shared_topology(), bond(&model, b, 5), options)
+                    .unwrap();
+            assert_eq!(selected.atoms(), Some([ids[a], ids[b], ids[5], ids[6]]));
+        }
+    }
+    // Losing branches may also extend beyond the default depth limit.
+    let chain = "C".repeat(70);
+    let model = make_model(&format!("C({chain})({chain})(C(F)F)CO"), true);
+    let ids = model.atom_ids();
+    assert_eq!(
+        definition(&model, 0, 144).atoms(),
+        Some([ids[141], ids[0], ids[144], ids[145]])
+    );
+}
+
+#[test]
+fn only_possible_maxima_consume_further_ranking_budget() {
+    // The tert-butyl reference loses to both fluorinated references at shell 1.
+    // Its next shell would exceed seven nodes, while the tied maxima complete
+    // within that budget and must use the smaller atom ID.
+    let model = make_model("C(C(C)(C)C)(C(F)C)(C(F)C)CO", true);
+    let axis = bond(&model, 0, 11);
+    let ids = model.atom_ids();
+    let selected = BondDihedral::with_options(
+        &model.shared_topology(),
+        axis,
+        CipAssignmentOptions {
+            max_depth: 2,
+            max_nodes: 7,
+        },
+    )
+    .unwrap();
+    assert_eq!(selected.atoms(), Some([ids[5], ids[0], ids[11], ids[12]]));
+    // Discarding a loser must not turn an unfinished tie among winners into
+    // an atom-ID tie, for either kind of resource bound.
+    for (options, expected) in [
+        (
+            CipAssignmentOptions {
+                max_depth: 1,
+                max_nodes: 7,
+            },
+            CipRankingError::DepthLimitExceeded { max_depth: 1 },
+        ),
+        (
+            CipAssignmentOptions {
+                max_depth: 2,
+                max_nodes: 4,
+            },
+            CipRankingError::ResourceLimitExceeded { max_nodes: 4 },
+        ),
+    ] {
+        assert!(matches!(
+            BondDihedral::with_options(&model.shared_topology(), axis, options),
+            Err(BondDihedralError::Ranking { error, .. }) if error == expected
+        ));
+    }
+}
+
+#[test]
 fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
     let model = make_model("CC(CO)CC", true);
     let axis = bond(&model, 1, 4);
@@ -347,30 +427,42 @@ fn references_preserve_instance_identity_and_work_on_ensemble_views() {
 fn represented_remote_stereo_distinguishes_constitutionally_tied_ligands() {
     // Changing only the configuration of both terminal centers swaps their
     // relative CIP preference without changing any atom identifiers.
-    let left = make_model("C[C@H](F)C(CC)[C@H](F)C", true);
-    let right = make_model("C[C@@H](F)C(CC)[C@@H](F)C", true);
-    let left_atoms = definition(&left, 3, 4).atoms().unwrap();
-    let right_atoms = definition(&right, 3, 4).atoms().unwrap();
-    assert!(matches!(left_atoms[0].atom().raw(), 1 | 6));
-    assert!(matches!(right_atoms[0].atom().raw(), 1 | 6));
-    assert_ne!(left_atoms[0].atom(), right_atoms[0].atom());
-    // For this simple enantiomorphic pair Rule 5 prefers R to S. Check the
-    // direction as well as sensitivity to stereo, without installing labels
-    // on either source model.
-    for (model, atoms) in [(&left, left_atoms), (&right, right_atoms)] {
-        let mut labelled = model
-            .topology()
-            .molecules()
-            .next()
-            .unwrap()
-            .molecule()
-            .clone();
-        assign_cip_descriptors(&mut labelled).unwrap();
-        let (id, _) = labelled.stereo_elements().find(|(_, element)| matches!(&element.kind, StereoElementKind::Tetrahedral(stereo) if stereo.center == atoms[0].atom())).unwrap();
-        assert_eq!(
-            labelled.cip_descriptor(id).unwrap(),
-            Some(StereoDescriptor::R)
-        );
+    for (left_smiles, right_smiles, c, other_reference) in [
+        ("C[C@H](F)C(CC)[C@H](F)C", "C[C@@H](F)C(CC)[C@@H](F)C", 4, 6),
+        // A third, lower-priority methyl reference must stay discarded when
+        // the tied maxima are reranked with auxiliary stereo descriptors.
+        (
+            "C[C@H](F)C(C)(CC)[C@H](F)C",
+            "C[C@@H](F)C(C)(CC)[C@@H](F)C",
+            5,
+            7,
+        ),
+    ] {
+        let left = make_model(left_smiles, true);
+        let right = make_model(right_smiles, true);
+        let left_atoms = definition(&left, 3, c).atoms().unwrap();
+        let right_atoms = definition(&right, 3, c).atoms().unwrap();
+        assert!([1, other_reference].contains(&left_atoms[0].atom().raw()));
+        assert!([1, other_reference].contains(&right_atoms[0].atom().raw()));
+        assert_ne!(left_atoms[0].atom(), right_atoms[0].atom());
+        // For this simple enantiomorphic pair Rule 5 prefers R to S. Check the
+        // direction as well as sensitivity to stereo, without installing labels
+        // on either source model.
+        for (model, atoms) in [(&left, left_atoms), (&right, right_atoms)] {
+            let mut labelled = model
+                .topology()
+                .molecules()
+                .next()
+                .unwrap()
+                .molecule()
+                .clone();
+            assign_cip_descriptors(&mut labelled).unwrap();
+            let (id, _) = labelled.stereo_elements().find(|(_, element)| matches!(&element.kind, StereoElementKind::Tetrahedral(stereo) if stereo.center == atoms[0].atom())).unwrap();
+            assert_eq!(
+                labelled.cip_descriptor(id).unwrap(),
+                Some(StereoDescriptor::R)
+            );
+        }
     }
 }
 
