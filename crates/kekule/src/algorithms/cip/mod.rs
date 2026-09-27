@@ -6,6 +6,69 @@ use crate::core::*;
 mod ranking;
 
 type CipResult<T> = std::result::Result<T, CipAssignmentIssue>;
+type RankingResult<T> = std::result::Result<T, CipRankingError>;
+
+/// Failure to compare rooted ligands without assigning a stereo descriptor.
+/// A resource limit or unresolved comparison is never an equal-priority result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CipRankingError {
+    DepthLimitExceeded {
+        max_depth: usize,
+    },
+    ResourceLimitExceeded {
+        max_nodes: usize,
+    },
+    UnresolvedPriority,
+    InvalidStereo {
+        issue: StereoValidationIssue,
+    },
+    /// Run valence perception explicitly before ranking ligands whose inferred
+    /// hydrogen counts are unknown. No perception is installed by ranking.
+    UnknownHydrogenCount {
+        atom: AtomId,
+    },
+}
+
+impl fmt::Display for CipRankingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DepthLimitExceeded { max_depth } => {
+                write!(f, "CIP ranking exceeded depth {max_depth}")
+            }
+            Self::ResourceLimitExceeded { max_nodes } => {
+                write!(f, "CIP ranking exceeded {max_nodes} nodes")
+            }
+            Self::UnresolvedPriority => f.write_str("CIP ligand priority could not be resolved"),
+            Self::InvalidStereo { issue } => write!(f, "invalid stereo for CIP ranking: {issue:?}"),
+            Self::UnknownHydrogenCount { atom } => write!(
+                f,
+                "CIP ranking requires known implicit hydrogen counts: {atom}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CipRankingError {}
+
+impl CipRankingError {
+    fn for_element(self, element: StereoElementId) -> CipAssignmentIssue {
+        match self {
+            Self::DepthLimitExceeded { max_depth } => {
+                CipAssignmentIssue::DepthLimitExceeded { element, max_depth }
+            }
+            Self::ResourceLimitExceeded { max_nodes } => {
+                CipAssignmentIssue::ResourceLimitExceeded { element, max_nodes }
+            }
+            Self::InvalidStereo { issue } => CipAssignmentIssue::InvalidStereo { issue },
+            Self::UnresolvedPriority | Self::UnknownHydrogenCount { .. } => {
+                CipAssignmentIssue::UnresolvedPriority { element }
+            }
+        }
+    }
+}
+
+pub(crate) use ranking::bond_reference_atoms;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Explicit bounds on rooted ligand expansion.

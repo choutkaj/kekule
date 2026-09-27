@@ -509,12 +509,12 @@ fn carrier_signatures(
         let mut descriptor_context = DescriptorContext::new(element);
         let aux_graph = build_auxiliary_graph(
             mol,
-            element,
             root,
             options,
             &atomic_number_fractions,
             atropisomer_mode,
-        )?;
+        )
+        .map_err(|issue| issue.for_element(element))?;
         precompute_auxiliary_descriptors(
             mol,
             &mut descriptor_context,
@@ -525,19 +525,18 @@ fn carrier_signatures(
         );
         let build_context = LigandBuildContext {
             mol,
-            element,
             descriptor_context: &descriptor_context,
             options,
             atomic_number_fractions: &atomic_number_fractions,
             atropisomer_mode,
         };
-        let signatures = build_carrier_signatures(&build_context, root, carriers)?;
+        let signatures = build_carrier_signatures(&build_context, root, carriers)
+            .map_err(|issue| issue.for_element(element))?;
         return Ok(signatures);
     }
     let descriptor_context = DescriptorContext::new(element);
     let build_context = LigandBuildContext {
         mol,
-        element,
         descriptor_context: &descriptor_context,
         options,
         atomic_number_fractions: &atomic_number_fractions,
@@ -561,20 +560,21 @@ fn carrier_signatures(
             (priority, children)
         },
     )
+    .map_err(|issue| issue.for_element(element))
 }
 
 fn build_carrier_signatures(
     context: &LigandBuildContext<'_>,
     root: AtomId,
     carriers: &[StereoCarrier],
-) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
+) -> RankingResult<Vec<(StereoCarrier, LigandSignature)>> {
     carriers
         .iter()
         .copied()
         .map(|carrier| {
             carrier_signature(context, carrier, root).map(|signature| (carrier, signature))
         })
-        .collect::<CipResult<Vec<_>>>()
+        .collect::<RankingResult<Vec<_>>>()
 }
 
 pub(super) fn rank_carrier_signatures(

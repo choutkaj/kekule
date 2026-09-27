@@ -8,11 +8,13 @@ use super::super::rings::compute_ring_membership;
 use super::super::{atom_hydrogen_count, double_bond_endpoint_carriers};
 use super::{
     CipAssignment, CipAssignmentError, CipAssignmentIssue, CipAssignmentOptions,
-    CipAssignmentReport, CipResult, CipSkipped, CipSkippedReason,
+    CipAssignmentReport, CipRankingError, CipResult, CipSkipped, CipSkippedReason, RankingResult,
 };
 
 mod assignment;
+mod bond_references;
 mod comparison;
+pub(crate) use bond_references::bond_reference_atoms;
 mod expansion;
 mod isotope_masses;
 
@@ -449,28 +451,27 @@ struct AuxOccurrence {
     distance: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct DescriptorContext {
-    skipped: StereoElementId,
+    skipped: Option<StereoElementId>,
     aux_labels: HashMap<AuxDescriptorKey, StereoDescriptor>,
 }
 
 impl DescriptorContext {
     fn new(skipped: StereoElementId) -> Self {
         Self {
-            skipped,
+            skipped: Some(skipped),
             aux_labels: HashMap::new(),
         }
     }
 
     fn skips(&self, element: StereoElementId) -> bool {
-        self.skipped == element
+        self.skipped == Some(element)
     }
 }
 
 struct LigandBuildContext<'a> {
     mol: &'a Molecule,
-    element: StereoElementId,
     descriptor_context: &'a DescriptorContext,
     options: CipAssignmentOptions,
     atomic_number_fractions: &'a [AtomicNumberFraction],
@@ -798,7 +799,7 @@ fn carrier_signature(
     context: &LigandBuildContext<'_>,
     carrier: StereoCarrier,
     root: AtomId,
-) -> CipResult<LigandSignature> {
+) -> RankingResult<LigandSignature> {
     let node = carrier_node(carrier, root);
     let mut visited_nodes = 0usize;
     let mut truncated = false;
@@ -822,12 +823,11 @@ fn carrier_node(carrier: StereoCarrier, root: AtomId) -> LigandNode {
 
 fn build_auxiliary_graph(
     mol: &Molecule,
-    element: StereoElementId,
     root: AtomId,
     options: CipAssignmentOptions,
     atomic_number_fractions: &[AtomicNumberFraction],
     atropisomer_mode: bool,
-) -> CipResult<AuxiliaryGraph> {
+) -> RankingResult<AuxiliaryGraph> {
     let root = LigandNode::Atom {
         atom: root,
         previous: None,
@@ -839,7 +839,6 @@ fn build_auxiliary_graph(
     let mut visited_nodes = 0usize;
     let context = AuxiliaryGraphBuildContext {
         mol,
-        element,
         options,
         atomic_number_fractions,
         atropisomer_mode,
@@ -850,7 +849,6 @@ fn build_auxiliary_graph(
 
 struct AuxiliaryGraphBuildContext<'a> {
     mol: &'a Molecule,
-    element: StereoElementId,
     options: CipAssignmentOptions,
     atomic_number_fractions: &'a [AtomicNumberFraction],
     atropisomer_mode: bool,
@@ -863,11 +861,10 @@ fn add_auxiliary_graph_node(
     parent: Option<usize>,
     depth: usize,
     visited_nodes: &mut usize,
-) -> CipResult<usize> {
+) -> RankingResult<usize> {
     *visited_nodes = visited_nodes.saturating_add(1);
     if *visited_nodes > context.options.max_nodes {
-        return Err(CipAssignmentIssue::ResourceLimitExceeded {
-            element: context.element,
+        return Err(CipRankingError::ResourceLimitExceeded {
             max_nodes: context.options.max_nodes,
         });
     }
@@ -887,8 +884,7 @@ fn add_auxiliary_graph_node(
         &mut child_nodes,
     );
     if depth >= context.options.max_depth.saturating_add(1) && !child_nodes.is_empty() {
-        return Err(CipAssignmentIssue::DepthLimitExceeded {
-            element: context.element,
+        return Err(CipRankingError::DepthLimitExceeded {
             max_depth: context.options.max_depth,
         });
     }
@@ -914,11 +910,10 @@ fn ligand_tree(
     depth: usize,
     visited_nodes: &mut usize,
     truncated: &mut bool,
-) -> CipResult<LigandTree> {
+) -> RankingResult<LigandTree> {
     *visited_nodes = visited_nodes.saturating_add(1);
     if *visited_nodes > context.options.max_nodes {
-        return Err(CipAssignmentIssue::ResourceLimitExceeded {
-            element: context.element,
+        return Err(CipRankingError::ResourceLimitExceeded {
             max_nodes: context.options.max_nodes,
         });
     }
@@ -1607,7 +1602,6 @@ fn auxiliary_descriptor_for_occurrence(
     let element = mol.stereo_element(occurrence.key.element).ok()?;
     let aux_context = LigandBuildContext {
         mol,
-        element: occurrence.key.element,
         descriptor_context,
         options: CipAssignmentOptions {
             max_depth: graph.nodes.len(),
@@ -1617,7 +1611,14 @@ fn auxiliary_descriptor_for_occurrence(
         atropisomer_mode,
     };
     let StereoElementKind::Tetrahedral(stereo) = &element.kind else {
-        return auxiliary_bond_descriptor(&aux_context, graph, occurrence.node, &element.kind).ok();
+        return auxiliary_bond_descriptor(
+            &aux_context,
+            occurrence.key.element,
+            graph,
+            occurrence.node,
+            &element.kind,
+        )
+        .ok();
     };
     let signatures =
         auxiliary_tetrahedral_signatures(&aux_context, graph, occurrence.node, stereo).ok()?;
@@ -1633,11 +1634,11 @@ fn auxiliary_descriptor_for_occurrence(
 
 fn auxiliary_bond_descriptor(
     context: &LigandBuildContext<'_>,
+    element: StereoElementId,
     graph: &AuxiliaryGraph,
     node: usize,
     kind: &StereoElementKind,
 ) -> CipResult<StereoDescriptor> {
-    let element = context.element;
     let (left, right, left_reference, right_reference, left_carriers, right_carriers) = match kind {
         StereoElementKind::DoubleBond(stereo) => (
             stereo.left,
@@ -1672,7 +1673,8 @@ fn auxiliary_bond_descriptor(
         .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let rank_endpoint = |root, carriers: Vec<StereoCarrier>| {
         let traversal = AuxiliaryTraversal::new(graph, root);
-        let signatures = auxiliary_carrier_signatures(context, &traversal, &carriers)?;
+        let signatures = auxiliary_carrier_signatures(context, &traversal, &carriers)
+            .map_err(|issue| issue.for_element(element))?;
         rank_carrier_signatures(element, &signatures, None)
     };
     let left_ranked = rank_endpoint(left_node, left_carriers)?;
@@ -1705,7 +1707,7 @@ fn auxiliary_tetrahedral_signatures(
     graph: &AuxiliaryGraph,
     root: usize,
     stereo: &TetrahedralStereo,
-) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
+) -> RankingResult<Vec<(StereoCarrier, LigandSignature)>> {
     let traversal = AuxiliaryTraversal::new(graph, root);
     auxiliary_carrier_signatures(context, &traversal, &stereo.carriers)
 }
@@ -1720,7 +1722,7 @@ fn auxiliary_carrier_signatures(
     context: &LigandBuildContext<'_>,
     traversal: &AuxiliaryTraversal<'_>,
     carriers: &[StereoCarrier],
-) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
+) -> RankingResult<Vec<(StereoCarrier, LigandSignature)>> {
     let roots = carriers
         .iter()
         .copied()
@@ -1732,16 +1734,14 @@ fn auxiliary_carrier_signatures(
                         .find(|node| {
                             auxiliary_graph_node_matches_atom(traversal.graph, *node, atom)
                         })
-                        .ok_or(CipAssignmentIssue::UnresolvedPriority {
-                            element: context.element,
-                        })?,
+                        .ok_or(CipRankingError::UnresolvedPriority)?,
                 ),
                 StereoCarrier::ImplicitHydrogen => AuxiliaryLigandNode::Hydrogen,
                 StereoCarrier::ImplicitLonePair => AuxiliaryLigandNode::LonePair,
             };
             Ok((carrier, node))
         })
-        .collect::<CipResult<Vec<_>>>()?;
+        .collect::<RankingResult<Vec<_>>>()?;
     expansion::carrier_signatures(context, roots, |node| match node {
         AuxiliaryLigandNode::Occurrence(node) => (
             traversal.graph.nodes[node].node.priority(context),
