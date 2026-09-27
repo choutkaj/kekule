@@ -1,0 +1,24 @@
+[package]
+name = "kekule-openff"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "SMIRNOFF parameter assignment and native NAGL inference for Kekule."
+
+[dependencies]
+kekule = { version = "0.2.1", path = "../kekule" }
+# Lookup identity is a versioned scientific dependency, including its C backend.
+inchi = { version = "=0.1.4", default-features = false }
+inchi-sys = { version = "=0.1.4", default-features = false }
+roxmltree = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+ndarray = "0.16"
+
+[dev-dependencies]
+flate2 = "1"

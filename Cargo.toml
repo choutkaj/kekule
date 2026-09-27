@@ -4,6 +4,7 @@ members = [
     "crates/kekule",
     "crates/kekule-potentials",
     "crates/kekule-traj",
+    "crates/kekule-openff",
     "benchmarks",
 ]
 

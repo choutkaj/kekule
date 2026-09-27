@@ -384,7 +384,28 @@ impl Context<'_, '_> {
             })
             .expect("unmapped atom");
         let candidates = state.candidates.clone();
-        for &target in &candidates[qa.index()] {
+        // Once a query neighbor is mapped, every feasible target must be a
+        // neighbor of its image. Avoid rescanning the entire molecule at each
+        // extension (quadratic work on ordinary protein bond/angle patterns).
+        // Sort by target index to preserve the existing enumeration order.
+        let frontier = state
+            .query
+            .neighbors(qa)
+            .expect("query adjacency")
+            .filter_map(|a| state.mapping[a.index()])
+            .min_by_key(|&a| self.data.atoms[a].neighbors.len())
+            .map(|a| {
+                let mut adjacent = self.data.atoms[a]
+                    .neighbors
+                    .iter()
+                    .map(|&(n, _)| n)
+                    .filter(|n| candidates[qa.index()].binary_search(n).is_ok())
+                    .collect::<Vec<_>>();
+                adjacent.sort_unstable();
+                adjacent
+            });
+        let targets = frontier.as_deref().unwrap_or(&candidates[qa.index()]);
+        for &target in targets {
             self.charge()?;
             if state.used[target] || !self.feasible(state, qa, target) {
                 continue;
