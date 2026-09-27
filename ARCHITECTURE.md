@@ -250,6 +250,14 @@ policies and supported geometries live with
 [measurements](crates/kekule/src/structure/measure.rs), and
 [alignment](crates/kekule/src/alignment.rs).
 
+Cartesian geometry edits mutate `Model` coordinates atomically while retaining
+the exact topology, cell, and properties. Prepared distance, angle, and dihedral
+edits bind references and moving selections to that snapshot, never to cached
+coordinates. Automatic fragments must separate from fixed references; explicit
+selections may deliberately deform boundary bonds. Neither path performs ring
+closure, relaxation, or periodic imaging. See the
+[geometry editing contract](crates/kekule/src/structure/geometry_edit.rs).
+
 ## Trajectories and streaming
 
 A trajectory represents one fixed-topology epoch. Changing chemistry or hierarchy
