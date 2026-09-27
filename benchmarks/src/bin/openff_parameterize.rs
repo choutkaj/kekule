@@ -95,7 +95,10 @@ fn observe(
     Ok(result)
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let ff = ForceField::rosemary()?;
+    let ff = std::env::args()
+        .nth(2)
+        .map(ForceField::from_file)
+        .unwrap_or_else(ForceField::rosemary)?;
     let model = std::env::args().nth(1).map(NaglModel::load).transpose()?;
     for line in io::stdin().lock().lines() {
         let line = line?;

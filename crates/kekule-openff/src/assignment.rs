@@ -169,6 +169,13 @@ impl ForceField {
         topology: Arc<Topology>,
         model: &NaglModel,
     ) -> Result<ParameterizedTopology> {
+        if self.charge_model() != model.identity() {
+            return Err(error(format!(
+                "NAGL model identity mismatch: force field requires {:?}, supplied {:?}",
+                self.charge_model(),
+                model.identity()
+            )));
+        }
         self.parameterize_with(topology, |m| self.charges(m, |m| model.assign_charges(m)))
     }
     fn parameterize_with(

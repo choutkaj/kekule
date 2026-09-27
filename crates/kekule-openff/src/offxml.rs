@@ -1,4 +1,4 @@
-use crate::{error, parameters::*, Result};
+use crate::{error, parameters::*, ModelIdentity, Result};
 use kekule::{
     query::{parse_smarts, QueryGraph},
     substructure::TaggedQuery,
@@ -12,8 +12,6 @@ pub(crate) use quantity::parse_quantity;
 #[cfg(test)]
 mod reference_tests;
 
-pub(crate) const ASH_HASH: &str =
-    "7981e7f5b0b1e424c9e10a40d9e7606d96dcd3dd2b095cb4eeff6829f92238ee";
 #[derive(Debug, Clone)]
 pub(crate) struct Rule<P> {
     pub query: QueryGraph,
@@ -39,8 +37,14 @@ pub struct ForceField {
     pub(crate) vdw: Vec<Rule<VdwParameter>>,
     pub(crate) library: Vec<Rule<LibraryCharge>>,
     pub(crate) settings: NonbondedSettings,
+    pub(crate) charge_model: ModelIdentity,
 }
 impl ForceField {
+    /// Model identity required by this force field's NAGLCharges handler.
+    pub fn charge_model(&self) -> &ModelIdentity {
+        &self.charge_model
+    }
+
     /// Compile the bundled, version-pinned Rosemary preset.
     pub fn rosemary() -> Result<Self> {
         Self::from_offxml(include_str!("../data/rosemary.offxml"))
@@ -48,7 +52,7 @@ impl ForceField {
     /// Read one UTF-8 OFFXML file and compile its supported rules.
     ///
     /// File paths are used literally, without registry lookup or network access.
-    /// Charges still require the pinned Ash model declared by `NAGLCharges`.
+    /// Charges require a compatible bundle matching the identity declared by `NAGLCharges`.
     ///
     /// ```no_run
     /// let force_field = kekule_openff::ForceField::from_file("custom.offxml")?;
@@ -62,7 +66,7 @@ impl ForceField {
     /// Compile one SMIRNOFF 0.3 document with MDL aromaticity.
     ///
     /// Constraints, ImproperTorsions and LibraryCharges may be absent. Bonds,
-    /// Angles, ProperTorsions, vdW, Electrostatics and pinned NAGLCharges remain
+    /// Angles, ProperTorsions, vdW, Electrostatics and NAGLCharges remain
     /// required. Supported optional attributes use specification defaults.
     /// Unknown physics, attributes and section versions fail explicitly.
     pub fn from_offxml(xml: &str) -> Result<Self> {
@@ -161,8 +165,10 @@ impl ForceField {
         let electrostatics = section("Electrostatics")?;
         let nagl = section("NAGLCharges")?;
         require(nagl, "version", "0.3")?;
-        require(nagl, "model_file", "openff-gnn-am1bcc-1.0.0.pt")?;
-        require(nagl, "model_file_hash", ASH_HASH)?;
+        let charge_model = ModelIdentity::new(
+            attr(nagl, "model_file")?.to_owned(),
+            attr(nagl, "model_file_hash")?.to_owned(),
+        )?;
         choice(
             bonds,
             "potential",
@@ -277,6 +283,7 @@ impl ForceField {
             vdw: vec![],
             library: vec![],
             settings,
+            charge_model,
         };
         for n in children(bonds, "Bond")? {
             let p = BondParameter {

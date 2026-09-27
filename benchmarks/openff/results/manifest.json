@@ -1,0 +1,240 @@
+{
+  "schema": 1,
+  "recorded": "2026-09-27",
+  "artifacts": [
+    {
+      "path": "data/inputs.json.gz",
+      "sha256": "5fc588cc2f693843b2f38d0a69b5875c32e85d5822e82548aea97d3f3470740b"
+    },
+    {
+      "path": "data/reference.json.gz",
+      "sha256": "a006679a31ff8d52ac46e16283923b7d4bb0eac612177ab89296eafe2925ccc9"
+    },
+    {
+      "path": "results/native.json.gz",
+      "sha256": "1b44ddb5000d1e1122105db2cc21f020c1b79ef95ee5d4a579c903886149cc75"
+    },
+    {
+      "path": "results/timings.json",
+      "sha256": "a103219b46625ade95501aba7726eb3e53315fb366b08bbc1c8a10f57f1a92fc"
+    },
+    {
+      "path": "results/models.json.gz",
+      "sha256": "d6505cdb86699beaa1ae01531c78bd1235e1ab297229e631ca6b0172f47e579e"
+    },
+    {
+      "path": "data/models.lock.json",
+      "sha256": "1f21fdaa7c537de261a05d5a17dc5cad9c9884f09527314960a94de251d28d50"
+    },
+    {
+      "path": "archive/previous-validation.zip",
+      "sha256": "af235600e80a5538e1a34575a43c65ecae06fa45c1073d5341c4bf6bb3125e03"
+    },
+    {
+      "path": "data/gradients.json.gz",
+      "sha256": "22cd882757af87413dff9072f5bda7d3984458b459bb0998449b68bf1876476f"
+    },
+    {
+      "path": "results/gradients.json.gz",
+      "sha256": "9e06b65d8f02dd1fad3b6e3eb8a104a3ae8abb821439f3ec9db86f5b91aa4c50"
+    },
+    {
+      "path": "archive/gradient-before-fix.json.gz",
+      "sha256": "212c3938014d32b987824f3f510de130792051f5ca9b3058e23d6afbcd0a9895"
+    }
+  ],
+  "reference_drift": {
+    "charges_e": 0.0,
+    "energies_kj_mol": 0.0,
+    "features": 0.0
+  },
+  "timing_comparison": [
+    {
+      "id": "pubchem-11642",
+      "atoms": 8,
+      "previous_ms": {
+        "features_ms": 0.1744,
+        "inference_including_features_ms": 2.862,
+        "assign_charges_ms": 0.0919,
+        "full_parameterization_ms": 0.6322
+      },
+      "current_ms": {
+        "features_ms": 0.1776,
+        "inference_including_features_ms": 2.1456,
+        "assign_charges_ms": 0.0882,
+        "full_parameterization_ms": 0.7368
+      }
+    },
+    {
+      "id": "pubchem-111320",
+      "atoms": 27,
+      "previous_ms": {
+        "features_ms": 0.5378,
+        "inference_including_features_ms": 4.6782,
+        "assign_charges_ms": 4.8426,
+        "full_parameterization_ms": 6.2207
+      },
+      "current_ms": {
+        "features_ms": 0.6103999999999999,
+        "inference_including_features_ms": 4.3579,
+        "assign_charges_ms": 3.8551,
+        "full_parameterization_ms": 5.38
+      }
+    },
+    {
+      "id": "pubchem-446684",
+      "atoms": 38,
+      "previous_ms": {
+        "features_ms": 0.7335,
+        "inference_including_features_ms": 5.0225,
+        "assign_charges_ms": 5.3432,
+        "full_parameterization_ms": 7.587899999999999
+      },
+      "current_ms": {
+        "features_ms": 0.643,
+        "inference_including_features_ms": 4.4383,
+        "assign_charges_ms": 4.7735,
+        "full_parameterization_ms": 7.045100000000001
+      }
+    },
+    {
+      "id": "pubchem-476793",
+      "atoms": 102,
+      "previous_ms": {
+        "features_ms": 1.8075,
+        "inference_including_features_ms": 12.072899999999999,
+        "assign_charges_ms": 12.260200000000001,
+        "full_parameterization_ms": 16.948700000000002
+      },
+      "current_ms": {
+        "features_ms": 1.6804000000000001,
+        "inference_including_features_ms": 11.0052,
+        "assign_charges_ms": 12.1091,
+        "full_parameterization_ms": 15.5316
+      }
+    },
+    {
+      "id": "pdb-6EE9-X",
+      "atoms": 378,
+      "previous_ms": {
+        "features_ms": 9.083400000000001,
+        "inference_including_features_ms": 39.4743,
+        "assign_charges_ms": 41.9385,
+        "full_parameterization_ms": 56.3201
+      },
+      "current_ms": {
+        "features_ms": 8.763399999999999,
+        "inference_including_features_ms": 39.9961,
+        "assign_charges_ms": 39.5182,
+        "full_parameterization_ms": 55.7193
+      }
+    },
+    {
+      "id": "pdb-1W1F-A",
+      "atoms": 974,
+      "previous_ms": {
+        "features_ms": 24.9266,
+        "inference_including_features_ms": 100.5548,
+        "assign_charges_ms": 100.1425,
+        "full_parameterization_ms": 139.7641
+      },
+      "current_ms": {
+        "features_ms": 24.7225,
+        "inference_including_features_ms": 100.81429999999999,
+        "assign_charges_ms": 103.2364,
+        "full_parameterization_ms": 152.8032
+      }
+    },
+    {
+      "id": "pdb-3ABD-A",
+      "atoms": 2940,
+      "previous_ms": {
+        "features_ms": 97.01010000000001,
+        "inference_including_features_ms": 324.51869999999997,
+        "assign_charges_ms": 320.8334,
+        "full_parameterization_ms": 447.8303
+      },
+      "current_ms": {
+        "features_ms": 94.8432,
+        "inference_including_features_ms": 324.8338,
+        "assign_charges_ms": 328.67600000000004,
+        "full_parameterization_ms": 462.13149999999996
+      }
+    }
+  ],
+  "environment": {
+    "rdkit": "2026.3.3",
+    "openff-toolkit": "0.19.0",
+    "openff-nagl": "0.6.1",
+    "openff-nagl-models": "2026.9.0",
+    "openff-interchange": "0.5.5",
+    "openmm": "8.6.1",
+    "torch": "2.10.0",
+    "numpy": "2.5.3",
+    "matplotlib": "3.11.2"
+  },
+  "model_sha256": {
+    "model.json": "80e13a479c6bba53cb94446b514b7cbf40edff01d28b28a0fd3b65e7cf967e89",
+    "weights.bin": "a42f9e6325b22db821553287d2e96bb31a542df420fa5f9ca8887454ba4b9ea0"
+  },
+  "binary_sha256": "751d339615467d2f1dc540a0486d7bb1dfe710014782e376195f91280fea4233",
+  "timing_binary_sha256": "d3dbc1b0b0b197731a15fa758a8eae0d0a3cddf19dc25dea0d6b83da7ae5f111",
+  "source_sha256_lf": {
+    "Cargo.lock": "0ac3b56b8fa171a01e939e4e2bd6dc9904351c91c9b64cbc9fe6ebd0a3634662",
+    "crates/kekule-openff/src/assignment.rs": "74021db19e31bec772e545d16807ccf9671a72521a5b67e5170d2a3da2e73840",
+    "crates/kekule-openff/src/identity.rs": "d8978789040863f4db989a2d8c567088a47b2a018d7329e42b6847b10eb16e91",
+    "crates/kekule-openff/src/lib.rs": "ad6ac1845ee5c37b4bd685db80d8ebd89016f97e876847f63c7eaf97c03f83d4",
+    "crates/kekule-openff/src/nagl/bundle.rs": "7f3996e4429d37bf3bf20fb0605484cbccaae6a14052defb111f83d88ebf6682",
+    "crates/kekule-openff/src/nagl/config.rs": "90aca186209ff022e829421e259af584cd259ccfeb5d897bf4b5a3a0fb71e5ba",
+    "crates/kekule-openff/src/nagl/features.rs": "d74dc71fdf0a5af3f2482b9c4ca8da35c6d30d78e8b37151260644c1825e7edb",
+    "crates/kekule-openff/src/nagl/network.rs": "77887d70b5d8a3f570e6036db38a756c67bbae2cf1ec2e23e765cddbe992cb8a",
+    "crates/kekule-openff/src/nagl.rs": "60ae8e3d14e5fdc959167f10c75aea3aa35f3bf5f5b6932c6a6a832eed3c982d",
+    "crates/kekule-openff/src/offxml/quantity.rs": "55120baa05afeac0fb5e0826fae3709bf210e21b456b9f3b1cc0bf3fe9b28f64",
+    "crates/kekule-openff/src/offxml/reference_tests.rs": "7313c33a59eb8dcb7d4b83ba82e3817c2c640f97e313a8bcc6dc390c099a76aa",
+    "crates/kekule-openff/src/offxml.rs": "ea404b8d1eca8b68e02db306eead7cb4ba01101d26c86f95b0c860e56f9cabb7",
+    "crates/kekule-openff/src/parameters.rs": "602535b31b574d55f0253c04ace56f71bf32cc01cbf2bec64233d2926b9f53c2",
+    "crates/kekule-openff/src/preparation.rs": "22c8b521b7a422939c92e239ef50cf3b651e2363ec81a3543d79f9f18c97e30b",
+    "benchmarks/openff/scripts/audit.py": "732a8440737c58335cad2225388b3b1904c4cb706a70ca363ccf1ba855d6a62e",
+    "benchmarks/openff/scripts/cases.py": "39688e1e8fcaecd12f323f4f1a8220451e9d0d35beaccd7e2d041d4f4ef2af42",
+    "benchmarks/openff/scripts/compare_models.py": "0ac2b16e64c4b1b55d8f3bad74e8181a8443bf688fec550726b8aa90ca2b60ab",
+    "benchmarks/openff/scripts/export_model.py": "b0e08debdb019871b40b0d8fb4973330a073a9fd5ad1f3e55e56547eae91fe02",
+    "benchmarks/openff/scripts/export_normalizations.py": "fb2e5ed0575b3b6f49af78bbe95b26ac0abb87922a9e340eafeaaba9ccbbb24e",
+    "benchmarks/openff/scripts/paths.py": "dd56b6a9b398d5e816a32052596273fe39c4846ab310538db99ba7bc3e109437",
+    "benchmarks/openff/scripts/plot_validation.py": "590a798a8bd270ae682ce263793b2a706c87978164f2800df8566dbba898520c",
+    "benchmarks/openff/scripts/prepare_robustness.py": "06ad57bf82746caeb8dcef602ebd4fd9135a138018da81ddf36bd5a82857a859",
+    "benchmarks/openff/scripts/reference_models.py": "b30ff2ba17d40b4e7a76121bbf0134cb8445a3141af2170877a8af2d0fa775d5",
+    "benchmarks/openff/scripts/reference_offxml.py": "a28c7988ba1e094f8e2fe959a3ba0d348be2950844aee4c8442a412621c83987",
+    "benchmarks/openff/scripts/robustness.py": "52594c089ca42f087e05f92f0963b05b4dfea24affb9b34389dbd57ebe86952b",
+    "benchmarks/openff/scripts/test_audit.py": "df971f7af9021087e590ae98b43424d9182ca4d9e4e6aeb5287631d1e77ad7b7",
+    "benchmarks/openff/scripts/test_models.py": "cb068bc3dd7c2cc9cae13c2b908011c38a5ca01285d756065712108424bdbb49",
+    "benchmarks/openff/scripts/test_offxml_reference.py": "571f6e7bf00ee29332944e3c428dc5196a70bf83a0bf3109fc89f15b0230b406",
+    "benchmarks/openff/scripts/test_plot_validation.py": "8a6e19f5a98d61299779c4df592faa5efc8770653c02a7ba2a8716c09ec0fc3f",
+    "benchmarks/openff/scripts/test_robustness.py": "3bdef26eeef7f3ef9ba0d2458690fc87f64e261a76ffc1aeb2503331426efd0a",
+    "benchmarks/openff/scripts/timings.py": "5c65a97d46c91803a9088aac256f31706135161eb8043d3839eda06321e84d81",
+    "benchmarks/src/bin/openff_parameterize.rs": "59295f8bc208b2e2cc72bbd3c269a41563d6331d6f82b79da205081f1f49bbe8",
+    "benchmarks/src/bin/openff_parameterize/energy.rs": "b7c738f5e52679833588cea3cb1362340c7157610f59c062e66b9aff11bb183e",
+    "benchmarks/src/bin/openff_timing.rs": "44f851a75f2a04d3fd06846cccec8bb9adaa8174ddddede290c16f69eb7defd3"
+  },
+  "gradient_validation": {
+    "cases": 220,
+    "passed": 218,
+    "finite_difference_checks": 25410,
+    "failure_cases": [
+      {
+        "id": "pubchem-443915",
+        "reverse": false
+      },
+      {
+        "id": "pubchem-443915",
+        "reverse": true
+      }
+    ],
+    "binary_sha256": "c4097d94fa2baa8bfbfa2f9ab380437220c0e61265a64d5ba860ef09ff8f9053",
+    "source_sha256_at_generation": {
+      "benchmarks/src/bin/openff_parameterize/energy.rs": "4d2016a3953d9daca584106710e00c72a143de4950e92cf646c1c2e78acdd9bd",
+      "benchmarks/openff/scripts/gradients.py": "4d6287b3fafc0c9f9fbcafd10f9b68afc1761091b915c907c9ec80437d20bd73",
+      "benchmarks/openff/scripts/robustness.py": "ed0f15983b31ef17cba8a8e28ea6c3394947318cd0d5843ae7fc390029c201dc",
+      "Cargo.lock": "0ac3b56b8fa171a01e939e4e2bd6dc9904351c91c9b64cbc9fe6ebd0a3634662"
+    }
+  }
+}

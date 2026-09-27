@@ -18,10 +18,14 @@ let force_field = kekule_openff::ForceField::from_file("my-forcefield.offxml")?;
 
 ## Custom OFFXML subset
 
-The root must declare SMIRNOFF `0.3` and `OEAroModel_MDL`. Charge-model decisions
-are unchanged: `NAGLCharges` version `0.3` must declare the pinned Ash filename
-and hash, and parameterization still takes `&NaglModel`. Other charge methods,
-model loading, and user charge overrides remain unsupported.
+The root must declare SMIRNOFF `0.3` and `OEAroModel_MDL`. `NAGLCharges`
+version `0.3` declares a nonempty `model_file` and a 64-digit SHA-256
+`model_file_hash`. `ForceField::charge_model()` exposes that identity.
+Parameterization takes `&NaglModel` and requires an exact model identifier and
+checkpoint digest match before assignment, including for library-only inputs.
+Hexadecimal digests are case-insensitive. Model identifiers are literal strings,
+not paths to resolve or download. Other charge methods and implicit overrides
+remain unsupported. The Rosemary preset continues to require Ash 1.0.0.
 
 | Handler | Accepted versions | Presence |
 | --- | --- | --- |
@@ -29,7 +33,7 @@ model loading, and user charge overrides remain unsupported.
 | Angles | 0.3 | Required |
 | vdW, Electrostatics | 0.3, 0.4 | Required |
 | Constraints, ImproperTorsions, LibraryCharges | 0.3 | Optional |
-| NAGLCharges | 0.3 | Required; pinned Ash |
+| NAGLCharges | 0.3 | Required; matching supported NAGL bundle |
 
 Absent optional handlers produce no corresponding rules. Missing required
 handlers remain errors, including for partial force-field fragments. Files are
@@ -70,7 +74,7 @@ Fractional-bond-order indexed parameters remain unsupported; valid but unused
 
 Six independently generated Toolkit fixtures check every loaded parameter and
 nonbonded setting, including legacy headers, defaults, anonymous rules, and
-omitted optional sections. See [OFFXML validation](../../benchmarks/openff/OFFXML.md).
+omitted optional sections. See [OFFXML validation](../../benchmarks/openff/VALIDATION.md).
 
 ## API and ownership
 
@@ -124,34 +128,67 @@ cover shortest graph distances 1, 2 and 3, with independent vdW/electrostatic
 scales. All other pairs have scale 1, including pairs between instances.
 Nonbonded cutoffs, switching widths, methods and combining rules are retained.
 
-Charge precedence is complete LibraryCharges coverage, then the Ash lookup
+Charge precedence is complete LibraryCharges coverage, then the model's optional lookup
 table, then neural inference. A partial library assignment falls back for the
 whole molecule. Lookup uses the full fixed-H InChI string and bounded graph
 mapping, relaxing formal charge/bond order and finally stereo as upstream does.
 It retains the table's small asymmetries rather than averaging equivalent atoms.
-NAGL results receive the toolkit's uniform total-charge correction.
+NAGL results receive the toolkit's uniform total-charge correction. Both lookup
+and inference provenance retain the model identifier and original checkpoint
+SHA-256. Library provenance retains the matched parameter IDs.
 
 ## Model data and native dependencies
 
-Inference is Rust CPU code: six mean-aggregation GraphSAGE/ReLU layers, the
-sigmoid readout, and charge-conserving pooling. The exact Ash 1.0.0 checkpoint,
-exported tensor layout, manifest and weights are checksum-pinned. No Python,
-PyTorch, RDKit, network access or pickle loading occurs in the Rust runtime.
+Inference is Rust CPU code. Bundle loading, feature configuration, GraphSAGE
+evaluation, and charge assignment are separate internal modules with one public
+`NaglModel` type. No Python, PyTorch, RDKit, network access or pickle loading
+occurs in the Rust runtime. Direct `.pt` import is not implemented.
 
-Prepare the bundle once in the separately installed reference environment:
+Schema-2 bundles contain `model.json` and little-endian float32 `weights.bin`.
+The manifest declares original checkpoint identity, weights checksum, complete
+tensor layout, NAGL configuration, chemical domain, optional lookup tables and
+preparation profile. The original checksum-pinned schema-1 Ash export remains
+accepted unchanged. New exports use schema 2.
+
+| Configuration | Supported subset |
+| --- | --- |
+| Preparation | `openff-nagl-0.6.1`: existing normalization, resonance and SSSR semantics |
+| NAGL config | Version `0.1`, no bond features, exactly one charge readout |
+| Atom features | Element and connectivity one-hot categories in declared order; average formal charge; ring sizes 3–6 |
+| Categories | Unique canonical element symbols; unique connectivity values in 0–6; missing input categories fail |
+| Convolution | SAGEConv with mean aggregation, 1–16 layers, widths 1–2048 |
+| Activations | ReLU, sigmoid, identity |
+| Readout | Atom pooling, 0–16 hidden layers, widths 1–2048, regularized charge equilibration with three outputs |
+| Dropout | Training probability 0–1 accepted; always disabled during evaluation |
+| Lookup | Zero or one table matching the readout name; duplicate keys rejected; map/charge correspondence checked on a hit |
+
+Feature lists may contain up to 64 entries and produce up to 256 columns. The
+loader caps metadata at 64 MiB and weights at 256 MiB, including file-growth
+checks. It validates tensor shapes, offsets, complete nonoverlapping storage,
+finite weights and checksums. Unknown fields, schemas, profiles, features or
+operations fail explicitly. An empty domain element list means unrestricted
+elements at the domain-check stage; feature categories still must cover inputs.
+
+Prepare an Ash bundle once in the reference environment (output must be new):
 
 ```text
-micromamba create --override-channels -c conda-forge -p target/openff-reference -f benchmarks/openff/environment.yml
-micromamba run -p target/openff-reference python benchmarks/openff/export_model.py target/openff-ash
-cargo run -p kekule-openff --release --example parameterize -- target/openff-ash CCO
+micromamba run -p target/openff-reference python benchmarks/openff/scripts/export_model.py target/ash-bundle
+cargo run -p kekule-openff --release --example parameterize -- target/ash-bundle CCO
 ```
 
-The exporter accepts `--checkpoint PATH` and verifies its hash before loading
-its Python serialization. Otherwise the OpenFF resolver may download the model.
-The bundle is about 13 MB (`model.json` and little-endian float32 `weights.bin`)
-and is not checked into Git. Loading checks exact file sizes before allocation,
-caps reads against file growth, and verifies both fingerprints. Re-export in
-the pinned environment produced byte-identical files.
+For another trusted checkpoint, supply `--checkpoint PATH` and
+`--checkpoint-sha256 SHA256`; optionally supply its `--license PATH`. The
+exporter verifies the checkpoint before Python deserialization and records its
+configuration. The Rust loader determines whether that configuration is
+supported. The default Ash resolver may download its model; custom checkpoint
+paths are local. See [model validation and reproduction](../../benchmarks/openff/VALIDATION.md).
+
+Bundle checksums detect corruption; the declared original checkpoint hash is
+provenance from the exporter, not proof that arbitrary edited bundles reproduce
+that checkpoint. Distribute bundles with independently pinned fingerprints and
+retain source licenses. The two validation bundles are externally supplied and
+are not checked into Git. Supporting their configuration does not establish
+scientific accuracy for arbitrary user-trained weights.
 
 The `inchi` and `inchi-sys` dependencies are pinned to 0.1.4, using the official
 InChI 1.07.5 C implementation. This companion therefore requires a C toolchain
@@ -161,14 +198,30 @@ Relative/mixture groups and axial stereo currently fail explicitly.
 
 ## Boundaries and validation
 
+The subsequent two-model end-to-end suite checks Ash 1.0.0 (22 features,
+13,944 lookup entries) and OpenFF `0.1.0-rc.2` (21 features, no lookup table).
+All **132 cases** pass: 33 externally sourced molecules in both atom orders for
+each model. It checks complete parameterization, every valence/vdW value and
+multiplicity, all feature columns, direct/assigned charges, model provenance,
+input immutability and rejection of mismatched models or malformed bundles.
+Forced-inference tolerance is `1e-6 e`; final-charge tolerance remains `5e-5 e`.
+Measured maxima and commands are recorded in [VALIDATION.md](../../benchmarks/openff/VALIDATION.md).
+
 This implements the Rosemary functional forms, not every SMIRNOFF extension or
 NAGL architecture. Unsupported handlers, section versions, parameter attributes,
 unit expressions, fractional-bond-order interpolation and virtual sites fail.
 The OFFXML's unused AM1-Wiberg defaults do not require AM1 calculations.
-Custom OFFXML must satisfy the supported subset above and use the same Ash model.
+Custom OFFXML must satisfy the supported subset above and declare the supplied
+model identity. New charge methods and new network architectures require their
+own implementations and reference validation.
 The runtime supplies parameter assignments. An optional benchmark consumer uses
 `potentials` to compare vacuum energies against OpenMM; it is not a dynamics
 backend or a public force-evaluation API.
+That consumer also validates Cartesian energy gradients, numerical derivatives
+and rigid transformations. The 110-molecule panel retains one near-linear
+geometry with a documented OpenMM force-regularization discrepancy and a strict
+native torsion rotation failure; see the validation report before interpreting
+energy parity as evidence of general force-evaluation robustness.
 
 Native regression tests use an unchanged, externally sourced 23-molecule audit
 fixture: all rule labels, fixed-H identifiers and all 22 NAGL feature columns.
@@ -181,7 +234,7 @@ $env:KEKULE_OPENFF_MODEL = (Resolve-Path target/openff-ash).Path
 cargo test -p kekule-openff --test contracts -- --ignored
 ```
 
-The extended live comparison contains those 23 molecules plus ten independently
+The original Ash live comparison contains those 23 molecules plus ten independently
 retrieved PubChem cases, each in forward and reversed atom order: **66/66 pass**.
 It checks fixed-H identifiers, all feature columns, forced neural inference,
 lookup/library/inference system charges, every bonded/vdW parameter, torsion
@@ -201,7 +254,7 @@ large-system performance still warrant independent reference coverage.
 
 The [validation report](../../benchmarks/openff/VALIDATION.md) presents parameter
 and energy parity figures, numerical differences, and measured CPU timings.
-The subsequent [robustness panel](../../benchmarks/openff/ROBUSTNESS.md) contains
+The panel contains
 100 independently selected PubChem molecules and ten prepared PDB protein chains
 (up to 2,940 atoms). All 220 atom-order parameterization cases and 660 geometry
 energy comparisons pass. Charge error is at most `2.23e-7 e`; total energy error
@@ -218,6 +271,5 @@ for lookup mapping, 4096 atoms for features, 200 normalization applications per
 rule, one million resonance path visits, and bounded resonance state/product
 queues. Higher limits or broader chemical support need explicit validation.
 
-See [reference execution](../../benchmarks/openff/IMPLEMENTATION.md),
-[attribution](THIRD_PARTY.md), and the earlier
-[prerequisite audit](../../benchmarks/openff/AUDIT.md).
+See the report for reference execution commands and the historical prerequisite
+audit, and [THIRD_PARTY.md](THIRD_PARTY.md) for attribution.

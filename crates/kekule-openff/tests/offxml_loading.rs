@@ -29,13 +29,13 @@ fn file_loader_uses_literal_paths_and_reports_path_on_failure() {
 }
 
 #[test]
-fn deferred_charging_and_unsupported_semantics_still_fail() {
+fn malformed_model_identity_and_unsupported_semantics_fail() {
     for (changed, diagnostic) in [
         (
-            ROSEMARY.replace("openff-gnn-am1bcc-1.0.0.pt", "custom.pt"),
+            ROSEMARY.replace("openff-gnn-am1bcc-1.0.0.pt", ""),
             "model_file",
         ),
-        (ROSEMARY.replace("7981e7f5", "0981e7f5"), "model_file_hash"),
+        (ROSEMARY.replace("7981e7f5", "not-a-sha"), "model_file_hash"),
         (
             ROSEMARY
                 .replace("<NAGLCharges", "<ToolkitAM1BCC")
