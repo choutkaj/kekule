@@ -1,6 +1,9 @@
 //! Dependency-light three-dimensional geometry shared by structure, analysis,
 //! trajectory, and modelling code.
 
+mod periodic;
+pub use periodic::{PeriodicGeometry, PeriodicGeometryError};
+
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 
