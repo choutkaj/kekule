@@ -423,118 +423,49 @@ fn center(points: &[Point3], atoms: &[usize], frame: usize) -> Result<Point3, Pe
 }
 
 struct Lattice {
-    basis: [Vector3; 3],
-    reciprocal: [Vector3; 3],
+    geometry: kekule::geometry::PeriodicGeometry,
     periodic: [bool; 3],
     frame: usize,
 }
-
 impl Lattice {
     fn new(cell: Option<PeriodicCell>, frame: usize) -> Result<Self, PeriodicError> {
         let cell = cell.ok_or(PeriodicError::MissingCell { frame })?;
-        let [a, b, c] = cell.vectors().into_value();
-        let inverse_volume = 1.0 / a.dot(b.cross(c));
-        let reciprocal = [
-            b.cross(c) * inverse_volume,
-            c.cross(a) * inverse_volume,
-            a.cross(b) * inverse_volume,
-        ];
-        if !reciprocal.iter().all(|v| v.is_finite()) {
-            return Err(PeriodicError::NumericalFailure { frame });
-        }
         Ok(Self {
-            basis: [a, b, c],
-            reciprocal,
+            geometry: kekule::geometry::PeriodicGeometry::new(cell)
+                .map_err(|error| geometry_error(error, frame))?,
             periodic: cell.periodic_axes(),
             frame,
         })
     }
-
     fn fractional(&self, vector: Vector3) -> Result<[f64; 3], PeriodicError> {
-        let fractional = self.reciprocal.map(|dual| dual.dot(vector));
-        if !fractional.iter().all(|v| v.is_finite()) {
-            return Err(PeriodicError::NumericalFailure { frame: self.frame });
-        }
-        Ok(fractional)
+        self.geometry
+            .fractional(vector)
+            .map_err(|error| geometry_error(error, self.frame))
     }
-
     fn cartesian(&self, fractional: [f64; 3]) -> Vector3 {
-        self.basis[0] * fractional[0]
-            + self.basis[1] * fractional[1]
-            + self.basis[2] * fractional[2]
+        self.geometry.cartesian(fractional)
     }
-
     fn minimum_image(&self, delta: Vector3) -> Result<Vector3, PeriodicError> {
-        self.nearest_image(delta).map(|(vector, _)| vector)
+        self.geometry
+            .minimum_image(delta)
+            .map_err(|error| geometry_error(error, self.frame))
     }
-
     fn nearest_image(&self, delta: Vector3) -> Result<(Vector3, [i64; 3]), PeriodicError> {
-        let fractional = self.fractional(delta)?;
-        let mut images = [0.0; 3];
-        for axis in 0..3 {
-            if self.periodic[axis] {
-                images[axis] = checked_image(fractional[axis], self.frame)?;
-            }
-        }
-        let mut best = delta - self.cartesian(images);
-        let mut best_images = images.map(|n| n as i64);
-        let mut best_squared = best.norm_squared();
-        if !best_squared.is_finite() {
-            return Err(PeriodicError::NumericalFailure { frame: self.frame });
-        }
-        // In an exactly orthogonal basis the three image choices are independent.
-        // Besides avoiding enumeration, this handles very elongated rectangular
-        // cells without an unnecessarily large Cartesian search radius.
-        if self.basis[0].dot(self.basis[1]) == 0.0
-            && self.basis[0].dot(self.basis[2]) == 0.0
-            && self.basis[1].dot(self.basis[2]) == 0.0
-        {
-            return Ok((best, best_images));
-        }
-        // If r bounds the best Cartesian residual, reciprocal-vector norms bound
-        // every fractional residual. Enumerating this finite box therefore includes
-        // the true closest lattice image, even for skewed or partially periodic cells.
-        let radius = best_squared.sqrt();
-        let mut bounds = [(0_i64, 0_i64); 3];
-        let mut candidates = 1_u64;
-        for axis in 0..3 {
-            if self.periodic[axis] {
-                let span = radius * self.reciprocal[axis].norm();
-                let padding = 64.0 * f64::EPSILON * (1.0 + fractional[axis].abs() + span);
-                let low = (fractional[axis] - span - padding).ceil();
-                let high = (fractional[axis] + span + padding).floor();
-                if !low.is_finite()
-                    || !high.is_finite()
-                    || low.abs().max(high.abs()) >= 2.0_f64.powi(52)
-                {
-                    return Err(PeriodicError::NumericalFailure { frame: self.frame });
-                }
-                let (low, high) = (low as i64, high as i64);
-                let count = (high - low + 1).max(0) as u64;
-                candidates = candidates
-                    .checked_mul(count)
-                    .filter(|n| *n <= 1_000_000)
-                    .ok_or(PeriodicError::ImageSearchLimit { frame: self.frame })?;
-                bounds[axis] = (low, high);
-            }
-        }
-        for a in bounds[0].0..=bounds[0].1 {
-            for b in bounds[1].0..=bounds[1].1 {
-                for c in bounds[2].0..=bounds[2].1 {
-                    let residual = delta - self.cartesian([a as f64, b as f64, c as f64]);
-                    let squared = residual.norm_squared();
-                    if squared < best_squared {
-                        best = residual;
-                        best_squared = squared;
-                        best_images = [a, b, c];
-                    }
-                }
-            }
-        }
-        Ok((best, best_images))
+        self.geometry
+            .nearest_image(delta)
+            .map_err(|error| geometry_error(error, self.frame))
     }
 }
-
+fn geometry_error(error: kekule::geometry::PeriodicGeometryError, frame: usize) -> PeriodicError {
+    match error {
+        kekule::geometry::PeriodicGeometryError::NumericalFailure => {
+            PeriodicError::NumericalFailure { frame }
+        }
+        kekule::geometry::PeriodicGeometryError::ImageSearchLimit => {
+            PeriodicError::ImageSearchLimit { frame }
+        }
+    }
+}
 fn checked_image(value: f64, frame: usize) -> Result<f64, PeriodicError> {
     if !value.is_finite() || value.abs() >= 2.0_f64.powi(52) {
         return Err(PeriodicError::NumericalFailure { frame });
