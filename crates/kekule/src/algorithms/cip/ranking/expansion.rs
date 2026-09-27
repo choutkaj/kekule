@@ -7,31 +7,83 @@ pub(super) fn carrier_signatures<N>(
     carriers: impl IntoIterator<Item = (StereoCarrier, N)>,
     describe: impl Fn(N) -> (NodePriority, Vec<N>),
 ) -> RankingResult<Vec<(StereoCarrier, LigandSignature)>> {
-    let mut signatures = Vec::new();
-    let mut expansions = Vec::new();
+    expand_carriers(context, carriers, describe, ComparisonGoal::AllPairs)
+}
+
+/// Discard proven losers as shells are expanded. Only possible maxima need
+/// further ranking; ties require complete signatures before an ID can decide.
+pub(super) fn maximal_carrier_signatures<N>(
+    context: &LigandBuildContext<'_>,
+    carriers: impl IntoIterator<Item = (StereoCarrier, N)>,
+    describe: impl Fn(N) -> (NodePriority, Vec<N>),
+) -> RankingResult<Vec<(StereoCarrier, LigandSignature)>> {
+    expand_carriers(context, carriers, describe, ComparisonGoal::Maxima)
+}
+
+enum ComparisonGoal {
+    AllPairs,
+    Maxima,
+}
+
+fn expand_carriers<N>(
+    context: &LigandBuildContext<'_>,
+    carriers: impl IntoIterator<Item = (StereoCarrier, N)>,
+    describe: impl Fn(N) -> (NodePriority, Vec<N>),
+    goal: ComparisonGoal,
+) -> RankingResult<Vec<(StereoCarrier, LigandSignature)>> {
+    let mut entries = Vec::new();
     for (carrier, node) in carriers {
         let (signature, expansion) = LigandExpansion::new(context, node, &describe)?;
-        signatures.push((carrier, signature));
-        expansions.push(expansion);
+        entries.push((carrier, signature, expansion));
     }
     let mut depth = 0;
     let mut next_comparison = 0;
     loop {
-        if signatures.iter().all(|(_, signature)| !signature.truncated) {
-            return Ok(signatures);
-        }
-        let next_shell_fits = expansions
+        let complete = entries.iter().all(|(_, signature, _)| !signature.truncated);
+        let next_shell_fits = entries
             .iter()
-            .all(|expansion| expansion.next_shell_fits(context.options.max_nodes));
+            .all(|(_, _, expansion)| expansion.next_shell_fits(context.options.max_nodes));
         // Amortize comparisons of large tied trees, but always try the current
         // shell before either bound can prevent further expansion.
-        if depth == next_comparison || depth == context.options.max_depth || !next_shell_fits {
-            if signatures.iter().enumerate().all(|(i, (_, left))| {
-                signatures[i + 1..]
-                    .iter()
-                    .all(|(_, right)| left.compare(right) != Ordering::Equal)
-            }) {
-                return Ok(signatures);
+        if complete
+            || depth == next_comparison
+            || depth == context.options.max_depth
+            || !next_shell_fits
+        {
+            let decided = match goal {
+                ComparisonGoal::AllPairs => {
+                    complete
+                        || entries.iter().enumerate().all(|(i, (_, left, _))| {
+                            entries[i + 1..]
+                                .iter()
+                                .all(|(_, right, _)| left.compare(right) != Ordering::Equal)
+                        })
+                }
+                ComparisonGoal::Maxima => {
+                    // With an unfinished signature, compare only proves Rule 1a
+                    // differences. Later rules cannot overturn these decisions.
+                    let keep = entries
+                        .iter()
+                        .map(|(_, candidate, _)| {
+                            !entries
+                                .iter()
+                                .any(|(_, other, _)| other.compare(candidate) == Ordering::Greater)
+                        })
+                        .collect::<Vec<_>>();
+                    entries = entries
+                        .into_iter()
+                        .zip(keep)
+                        .filter_map(|(entry, keep)| keep.then_some(entry))
+                        .collect();
+                    entries.len() <= 1
+                        || entries.iter().all(|(_, signature, _)| !signature.truncated)
+                }
+            };
+            if decided {
+                return Ok(entries
+                    .into_iter()
+                    .map(|(carrier, signature, _)| (carrier, signature))
+                    .collect());
             }
             next_comparison = depth.saturating_mul(2).max(1);
         }
@@ -40,12 +92,16 @@ pub(super) fn carrier_signatures<N>(
                 max_depth: context.options.max_depth,
             });
         }
-        if !next_shell_fits {
+        // A discarded ligand must not consume the remaining node budget.
+        if !entries
+            .iter()
+            .all(|(_, _, expansion)| expansion.next_shell_fits(context.options.max_nodes))
+        {
             return Err(CipRankingError::ResourceLimitExceeded {
                 max_nodes: context.options.max_nodes,
             });
         }
-        for ((_, signature), expansion) in signatures.iter_mut().zip(&mut expansions) {
+        for (_, signature, expansion) in &mut entries {
             expansion.extend(context, signature, &describe)?;
         }
         depth += 1;
