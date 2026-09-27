@@ -5,6 +5,25 @@
 //! radians and distances use the canonical length unit; results support ordinary
 //! [`Quantity`] conversions. No structural ownership is materialized.
 //!
+//! [`distance`], [`angle`], and [`dihedral`] accept arbitrary atoms, including
+//! atoms in different molecule instances. Their `*_with_connectivity` variants
+//! optionally require direct bonds between consecutive atoms using
+//! [`ConnectivityCheck::ConsecutiveBonds`]. Connectivity comes from the topology,
+//! never from coordinate proximity; geometric validity is checked separately.
+//!
+//! ```
+//! use kekule::structure::{measure::{self, ConnectivityCheck}, Model};
+//! use kekule::topology::InstanceAtomId;
+//!
+//! # fn bonded_angle(model: &Model, a: InstanceAtomId, b: InstanceAtomId,
+//! # c: InstanceAtomId) -> Result<(), Box<dyn std::error::Error>> {
+//! let angle = measure::angle_with_connectivity(
+//!     model.view(), a, b, c, ConnectivityCheck::ConsecutiveBonds,
+//! )?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! A whole-residue pocket around one source-identified ligand:
 //! ```
 //! use kekule::{
@@ -37,11 +56,32 @@ use crate::units::{Quantity, UnitError, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_U
 
 use super::ModelView;
 
+/// Optional topology validation for Cartesian measurements.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ConnectivityCheck {
+    /// Allow arbitrary atoms, without requiring bonds. This is the default.
+    #[default]
+    Unrestricted,
+    /// Require A-B for distance, A-B and B-C for angle, and A-B, B-C, C-D
+    /// for dihedral. Bond order is irrelevant. Different molecule instances
+    /// and repeated consecutive atoms cannot satisfy this requirement.
+    /// Nonconsecutive atoms need not be bonded or distinct.
+    ///
+    /// All atom IDs are validated before connectivity. The first missing pair
+    /// in argument order is reported before any geometric calculation.
+    ConsecutiveBonds,
+}
+
 /// A failed Cartesian measurement or spatial selection.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum MeasurementError {
     InvalidAtomId(InstanceAtomId),
+    /// Consecutive measurement atoms lack a direct bond, in argument order.
+    MissingBond {
+        a: InstanceAtomId,
+        b: InstanceAtomId,
+    },
     Selection(SelectionError),
     Unit(UnitError),
     InvalidCutoff,
@@ -53,6 +93,9 @@ impl fmt::Display for MeasurementError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidAtomId(atom) => write!(f, "invalid measurement atom: {atom}"),
+            Self::MissingBond { a, b } => {
+                write!(f, "measurement requires a direct bond between {a} and {b}")
+            }
             Self::Selection(error) => write!(f, "measurement selection: {error}"),
             Self::Unit(error) => write!(f, "measurement unit: {error}"),
             Self::InvalidCutoff => f.write_str("distance cutoff must be finite and nonnegative"),
@@ -84,6 +127,33 @@ fn point(view: ModelView<'_>, atom: InstanceAtomId) -> Result<Point3, Measuremen
     Ok(view.positions().values().value()[index.index()])
 }
 
+fn check_connectivity(
+    view: ModelView<'_>,
+    atoms: &[InstanceAtomId],
+    connectivity: ConnectivityCheck,
+) -> Result<(), MeasurementError> {
+    if connectivity == ConnectivityCheck::Unrestricted {
+        return Ok(());
+    }
+    let topology = view.topology();
+    for &atom in atoms {
+        if topology.atom_index(atom).is_none() {
+            return Err(MeasurementError::InvalidAtomId(atom));
+        }
+    }
+    for pair in atoms.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let bonded = topology
+            .neighbors(a)
+            .map_err(|_| MeasurementError::InvalidAtomId(a))?
+            .any(|neighbor| neighbor == b);
+        if !bonded {
+            return Err(MeasurementError::MissingBond { a, b });
+        }
+    }
+    Ok(())
+}
+
 fn norm(vector: Vector3) -> Result<f64, MeasurementError> {
     let value = vector.x.hypot(vector.y).hypot(vector.z);
     if !value.is_finite() {
@@ -107,6 +177,7 @@ fn normalized(vector: Vector3) -> Result<Vector3, MeasurementError> {
 }
 
 /// Measures the stored Cartesian distance. Coincident atoms have distance zero.
+/// No bond is required; see [`distance_with_connectivity`] to require one.
 pub fn distance(
     view: ModelView<'_>,
     a: InstanceAtomId,
@@ -118,8 +189,21 @@ pub fn distance(
     ))
 }
 
+/// Measures [`distance`] with an explicit [`ConnectivityCheck`] policy.
+/// Connectivity validation precedes geometric calculation; cells are ignored.
+pub fn distance_with_connectivity(
+    view: ModelView<'_>,
+    a: InstanceAtomId,
+    b: InstanceAtomId,
+    connectivity: ConnectivityCheck,
+) -> Result<Quantity<f64>, MeasurementError> {
+    check_connectivity(view, &[a, b], connectivity)?;
+    distance(view, a, b)
+}
+
 /// Measures the angle A-B-C, with B as vertex, in [0, pi] radians.
 /// A zero-length arm is an error; a straight angle is valid.
+/// No bonds are required; see [`angle_with_connectivity`] to require them.
 pub fn angle(
     view: ModelView<'_>,
     a: InstanceAtomId,
@@ -135,10 +219,24 @@ pub fn angle(
     ))
 }
 
+/// Measures [`angle`] with an explicit [`ConnectivityCheck`] policy.
+/// Connectivity validation precedes geometric calculation; cells are ignored.
+pub fn angle_with_connectivity(
+    view: ModelView<'_>,
+    a: InstanceAtomId,
+    b: InstanceAtomId,
+    c: InstanceAtomId,
+    connectivity: ConnectivityCheck,
+) -> Result<Quantity<f64>, MeasurementError> {
+    check_connectivity(view, &[a, b, c], connectivity)?;
+    angle(view, a, b, c)
+}
+
 /// Measures the signed A-B-C-D dihedral in [-pi, pi] radians.
 /// With consecutive bond vectors u, v, w, the sign follows
 /// `atan2(((u x v) x (v x w)) . v_hat, (u x v) . (v x w))`.
 /// Zero-length bonds and collinear defining triples are errors.
+/// No topology bonds are required; see [`dihedral_with_connectivity`] to require them.
 pub fn dihedral(
     view: ModelView<'_>,
     a: InstanceAtomId,
@@ -161,6 +259,20 @@ pub fn dihedral(
         n0.cross(n1).dot(v).atan2(n0.dot(n1)),
         CANONICAL_ANGLE_UNIT,
     ))
+}
+
+/// Measures [`dihedral`] with an explicit [`ConnectivityCheck`] policy.
+/// Connectivity validation precedes geometric calculation; cells are ignored.
+pub fn dihedral_with_connectivity(
+    view: ModelView<'_>,
+    a: InstanceAtomId,
+    b: InstanceAtomId,
+    c: InstanceAtomId,
+    d: InstanceAtomId,
+    connectivity: ConnectivityCheck,
+) -> Result<Quantity<f64>, MeasurementError> {
+    check_connectivity(view, &[a, b, c, d], connectivity)?;
+    dihedral(view, a, b, c, d)
 }
 
 /// Selects candidate atoms at Cartesian distance **<= cutoff** from any
