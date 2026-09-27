@@ -6,7 +6,7 @@ pub(super) fn carrier_signatures<N>(
     context: &LigandBuildContext<'_>,
     carriers: impl IntoIterator<Item = (StereoCarrier, N)>,
     describe: impl Fn(N) -> (NodePriority, Vec<N>),
-) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
+) -> RankingResult<Vec<(StereoCarrier, LigandSignature)>> {
     let mut signatures = Vec::new();
     let mut expansions = Vec::new();
     for (carrier, node) in carriers {
@@ -26,20 +26,22 @@ pub(super) fn carrier_signatures<N>(
         // Amortize comparisons of large tied trees, but always try the current
         // shell before either bound can prevent further expansion.
         if depth == next_comparison || depth == context.options.max_depth || !next_shell_fits {
-            if rank_carrier_signatures(context.element, &signatures, None).is_ok() {
+            if signatures.iter().enumerate().all(|(i, (_, left))| {
+                signatures[i + 1..]
+                    .iter()
+                    .all(|(_, right)| left.compare(right) != Ordering::Equal)
+            }) {
                 return Ok(signatures);
             }
             next_comparison = depth.saturating_mul(2).max(1);
         }
         if depth == context.options.max_depth {
-            return Err(CipAssignmentIssue::DepthLimitExceeded {
-                element: context.element,
+            return Err(CipRankingError::DepthLimitExceeded {
                 max_depth: context.options.max_depth,
             });
         }
         if !next_shell_fits {
-            return Err(CipAssignmentIssue::ResourceLimitExceeded {
-                element: context.element,
+            return Err(CipRankingError::ResourceLimitExceeded {
                 max_nodes: context.options.max_nodes,
             });
         }
@@ -73,7 +75,7 @@ impl<N> LigandExpansion<N> {
         context: &LigandBuildContext<'_>,
         node: N,
         describe: &impl Fn(N) -> (NodePriority, Vec<N>),
-    ) -> CipResult<(LigandSignature, Self)> {
+    ) -> RankingResult<(LigandSignature, Self)> {
         let mut expansion = Self {
             frontier: Vec::new(),
             nodes: 0,
@@ -99,13 +101,13 @@ impl<N> LigandExpansion<N> {
         context: &LigandBuildContext<'_>,
         signature: &mut LigandSignature,
         describe: &impl Fn(N) -> (NodePriority, Vec<N>),
-    ) -> CipResult<()> {
+    ) -> RankingResult<()> {
         for frontier in std::mem::take(&mut self.frontier) {
             let mut children = frontier
                 .children
                 .into_iter()
                 .map(|node| self.leaf(context, node, describe))
-                .collect::<CipResult<Vec<_>>>()?;
+                .collect::<RankingResult<Vec<_>>>()?;
             children.sort_by(|left, right| right.0.priority.compare_shallow(&left.0.priority));
             let mut tree = &mut signature.root;
             for index in &frontier.tree_path {
@@ -134,10 +136,9 @@ impl<N> LigandExpansion<N> {
         context: &LigandBuildContext<'_>,
         node: N,
         describe: &impl Fn(N) -> (NodePriority, Vec<N>),
-    ) -> CipResult<(LigandTree, Vec<N>)> {
+    ) -> RankingResult<(LigandTree, Vec<N>)> {
         if self.nodes >= context.options.max_nodes {
-            return Err(CipAssignmentIssue::ResourceLimitExceeded {
-                element: context.element,
+            return Err(CipRankingError::ResourceLimitExceeded {
                 max_nodes: context.options.max_nodes,
             });
         }

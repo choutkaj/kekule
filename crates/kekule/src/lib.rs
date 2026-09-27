@@ -930,10 +930,10 @@ pub mod stereo {
         infer_coordinate_stereo_with_options, materialize_coordinate_stereo,
         materialize_coordinate_stereo_with_options, validate_stereo, CipAssignment,
         CipAssignmentError, CipAssignmentIssue, CipAssignmentOptions, CipAssignmentReport,
-        CipSkipped, CipSkippedReason, CoordinateStereoError, CoordinateStereoMaterializationReport,
-        CoordinateStereoOptions, CoordinateStereoResult, StereoCandidate, StereoCleanupReport,
-        StereoPerceptionError, StereoPerceptionOptions, StereoValidationError,
-        StereoValidationIssue,
+        CipRankingError, CipSkipped, CipSkippedReason, CoordinateStereoError,
+        CoordinateStereoMaterializationReport, CoordinateStereoOptions, CoordinateStereoResult,
+        StereoCandidate, StereoCleanupReport, StereoPerceptionError, StereoPerceptionOptions,
+        StereoValidationError, StereoValidationIssue,
     };
 }
 
