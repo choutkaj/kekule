@@ -98,7 +98,7 @@ remain untracked, as required by the benchmark policy.
 ```text
 cargo benchmark --feature io.smiles.text.canonical --dataset all --jobs 4
 cargo benchmark --feature io.smiles.text.canonical --dataset all --limit 1000 --jobs 4
-cargo benchmark --feature io.smiles.canonical --dataset all --limit 1000 --jobs 4 --goldens IDENTITY_REFERENCES --writer-python PATH
+cargo benchmark --feature io.smiles.canonical --dataset all --limit 1000 --jobs 4 --writer-python PATH
 ```
 
 Focused regressions assert RDKit charge, fused-ring, symmetric-stereo,

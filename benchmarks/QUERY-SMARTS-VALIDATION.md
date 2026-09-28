@@ -90,8 +90,9 @@ Toy structures appear only in these regression tests.
 The feature-specific contract hash includes the target panel and limits. Old
 count-only goldens are rejected; historical dashboard reports remain visible
 as stale. Other feature contracts, including MDL, retain their existing hashes.
-The previous five datasets' query references are preserved under
-`goldens/legacy/query-smarts-v1/`. The migration adds assertions rather than
+The previous five datasets' tracked query provenance and bundled payload are
+recoverable from Git history; obsolete snapshots are no longer kept in the live
+golden directory. The migration adds assertions rather than
 replacing the original parser observations. Each manifest records the adapter
 digest actually used; the later disconnected-fragment optimization preserves
 the same observation contract.

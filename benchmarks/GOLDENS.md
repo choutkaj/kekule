@@ -9,10 +9,41 @@ Bulk inputs, full reference archives, reports and diagnostic outputs remain loca
 The general chemistry follow-up uses observation contract 3, which asserts
 radical electron occupancy and explicitly supplied spin independently. Compatible
 references and their provenance are recorded in `GENERAL_CHEMISTRY_REVIEW.md`.
-Historical full-dataset archives below are not silently migrated or regenerated
-by comparison. An archive with an old contract is rejected; generate a fresh
-independent reference into a new directory or select the audited compatible
-archive explicitly with `--goldens` as described in `GUIDE.md`.
+`benchmarks/goldens` is the single active reference set. Historical counts below
+describe earlier audits, not alternate datasets to select at runtime. Comparison
+rejects stale archives and never regenerates them. Maintenance stages and audits
+independent replacements temporarily, then publishes them into the same active
+set and removes staging, as described in `GUIDE.md`.
+
+## Active-set repair, 2026-09-28
+
+The 96 bulk manifests left on observation contract 2 were audited against
+contract 3. The contract changes only radical-electron and spin semantics.
+All 1,547 locked source files passed their checksum checks.
+
+The 29 archives containing affected observations were independently regenerated
+with pinned RDKit 2026.03.3 and paired against all 2,106,312 previous rows.
+The other 67 archives contain none of the affected fields: all 3,483,456 rows
+were scanned, their payload bytes were retained, and their manifests record
+the compatibility audit while preserving their original generator provenance.
+The 107 already-current archives needed no changes.
+
+The resulting manifests belong to the same `benchmarks/goldens` catalogue.
+[reference-audit.json](reference-audit.json) records the previous and current
+payload hashes, source identities, row counts and observation differences.
+The audit does not change comparison fields, tolerances or denominators.
+Radical electron counts and all non-spin observations are unchanged. The only
+value differences remove spin labels previously inferred from electron counts;
+contract 3 records spin only when supplied by the source. Reference errors and
+missing-format outcomes remain present.
+
+After publication, the default-path all-feature/all-dataset run with `--limit 1`
+completed all 203 pairs and validated all 6,514,328 stored rows. Its native
+sample reported 118 agreements, 43 disagreements and zero errors; the expected
+nonzero exit reflects those disagreements. This was not a full native corpus
+comparison. All 96 benchmark tests and the scoped Rust checks passed; commands
+and validation scope are recorded in the audit report. Temporary staging and
+obsolete reference copies were removed.
 
 ## SMILES text references, 2026-09-28
 

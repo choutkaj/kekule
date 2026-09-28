@@ -14,7 +14,7 @@ cargo benchmark --feature query.smarts --dataset rdkit-queries
 cargo benchmark --feature io.sdf.parse --dataset rdkit-structures
 cargo benchmark --feature io.sdf.parse --dataset enamine-diversity
 cargo benchmark --feature all --dataset smoke --writer-python PATH_TO_RDKIT_PYTHON
-cargo benchmark generate --feature FEATURE --dataset DATASET --python PATH --goldens NEW_DIRECTORY
+cargo benchmark generate --feature FEATURE --dataset DATASET --python PATH --goldens TEMPORARY_STAGING_DIRECTORY
 ```
 
 A fresh checkout includes the smoke, `rdkit-queries` and `rdkit-structures`
@@ -53,7 +53,10 @@ also fails, the CLI retains both errors and the previous readable snapshot.
 
 Normal parser, algorithm and exact SMILES text checks need Rust and the stored
 goldens. Writer identity checks also need RDKit to read the emitted text. Select it with `--writer-python`,
-`KEKULE_WRITER_PYTHON`, or the activated environment's `python`.
+`KEKULE_WRITER_PYTHON`, the ignored local `benchmarks/.writer-python` file
+(one interpreter path), or the activated environment's `python`, in that order.
+The local file lets the usual command work without repeating machine-specific
+flags; the stored reference tool/version check still applies.
 Before evaluating the first applicable writer input in each feature/dataset,
 the runner checks that this interpreter can load the reference and matches the
 stored tool/version. A setup failure stops with an incomplete report; it does
@@ -63,10 +66,39 @@ engine-specific environment files are available for narrower installations.
 DSSP requires mkdssp, its shared libraries, and its CIF dictionary on the
 activated environment's paths.
 
-Generation is explicit and never evaluates Kekule. Write regenerated goldens to
-a new directory, investigate changes, and review them before adopting them.
+There is one active reference set: `benchmarks/goldens`. Normal runs use it
+without `--goldens`. Generation is explicit and never evaluates Kekule.
+Reference maintenance stages replacements temporarily, audits changed
+observations, and publishes the accepted archive and manifest back to this
+same set. Remove staging after publication; do not keep competing versioned
+reference directories. Existing generation outputs are protected from
+accidental overwrites.
 Missing, stale, malformed or duplicated goldens stop comparison; they do not
 trigger regeneration. A partial generation does not cover omitted cases.
+
+If a run stops with an incompatible golden manifest, the diagnostic names each
+mismatched field and its stored and required values. A `contract_sha256`
+mismatch means the reference observations use a different comparison contract;
+it is not a Kekule chemistry disagreement. Do not change the hash alone to
+make the archive load. The completed repair of the historical bulk references
+for observation contract 3 is recorded in [GOLDENS.md](GOLDENS.md). Current
+references for one feature do not establish compatibility for another feature.
+
+For reference maintenance, activate the combined pinned environment from
+`reference/environment.yml` (including DSSP's paths). Generate the affected
+feature/dataset into temporary staging with the `generate` command above.
+Verify completeness, source identities, checksums and changed observations
+before replacing its pair in `benchmarks/goldens`. Keep the audit and provenance
+in reports, not a second active dataset. Generation can finish with a nonzero
+exit code because reference failures are retained: distinguish a complete
+report containing case errors from an incomplete run. Normal usage remains:
+
+```text
+cargo benchmark --feature all --dataset all
+```
+
+Writer identity checks still require the pinned RDKit interpreter described
+above; use the activated environment or `--writer-python` when necessary.
 
 ## Dashboard
 
@@ -156,7 +188,10 @@ CTAB/CX spin that RDKit's atom model loses, and a changed explicit occupancy is
 a reference failure. It follows the [BIOVIA CTfile specification](https://discover.3ds.com/sites/default/files/2020-08/biovia_ctfileformats_2020.pdf)
 and [Chemaxon CX radical definitions](https://docs.chemaxon.com/latest/formats_chemaxon-extended-smiles-and-smarts-cxsmiles-and-cxsmarts.html).
 Plain bracket SMILES does not assert spin. Old-contract goldens must be explicitly
-regenerated and audited; they are never accepted by silently converting fields
+audited: archives with affected measurements require independent regeneration.
+An unaffected archive may retain its exact payload only after verifying every
+row's compatibility, checksums and source identity, with the old contract and
+audit recorded in its manifest provenance. Fields are never silently converted
 during comparison. Report and archive framing remain at schema 2.
 
 Every structural difference and numerical difference is retained, with its path
@@ -536,8 +571,9 @@ in `implementation.feature_contracts`. Count-only references fail validation;
 historical reports remain visible as stale. Other features retain the base
 contract, except the three SMILES text features, which use the same construction
 with `smiles-text.json`. Changing text writer options invalidates text references
-without changing the identity or other chemistry contracts. Previous SMARTS references are archived in
-`goldens/legacy/query-smarts-v1/`; the standard catalogue ignores that archive.
+without changing the identity or other chemistry contracts. Obsolete SMARTS
+references were removed from the live data directory; their tracked provenance
+and bundled payload remain recoverable from Git history.
 Integration with observation contract 3 explicitly updates only the compatibility
 metadata of SMARTS mappings and MDL flags, which contain no changed radical/spin
 or DSSP fields. Payloads and original generator identities remain unchanged;
