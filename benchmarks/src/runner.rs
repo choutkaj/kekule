@@ -32,6 +32,9 @@ const FEATURES: &[&str] = &[
     "io.smiles.write",
     "io.smiles.canonical",
     "io.smiles.isomeric",
+    "io.smiles.text.write",
+    "io.smiles.text.canonical",
+    "io.smiles.text.isomeric",
     "io.mol.parse",
     "io.mol.v2000.write",
     "io.mol.v3000.write",
@@ -1008,7 +1011,7 @@ fn implementation_identity() -> Result<Value, Box<dyn Error>> {
     let status = git(&["status", "--porcelain"]);
     Ok(
         json!({"revision":git(&["rev-parse","HEAD"]),"dirty":status.as_ref().map(|status|!status.is_empty()),"working_tree_status_sha256":status.as_ref().map(|status|sha256(status.as_bytes())),
-        "executable_sha256":executable,"reference_code_sha256":stored::reference_code_hash(Path::new(env!("CARGO_MANIFEST_DIR")))?,"contract_sha256":stored::contract_hash(),"feature_contracts":{"query.smarts":stored::feature_contract_hash("query.smarts")}}),
+        "executable_sha256":executable,"reference_code_sha256":stored::reference_code_hash(Path::new(env!("CARGO_MANIFEST_DIR")))?,"contract_sha256":stored::contract_hash(),"feature_contracts": FEATURES.iter().filter(|feature| **feature == "query.smarts" || features::is_smiles_text(feature)).map(|feature| (*feature, stored::feature_contract_hash(feature))).collect::<BTreeMap<_, _>>()}),
     )
 }
 

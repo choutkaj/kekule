@@ -225,6 +225,7 @@ fn reference_fingerprint_covers_source_radical_semantics() {
         "reference/biopython/run_feature.py",
         "queries.smarts",
         "query-smarts.json",
+        "smiles-text.json",
     ] {
         let target = fixture.0.join(path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
@@ -672,6 +673,49 @@ fn identity() -> Outcome {
     Outcome::Ok {
         value: json!({"records":[{"record_index":0,"status":"ok","title":"","identity":"CC"}]}),
     }
+}
+
+#[test]
+fn smiles_text_comparison_does_not_reread_or_normalize_the_emitted_string() {
+    let mut opts = opts(false);
+    opts.feature = "io.smiles.text.write".into();
+    let fixture = Fixture::new();
+    let expected = Outcome::Ok {
+        value: json!({"records":[{
+            "record_index":0,"status":"ok","title":"","smiles":"OCC"
+        }]}),
+    };
+    let stored = fixture.store(&opts.feature, &[golden(&opts.feature, 0, expected)]);
+    let pool = pool();
+    let progress = ProgressBar::hidden();
+    let mut results = Vec::new();
+    let mut run = BatchRun {
+        opts: &opts,
+        pool: &pool,
+        progress: &progress,
+        mode: RunMode::Compare(stored),
+        results: &mut results,
+        evaluate: |_, _| {
+            Ok(json!({"records":[{
+                "record_index":0,"status":"ok","title":"","smiles":"CCO"
+            }]}))
+        },
+        reference: |_, _, _| panic!("text comparison must not call RDKit to reread output"),
+    };
+    let mut row = Summary {
+        dataset: "test".into(),
+        feature: opts.feature.clone(),
+        ..Default::default()
+    };
+    run.batch(&[case(0)], &mut row).unwrap();
+    assert_eq!((row.cases, row.disagrees, row.errors), (1, 1, 0));
+    drop(run);
+    let case: Value = serde_json::from_slice(&results).unwrap();
+    assert_eq!(case["actual"]["value"]["records"][0]["smiles"], "CCO");
+    assert_eq!(
+        case["difference"]["differences"]["details"][0]["path"],
+        "$.records[0].smiles"
+    );
 }
 #[test]
 fn writer_validation_uses_only_emitted_text_and_rejects_version_drift() {

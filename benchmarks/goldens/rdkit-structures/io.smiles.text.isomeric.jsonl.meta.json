@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "contract_sha256": "001d6223e64a1c7b2e3466872f3f8dc34d19d5b9ce5716a8a8203eda51448050",
+  "dataset": "rdkit-structures",
+  "feature": "io.smiles.text.isomeric",
+  "input_lock_sha256": "273c7f1c7316344a39d83104a57ac99c3e62fd393f6b5d37a84bee81aae3100e",
+  "sha256": "e5edbcded6c4791acb6ff82feb12fa8288d5968ec20449febcb8e44c1127f7ca",
+  "reference": null,
+  "reference_code_sha256": "e41f02040a111a729cf9bcfb5999f0a68bb8b63f8a355c7673d5d917d0d8a93c",
+  "origin": "independent generation",
+  "cases": 50
+}

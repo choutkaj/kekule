@@ -51,8 +51,8 @@ seconds. It does not repeat serialization or benchmark computation. Persistent
 failures identify the operation and report path; if recording an execution error
 also fails, the CLI retains both errors and the previous readable snapshot.
 
-Normal parser and algorithm checks need Rust and the stored goldens. Writers
-also need RDKit to read the emitted text. Select it with `--writer-python`,
+Normal parser, algorithm and exact SMILES text checks need Rust and the stored
+goldens. Writer identity checks also need RDKit to read the emitted text. Select it with `--writer-python`,
 `KEKULE_WRITER_PYTHON`, or the activated environment's `python`.
 Before evaluating the first applicable writer input in each feature/dataset,
 the runner checks that this interpreter can load the reference and matches the
@@ -298,11 +298,39 @@ matching total hydrogen counts alone does not make
 the complete observations agree. Interpret these distinctions before attributing
 every parsing disagreement to incorrect chemistry.
 
-SMILES writers compare complete canonical isomeric CXSMILES identity, without
-requiring the same traversal string as RDKit. Canonical mode additionally checks
-a read/write fixed point and invariance under reversing atom and bond numbering.
-These probes do not exhaust all permutations. CXSMILES source extensions are
-parsed by RDKit; unsupported extensions cause an explicit Kekule error.
+SMILES writing has two independent benchmark concepts, shown separately in the
+dashboard:
+
+| Concept | Features | What agrees |
+| --- | --- | --- |
+| SMILES | `io.smiles.text.write`, `io.smiles.text.isomeric`, `io.smiles.text.canonical` | The actual emitted string equals RDKit's emitted string exactly |
+| SMILES identity | `io.smiles.write`, `io.smiles.isomeric`, `io.smiles.canonical` | RDKit rereads the output and produces the same complete canonical isomeric CXSMILES identity as the source |
+
+The identity feature IDs and contracts are unchanged so historical results keep
+their meaning. Text checks retain the full SMILES/CXSMILES string, including
+stereo characters, ring numbers and extension fields. Titles are asserted in a
+separate field; no emitted text is reparsed, canonicalized, stripped of CX fields,
+or otherwise normalized before comparison. Text comparison needs only Rust and
+stored references; reference generation needs RDKit. Identity comparison also
+needs `--writer-python` to read the newly emitted text.
+
+The versioned text contract is [smiles-text.json](smiles-text.json). RDKit writes
+isomeric CXSMILES with `CX_ALL` in all modes: canonical mode selects canonical
+aromatic output, ordinary mode noncanonical aromatic output, and isomeric mode
+noncanonical Kekule output. Both engines start from their ordinary prepared source
+graphs. Kekule ordinary mode still rejects represented stereo; it never silently
+drops it to obtain a string agreement. A text match does not replace the separate
+identity assertion. Neither metric computes a fuzzy similarity score.
+
+```text
+cargo benchmark --feature io.smiles.text.canonical --dataset smoke
+cargo benchmark --feature io.smiles.canonical --dataset smoke --writer-python PATH_TO_RDKIT_PYTHON
+```
+
+Canonical mode in both concepts additionally checks a read/write fixed point and
+invariance under reversing atom and bond numbering. These probes do not exhaust
+all permutations. CXSMILES source extensions are parsed by RDKit; unsupported
+extensions cause an explicit Kekule error.
 
 Versioned MOL/SDF writers must emit the requested format. Each MOL file must end
 after its single complete record; extra molecules or SDF data are rejected even
@@ -506,7 +534,9 @@ feature-specific contract hash: SHA256 of the base contract's hex digest, a
 newline, and the LF-normalized `query-smarts.json`. Reports carry this override
 in `implementation.feature_contracts`. Count-only references fail validation;
 historical reports remain visible as stale. Other features retain the base
-contract. Previous SMARTS references are archived in
+contract, except the three SMILES text features, which use the same construction
+with `smiles-text.json`. Changing text writer options invalidates text references
+without changing the identity or other chemistry contracts. Previous SMARTS references are archived in
 `goldens/legacy/query-smarts-v1/`; the standard catalogue ignores that archive.
 Integration with observation contract 3 explicitly updates only the compatibility
 metadata of SMARTS mappings and MDL flags, which contain no changed radical/spin

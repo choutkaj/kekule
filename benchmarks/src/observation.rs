@@ -102,6 +102,15 @@ struct Identity {
     title: String,
     identity: String,
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SmilesText {
+    record_index: usize,
+    status: Success,
+    title: String,
+    smiles: String,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Query {
@@ -402,6 +411,18 @@ pub(crate) fn validate(feature: &str, value: &Value) -> Result<(), Box<dyn Error
         return Err(boxed_error(format!("missing or empty {collection}")));
     }
     match feature {
+        _ if features::is_smiles_text(feature) => {
+            read::<Records<SmilesText>>(value)?;
+            if value["records"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|record| record["smiles"].as_str().is_none_or(str::is_empty))
+            {
+                return Err(boxed_error("empty SMILES output"));
+            }
+            Ok(())
+        }
         "io.mmcif.parse" => read::<Cif>(value),
         "bio.secondary-structure.dssp" => read::<Dssp>(value),
         "query.smarts" => read::<Records<Query>>(value),

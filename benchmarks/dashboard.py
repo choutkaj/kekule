@@ -97,11 +97,15 @@ def golden_metadata(raw):
 
 
 def feature_contracts(root):
-    path = root / 'query-smarts.json'
-    if not path.exists():
-        return {}
-    value = text_hash(root / 'contract.json') + '\n' + path.read_text(encoding='utf-8').replace('\r\n', '\n')
-    return {'query.smarts': hashlib.sha256(value.encode()).hexdigest()}
+    result = {}
+    for filename, features in (
+            ('query-smarts.json', ['query.smarts']),
+            ('smiles-text.json', ['io.smiles.text.' + mode for mode in ('write', 'canonical', 'isomeric')])):
+        path = root / filename
+        if path.exists():
+            value = text_hash(root / 'contract.json') + '\n' + path.read_text(encoding='utf-8').replace('\r\n', '\n')
+            result.update({feature: hashlib.sha256(value.encode()).hexdigest() for feature in features})
+    return result
 
 
 def catalogue(root=ROOT):

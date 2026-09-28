@@ -14,28 +14,21 @@ const MAX_REFINEMENT_WORK: usize = 50_000_000;
 const MAX_PENDING_ATOMS: usize = 2_000_000;
 
 pub(super) struct CanonicalOrder {
-    symmetry: Vec<u32>,
+    // Writer priorities are ordered initial classes, not chemical symmetries.
+    initial_classes: Vec<u32>,
     labels: Vec<usize>,
 }
 
 impl CanonicalOrder {
     pub(super) fn new(
         molecule: &Molecule,
-        ranking: &CanonicalAtomRanking,
         style: CanonicalAtomStyle,
     ) -> Result<Self, MolWriteError> {
-        Self::with_limits(
-            molecule,
-            ranking,
-            style,
-            MAX_SEARCH_STATES,
-            MAX_REFINEMENT_WORK,
-        )
+        Self::with_limits(molecule, style, MAX_SEARCH_STATES, MAX_REFINEMENT_WORK)
     }
 
     fn with_limits(
         molecule: &Molecule,
-        ranking: &CanonicalAtomRanking,
         style: CanonicalAtomStyle,
         max_states: usize,
         max_work: usize,
@@ -46,15 +39,16 @@ impl CanonicalOrder {
         for (index, atom) in atoms.iter().enumerate() {
             dense[atom.index()] = index;
         }
-        let mut symmetry = vec![u32::MAX; slots];
-        for (atom, rank) in ranking.iter() {
-            symmetry[atom.index()] = rank;
-        }
         let keys = atoms
             .iter()
             .map(|atom| {
                 (
-                    symmetry[atom.index()],
+                    writer_atom_priority(molecule, *atom),
+                    molecule
+                        .atom(*atom)
+                        .expect("canonical atom is live")
+                        .radical
+                        .map(|radical| (radical.electron_count(), radical.spin_multiplicity())),
                     canonical_smiles_atom_for_sort(molecule, *atom, style),
                 )
             })
@@ -70,6 +64,10 @@ impl CanonicalOrder {
                     .expect("every atom key is indexed")
             })
             .collect::<Vec<_>>();
+        let mut initial_classes = vec![u32::MAX; slots];
+        for (atom, color) in atoms.iter().zip(&initial) {
+            initial_classes[atom.index()] = *color as u32;
+        }
         let adjacency = atoms
             .iter()
             .map(|atom| {
@@ -170,12 +168,44 @@ impl CanonicalOrder {
         for (label, index) in order.into_iter().enumerate() {
             labels[atoms[index].index()] = label;
         }
-        Ok(Self { symmetry, labels })
+        Ok(Self {
+            initial_classes,
+            labels,
+        })
     }
 
     pub(super) fn rank(&self, atom: AtomId) -> (u32, usize) {
-        (self.symmetry[atom.index()], self.labels[atom.index()])
+        (
+            self.initial_classes[atom.index()],
+            self.labels[atom.index()],
+        )
     }
+}
+
+/// Writer-local priorities follow RDKit's map/degree/element/isotope/H/charge
+/// ordering. Keep this separate from the public symmetry-class algorithm: the
+/// writer orders classes, while canonical labeling still proves all remaining
+/// ties using the complete adjacency/stereo certificate. This is not a claim of
+/// exact RDKit stereo ranking or tie-breaking compatibility.
+fn writer_atom_priority(molecule: &Molecule, id: AtomId) -> (u32, usize, u8, u16, usize, u32) {
+    let atom = molecule.atom(id).expect("canonical atom is live");
+    (
+        atom.atom_map.unwrap_or(0),
+        molecule
+            .incident_bonds(id)
+            .expect("canonical atom is live")
+            .count(),
+        atom.element.atomic_number(),
+        atom.isotope.unwrap_or(0),
+        molecule
+            .implicit_hydrogens(id)
+            .expect("canonical atom is live")
+            .unwrap_or_else(|| usize::from(atom.hydrogens.specified_count())),
+        // RDKit compares formal charge through an unsigned 32-bit value.
+        // Sign-extend before conversion so negative charges follow neutral
+        // and positive atoms while retaining their order among themselves.
+        i32::from(atom.formal_charge) as u32,
+    )
 }
 
 type Certificate = (
@@ -197,6 +227,19 @@ enum LabelStereo {
         right_carrier: usize,
         together: bool,
     },
+}
+
+/// The order here is a serialization preference, not a chemical ordering of
+/// stereo relationships. Correlated groups never refine by absolute handedness.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum StereoRefinementKind {
+    None,
+    Ungrouped,
+    Absolute,
+    Or,
+    And,
+    Relative,
+    Racemic,
 }
 
 struct Search {
@@ -351,8 +394,16 @@ impl Search {
         loop {
             let cost = colors
                 .len()
-                .saturating_add(self.adjacency.iter().map(Vec::len).sum::<usize>());
+                .saturating_add(self.adjacency.iter().map(Vec::len).sum::<usize>())
+                .saturating_add(self.stereo.len())
+                .saturating_add(
+                    self.groups
+                        .iter()
+                        .map(|(_, members)| members.len())
+                        .sum::<usize>(),
+                );
             self.charge_work(cost)?;
+            let stereo_keys = self.stereo_refinement_keys(colors);
             let signatures = self
                 .adjacency
                 .iter()
@@ -360,10 +411,12 @@ impl Search {
                 .map(|(atom, neighbors)| {
                     let mut neighborhood = neighbors
                         .iter()
-                        .map(|&(other, bond)| (colors[other], bond))
+                        .map(|&(other, bond)| (bond, colors[other]))
                         .collect::<Vec<_>>();
-                    neighborhood.sort_unstable();
-                    (colors[atom], neighborhood)
+                    // RDKit compares neighbor lists in descending bond/class
+                    // order. The full certificate still resolves residual ties.
+                    neighborhood.sort_unstable_by(|a, b| b.cmp(a));
+                    (colors[atom], &stereo_keys[atom], neighborhood)
                 })
                 .collect::<Vec<_>>();
             let mut ordered = signatures.clone();
@@ -382,6 +435,83 @@ impl Search {
             }
             *colors = refined;
         }
+    }
+
+    fn stereo_refinement_keys(&self, colors: &[usize]) -> Vec<(StereoRefinementKind, usize, u8)> {
+        // Build each group signature once. Copying its member list into every
+        // atom key would make a large correlated group quadratic in memory.
+        let group_keys = self
+            .groups
+            .iter()
+            .map(|(kind, members)| {
+                let kind = match kind {
+                    StereoGroupKind::Absolute => StereoRefinementKind::Absolute,
+                    StereoGroupKind::Or => StereoRefinementKind::Or,
+                    StereoGroupKind::And => StereoRefinementKind::And,
+                    StereoGroupKind::Relative => StereoRefinementKind::Relative,
+                    StereoGroupKind::Racemic => StereoRefinementKind::Racemic,
+                };
+                let mut ranks = members
+                    .iter()
+                    .filter_map(|i| match &self.stereo[*i] {
+                        LabelStereo::Tetrahedral { center, .. } => Some(colors[*center]),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                ranks.sort_unstable();
+                ranks.dedup();
+                (kind, ranks)
+            })
+            .collect::<Vec<_>>();
+        let mut sorted = group_keys.iter().collect::<Vec<_>>();
+        sorted.sort_unstable();
+        sorted.dedup();
+        let mut memberships = vec![(StereoRefinementKind::Ungrouped, 0); self.stereo.len()];
+        for ((_, members), key) in self.groups.iter().zip(&group_keys) {
+            let class = sorted.binary_search(&key).expect("group key is indexed");
+            for &member in members {
+                memberships[member] = (key.0, class);
+            }
+        }
+        let mut keys = vec![(StereoRefinementKind::None, 0, 0); colors.len()];
+        for (index, element) in self.stereo.iter().enumerate() {
+            let LabelStereo::Tetrahedral {
+                center,
+                carriers,
+                clockwise,
+            } = element
+            else {
+                continue;
+            };
+            let (kind, members) = memberships[index];
+            let mut chirality = 0;
+            // A correlated group and its joint inverse are the same assertion.
+            // Its absolute orientation must not split the refinement classes.
+            if matches!(
+                kind,
+                StereoRefinementKind::Ungrouped | StereoRefinementKind::Absolute
+            ) {
+                let ranks = carriers
+                    .iter()
+                    .map(|atom| colors.get(*atom).copied().unwrap_or(*atom))
+                    .collect::<Vec<_>>();
+                let mut sorted = ranks.clone();
+                sorted.sort_unstable();
+                sorted.dedup();
+                if sorted.len() == ranks.len() {
+                    let odd = (0..ranks.len())
+                        .flat_map(|i| (i + 1..ranks.len()).map(move |j| (i, j)))
+                        .filter(|&(i, j)| ranks[i] > ranks[j])
+                        .count()
+                        % 2
+                        != 0;
+                    // Core Clockwise spells SMILES @, which RDKit names CCW.
+                    chirality = 1 + u8::from(*clockwise == odd);
+                }
+            }
+            keys[*center] = (kind, members, chirality);
+        }
+        keys
     }
 
     fn charge_work(&mut self, cost: usize) -> Result<(), MolWriteError> {
@@ -439,7 +569,7 @@ impl Search {
                         carriers.sort_unstable();
                         let mut value = vec![0, label(*center)];
                         value.extend(carriers);
-                        value.push(usize::from(*clockwise != odd));
+                        value.push(usize::from(*clockwise == odd));
                         value
                     }
                     LabelStereo::DoubleBond {
@@ -539,10 +669,8 @@ mod tests {
     #[test]
     fn incomplete_search_never_publishes_a_candidate() {
         let molecule = crate::tests::read_smiles("C1CCCCC1").expect("cyclohexane");
-        let ranking = canonical_atom_ranking(&molecule);
         let error = CanonicalOrder::with_limits(
             &molecule,
-            &ranking,
             CanonicalAtomStyle::Aromatic,
             1,
             MAX_REFINEMENT_WORK,
@@ -556,7 +684,6 @@ mod tests {
         assert!(error.message().contains("search states"));
         let error = CanonicalOrder::with_limits(
             &molecule,
-            &ranking,
             CanonicalAtomStyle::Aromatic,
             MAX_SEARCH_STATES,
             1,

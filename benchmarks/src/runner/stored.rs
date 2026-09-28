@@ -37,6 +37,12 @@ pub(super) fn feature_contract_hash(feature: &str) -> String {
             contract_hash(),
             crate::features::query::CONTRACT
         ))
+    } else if crate::features::is_smiles_text(feature) {
+        text_hash(&format!(
+            "{}\n{}",
+            contract_hash(),
+            include_str!("../../smiles-text.json")
+        ))
     } else {
         contract_hash()
     }
@@ -71,6 +77,7 @@ pub(super) fn reference_code_hash(root: &Path) -> Result<String, Box<dyn Error>>
         "reference/biopython/run_feature.py",
         "queries.smarts",
         "query-smarts.json",
+        "smiles-text.json",
     ] {
         hash.update(path.as_bytes());
         hash.update(
