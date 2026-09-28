@@ -2,6 +2,115 @@ use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::smiles::{self, MolWriteErrorKind};
 
 #[test]
+fn canonical_smiles_matches_rdkit_charge_closures_stereo_and_cx_radicals() {
+    for (source, expected) in [
+        ("CC([O-])=O", "CC(=O)[O-]"),
+        ("[O-][N+](=O)c1ccccc1", "O=[N+]([O-])c1ccccc1"),
+        (
+            "CC12CCC3C(CCC4CC(O)CCC43C)C2CCC1=O",
+            "CC12CCC3C(CCC4CC(O)CCC43C)C1CCC2=O",
+        ),
+        ("C[C@H]1CCC[C@H]1C", "C[C@@H]1CCC[C@@H]1C"),
+        ("[CH3].[CH2].[CH]", "[CH2].[CH3].[CH] |^1:1,^2:0,^5:2|"),
+        ("O.[Cu].[Cu]", "O.[Cu].[Cu] |^1:1,2|"),
+        (
+            "[CH2][C@H](F)[C@@H](C)Cl |&1:1,3|",
+            "[CH2][C@H](F)[C@@H](C)Cl |^1:0,&1:1,3|",
+        ),
+        (
+            "C[C@H](F)[C@H](Cl)[C@H](Br)[C@H](O)C |&1:1,3,o2:5,7|",
+            "C[C@H](O)[C@H](Br)[C@@H](Cl)[C@H](C)F |o1:1,3,&1:5,7|",
+        ),
+    ] {
+        let write = |text: &str| {
+            let mut molecules = smiles::to_molecules(text).unwrap();
+            for molecule in &mut molecules {
+                molecule.perceive().unwrap();
+            }
+            let topology = kekule::topology::Topology::from_molecules(&molecules).unwrap();
+            smiles::write_topology(
+                &topology,
+                smiles::SmilesWriteOptions {
+                    mode: smiles::SmilesWriteMode::Canonical,
+                },
+            )
+            .unwrap()
+        };
+        let actual = write(source);
+        assert_eq!(actual, expected, "{source}");
+        assert_eq!(write(&actual), actual, "fixed point: {source}");
+    }
+}
+
+#[test]
+fn cx_radical_emission_preserves_occupancy_and_rejects_explicit_spin() {
+    for source in ["[CH3]", "[CH2]", "[CH]", "[C]", "[Cu]", "[O-][O]"] {
+        let mut original = smiles::to_molecules(source).unwrap().pop().unwrap();
+        original.perceive().unwrap();
+        for text in [
+            smiles::write(&original).unwrap(),
+            smiles::write_isomeric(&original).unwrap(),
+            smiles::write_canonical(&original).unwrap(),
+        ] {
+            let restored = smiles::to_molecules(&text).unwrap().pop().unwrap();
+            let radicals = |m: &Molecule| {
+                let mut states = m
+                    .atoms()
+                    .map(|(_, a)| {
+                        (
+                            a.element.atomic_number(),
+                            a.radical
+                                .map(|r| (r.electron_count(), r.spin_multiplicity())),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                states.sort_unstable();
+                states
+            };
+            assert_eq!(
+                radicals(&original),
+                radicals(&restored),
+                "{source} -> {text}"
+            );
+        }
+    }
+    for source in ["[CH2] |^3:0|", "[CH2] |^4:0|", "[CH] |^6:0|", "[CH] |^7:0|"] {
+        let molecule = smiles::to_molecules(source).unwrap().pop().unwrap();
+        assert!(smiles::write_canonical(&molecule)
+            .unwrap_err()
+            .message()
+            .contains("spin"));
+    }
+}
+
+#[test]
+fn canonical_smiles_uses_rdkit_style_roots_and_branch_continuations() {
+    // Focused regressions against RDKit 2026.03.3 canonical isomeric SMILES.
+    // Alternate source traversals also guard against input-order tie breaking.
+    for (sources, expected) in [
+        (["CC(C)SC", "CSC(C)C"], "CSC(C)C"),
+        (["CC(O)=O", "OC(C)=O"], "CC(=O)O"),
+        (["C1=COC=C1", "o1cccc1"], "c1ccoc1"),
+        (
+            ["CC(=O)OC1=CC=CC=C1C(=O)O", "O=C(O)c1ccccc1OC(C)=O"],
+            "CC(=O)Oc1ccccc1C(=O)O",
+        ),
+        (["C1=CC=C2C=CC=CC2=C1", "c1ccc2ccccc2c1"], "c1ccc2ccccc2c1"),
+        (["C(CCF)COCCCCCl", "ClCCCCOCCCCF"], "FCCCCOCCCCCl"),
+    ] {
+        for source in sources {
+            let mut molecule = smiles::to_molecules(source).unwrap().pop().unwrap();
+            molecule.perceive().unwrap();
+            let written = smiles::write_canonical(&molecule).unwrap();
+            assert_eq!(written, expected, "{source}");
+            let mut restored = smiles::to_molecules(&written).unwrap().pop().unwrap();
+            restored.perceive().unwrap();
+            assert_eq!(smiles::write_canonical(&restored).unwrap(), written);
+        }
+    }
+}
+
+#[test]
 fn canonical_smiles_retains_charged_and_mapped_hydrogen_atoms() {
     for source in ["[H-][Na+]", "[H+]C", "[H:7]C", "[H-:7][Na+]"] {
         let original = smiles::to_molecules(source).unwrap().pop().unwrap();
@@ -222,7 +331,7 @@ fn canonical_hydrogen_normalization_preserves_isotope_vertices() {
 }
 
 #[test]
-fn canonical_candidate_work_is_bounded_before_export() {
+fn canonical_input_complexity_is_bounded_before_export() {
     let mut editor = MoleculeEditor::new();
     let mut previous = None;
     for index in 0..4096 {
@@ -237,7 +346,7 @@ fn canonical_candidate_work_is_bounded_before_export() {
     let molecule = editor.finish().unwrap();
     let error = smiles::write_canonical(&molecule).unwrap_err();
     assert_eq!(error.kind(), MolWriteErrorKind::ResourceLimit);
-    assert!(error.to_string().contains("candidate traversal"));
+    assert!(error.to_string().contains("input complexity"));
 }
 
 #[test]
@@ -246,11 +355,34 @@ fn canonical_stereo_is_invariant_under_atom_and_bond_permutations() {
     use std::collections::BTreeMap;
     let mut seed = 41u64;
     for source in [
+        "CC(=O)Oc1ccccc1C(=O)O",
+        "c1ccoc1",
+        "c1ccc2ccccc2c1",
+        "ClCCCCOCCCCF",
+        "CC([O-])=O",
+        "[O-][N+](=O)c1ccccc1",
+        "CC12CCC3C(CCC4CC(O)CCC43C)C2CCC1=O",
+        "C[C@H]1CCC[C@H]1C",
+        "[CH2][C@H](F)[C@@H](C)Cl |&1:1,3|",
+        "C[C@H](F)[C@H](Cl)[C@H](Br)[C@H](O)C |&1:1,3,o2:5,7|",
+        "C[C@@H](F)[C@@H](Cl)[C@@H](Br)[C@@H](O)C |&1:1,3,o2:5,7|",
+        "C[C@H](F)[C@H](Cl)[C@H](Br)[C@H](O)C |&1:1,3,r|",
         "N[C@@H](C)C(=O)O",
         "O[C@H]1CC[C@@H](O)CC1",
         "C[C@H](O)[C@@H](O)C",
         "C[C@H](O)[C@H](O)C",
         "F/C=C/C=C\\Cl",
+        // PubChem CIDs 444596, 445186, 445554, 445925, 446439, 446467,
+        // 448343 and 448437 exposed numbering-dependent carrier choices and
+        // independently flipped redundant directional marks.
+        "CC1=C(C(CCC1)(C)C)/C=C/C(=C/C=C/C(=C/CN)/C)/C",
+        "CC1=C(C(CCC1)(C)C)/C=C/C(=C/C=C/C(C)C=C)/C",
+        "CC1=C(C(CCC1)(C)C)/C=C/C(=C/C=C/C(C)CCN)/C",
+        "CC1=C(C(CCC1)(C)C)/C=C/C(=C/C=C/C(=CC(=O)O)C)/C",
+        r"CC1=CCCC(C1/C=C/C(=C/C=C/C(=C/C=C/C=C(/C=C/C=C(/C=C/C2C(CCC=C2C)(C)C)\C)\C)/C)/C)(C)C",
+        r"C/C=C(\C)/C=C\C=C(/C)\C=C\C1=C(CCCC1(C)C)C",
+        r"CC(=CCC/C(=C/CC/C(=C/C=C/C(=C/C=C\C=C(/C)\C=C\C=C(/C)\C=C\C=C(/C)\C=C\CC(C)(C)OC)/C)/C)/C)C",
+        r"CC1=C(C(C[C@H](C1)O)(C)C)/C=C/C(=C/C=C/C(=C/C=C/C=C(\C)/C=C/C=C(\C)/C=C/[C@H]2C(=C[C@@H](CC2(C)C)O)C)/C)/C",
         "F/C=C(/F)F",
         "C/C(Cl)=C(F)/C",
         "[13CH3][C@H]([2H])O",
@@ -260,13 +392,27 @@ fn canonical_stereo_is_invariant_under_atom_and_bond_permutations() {
         let mut original = smiles::to_molecules(source).unwrap().pop().unwrap();
         original.perceive().unwrap();
         let expected = smiles::write_canonical(&original).unwrap();
-        for _ in 0..24 {
+        let mut restored = smiles::to_molecules(&expected).unwrap().pop().unwrap();
+        restored.perceive().unwrap();
+        assert_eq!(smiles::write_canonical(&restored).unwrap(), expected);
+        for iteration in 0..24 {
             let mut order = original.atom_ids().collect::<Vec<_>>();
             for index in (1..order.len()).rev() {
                 seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
                 order.swap(index, seed as usize % (index + 1));
             }
             let mut editor = MoleculeEditor::new();
+            if iteration % 2 != 0 {
+                // Deleted atom/bond slots must not enter the canonical order
+                // or CX atom indices. Exercise sparse storage as well as a
+                // permutation of densely allocated live atoms.
+                let carbon = Atom::new(Element::from_symbol("C").unwrap());
+                let left = editor.add_atom(carbon.clone()).unwrap();
+                let right = editor.add_atom(carbon).unwrap();
+                editor.add_bond(left, right, BondOrder::Single).unwrap();
+                editor.delete_atom(left).unwrap();
+                editor.delete_atom(right).unwrap();
+            }
             let atoms = order
                 .into_iter()
                 .map(|old| {
@@ -297,7 +443,8 @@ fn canonical_stereo_is_invariant_under_atom_and_bond_permutations() {
                     *id = atoms[id];
                 }
             };
-            for (_, element) in original.stereo_elements() {
+            let mut elements = BTreeMap::new();
+            for (id, element) in original.stereo_elements() {
                 let mut kind = element.kind.clone();
                 match &mut kind {
                     StereoElementKind::Tetrahedral(value) => {
@@ -313,7 +460,18 @@ fn canonical_stereo_is_invariant_under_atom_and_bond_permutations() {
                     }
                     StereoElementKind::Axis(_) => unreachable!(),
                 }
-                editor.add_stereo_element(StereoElement::new(kind)).unwrap();
+                elements.insert(
+                    id,
+                    editor.add_stereo_element(StereoElement::new(kind)).unwrap(),
+                );
+            }
+            for (_, group) in original.stereo_groups() {
+                editor
+                    .add_stereo_group(kekule::core::StereoGroup {
+                        kind: group.kind,
+                        members: group.members.iter().map(|id| elements[id]).collect(),
+                    })
+                    .unwrap();
             }
             let mut molecule = editor.finish().unwrap();
             molecule.perceive().unwrap();

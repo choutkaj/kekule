@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "contract_sha256": "001d6223e64a1c7b2e3466872f3f8dc34d19d5b9ce5716a8a8203eda51448050",
+  "dataset": "pl-rex",
+  "feature": "io.smiles.text.write",
+  "input_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d",
+  "sha256": "d4bab8596248acb8a6bdabbed533762ebe8ae0f7b0507d428e1ad95fb3e02b8d",
+  "reference": null,
+  "reference_code_sha256": "e41f02040a111a729cf9bcfb5999f0a68bb8b63f8a355c7673d5d917d0d8a93c",
+  "origin": "independent generation",
+  "cases": 164
+}

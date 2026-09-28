@@ -291,9 +291,10 @@ pub mod smiles {
     /// permits inferred hydrogens and requires bracket syntax must have hydrogen
     /// perception installed; otherwise writing returns an error. Call
     /// [`Molecule::perceive`] explicitly before exporting such atoms.
-    /// Radical electrons may be encoded by bracket valence, but explicit spin
-    /// multiplicities cannot be represented. Writing fails if the bracket would
-    /// imply a different radical state.
+    /// Radical electrons are encoded by bracket valence, with redundant CX
+    /// annotations for one, two or three electrons (`^1`, `^2`, `^5`). These
+    /// codes retain unspecified spin; explicit spin multiplicities remain
+    /// unsupported. Writing fails if the bracket would imply a different state.
     pub fn write(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_smiles(molecule)
     }
@@ -341,6 +342,12 @@ pub mod smiles {
 
     /// Writes deterministic canonical isomeric SMILES.
     ///
+    /// Atom priorities, stereo refinement, branch traversal, ring closures and
+    /// AND/OR representative selection follow RDKit-style conventions.
+    /// Complete tie labeling and legacy relative-group handling remain
+    /// native; byte-for-byte RDKit compatibility is not guaranteed. Canonical
+    /// spelling can change when these ordering rules are improved.
+    ///
     /// Successful output is invariant under atom numbering and preserves supported
     /// stereo, isotopes, formal charges, and atom maps. Neutral unmapped
     /// nonisotopic terminal hydrogen vertices may collapse into hydrogen counts.
@@ -357,8 +364,9 @@ pub mod smiles {
     /// Complete canonical labeling is bounded by 100,000 search states,
     /// 50,000,000 atom/edge/twin visits, and 2,000,000 pending atom labels.
     /// Serialization additionally bounds the input to 2,000,000 combined
-    /// atom/bond slots and 50,000,000 prospective candidate atom/edge visits,
-    /// retaining only the best candidate. Exceeding a bound returns
+    /// atom/bond slots and an input complexity score `2*n*(n+2*m)` of at most
+    /// 50,000,000, where `n` and `m` are the live atom and bond counts. This
+    /// preflight guard is separate from the metered labeling work. Exceeding a bound returns
     /// [`MolWriteErrorKind::ResourceLimit`] without a partial canonical result.
     pub fn write_canonical(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_canonical_smiles(molecule)

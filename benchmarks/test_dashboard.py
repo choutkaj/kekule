@@ -223,6 +223,16 @@ class DashboardTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'invalid'):
             self.load()
 
+    def test_smiles_text_contract_does_not_relabel_historical_identity_results(self):
+        panel = self.root / 'smiles-text.json'
+        panel.write_text('{"version": 1}\n')
+        contracts = dashboard.feature_contracts(self.root)
+        self.assertEqual(set(contracts), {'io.smiles.text.' + mode for mode in ('write', 'canonical', 'isomeric')})
+        self.assertEqual(self.load()['results'][0]['coverage'], 'sampled')
+        panel.write_text('{"version": 2}\n')
+        self.assertNotEqual(contracts, dashboard.feature_contracts(self.root))
+        self.assertEqual(self.load()['results'][0]['coverage'], 'sampled')
+
     def test_reference_identity_and_contract_mismatches_are_rejected(self):
         self.report['results'][0]['golden'] = dict(self.golden, dataset='wrong')
         with self.assertRaisesRegex(ValueError, 'identity mismatch'):

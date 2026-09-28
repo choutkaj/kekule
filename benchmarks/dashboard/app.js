@@ -12,6 +12,12 @@ const outcomes = ["agree", "disagree", "error"];
 let active = 0;
 const current = () => data.runs[active];
 const index = () => new Map(current().results.map(row => [`${row.dataset}/${row.feature}`, row]));
+function featureLabel(feature) {
+  const text = feature.match(/^io\.smiles\.text\.(write|canonical|isomeric)$/);
+  const identity = feature.match(/^io\.smiles\.(write|canonical|isomeric)$/);
+  const mode = text?.[1] || identity?.[1];
+  return mode ? `${text ? "SMILES" : "SMILES identity"} · ${mode === "write" ? "ordinary" : mode}` : feature;
+}
 function segments(container, counts, classes, total) {
   container.replaceChildren();
   counts.forEach((value, i) => {
@@ -40,8 +46,9 @@ function renderMatrix() {
   }
   $("matrix").tHead.replaceChildren(header);
   const body = $("matrix").tBodies[0]; body.replaceChildren();
-  for (const feature of data.catalog.features.filter(name => name.includes($("search").value.toLowerCase().trim()))) {
-    const tr = node("tr"); const label = node("th", "feature-label", feature);
+  for (const feature of data.catalog.features.filter(name => `${name} ${featureLabel(name)}`.toLowerCase().includes($("search").value.toLowerCase().trim()))) {
+    const tr = node("tr"); const label = node("th", "feature-label", featureLabel(feature));
+    label.title = feature;
     label.scope = "row"; tr.append(label);
     for (const dataset of data.catalog.datasets) {
       const key = `${dataset.id}/${feature}`; const row = rows.get(key);

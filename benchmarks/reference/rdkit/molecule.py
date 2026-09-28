@@ -223,8 +223,14 @@ def writer_value(feature, source):
             params = Chem.SmilesWriteParams()
             params.canonical = True
             params.doIsomericSmiles = True
+            text_comparison = feature.startswith('io.smiles.text.')
+            if text_comparison:
+                from pathlib import Path
+                contract = json.loads((Path(__file__).resolve().parents[2] / 'smiles-text.json').read_text())
+                for key, value in contract['modes'][feature.rsplit('.', 1)[1]].items():
+                    setattr(params, key, value)
             outputs.append({'record_index': index, 'status': 'ok', 'title': title,
-                            'identity': Chem.MolToCXSmiles(mol, params, Chem.CXSmilesFields.CX_ALL)})
+                            'smiles' if text_comparison else 'identity': Chem.MolToCXSmiles(mol, params, Chem.CXSmilesFields.CX_ALL)})
         return {'records': outputs}
     # Compare all parsed molecular properties and coordinates. Do not synthesize
     # zero coordinates or copy a title from the input into the writer result.

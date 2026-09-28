@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "contract_sha256": "001d6223e64a1c7b2e3466872f3f8dc34d19d5b9ce5716a8a8203eda51448050",
+  "dataset": "pdb-1000",
+  "feature": "io.smiles.text.isomeric",
+  "input_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171",
+  "sha256": "9a95e7b46d4aaa15a8c3670a600aecb02b2a30132a34f95668425b04314313c5",
+  "reference": null,
+  "reference_code_sha256": "e41f02040a111a729cf9bcfb5999f0a68bb8b63f8a355c7673d5d917d0d8a93c",
+  "origin": "independent generation",
+  "cases": 1000
+}

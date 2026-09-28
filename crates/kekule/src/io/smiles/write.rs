@@ -298,31 +298,6 @@ fn validate_isomeric_double_bond_endpoint(
     Ok(())
 }
 
-pub(super) fn smiles_connected_components(
-    mol: &Molecule,
-) -> std::result::Result<Vec<Vec<AtomId>>, MolWriteError> {
-    let mut components = Vec::new();
-    let mut visited = BTreeSet::new();
-    for start in mol.atom_ids() {
-        if !visited.insert(start) {
-            continue;
-        }
-        let mut component = Vec::new();
-        let mut stack = vec![start];
-        while let Some(atom) = stack.pop() {
-            component.push(atom);
-            for (_, _, neighbor) in smiles_incident_bonds(mol, atom)? {
-                if visited.insert(neighbor) {
-                    stack.push(neighbor);
-                }
-            }
-        }
-        component.sort();
-        components.push(component);
-    }
-    Ok(components)
-}
-
 pub(super) fn collect_smiles_tree<F>(
     mol: &Molecule,
     atom_id: AtomId,
@@ -438,6 +413,7 @@ fn compute_smiles_subtree_sizes(
 pub(super) struct SmilesStereoWriteContext {
     tetrahedral: BTreeMap<AtomId, TetrahedralSmilesState>,
     directional: BTreeMap<BondId, DirectionalSmilesConstraint>,
+    group_references: BTreeSet<AtomId>,
 }
 
 #[derive(Debug, Clone)]
@@ -506,6 +482,22 @@ impl SmilesStereoWriteContext {
         Ok(Self {
             tetrahedral,
             directional,
+            group_references: mol
+                .stereo_groups()
+                .filter(|(_, group)| {
+                    matches!(group.kind, StereoGroupKind::And | StereoGroupKind::Or)
+                })
+                .filter_map(|(_, group)| {
+                    group
+                        .members
+                        .iter()
+                        .filter_map(|id| match &mol.stereo_element(*id).ok()?.kind {
+                            StereoElementKind::Tetrahedral(value) => Some(value.center),
+                            _ => None,
+                        })
+                        .min_by_key(|atom| rank(*atom))
+                })
+                .collect(),
         })
     }
 
@@ -674,10 +666,23 @@ fn canonical_directional_constraint(
 }
 
 fn solve_directional_constraints(
+    mol: &Molecule,
     constraints: BTreeMap<BondId, DirectionalBondConstraints>,
+    rank: &impl Fn(AtomId) -> usize,
 ) -> std::result::Result<BTreeMap<BondId, DirectionalSmilesConstraint>, MolWriteError> {
     let mut assigned = BTreeMap::new();
-    for (&seed, initial) in &constraints {
+    // Independent constraint components can meet at a substituted alkene.
+    // Their relative phases affect whether redundant marks are compatible, so
+    // choose seeds by canonical endpoints, never by source bond numbering.
+    let mut seeds = constraints.keys().copied().collect::<Vec<_>>();
+    seeds.sort_by_key(|id| {
+        let bond = mol.bond(*id).expect("directional bond is live");
+        let left = rank(bond.a());
+        let right = rank(bond.b());
+        (left.min(right), left.max(right))
+    });
+    for seed in seeds {
+        let initial = &constraints[&seed];
         if assigned.contains_key(&seed) {
             continue;
         }
@@ -790,10 +795,37 @@ fn choose_directional_bonds(
                 &mut constraints,
             )?;
         }
-        let result = solve_directional_constraints(constraints).and_then(|directional| {
-            validate_directional_projection(mol, &directional)?;
-            Ok(directional)
-        });
+        // Two marked substituents at one alkene endpoint are redundant only
+        // when their outward directions are opposite. Couple their phases so
+        // emission cannot independently flip them into contradictory marks.
+        for value in &stereo {
+            for endpoint in [value.left, value.right] {
+                let marked = mol
+                    .incident_bonds(endpoint)
+                    .expect("stereo endpoint is live")
+                    .filter_map(|(id, _)| constraints.contains_key(&id).then_some(id))
+                    .collect::<Vec<_>>();
+                if let [left, right] = marked.as_slice() {
+                    let opposite = (constraints[left].preferred.endpoint == endpoint)
+                        == (constraints[right].preferred.endpoint == endpoint);
+                    constraints
+                        .get_mut(left)
+                        .unwrap()
+                        .neighbors
+                        .push((*right, opposite));
+                    constraints
+                        .get_mut(right)
+                        .unwrap()
+                        .neighbors
+                        .push((*left, opposite));
+                }
+            }
+        }
+        let result =
+            solve_directional_constraints(mol, constraints, rank).and_then(|directional| {
+                validate_directional_projection(mol, &directional)?;
+                Ok(directional)
+            });
         let error = match result {
             Ok(directional) => return Ok(directional),
             Err(error) => error,
@@ -964,7 +996,7 @@ pub(super) fn write_smiles_component(
     plan: &SmilesWritePlan,
     stereo: Option<&SmilesStereoWriteContext>,
     atom_style: CanonicalAtomStyle,
-    canonical_groups: bool,
+    canonical: bool,
     order_children: impl Fn(AtomId, &mut Vec<(BondId, SmilesBondOrder, AtomId)>) -> Option<usize>,
 ) -> std::result::Result<Emission, MolWriteError> {
     enum Action {
@@ -984,12 +1016,26 @@ pub(super) fn write_smiles_component(
 
     let mut out = String::new();
     let mut atom_order = Vec::new();
+    // Stereo normalization and actual emission must use the same carrier frame.
+    let ordered_children = |atom, parent| -> std::result::Result<_, MolWriteError> {
+        let mut children = smiles_incident_bonds_for_style(mol, atom, atom_style)?
+            .into_iter()
+            .filter(|(bond, _, other)| plan.tree_bonds.contains(bond) && Some(*other) != parent)
+            .collect::<Vec<_>>();
+        let main = order_children(atom, &mut children);
+        Ok((children, main))
+    };
     let mut group_inversions = BTreeMap::new();
     let grouped_centers: BTreeMap<_, _> = mol
         .stereo_elements()
         .filter_map(|(_, e)| {
             let group = e.group?;
-            if mol.stereo_group(group).ok()?.kind == StereoGroupKind::Absolute {
+            if mol
+                .stereo_group(group)
+                .expect("validated stereo group is live")
+                .kind
+                == StereoGroupKind::Absolute
+            {
                 return None;
             }
             if let StereoElementKind::Tetrahedral(s) = &e.kind {
@@ -999,6 +1045,35 @@ pub(super) fn write_smiles_component(
             }
         })
         .collect();
+    if canonical {
+        if let Some(context) = stereo.filter(|context| !context.group_references.is_empty()) {
+            // Normalize the lowest-ranked group member in its emitted carrier
+            // frame, even when traversal reaches another member first.
+            let mut pending = vec![(atom_id, None)];
+            while let Some((atom, parent)) = pending.pop() {
+                let (children, main) = ordered_children(atom, parent)?;
+                if context.group_references.contains(&atom) {
+                    if let Some(state) = context.atom_chirality(
+                        atom,
+                        parent,
+                        plan.closures.get(&atom).map(Vec::as_slice),
+                        &children,
+                        main,
+                    ) {
+                        group_inversions.insert(
+                            grouped_centers[&atom],
+                            state?.orientation == TetrahedralOrientation::CounterClockwise,
+                        );
+                    }
+                }
+                pending.extend(
+                    children
+                        .into_iter()
+                        .map(|(_, _, other)| (other, Some(atom))),
+                );
+            }
+        }
+    }
     let mut phases = BTreeMap::new();
     let mut open_rings = BTreeMap::new();
     let mut available_rings = (0..=99u64).collect::<BTreeSet<_>>();
@@ -1033,25 +1108,28 @@ pub(super) fn write_smiles_component(
                     .atom(atom)
                     .map_err(|error| MolWriteError::new(error.to_string()))?;
                 let closures = plan.closures.get(&atom).map(Vec::as_slice);
-                let mut children = smiles_incident_bonds_for_style(mol, atom, atom_style)?
-                    .into_iter()
-                    .filter(|(bond_id, _, neighbor)| {
-                        plan.tree_bonds.contains(bond_id) && Some(*neighbor) != parent
-                    })
-                    .collect::<Vec<_>>();
-                let main_child_index = order_children(atom, &mut children);
+                let (children, main_child_index) = ordered_children(atom, parent)?;
                 atom_order.push(atom);
                 let mut chirality = stereo
                     .and_then(|context| {
                         context.atom_chirality(atom, parent, closures, &children, main_child_index)
                     })
                     .transpose()?;
-                if canonical_groups {
+                if canonical {
                     if let (Some(group), Some(state)) = (grouped_centers.get(&atom), &mut chirality)
                     {
-                        let invert = *group_inversions
-                            .entry(*group)
-                            .or_insert(state.orientation == TetrahedralOrientation::Clockwise);
+                        // The legacy r relationship has distinct semantics
+                        // from RDKit's AND/OR groups. Keep its existing emitted
+                        // representative; do not reinterpret it as absolute.
+                        let invert = if mol.stereo_group(*group).expect("group is live").kind
+                            == StereoGroupKind::Relative
+                        {
+                            *group_inversions
+                                .entry(*group)
+                                .or_insert(state.orientation == TetrahedralOrientation::Clockwise)
+                        } else {
+                            group_inversions[group]
+                        };
                         if invert {
                             state.orientation = state.orientation.inverted();
                         }
@@ -1066,6 +1144,7 @@ pub(super) fn write_smiles_component(
                     chirality.is_some_and(|state| state.force_hydrogen),
                 )?);
                 if let Some(closures) = closures {
+                    let mut released = Vec::new();
                     for closure in closures {
                         let closure_order = match atom_style {
                             CanonicalAtomStyle::Aromatic => closure.order,
@@ -1075,26 +1154,33 @@ pub(super) fn write_smiles_component(
                                     .order,
                             )?,
                         };
-                        let directional = stereo
-                            .map(|context| {
-                                context.directional_bond(
-                                    closure.bond,
-                                    atom,
-                                    closure.other,
-                                    &mut phases,
-                                )
-                            })
-                            .transpose()?
-                            .flatten();
-                        out.push_str(smiles_bond_between_with_direction(
-                            mol,
-                            closure_order,
-                            atom,
-                            closure.other,
-                            directional,
-                        )?);
+                        let closing = open_rings.contains_key(&closure.bond);
+                        if !canonical || closing {
+                            let directional = stereo
+                                .map(|context| {
+                                    context.directional_bond(
+                                        closure.bond,
+                                        atom,
+                                        closure.other,
+                                        &mut phases,
+                                    )
+                                })
+                                .transpose()?
+                                .flatten();
+                            out.push_str(smiles_bond_between_with_direction(
+                                mol,
+                                closure_order,
+                                atom,
+                                closure.other,
+                                directional,
+                            )?);
+                        }
                         let number = if let Some(number) = open_rings.remove(&closure.bond) {
-                            available_rings.insert(number);
+                            if canonical {
+                                released.push(number);
+                            } else {
+                                available_rings.insert(number);
+                            }
                             number
                         } else {
                             let number = available_rings
@@ -1113,6 +1199,9 @@ pub(super) fn write_smiles_component(
                         };
                         out.push_str(&smiles_ring_number(number));
                     }
+                    // Canonical spelling delays reuse until the next atom;
+                    // source-order spelling returns labels immediately above.
+                    available_rings.extend(released);
                 }
 
                 if let Some(index) = main_child_index {

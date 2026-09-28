@@ -36,6 +36,9 @@ const context = {document, window: {}, Blob, Date,
   URL: {createObjectURL(blob) { download = blob; return 'blob:test'; }, revokeObjectURL() {}},
   setTimeout(action, delay) { timers.push({action, delay}); }};
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'dashboard/app.js'), 'utf8'), context);
+assert.equal(vm.runInNewContext('featureLabel("io.smiles.canonical")', context), 'SMILES identity · canonical');
+assert.equal(vm.runInNewContext('featureLabel("io.smiles.text.canonical")', context), 'SMILES · canonical');
+assert.equal(vm.runInNewContext('featureLabel("io.smiles.parse")', context), 'io.smiles.parse');
 assert.equal(elements.run.disabled, true);
 assert.equal(elements.download.disabled, true);
 assert.match(elements.provenance.textContent, /No benchmark runs/);
