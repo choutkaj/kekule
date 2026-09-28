@@ -1,12 +1,12 @@
 {
   "schema": 2,
-  "contract_sha256": "55137d7e199da4baeb425d7172467b7b5b8f0efbe0e45c5b8feca1077c546df7",
+  "contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
   "dataset": "pdb-1000",
   "feature": "chem.hydrogen-transforms",
   "input_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171",
   "sha256": "703d8538a2474b86dc4f0f4fb1cf4e2614f9f82d1616ee1e243be9b1d3540df9",
   "reference": null,
   "reference_code_sha256": null,
-  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded.",
+  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded. Compatibility audit 2026-09-28: contract 55137d7e199da4baeb425d7172467b7b5b8f0efbe0e45c5b8feca1077c546df7 to 6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758; only radical/spin field semantics changed; every payload row was checked and contains none of those fields. Compressed payload, source lock and original generator provenance are unchanged.",
   "cases": 1000
 }

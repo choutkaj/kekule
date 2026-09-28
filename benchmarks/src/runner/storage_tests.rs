@@ -215,6 +215,82 @@ impl Fixture {
 }
 
 #[test]
+fn writer_interpreter_configuration_preserves_explicit_overrides() {
+    let fixture = Fixture::new();
+    let configuration = fixture.0.join(".writer-python");
+    assert_eq!(
+        resolve_writer_python(None, None, &configuration),
+        PathBuf::from("python")
+    );
+    fs::write(&configuration, "  \r\n").unwrap();
+    assert_eq!(
+        resolve_writer_python(None, None, &configuration),
+        PathBuf::from("python")
+    );
+    fs::write(&configuration, " C:/reference environment/python.exe\r\n").unwrap();
+    assert_eq!(
+        resolve_writer_python(None, None, &configuration),
+        PathBuf::from("C:/reference environment/python.exe")
+    );
+    assert_eq!(
+        resolve_writer_python(None, Some("environment-python".into()), &configuration),
+        PathBuf::from("environment-python")
+    );
+    assert_eq!(
+        resolve_writer_python(
+            Some("explicit-python".into()),
+            Some("environment-python".into()),
+            &configuration
+        ),
+        PathBuf::from("explicit-python")
+    );
+}
+
+#[test]
+fn active_catalogue_manifests_match_every_registered_contract_and_source_lock() {
+    // Bulk payloads stay local, but their small manifests must never be left
+    // behind when an observation contract changes. This check also runs in CI.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let goldens = root.join("goldens");
+    for entry in fs::read_dir(&goldens).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if entry.file_type().unwrap().is_dir() {
+            assert!(
+                DATASETS.contains(&name.to_str().unwrap()),
+                "unexpected reference set: {}",
+                entry.path().display()
+            );
+        }
+    }
+    for dataset in DATASETS {
+        let lock = fs::read_to_string(root.join("corpora").join(dataset).join("sources.lock.json"))
+            .unwrap();
+        for feature in FEATURES {
+            let path = goldens
+                .join(dataset)
+                .join(format!("{feature}.jsonl.meta.json"));
+            let metadata: Metadata = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(metadata.schema, 2, "{}", path.display());
+            assert_eq!(metadata.dataset, *dataset, "{}", path.display());
+            assert_eq!(metadata.feature, *feature, "{}", path.display());
+            assert_eq!(
+                metadata.contract_sha256,
+                stored::feature_contract_hash(feature),
+                "{}",
+                path.display()
+            );
+            assert_eq!(
+                metadata.input_lock_sha256,
+                stored::text_hash(&lock),
+                "{}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
 fn reference_fingerprint_covers_source_radical_semantics() {
     let fixture = Fixture::new();
     for path in [
@@ -369,7 +445,7 @@ fn query_contract_rejects_count_only_goldens_without_invalidating_other_features
     let Err(error) = fixture.load("query.smarts") else {
         panic!("accepted parser-only golden")
     };
-    assert!(error.to_string().contains("stale schema, contract"));
+    assert!(error.to_string().contains("contract_sha256: stored"));
 }
 
 #[test]
@@ -631,7 +707,25 @@ fn invalid_metadata_checksums_and_observation_fields_are_rejected() {
         let mut meta: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         meta[field] = value;
         fs::write(path, serde_json::to_vec(&meta).unwrap()).unwrap();
-        assert!(fixture.load("io.smiles.parse").is_err(), "{field}");
+        let error = fixture
+            .load("io.smiles.parse")
+            .err()
+            .expect("invalid manifest must fail")
+            .to_string();
+        if field == "sha256" {
+            assert!(error.contains("checksum differs"), "{error}");
+        } else {
+            assert!(error.contains(&format!("{field}: stored")), "{error}");
+            assert!(error.contains("required"), "{error}");
+        }
+        assert!(
+            error.contains("--goldens TEMPORARY_STAGING_DIRECTORY"),
+            "{error}"
+        );
+        assert!(
+            error.contains("Normal comparisons keep the same golden directory"),
+            "{error}"
+        );
     }
     for (field, value) in [
         ("dataset", json!("other")),

@@ -270,11 +270,28 @@ struct Options {
 
 impl Options {
     fn writer_python(&self) -> PathBuf {
-        self.python
-            .clone()
-            .or_else(|| env::var_os("KEKULE_WRITER_PYTHON").map(PathBuf::from))
-            .unwrap_or_else(|| "python".into())
+        resolve_writer_python(
+            self.python.clone(),
+            env::var_os("KEKULE_WRITER_PYTHON").map(PathBuf::from),
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join(".writer-python"),
+        )
     }
+}
+
+fn resolve_writer_python(
+    explicit: Option<PathBuf>,
+    environment: Option<PathBuf>,
+    configuration: &Path,
+) -> PathBuf {
+    explicit
+        .or(environment)
+        .or_else(|| {
+            fs::read_to_string(configuration)
+                .ok()
+                .map(|value| PathBuf::from(value.trim()))
+                .filter(|path| !path.as_os_str().is_empty())
+        })
+        .unwrap_or_else(|| "python".into())
 }
 
 fn options(args: &[String]) -> Result<Options, Box<dyn Error>> {
