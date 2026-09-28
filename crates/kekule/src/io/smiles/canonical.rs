@@ -1,51 +1,49 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::algorithms::{
-    allowed_valences, canonical_atom_ranking, rdkit_default_valence, CanonicalAtomRanking,
-};
+use crate::algorithms::{allowed_valences, rdkit_default_valence};
 use crate::core::Molecule;
 use crate::core::*;
 use crate::io::MolWriteError;
 
 use super::write::{
-    collect_smiles_tree, smiles_atom, smiles_atom_requires_brackets, smiles_connected_components,
-    smiles_incident_bonds_for_style, smiles_ring_closures, validate_smiles_bracket_radical,
-    validate_smiles_writeable, write_smiles_component, CanonicalAtomStyle, SmilesBondOrder,
-    SmilesStereoWriteContext, SmilesWritePlan, StereoWriteMode,
+    smiles_atom, smiles_atom_requires_brackets, smiles_incident_bonds_for_style,
+    smiles_ring_closures, validate_smiles_bracket_radical, validate_smiles_writeable,
+    write_smiles_component, CanonicalAtomStyle, SmilesBondOrder, SmilesStereoWriteContext,
+    SmilesWritePlan, StereoWriteMode,
 };
 
 mod labeling;
 use super::emit::Emission;
 use labeling::CanonicalOrder;
 
-const MAX_CANDIDATE_VISITS: usize = 50_000_000;
+const MAX_INPUT_COMPLEXITY: usize = 50_000_000;
 const MAX_GRAPH_SLOTS: usize = 2_000_000;
 
 pub fn write_canonical_smiles(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
-    write_canonical_smiles_with_limits(molecule, MAX_CANDIDATE_VISITS, MAX_GRAPH_SLOTS)
+    write_canonical_smiles_with_limits(molecule, MAX_INPUT_COMPLEXITY, MAX_GRAPH_SLOTS)
 }
 
 fn write_canonical_smiles_with_limits(
     molecule: &Molecule,
-    max_candidate_visits: usize,
+    max_input_complexity: usize,
     max_graph_slots: usize,
 ) -> std::result::Result<String, MolWriteError> {
-    write_canonical_emission_with_limits(molecule, max_candidate_visits, max_graph_slots)?.render()
+    write_canonical_emission_with_limits(molecule, max_input_complexity, max_graph_slots)?.render()
 }
 
 pub(super) fn write_canonical_emission(
     molecule: &Molecule,
 ) -> std::result::Result<Emission, MolWriteError> {
-    write_canonical_emission_with_limits(molecule, MAX_CANDIDATE_VISITS, MAX_GRAPH_SLOTS)
+    write_canonical_emission_with_limits(molecule, MAX_INPUT_COMPLEXITY, MAX_GRAPH_SLOTS)
 }
 
 fn write_canonical_emission_with_limits(
     molecule: &Molecule,
-    max_candidate_visits: usize,
+    max_input_complexity: usize,
     max_graph_slots: usize,
 ) -> std::result::Result<Emission, MolWriteError> {
-    // Check before cloning, ranking or constructing any candidate. A sparse
-    // graph can have many deleted slots, so live atom counts alone do not bound
+    // Check before cloning or ranking. A sparse graph can have many deleted
+    // slots, so live atom counts alone do not bound
     // the dense scratch arrays used by ranking and labeling.
     let slots = molecule
         .graph
@@ -57,49 +55,34 @@ fn write_canonical_emission_with_limits(
         )));
     }
     let atoms = molecule.atom_count();
-    let candidate_visits = molecule
+    // This quadratic input-size guard bounds admission to canonicalization,
+    // not its actual search work. Labeling separately meters refinement and
+    // search states. Keep the established 2*n*(n+2*m) admission threshold.
+    let input_complexity = molecule
         .bond_count()
         .checked_mul(2)
         .and_then(|edges| edges.checked_add(atoms))
         .and_then(|visits| visits.checked_mul(atoms))
         .and_then(|visits| visits.checked_mul(2));
-    if candidate_visits.is_none_or(|visits| visits > max_candidate_visits) {
+    if input_complexity.is_none_or(|score| score > max_input_complexity) {
         return Err(MolWriteError::resource_limit(format!(
-            "canonical SMILES exceeds the candidate traversal limit ({max_candidate_visits} atom/edge visits)"
+            "canonical SMILES exceeds the input complexity limit ({max_input_complexity})"
         )));
     }
     validate_smiles_writeable(molecule, StereoWriteMode::Encode)?;
     let normalized = canonical_hydrogen_graph(molecule)?;
-    let mol = &normalized;
-    let mut components = Vec::new();
-    for component in smiles_connected_components(mol)? {
-        let atom_style = canonical_atom_style(mol);
-        let projected = canonical_projection_graph(mol, atom_style)?;
-        let mol = &projected;
-        let ranking = canonical_atom_ranking(mol);
-        let order = CanonicalOrder::new(mol, &ranking, atom_style)?;
-        let stereo = SmilesStereoWriteContext::new(mol, |atom| canonical_label(&order, atom))?;
-        let mut best = None;
-        for preference in [
-            CanonicalBondTraversal::HighOrderFirst,
-            CanonicalBondTraversal::LowOrderFirst,
-        ] {
-            for root in &component {
-                let candidate = write_canonical_smiles_component(
-                    mol, *root, &order, preference, atom_style, &stereo,
-                )?;
-                let key = canonical_smiles_candidate_key(candidate.render()?);
-                if best.as_ref().is_none_or(|(best, _)| key < *best) {
-                    best = Some((key, candidate));
-                }
-            }
-        }
-        if let Some((_, candidate)) = best {
-            components.push(candidate);
-        }
-    }
-    // A published Molecule is connected; topology writing orders occurrences.
-    Ok(Emission::join(components))
+    let atom_style = canonical_atom_style(&normalized);
+    let projected = canonical_projection_graph(&normalized, atom_style)?;
+    let mol = &projected;
+    let order = CanonicalOrder::new(mol, atom_style)?;
+    let stereo = SmilesStereoWriteContext::new(mol, |atom| canonical_label(&order, atom))?;
+    // A Molecule is nonempty and connected; topology writing owns component
+    // ordering. Like RDKit, start this traversal at the least-ranked atom.
+    let root = mol
+        .atom_ids()
+        .min_by_key(|atom| order.rank(*atom))
+        .expect("canonical projection preserves a nonempty molecule");
+    write_canonical_smiles_component(mol, root, &order, atom_style, &stereo)
 }
 
 fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, MolWriteError> {
@@ -153,21 +136,6 @@ fn restore_projection_aromaticity(projected: &mut Molecule, original: &Perceptio
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CanonicalBondTraversal {
-    HighOrderFirst,
-    LowOrderFirst,
-}
-
-impl CanonicalBondTraversal {
-    fn order_key(self, order: SmilesBondOrder) -> u8 {
-        match self {
-            Self::HighOrderFirst => reverse_bond_order_code(order),
-            Self::LowOrderFirst => bond_order_code(order),
-        }
-    }
-}
-
 fn canonical_atom_style(mol: &Molecule) -> CanonicalAtomStyle {
     if mol
         .stereo_elements()
@@ -187,72 +155,26 @@ fn canonical_atom_style(mol: &Molecule) -> CanonicalAtomStyle {
     }
 }
 
-fn canonical_smiles_candidate_key(candidate: String) -> (usize, usize, usize, String) {
-    (
-        candidate.matches('(').count(),
-        explicit_ring_bond_marker_count(&candidate),
-        leading_ring_label_count(&candidate),
-        candidate,
-    )
-}
-
-fn leading_ring_label_count(candidate: &str) -> usize {
-    let bytes = candidate.as_bytes();
-    let mut index = smiles_atom_token_end(candidate);
-    let mut count = 0usize;
-    while let Some(byte) = bytes.get(index) {
-        if byte.is_ascii_digit() {
-            count += 1;
-            index += 1;
-        } else if *byte == b'%' && bytes.get(index + 1).is_some_and(u8::is_ascii_digit) {
-            count += 1;
-            index += 3;
-        } else {
-            break;
-        }
-    }
-    count
-}
-
-fn smiles_atom_token_end(candidate: &str) -> usize {
-    let bytes = candidate.as_bytes();
-    if bytes.first() == Some(&b'[') {
-        return bytes
-            .iter()
-            .position(|byte| *byte == b']')
-            .map(|index| index + 1)
-            .unwrap_or(candidate.len());
-    }
-    if matches!(bytes.first(), Some(b'B' | b'C')) && matches!(bytes.get(1), Some(b'l' | b'r')) {
-        2
-    } else {
-        bytes.first().map(|_| 1).unwrap_or(0)
-    }
-}
-
-fn explicit_ring_bond_marker_count(candidate: &str) -> usize {
-    let bytes = candidate.as_bytes();
-    bytes
-        .windows(2)
-        .filter(|pair| matches!(pair[0], b'-' | b'=' | b'#' | b':') && pair[1].is_ascii_digit())
-        .count()
-        + bytes
-            .windows(2)
-            .filter(|pair| matches!(pair[0], b'-' | b'=' | b'#' | b':') && pair[1] == b'%')
-            .count()
-}
-
 fn write_canonical_smiles_component(
     mol: &Molecule,
     root: AtomId,
     ranking: &CanonicalOrder,
-    preference: CanonicalBondTraversal,
     atom_style: CanonicalAtomStyle,
     stereo: &SmilesStereoWriteContext,
 ) -> std::result::Result<Emission, MolWriteError> {
-    let plan = plan_canonical_smiles_component(mol, root, ranking, preference, atom_style)?;
-    write_canonical_smiles_component_with_plan(
-        mol, root, &plan, ranking, preference, atom_style, stereo,
+    let rings = crate::algorithms::compute_ring_membership(mol);
+    let plan = plan_canonical_smiles_component(mol, root, ranking, atom_style, &rings)?;
+    write_smiles_component(
+        mol,
+        root,
+        &plan,
+        Some(stereo),
+        atom_style,
+        true,
+        |_, children| {
+            sort_canonical_smiles_neighbors(children, ranking, &rings);
+            children.len().checked_sub(1)
+        },
     )
 }
 
@@ -260,52 +182,53 @@ fn plan_canonical_smiles_component(
     mol: &Molecule,
     root: AtomId,
     ranking: &CanonicalOrder,
-    preference: CanonicalBondTraversal,
     atom_style: CanonicalAtomStyle,
+    rings: &RingMembership,
 ) -> std::result::Result<SmilesWritePlan, MolWriteError> {
-    let mut visited = BTreeSet::<AtomId>::new();
-    let mut tree_bonds = BTreeSet::<BondId>::new();
-    let mut ring_bonds = BTreeMap::<BondId, (AtomId, AtomId, SmilesBondOrder)>::new();
-    collect_smiles_tree(
-        mol,
-        root,
-        None,
-        &mut visited,
-        &mut tree_bonds,
-        &mut ring_bonds,
-        |atom| canonical_smiles_incident_bonds(mol, atom, ranking, preference, atom_style),
-    )?;
-
-    let mut ring_bonds = ring_bonds
-        .into_iter()
-        .map(|(bond_id, (a, b, order))| {
-            let (first, second) = if ranking.rank(a) < ranking.rank(b) {
-                (a, b)
-            } else {
-                (b, a)
-            };
-            (bond_id, first, second, order)
-        })
-        .collect::<Vec<_>>();
-    ring_bonds.sort_by_key(|(_, first, second, order)| {
-        (
-            canonical_rank(ranking, *first),
-            canonical_rank(ranking, *second),
-            bond_order_code(*order),
-            canonical_label(ranking, *first),
-            canonical_label(ranking, *second),
-        )
-    });
-    let mut closures = smiles_ring_closures(ring_bonds);
-    for closures in closures.values_mut() {
-        closures.sort_by_key(|closure| {
-            (
-                canonical_rank(ranking, closure.other),
-                bond_order_code(closure.order),
-                canonical_label(ranking, closure.other),
-            )
-        });
+    // Record back edges in DFS discovery order. In particular, closures
+    // sharing their opening atom must follow when their far endpoints are
+    // encountered, not the ranks of those endpoints.
+    enum Action {
+        Enter(AtomId, Option<BondId>),
+        Edge(AtomId, BondId, SmilesBondOrder, AtomId),
+        Exit(AtomId),
     }
+    let mut visited = BTreeSet::new();
+    let mut active = BTreeSet::new();
+    let mut tree_bonds = BTreeSet::new();
+    let mut ring_bonds = Vec::new();
+    let mut actions = vec![Action::Enter(root, None)];
+    while let Some(action) = actions.pop() {
+        match action {
+            Action::Enter(atom, parent) => {
+                visited.insert(atom);
+                active.insert(atom);
+                let mut incident = smiles_incident_bonds_for_style(mol, atom, atom_style)?;
+                sort_canonical_smiles_neighbors(&mut incident, ranking, rings);
+                // Existing ancestors precede new continuations. Stable sorting
+                // preserves the bond-order/rank ordering within each class.
+                incident.sort_by_key(|(_, _, other)| !active.contains(other));
+                actions.push(Action::Exit(atom));
+                for (bond, order, other) in incident.into_iter().rev() {
+                    if Some(bond) != parent {
+                        actions.push(Action::Edge(atom, bond, order, other));
+                    }
+                }
+            }
+            Action::Edge(atom, bond, order, other) => {
+                if !visited.contains(&other) {
+                    tree_bonds.insert(bond);
+                    actions.push(Action::Enter(other, Some(bond)));
+                } else if active.contains(&other) {
+                    ring_bonds.push((bond, other, atom, order));
+                }
+            }
+            Action::Exit(atom) => {
+                active.remove(&atom);
+            }
+        }
+    }
+    let closures = smiles_ring_closures(ring_bonds);
 
     Ok(SmilesWritePlan {
         roots: vec![root],
@@ -315,69 +238,25 @@ fn plan_canonical_smiles_component(
     })
 }
 
-fn write_canonical_smiles_component_with_plan(
-    mol: &Molecule,
-    root: AtomId,
-    plan: &SmilesWritePlan,
+fn sort_canonical_smiles_neighbors(
+    neighbors: &mut [(BondId, SmilesBondOrder, AtomId)],
     ranking: &CanonicalOrder,
-    preference: CanonicalBondTraversal,
-    atom_style: CanonicalAtomStyle,
-    stereo: &SmilesStereoWriteContext,
-) -> std::result::Result<Emission, MolWriteError> {
-    write_smiles_component(
-        mol,
-        root,
-        plan,
-        Some(stereo),
-        atom_style,
-        true,
-        |atom, children| {
-            children.sort_by_key(|(_, order, child)| {
-                (
-                    !canonical_smiles_aromatic_continuation(mol, atom, *child, *order),
-                    canonical_rank(ranking, *child),
-                    canonical_smiles_atom_for_sort(mol, *child, atom_style),
-                    preference.order_key(*order),
-                    canonical_label(ranking, *child),
-                )
-            });
-            (!children.is_empty()).then_some(0)
-        },
-    )
-}
-
-fn canonical_smiles_aromatic_continuation(
-    mol: &Molecule,
-    left: AtomId,
-    right: AtomId,
-    order: SmilesBondOrder,
-) -> bool {
-    order == SmilesBondOrder::Aromatic
-        && mol.atom_is_aromatic(left).ok().flatten() == Some(true)
-        && mol.atom_is_aromatic(right).ok().flatten() == Some(true)
-}
-
-fn canonical_smiles_incident_bonds(
-    mol: &Molecule,
-    atom_id: AtomId,
-    ranking: &CanonicalOrder,
-    preference: CanonicalBondTraversal,
-    atom_style: CanonicalAtomStyle,
-) -> std::result::Result<Vec<(BondId, SmilesBondOrder, AtomId)>, MolWriteError> {
-    let mut incident = smiles_incident_bonds_for_style(mol, atom_id, atom_style)?;
-    incident.sort_by_key(|(_, order, atom)| {
+    rings: &RingMembership,
+) {
+    // Both tree planning and emission must use this order: acyclic branches
+    // precede ring continuations, whose higher bond orders precede lower ones.
+    // The last child is emitted as the main continuation.
+    neighbors.sort_by_key(|(bond, order, atom)| {
         (
-            canonical_rank(ranking, *atom),
-            canonical_smiles_atom_for_sort(mol, *atom, atom_style),
-            preference.order_key(*order),
-            canonical_label(ranking, *atom),
+            rings.bond_in_ring(*bond),
+            if rings.bond_in_ring(*bond) {
+                reverse_bond_order_code(*order)
+            } else {
+                0
+            },
+            ranking.rank(*atom),
         )
     });
-    Ok(incident)
-}
-
-fn canonical_rank(ranking: &CanonicalOrder, atom: AtomId) -> u32 {
-    ranking.rank(atom).0
 }
 
 fn canonical_label(ranking: &CanonicalOrder, atom: AtomId) -> usize {
@@ -415,7 +294,6 @@ fn canonical_smiles_atom_representation(
     atom: &Atom,
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<(Atom, bool, u8), MolWriteError> {
-    let normalized = atom.clone();
     let aromatic = mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true);
     let perceived_hydrogens = mol
         .inferred_hydrogens(atom_id)
@@ -431,7 +309,7 @@ fn canonical_smiles_atom_representation(
     let (mut payload, mut inferred_hydrogens) = canonical_smiles_atom_normalized(
         mol,
         atom_id,
-        &normalized,
+        atom,
         aromatic,
         inferred_hydrogens,
         matches!(atom_style, CanonicalAtomStyle::StoredKekule),
@@ -756,6 +634,19 @@ fn smiles_bond_valence_sum(
 mod resource_tests {
     use super::*;
     use crate::io::MolWriteErrorKind;
+
+    #[test]
+    fn canonical_input_complexity_accepts_the_boundary() {
+        let mut molecule = crate::smiles::to_molecules("CC").unwrap().pop().unwrap();
+        molecule.perceive().unwrap();
+        assert_eq!(
+            write_canonical_smiles_with_limits(&molecule, 16, usize::MAX).unwrap(),
+            "CC"
+        );
+        let error = write_canonical_smiles_with_limits(&molecule, 15, usize::MAX).unwrap_err();
+        assert_eq!(error.kind(), MolWriteErrorKind::ResourceLimit);
+        assert!(error.to_string().contains("input complexity"));
+    }
 
     #[test]
     fn canonical_export_checks_deleted_slots_before_dense_scratch_allocation() {

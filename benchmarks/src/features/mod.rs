@@ -11,11 +11,20 @@ mod strict;
 use descriptors::*;
 
 pub(crate) fn is_writer(feature: &str) -> bool {
-    feature.ends_with(".write") || matches!(feature, "io.smiles.canonical" | "io.smiles.isomeric")
+    !is_smiles_text(feature)
+        && (feature.ends_with(".write")
+            || matches!(feature, "io.smiles.canonical" | "io.smiles.isomeric"))
+}
+
+pub(crate) fn is_smiles_text(feature: &str) -> bool {
+    matches!(
+        feature,
+        "io.smiles.text.write" | "io.smiles.text.canonical" | "io.smiles.text.isomeric"
+    )
 }
 
 pub(crate) fn evaluate(feature: &str, input: &Input) -> Result<Value, Box<dyn Error>> {
-    if is_writer(feature) {
+    if is_writer(feature) || is_smiles_text(feature) {
         return strict::write(feature, input);
     }
     if feature.starts_with("io.smiles.")

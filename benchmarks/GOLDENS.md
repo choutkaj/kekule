@@ -1,7 +1,7 @@
 # Stored reference coverage
 
-The registry now contains 182 dataset/feature pairs: 26 features across seven
-datasets. The 78 bundled archives cover smoke, the 518-query RDKit corpus and
+The registry now contains 203 dataset/feature pairs: 29 features across seven
+datasets. The 87 bundled archives cover smoke, the 518-query RDKit corpus and
 the 50-file RDKit structure corpus. The latter supplies several representations
 of a small set of compounds; it is not a random sample of 50 independent molecules.
 Bulk inputs, full reference archives, reports and diagnostic outputs remain local.
@@ -13,6 +13,21 @@ Historical full-dataset archives below are not silently migrated or regenerated
 by comparison. An archive with an old contract is rejected; generate a fresh
 independent reference into a new directory or select the audited compatible
 archive explicitly with `--goldens` as described in `GUIDE.md`.
+
+## SMILES text references, 2026-09-28
+
+The three `io.smiles.text.*` features have independent RDKit 2026.03.3
+references for all seven datasets. Each mode covers all 100,000 PubChem and
+50,240 Enamine SMILES inputs and the eight applicable smoke records. Other
+source IDs remain explicitly not applicable. Reference failures are retained
+as errors. These are full reference inventories, not claims of full agreement.
+
+The 21 new manifests pin the exact text contract in
+[smiles-text.json](smiles-text.json), source locks, generator fingerprint and
+compressed payloads. The nine small-corpus payloads are bundled; bulk payloads
+remain local. Existing `io.smiles.*` identity references are unchanged. See
+[SMILES-VALIDATION.md](SMILES-VALIDATION.md) for the measured canonicalization
+improvement and remaining incompatibilities.
 
 ## Original five-dataset snapshot
 

@@ -23,6 +23,44 @@ fn compare(feature: &str, mut a: Value, mut b: Value) -> bool {
 }
 
 #[test]
+fn smiles_text_observes_unmodified_output_separately_from_identity() {
+    for mode in ["write", "canonical", "isomeric"] {
+        let feature = format!("io.smiles.text.{mode}");
+        assert!(!crate::features::is_writer(&feature));
+        let value = output(&feature, "input.smi", "CCO ethanol\nCC ethane");
+        crate::observation::validate(&feature, &value).unwrap();
+        assert_eq!(value["records"][0]["smiles"], "CCO");
+        assert_eq!(value["records"][0]["title"], "ethanol");
+        assert_eq!(value["records"][1]["record_index"], 1);
+        let mut other = value.clone();
+        other["records"][0]["smiles"] = json!("OCC");
+        assert!(!compare(&feature, value.clone(), other));
+        let mut missing = value.clone();
+        missing["records"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("smiles");
+        assert!(crate::observation::validate(&feature, &missing).is_err());
+        let mut empty = value;
+        empty["records"][0]["smiles"] = json!("");
+        assert!(crate::observation::validate(&feature, &empty).is_err());
+    }
+    let value = output(
+        "io.smiles.text.isomeric",
+        "input.smi",
+        "F[C@H](Cl)Br |r| example",
+    );
+    assert!(value["records"][0]["smiles"]
+        .as_str()
+        .unwrap()
+        .ends_with(" |r|"));
+    assert_eq!(value["records"][0]["title"], "example");
+    let mut different = value.clone();
+    different["records"][0]["smiles"] = json!("F[C@H](Cl)Br");
+    assert!(!compare("io.smiles.text.isomeric", value, different));
+}
+
+#[test]
 fn cip_sequence_descriptors_use_reference_spelling_without_losing_pseudoasymmetry() {
     for (source, label, ordinary) in [
         (r"C/C=C/1\CC[C@H](C)CC1", "z", "Z"),
