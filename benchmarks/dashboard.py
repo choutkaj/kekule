@@ -244,7 +244,7 @@ def encoded(data):
 
 
 def page(data):
-    template = (ROOT / 'dashboard' / 'index.html').read_text(encoding='utf-8')
+    template = (ROOT / 'dashboard' / 'page.html.template').read_text(encoding='utf-8')
     return (template.replace('/* DASHBOARD_CSS */', (ROOT / 'dashboard' / 'style.css').read_text(encoding='utf-8'))
             .replace('/* DASHBOARD_JS */', (ROOT / 'dashboard' / 'app.js').read_text(encoding='utf-8'))
             .replace('DASHBOARD_LIVE_SOURCE', ' file:' if data.get('live') else '')
@@ -291,9 +291,9 @@ def write_atomic(path, content):
 
 
 @contextmanager
-def refresh_lock(runs_dir):
-    runs_dir.mkdir(parents=True, exist_ok=True)
-    with (runs_dir / '.dashboard.lock').open('a+b') as lock:
+def refresh_lock(directory):
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / '.dashboard.lock').open('a+b') as lock:
         if os.name == 'nt':
             import msvcrt
             if lock.tell() == 0:
@@ -307,9 +307,14 @@ def refresh_lock(runs_dir):
         yield  # Closing the file releases the OS lock, including after exceptions.
 
 
+def dashboard_path(runs_dir):
+    return runs_dir.parent / 'dashboard' / 'index.html'
+
+
 def refresh(runs_dir, output=None, root=ROOT):
-    output = output or runs_dir / 'index.html'
-    with refresh_lock(runs_dir):
+    output = output or dashboard_path(runs_dir)
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    with refresh_lock(output.parent):
         data = discovered(runs_dir, root)
         write_atomic(output.with_name('dashboard-data.js'),
                      f'window.updateKekuleBenchmarks({encoded(data)});\n')
@@ -327,7 +332,7 @@ def main():
         require(not (args.reports and args.runs_dir), 'choose explicit reports or --runs-dir')
         runs_dir = args.runs_dir or ROOT / 'runs'
         output = args.output or (ROOT.parent / 'target/benchmark-dashboard/index.html'
-                                 if args.reports else runs_dir / 'index.html')
+                                 if args.reports else dashboard_path(runs_dir))
         require(output.suffix.lower() == '.html', 'output must be an .html file')
         require(output.resolve() not in {path.resolve() for path in args.reports},
                 'output must not replace an input report')

@@ -16,7 +16,7 @@ class Element {
   click() { this.events.click?.(); }
   remove() { this.parent.children = this.parent.children.filter(child => child !== this); }
 }
-const html = fs.readFileSync(path.join(__dirname, 'dashboard/index.html'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, 'dashboard/page.html.template'), 'utf8');
 const elements = Object.fromEntries([...html.matchAll(/id="([^"]+)"/g)].map(match => [match[1], new Element('div')]));
 elements.matrix.tHead = new Element('thead'); elements.matrix.tBodies = [new Element('tbody')];
 const catalog = {datasets: [{id: 'example', source_ids: 4, formats: ['SMILES'], description: 'Unit regression'}], features: ['io.smiles.parse']};

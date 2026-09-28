@@ -74,6 +74,7 @@ fn refresh(opts: &Options) -> Result<(), Box<dyn Error>> {
             command.arg("-3");
         }
         let output = command
+            .env("PYTHONIOENCODING", "utf-8")
             .arg(root.join("dashboard.py"))
             .arg("--runs-dir")
             .arg(&opts.runs_dir)
@@ -84,7 +85,7 @@ fn refresh(opts: &Options) -> Result<(), Box<dyn Error>> {
         if !output.stderr.is_empty() {
             eprint!("{}", String::from_utf8_lossy(&output.stderr));
         }
-        println!("Dashboard: {}", opts.runs_dir.join("index.html").display());
+        println!("Dashboard: {}", String::from_utf8(output.stdout)?.trim());
         return Ok(());
     }
     Err(boxed_error("Python 3.11+ is needed; set KEKULE_DASHBOARD_PYTHON or put its executable path in benchmarks/.dashboard-python"))
