@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "contract_sha256": "55137d7e199da4baeb425d7172467b7b5b8f0efbe0e45c5b8feca1077c546df7",
+  "contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
   "dataset": "pubchem-100k",
   "feature": "io.smiles.write",
   "input_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
@@ -10,6 +10,6 @@
     "version": "2026.03.3"
   },
   "reference_code_sha256": null,
-  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded.",
+  "origin": "Unchanged independent reference values imported from the previous storage; original generator fingerprint was not recorded. Compatibility audit 2026-09-28: contract 55137d7e199da4baeb425d7172467b7b5b8f0efbe0e45c5b8feca1077c546df7 to 6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758; only radical/spin field semantics changed; every payload row was checked and contains none of those fields. Compressed payload, source lock and original generator provenance are unchanged.",
   "cases": 100000
 }

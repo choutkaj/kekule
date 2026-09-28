@@ -1,6 +1,7 @@
 /target/
 /benchmarks/runs/
 /benchmarks/.dashboard-python
+/benchmarks/.writer-python
 **/*.rs.bk
 .DS_Store
 .idea/
@@ -34,7 +35,3 @@ tools/atomic-data/cache/
 !/benchmarks/corpora/rdkit-queries/data/
 !/benchmarks/corpora/rdkit-queries/data/**
 !/benchmarks/goldens/rdkit-queries/*.jsonl.gz
-!/benchmarks/goldens/legacy/query-smarts-v1/
-!/benchmarks/goldens/legacy/query-smarts-v1/*/
-!/benchmarks/goldens/legacy/query-smarts-v1/*/*.jsonl.meta.json
-!/benchmarks/goldens/legacy/query-smarts-v1/smoke/*.jsonl.gz

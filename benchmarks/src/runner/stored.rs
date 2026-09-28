@@ -107,7 +107,7 @@ impl GeneratedGoldens {
     pub(super) fn create(path: &Path) -> Result<Self, Box<dyn Error>> {
         if path.exists() || metadata_path(path).exists() {
             return Err(boxed_error(format!(
-                "stored goldens already exist: {}; choose a new --goldens directory",
+                "stored goldens already exist: {}; stage and audit replacements before updating the current reference set (see benchmarks/GUIDE.md)",
                 path.display()
             )));
         }
@@ -209,15 +209,31 @@ impl StoredGoldens {
     ) -> Result<Self, Box<dyn Error>> {
         let read = || -> Result<Self, Box<dyn Error>> {
             let metadata: Metadata = serde_json::from_reader(fs::File::open(metadata_path(path))?)?;
-            if metadata.schema != 2
-                || metadata.contract_sha256 != feature_contract_hash(feature)
-                || metadata.dataset != dataset
-                || metadata.feature != feature
-                || metadata.input_lock_sha256 != lock_hash
-            {
-                return Err(boxed_error(
-                    "golden manifest has stale schema, contract or input identity",
-                ));
+            let mut mismatches = Vec::new();
+            for (field, stored, required) in [
+                ("schema", metadata.schema.to_string(), "2".to_owned()),
+                (
+                    "contract_sha256",
+                    metadata.contract_sha256.clone(),
+                    feature_contract_hash(feature),
+                ),
+                ("dataset", metadata.dataset.clone(), dataset.to_owned()),
+                ("feature", metadata.feature.clone(), feature.to_owned()),
+                (
+                    "input_lock_sha256",
+                    metadata.input_lock_sha256.clone(),
+                    lock_hash.to_owned(),
+                ),
+            ] {
+                if stored != required {
+                    mismatches.push(format!("{field}: stored {stored:?}, required {required:?}"));
+                }
+            }
+            if !mismatches.is_empty() {
+                return Err(boxed_error(format!(
+                    "golden manifest is incompatible ({})",
+                    mismatches.join("; ")
+                )));
             }
             if file_hash(path)? != metadata.sha256 {
                 return Err(boxed_error("golden checksum differs from manifest"));
@@ -234,7 +250,10 @@ impl StoredGoldens {
             stored.advance()?;
             Ok(stored)
         };
-        read().map_err(|error| boxed_error(format!("cannot load stored goldens {}: {error}\nGenerate them explicitly with cargo benchmark generate --feature {feature} --dataset {dataset}",path.display())))
+        read().map_err(|error| boxed_error(format!(
+            "cannot load stored goldens {}: {error}\nRepair the current reference set by generating an independent replacement in temporary staging:\n  cargo benchmark generate --feature {feature} --dataset {dataset} --python PATH_TO_REFERENCE_PYTHON --goldens TEMPORARY_STAGING_DIRECTORY\nAudit the replacement, publish its archive and manifest into the current golden directory, then remove staging. Normal comparisons keep the same golden directory. See benchmarks/GUIDE.md for reference maintenance.",
+            path.display()
+        )))
     }
     fn advance(&mut self) -> Result<(), Box<dyn Error>> {
         let mut line = String::new();
