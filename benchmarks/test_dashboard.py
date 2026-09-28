@@ -66,6 +66,16 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(corpus['formats'], ['MOL', 'SDF', 'SMARTS', 'SMILES', 'mmCIF'])
         self.assertFalse((self.root / 'corpora/example/data').exists())
 
+    def test_dashboard_renderer_reads_the_source_template(self):
+        source = dashboard.ROOT / 'dashboard'
+        template = (source / 'page.html.template').read_text(encoding='utf-8')
+        self.assertIn('DASHBOARD_DATA', template)
+        self.load()
+        rendered = dashboard.render([self.path], self.root)
+        self.assertIn('<title>kekule · Benchmarks</title>', rendered)
+        self.assertNotIn('DASHBOARD_DATA', rendered)
+        self.assertNotIn('/* DASHBOARD_JS */', rendered)
+
     def test_simplified_page_has_corpora_without_removed_panels_or_logo(self):
         self.load()
         html = dashboard.render([self.path], self.root)
@@ -321,7 +331,10 @@ class DashboardTests(unittest.TestCase):
     def test_refresh_creates_live_empty_history_then_includes_an_incomplete_run(self):
         runs_dir = self.root / 'runs'
         output = dashboard.refresh(runs_dir, root=self.root)
+        self.assertEqual(output, self.root / 'dashboard' / 'index.html')
         self.assertTrue(output.is_file())
+        self.assertFalse((runs_dir / 'index.html').exists())
+        self.assertFalse((runs_dir / 'dashboard-data.js').exists())
         script = output.with_name('dashboard-data.js')
         self.assertIn('"runs":[]', script.read_text())
         self.report.update(complete=False, passed=False, started_at_unix_ms=1000)
@@ -331,7 +344,16 @@ class DashboardTests(unittest.TestCase):
         self.assertTrue(raw.startswith('window.updateKekuleBenchmarks('))
         self.assertIn('"complete":false', raw)
         self.assertNotIn('C:/private', raw)
-        self.assertEqual(list(runs_dir.glob('*.tmp')), [])
+        self.assertEqual(list(output.parent.glob('*.tmp')), [])
+
+    def test_explicit_live_output_keeps_the_feed_beside_the_page(self):
+        runs_dir = self.root / 'runs'
+        output = self.root / 'custom-view' / 'history.html'
+        self.assertEqual(dashboard.refresh(runs_dir, output, self.root), output)
+        self.assertTrue(output.is_file())
+        self.assertTrue(output.with_name('dashboard-data.js').is_file())
+        self.assertTrue(output.with_name('.dashboard.lock').is_file())
+        self.assertFalse(dashboard.dashboard_path(runs_dir).exists())
 
     def test_invalid_run_start_times_are_rejected(self):
         for value in (-1, True, 1.5, 8_640_000_000_000_001):

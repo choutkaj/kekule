@@ -101,6 +101,22 @@ fn staging_keeps_bulk_data_local_and_includes_bundled_inputs_and_provenance() {
         b"local reference interpreter",
     )
     .unwrap();
+    fs::create_dir(root.join("benchmarks/dashboard")).unwrap();
+    for (name, tracked) in [
+        ("page.html.template", true),
+        ("app.js", true),
+        ("style.css", true),
+        ("index.html", false),
+        ("dashboard-data.js", false),
+        (".dashboard.lock", false),
+        ("interrupted.tmp", false),
+    ] {
+        let path = format!("benchmarks/dashboard/{name}");
+        fs::write(root.join(&path), b"dashboard fixture").unwrap();
+        if tracked {
+            expected.push(path);
+        }
+    }
     git(&root, &["init", "--quiet"]);
     git(&root, &["add", "."]);
     let staged = git(&root, &["ls-files"]);
