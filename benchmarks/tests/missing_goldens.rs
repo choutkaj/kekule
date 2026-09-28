@@ -68,8 +68,8 @@ fn unavailable_goldens_stop_the_cli_without_reporting_case_failures() {
             .unwrap()
             .contains("cannot load stored goldens"));
         assert_eq!(summary["results"], serde_json::json!([]));
-        assert!(root.join("runs/index.html").exists());
-        assert!(fs::read_to_string(root.join("runs/dashboard-data.js"))
+        assert!(root.join("dashboard/index.html").exists());
+        assert!(fs::read_to_string(root.join("dashboard/dashboard-data.js"))
             .unwrap()
             .contains("\"complete\":false"));
         assert_eq!(golden.exists(), !missing);

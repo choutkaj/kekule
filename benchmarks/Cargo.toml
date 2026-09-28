@@ -9,6 +9,10 @@ license.workspace = true
 publish = false
 exclude = [
     "runs/**",
+    "dashboard/index.html",
+    "dashboard/dashboard-data.js",
+    "dashboard/.dashboard.lock",
+    "dashboard/*.tmp",
     ".dashboard-python",
     "corpora/*/data/**",
     "!corpora/smoke/data/**",

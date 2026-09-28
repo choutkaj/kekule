@@ -1,5 +1,9 @@
 /target/
 /benchmarks/runs/
+/benchmarks/dashboard/index.html
+/benchmarks/dashboard/dashboard-data.js
+/benchmarks/dashboard/.dashboard.lock
+/benchmarks/dashboard/*.tmp
 /benchmarks/.dashboard-python
 /benchmarks/.writer-python
 **/*.rs.bk
