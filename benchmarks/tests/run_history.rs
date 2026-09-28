@@ -151,7 +151,7 @@ fn unavailable_dashboard_python_preserves_reports_and_the_scientific_status() {
 #[test]
 fn comparisons_archive_and_refresh_even_when_they_disagree() {
     let root = std::env::temp_dir().join(format!(
-        "kekule-runs-{}-{}",
+        "kekule-runs-\u{017e}-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -176,7 +176,8 @@ fn comparisons_archive_and_refresh_even_when_they_disagree() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.success(), passing, "{stderr}");
         assert!(!stderr.contains("dashboard was not refreshed"), "{stderr}");
-        let script = fs::read_to_string(runs.join("dashboard-data.js")).unwrap();
+        let dashboard = root.join("dashboard");
+        let script = fs::read_to_string(dashboard.join("dashboard-data.js")).unwrap();
         let data: Value = serde_json::from_str(
             script
                 .strip_prefix("window.updateKekuleBenchmarks(")
@@ -192,7 +193,13 @@ fn comparisons_archive_and_refresh_even_when_they_disagree() {
         assert_eq!(history[0]["passed"], passing);
         assert_eq!(history[0]["results"][0]["feature"], feature);
         assert!(history[0]["started_at_unix_ms"].as_u64().unwrap() > 0);
-        assert!(runs.join("index.html").exists());
+        assert!(dashboard.join("index.html").exists());
+        assert!(!runs.join("index.html").exists());
+        assert!(!runs.join("dashboard-data.js").exists());
+        assert!(String::from_utf8_lossy(&output.stdout).contains(&format!(
+            "Dashboard: {}",
+            dashboard.join("index.html").display()
+        )));
         if !passing {
             assert!(runs.join("custom.cases.jsonl.gz").exists());
             assert!(

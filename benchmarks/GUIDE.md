@@ -102,18 +102,22 @@ above; use the activated environment or `--writer-python` when necessary.
 
 ## Dashboard
 
-Every comparison refreshes `benchmarks/runs/index.html`, including comparisons that
+Every comparison refreshes `benchmarks/dashboard/index.html`, including comparisons that
 fail or stop with an error. Open that page once: it checks the adjacent local data
 file every five seconds and selects the newest run when history changes. Unchanged
 history preserves your selected run and search. Reports are ordered by their recorded
 start time, not file modification time. Reference generation is excluded.
+The page and its adjacent `dashboard-data.js` feed are generated local files.
+Their sources are `page.html.template`, `app.js` and `style.css` in the same
+directory. Run reports and case records remain in `benchmarks/runs/`.
 
 Python 3.11+ and its standard library are needed to render the dashboard. The command
 uses `KEKULE_DASHBOARD_PYTHON`, an executable path in the ignored file
 `benchmarks/.dashboard-python`, the selected writer Python, or Python on `PATH`.
 If rendering fails, a warning identifies the problem; reports and the scientific
 exit status are preserved. `KEKULE_BENCHMARK_RUNS_DIR` can override the local history
-directory. There is no server or upload.
+directory; its dashboard is generated in a sibling `dashboard/` directory.
+There is no server or upload.
 
 To refresh history manually, including checkpoints left by an aborted process:
 
@@ -159,8 +163,9 @@ their reports because the observation count differs from the reference archive.
 Only aggregate counts, source membership sizes and hashes/tool versions are
 embedded. Inputs, golden payloads, per-case observations, local paths and raw
 error messages stay local. The page can be generated without the full datasets
-or golden archives. Run history and local Python configuration are excluded from
-Git and Cargo packages; fixed snapshots under `target/` are likewise local.
+or golden archives. Run history, generated dashboard files and local Python
+configuration are excluded from Git and Cargo packages; fixed snapshots under
+`target/` are likewise local.
 Publication is a separate, deliberate step; this command uploads nothing.
 "Download plotted data" saves a sanitized dashboard export, not the original
 runner report. Rebuild the page from the original comparison summaries.

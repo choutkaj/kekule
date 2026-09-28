@@ -107,7 +107,7 @@ Validation for this dashboard addition:
 - Automated visual preview could not run: the browser tool's URL security policy
   blocked local `file:` navigation. No alternate browser route was attempted.
 
-The automatic page is `benchmarks/runs/index.html`; comparison commands refresh
+The automatic page is `benchmarks/dashboard/index.html`; comparison commands refresh
 its sanitized `dashboard-data.js` feed after success, disagreement or a handled
 execution error. Each report records `started_at_unix_ms`. Updates are serialized
 with an OS file lock and published by atomic replacement. Explicit `--output`
