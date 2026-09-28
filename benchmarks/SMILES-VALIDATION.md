@@ -156,12 +156,13 @@ it as a persisted key need to account for the version of the canonicalizer.
 ## Reproduction and validation
 
 ```text
-cargo benchmark generate --feature io.smiles.text.canonical --dataset all --python PATH --goldens NEW_DIRECTORY
-cargo benchmark --feature io.smiles.text.canonical --dataset all --limit 1000 --jobs 4 --goldens NEW_DIRECTORY
-cargo benchmark --feature io.smiles.canonical --dataset all --limit 1000 --jobs 4 --goldens IDENTITY_REFERENCES --writer-python PATH
+cargo benchmark --feature io.smiles.text.canonical --dataset all --limit 1000 --jobs 4
+cargo benchmark --feature io.smiles.canonical --dataset all --limit 1000 --jobs 4 --writer-python PATH
 ```
 
-The text feature is expected to exit unsuccessfully while exact differences
+Both features use the single current reference set in `benchmarks/goldens`.
+The original audit's temporary reference directories are not required for
+normal runs. The text feature is expected to exit unsuccessfully while exact differences
 remain; identity likewise retains the documented CX disagreement. Generation
 also reports failure when retained reference errors are present, while preserving
 their outcomes and finalized manifests. Generation does not run Kekule. New

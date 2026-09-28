@@ -1,0 +1,1271 @@
+{
+  "date": "2026-09-28",
+  "active_directory": "benchmarks/goldens",
+  "previous_contract_sha256": "55137d7e199da4baeb425d7172467b7b5b8f0efbe0e45c5b8feca1077c546df7",
+  "current_contract_sha256": "6ac71d56c71393b5f756b62acd0dacb5877c0bbe28aca9564c4e620b234af758",
+  "contract_changed_keys": [
+    "radicals",
+    "schema"
+  ],
+  "verified_source_files": 1547,
+  "method": "Fresh affected observations come only from the pinned independent reference adapter, never Kekule. Every source identity and old/new outcome was paired. The comparison of field names maps unpaired_electrons to radical_electrons and old spin labels to numeric multiplicity for the audit only. All non-spin measurements and status transitions are unchanged. Other archives retain byte-identical payloads after verifying absence of affected fields and unchanged contract clauses.",
+  "archives": [
+    {
+      "dataset": "enamine-diversity",
+      "feature": "algo.aromaticity.rdkit-like",
+      "rows": 100480,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "3b091e34a236ed0f23a4a594d7788ce12c6ecee18c483f7f6df8a9c12dcaf6ba",
+      "current_payload_sha256": "3b091e34a236ed0f23a4a594d7788ce12c6ecee18c483f7f6df8a9c12dcaf6ba",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "algo.canonical-ranking",
+      "rows": 100480,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "14857894e7d8f73f0f524a28cde099ceadf66c16c277cb410981699623dca818",
+      "current_payload_sha256": "14857894e7d8f73f0f524a28cde099ceadf66c16c277cb410981699623dca818",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "algo.rings.fast",
+      "rows": 100480,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "041d88e19bbea292745b996f58a6ab8c33498a390e4808fd8bcc9c9a9f73889a",
+      "current_payload_sha256": "041d88e19bbea292745b996f58a6ab8c33498a390e4808fd8bcc9c9a9f73889a",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "algo.rings.sssr",
+      "rows": 100480,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "cd061f8781cbe5f0a392b8246707b90894c52b2f0bbffbae33edcca6129b4e71",
+      "current_payload_sha256": "cd061f8781cbe5f0a392b8246707b90894c52b2f0bbffbae33edcca6129b4e71",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "algo.substructure.vf2",
+      "rows": 100480,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "470da7276ce9499a397c3b616f8eed04a1a74aef3b343774fc1ea99b0c47a2bf",
+      "current_payload_sha256": "470da7276ce9499a397c3b616f8eed04a1a74aef3b343774fc1ea99b0c47a2bf",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "algo.valence.rdkit-like",
+      "rows": 100480,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "3f126c52df6315f357220b973e872a9da933d27a2902fdb9825d7135e2d290be",
+      "current_payload_sha256": "3f126c52df6315f357220b973e872a9da933d27a2902fdb9825d7135e2d290be",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "bio.secondary-structure.dssp",
+      "rows": 50240,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "cffe5af80ad97ea28420e1b735b12cc593dd4ad261930afd934db8d9ae475e39",
+      "current_payload_sha256": "cffe5af80ad97ea28420e1b735b12cc593dd4ad261930afd934db8d9ae475e39",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "chem.hydrogen-transforms",
+      "rows": 100480,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "75c25ec78c30d3b1f4f6bd2b885303578dbba5682f4c979108dd07c9f2dc535b",
+      "current_payload_sha256": "6bc904bbd5f41c263343190cbd115e7cf6ce641081724915c2f72f0ffa791675",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+      "counts": {
+        "rows": 100480,
+        "atom_field_migrations": 7302118,
+        "field_names_only_rows": 100480
+      },
+      "status_transitions": {
+        "ok -> ok": 100480
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "chem.perception.default",
+      "rows": 100480,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "92f1c6a11210c40b19ba1dd3dbbefed8c3a0e9a40ddc2ea8409dd26b0efdd3fc",
+      "current_payload_sha256": "6d8a034e336491aee4126868682c3034150f7ba3b8c6fa324ffd227dd4cbe44c",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+      "counts": {
+        "rows": 100480,
+        "atom_field_migrations": 2592318,
+        "field_names_only_rows": 100480
+      },
+      "status_transitions": {
+        "ok -> ok": 100480
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "descriptor.molecular",
+      "rows": 100480,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "6de9adbec9a9fec4cffd738f16e3630b7087e4d6efc357f8f33b7a2756f1d988",
+      "current_payload_sha256": "6de9adbec9a9fec4cffd738f16e3630b7087e4d6efc357f8f33b7a2756f1d988",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "descriptor.rotatable-bonds.rdkit-strict",
+      "rows": 100480,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "022b5b5ff9b1faef6e5969827e196560fd1fc5d2e91f9d75e1d658446ceedbcb",
+      "current_payload_sha256": "022b5b5ff9b1faef6e5969827e196560fd1fc5d2e91f9d75e1d658446ceedbcb",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "io.mmcif.parse",
+      "rows": 50240,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "b39bce125d1e08a73f12a698a663f79cda2ca5778e4b5ecd7923a458ef506c6b",
+      "current_payload_sha256": "b39bce125d1e08a73f12a698a663f79cda2ca5778e4b5ecd7923a458ef506c6b",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "io.mol.parse",
+      "rows": 50240,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "84468593aef0353bd7b5be4034fc3b7faccfca16502fd42d006d8824be79452d",
+      "current_payload_sha256": "3ccedf063616147b743107757739d50c1d6042c84d333752f51d22e56aa32074",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+      "counts": {
+        "rows": 50240,
+        "atom_field_migrations": 1296159,
+        "field_names_only_rows": 50240
+      },
+      "status_transitions": {
+        "ok -> ok": 50240
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "io.mol.v2000.write",
+      "rows": 50240,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "452ce37315356bc869e840c2f45224694b5aee511620dcecf337785f71d66273",
+      "current_payload_sha256": "3239276d91903453c517fc01f5a0ea68b0600ef2d115f7aa0e862a87f1ff5c0a",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+      "counts": {
+        "rows": 50240,
+        "atom_field_migrations": 1296159,
+        "field_names_only_rows": 50240
+      },
+      "status_transitions": {
+        "ok -> ok": 50240
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "io.mol.v3000.write",
+      "rows": 50240,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "b62b805106ab1e4ceb4eaadc31adfea02c9dc896c8ca6c8de02e0e7de692acf6",
+      "current_payload_sha256": "517a7cb93b0833376999878aa42505efbb81f53f863b342b2928d9d2ca07482a",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+      "counts": {
+        "rows": 50240,
+        "atom_field_migrations": 1296159,
+        "field_names_only_rows": 50240
+      },
+      "status_transitions": {
+        "ok -> ok": 50240
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "io.sdf.parse",
+      "rows": 50240,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "11aee1a87785dc96d73a170ec32c9f44a89d7efe520bd17d23477df7200accc9",
+      "current_payload_sha256": "11d8f21817c3e3aad13af821ecde670b5727ef460f3996dc411d573925dc8a37",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+      "counts": {
+        "rows": 50240,
+        "atom_field_migrations": 1296159,
+        "field_names_only_rows": 50240
+      },
+      "status_transitions": {
+        "ok -> ok": 50240
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "io.sdf.v2000.write",
+      "rows": 50240,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "f0f7d1ae7f7938f34f19847276c49d155935995e0e90d0bd408ee23cfbf13624",
+      "current_payload_sha256": "15f465b2cb2f1ad5b169b05667f61c0c6605ab592cc903b31d19cbf7286363a4",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+      "counts": {
+        "rows": 50240,
+        "atom_field_migrations": 1296159,
+        "field_names_only_rows": 50240
+      },
+      "status_transitions": {
+        "ok -> ok": 50240
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "io.smiles.canonical",
+      "rows": 50240,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "095ed02805b9bb5be815f93d58e7b6bf5f76019473647948d970504a40add55a",
+      "current_payload_sha256": "095ed02805b9bb5be815f93d58e7b6bf5f76019473647948d970504a40add55a",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "io.smiles.isomeric",
+      "rows": 50240,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "21710f9b3d088ae4a163a3a027928115b009d9d2df6f017244d0902a2cf64b8f",
+      "current_payload_sha256": "21710f9b3d088ae4a163a3a027928115b009d9d2df6f017244d0902a2cf64b8f",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "io.smiles.parse",
+      "rows": 50240,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "fb9fc66a1bf2436c066f9540d00fceef0a456dbdbd53ff67894091b3eefcf126",
+      "current_payload_sha256": "fa17c7875bda71aeada4aa94dec6d3876b776a16e706ecd3d9a8b6cb5482e6b7",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+      "counts": {
+        "rows": 50240,
+        "atom_field_migrations": 1296159,
+        "field_names_only_rows": 50240
+      },
+      "status_transitions": {
+        "ok -> ok": 50240
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "io.smiles.write",
+      "rows": 50240,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "78032678b15576214c0d2c64a208b6da371179988c74f252a7d9e3ecea5a2eda",
+      "current_payload_sha256": "78032678b15576214c0d2c64a208b6da371179988c74f252a7d9e3ecea5a2eda",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "stereo.cip",
+      "rows": 100480,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "4e179983a2ec77f4ed154057a392080a4e9eb365a3e7577abee4f0880b8ad082",
+      "current_payload_sha256": "4e179983a2ec77f4ed154057a392080a4e9eb365a3e7577abee4f0880b8ad082",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e"
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "stereo.perception",
+      "rows": 100480,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "b1fd0284f9ac584c73213b151581e26548f8bdb3806a41736b38123caae093e5",
+      "current_payload_sha256": "5bb3401af17d016a16426c0f225ad61b61ae64a9dc35527a34a194ba591a4484",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+      "counts": {
+        "rows": 100480,
+        "atom_field_migrations": 2592318,
+        "field_names_only_rows": 100480
+      },
+      "status_transitions": {
+        "ok -> ok": 100480
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "enamine-diversity",
+      "feature": "stereo.representation",
+      "rows": 100480,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "450387f353824d6c16fe5e83de5bf2cdab62265fa13dbdf96545ff2f5359d621",
+      "current_payload_sha256": "757efd6ce15e44604c3ae134975c03bb1cf8a0da41a775a953123e92cb6e4b72",
+      "source_lock_sha256": "42aa3ef3bf5f2a5bf8ee589f9738f1f3e31fc21fbe673521c9a2cae4d827387e",
+      "counts": {
+        "rows": 100480,
+        "atom_field_migrations": 2592318,
+        "field_names_only_rows": 100480
+      },
+      "status_transitions": {
+        "ok -> ok": 100480
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "algo.aromaticity.rdkit-like",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "97ccc4051b67ba449ff03b7812116009511b27622fd0f61da3259c149a8d0fc5",
+      "current_payload_sha256": "97ccc4051b67ba449ff03b7812116009511b27622fd0f61da3259c149a8d0fc5",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "algo.canonical-ranking",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "546d26274c4219dae3e6a6bb6bc91466e9bdd3a54ec8ecd7506e3d8e2e06c671",
+      "current_payload_sha256": "546d26274c4219dae3e6a6bb6bc91466e9bdd3a54ec8ecd7506e3d8e2e06c671",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "algo.rings.fast",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "48dc7869f446a7ee602b5664837d708d6f237e46793f01e9f86d17613312e1a0",
+      "current_payload_sha256": "48dc7869f446a7ee602b5664837d708d6f237e46793f01e9f86d17613312e1a0",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "algo.rings.sssr",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "0d522d15d990371c800241b5633d9c66bb9d692f6370e9035157b660823a1b13",
+      "current_payload_sha256": "0d522d15d990371c800241b5633d9c66bb9d692f6370e9035157b660823a1b13",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "algo.substructure.vf2",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "1fc656179117987354a0341bb93da90ade2c7676e7e4fed71f82c8a3f32c1ba0",
+      "current_payload_sha256": "1fc656179117987354a0341bb93da90ade2c7676e7e4fed71f82c8a3f32c1ba0",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "algo.valence.rdkit-like",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "fa49d8021b16622fae3b6ef9e6ea1f6596ff35d47aff5731ebe857eff07c6706",
+      "current_payload_sha256": "fa49d8021b16622fae3b6ef9e6ea1f6596ff35d47aff5731ebe857eff07c6706",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "bio.secondary-structure.dssp",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "ac7ff8a644d48c168d9a6ac9d08afb689f75fd25f232e90bb931bc0b6bcb0c99",
+      "current_payload_sha256": "ac7ff8a644d48c168d9a6ac9d08afb689f75fd25f232e90bb931bc0b6bcb0c99",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "chem.hydrogen-transforms",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "703d8538a2474b86dc4f0f4fb1cf4e2614f9f82d1616ee1e243be9b1d3540df9",
+      "current_payload_sha256": "703d8538a2474b86dc4f0f4fb1cf4e2614f9f82d1616ee1e243be9b1d3540df9",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "chem.perception.default",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "bba4141f49336f7e838e39cabe0a799fce679b4e10a6a6947574060dfe863ae4",
+      "current_payload_sha256": "bba4141f49336f7e838e39cabe0a799fce679b4e10a6a6947574060dfe863ae4",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "descriptor.molecular",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "b8cdb7ca115091f578527c69fd712ad8f177a0b9058b7dcd5a9abb34c96acd13",
+      "current_payload_sha256": "b8cdb7ca115091f578527c69fd712ad8f177a0b9058b7dcd5a9abb34c96acd13",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "descriptor.rotatable-bonds.rdkit-strict",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "56a777943262ac53471883d5b20c441491b6a0774489e0e5b877e5fa08485283",
+      "current_payload_sha256": "56a777943262ac53471883d5b20c441491b6a0774489e0e5b877e5fa08485283",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "io.mmcif.parse",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "278ac33cf66fed3d10026e9f0251ee3eaf5daf839904394b40a0e33cfb78abd8",
+      "current_payload_sha256": "278ac33cf66fed3d10026e9f0251ee3eaf5daf839904394b40a0e33cfb78abd8",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "io.mol.parse",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "11a5d414e880a3a94915bbe68588095d2c16dd14c1d423d56042316e3786192f",
+      "current_payload_sha256": "11a5d414e880a3a94915bbe68588095d2c16dd14c1d423d56042316e3786192f",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "io.mol.v2000.write",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "9b536daf170e7401fdc0801678e8aa6b79c1d02399cb7ec681e6f564cf19cb1e",
+      "current_payload_sha256": "9b536daf170e7401fdc0801678e8aa6b79c1d02399cb7ec681e6f564cf19cb1e",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "io.mol.v3000.write",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "1678379243c11f9b5fa5090cee621f64c9216a722eb6f39871d3dbe9d02a33d1",
+      "current_payload_sha256": "1678379243c11f9b5fa5090cee621f64c9216a722eb6f39871d3dbe9d02a33d1",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "io.sdf.parse",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "70d7219284dfbda3e95f44f98d151ddaa707fa6c100ecfd7baa8ffbb6a980ea2",
+      "current_payload_sha256": "70d7219284dfbda3e95f44f98d151ddaa707fa6c100ecfd7baa8ffbb6a980ea2",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "io.sdf.v2000.write",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "e8eba7918863cb03db7f86415815e7c0e55e3c77db84c26bc5fd8d4142376c42",
+      "current_payload_sha256": "e8eba7918863cb03db7f86415815e7c0e55e3c77db84c26bc5fd8d4142376c42",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "io.smiles.canonical",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "5c6572f3a238a126772b872be50da2c6c23df61126fd5ba6405b320c7d23cc80",
+      "current_payload_sha256": "5c6572f3a238a126772b872be50da2c6c23df61126fd5ba6405b320c7d23cc80",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "io.smiles.isomeric",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "92bf1f656b4062103651675adcf24f95ded2fe6b528eb779ca243fda0d72de81",
+      "current_payload_sha256": "92bf1f656b4062103651675adcf24f95ded2fe6b528eb779ca243fda0d72de81",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "io.smiles.parse",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "48ba1e2738063afed7e5f07273e75dbb3c8cbf59d0de63663c4c1abf0a98c083",
+      "current_payload_sha256": "48ba1e2738063afed7e5f07273e75dbb3c8cbf59d0de63663c4c1abf0a98c083",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "io.smiles.write",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "9fa0db36da447710d997b59357597bc34d964cbacbd1844d8b57df60f34b52d2",
+      "current_payload_sha256": "9fa0db36da447710d997b59357597bc34d964cbacbd1844d8b57df60f34b52d2",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "stereo.cip",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "bcaaf2336319d4176647b886999a76eeb09397aa154454041555437c0a6dbeca",
+      "current_payload_sha256": "bcaaf2336319d4176647b886999a76eeb09397aa154454041555437c0a6dbeca",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "stereo.perception",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "971e01b4b13e41766a7d4b8259e7826fa865b1ec5acc8a38f29a29eac285dbe2",
+      "current_payload_sha256": "971e01b4b13e41766a7d4b8259e7826fa865b1ec5acc8a38f29a29eac285dbe2",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pdb-1000",
+      "feature": "stereo.representation",
+      "rows": 1000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "a81bbcf6616b30088a2fa0cc98f61ac5a8c85b5045a1b3de4a636d1cb02f17de",
+      "current_payload_sha256": "a81bbcf6616b30088a2fa0cc98f61ac5a8c85b5045a1b3de4a636d1cb02f17de",
+      "source_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "algo.aromaticity.rdkit-like",
+      "rows": 328,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "4f1d7a4a11d3ac29146689b5f49df2855e1675075c345fb148e104cd6a351df1",
+      "current_payload_sha256": "4f1d7a4a11d3ac29146689b5f49df2855e1675075c345fb148e104cd6a351df1",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "algo.canonical-ranking",
+      "rows": 328,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "45beed0276942dc5c76ef56b60a6a1b6cc3e7f23a1ccdca71613073a59c9349b",
+      "current_payload_sha256": "45beed0276942dc5c76ef56b60a6a1b6cc3e7f23a1ccdca71613073a59c9349b",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "algo.rings.fast",
+      "rows": 328,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "65a5b3fe07248d0fb8cc8990c77051fb77b37a558f23ebcc4bf716fdec43f5da",
+      "current_payload_sha256": "65a5b3fe07248d0fb8cc8990c77051fb77b37a558f23ebcc4bf716fdec43f5da",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "algo.rings.sssr",
+      "rows": 328,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "f7ae8cd683c301d627523f561d26b6e96c3a37ca9b2bc20511bec214b18d816e",
+      "current_payload_sha256": "f7ae8cd683c301d627523f561d26b6e96c3a37ca9b2bc20511bec214b18d816e",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "algo.substructure.vf2",
+      "rows": 328,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "721141259e10c2833f13f4574cdbb9f50ab04ac6d1607ac3cbf80b3ac9883efe",
+      "current_payload_sha256": "721141259e10c2833f13f4574cdbb9f50ab04ac6d1607ac3cbf80b3ac9883efe",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "algo.valence.rdkit-like",
+      "rows": 328,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "19495a8adc7c848097a68c700b3bdd16f4e595eed37e2557b6a1c4588c28fb5e",
+      "current_payload_sha256": "19495a8adc7c848097a68c700b3bdd16f4e595eed37e2557b6a1c4588c28fb5e",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "bio.secondary-structure.dssp",
+      "rows": 164,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "d17b435b5916b535e2e8f22cf91404a1e7a247fcb52c612776624c2d0c4e319c",
+      "current_payload_sha256": "d17b435b5916b535e2e8f22cf91404a1e7a247fcb52c612776624c2d0c4e319c",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "chem.hydrogen-transforms",
+      "rows": 328,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "cfc9859d539da3cec34a9555b0be1f5d5fe2024df5ba647d6b7b13f42e1297ba",
+      "current_payload_sha256": "18d74b341b1e7addb9396a77101d8fc9c90c390d4ebdbd7ee1474f0f2eaeaa51",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d",
+      "counts": {
+        "rows": 328,
+        "atom_field_migrations": 26154,
+        "field_names_only_rows": 328
+      },
+      "status_transitions": {
+        "ok -> ok": 328
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "chem.perception.default",
+      "rows": 328,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "e940cdd3374f5c938a5c29fc88140fcf230ca1b4e002dff5482eeca8ff509cb4",
+      "current_payload_sha256": "666e464772063cdc0015887d4a49e502c9a1ad4f356a52bd36011e9a6078e690",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d",
+      "counts": {
+        "rows": 328,
+        "atom_field_migrations": 16932,
+        "field_names_only_rows": 328
+      },
+      "status_transitions": {
+        "ok -> ok": 328
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "descriptor.molecular",
+      "rows": 328,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "0b5c32760c119de56967513ac25dae9eba80b8c88e667a800871a27dece328cf",
+      "current_payload_sha256": "0b5c32760c119de56967513ac25dae9eba80b8c88e667a800871a27dece328cf",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "descriptor.rotatable-bonds.rdkit-strict",
+      "rows": 328,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "5aeaad0f6b1e1e32977d436713efa76c916411f25694f2e1360134c2aa9890ef",
+      "current_payload_sha256": "5aeaad0f6b1e1e32977d436713efa76c916411f25694f2e1360134c2aa9890ef",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "io.mmcif.parse",
+      "rows": 164,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "a200548ec4a5f4c257a5482b8ea67ff4f931247e2312a7f91aaceb27b6af42a6",
+      "current_payload_sha256": "a200548ec4a5f4c257a5482b8ea67ff4f931247e2312a7f91aaceb27b6af42a6",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "io.mol.parse",
+      "rows": 328,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "7d9efa411dc7f2463d6cadcb19bdbad4125ac98118e8520847186e6f8051ec0e",
+      "current_payload_sha256": "ffdcd5ad1971edaddc85ce5fa152e8ef311084817cf48ccad41344080aadac84",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d",
+      "counts": {
+        "rows": 328,
+        "atom_field_migrations": 16932,
+        "field_names_only_rows": 328
+      },
+      "status_transitions": {
+        "ok -> ok": 328
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "io.mol.v2000.write",
+      "rows": 328,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "cd7246f622f55774f0f688c309590da26cacd102714f3033d7e8bc2e46cc4dc4",
+      "current_payload_sha256": "1fcfb8018d428dc8121bc5643dc6e025e3414105268504d52d2fbcf89efd2d4a",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d",
+      "counts": {
+        "rows": 328,
+        "atom_field_migrations": 16932,
+        "field_names_only_rows": 328
+      },
+      "status_transitions": {
+        "ok -> ok": 328
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "io.mol.v3000.write",
+      "rows": 328,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "a4daa9aca95615b8035a0d612dfd21db66a30750a9248d5213e456314edb5cc0",
+      "current_payload_sha256": "a34aeb74d91433b8594a30e619058639a748a3a2cd4acca4b6d131ad511cb6d7",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d",
+      "counts": {
+        "rows": 328,
+        "atom_field_migrations": 16932,
+        "field_names_only_rows": 328
+      },
+      "status_transitions": {
+        "ok -> ok": 328
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "io.sdf.parse",
+      "rows": 328,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "9566c018706d0103c477248f5da45dc110a487b025f4b293a01601785ec171aa",
+      "current_payload_sha256": "f01a8bfa39099b3fa43445a87c723ce7a7e010a5acb1ae86b8d8952166b6359e",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d",
+      "counts": {
+        "rows": 328,
+        "atom_field_migrations": 16932,
+        "field_names_only_rows": 328
+      },
+      "status_transitions": {
+        "ok -> ok": 328
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "io.sdf.v2000.write",
+      "rows": 328,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "3c453224c02e80f2c6a4bfbbcfb99e5322199d897dd87cb887f7e9f48f354b5a",
+      "current_payload_sha256": "f627714c0be620f5a57089c6567ccc1ebe372302a35e3ba2bcab6b00ebfb65ce",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d",
+      "counts": {
+        "rows": 328,
+        "atom_field_migrations": 16932,
+        "field_names_only_rows": 328
+      },
+      "status_transitions": {
+        "ok -> ok": 328
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "io.smiles.canonical",
+      "rows": 164,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "a614d78bc8dacb48da03afa405d4081b482511530788280c15a4ec9e8a0d7b4a",
+      "current_payload_sha256": "a614d78bc8dacb48da03afa405d4081b482511530788280c15a4ec9e8a0d7b4a",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "io.smiles.isomeric",
+      "rows": 164,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "4f5bfaab6f28a977d387262a349f1cd41204252fbb174df76ffd0b3b43732470",
+      "current_payload_sha256": "4f5bfaab6f28a977d387262a349f1cd41204252fbb174df76ffd0b3b43732470",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "io.smiles.parse",
+      "rows": 164,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "0ab8a40f0d8080549985f28d0d0ffcb9bad9c67bedcdcd01ae76c23cd307ad45",
+      "current_payload_sha256": "0ab8a40f0d8080549985f28d0d0ffcb9bad9c67bedcdcd01ae76c23cd307ad45",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "io.smiles.write",
+      "rows": 164,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "c240aa98f01c3914a28007be8eefa1b6fcaa931e8cd88d08a4b7aa87d57e1eec",
+      "current_payload_sha256": "c240aa98f01c3914a28007be8eefa1b6fcaa931e8cd88d08a4b7aa87d57e1eec",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "stereo.cip",
+      "rows": 328,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "0ed562a949466d5e7ef19cf3a002ea8cb999bcfad7d7d2ec5d45eac81756b37d",
+      "current_payload_sha256": "0ed562a949466d5e7ef19cf3a002ea8cb999bcfad7d7d2ec5d45eac81756b37d",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d"
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "stereo.perception",
+      "rows": 328,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "68cda30d5cbae626c6d6ec93d6a44f32124357990b3f1259b49ceb59b16095bb",
+      "current_payload_sha256": "9f6ca65c30e4c007a7ff94e88460d2e00ec26736d45aa83b1a9de523070277e2",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d",
+      "counts": {
+        "rows": 328,
+        "atom_field_migrations": 16932,
+        "field_names_only_rows": 328
+      },
+      "status_transitions": {
+        "ok -> ok": 328
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "pl-rex",
+      "feature": "stereo.representation",
+      "rows": 328,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "b738f87e79d3ddd15422ea4912484a9e052a6fa6aefadbce0a8dc4ee080ccac3",
+      "current_payload_sha256": "d871024468eb30685976146aaebe77b9d09aa632d1c829ff44120afd0de8e576",
+      "source_lock_sha256": "18ad37b0847bd8caffcfc72c53ff59ab741890412c2ca73667e38fb0b7bb382d",
+      "counts": {
+        "rows": 328,
+        "atom_field_migrations": 16932,
+        "field_names_only_rows": 328
+      },
+      "status_transitions": {
+        "ok -> ok": 328
+      },
+      "changed_paths": {},
+      "spin_transitions": {}
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "algo.aromaticity.rdkit-like",
+      "rows": 200000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "7c9faf6b510d113e82d6277d5f27d712118d9a6641fae691f06e5d97a5febe90",
+      "current_payload_sha256": "7c9faf6b510d113e82d6277d5f27d712118d9a6641fae691f06e5d97a5febe90",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "algo.canonical-ranking",
+      "rows": 200000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "e4cb3ddba17d290e01b06f254174e208cf711ded4428dd69cf2eb9fb435b51f7",
+      "current_payload_sha256": "e4cb3ddba17d290e01b06f254174e208cf711ded4428dd69cf2eb9fb435b51f7",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "algo.rings.fast",
+      "rows": 200000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "5fdbce8f28aef1cb7f0669e17a903b7c537f46b133eaa46428f513bed10066b3",
+      "current_payload_sha256": "5fdbce8f28aef1cb7f0669e17a903b7c537f46b133eaa46428f513bed10066b3",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "algo.rings.sssr",
+      "rows": 200000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "ef5ac7e773a655aa9c1d042e9e549dc270c574575b47bc8f4a91a37c3c23a642",
+      "current_payload_sha256": "ef5ac7e773a655aa9c1d042e9e549dc270c574575b47bc8f4a91a37c3c23a642",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "algo.substructure.vf2",
+      "rows": 200000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "726c9b0aadf5f3ac8e72c3ffc26af09958988e0c18b2f07d476dfaf6890aa506",
+      "current_payload_sha256": "726c9b0aadf5f3ac8e72c3ffc26af09958988e0c18b2f07d476dfaf6890aa506",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "algo.valence.rdkit-like",
+      "rows": 200000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "e91e07047131a3e26c2679bc8a255c77ff48c16c2dff6fac75f85e19cf3a3384",
+      "current_payload_sha256": "e91e07047131a3e26c2679bc8a255c77ff48c16c2dff6fac75f85e19cf3a3384",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "bio.secondary-structure.dssp",
+      "rows": 100000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "e5951bce5cc3da9e24a277ca8d289b2db7d1f633e0ca6026b5159e4466e0c338",
+      "current_payload_sha256": "e5951bce5cc3da9e24a277ca8d289b2db7d1f633e0ca6026b5159e4466e0c338",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "chem.hydrogen-transforms",
+      "rows": 200000,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "7db25a2e8de67a24b3615834aed3cf46189bb83246da47adb9f240d894168080",
+      "current_payload_sha256": "640da1ecb29260e6289a8a944c0190424ae4b88b616853e1bd29b837ab4e5762",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
+      "counts": {
+        "rows": 200000,
+        "atom_field_migrations": 13239339,
+        "field_names_only_rows": 199044,
+        "changed_beyond_field_names_rows": 938,
+        "identical_rows": 18
+      },
+      "status_transitions": {
+        "ok -> ok": 199982,
+        "error -> error": 18
+      },
+      "changed_paths": {
+        "expected.value.records[*].added_graph.atoms[*].spin_multiplicity": 1476,
+        "expected.value.records[*].round_trip.atoms[*].spin_multiplicity": 1476
+      },
+      "spin_transitions": {
+        "[2, null]": 2550,
+        "[3, null]": 402
+      }
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "chem.perception.default",
+      "rows": 200000,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "f9799a103b55c3da8a48555d554ec31eb3755c4e31524d42fabdfc3c2de265d3",
+      "current_payload_sha256": "e7183baf786e67e8a023bb590f25c55c9f92c7f52600a2baf6a1bf028532f345",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
+      "counts": {
+        "rows": 200000,
+        "atom_field_migrations": 6619220,
+        "field_names_only_rows": 199044,
+        "changed_beyond_field_names_rows": 938,
+        "identical_rows": 18
+      },
+      "status_transitions": {
+        "ok -> ok": 199982,
+        "error -> error": 18
+      },
+      "changed_paths": {
+        "expected.value.records[*].graph.atoms[*].spin_multiplicity": 1476
+      },
+      "spin_transitions": {
+        "[2, null]": 1275,
+        "[3, null]": 201
+      }
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "descriptor.molecular",
+      "rows": 200000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "b8f90460b0c60f655426f96402437228a5d3b4661c974ef4855a341704e4c874",
+      "current_payload_sha256": "b8f90460b0c60f655426f96402437228a5d3b4661c974ef4855a341704e4c874",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "descriptor.rotatable-bonds.rdkit-strict",
+      "rows": 200000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "44894b183c98874efd98162db0370c54ab6e8234bdb4cdf6f0e29125fe91e445",
+      "current_payload_sha256": "44894b183c98874efd98162db0370c54ab6e8234bdb4cdf6f0e29125fe91e445",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "io.mmcif.parse",
+      "rows": 100000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "9a3212365c20d9bdcfbf468b40e370a36f19b960b305f0b2f431de7248176b76",
+      "current_payload_sha256": "9a3212365c20d9bdcfbf468b40e370a36f19b960b305f0b2f431de7248176b76",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "io.mol.parse",
+      "rows": 100000,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "bdc29c020ccf915886066cb2a7df73d1d53d3a03ce28afc26fb3a318139fbe6c",
+      "current_payload_sha256": "b3d49ca995e43708273be2265611b0f3b0ce8cb94678b760171fce35ee89df6c",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
+      "counts": {
+        "rows": 100000,
+        "atom_field_migrations": 4338472,
+        "field_names_only_rows": 99986,
+        "identical_rows": 9,
+        "changed_beyond_field_names_rows": 5
+      },
+      "status_transitions": {
+        "ok -> ok": 99991,
+        "error -> error": 9
+      },
+      "changed_paths": {
+        "expected.value.records[*].components[*].atoms[*].spin_multiplicity": 10
+      },
+      "spin_transitions": {
+        "[3, null]": 10
+      }
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "io.mol.v2000.write",
+      "rows": 100000,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "84ef09b99141d10122bff660804930ab44a109cbc9ad0464354cf91b038c28eb",
+      "current_payload_sha256": "e90e4261edbe1b736e6edd535c8e41b79a32b519c30745ce7562761166996ac6",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
+      "counts": {
+        "rows": 100000,
+        "atom_field_migrations": 4338472,
+        "field_names_only_rows": 99986,
+        "identical_rows": 9,
+        "changed_beyond_field_names_rows": 5
+      },
+      "status_transitions": {
+        "ok -> ok": 99991,
+        "error -> error": 9
+      },
+      "changed_paths": {
+        "expected.value.records[*].components[*].atoms[*].spin_multiplicity": 10
+      },
+      "spin_transitions": {
+        "[3, null]": 10
+      }
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "io.mol.v3000.write",
+      "rows": 100000,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "a7c6968f237ffd207484c6882037030e35b22e222354c2364249d8cc7ffcea30",
+      "current_payload_sha256": "7ba3c71efc0fd763a3a457f401f9f6a35290399bb27204cd7a2c3079909a9a89",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
+      "counts": {
+        "rows": 100000,
+        "atom_field_migrations": 4338472,
+        "field_names_only_rows": 99986,
+        "identical_rows": 9,
+        "changed_beyond_field_names_rows": 5
+      },
+      "status_transitions": {
+        "ok -> ok": 99991,
+        "error -> error": 9
+      },
+      "changed_paths": {
+        "expected.value.records[*].components[*].atoms[*].spin_multiplicity": 10
+      },
+      "spin_transitions": {
+        "[3, null]": 10
+      }
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "io.sdf.parse",
+      "rows": 100000,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "f817221f562411362981ed468448245518f8a737bade8f2585e3c63418b4b075",
+      "current_payload_sha256": "a5efbf374d0108b027c05329b3564bac78717316c4c0827029f6e0749199d934",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
+      "counts": {
+        "rows": 100000,
+        "atom_field_migrations": 4338472,
+        "field_names_only_rows": 99986,
+        "identical_rows": 9,
+        "changed_beyond_field_names_rows": 5
+      },
+      "status_transitions": {
+        "ok -> ok": 99991,
+        "error -> error": 9
+      },
+      "changed_paths": {
+        "expected.value.records[*].components[*].atoms[*].spin_multiplicity": 10
+      },
+      "spin_transitions": {
+        "[3, null]": 10
+      }
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "io.sdf.v2000.write",
+      "rows": 100000,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "298fbca427a3d59459aecf8c3798b6afd51a2bbbdd687ae1d7c67639497855e9",
+      "current_payload_sha256": "97bda96450d265d4b64f37ce3387783b2f05d11caa9acbcf713b84ab639beb35",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
+      "counts": {
+        "rows": 100000,
+        "atom_field_migrations": 4338472,
+        "field_names_only_rows": 99986,
+        "identical_rows": 9,
+        "changed_beyond_field_names_rows": 5
+      },
+      "status_transitions": {
+        "ok -> ok": 99991,
+        "error -> error": 9
+      },
+      "changed_paths": {
+        "expected.value.records[*].components[*].atoms[*].spin_multiplicity": 10
+      },
+      "spin_transitions": {
+        "[3, null]": 10
+      }
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "io.smiles.canonical",
+      "rows": 100000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "f44e7f51b2efd12be5f7c8ef938902854492a511f8064a6a3c7c65227a3fcfb1",
+      "current_payload_sha256": "f44e7f51b2efd12be5f7c8ef938902854492a511f8064a6a3c7c65227a3fcfb1",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "io.smiles.isomeric",
+      "rows": 100000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "383a13eecf348b79fd9278599e69dd10557bcfa039b6e7d9c26f336e4a5bbabb",
+      "current_payload_sha256": "383a13eecf348b79fd9278599e69dd10557bcfa039b6e7d9c26f336e4a5bbabb",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "io.smiles.parse",
+      "rows": 100000,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "733553698bcab77a8b3d5e6867d660daa2f7b7eb3e2b56d95f59e1ded9ed062a",
+      "current_payload_sha256": "30982529032c186e7cb3630c9ced90a593e25263b7e6f8d6d8b2121357d09ce8",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
+      "counts": {
+        "rows": 100000,
+        "atom_field_migrations": 2280748,
+        "field_names_only_rows": 99058,
+        "changed_beyond_field_names_rows": 933,
+        "identical_rows": 9
+      },
+      "status_transitions": {
+        "ok -> ok": 99991,
+        "error -> error": 9
+      },
+      "changed_paths": {
+        "expected.value.records[*].components[*].atoms[*].spin_multiplicity": 1466
+      },
+      "spin_transitions": {
+        "[2, null]": 1275,
+        "[3, null]": 191
+      }
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "io.smiles.write",
+      "rows": 100000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "852b94d073f1960ab6e839ab80977d99a7f3f4ad671e774a82f789e66e782442",
+      "current_payload_sha256": "852b94d073f1960ab6e839ab80977d99a7f3f4ad671e774a82f789e66e782442",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "stereo.cip",
+      "rows": 200000,
+      "action": "audited compatibility update",
+      "previous_payload_sha256": "e9db3516a68b3a125ffb03da1703d27e3cc66a2d91769946d6decbcd01703539",
+      "current_payload_sha256": "e9db3516a68b3a125ffb03da1703d27e3cc66a2d91769946d6decbcd01703539",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d"
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "stereo.perception",
+      "rows": 200000,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "b05a7ee5e3cef9a5cc73371c5b2cb1653916fe8884450a4a5ca22825fda82f8b",
+      "current_payload_sha256": "3c90102d916817e8fe2b27eb2e1a831125f1afdceca3fa39135a354b66ffd45f",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
+      "counts": {
+        "rows": 200000,
+        "atom_field_migrations": 6619220,
+        "field_names_only_rows": 199044,
+        "changed_beyond_field_names_rows": 938,
+        "identical_rows": 18
+      },
+      "status_transitions": {
+        "ok -> ok": 199982,
+        "error -> error": 18
+      },
+      "changed_paths": {
+        "expected.value.records[*].components[*].atoms[*].spin_multiplicity": 1476
+      },
+      "spin_transitions": {
+        "[2, null]": 1275,
+        "[3, null]": 201
+      }
+    },
+    {
+      "dataset": "pubchem-100k",
+      "feature": "stereo.representation",
+      "rows": 200000,
+      "action": "independent regeneration",
+      "previous_payload_sha256": "193b39eb03b871ebc57001f2c1416fe8b4e981009dadd64bff7820327112288e",
+      "current_payload_sha256": "343e59db08539276a4a049fb88617e5c915c59ec2eed54969567ed6c3d238b26",
+      "source_lock_sha256": "6b53afc4e6cba0af4f2f1c4582c8c2fb19b0e3fa40a63dac752840de1e433c7d",
+      "counts": {
+        "rows": 200000,
+        "atom_field_migrations": 6619220,
+        "field_names_only_rows": 199044,
+        "changed_beyond_field_names_rows": 938,
+        "identical_rows": 18
+      },
+      "status_transitions": {
+        "ok -> ok": 199982,
+        "error -> error": 18
+      },
+      "changed_paths": {
+        "expected.value.records[*].components[*].atoms[*].spin_multiplicity": 1476
+      },
+      "spin_transitions": {
+        "[2, null]": 1275,
+        "[3, null]": 201
+      }
+    }
+  ],
+  "validation": {
+    "command": "cargo benchmark --feature all --dataset all --limit 1 --jobs 4 --output target/golden-refresh/catalogue-validation.json",
+    "complete": true,
+    "run_error": null,
+    "dataset_feature_pairs": 203,
+    "stored_rows_validated": 6514328,
+    "native_selection": "One source ID per dataset; not a full native corpus comparison.",
+    "native_results": {
+      "cases": 161,
+      "agrees": 118,
+      "disagrees": 43,
+      "errors": 0,
+      "not_applicable": 89
+    },
+    "benchmark_tests_passed": 96,
+    "rust_checks_passed": [
+      "cargo fmt --all -- --check",
+      "cargo check -p kekule-bench --all-targets --locked -j 4",
+      "cargo clippy -p kekule-bench --all-targets --locked -j 4 -- -D warnings",
+      "cargo test -p kekule-bench --locked -j 4",
+      "RUSTDOCFLAGS=\"-D warnings\" cargo doc -p kekule-bench --no-deps --locked -j 4",
+      "cargo +1.89.0 check -p kekule-bench --all-targets --locked -j 4",
+      "cargo package -p kekule-bench --list --allow-dirty --locked",
+      "cargo build --release -p kekule-bench --locked -j 4"
+    ],
+    "scope": "Benchmark harness, reference data and documentation only. Runtime workspace tests, runtime package verification, Linux and fuzz checks were not repeated because runtime code was unchanged; validation ran on Windows. The full native benchmark was not rerun."
+  }
+}
