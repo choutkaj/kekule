@@ -233,8 +233,12 @@ pub(super) fn write(feature: &str, input: &Input) -> Result<Value, Box<dyn Error
                 return Err(boxed_error("SMILES parse failed"));
             }
             let mode = match feature {
-                "io.smiles.canonical" => smiles::SmilesWriteMode::Canonical,
-                "io.smiles.isomeric" => smiles::SmilesWriteMode::Isomeric,
+                "io.smiles.canonical" | "io.smiles.text.canonical" => {
+                    smiles::SmilesWriteMode::Canonical
+                }
+                "io.smiles.isomeric" | "io.smiles.text.isomeric" => {
+                    smiles::SmilesWriteMode::Isomeric
+                }
                 _ => smiles::SmilesWriteMode::default(),
             };
             let mut components = record.components;
@@ -243,7 +247,7 @@ pub(super) fn write(feature: &str, input: &Input) -> Result<Value, Box<dyn Error
             }
             let topology = kekule::topology::Topology::from_molecules(&components)?;
             let text = smiles::write_topology(&topology, smiles::SmilesWriteOptions { mode })?;
-            if feature == "io.smiles.canonical" {
+            if mode == smiles::SmilesWriteMode::Canonical {
                 // Canonical text must be invariant to atom numbering and a fixed
                 // point of reading/writing. These checks supplement RDKit identity.
                 for molecule in &components {
@@ -270,7 +274,13 @@ pub(super) fn write(feature: &str, input: &Input) -> Result<Value, Box<dyn Error
                     }
                 }
             }
-            written.push(json!({"path":"output.smi","text":format!("{} {}",text,record.title)}));
+            if super::is_smiles_text(feature) {
+                written.push(json!({"record_index":written.len(),"status":"ok",
+                    "title":record.title,"smiles":text}));
+            } else {
+                written
+                    .push(json!({"path":"output.smi","text":format!("{} {}",text,record.title)}));
+            }
         }
     } else {
         let records = if input.extension().is_some_and(|s| s == "sdf") {
@@ -296,7 +306,11 @@ pub(super) fn write(feature: &str, input: &Input) -> Result<Value, Box<dyn Error
             }
         }
     }
-    Ok(json!({"written":written}))
+    Ok(if super::is_smiles_text(feature) {
+        json!({"records":written})
+    } else {
+        json!({"written":written})
+    })
 }
 
 // Change only numbering through the public construction API. Retain every atom,

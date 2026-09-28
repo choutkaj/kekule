@@ -10,6 +10,7 @@ pub(super) struct Emission {
     pub atoms: usize,
     groups: Vec<(StereoGroupKind, Vec<usize>)>,
     ungrouped: Vec<usize>,
+    radicals: Vec<(u8, usize)>,
 }
 
 impl Emission {
@@ -47,6 +48,25 @@ impl Emission {
             atoms: order.len(),
             groups,
             ungrouped,
+            radicals: order
+                .iter()
+                .enumerate()
+                .filter_map(|(i, atom)| {
+                    let radical = mol
+                        .atom(*atom)
+                        .expect("emission visits a live atom")
+                        .radical?;
+                    // Explicit spin remains unsupported by the writer. Higher
+                    // occupancies have no CX code and remain encoded by brackets.
+                    let code = match radical.electron_count() {
+                        1 => 1,
+                        2 => 2,
+                        3 => 5,
+                        _ => return None,
+                    };
+                    Some((code, i))
+                })
+                .collect(),
         }
     }
 
@@ -66,6 +86,11 @@ impl Emission {
                 .ungrouped
                 .extend(part.ungrouped.into_iter().map(|i| i + result.atoms));
             result.groups.extend(part.groups);
+            result.radicals.extend(
+                part.radicals
+                    .into_iter()
+                    .map(|(code, i)| (code, i + result.atoms)),
+            );
             result.atoms += part.atoms;
         }
         result
@@ -104,6 +129,13 @@ impl Emission {
                 .join(",")
         };
         let mut fields = Vec::new();
+        let mut radicals = BTreeMap::<u8, Vec<usize>>::new();
+        for &(code, atom) in &self.radicals {
+            radicals.entry(code).or_default().push(atom);
+        }
+        for (code, atoms) in radicals {
+            fields.push(format!("^{code}:{}", list(&atoms)));
+        }
         if !absolute.is_empty() {
             fields.push(format!(
                 "a:{}",
@@ -112,7 +144,7 @@ impl Emission {
         }
         and.sort();
         or.sort();
-        for (tag, groups) in [("&", and), ("o", or)] {
+        for (tag, groups) in [("o", or), ("&", and)] {
             for (number, members) in groups.iter().enumerate() {
                 fields.push(format!("{tag}{}:{}", number + 1, list(members)));
             }

@@ -14,6 +14,18 @@ spec.loader.exec_module(runner)
 
 
 class StrictReferenceTests(unittest.TestCase):
+    def test_smiles_text_modes_are_independent_of_identity_and_preserve_cx(self):
+        def value(feature, text):
+            return runner.run({'feature': feature, 'inputs': [{'path': 'input.smi', 'text': text}]})['results'][0]['value']['records'][0]
+        self.assertEqual(value('io.smiles.text.write', 'OCC ethanol')['smiles'], 'OCC')
+        self.assertEqual(value('io.smiles.text.canonical', 'OCC ethanol')['smiles'], 'CCO')
+        self.assertEqual(value('io.smiles.text.canonical', 'OCC ethanol')['title'], 'ethanol')
+        self.assertEqual(value('io.smiles.write', 'OCC ethanol')['identity'], 'CCO')
+        self.assertEqual(value('io.smiles.text.isomeric', 'c1ccccc1')['smiles'], 'C1=CC=CC=C1')
+        self.assertEqual(value('io.smiles.text.canonical', 'CCCO[O]')['smiles'], 'CCCO[O] |^1:4|')
+        result = runner.run({'feature': 'io.smiles.text.write', 'written': [{'status': 'ok', 'value': {'written': [{'path': 'output.smi', 'text': 'CCO'}]}}]})
+        self.assertEqual(result['results'][0]['status'], 'error')
+
     def test_smarts_behavior_keeps_ordered_tags_symmetry_and_stereo(self):
         def target(query, id):
             value = reference.smarts_behavior(Chem.MolFromSmarts(query))

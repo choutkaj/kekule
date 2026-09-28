@@ -72,6 +72,8 @@ def run(request):
     if reference['tool'] == 'rdkit':
         from reference.rdkit import molecule
     writer = feature.endswith('.write') or feature in ('io.smiles.canonical', 'io.smiles.isomeric')
+    smiles_text = feature in ('io.smiles.text.write', 'io.smiles.text.canonical', 'io.smiles.text.isomeric')
+    writer = writer and not smiles_text
     results = []
     elapsed = 0
     with tempfile.TemporaryDirectory(prefix='kekule-reference-') as directory:
@@ -93,7 +95,7 @@ def run(request):
                         value = module.evaluate(feature, source, dependencies)
                     else:
                         source = MemoryInput(item['path'], item['text'])
-                        if writer:
+                        if writer or smiles_text:
                             value = molecule.writer_value(feature, source)
                         elif feature.startswith(('io.smiles.', 'io.mol.', 'io.sdf.')) or feature in ('stereo.representation', 'stereo.perception'):
                             value = molecule.evaluate(feature, source)
