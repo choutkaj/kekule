@@ -86,3 +86,26 @@ and expanded dense benchmark JSON construction without changing its values or
 comparison rules. Formatting, diff checks, the resonance observation regression,
 scoped benchmark clippy, and core package verification were repeated. The full
 workspace test total above precedes this cosmetic cleanup.
+
+## Review fixes
+
+Permutation construction now reserves work for its stored vectors, depth scans,
+and sorting before allocation. Checked arithmetic rejects an overflowing work
+estimate. Regressions exercise a million-permutation request with a small budget,
+sorting-budget exhaustion, overflow, and unchanged contributor priority.
+Detached resonance groups are normalized by their smallest bond ID, with a
+regression for reversed input order and stable atom/bond group indices. Invalid
+empty groups and duplicate members remain installation errors.
+
+Review revalidation passed: 1,506 workspace tests (three existing ignored), all
+42 separately run doctests, formatting/diff checks, stable and Rust 1.89
+workspace checks, warning-free workspace clippy and documentation, all fuzz
+target compilation, and core package verification. Detailed logs are
+`target/resonance-review-*.log`.
+
+The optional external comparisons and runtime fuzz smoke were not repeated for
+these fixes; focused regressions exercise the two defects and the full workspace
+suite checks integration. Python/Node tooling, companion-only minimal-feature
+checks and companion package inventories were unchanged and retain their earlier
+validation results above. Linux execution remains unavailable on this Windows
+host. The previously recorded cutoff-parity differences remain unresolved.
