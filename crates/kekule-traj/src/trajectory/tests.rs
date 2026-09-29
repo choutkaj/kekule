@@ -121,7 +121,11 @@ fn trajectory_perception_preserves_all_frame_state_and_original_bindings() {
         ));
         assert!(frame.topology().molecules().all(|m| {
             let perception = m.molecule().perception();
-            perception.has_valence() && perception.has_rings() && perception.has_aromaticity()
+            perception.has_valence()
+                && perception.has_rings()
+                && perception.has_aromaticity()
+                && perception.has_conjugation()
+                && !perception.has_resonance()
         }));
     }
     assert!(topology

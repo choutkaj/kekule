@@ -10,7 +10,7 @@ establish correctness. Scientific runs are optional, outside CI/release gates.
 - `src/`, `tests/`, the Python tools and `dashboard/` implement and test the runner.
 - `corpora/` and `smarts-fixtures/openff-smarts/` retain supplied inputs, licenses
   and source locks. Both SMARTS workflows share `corpora/rdkit-queries/`.
-- `goldens/`, `contract.json`, `query-smarts.json`, `smiles-text.json` and
+- `goldens/`, `contract.json`, `query-smarts.json`, `smiles-text.json`, `resonance.json` and
   `queries.smarts` are active comparison inputs, not disposable result files.
 - [GOLDENS.md](GOLDENS.md) and `reference-audit.json` retain reference provenance;
   the [current parity audit](FULL-PARITY-2026-09-29.md) records remaining issues.
@@ -94,6 +94,14 @@ reference directories. Existing generation outputs are protected from
 accidental overwrites.
 Missing, stale, malformed or duplicated goldens stop comparison; they do not
 trigger regeneration. A partial generation does not cover omitted cases.
+
+Conjugation, connected resonance groups and explicit contributor enumeration
+have separate features. Their small-corpus references cover all smoke and RDKit
+structure inputs. Bulk reference coverage initially uses `--limit 100` for
+conjugation/groups and `--limit 10` for enumeration; specify those limits when
+using the supplied bulk samples. Enumeration asserts all 32 option masks and
+uses four-input batches to bound output amplification. Its comparisons remain
+strict, including indexed localized structures at the contributor limit.
 
 If a run stops with an incompatible golden manifest, the diagnostic names each
 mismatched field and its stored and required values. A `contract_sha256`

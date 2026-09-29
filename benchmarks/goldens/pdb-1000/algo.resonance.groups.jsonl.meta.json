@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "contract_sha256": "99a36c2ce8cdfd5741184e74ab6f589ce4f140ad47db5f62a45cbc2908500f8b",
+  "dataset": "pdb-1000",
+  "feature": "algo.resonance.groups",
+  "input_lock_sha256": "d7b3af4fe3a00a0d75c1e49e2144dcedffca4791f47a0eb312463c981c9e6171",
+  "sha256": "9ed28fa5d1b74926b4a54010cccff0764a3b67909610e9f475e616529edef890",
+  "reference": null,
+  "reference_code_sha256": "4ddf191c8feefec03d198c1675ddd842f319fc0aa67f484fe55591a022a62b82",
+  "origin": "independent generation",
+  "cases": 100
+}
