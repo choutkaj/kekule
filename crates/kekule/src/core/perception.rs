@@ -440,10 +440,11 @@ impl PerceptionBuilder {
         });
         Ok(self)
     }
-    /// Adds exact connected groups. Installation checks the complete partition.
+    /// Adds connected groups, ordered by their smallest bond ID.
+    /// Installation checks the complete partition, including empty or duplicate members.
     pub fn with_resonance_groups(
         mut self,
-        groups: Vec<ResonanceGroup>,
+        mut groups: Vec<ResonanceGroup>,
     ) -> Result<Self, PerceptionBuildError> {
         check_perception_component_capacity(groups.len(), PerceptionComponent::Conjugation)?;
         for group in &groups {
@@ -456,6 +457,7 @@ impl PerceptionBuilder {
                 PerceptionComponent::Conjugation,
             )?;
         }
+        groups.sort_by_key(|group| group.bonds.iter().min().copied());
         self.state.resonance = Some(ResonancePerception { groups });
         Ok(self)
     }
