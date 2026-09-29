@@ -18,9 +18,9 @@ pub use rings::*;
 pub use rotatable_bonds::*;
 pub use stereo::*;
 pub(crate) use stereo::{
-    atom_axis_carriers, atom_hydrogen_count, coordinates_are_planar, double_bond_endpoint_carriers,
-    double_bond_geometry_is_supported, double_bond_orientation_from_points,
-    tetrahedral_orientation_from_points,
+    atom_axis_carriers, atom_hydrogen_count, atom_is_atropisomeric_sp2_endpoint,
+    coordinates_are_planar, double_bond_endpoint_carriers, double_bond_geometry_is_supported,
+    double_bond_orientation_from_points, tetrahedral_orientation_from_points,
 };
 
 pub use substructure::*;

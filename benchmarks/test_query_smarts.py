@@ -9,12 +9,15 @@ ROOT = Path(__file__).parent
 
 class QuerySmartsTests(unittest.TestCase):
     def test_standard_corpus_preserves_every_original_query_and_source_byte(self):
-        original = ROOT / 'smarts-fixtures/rdkit-queries'
         standard = ROOT / 'corpora/rdkit-queries'
-        lock = json.loads((standard / 'sources.lock.json').read_text())
+        source_bytes = (standard / 'sources.lock.json').read_bytes()
+        lock = json.loads(source_bytes)
+        reference = json.loads((ROOT / 'goldens/rdkit-queries/query.smarts.jsonl.meta.json').read_text())
+        # Repository-text fingerprints use LF, as in the runner's text_hash;
+        # externally supplied query/source bytes below remain exact.
+        self.assertEqual(hashlib.sha256(source_bytes.replace(b'\r\n', b'\n')).hexdigest(),
+                         reference['input_lock_sha256'])
         self.assertEqual(len(lock['entries']), 518)
-        for relative in ['sources.lock.json'] + [p['path'] for p in lock['packs'] + lock['upstream']]:
-            self.assertEqual((original / relative).read_bytes(), (standard / relative).read_bytes(), relative)
         for item in lock['packs'] + lock['upstream']:
             self.assertEqual(hashlib.sha256((standard / item['path']).read_bytes()).hexdigest(), item['sha256'])
 

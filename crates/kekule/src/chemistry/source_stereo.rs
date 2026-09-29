@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::{
-    atom_axis_carriers, compute_ring_membership, coordinates_are_planar,
-    double_bond_geometry_is_supported, double_bond_orientation_from_points,
+    atom_axis_carriers, atom_is_atropisomeric_sp2_endpoint, compute_ring_membership,
+    coordinates_are_planar, double_bond_geometry_is_supported, double_bond_orientation_from_points,
     tetrahedral_orientation_from_points, validate_stereo, RingMembership, StereoValidationError,
 };
 use crate::core::*;
@@ -597,7 +597,8 @@ fn tetrahedral_wedge_orientation(
     }
     let mut explicit_points = vec![Point3::origin()];
     explicit_points.extend(carrier_points.iter().filter_map(|point| *point));
-    if coordinates_are_planar(&explicit_points) {
+    let planar = coordinates_are_planar(&explicit_points);
+    if planar {
         let marked = carrier_points[0].as_mut()?;
         let reference_length = (*marked - Point3::origin()).norm();
         // The wedge supplies the missing out-of-plane direction. A coincident
@@ -629,6 +630,9 @@ fn tetrahedral_wedge_orientation(
         }
         directions.push(direction);
     }
+    if planar && virtual_carriers.is_empty() {
+        return four_coordinate_drawing_orientation(directions.try_into().ok()?);
+    }
     let mut vector_sum = Vector3::zero();
     for point in carrier_points.iter().filter_map(|point| *point) {
         vector_sum += point - Point3::origin();
@@ -644,6 +648,75 @@ fn tetrahedral_wedge_orientation(
         carrier_points[2]?,
         carrier_points[3]?,
     ])
+}
+
+/// Interpret a four-bond projection by its angular order, rather than by the
+/// volume of an arbitrary tetrahedron made from the drawn bond lengths.
+/// The marked bond is first. Following the CTfile drawing conventions used by
+/// RDKit's atomChiralTypeFromBondDir (Release_2026_03_3), select a nondegenerate
+/// pair of unmarked directions and account for the opposite fourth carrier.
+fn four_coordinate_drawing_orientation(
+    mut directions: [Vector3; 4],
+) -> Option<TetrahedralOrientation> {
+    const ZERO: f64 = 0.001;
+    const VOLUME: f64 = 0.00174;
+    if directions[1].cross(directions[2]).norm_squared() < 10.0 * ZERO
+        && directions[1].cross(directions[0]).norm_squared() > 10.0 * ZERO
+    {
+        directions[1].z = -directions[0].z;
+    }
+    let key = |index: usize| {
+        let side = if directions[0].cross(directions[index]).z < -ZERO {
+            -1.0_f64
+        } else {
+            1.0
+        };
+        (side, side * directions[0].dot(directions[index]))
+    };
+    let mut order = [1, 2, 3];
+    order.sort_by(|&a, &b| {
+        let (side_a, dot_a) = key(a);
+        let (side_b, dot_b) = key(b);
+        side_b
+            .total_cmp(&side_a)
+            .then_with(|| dot_b.total_cmp(&dot_a))
+            .then_with(|| b.cmp(&a))
+    });
+    let inversions = usize::from(order[0] > order[1])
+        + usize::from(order[0] > order[2])
+        + usize::from(order[1] > order[2]);
+    let mut sign = if inversions % 2 == 0 { 1.0 } else { -1.0 };
+    let [mut first, mut second, mut third] = order.map(|index| directions[index]);
+    first.z = 0.0;
+    second.z = 0.0;
+    third.z = 0.0;
+    let mut volume = first.cross(second).dot(directions[0]);
+    let alternate = first.cross(third).dot(directions[0]);
+    if volume.abs() < ZERO {
+        if alternate.abs() < ZERO {
+            return None;
+        }
+        volume = alternate;
+        sign = -sign;
+    } else if volume * alternate > 0.0
+        && alternate.abs() > VOLUME
+        && directions[order[0]].dot(directions[order[1]])
+            < directions[order[0]].dot(directions[order[2]])
+    {
+        volume = alternate;
+        sign = -sign;
+    } else if volume.abs() < VOLUME && alternate.abs() > VOLUME {
+        if volume * alternate < 0.0 {
+            sign = -sign;
+        }
+        volume = alternate;
+    }
+    let volume = sign * volume;
+    (volume.abs() > VOLUME).then_some(if volume > 0.0 {
+        TetrahedralOrientation::Clockwise
+    } else {
+        TetrahedralOrientation::CounterClockwise
+    })
 }
 
 fn assemble_atropisomeric_axes(
@@ -725,7 +798,6 @@ fn atropisomeric_axis_candidates(
             atropisomeric_axis_candidate(
                 molecule,
                 geometry,
-                ring_membership,
                 mark,
                 (axis, bond),
                 near,
@@ -747,7 +819,6 @@ fn atropisomeric_axis_candidates(
 fn atropisomeric_axis_candidate(
     molecule: &Molecule,
     geometry: Option<&dyn AtomPositionSource>,
-    ring_membership: &RingMembership,
     mark: &SourceStereoBondMark,
     axis: (BondId, &Bond),
     near: AtomId,
@@ -758,9 +829,18 @@ fn atropisomeric_axis_candidate(
         return None;
     }
     let other = axis_bond.other_atom(near);
-    if !source_atom_is_atropisomeric_sp2_endpoint(molecule, ring_membership, near)
-        || !source_atom_is_atropisomeric_sp2_endpoint(molecule, ring_membership, other)
-    {
+    let is_trigonal = |atom| {
+        atom_is_atropisomeric_sp2_endpoint(
+            molecule,
+            atom,
+            molecule
+                .atom(atom)
+                .expect("live axis endpoint")
+                .hydrogens
+                .specified_count(),
+        )
+    };
+    if !is_trigonal(near) || !is_trigonal(other) {
         return None;
     }
     let left = axis_bond.a();
@@ -801,34 +881,6 @@ fn atropisomeric_axis_candidate(
         ],
         orientation,
     })))
-}
-
-fn source_atom_is_atropisomeric_sp2_endpoint(
-    molecule: &Molecule,
-    ring_membership: &RingMembership,
-    atom_id: AtomId,
-) -> bool {
-    let Ok(atom) = molecule.atom(atom_id) else {
-        return false;
-    };
-    let incident = molecule
-        .incident_bonds(atom_id)
-        .ok()
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
-    // Source-declared atom hydrogens participate in represented degree;
-    // perceived implicit hydrogens do not.
-    let total_degree = incident
-        .len()
-        .saturating_add(usize::from(atom.hydrogens.specified_count()));
-    if !(2..=3).contains(&total_degree) {
-        return false;
-    }
-    ring_membership.atom_in_ring(atom_id)
-        || incident
-            .iter()
-            .any(|(_, bond)| bond.order == BondOrder::Double)
 }
 
 fn axis_orientation_from_wedge(

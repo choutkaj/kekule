@@ -568,3 +568,29 @@ fn canonical_labeling_prunes_equivalent_phenyl_branches() {
     assert_eq!(restored.bond_count(), molecule.bond_count());
     assert_eq!(smiles::write_canonical(&restored).unwrap(), written);
 }
+
+#[test]
+fn source_order_spiro_groups_preserve_native_stereo_on_rereading() {
+    // Supplied Enamine cases whose RDKit canonical identity strings depend on
+    // traversal. RDKit 2026.03.3 confirms mutual chirality/enhanced-group-aware
+    // matches for every source/output pair; native reconstruction must agree too.
+    for source in [
+        r"O[C@@H]1C[C@@]2(C[C@H](C2)NC=3N=CC=C(N3)C=4C=CC=NC4)[C@H]1O |&1:1,3,5,20,r| ID:Z9237738672",
+        r"COC(=O)[C@H]1C(F)(F)[C@@]21C[C@H](C2)C3=NC(=NO3)C4=NC(C)=NN4C |&1:4,8,10,r| ID:Z5188334346",
+        r"O=C(O)[C@H]1C[C@@]21C[C@H](C2)NC(=O)C3=CC=C(COC=4C=CC=CC4)O3 |&1:3,5,7,r| ID:Z3510155828",
+        r"COC(=O)[C@H]1C(F)(F)[C@@]21C[C@H](C2)C3=NC(=NO3)C(C)C4=CC=CO4 |&1:4,8,10,r| ID:Z4875774646",
+        r"O=C(O)[C@H]1C[C@@]21C[C@H](C2)NC(=O)C=3C=CC=C(C3)OCC4=CN5C=CC=CC5=N4 |&1:3,5,7,r| ID:Z3510152401",
+    ] {
+        let mut molecule = smiles::to_molecules(source).unwrap().pop().unwrap();
+        molecule.perceive().unwrap();
+        let expected = smiles::write_canonical(&molecule).unwrap();
+        let written = smiles::write_isomeric(&molecule).unwrap();
+        let mut restored = smiles::to_molecules(&written).unwrap().pop().unwrap();
+        restored.perceive().unwrap();
+        assert_eq!(
+            smiles::write_canonical(&restored).unwrap(),
+            expected,
+            "{source} -> {written}"
+        );
+    }
+}

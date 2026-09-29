@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::algorithms::{allowed_valences, rdkit_default_valence};
 use crate::core::Molecule;
@@ -7,9 +7,9 @@ use crate::io::MolWriteError;
 
 use super::write::{
     smiles_atom, smiles_atom_requires_brackets, smiles_incident_bonds_for_style,
-    smiles_ring_closures, validate_smiles_bracket_radical, validate_smiles_writeable,
-    write_smiles_component, CanonicalAtomStyle, SmilesBondOrder, SmilesStereoWriteContext,
-    SmilesWritePlan, StereoWriteMode,
+    validate_smiles_bracket_radical, validate_smiles_writeable, write_smiles_component,
+    CanonicalAtomStyle, SmilesBondOrder, SmilesStereoWriteContext, SmilesWritePlan,
+    StereoWriteMode,
 };
 
 mod labeling;
@@ -185,56 +185,8 @@ fn plan_canonical_smiles_component(
     atom_style: CanonicalAtomStyle,
     rings: &RingMembership,
 ) -> std::result::Result<SmilesWritePlan, MolWriteError> {
-    // Record back edges in DFS discovery order. In particular, closures
-    // sharing their opening atom must follow when their far endpoints are
-    // encountered, not the ranks of those endpoints.
-    enum Action {
-        Enter(AtomId, Option<BondId>),
-        Edge(AtomId, BondId, SmilesBondOrder, AtomId),
-        Exit(AtomId),
-    }
-    let mut visited = BTreeSet::new();
-    let mut active = BTreeSet::new();
-    let mut tree_bonds = BTreeSet::new();
-    let mut ring_bonds = Vec::new();
-    let mut actions = vec![Action::Enter(root, None)];
-    while let Some(action) = actions.pop() {
-        match action {
-            Action::Enter(atom, parent) => {
-                visited.insert(atom);
-                active.insert(atom);
-                let mut incident = smiles_incident_bonds_for_style(mol, atom, atom_style)?;
-                sort_canonical_smiles_neighbors(&mut incident, ranking, rings);
-                // Existing ancestors precede new continuations. Stable sorting
-                // preserves the bond-order/rank ordering within each class.
-                incident.sort_by_key(|(_, _, other)| !active.contains(other));
-                actions.push(Action::Exit(atom));
-                for (bond, order, other) in incident.into_iter().rev() {
-                    if Some(bond) != parent {
-                        actions.push(Action::Edge(atom, bond, order, other));
-                    }
-                }
-            }
-            Action::Edge(atom, bond, order, other) => {
-                if !visited.contains(&other) {
-                    tree_bonds.insert(bond);
-                    actions.push(Action::Enter(other, Some(bond)));
-                } else if active.contains(&other) {
-                    ring_bonds.push((bond, other, atom, order));
-                }
-            }
-            Action::Exit(atom) => {
-                active.remove(&atom);
-            }
-        }
-    }
-    let closures = smiles_ring_closures(ring_bonds);
-
-    Ok(SmilesWritePlan {
-        roots: vec![root],
-        tree_bonds,
-        closures,
-        subtree_sizes: BTreeMap::new(),
+    super::write::plan_smiles_component(mol, root, atom_style, |neighbors| {
+        sort_canonical_smiles_neighbors(neighbors, ranking, rings);
     })
 }
 
