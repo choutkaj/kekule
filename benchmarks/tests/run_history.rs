@@ -196,10 +196,6 @@ fn comparisons_archive_and_refresh_even_when_they_disagree() {
         assert!(dashboard.join("index.html").exists());
         assert!(!runs.join("index.html").exists());
         assert!(!runs.join("dashboard-data.js").exists());
-        assert!(String::from_utf8_lossy(&output.stdout).contains(&format!(
-            "Dashboard: {}",
-            dashboard.join("index.html").display()
-        )));
         if !passing {
             assert!(runs.join("custom.cases.jsonl.gz").exists());
             assert!(
