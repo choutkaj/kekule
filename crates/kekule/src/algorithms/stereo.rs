@@ -4,6 +4,8 @@ use crate::geometry::{Point3, Vector3};
 use crate::structure::Positions;
 use std::fmt;
 
+mod axis_geometry;
+pub(crate) use axis_geometry::atom_is_atropisomeric_sp2_endpoint;
 mod eligibility;
 mod nitrogen;
 mod perception;
@@ -724,29 +726,6 @@ pub(crate) fn atom_axis_carriers(
     Some(carriers)
 }
 
-fn atom_is_atropisomeric_sp2_endpoint(mol: &Molecule, atom_id: AtomId) -> bool {
-    if mol.atom(atom_id).is_err() {
-        return false;
-    }
-    let incident = mol
-        .incident_bonds(atom_id)
-        .ok()
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
-    let total_degree = incident
-        .len()
-        .saturating_add(usize::from(atom_hydrogen_count(mol, atom_id)));
-    if !(2..=3).contains(&total_degree) {
-        return false;
-    }
-    mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true)
-        || incident.iter().any(|(bond_id, bond)| {
-            mol.bond_is_aromatic(*bond_id).ok().flatten() == Some(true)
-                || bond.order == BondOrder::Double
-        })
-}
-
 fn infer_coordinate_stereo_elements(
     mol: &Molecule,
     coordinates: &dyn AtomPositionSource,
@@ -872,8 +851,8 @@ fn infer_coordinate_axes(
             continue;
         }
         let (left, right) = bond.endpoints();
-        if !atom_is_atropisomeric_sp2_endpoint(mol, left)
-            || !atom_is_atropisomeric_sp2_endpoint(mol, right)
+        if !atom_is_atropisomeric_sp2_endpoint(mol, left, atom_hydrogen_count(mol, left))
+            || !atom_is_atropisomeric_sp2_endpoint(mol, right, atom_hydrogen_count(mol, right))
         {
             continue;
         }

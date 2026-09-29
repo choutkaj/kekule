@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::algorithms::ordered_atom_pair;
+use crate::algorithms::{compute_ring_membership, ordered_atom_pair};
 use crate::core::Molecule;
 use crate::core::*;
 use crate::io::MolWriteError;
@@ -31,7 +31,30 @@ pub(super) fn write_source_order_emission(
     mode: StereoWriteMode,
     style: CanonicalAtomStyle,
 ) -> std::result::Result<Emission, MolWriteError> {
-    let plan = plan_smiles_write(mol, mode)?;
+    validate_smiles_writeable(mol, mode)?;
+    let rings = compute_ring_membership(mol);
+    let order_neighbors = |neighbors: &mut [(BondId, SmilesBondOrder, AtomId)]| {
+        neighbors.sort_by_key(|(bond, order, atom)| {
+            let order = match order {
+                SmilesBondOrder::Single => 1,
+                SmilesBondOrder::Double => 2,
+                SmilesBondOrder::Triple => 3,
+                SmilesBondOrder::Quadruple => 4,
+                SmilesBondOrder::Aromatic => 5,
+            };
+            (
+                rings.bond_in_ring(*bond),
+                if rings.bond_in_ring(*bond) {
+                    5 - order
+                } else {
+                    0
+                },
+                *atom,
+            )
+        });
+    };
+    let root = mol.atom_ids().next().expect("a molecule is nonempty");
+    let plan = plan_smiles_component(mol, root, style, order_neighbors)?;
     let stereo = (mode == StereoWriteMode::Encode)
         .then(|| SmilesStereoWriteContext::new(mol, AtomId::index))
         .transpose()?;
@@ -45,14 +68,8 @@ pub(super) fn write_source_order_emission(
             style,
             false,
             |_, children| {
-                children.sort_by_key(|(bond, _, atom)| (*atom, *bond));
-                children
-                    .iter()
-                    .enumerate()
-                    .max_by_key(|(_, (_, _, child))| {
-                        (plan.subtree_sizes.get(child).copied().unwrap_or(0), *child)
-                    })
-                    .map(|(index, _)| index)
+                order_neighbors(children);
+                children.len().checked_sub(1)
             },
         )?);
     }
@@ -70,7 +87,6 @@ pub(super) struct SmilesWritePlan {
     pub(super) roots: Vec<AtomId>,
     pub(super) tree_bonds: BTreeSet<BondId>,
     pub(super) closures: BTreeMap<AtomId, Vec<SmilesRingClosure>>,
-    pub(super) subtree_sizes: BTreeMap<AtomId, usize>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -88,55 +104,6 @@ pub(super) enum SmilesBondOrder {
     Triple,
     Quadruple,
     Aromatic,
-}
-
-fn plan_smiles_write(
-    mol: &Molecule,
-    stereo: StereoWriteMode,
-) -> std::result::Result<SmilesWritePlan, MolWriteError> {
-    validate_smiles_writeable(mol, stereo)?;
-    let mut roots = Vec::new();
-    let mut visited = BTreeSet::<AtomId>::new();
-    let mut tree_bonds = BTreeSet::<BondId>::new();
-    let mut ring_bonds = BTreeMap::<BondId, (AtomId, AtomId, SmilesBondOrder)>::new();
-
-    for start in mol.atom_ids() {
-        if visited.contains(&start) {
-            continue;
-        }
-        roots.push(start);
-        collect_smiles_tree(
-            mol,
-            start,
-            None,
-            &mut visited,
-            &mut tree_bonds,
-            &mut ring_bonds,
-            |atom| smiles_incident_bonds(mol, atom),
-        )?;
-    }
-
-    let mut ring_bonds = ring_bonds
-        .into_iter()
-        .map(|(bond_id, (a, b, order))| {
-            let (first, second) = ordered_atom_pair(a, b);
-            (bond_id, first, second, order)
-        })
-        .collect::<Vec<_>>();
-    ring_bonds.sort_by_key(|(bond_id, first, second, _)| (*first, *second, *bond_id));
-    let closures = smiles_ring_closures(ring_bonds);
-
-    let mut subtree_sizes = BTreeMap::new();
-    for root in &roots {
-        compute_smiles_subtree_sizes(mol, *root, None, &tree_bonds, &mut subtree_sizes)?;
-    }
-
-    Ok(SmilesWritePlan {
-        roots,
-        tree_bonds,
-        closures,
-        subtree_sizes,
-    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -298,60 +265,62 @@ fn validate_isomeric_double_bond_endpoint(
     Ok(())
 }
 
-pub(super) fn collect_smiles_tree<F>(
+pub(super) fn plan_smiles_component(
     mol: &Molecule,
-    atom_id: AtomId,
-    parent_bond: Option<BondId>,
-    visited: &mut BTreeSet<AtomId>,
-    tree_bonds: &mut BTreeSet<BondId>,
-    ring_bonds: &mut BTreeMap<BondId, (AtomId, AtomId, SmilesBondOrder)>,
-    mut incident_bonds: F,
-) -> std::result::Result<(), MolWriteError>
-where
-    F: FnMut(AtomId) -> std::result::Result<Vec<(BondId, SmilesBondOrder, AtomId)>, MolWriteError>,
-{
-    struct Frame {
-        parent_bond: Option<BondId>,
-        incident: Vec<(BondId, SmilesBondOrder, AtomId)>,
-        next_edge: usize,
+    root: AtomId,
+    atom_style: CanonicalAtomStyle,
+    order_neighbors: impl Fn(&mut [(BondId, SmilesBondOrder, AtomId)]),
+) -> std::result::Result<SmilesWritePlan, MolWriteError> {
+    // Record back edges in DFS discovery order. In particular, closures
+    // sharing their opening atom must follow when their far endpoints are
+    // encountered, not the ranks of those endpoints.
+    enum Action {
+        Enter(AtomId, Option<BondId>),
+        Edge(AtomId, BondId, SmilesBondOrder, AtomId),
+        Exit(AtomId),
     }
-
-    visited.insert(atom_id);
-    let mut stack = vec![Frame {
-        parent_bond,
-        incident: incident_bonds(atom_id)?,
-        next_edge: 0,
-    }];
-    while let Some(frame) = stack.last_mut() {
-        if frame.next_edge >= frame.incident.len() {
-            stack.pop();
-            continue;
-        }
-        let (bond_id, order, neighbor) = frame.incident[frame.next_edge];
-        frame.next_edge += 1;
-        if Some(bond_id) == frame.parent_bond {
-            continue;
-        }
-        if visited.contains(&neighbor) {
-            if !tree_bonds.contains(&bond_id) {
-                let bond = mol
-                    .bond(bond_id)
-                    .map_err(|error| MolWriteError::new(error.to_string()))?;
-                ring_bonds
-                    .entry(bond_id)
-                    .or_insert((bond.a(), bond.b(), order));
+    let mut visited = BTreeSet::new();
+    let mut active = BTreeSet::new();
+    let mut tree_bonds = BTreeSet::new();
+    let mut ring_bonds = Vec::new();
+    let mut actions = vec![Action::Enter(root, None)];
+    while let Some(action) = actions.pop() {
+        match action {
+            Action::Enter(atom, parent) => {
+                visited.insert(atom);
+                active.insert(atom);
+                let mut incident = smiles_incident_bonds_for_style(mol, atom, atom_style)?;
+                order_neighbors(&mut incident);
+                // Existing ancestors precede new continuations. Stable sorting
+                // preserves the bond-order/rank ordering within each class.
+                incident.sort_by_key(|(_, _, other)| !active.contains(other));
+                actions.push(Action::Exit(atom));
+                for (bond, order, other) in incident.into_iter().rev() {
+                    if Some(bond) != parent {
+                        actions.push(Action::Edge(atom, bond, order, other));
+                    }
+                }
             }
-            continue;
+            Action::Edge(atom, bond, order, other) => {
+                if !visited.contains(&other) {
+                    tree_bonds.insert(bond);
+                    actions.push(Action::Enter(other, Some(bond)));
+                } else if active.contains(&other) {
+                    ring_bonds.push((bond, other, atom, order));
+                }
+            }
+            Action::Exit(atom) => {
+                active.remove(&atom);
+            }
         }
-        tree_bonds.insert(bond_id);
-        visited.insert(neighbor);
-        stack.push(Frame {
-            parent_bond: Some(bond_id),
-            incident: incident_bonds(neighbor)?,
-            next_edge: 0,
-        });
     }
-    Ok(())
+    let closures = smiles_ring_closures(ring_bonds);
+
+    Ok(SmilesWritePlan {
+        roots: vec![root],
+        tree_bonds,
+        closures,
+    })
 }
 
 pub(super) fn smiles_ring_closures(
@@ -371,42 +340,6 @@ pub(super) fn smiles_ring_closures(
         });
     }
     closures
-}
-
-fn compute_smiles_subtree_sizes(
-    mol: &Molecule,
-    atom_id: AtomId,
-    parent: Option<AtomId>,
-    tree_bonds: &BTreeSet<BondId>,
-    subtree_sizes: &mut BTreeMap<AtomId, usize>,
-) -> std::result::Result<usize, MolWriteError> {
-    let mut stack = vec![(atom_id, parent, false)];
-    while let Some((current, parent, expanded)) = stack.pop() {
-        if expanded {
-            let mut size = 1usize;
-            for (bond_id, _, neighbor) in smiles_incident_bonds(mol, current)? {
-                if tree_bonds.contains(&bond_id) && Some(neighbor) != parent {
-                    size = size
-                        .saturating_add(subtree_sizes.get(&neighbor).copied().unwrap_or_default());
-                }
-            }
-            subtree_sizes.insert(current, size);
-            continue;
-        }
-        stack.push((current, parent, true));
-        let mut children = smiles_incident_bonds(mol, current)?
-            .into_iter()
-            .filter(|(bond_id, _, neighbor)| {
-                tree_bonds.contains(bond_id) && Some(*neighbor) != parent
-            })
-            .map(|(_, _, neighbor)| neighbor)
-            .collect::<Vec<_>>();
-        children.sort();
-        for child in children.into_iter().rev() {
-            stack.push((child, Some(current), false));
-        }
-    }
-    Ok(subtree_sizes.get(&atom_id).copied().unwrap_or_default())
 }
 
 #[derive(Debug, Clone)]
@@ -1101,6 +1034,7 @@ pub(super) fn write_smiles_component(
                     left,
                     right,
                     directional,
+                    atom_style,
                 )?);
             }
             Action::Node { atom, parent } => {
@@ -1155,7 +1089,7 @@ pub(super) fn write_smiles_component(
                             )?,
                         };
                         let closing = open_rings.contains_key(&closure.bond);
-                        if !canonical || closing {
+                        if closing {
                             let directional = stereo
                                 .map(|context| {
                                     context.directional_bond(
@@ -1173,14 +1107,11 @@ pub(super) fn write_smiles_component(
                                 atom,
                                 closure.other,
                                 directional,
+                                atom_style,
                             )?);
                         }
                         let number = if let Some(number) = open_rings.remove(&closure.bond) {
-                            if canonical {
-                                released.push(number);
-                            } else {
-                                available_rings.insert(number);
-                            }
+                            released.push(number);
                             number
                         } else {
                             let number = available_rings
@@ -1188,6 +1119,10 @@ pub(super) fn write_smiles_component(
                                 .next()
                                 .copied()
                                 .or_else(|| available_rings.first().copied())
+                                // Preserve source-order export's full capacity:
+                                // when every other label is live, a label just
+                                // closed on this atom can legally be reused.
+                                .or_else(|| (!canonical).then(|| released.pop()).flatten())
                                 .ok_or_else(|| {
                                     MolWriteError::resource_limit(
                                         "SMILES requires more than 100 simultaneous ring labels",
@@ -1199,8 +1134,7 @@ pub(super) fn write_smiles_component(
                         };
                         out.push_str(&smiles_ring_number(number));
                     }
-                    // Canonical spelling delays reuse until the next atom;
-                    // source-order spelling returns labels immediately above.
+                    // Do not close and reopen the same label on one atom.
                     available_rings.extend(released);
                 }
 
@@ -1238,13 +1172,6 @@ pub(super) fn write_smiles_component(
         }
     }
     Ok(Emission::new(mol, out, &atom_order))
-}
-
-fn smiles_incident_bonds(
-    mol: &Molecule,
-    atom_id: AtomId,
-) -> std::result::Result<Vec<(BondId, SmilesBondOrder, AtomId)>, MolWriteError> {
-    smiles_incident_bonds_for_style(mol, atom_id, CanonicalAtomStyle::Aromatic)
 }
 
 pub(super) fn smiles_incident_bonds_for_style(
@@ -1334,6 +1261,7 @@ fn smiles_bond_between_with_direction(
     left: AtomId,
     right: AtomId,
     directional: Option<SmilesDirectionToken>,
+    atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<&'static str, MolWriteError> {
     if let Some(directional) = directional {
         if order != SmilesBondOrder::Single {
@@ -1346,7 +1274,12 @@ fn smiles_bond_between_with_direction(
             SmilesDirectionToken::Down => Ok("\\"),
         };
     }
-    smiles_bond_between(mol, order, left, right)
+    match atom_style {
+        CanonicalAtomStyle::Aromatic => smiles_bond_between(mol, order, left, right),
+        // Uppercase Kekule atoms imply a single bond when no symbol is given,
+        // even when their source molecule has installed aromatic perception.
+        CanonicalAtomStyle::StoredKekule => Ok(smiles_bond(order)),
+    }
 }
 
 pub(super) fn smiles_atom(atom: &Atom, aromatic: bool, inferred_hydrogens: u8) -> String {

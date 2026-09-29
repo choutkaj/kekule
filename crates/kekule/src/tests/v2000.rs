@@ -1,6 +1,34 @@
 use super::*;
 use crate::properties::{PropertyKey, PropertyValue};
 
+#[test]
+fn v2000_touching_coordinates_preserve_precision_and_atom_fields() {
+    // The larger z occupies the separator column, as in the externally
+    // supplied RDKit BMS-986142_3d_chiral drawing.
+    for z in [-1535.5894, -15355.5894] {
+        let source = format!(
+            "coordinates\nkekule\n\n  1  0  0  0  0  0            999 V2000\n   -1.1945   -2.2790{z:10.4} F   0  5  0  1  0 15  0  0  0 17  0  0\nM  END\n"
+        );
+        let document = molfile::parse_str(&source).unwrap();
+        let interpreted = molfile::interpret(&document).unwrap();
+        let point = interpreted
+            .model()
+            .positions()
+            .position_at(0)
+            .unwrap()
+            .value_in(crate::units::ANGSTROM)
+            .unwrap();
+        assert!((point.x + 1.1945).abs() < 1.0e-12);
+        assert!((point.y + 2.2790).abs() < 1.0e-12);
+        assert!((point.z - z).abs() < 1.0e-10);
+        let molecule = interpreted.molecules().next().unwrap();
+        let (_, atom) = molecule.atoms().next().unwrap();
+        assert_eq!(atom.formal_charge, -1);
+        assert_eq!(atom.atom_map, Some(17));
+        assert_eq!(atom.hydrogens, HydrogenDeclaration::Fixed(0));
+    }
+}
+
 fn coordinate_tetrahedron(v3000: bool, points: &[[f64; 3]], mark: u8) -> String {
     let symbols = ["C", "F", "Cl", "Br", "I"];
     let mut source = if v3000 {
@@ -292,7 +320,7 @@ fn molfile_specified_tetrahedral_export_requires_a_drawing() {
 
 #[test]
 fn molfile_valid_wedge_geometry_is_scale_and_reflection_consistent() {
-    // RDKit 2026.03.3 independently checks all 48 drawing variants.
+    // RDKit 2026.03.3 independently checks these drawing configurations.
     for (points, original) in [
         (
             vec![[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0]],
@@ -308,6 +336,29 @@ fn molfile_valid_wedge_geometry_is_scale_and_reflection_consistent() {
         ),
         (
             vec![[0.0, 0.0], [0.0, 0.0], [-1.0, 0.0], [0.0, 1.0]],
+            StereoDescriptor::S,
+        ),
+        // Local drawings from PubChem 10524, with distinct test ligands.
+        // The three unmarked bonds lie on the same side of the center;
+        // their drawing order must not be read as a displaced tetrahedron.
+        (
+            vec![
+                [6.3981, -0.4499],
+                [6.3820, -1.4914],
+                [7.2641, 0.0501],
+                [6.1950, -0.0800],
+                [5.5320, 0.0501],
+            ],
+            StereoDescriptor::S,
+        ),
+        (
+            vec![
+                [7.2641, 1.0501],
+                [7.6891, 1.7862],
+                [6.8422, 1.0410],
+                [7.2641, 0.0501],
+                [6.3981, 1.5501],
+            ],
             StereoDescriptor::S,
         ),
     ] {
@@ -330,6 +381,41 @@ fn molfile_valid_wedge_geometry_is_scale_and_reflection_consistent() {
                     assert_eq!(assignment.assigned[0].descriptor, expected, "{source}");
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn crowded_wedge_drawing_respects_carrier_permutations() {
+    let points = [
+        [6.3981, -0.4499],
+        [6.3820, -1.4914],
+        [7.2641, 0.0501],
+        [6.1950, -0.0800],
+        [5.5320, 0.0501],
+    ];
+    for (order, expected) in [
+        ([2, 3, 4], StereoDescriptor::S),
+        ([3, 4, 2], StereoDescriptor::S),
+        ([4, 2, 3], StereoDescriptor::S),
+        ([2, 4, 3], StereoDescriptor::R),
+        ([4, 3, 2], StereoDescriptor::R),
+        ([3, 2, 4], StereoDescriptor::R),
+    ] {
+        let permuted = [
+            points[0],
+            points[1],
+            points[order[0]],
+            points[order[1]],
+            points[order[2]],
+        ];
+        for v3000 in [false, true] {
+            let source = wedge_drawing(&permuted, 1.0, 1.0, v3000);
+            let mut molecule = read_molfile(&source).unwrap();
+            perceive(&mut molecule).unwrap();
+            let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+            assert_eq!(assigned.assigned.len(), 1);
+            assert_eq!(assigned.assigned[0].descriptor, expected, "{source}");
         }
     }
 }
@@ -520,6 +606,55 @@ fn v3000_round_trips_atropisomeric_bond_group_members() {
         }
     }
 }
+#[test]
+fn molfile_wedges_respect_pyramidal_lone_pair_endpoints() {
+    // A focused aryl sulfoxide drawing reproduces the competing axis/tetrahedral
+    // interpretations in supplied PubChem 146091, 461502 and 461520.
+    for symbol in ["S", "Se"] {
+        let mut descriptors = Vec::new();
+        for cfg in [1, 3] {
+            let source = format!(
+                "pyramidal endpoint\nkekule\n\n  0  0  0     0  0            999 V3000\n\
+M  V30 BEGIN CTAB\nM  V30 COUNTS 9 9 0 0 0\nM  V30 BEGIN ATOM\n\
+M  V30 1 {symbol} 0 0 0 0\nM  V30 2 O 0 1 0 0\nM  V30 3 C -1 -1 0 0\n\
+M  V30 4 C 1 0 0 0\nM  V30 5 C 1.5 0.866 0 0\nM  V30 6 C 2.5 0.866 0 0\n\
+M  V30 7 C 3 0 0 0\nM  V30 8 C 2.5 -0.866 0 0\nM  V30 9 C 1.5 -0.866 0 0\n\
+M  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 2 1 2\nM  V30 2 1 1 3 CFG={cfg}\n\
+M  V30 3 1 1 4\nM  V30 4 2 4 5\nM  V30 5 1 5 6\nM  V30 6 2 6 7\n\
+M  V30 7 1 7 8\nM  V30 8 2 8 9\nM  V30 9 1 9 4\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n"
+            );
+            let mut molecule = read_molfile(&source).unwrap();
+            assert!(!molecule.perception().has_valence());
+            let elements = molecule.stereo_elements().collect::<Vec<_>>();
+            assert_eq!(elements.len(), 1);
+            assert!(
+                matches!(&elements[0].1.kind, StereoElementKind::Tetrahedral(stereo)
+                if stereo.center == AtomId::new(0)
+                    && stereo.carriers.contains(&StereoCarrier::ImplicitLonePair))
+            );
+            perceive(&mut molecule).unwrap();
+            let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+            assert_eq!(assigned.assigned.len(), 1);
+            descriptors.push(assigned.assigned[0].descriptor);
+            let interpretation = molfile::parse_str(&source).unwrap().interpret().unwrap();
+            for output in [
+                molfile::write_model_v2000(interpretation.model()).unwrap(),
+                molfile::write_model_v3000(interpretation.model()).unwrap(),
+            ] {
+                let mut reread = read_molfile(&output).unwrap();
+                perceive(&mut reread).unwrap();
+                let assigned = stereo_api::assign_cip_descriptors(&mut reread).unwrap();
+                assert_eq!(assigned.assigned.len(), 1);
+                assert_eq!(
+                    assigned.assigned[0].descriptor,
+                    *descriptors.last().unwrap()
+                );
+            }
+        }
+        assert_ne!(descriptors[0], descriptors[1]);
+    }
+}
+
 #[test]
 fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo() {
     let source = rdkit_rp6306_atrop_molblock().replace("  9 12  1  6", "  9 12  1  0");
