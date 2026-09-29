@@ -867,13 +867,26 @@ pub mod mmcif {
     }
 }
 
-/// Explicit installation of derived valence, ring, and aromaticity state.
+/// Derived valence, rings, aromaticity, conjugation and explicit resonance work.
 ///
 /// [`perception::perceive`] installs Kekule's default transactional perception
 /// profile. The nested modules expose the individual expert algorithms.
 /// Perception does not alter represented graph chemistry and is invalidated by
 /// relevant graph edits.
 pub mod perception {
+    /// Connected conjugated groups and explicit RDKit-like contributor enumeration.
+    pub mod resonance {
+        pub use crate::algorithms::{
+            enumerate_resonance, perceive_resonance, ResonanceContributor, ResonanceError,
+            ResonanceFlags, ResonanceOptions, ResonanceStructures,
+        };
+        pub use crate::core::{ResonanceGroup, ResonancePerception};
+    }
+    /// Bond conjugation, including aromatic bonds, without contributor enumeration.
+    pub mod conjugation {
+        pub use crate::algorithms::{perceive_conjugation, ConjugationError};
+        pub use crate::core::{ConjugationModel, ConjugationPerception};
+    }
     pub use crate::chemistry::PerceptionError;
 
     use crate::core::Molecule;
@@ -917,7 +930,7 @@ pub mod perception {
         pub use crate::core::AromaticityModel;
     }
 
-    /// Install the transactional default valence, ring-set, and aromaticity profile.
+    /// Install default valence, rings, aromaticity and conjugation transactionally.
     ///
     /// The represented molecule must already be canonical. This operation
     /// never rewrites represented chemistry or performs stereo or CIP work.

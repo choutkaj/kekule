@@ -99,6 +99,7 @@ def golden_metadata(raw):
 def feature_contracts(root):
     result = {}
     for filename, features in (
+            ('resonance.json', ['algo.conjugation.rdkit-like', 'algo.resonance.groups', 'algo.resonance.enumeration']),
             ('query-smarts.json', ['query.smarts']),
             ('smiles-text.json', ['io.smiles.text.' + mode for mode in ('write', 'canonical', 'isomeric')])):
         path = root / filename

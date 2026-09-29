@@ -31,7 +31,13 @@ pub(super) fn contract_hash() -> String {
     text_hash(include_str!("../../contract.json"))
 }
 pub(super) fn feature_contract_hash(feature: &str) -> String {
-    if feature == "query.smarts" {
+    if feature == "algo.conjugation.rdkit-like" || feature.starts_with("algo.resonance.") {
+        text_hash(&format!(
+            "{}\n{}",
+            contract_hash(),
+            include_str!("../../resonance.json")
+        ))
+    } else if feature == "query.smarts" {
         text_hash(&format!(
             "{}\n{}",
             contract_hash(),
@@ -78,6 +84,8 @@ pub(super) fn reference_code_hash(root: &Path) -> Result<String, Box<dyn Error>>
         "queries.smarts",
         "query-smarts.json",
         "smiles-text.json",
+        "resonance.json",
+        "reference/rdkit/resonance.py",
     ] {
         hash.update(path.as_bytes());
         hash.update(

@@ -27,6 +27,8 @@ fn assert_default_perception(topology: &Topology) {
         assert!(molecule.perception().has_valence());
         assert!(molecule.perception().has_rings());
         assert!(molecule.perception().has_aromaticity());
+        assert!(molecule.perception().has_conjugation());
+        assert!(!molecule.perception().has_resonance());
         assert!(!molecule.perception().has_stereo());
     }
 }
@@ -37,7 +39,9 @@ fn failing_topology() -> Arc<Topology> {
         .remove(0);
     good.perceive().unwrap();
     stereo::assign_cip_descriptors(&mut good).unwrap();
+    perception::resonance::perceive_resonance(&mut good).unwrap();
     assert!(good.perception().has_cip_descriptors());
+    assert!(good.perception().has_resonance());
 
     // Publication permits represented chemistry rejected by the default valence model.
     let mut editor = MoleculeEditor::new();

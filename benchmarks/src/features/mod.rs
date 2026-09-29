@@ -6,6 +6,7 @@ mod chemistry;
 mod descriptors;
 mod io;
 pub(crate) mod query;
+mod resonance;
 mod stereo;
 mod strict;
 use descriptors::*;
@@ -53,6 +54,9 @@ pub(crate) fn evaluate(feature: &str, input: &Input) -> Result<Value, Box<dyn Er
         .iter_mut()
         .map(|record| {
             Ok(match feature {
+                "algo.conjugation.rdkit-like"
+                | "algo.resonance.groups"
+                | "algo.resonance.enumeration" => resonance::record(record, feature)?,
                 "descriptor.molecular" => molecular_descriptor_record_json(record)?,
                 "descriptor.rotatable-bonds.rdkit-strict" => rotatable_bond_record_json(record)?,
                 "algo.rings.fast" => ring_membership_record_json(record),

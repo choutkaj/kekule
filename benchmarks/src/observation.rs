@@ -16,6 +16,59 @@ enum Success {
 struct Records<T> {
     records: Vec<T>,
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConjugatedBond {
+    atoms: [usize; 2],
+    conjugated: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Conjugation {
+    record_index: usize,
+    status: Success,
+    title: String,
+    bonds: Vec<ConjugatedBond>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConjugatedGroup {
+    atoms: Vec<usize>,
+    bonds: Vec<[usize; 2]>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResonanceGroups {
+    record_index: usize,
+    status: Success,
+    title: String,
+    groups: Vec<ConjugatedGroup>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Contributor {
+    charges: Vec<i8>,
+    orders: Vec<u8>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResonanceProfile {
+    flags: u8,
+    max_structures: usize,
+    count: usize,
+    structures: Vec<Contributor>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Resonance {
+    record_index: usize,
+    status: Success,
+    title: String,
+    groups: Vec<ConjugatedGroup>,
+    bonds: Vec<[usize; 2]>,
+    profiles: Vec<ResonanceProfile>,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GraphRecord {
@@ -433,6 +486,9 @@ pub(crate) fn validate(feature: &str, value: &Value) -> Result<(), Box<dyn Error
             read::<Records<Aromaticity>>(value)
         }
         "algo.valence.rdkit-like" => read::<Records<Valence>>(value),
+        "algo.conjugation.rdkit-like" => read::<Records<Conjugation>>(value),
+        "algo.resonance.groups" => read::<Records<ResonanceGroups>>(value),
+        "algo.resonance.enumeration" => resonance_dimensions(value),
         "algo.canonical-ranking" => read::<Records<Classes>>(value),
         "chem.perception.default" => read::<Records<Perception>>(value),
         "chem.hydrogen-transforms" => read::<Records<Hydrogens>>(value),
@@ -444,6 +500,37 @@ pub(crate) fn validate(feature: &str, value: &Value) -> Result<(), Box<dyn Error
         }
         _ => read::<Records<GraphRecord>>(value),
     }
+}
+
+fn resonance_dimensions(value: &Value) -> Result<(), Box<dyn Error>> {
+    let records = Records::<Resonance>::deserialize(value)?;
+    for r in records.records {
+        if r.profiles.len() != 32 {
+            return Err(boxed_error("resonance requires all 32 option masks"));
+        }
+        let mut atoms = None;
+        for (flags, p) in r.profiles.iter().enumerate() {
+            if usize::from(p.flags) != flags
+                || p.max_structures != 1000
+                || p.count != p.structures.len()
+                || p.count > p.max_structures
+            {
+                return Err(boxed_error("inconsistent resonance profile"));
+            }
+            for s in &p.structures {
+                if s.charges.is_empty()
+                    || atoms.is_some_and(|n| n != s.charges.len())
+                    || s.orders.len() != r.bonds.len()
+                    || s.orders.iter().any(|&o| o > 5)
+                    || r.bonds.iter().any(|&[a, b]| a >= b || b >= s.charges.len())
+                {
+                    return Err(boxed_error("inconsistent indexed resonance structure"));
+                }
+                atoms = Some(s.charges.len());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn graph_dimensions(value: &Value, require_candidates: bool) -> Result<(), Box<dyn Error>> {
@@ -500,4 +587,44 @@ fn required_option<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
     deserializer: D,
 ) -> Result<Option<T>, D::Error> {
     Option::deserialize(deserializer)
+}
+
+#[cfg(test)]
+mod resonance_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn indexed_contributors_require_every_profile_and_bond_order() {
+        let profiles: Vec<_> = (0..32)
+            .map(|flags| {
+                json!({
+                    "flags": flags,
+                    "max_structures": 1000,
+                    "count": 1,
+                    "structures": [{"charges": [0, 0], "orders": [1]}],
+                })
+            })
+            .collect();
+        let good = json!({"records": [{
+            "record_index": 0,
+            "status": "ok",
+            "title": "",
+            "bonds": [[0, 1]],
+            "groups": [],
+            "profiles": profiles,
+        }]});
+        assert!(validate("algo.resonance.enumeration", &good).is_ok());
+        let mut missing = good.clone();
+        missing["records"][0]["profiles"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        assert!(validate("algo.resonance.enumeration", &missing).is_err());
+        let mut missing = good.clone();
+        missing["records"][0]["profiles"][0]["structures"][0]["orders"] = json!([]);
+        assert!(validate("algo.resonance.enumeration", &missing).is_err());
+        let mut count = good;
+        count["records"][0]["profiles"][0]["count"] = json!(2);
+        assert!(validate("algo.resonance.enumeration", &count).is_err());
+    }
 }

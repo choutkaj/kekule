@@ -302,6 +302,8 @@ fn reference_fingerprint_covers_source_radical_semantics() {
         "queries.smarts",
         "query-smarts.json",
         "smiles-text.json",
+        "resonance.json",
+        "reference/rdkit/resonance.py",
     ] {
         let target = fixture.0.join(path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
@@ -406,11 +408,13 @@ fn pool() -> rayon::ThreadPool {
 
 #[test]
 fn large_structure_batches_flush_without_waiting_for_the_case_limit() {
-    assert!(batch_is_full(2, 10 * 1024 * 1024));
-    assert!(batch_is_full(1, 64 * 1024 * 1024));
-    assert!(batch_is_full(256, 1024));
-    assert!(!batch_is_full(255, 1024));
-    assert!(!batch_is_full(0, 0));
+    assert!(batch_is_full("io.mmcif.parse", 2, 10 * 1024 * 1024));
+    assert!(batch_is_full("io.mmcif.parse", 1, 64 * 1024 * 1024));
+    assert!(batch_is_full("io.smiles.parse", 256, 1024));
+    assert!(!batch_is_full("io.smiles.parse", 255, 1024));
+    assert!(!batch_is_full("io.smiles.parse", 0, 0));
+    assert!(batch_is_full("algo.resonance.enumeration", 4, 1024));
+    assert!(!batch_is_full("algo.resonance.enumeration", 3, 1024));
 }
 
 #[test]

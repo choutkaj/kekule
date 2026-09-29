@@ -1,0 +1,15 @@
+{
+  "schema": 2,
+  "contract_sha256": "99a36c2ce8cdfd5741184e74ab6f589ce4f140ad47db5f62a45cbc2908500f8b",
+  "dataset": "smoke",
+  "feature": "algo.resonance.enumeration",
+  "input_lock_sha256": "f071f66843ebccd2fe0a0417db961f5ce228d01083c84943e2357afab21fedae",
+  "sha256": "4c50d8b4eaaacb650a84b211e576776538cbed63d6427c2bce33a6fd06f473a1",
+  "reference": {
+    "tool": "rdkit",
+    "version": "2026.03.3"
+  },
+  "reference_code_sha256": "4ddf191c8feefec03d198c1675ddd842f319fc0aa67f484fe55591a022a62b82",
+  "origin": "independent generation",
+  "cases": 26
+}
