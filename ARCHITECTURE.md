@@ -52,7 +52,10 @@ split independently. Formats that cannot encode a relationship fail explicitly.
 
 `Perception` is reconstructible state derived from the exact represented graph
 under an explicit model or policy. It contains fundamental chemistry such as
-valence, rings, aromaticity, and installed CIP descriptors. Task-specific
+valence, rings, aromaticity, conjugation, explicitly prepared resonance groups,
+and installed CIP descriptors. Resonance contributors are separately requested
+results borrowing the exact source molecule; default perception never enumerates
+them or rewrites represented bond orders and charges. Task-specific
 descriptors, force-field typing, scoring, and analyses belong in separate result
 objects; attaching selected values as properties is deliberate.
 

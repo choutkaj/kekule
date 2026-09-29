@@ -478,6 +478,18 @@ impl Molecule {
         Ok(self.perception.bond_is_aromatic(bond))
     }
 
+    /// Reads installed conjugation. `None` means it has not been computed.
+    pub fn atom_is_conjugated(&self, atom: AtomId) -> Result<Option<bool>> {
+        self.atom(atom)?;
+        Ok(self.perception.atom_is_conjugated(atom))
+    }
+
+    /// Reads installed conjugation. Aromatic bonds are also conjugated.
+    pub fn bond_is_conjugated(&self, bond: BondId) -> Result<Option<bool>> {
+        self.bond(bond)?;
+        Ok(self.perception.bond_is_conjugated(bond))
+    }
+
     pub fn cip_descriptor(&self, element: StereoElementId) -> Result<Option<StereoDescriptor>> {
         self.stereo_element(element)?;
         Ok(self.perception.cip_descriptor(element))
@@ -718,6 +730,8 @@ impl Molecule {
 
     fn invalidate_aromaticity(&mut self) {
         self.perception.aromaticity = None;
+        self.perception.conjugation = None;
+        self.perception.resonance = None;
         self.invalidate_stereo();
     }
 
@@ -767,6 +781,8 @@ impl Molecule {
     }
 
     pub(crate) fn begin_aromaticity(&mut self, model: AromaticityModel) {
+        self.perception.conjugation = None;
+        self.perception.resonance = None;
         self.perception.aromaticity = Some(AromaticityPerception {
             model,
             atoms: BTreeSet::new(),

@@ -10,6 +10,7 @@
 //! [`crate::structure`] and [`crate::topology`] for those layers.
 
 mod atom_bond;
+mod delocalization;
 mod element;
 mod element_reference;
 mod graph;
@@ -22,6 +23,7 @@ mod perception;
 mod stereo;
 
 pub use atom_bond::*;
+pub use delocalization::*;
 pub use element::*;
 pub use element_reference::*;
 pub use graph::*;

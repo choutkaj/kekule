@@ -101,7 +101,10 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo +nightly install cargo-fuzz --version 0.13.2 --locked
       - name: Seed SMILES with the supplied PubChem smoke inputs
-        run: cp benchmarks/corpora/smoke/data/pubchem_smiles/*.txt fuzz/corpus/smiles/
+        run: |
+          cp benchmarks/corpora/smoke/data/pubchem_smiles/*.txt fuzz/corpus/smiles/
+          mkdir -p fuzz/corpus/resonance
+          cp benchmarks/corpora/smoke/data/pubchem_smiles/*.txt fuzz/corpus/resonance/
       - name: Run every registered target
         shell: bash
         run: |
