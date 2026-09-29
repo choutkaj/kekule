@@ -305,6 +305,29 @@ fn detached(m: &Molecule, groups: Vec<ResonanceGroup>) -> Perception {
 }
 
 #[test]
+fn detached_group_order_is_canonical_before_and_after_installation() {
+    let mut m = molecule("CC(=O)NCC(=O)[O-]");
+    perceive_resonance(&mut m).unwrap();
+    let expected = m.perception().resonance_state().unwrap().clone();
+    let mut groups = expected.groups().to_vec();
+    assert_eq!(groups.len(), 2);
+    groups.reverse();
+    let state = detached(&m, groups);
+    assert_eq!(state.resonance_state(), Some(&expected));
+    m.install_perception(state).unwrap();
+    let installed = m.perception().resonance_state().unwrap();
+    assert_eq!(installed, &expected);
+    for (index, group) in expected.groups().iter().enumerate() {
+        for &atom in &group.atoms {
+            assert_eq!(installed.atom_group(atom), Some(index));
+        }
+        for &bond in &group.bonds {
+            assert_eq!(installed.bond_group(bond), Some(index));
+        }
+    }
+}
+
+#[test]
 fn detached_group_validation_is_structural_and_atomic() {
     let mut m = molecule("CC(=O)NCC(=O)[O-]");
     perceive_resonance(&mut m).unwrap();
@@ -312,6 +335,12 @@ fn detached_group_validation_is_structural_and_atomic() {
     let groups = before.resonance_state().unwrap().groups().to_vec();
     let mut malformed = Vec::new();
     malformed.push(vec![]); // incomplete partition
+    let mut empty = groups.clone();
+    empty.push(ResonanceGroup {
+        atoms: vec![],
+        bonds: vec![],
+    });
+    malformed.push(empty);
     let mut duplicate = groups.clone();
     duplicate[0].atoms.push(groups[0].atoms[0]);
     malformed.push(duplicate);

@@ -54,7 +54,8 @@ pub struct ResonanceOptions {
     /// Zero returns an empty collection. The pinned reference cannot produce a
     /// valid conjugated contributor at a limit of one; use at least two.
     pub max_structures: usize,
-    /// Bounds search visits and copied search state; exhaustion returns an error.
+    /// Bounds search visits, copied state, and permutation construction/sorting.
+    /// Exhaustion returns an error without a partial result.
     pub max_total_work: usize,
 }
 impl Default for ResonanceOptions {

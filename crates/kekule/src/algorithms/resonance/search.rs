@@ -675,39 +675,8 @@ pub(super) fn enumerate(
             families[g].truncate(t[g]);
         }
     }
-    let mut permutations = Vec::new();
-    for index in 0..len {
-        let mut rest = index;
-        let mut chosen = Vec::new();
-        let mut ds = Vec::new();
-        let mut widths = Vec::new();
-        for (g, f) in families.iter().enumerate() {
-            if f.is_empty() {
-                return Err(ResonanceError::InvalidElectronCount);
-            }
-            let i = rest % f.len();
-            rest /= f.len();
-            chosen.push(i);
-            let mut width = i;
-            let mut depth = 0;
-            while width >= depths[g][depth] {
-                width -= depths[g][depth];
-                depth += 1;
-            }
-            ds.push(depth);
-            widths.push(width);
-        }
-        permutations.push((
-            (
-                ds.iter().sum::<usize>(),
-                ds.iter().max().copied().unwrap_or(0),
-                ds,
-                widths,
-            ),
-            chosen,
-        ));
-    }
-    permutations.sort_by(|a, b| a.0.cmp(&b.0));
+    let family_sizes: Vec<_> = families.iter().map(Vec::len).collect();
+    let permutations = build_permutations(&family_sizes, &depths, len, &mut work)?;
     let mut result = Vec::new();
     for (_, chosen) in permutations {
         work.charge(mol.atom_count() + mol.bond_count())?;
@@ -738,4 +707,117 @@ pub(super) fn enumerate(
         result.push(c);
     }
     Ok(result)
+}
+
+type Permutation = ((usize, usize, Vec<usize>, Vec<usize>), Vec<usize>);
+
+fn build_permutations(
+    family_sizes: &[usize],
+    depths: &[Vec<usize>],
+    len: usize,
+    work: &mut Work,
+) -> Result<Vec<Permutation>, ResonanceError> {
+    // Reserve work before allocating any permutations: three group-sized
+    // vectors, two depth reductions, all depth scans, and an n log n sorting
+    // allowance whose comparisons can scan both group-sized key vectors.
+    // Checked arithmetic makes an overflowing estimate fail closed as well.
+    let estimate = (|| {
+        let groups = family_sizes.len();
+        let scans = depths
+            .iter()
+            .try_fold(0usize, |n, d| n.checked_add(d.len()))?;
+        let building = groups.checked_mul(5)?.checked_add(1)?.checked_add(scans)?;
+        let levels = usize::BITS - len.saturating_sub(1).leading_zeros();
+        let sorting = groups
+            .checked_mul(2)?
+            .checked_add(2)?
+            .checked_mul(levels as usize)?;
+        len.checked_mul(building.checked_add(sorting)?)
+    })()
+    .ok_or(ResonanceError::ResourceLimit { limit: work.limit })?;
+    work.charge(estimate)?;
+
+    let mut permutations = Vec::new();
+    for index in 0..len {
+        let mut rest = index;
+        let mut chosen = Vec::new();
+        let mut ds = Vec::new();
+        let mut widths = Vec::new();
+        for (g, &size) in family_sizes.iter().enumerate() {
+            if size == 0 {
+                return Err(ResonanceError::InvalidElectronCount);
+            }
+            let i = rest % size;
+            rest /= size;
+            chosen.push(i);
+            let mut width = i;
+            let mut depth = 0;
+            while width >= depths[g][depth] {
+                width -= depths[g][depth];
+                depth += 1;
+            }
+            ds.push(depth);
+            widths.push(width);
+        }
+        permutations.push((
+            (
+                ds.iter().sum::<usize>(),
+                ds.iter().max().copied().unwrap_or(0),
+                ds,
+                widths,
+            ),
+            chosen,
+        ));
+    }
+    permutations.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(permutations)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permutation_materialization_and_sorting_require_budget() {
+        // Twenty independently resonating groups would produce 2^20 forms.
+        let mut work = Work {
+            left: 10_000,
+            limit: 10_000,
+        };
+        assert!(matches!(
+            build_permutations(&[2; 20], &vec![vec![2]; 20], 1_000_000, &mut work),
+            Err(ResonanceError::ResourceLimit { limit: 10_000 })
+        ));
+        // Construction alone fits, but construction plus sorting does not.
+        let mut work = Work {
+            left: 60,
+            limit: 60,
+        };
+        assert!(matches!(
+            build_permutations(&[2, 2], &[vec![1, 1], vec![1, 1]], 4, &mut work),
+            Err(ResonanceError::ResourceLimit { limit: 60 })
+        ));
+    }
+
+    #[test]
+    fn budgeted_permutations_preserve_reference_priority_order() {
+        let mut work = Work {
+            left: 1_000,
+            limit: 1_000,
+        };
+        let permutations =
+            build_permutations(&[2, 2], &[vec![1, 1], vec![1, 1]], 4, &mut work).unwrap();
+        assert_eq!(
+            permutations
+                .into_iter()
+                .map(|(_, chosen)| chosen)
+                .collect::<Vec<_>>(),
+            vec![vec![0, 0], vec![0, 1], vec![1, 0], vec![1, 1]]
+        );
+        assert!(work.left < work.limit);
+        assert!(matches!(
+            build_permutations(&[2], &[vec![2]], usize::MAX, &mut work),
+            Err(ResonanceError::ResourceLimit { .. })
+        ));
+    }
 }
