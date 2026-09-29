@@ -1,10 +1,31 @@
 # Stored reference coverage
 
-The registry now contains 203 dataset/feature pairs: 29 features across seven
-datasets. The 87 bundled archives cover smoke, the 518-query RDKit corpus and
+The registry now contains 224 dataset/feature pairs: 32 features across seven
+datasets. The 96 bundled archives cover smoke, the 518-query RDKit corpus and
 the 50-file RDKit structure corpus. The latter supplies several representations
 of a small set of compounds; it is not a random sample of 50 independent molecules.
 Bulk inputs, full reference archives, reports and diagnostic outputs remain local.
+
+## Conjugation and resonance references, 2026-09-29
+
+The three new features use independent RDKit 2026.03.3 observations and the
+separate [resonance contract](resonance.json). Conjugation and connected groups
+cover the full smoke and 50-file RDKit structure corpora and deterministic
+100-source samples from PubChem, Enamine and PL-REX. Enumeration covers the same
+two complete small corpora and deterministic 10-source samples from those bulk
+corpora. The PDB and query corpora retain explicit not-applicable outcomes.
+Bulk samples do not cover omitted source IDs; larger runs require independently
+generated reference coverage. The manifests and payloads for existing features
+are unchanged.
+
+Every enumeration record includes all 32 option masks at `maxStructs=1000`,
+indexed formal charges and every localized bond order, retaining multiplicity.
+Shared bond endpoints are stored once per record. The complete structure-corpus
+generation was audited against its initial 10-file sample: all overlapping
+observations were identical. All new payload hashes were verified before
+publication. See [the implementation validation](RESONANCE-VALIDATION.md) for
+strict comparison results and outstanding cutoff differences; generation alone
+does not establish parity.
 
 Observation contract 3 asserts radical electron occupancy and explicitly
 supplied spin independently. Compatible references and their provenance are

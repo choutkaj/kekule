@@ -46,6 +46,9 @@ const FEATURES: &[&str] = &[
     "algo.valence.rdkit-like",
     "algo.aromaticity.rdkit-like",
     "algo.aromaticity.mdl",
+    "algo.conjugation.rdkit-like",
+    "algo.resonance.groups",
+    "algo.resonance.enumeration",
     "algo.canonical-ranking",
     "algo.substructure.vf2",
     "query.smarts",
@@ -471,8 +474,15 @@ struct BatchRun<'a> {
 
 // Large macromolecular inputs must not accumulate to 256 structures. This
 // bounds batching overhead, not the memory needed to evaluate one large input.
-fn batch_is_full(case_count: usize, input_bytes: usize) -> bool {
-    case_count >= 256 || input_bytes >= 8 * 1024 * 1024
+fn batch_is_full(feature: &str, case_count: usize, input_bytes: usize) -> bool {
+    // Enumeration emits 32 collections per input, potentially with thousands
+    // of indexed structures. Bound output amplification as well as input size.
+    let case_limit = if feature == "algo.resonance.enumeration" {
+        4
+    } else {
+        256
+    };
+    case_count >= case_limit || input_bytes >= 8 * 1024 * 1024
 }
 
 impl BatchRun<'_> {
@@ -886,7 +896,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                                         text,
                                     },
                                 });
-                                if batch_is_full(pending.len(), pending_input_bytes) {
+                                if batch_is_full(feature, pending.len(), pending_input_bytes) {
                                     run.batch(&pending, &mut row)?;
                                     pending.clear();
                                     pending_input_bytes = 0;

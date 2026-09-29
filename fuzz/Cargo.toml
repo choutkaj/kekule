@@ -45,6 +45,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "resonance"
+path = "fuzz_targets/resonance.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "mmcif"
 path = "fuzz_targets/mmcif.rs"
 test = false

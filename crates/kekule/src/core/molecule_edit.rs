@@ -507,6 +507,16 @@ impl MoleculeEditor {
         self.working.bond_is_aromatic(bond)
     }
 
+    /// See [`Molecule::atom_is_conjugated`]. Chemical edits invalidate this state.
+    pub fn atom_is_conjugated(&self, atom: AtomId) -> Result<Option<bool>> {
+        self.working.atom_is_conjugated(atom)
+    }
+
+    /// See [`Molecule::bond_is_conjugated`]. Chemical edits invalidate this state.
+    pub fn bond_is_conjugated(&self, bond: BondId) -> Result<Option<bool>> {
+        self.working.bond_is_conjugated(bond)
+    }
+
     pub fn cip_descriptor(&self, element: StereoElementId) -> Result<Option<StereoDescriptor>> {
         self.working.cip_descriptor(element)
     }

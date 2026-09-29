@@ -5,6 +5,7 @@ use super::{
     checked_fixed_id_collection_len, AtomId, BondId, Molecule, StereoDescriptor, StereoElementId,
     StereoElementKind,
 };
+use super::{ConjugationModel, ConjugationPerception, ResonanceGroup, ResonancePerception};
 
 static EMPTY_CIP_DESCRIPTORS: BTreeMap<StereoElementId, StereoDescriptor> = BTreeMap::new();
 
@@ -169,6 +170,8 @@ pub struct Perception {
     pub(super) valence: Option<ValencePerception>,
     pub(super) rings: Option<RingPerception>,
     pub(super) aromaticity: Option<AromaticityPerception>,
+    pub(crate) conjugation: Option<ConjugationPerception>,
+    pub(crate) resonance: Option<ResonancePerception>,
     pub(super) stereo: Option<StereoPerception>,
 }
 
@@ -260,6 +263,30 @@ impl StereoPerception {
 }
 
 impl Perception {
+    /// Returns installed conjugation, including a successfully computed empty set.
+    pub const fn conjugation_state(&self) -> Option<&ConjugationPerception> {
+        self.conjugation.as_ref()
+    }
+    /// Returns the explicitly prepared conjugated-group partition.
+    pub const fn resonance_state(&self) -> Option<&ResonancePerception> {
+        self.resonance.as_ref()
+    }
+    /// Whether conjugation has been computed.
+    pub fn has_conjugation(&self) -> bool {
+        self.conjugation.is_some()
+    }
+    /// Whether resonance groups have been prepared (not enumerated).
+    pub fn has_resonance(&self) -> bool {
+        self.resonance.is_some()
+    }
+    /// Returns unknown before perception, otherwise bond membership.
+    pub fn bond_is_conjugated(&self, bond: BondId) -> Option<bool> {
+        self.conjugation.as_ref().map(|s| s.bonds.contains(&bond))
+    }
+    /// Returns unknown before perception, otherwise atom membership.
+    pub fn atom_is_conjugated(&self, atom: AtomId) -> Option<bool> {
+        self.conjugation.as_ref().map(|s| s.atoms.contains(&atom))
+    }
     /// Starts construction of a detached complete perception state.
     pub fn builder() -> PerceptionBuilder {
         PerceptionBuilder::default()
@@ -392,6 +419,46 @@ pub struct PerceptionBuilder {
 }
 
 impl PerceptionBuilder {
+    /// Adds exact conjugation membership. Graph coherence is checked at installation.
+    pub fn with_conjugation(
+        mut self,
+        model: ConjugationModel,
+        atoms: Vec<AtomId>,
+        bonds: Vec<BondId>,
+    ) -> Result<Self, PerceptionBuildError> {
+        check_perception_component_capacity(atoms.len(), PerceptionComponent::Conjugation)?;
+        check_perception_component_capacity(bonds.len(), PerceptionComponent::Conjugation)?;
+        let atom_set: BTreeSet<_> = atoms.iter().copied().collect();
+        let bond_set: BTreeSet<_> = bonds.iter().copied().collect();
+        if atom_set.len() != atoms.len() || bond_set.len() != bonds.len() {
+            return Err(PerceptionBuildError::DuplicateConjugationMember);
+        }
+        self.state.conjugation = Some(ConjugationPerception {
+            model,
+            atoms: atom_set,
+            bonds: bond_set,
+        });
+        Ok(self)
+    }
+    /// Adds exact connected groups. Installation checks the complete partition.
+    pub fn with_resonance_groups(
+        mut self,
+        groups: Vec<ResonanceGroup>,
+    ) -> Result<Self, PerceptionBuildError> {
+        check_perception_component_capacity(groups.len(), PerceptionComponent::Conjugation)?;
+        for group in &groups {
+            check_perception_component_capacity(
+                group.atoms.len(),
+                PerceptionComponent::Conjugation,
+            )?;
+            check_perception_component_capacity(
+                group.bonds.len(),
+                PerceptionComponent::Conjugation,
+            )?;
+        }
+        self.state.resonance = Some(ResonancePerception { groups });
+        Ok(self)
+    }
     /// Installs exact inferred contributions on the detached state.
     /// Assignments exclude specified counts and graph hydrogen neighbors.
     pub fn with_valence(
@@ -485,6 +552,8 @@ impl PerceptionBuilder {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PerceptionComponent {
+    /// Conjugated atoms, bonds, or connected groups.
+    Conjugation,
     /// Complete atom-slot ring-membership flags.
     RingAtomSlots,
     /// Complete bond-slot ring-membership flags.
@@ -508,6 +577,7 @@ pub enum PerceptionComponent {
 impl fmt::Display for PerceptionComponent {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::Conjugation => "conjugation membership",
             Self::RingAtomSlots => "ring atom-slot flags",
             Self::RingBondSlots => "ring bond-slot flags",
             Self::Rings => "installed rings",
@@ -525,6 +595,8 @@ impl fmt::Display for PerceptionComponent {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PerceptionBuildError {
+    /// An atom or bond was repeated in conjugation membership.
+    DuplicateConjugationMember,
     /// A component contains more entries than fixed-width stable IDs can address.
     ComponentCapacityExceeded(PerceptionComponent),
     /// One atom has more than one inferred-hydrogen assignment.
@@ -540,6 +612,7 @@ pub enum PerceptionBuildError {
 impl fmt::Display for PerceptionBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DuplicateConjugationMember => formatter.write_str("duplicate conjugation member"),
             Self::ComponentCapacityExceeded(component) => {
                 write!(formatter, "{component} capacity exceeded")
             }
@@ -605,6 +678,8 @@ impl fmt::Display for MalformedRingReason {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PerceptionInstallError {
+    /// Conjugation or its group partition is structurally inconsistent.
+    InvalidDelocalization(&'static str),
     /// One component exceeds the fixed-width stable-ID capacity.
     ComponentCapacityExceeded(PerceptionComponent),
     /// An atom reference is not live.
@@ -652,6 +727,9 @@ pub enum PerceptionInstallError {
 impl fmt::Display for PerceptionInstallError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidDelocalization(reason) => {
+                write!(formatter, "invalid delocalization state: {reason}")
+            }
             Self::ComponentCapacityExceeded(component) => {
                 write!(formatter, "{component} capacity exceeded")
             }
@@ -728,6 +806,7 @@ pub(super) fn validate_perception(
     molecule: &Molecule,
     state: &Perception,
 ) -> std::result::Result<(), PerceptionInstallError> {
+    validate_delocalization(molecule, state)?;
     if let Some(valence) = &state.valence {
         for atom in valence.inferred_hydrogens.keys().copied() {
             if molecule
@@ -807,6 +886,87 @@ pub(super) fn validate_perception(
                     descriptor,
                 });
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_delocalization(
+    mol: &Molecule,
+    state: &Perception,
+) -> Result<(), PerceptionInstallError> {
+    let bad = PerceptionInstallError::InvalidDelocalization;
+    let Some(conjugation) = &state.conjugation else {
+        return if state.resonance.is_some() {
+            Err(bad("groups require conjugation"))
+        } else {
+            Ok(())
+        };
+    };
+    let aromaticity = state
+        .aromaticity
+        .as_ref()
+        .ok_or(bad("conjugation requires aromaticity"))?;
+    let mut endpoints = BTreeSet::new();
+    for &atom in &conjugation.atoms {
+        mol.atom(atom)
+            .map_err(|_| PerceptionInstallError::InvalidAtomId(atom))?;
+    }
+    for &id in &conjugation.bonds {
+        let bond = mol
+            .bond(id)
+            .map_err(|_| PerceptionInstallError::InvalidBondId(id))?;
+        endpoints.extend([bond.a(), bond.b()]);
+    }
+    if endpoints != conjugation.atoms {
+        return Err(bad("conjugated atoms must be exactly bond endpoints"));
+    }
+    if !aromaticity.bonds.is_subset(&conjugation.bonds) {
+        return Err(bad("aromatic bonds must be conjugated"));
+    }
+    if let Some(resonance) = &state.resonance {
+        let mut atoms = BTreeSet::new();
+        let mut bonds = BTreeSet::new();
+        for group in &resonance.groups {
+            if group.bonds.is_empty() {
+                return Err(bad("empty group"));
+            }
+            let mut group_ends = BTreeSet::new();
+            for &id in &group.bonds {
+                if !conjugation.bonds.contains(&id) || !bonds.insert(id) {
+                    return Err(bad("group bonds must partition conjugation"));
+                }
+                let bond = mol
+                    .bond(id)
+                    .map_err(|_| PerceptionInstallError::InvalidBondId(id))?;
+                group_ends.extend([bond.a(), bond.b()]);
+            }
+            for &id in &group.atoms {
+                if !atoms.insert(id) {
+                    return Err(bad("duplicate or overlapping group atom"));
+                }
+            }
+            if group_ends != group.atoms.iter().copied().collect() {
+                return Err(bad("group atoms must be exactly bond endpoints"));
+            }
+            let member_bonds: BTreeSet<_> = group.bonds.iter().copied().collect();
+            let mut reached = BTreeSet::new();
+            let mut todo = vec![group.atoms[0]];
+            while let Some(atom) = todo.pop() {
+                if reached.insert(atom) {
+                    for (id, bond) in mol.incident_bonds(atom).expect("validated atom") {
+                        if member_bonds.contains(&id) {
+                            todo.push(bond.other_atom(atom));
+                        }
+                    }
+                }
+            }
+            if reached != group_ends {
+                return Err(bad("disconnected group"));
+            }
+        }
+        if atoms != conjugation.atoms || bonds != conjugation.bonds {
+            return Err(bad("incomplete conjugated-group partition"));
         }
     }
     Ok(())

@@ -8,6 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from reference.rdkit import molecule
+from reference.rdkit.resonance import record as resonance_record
 from reference.rdkit.molecule import atom_json, graph as molecular_graph, records as molecular_records
 
 
@@ -62,6 +63,9 @@ def evaluate(feature_id, fixture_path, rdkit):
             records.append({'record_index':len(records),'title':title,'status':'ok','mol':fragment,
                 'properties':fields})
     functions = {
+        'algo.conjugation.rdkit-like': lambda r: resonance_record(r, feature_id),
+        'algo.resonance.groups': lambda r: resonance_record(r, feature_id),
+        'algo.resonance.enumeration': lambda r: resonance_record(r, feature_id),
         'descriptor.molecular': lambda r: molecular_descriptor_record(r, Chem, rdkit['Descriptors']),
         'descriptor.rotatable-bonds.rdkit-strict': lambda r: rotatable_bond_record(r, Chem, rdkit['rdMolDescriptors'], Chem.MolFromSmarts(RDKIT_STRICT_ROTATABLE_BOND_SMARTS)),
         'algo.substructure.vf2': lambda r: substructure_record(r, Chem),
