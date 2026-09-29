@@ -37,13 +37,16 @@ python -m unittest discover -s benchmarks -p test_smarts_conformance.py
 
 The conformance data sets are:
 
-- All 518 rows of the existing pinned RDKit functional-group/reactivity corpus,
+- All 518 rows of the pinned RDKit functional-group/reactivity corpus in
+  `corpora/rdkit-queries/data/`,
   crossed with all eight existing PubChem SMILES smoke targets.
 - All 521 rows in `smarts-fixtures/openff-smarts`, crossed with those eight targets and
   its four externally sourced PubChem targets. These use explicit hydrogens and
   MDL aromaticity.
 
-See the corpus provenance files and `SMARTS-VALIDATION.md` for measured results.
+See the corpus provenance files for source identities and extraction rules.
+Measured results belong in the local run reports; historical validation
+snapshots remain recoverable from Git history.
 Focused Rust regressions separately cover syntax and scientific edge cases that
 these external targets do not exercise, including recursive negation, numeric
 rings, graph permutations, Boolean stereo, repeated topology definitions, and

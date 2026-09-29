@@ -6,9 +6,9 @@ the 50-file RDKit structure corpus. The latter supplies several representations
 of a small set of compounds; it is not a random sample of 50 independent molecules.
 Bulk inputs, full reference archives, reports and diagnostic outputs remain local.
 
-The general chemistry follow-up uses observation contract 3, which asserts
-radical electron occupancy and explicitly supplied spin independently. Compatible
-references and their provenance are recorded in `GENERAL_CHEMISTRY_REVIEW.md`.
+Observation contract 3 asserts radical electron occupancy and explicitly
+supplied spin independently. Compatible references and their provenance are
+recorded in the adjacent golden manifests and the audit described below.
 `benchmarks/goldens` is the single active reference set. Historical counts below
 describe earlier audits, not alternate datasets to select at runtime. Comparison
 rejects stale archives and never regenerates them. Maintenance stages and audits
@@ -57,7 +57,7 @@ The 21 new manifests pin the exact text contract in
 [smiles-text.json](smiles-text.json), source locks, generator fingerprint and
 compressed payloads. The nine small-corpus payloads are bundled; bulk payloads
 remain local. Existing `io.smiles.*` identity references are unchanged. See
-[SMILES-VALIDATION.md](SMILES-VALIDATION.md) for the measured canonicalization
+[current parity audit](FULL-PARITY-2026-09-29.md) for measured canonicalization
 improvement and remaining incompatibilities.
 
 ## Original five-dataset snapshot
@@ -197,7 +197,8 @@ single-precision omega allowance and nullable polymer sequence labels. All 125
 manifests were rebound to that contract only after verifying their compressed
 archive and source-lock hashes. No payload, case membership, reference version,
 generator fingerprint or generation provenance changed in this rebinding.
-`PARITY_REVIEW.md` documents the numerical derivation and schema regression.
+The historical parity review in Git records the numerical derivation and schema
+regression; the active precision and schema rules are in `contract.json`.
 The exhaustive local audit is `target/benchmark-parity/dssp-contract-rebinding.json`.
 
 All 50,240 Enamine SDF records, all 1,000 PDB entries, and the existing source
@@ -213,10 +214,9 @@ proof of general correctness.
 
 ## Core SMARTS and MDL additions
 
-The query feature now asserts full stereo-aware mappings against 16 pinned
-external targets. Its previous parser-only references remain archived, and the
-new contract is feature-specific. MDL aromaticity is an independent feature.
-See [SMARTS validation](QUERY-SMARTS-VALIDATION.md) and
-[MDL validation](MDL-VALIDATION.md) for recorded observations and limitations.
-These reports predate the merge of the general chemistry follow-up and remain
-historical evidence with their original contract and implementation hashes.
+The query feature asserts full stereo-aware mappings against 16 pinned external
+targets, with a feature-specific contract. Previous parser-only references and
+superseded validation snapshots are recoverable from Git history. MDL
+aromaticity is an independent feature. The [benchmark guide](GUIDE.md) describes
+both current contracts; run reports retain measured outcomes and implementation
+hashes.

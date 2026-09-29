@@ -22,6 +22,7 @@ remain distinct observations. Tests verify complete, unfiltered extraction.
 All 518 queries are registered in the standard `query.smarts` benchmark. Each is
 parsed and matched against every target in `benchmarks/query-smarts.json`.
 Unsupported grammar and resource failures remain errors; no query is removed
-based on either engine's result. Original extraction is identical to the earlier
-`smarts-fixtures/rdkit-queries` copy, which remains available for historical runs.
-See [SMARTS benchmark validation](../../QUERY-SMARTS-VALIDATION.md).
+based on either engine's result. The standard runner and standalone SMARTS
+conformance checks share this copy. All packed inputs, upstream files and the
+source lock were verified byte-identical before removing the duplicate corpus.
+See the [benchmark guide](../../GUIDE.md) for the comparison contract and limits.

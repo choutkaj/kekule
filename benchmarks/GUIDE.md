@@ -5,6 +5,25 @@ supplied, hash-locked inputs. Generation runs only the reference software;
 comparison runs Kekule against stored observations. Matching failures never
 establish correctness. Scientific runs are optional, outside CI/release gates.
 
+## Directory contents
+
+- `src/`, `tests/`, the Python tools and `dashboard/` implement and test the runner.
+- `corpora/` and `smarts-fixtures/openff-smarts/` retain supplied inputs, licenses
+  and source locks. Both SMARTS workflows share `corpora/rdkit-queries/`.
+- `goldens/`, `contract.json`, `query-smarts.json`, `smiles-text.json` and
+  `queries.smarts` are active comparison inputs, not disposable result files.
+- [GOLDENS.md](GOLDENS.md) and `reference-audit.json` retain reference provenance;
+  the [current parity audit](FULL-PARITY-2026-09-29.md) records remaining issues.
+- `reference/` and `openff/` contain independent reference workflows. OpenFF's
+  archived observations are still inputs to its offline provenance tests.
+- `runs/` is local scientific history. The dashboard HTML/data files and Python
+  bytecode caches are generated. Deleting run records loses local evidence;
+  rebuilding the dashboard does not recreate those records.
+
+Superseded implementation diaries and validation snapshots are available in
+Git history. Keep current contracts and operating instructions here, and raw
+development reports under `runs/` or the ignored repository `target/` directory.
+
 ## Run
 
 ```text
@@ -506,8 +525,12 @@ query-to-target mappings on the 16 externally supplied molecules pinned in
 retained. Tags and their ordered projections are asserted without applying
 force-field-specific tag rules. Each source query is one case, and every target
 must agree. The `rdkit-queries` corpus contains all 518 query rows from three
-RDKit tables. Molecular SMILES inputs remain query cases as before. See
-[SMARTS benchmark validation](QUERY-SMARTS-VALIDATION.md) for coverage and limits.
+RDKit tables. Molecular SMILES inputs remain query cases as before. The target
+panel is small: complete query enumeration does not imply broad positive-match
+coverage. The contract allows 100,000 mappings, 1,000,000 search states and
+1,000,000 candidate pairs per query/target; exhaustion is an error. RDKit uses
+uncapped enumeration followed by the same mapping-count check and its existing
+worker deadline. These resource mechanisms are not equivalent work budgets.
 
 ```text
 cargo benchmark --feature query.smarts --dataset rdkit-queries
@@ -520,7 +543,8 @@ reference kekulizes with `clearAromaticFlags=True` before calling
 `SetAromaticity(..., AROMATICITY_MDL)`. Default perception/sanitization and the
 explicit model application are included in the timed workflow. Molecules keep
 their supplied hydrogen representation. Invalid inputs and perception failures
-remain reported errors. See [MDL results](MDL-VALIDATION.md) for measured coverage.
+remain reported errors. Measured coverage and retained failures are recorded in
+each run's feature/corpus results.
 
 ```text
 cargo benchmark --feature algo.aromaticity.mdl --dataset smoke
