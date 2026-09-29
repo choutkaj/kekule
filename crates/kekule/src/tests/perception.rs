@@ -2272,6 +2272,41 @@ fn coordinate_stereo_infers_a_tetrahedral_sulfoxide_lone_pair() {
 }
 
 #[test]
+fn coordinate_axis_inference_respects_pyramidal_lone_pair_endpoints() {
+    for source in ["S(=O)(C)C1=CC=CC=C1", "[Se](=O)(C)C1=CC=CC=C1"] {
+        let mut molecule = read_smiles(source).unwrap();
+        perceive(&mut molecule).unwrap();
+        let points = (0..molecule.atom_count())
+            .map(|index| {
+                let t = index as f64;
+                Point3::new(t, (t * 1.7).sin(), (t * 2.3).cos())
+            })
+            .collect();
+        let result = stereo_api::infer_coordinate_stereo_with_options(
+            &molecule,
+            &test_positions(points),
+            CoordinateStereoOptions {
+                infer_axes: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(result.elements.iter().any(|element| matches!(
+            &element.kind,
+            StereoElementKind::Tetrahedral(stereo) if stereo.center == AtomId::new(0)
+        )));
+        assert!(
+            result
+                .elements
+                .iter()
+                .all(|element| !matches!(element.kind, StereoElementKind::Axis(_))),
+            "{source}: {:?}",
+            result.elements
+        );
+    }
+}
+
+#[test]
 fn coordinate_axis_inference_does_not_treat_saturated_rings_as_sp2() {
     let molecule = read_smiles("C1CCCCC1C2CCCCC2").unwrap();
     let points = (0..molecule.atom_count())

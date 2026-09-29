@@ -7,7 +7,7 @@ import json
 
 class SmartsConformanceTests(unittest.TestCase):
     def test_complete_rdkit_extraction_and_provenance(self):
-        root = Path(__file__).parent / "smarts-fixtures/rdkit-queries"
+        root = Path(__file__).parent / "corpora/rdkit-queries"
         lock = json.loads((root / "sources.lock.json").read_text())
         total = 0
         for source in lock["upstream"]:

@@ -478,20 +478,8 @@ fn atom_coordinates_from_v2000_line(line: &str) -> Option<[f64; 3]> {
     if !line.is_ascii() {
         return None;
     }
-    if let (Some(x), Some(y), Some(z)) = (
-        ascii_field(line, 0, 10),
-        ascii_field(line, 10, 20),
-        ascii_field(line, 20, 30),
-    ) {
-        if let (Ok(x), Ok(y), Ok(z)) = (
-            x.trim().parse::<f64>(),
-            y.trim().parse::<f64>(),
-            z.trim().parse::<f64>(),
-        ) {
-            if x.is_finite() && y.is_finite() && z.is_finite() {
-                return Some([x, y, z]);
-            }
-        }
+    if let Some(point) = fixed_atom_coordinates(line) {
+        return Some(point);
     }
     let fields = line.split_whitespace().collect::<Vec<_>>();
     let point = [
@@ -505,14 +493,43 @@ fn atom_coordinates_from_v2000_line(line: &str) -> Option<[f64; 3]> {
         .then_some(point)
 }
 
+fn fixed_atom_coordinates(line: &str) -> Option<[f64; 3]> {
+    if let (Some(x), Some(y), Some(z)) = (
+        ascii_field(line, 0, 10),
+        ascii_field(line, 10, 20),
+        // Some supplied CTfiles use the separator column for the last
+        // decimal digit of a large negative z coordinate. Read it rather
+        // than silently truncating an otherwise valid number.
+        ascii_field(line, 20, 31),
+    ) {
+        if let (Ok(x), Ok(y), Ok(z)) = (
+            x.trim().parse::<f64>(),
+            y.trim().parse::<f64>(),
+            z.trim().parse::<f64>(),
+        ) {
+            if x.is_finite() && y.is_finite() && z.is_finite() {
+                return Some([x, y, z]);
+            }
+        }
+    }
+    None
+}
+
 fn apply_atom_v2000_fields(
     record: usize,
     line_number: usize,
     atom: &mut V2000AtomSyntax,
     line: &str,
 ) -> std::result::Result<(), SdfParseError> {
-    let fields = line.split_whitespace().collect::<Vec<_>>();
-    if let Some(value) = fields.get(5) {
+    // Coordinate fields can touch, for example a negative y immediately
+    // followed by a full-width negative z. Tokenize only the atom fields so
+    // that this cannot shift charge, hydrogen, valence or atom-map columns.
+    let fields = if fixed_atom_coordinates(line).is_some() {
+        line[31..].split_whitespace().collect::<Vec<_>>()
+    } else {
+        line.split_whitespace().skip(3).collect::<Vec<_>>()
+    };
+    if let Some(value) = fields.get(2) {
         let charge_code = value.parse::<u8>().map_err(|_| {
             SdfParseError::new(record, line_number, "invalid V2000 atom charge code")
         })?;
@@ -536,7 +553,7 @@ fn apply_atom_v2000_fields(
             atom.radical = Some(V2000RadicalSyntax::Doublet);
         }
     }
-    if let Some(code) = fields.get(7).and_then(|value| value.parse::<u8>().ok()) {
+    if let Some(code) = fields.get(4).and_then(|value| value.parse::<u8>().ok()) {
         atom.hydrogen_count = match code {
             0 => None,
             1..=5 => Some(code - 1),
@@ -549,7 +566,7 @@ fn apply_atom_v2000_fields(
             }
         };
     }
-    if let Some(code) = fields.get(9).and_then(|value| value.parse::<u8>().ok()) {
+    if let Some(code) = fields.get(6).and_then(|value| value.parse::<u8>().ok()) {
         atom.valence = match code {
             0 => None,
             1..=14 => Some(code),
@@ -564,8 +581,8 @@ fn apply_atom_v2000_fields(
         };
     }
     if let Some(atom_map) = fields
-        .get(13)
-        .or_else(|| fields.get(12))
+        .get(10)
+        .or_else(|| fields.get(9))
         .and_then(|value| value.parse::<u32>().ok())
     {
         if atom_map != 0 {

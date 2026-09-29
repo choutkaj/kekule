@@ -1008,6 +1008,37 @@ fn canonical_smiles_preserves_stereo_and_isotopes() {
 }
 
 #[test]
+fn source_order_smiles_retains_branch_order_and_omits_kekule_single_bonds() {
+    // Independently checked with RDKit 2026.03.3, canonical=False.
+    for source in [
+        "CC(CCC)O",
+        "N[C@](CCC)(F)Cl",
+        "CC(=O)OC1=CC=CC=C1C(=O)O",
+        "C1(O)C(O)C(O)C(OP(=O)(O)O)C(O)C1O",
+        "C12(CCCCC1)CCCCC2",
+    ] {
+        let mut molecule = read_smiles(source).unwrap();
+        perceive(&mut molecule).unwrap();
+        let written = smiles_api::write_isomeric(&molecule).unwrap();
+        assert_eq!(written, source);
+        let mut round_trip = read_smiles(&written).unwrap();
+        perceive(&mut round_trip).unwrap();
+        assert_eq!(
+            smiles_api::write_canonical(&round_trip).unwrap(),
+            smiles_api::write_canonical(&molecule).unwrap()
+        );
+    }
+    let mut branched = read_smiles("CC(CCC)O").unwrap();
+    perceive(&mut branched).unwrap();
+    assert_eq!(smiles_api::write(&branched).unwrap(), "CC(CCC)O");
+    // Aromatic spelling still needs the explicit single bond between rings.
+    let mut biphenyl = read_smiles("c1ccccc1-c1ccccc1").unwrap();
+    perceive(&mut biphenyl).unwrap();
+    assert!(smiles_api::write(&biphenyl).unwrap().contains('-'));
+    assert!(!smiles_api::write_isomeric(&biphenyl).unwrap().contains('-'));
+}
+
+#[test]
 fn canonical_smiles_round_trips_supported_branch_and_ring_graphs() {
     for input in ["CC(=O)O", "C1CCCCC1", "c1ccccc1"] {
         let mut molecule =
