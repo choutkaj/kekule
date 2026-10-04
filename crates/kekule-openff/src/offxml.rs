@@ -37,12 +37,45 @@ pub struct ForceField {
     pub(crate) vdw: Vec<Rule<VdwParameter>>,
     pub(crate) library: Vec<Rule<LibraryCharge>>,
     pub(crate) settings: NonbondedSettings,
-    pub(crate) charge_model: ModelIdentity,
+    pub(crate) charge_model: Option<ModelIdentity>,
 }
 impl ForceField {
-    /// Model identity required by this force field's NAGLCharges handler.
-    pub fn charge_model(&self) -> &ModelIdentity {
-        &self.charge_model
+    /// Optional model identity declared by the NAGLCharges handler.
+    pub fn charge_model(&self) -> Option<&ModelIdentity> {
+        self.charge_model.as_ref()
+    }
+
+    /// Append compiled rules with last-match-wins precedence, preserving their IDs.
+    ///
+    /// Both fields must use compatible nonbonded settings. Only length conversion
+    /// roundoff (8 machine epsilons relative) is allowed; the first values remain.
+    /// Two declared NAGL models must match; an absent declaration does not erase
+    /// an existing one. Failure leaves this force field unchanged. This composes
+    /// complete supported documents, not arbitrary partial handler fragments.
+    pub fn append(&mut self, other: &Self) -> Result<()> {
+        if !compatible_settings(&self.settings, &other.settings) {
+            return Err(error(
+                "cannot combine force fields with different nonbonded settings",
+            ));
+        }
+        if let (Some(a), Some(b)) = (self.charge_model(), other.charge_model()) {
+            if a != b {
+                return Err(error(
+                    "cannot combine force fields with different NAGL models",
+                ));
+            }
+        }
+        self.bonds.extend_from_slice(&other.bonds);
+        self.angles.extend_from_slice(&other.angles);
+        self.propers.extend_from_slice(&other.propers);
+        self.impropers.extend_from_slice(&other.impropers);
+        self.constraints.extend_from_slice(&other.constraints);
+        self.vdw.extend_from_slice(&other.vdw);
+        self.library.extend_from_slice(&other.library);
+        if self.charge_model.is_none() {
+            self.charge_model.clone_from(&other.charge_model);
+        }
+        Ok(())
     }
 
     /// Compile the bundled, version-pinned Rosemary preset.
@@ -52,7 +85,8 @@ impl ForceField {
     /// Read one UTF-8 OFFXML file and compile its supported rules.
     ///
     /// File paths are used literally, without registry lookup or network access.
-    /// Charges require a compatible bundle matching the identity declared by `NAGLCharges`.
+    /// Neural charges require a compatible bundle matching `NAGLCharges`;
+    /// complete library charges can be assigned without a bundle.
     ///
     /// ```no_run
     /// let force_field = kekule_openff::ForceField::from_file("custom.offxml")?;
@@ -65,9 +99,10 @@ impl ForceField {
     }
     /// Compile one SMIRNOFF 0.3 document with MDL aromaticity.
     ///
-    /// Constraints, ImproperTorsions and LibraryCharges may be absent. Bonds,
-    /// Angles, ProperTorsions, vdW, Electrostatics and NAGLCharges remain
-    /// required. Supported optional attributes use specification defaults.
+    /// Constraints, ImproperTorsions, LibraryCharges and NAGLCharges may be absent.
+    /// Bonds, Angles, ProperTorsions, vdW and Electrostatics remain required.
+    /// Without NAGL, every molecule must have complete library charges.
+    /// Supported optional attributes use specification defaults.
     /// Unknown physics, attributes and section versions fail explicitly.
     pub fn from_offxml(xml: &str) -> Result<Self> {
         let document = roxmltree::Document::parse(xml).map_err(error)?;
@@ -163,12 +198,15 @@ impl ForceField {
         let impropers = optional_section("ImproperTorsions");
         let vdw = section("vdW")?;
         let electrostatics = section("Electrostatics")?;
-        let nagl = section("NAGLCharges")?;
-        require(nagl, "version", "0.3")?;
-        let charge_model = ModelIdentity::new(
-            attr(nagl, "model_file")?.to_owned(),
-            attr(nagl, "model_file_hash")?.to_owned(),
-        )?;
+        let charge_model = optional_section("NAGLCharges")
+            .map(|nagl| {
+                require(nagl, "version", "0.3")?;
+                ModelIdentity::new(
+                    attr(nagl, "model_file")?.to_owned(),
+                    attr(nagl, "model_file_hash")?.to_owned(),
+                )
+            })
+            .transpose()?;
         choice(
             bonds,
             "potential",
@@ -449,6 +487,27 @@ impl ForceField {
     pub fn nonbonded_settings(&self) -> &NonbondedSettings {
         &self.settings
     }
+}
+
+fn compatible_settings(a: &NonbondedSettings, b: &NonbondedSettings) -> bool {
+    let length = |x: &Quantity<f64>, y: &Quantity<f64>| {
+        let x = *x.value();
+        let y = *y.value();
+        (x - y).abs() <= 8.0 * f64::EPSILON * x.abs().max(y.abs())
+    };
+    length(&a.vdw_cutoff, &b.vdw_cutoff)
+        && length(&a.vdw_switch_width, &b.vdw_switch_width)
+        && length(&a.electrostatics_cutoff, &b.electrostatics_cutoff)
+        && length(
+            &a.electrostatics_switch_width,
+            &b.electrostatics_switch_width,
+        )
+        && a.vdw_scales == b.vdw_scales
+        && a.electrostatics_scales == b.electrostatics_scales
+        && a.vdw_periodic_method == b.vdw_periodic_method
+        && a.vdw_nonperiodic_method == b.vdw_nonperiodic_method
+        && a.electrostatics_periodic_method == b.electrostatics_periodic_method
+        && a.electrostatics_nonperiodic_method == b.electrostatics_nonperiodic_method
 }
 
 fn optional_children<'a, 'input>(
