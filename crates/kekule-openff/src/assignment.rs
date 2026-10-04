@@ -119,9 +119,11 @@ impl ForceField {
                 }
             }
         }
-        for pair in assigned.constraints.keys() {
-            if !bonds.contains(pair) {
-                return Err(error("only bond constraints are supported"));
+        for (pair, &rule) in &assigned.constraints {
+            if !bonds.contains(pair) && self.constraints[rule].parameter.1.is_none() {
+                return Err(error(
+                    "a nonbonded constraint requires an explicit distance",
+                ));
             }
         }
         Ok(assigned)
@@ -169,14 +171,44 @@ impl ForceField {
         topology: Arc<Topology>,
         model: &NaglModel,
     ) -> Result<ParameterizedTopology> {
-        if self.charge_model() != model.identity() {
+        if self
+            .charge_model()
+            .is_some_and(|required| required != model.identity())
+        {
             return Err(error(format!(
                 "NAGL model identity mismatch: force field requires {:?}, supplied {:?}",
                 self.charge_model(),
                 model.identity()
             )));
         }
-        self.parameterize_with(topology, |m| self.charges(m, |m| model.assign_charges(m)))
+        self.parameterize_with(topology, |m| {
+            self.charges(m, |m| {
+                if self.charge_model().is_none() {
+                    return Err(error(
+                        "incomplete library charges and no NAGLCharges handler",
+                    ));
+                }
+                model.assign_charges(m)
+            })
+        })
+    }
+
+    /// Parameterize using only LibraryCharges, without loading a neural model.
+    ///
+    /// Complete library coverage and the correct formal charge are required for
+    /// every molecule. A declared NAGL handler is not used by this explicit path.
+    /// Errors publish no partial result; the exact topology binding is retained.
+    pub fn parameterize_without_nagl(
+        &self,
+        topology: Arc<Topology>,
+    ) -> Result<ParameterizedTopology> {
+        self.parameterize_with(topology, |m| {
+            self.charges(m, |_| {
+                Err(error(
+                    "incomplete library charges; a compatible NAGL model is required",
+                ))
+            })
+        })
     }
     fn parameterize_with(
         &self,

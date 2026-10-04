@@ -16,11 +16,11 @@ fn xml(model: &Value) -> String {
     let preset = ForceField::rosemary().unwrap();
     ROSEMARY
         .replace(
-            preset.charge_model().model_file(),
+            preset.charge_model().unwrap().model_file(),
             model["name"].as_str().unwrap(),
         )
         .replace(
-            preset.charge_model().checkpoint_sha256(),
+            preset.charge_model().unwrap().checkpoint_sha256(),
             model["checkpoint_sha256"].as_str().unwrap(),
         )
 }
@@ -185,11 +185,11 @@ fn model_declarations_survive_offxml_loading() {
     for model in models {
         let ff = ForceField::from_offxml(&xml(model)).unwrap();
         assert_eq!(
-            ff.charge_model().model_file(),
+            ff.charge_model().unwrap().model_file(),
             model["name"].as_str().unwrap()
         );
         assert_eq!(
-            ff.charge_model().checkpoint_sha256(),
+            ff.charge_model().unwrap().checkpoint_sha256(),
             model["checkpoint_sha256"].as_str().unwrap()
         );
     }
@@ -216,7 +216,7 @@ fn both_models_reproduce_complete_openff_parameterization() {
         }
         let model = NaglModel::load(&directory).unwrap();
         let ff = ForceField::from_file(directory.join("force-field.offxml")).unwrap();
-        assert_eq!(ff.charge_model(), model.identity());
+        assert_eq!(ff.charge_model(), Some(model.identity()));
         assert_eq!(
             model.lookup_entry_count(),
             reference["lookup_entries"].as_u64().unwrap() as usize
