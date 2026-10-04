@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 // Cloneable drafts share existing handles, but allocate distinct new handles.
 // Keeping allocation global prevents aliasing across independent or cloned drafts.
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
+#[allow(deprecated, reason = "try_update requires Rust 1.95; our MSRV is 1.89")]
 fn fresh() -> u64 {
     NEXT_HANDLE
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
