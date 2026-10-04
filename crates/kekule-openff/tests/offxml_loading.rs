@@ -97,9 +97,9 @@ fn malformed_model_identity_and_unsupported_semantics_fail() {
     let mut missing = ROSEMARY.to_owned();
     missing.replace_range(nagl, "");
     assert!(ForceField::from_offxml(&missing)
-        .unwrap_err()
-        .to_string()
-        .contains("missing handler NAGLCharges"));
+        .unwrap()
+        .charge_model()
+        .is_none());
 }
 
 #[test]

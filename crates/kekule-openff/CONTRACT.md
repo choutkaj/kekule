@@ -20,9 +20,13 @@ let force_field = kekule_openff::ForceField::from_file("my-forcefield.offxml")?;
 
 The root must declare SMIRNOFF `0.3` and `OEAroModel_MDL`. `NAGLCharges`
 version `0.3` declares a nonempty `model_file` and a 64-digit SHA-256
-`model_file_hash`. `ForceField::charge_model()` exposes that identity.
-Parameterization takes `&NaglModel` and requires an exact model identifier and
-checkpoint digest match before assignment, including for library-only inputs.
+`model_file_hash`. `ForceField::charge_model()` exposes an optional identity.
+Parameterization with `&NaglModel` requires an exact model identifier and
+checkpoint digest match when a handler is declared, including for library-only inputs.
+`parameterize_without_nagl(Arc<Topology>)` needs no model bundle and requires
+complete, charge-conserving LibraryCharges for every molecule. Missing coverage
+is an error, even if an unused NAGL handler is declared. Without a NAGL handler,
+supplying a model does not enable implicit charge inference.
 Hexadecimal digests are case-insensitive. Model identifiers are literal strings,
 not paths to resolve or download. Other charge methods and implicit overrides
 remain unsupported. The Rosemary preset continues to require Ash 1.0.0.
@@ -33,11 +37,19 @@ remain unsupported. The Rosemary preset continues to require Ash 1.0.0.
 | Angles | 0.3 | Required |
 | vdW, Electrostatics | 0.3, 0.4 | Required |
 | Constraints, ImproperTorsions, LibraryCharges | 0.3 | Optional |
-| NAGLCharges | 0.3 | Required; matching supported NAGL bundle |
+| NAGLCharges | 0.3 | Optional; inference requires a matching supported bundle |
 
 Absent optional handlers produce no corresponding rules. Missing required
-handlers remain errors, including for partial force-field fragments. Files are
-loaded individually; merging multiple OFFXML files is not implemented.
+handlers remain errors, including for partial force-field fragments.
+`ForceField::append(&other)` appends compiled rules in order, so later matching
+rules win within each handler. Both fields must have matching canonical
+nonbonded settings; only length conversion roundoff within eight machine epsilons
+relative is accepted, retaining the first values. Scales and methods must match
+exactly; two NAGL declarations must agree. An absent NAGL declaration
+does not erase an existing model. Incompatible composition fails before mutation.
+Rule IDs and SMIRKS remain intact; callers should retain source-file provenance.
+This supports composition of complete supported documents, not partial handler
+fragments or arbitrary replacement of global physics.
 
 Supported attributes may omit their specification defaults: harmonic bonds and
 angles, periodic torsions with automatic division factors, Lennard–Jones 12-6
@@ -121,7 +133,10 @@ three cyclic terms with `auto` divisor 3; **emitted dihedral tuples put the
 central atom first**, matching Interchange. Label keys and SMIRKS instead put
 it second. Supported improper phases are integer multiples of pi.
 
-Constraints without a distance use the assigned equilibrium bond length.
+Constraints without a distance require a bonded pair and use its assigned
+equilibrium bond length. Explicit positive distances may constrain nonbonded
+atoms within a molecule, such as the hydrogen pair in water. They neither create
+chemical bonds nor change nonbonded exception connectivity.
 Constrained bond/angle terms remain available; a future evaluation backend must
 choose how to treat constrained degrees of freedom. Explicit pair exceptions
 cover shortest graph distances 1, 2 and 3, with independent vdW/electrostatic

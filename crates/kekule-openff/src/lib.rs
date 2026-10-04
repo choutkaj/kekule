@@ -7,6 +7,10 @@
 //! Use [`ForceField::from_file`] or [`ForceField::from_offxml`] for custom rules
 //! within the supported SMIRNOFF subset. [`NaglModel`] loads a compatible model
 //! bundle; its checkpoint identity must match the OFFXML charge handler.
+//! [`ForceField::append`] composes compatible compiled rule sets. Complete
+//! library-charge systems can use [`ForceField::parameterize_without_nagl`]
+//! without a model bundle. Explicit distance constraints may join nonbonded
+//! atoms within one molecule; they do not change chemical connectivity.
 //! Rosemary and Ash remain the independently validated presets.
 //!
 //! ```no_run
