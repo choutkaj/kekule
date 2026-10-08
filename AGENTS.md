@@ -15,12 +15,6 @@ These rules apply to contributors and AI agents working in this repository.
 ## Branches and commits
 
 - Do not push feature work directly to `main`; use a short-lived branch based on current `main`.
-- Preserve unrelated user changes in a dirty worktree.
-- Keep commits reviewable and end every commit message with:
-
-  ```text
-  Co-authored-by: codex <codex@openai.com>
-  ```
 
 ## Scientific tooling
 
