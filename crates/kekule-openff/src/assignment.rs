@@ -234,59 +234,74 @@ impl ForceField {
             exceptions: vec![],
             settings: self.settings.clone(),
         };
+        // One shared allocation per rule (or per derived parameter variant).
+        let bonds: Vec<Arc<BondParameter>> = shared(&self.bonds);
+        let angles: Vec<Arc<AngleParameter>> = shared(&self.angles);
+        let impropers: Vec<Arc<TorsionParameter>> = shared(&self.impropers);
+        let vdw: Vec<Arc<VdwParameter>> = shared(&self.vdw);
+        let mut propers = BTreeMap::<(usize, usize), Arc<TorsionParameter>>::new();
+        let mut constraints = BTreeMap::<(usize, Option<usize>), Arc<ConstraintParameter>>::new();
         for instance in topology.molecules() {
             let (a, charges) = &definitions[&instance.definition_id()];
             let qualify = |atom| InstanceAtomId::new(instance.id(), atom);
             for (atoms, &i) in &a.bonds {
                 result.bonds.push(Interaction {
                     atoms: atoms.map(qualify),
-                    parameter: self.bonds[i].parameter.clone(),
+                    parameter: Arc::clone(&bonds[i]),
                 });
             }
             for (atoms, &i) in &a.angles {
                 result.angles.push(Interaction {
                     atoms: atoms.map(qualify),
-                    parameter: self.angles[i].parameter.clone(),
+                    parameter: Arc::clone(&angles[i]),
                 });
             }
+            let mut around = BTreeMap::<[AtomId; 2], usize>::new();
+            for t in a.propers.keys() {
+                *around.entry(ordered([t[1], t[2]])).or_default() += 1;
+            }
             for (atoms, &i) in &a.propers {
-                let mut p = self.propers[i].parameter.clone();
-                for term in &mut p.terms {
-                    if term.idivf == 0.0 {
-                        term.idivf = a
-                            .propers
-                            .keys()
-                            .filter(|t| ordered([t[1], t[2]]) == ordered([atoms[1], atoms[2]]))
-                            .count() as f64;
+                // Automatic idivf divides by the torsions around the central bond.
+                let count = around[&ordered([atoms[1], atoms[2]])];
+                let parameter = propers.entry((i, count)).or_insert_with(|| {
+                    let mut p = self.propers[i].parameter.clone();
+                    for term in &mut p.terms {
+                        if term.idivf == 0.0 {
+                            term.idivf = count as f64;
+                        }
                     }
-                }
+                    Arc::new(p)
+                });
                 result.propers.push(Interaction {
                     atoms: atoms.map(qualify),
-                    parameter: p,
+                    parameter: Arc::clone(parameter),
                 });
             }
             for (atoms, &i) in &a.impropers {
                 for [x, y, z] in [[0, 2, 3], [2, 3, 0], [3, 0, 2]] {
                     result.impropers.push(Interaction {
                         atoms: [atoms[1], atoms[x], atoms[y], atoms[z]].map(qualify),
-                        parameter: self.impropers[i].parameter.clone(),
+                        parameter: Arc::clone(&impropers[i]),
                     });
                 }
             }
             for (atoms, &i) in &a.constraints {
                 let (source, distance) = &self.constraints[i].parameter;
-                let distance =
-                    (*distance).unwrap_or_else(|| self.bonds[a.bonds[atoms]].parameter.length);
+                let bond = distance.is_none().then(|| a.bonds[atoms]);
+                let parameter = constraints.entry((i, bond)).or_insert_with(|| {
+                    Arc::new(ConstraintParameter {
+                        source: source.clone(),
+                        distance: (*distance)
+                            .unwrap_or_else(|| self.bonds[a.bonds[atoms]].parameter.length),
+                    })
+                });
                 result.constraints.push(Interaction {
                     atoms: atoms.map(qualify),
-                    parameter: ConstraintParameter {
-                        source: source.clone(),
-                        distance,
-                    },
+                    parameter: Arc::clone(parameter),
                 });
             }
             for atom in a.molecule.atom_ids() {
-                result.vdw.push(self.vdw[a.vdw[&[atom]]].parameter.clone());
+                result.vdw.push(Arc::clone(&vdw[a.vdw[&[atom]]]));
             }
             result
                 .charges
@@ -368,6 +383,13 @@ impl ForceField {
         }
         fallback(molecule)
     }
+}
+
+fn shared<P: Clone>(rules: &[Rule<P>]) -> Vec<Arc<P>> {
+    rules
+        .iter()
+        .map(|rule| Arc::new(rule.parameter.clone()))
+        .collect()
 }
 
 fn complete<const N: usize>(

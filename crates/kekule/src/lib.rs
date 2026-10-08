@@ -124,7 +124,6 @@ pub mod descriptors;
 pub mod dssp;
 pub mod geometry;
 mod io;
-pub mod modeling;
 pub mod properties;
 pub mod query;
 pub mod structure;

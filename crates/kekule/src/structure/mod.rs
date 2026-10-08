@@ -72,4 +72,6 @@ pub use model_editor::*;
 pub use positions::*;
 
 #[cfg(test)]
+mod model_tests;
+#[cfg(test)]
 mod tests;

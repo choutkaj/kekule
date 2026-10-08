@@ -3,7 +3,7 @@ use kekule::{
     topology::{Topology, TopologyBuilder},
     units::{ELEMENTARY_CHARGE, NANOMETER},
 };
-use kekule_openff::{ChargeSource, ForceField};
+use kekule_openff::{ChargeSource, ElectrostaticsMethod, ForceField, VdwMethod};
 use std::sync::Arc;
 
 // Deliberately simple numerical parameters isolate assignment contracts.
@@ -167,4 +167,92 @@ fn incomplete_or_nonconserving_charges_and_implicit_nonbonded_distances_fail() {
         .unwrap_err()
         .to_string()
         .contains("incomplete library charges"));
+}
+
+fn two_waters() -> Arc<Topology> {
+    let m = molecule("O");
+    let mut builder = TopologyBuilder::new();
+    let definition = builder.add_molecule_definition(&m).unwrap();
+    builder.add_instance(definition).unwrap();
+    builder.add_instance(definition).unwrap();
+    Arc::new(builder.build().unwrap())
+}
+
+#[test]
+fn interactions_from_one_rule_share_one_parameter_allocation() {
+    let p = ForceField::from_offxml(WATER)
+        .unwrap()
+        .parameterize_without_nagl(two_waters())
+        .unwrap();
+    let first = &p.bonds()[0];
+    assert!(p
+        .bonds()
+        .iter()
+        .all(|b| Arc::ptr_eq(&b.parameter, &first.parameter)));
+    assert!(p
+        .bonds()
+        .iter()
+        .any(|b| b.atoms[0].molecule() != first.atoms[0].molecule()));
+    assert!(p
+        .angles()
+        .iter()
+        .all(|a| Arc::ptr_eq(&a.parameter, &p.angles()[0].parameter)));
+    assert!(p
+        .constraints()
+        .iter()
+        .all(|c| Arc::ptr_eq(&c.parameter, &p.constraints()[0].parameter)));
+    assert!(p.vdw().iter().all(|v| Arc::ptr_eq(v, &p.vdw()[0])));
+}
+
+#[test]
+fn nonbonded_methods_are_typed_and_keep_smirnoff_spelling() {
+    let settings = |xml: &str| {
+        ForceField::from_offxml(xml)
+            .unwrap()
+            .parameterize_without_nagl(two_waters())
+            .unwrap()
+            .nonbonded_settings()
+            .clone()
+    };
+    let defaults = settings(WATER);
+    assert_eq!(defaults.vdw_periodic_method, VdwMethod::Cutoff);
+    assert_eq!(defaults.vdw_nonperiodic_method, VdwMethod::NoCutoff);
+    assert_eq!(
+        defaults.electrostatics_periodic_method,
+        ElectrostaticsMethod::Ewald3DConductingBoundary
+    );
+    assert_eq!(
+        defaults.electrostatics_nonperiodic_method,
+        ElectrostaticsMethod::Coulomb
+    );
+    assert_eq!(VdwMethod::NoCutoff.smirnoff_name(), "no-cutoff");
+    assert_eq!(
+        ElectrostaticsMethod::Ewald3DConductingBoundary.smirnoff_name(),
+        "Ewald3D-ConductingBoundary"
+    );
+    let changed = settings(
+        &WATER
+            .replace(
+                r#"<vdW version="0.4">"#,
+                r#"<vdW version="0.4" periodic_method="no-cutoff" nonperiodic_method="cutoff">"#,
+            )
+            .replace(
+                r#"<Electrostatics version="0.4""#,
+                r#"<Electrostatics version="0.4" periodic_potential="Coulomb""#,
+            ),
+    );
+    assert_eq!(changed.vdw_periodic_method, VdwMethod::NoCutoff);
+    assert_eq!(changed.vdw_nonperiodic_method, VdwMethod::Cutoff);
+    assert_eq!(
+        changed.electrostatics_periodic_method,
+        ElectrostaticsMethod::Coulomb
+    );
+    let pme = settings(&WATER.replace(
+        r#"<Electrostatics version="0.4""#,
+        r#"<Electrostatics version="0.4" periodic_potential="PME""#,
+    ));
+    assert_eq!(
+        pme.electrostatics_periodic_method,
+        ElectrostaticsMethod::Ewald3DConductingBoundary
+    );
 }

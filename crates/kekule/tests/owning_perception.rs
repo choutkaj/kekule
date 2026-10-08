@@ -3,7 +3,6 @@ use std::sync::{Arc, Weak};
 
 use kekule::core::{Atom, BondOrder, Element, HydrogenDeclaration, MoleculeEditor, Perception};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::modeling::potential::{HarmonicBondPotential, Potential, PotentialError};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Ensemble, EnsembleMember, Model, Positions};
 use kekule::topology::{
@@ -158,7 +157,6 @@ fn perceived_topology_preserves_sparse_ids_reuse_hierarchy_and_annotations() {
 fn model_perception_changes_snapshot_preserving_realization_and_existing_bindings() {
     let topology = Arc::new(smiles::to_topology("c1ccccc1").unwrap());
     let selection = AtomSelection::from_atoms(&topology, [topology.atom_ids()[0]]).unwrap();
-    let mut potential = HarmonicBondPotential::new(&topology, []).unwrap();
     let positions = Positions::new(Quantity::new(
         (0..6)
             .map(|i| Point3::new(f64::from(i), 1.0, 2.0))
@@ -174,7 +172,6 @@ fn model_perception_changes_snapshot_preserving_realization_and_existing_binding
     model
         .set_bond_property(topology.bond_ids()[0], key(), Some(PropertyValue::Int(9)))
         .unwrap();
-    let prepared_source = model.clone();
     model.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), NANOMETER),
@@ -201,11 +198,6 @@ fn model_perception_changes_snapshot_preserving_realization_and_existing_binding
     selection
         .ensure_compatible(&original.shared_topology())
         .unwrap();
-    assert!(matches!(
-        potential.evaluate(model.view()),
-        Err(PotentialError::IncompatibleTopology)
-    ));
-    potential.evaluate(prepared_source.view()).unwrap();
     assert!(installed(&topology)
         .iter()
         .all(|p| p == &Perception::default()));

@@ -293,10 +293,10 @@ impl ForceField {
             )?,
             vdw_scales: scales(vdw, "0.5")?,
             electrostatics_scales: scales(electrostatics, "0.833333")?,
-            vdw_periodic_method: vdw_periodic_method.into(),
-            vdw_nonperiodic_method: vdw_nonperiodic_method.into(),
-            electrostatics_periodic_method: electrostatics_periodic_method.into(),
-            electrostatics_nonperiodic_method: "Coulomb".into(),
+            vdw_periodic_method,
+            vdw_nonperiodic_method,
+            electrostatics_periodic_method,
+            electrostatics_nonperiodic_method: ElectrostaticsMethod::Coulomb,
         };
         if settings.vdw_scales[3] != 1.0 || settings.electrostatics_scales[3] != 1.0 {
             return Err(error("only scale15=1 is supported"));
@@ -519,26 +519,35 @@ fn optional_children<'a, 'input>(
         .map(Option::unwrap_or_default)
 }
 
-fn vdw_methods<'a>(node: Node<'a, '_>) -> Result<(&'a str, &'a str)> {
+fn vdw_methods(node: Node<'_, '_>) -> Result<(VdwMethod, VdwMethod)> {
+    let method = |name| match name {
+        "cutoff" => VdwMethod::Cutoff,
+        _ => VdwMethod::NoCutoff,
+    };
     if attr(node, "version")? == "0.3" {
         absent(node, &["periodic_method", "nonperiodic_method"])?;
         choice(node, "method", "cutoff", &["cutoff"])?;
-        Ok(("cutoff", "no-cutoff"))
+        Ok((VdwMethod::Cutoff, VdwMethod::NoCutoff))
     } else {
         absent(node, &["method"])?;
         Ok((
-            choice(node, "periodic_method", "cutoff", &["cutoff", "no-cutoff"])?,
-            choice(
+            method(choice(
+                node,
+                "periodic_method",
+                "cutoff",
+                &["cutoff", "no-cutoff"],
+            )?),
+            method(choice(
                 node,
                 "nonperiodic_method",
                 "no-cutoff",
                 &["cutoff", "no-cutoff"],
-            )?,
+            )?),
         ))
     }
 }
 
-fn electrostatics_method<'a>(node: Node<'a, '_>) -> Result<&'a str> {
+fn electrostatics_method(node: Node<'_, '_>) -> Result<ElectrostaticsMethod> {
     if attr(node, "version")? == "0.3" {
         absent(
             node,
@@ -549,8 +558,8 @@ fn electrostatics_method<'a>(node: Node<'a, '_>) -> Result<&'a str> {
             ],
         )?;
         Ok(match choice(node, "method", "PME", &["PME", "Coulomb"])? {
-            "PME" => "Ewald3D-ConductingBoundary",
-            _ => "Coulomb",
+            "PME" => ElectrostaticsMethod::Ewald3DConductingBoundary,
+            _ => ElectrostaticsMethod::Coulomb,
         })
     } else {
         absent(node, &["method"])?;
@@ -563,8 +572,8 @@ fn electrostatics_method<'a>(node: Node<'a, '_>) -> Result<&'a str> {
                 "Ewald3D-ConductingBoundary",
                 &["Ewald3D-ConductingBoundary", "PME", "Coulomb"],
             )? {
-                "PME" => "Ewald3D-ConductingBoundary",
-                value => value,
+                "Coulomb" => ElectrostaticsMethod::Coulomb,
+                _ => ElectrostaticsMethod::Ewald3DConductingBoundary,
             },
         )
     }

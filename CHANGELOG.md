@@ -4,7 +4,30 @@ All notable changes to Kekule are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** rebuild `kekule-potentials` around a backend-independent
+  `Potential` trait over `ModelView`, with validated `Energy` decompositions and
+  `Evaluation` gradients. Potentials evaluate through `&self` and are `Send + Sync`.
+- **Breaking:** move potential evaluation and minimization out of `kekule`; the
+  `kekule::modeling` module, `HarmonicBondPotential`, and steepest-descent
+  `minimize` are removed.
+- **Breaking:** remove the DREIDING potential and its `dreid-forge`/`dreid-kernel`
+  dependencies, which also removes the unmaintained `paste` advisory.
+- **Breaking:** `kekule-openff` interactions and per-atom vdW entries share one
+  `Arc` parameter allocation per rule, and nonbonded methods are typed
+  `VdwMethod`/`ElectrostaticsMethod` values instead of strings.
+
 ### Added
+
+- Add `kekule_potentials::openff::OpenFfPotential`, which evaluates OpenFF
+  energies, gradients, and per-component gradients from a `ParameterizedTopology`
+  in vacuum without cutoffs, with optional replacement charges.
+- Add L-BFGS `minimize` and `minimize_with_observer` with a strong-Wolfe line
+  search, per-step displacement bound, singular-trial backtracking, and
+  `Minimization::to_model`.
+- The optional OpenFF energy and gradient benchmark now exercises the public
+  `OpenFfPotential` instead of a benchmark-local evaluator.
 
 - Add `io::write_trajectory` and `write_trajectory_with_options` for atomic saving
   through the strict codecs, with extension inference, explicit format/precision

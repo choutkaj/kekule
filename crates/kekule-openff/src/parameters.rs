@@ -54,10 +54,13 @@ pub struct ConstraintParameter {
     pub distance: Quantity<f64>,
 }
 /// Parameter assignment on atoms qualified by an instance in the owning topology.
+///
+/// Interactions assigned by the same rule share one parameter allocation, so
+/// rule identities are not copied for every interaction of a large system.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Interaction<const N: usize, P> {
     pub atoms: [InstanceAtomId; N],
-    pub parameter: P,
+    pub parameter: Arc<P>,
 }
 /// Explicit pair exceptions for graph distances 1, 2, and 3 (1-2/1-3/1-4).
 #[derive(Debug, Clone, PartialEq)]
@@ -66,7 +69,48 @@ pub struct PairException {
     pub vdw_scale: f64,
     pub electrostatics_scale: f64,
 }
+/// SMIRNOFF vdW treatment for one boundary condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VdwMethod {
+    /// Truncate at the handler cutoff, with its optional switching width.
+    Cutoff,
+    /// Evaluate every non-excluded pair without truncation.
+    NoCutoff,
+}
+
+impl VdwMethod {
+    /// The method's spelling in OFFXML.
+    pub const fn smirnoff_name(self) -> &'static str {
+        match self {
+            Self::Cutoff => "cutoff",
+            Self::NoCutoff => "no-cutoff",
+        }
+    }
+}
+
+/// SMIRNOFF electrostatics treatment for one boundary condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ElectrostaticsMethod {
+    /// Plain Coulomb interactions between every non-excluded pair.
+    Coulomb,
+    /// Ewald summation with conducting (tin-foil) boundary conditions; PME is
+    /// one accepted implementation.
+    Ewald3DConductingBoundary,
+}
+
+impl ElectrostaticsMethod {
+    /// The method's spelling in OFFXML.
+    pub const fn smirnoff_name(self) -> &'static str {
+        match self {
+            Self::Coulomb => "Coulomb",
+            Self::Ewald3DConductingBoundary => "Ewald3D-ConductingBoundary",
+        }
+    }
+}
+
 /// Nonbonded policy, preserved independently of any simulation backend.
+///
+/// Scales are indexed by graph distance: 1-2, 1-3, 1-4, and 1-5.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NonbondedSettings {
     pub vdw_cutoff: Quantity<f64>,
@@ -75,16 +119,17 @@ pub struct NonbondedSettings {
     pub electrostatics_switch_width: Quantity<f64>,
     pub vdw_scales: [f64; 4],
     pub electrostatics_scales: [f64; 4],
-    pub vdw_periodic_method: String,
-    pub vdw_nonperiodic_method: String,
-    pub electrostatics_periodic_method: String,
-    pub electrostatics_nonperiodic_method: String,
+    pub vdw_periodic_method: VdwMethod,
+    pub vdw_nonperiodic_method: VdwMethod,
+    pub electrostatics_periodic_method: ElectrostaticsMethod,
+    pub electrostatics_nonperiodic_method: ElectrostaticsMethod,
 }
 /// Complete parameterization tied to one exact topology snapshot.
 ///
 /// Atom parameters and charges follow `topology().atom_ids()` dense order.
 /// Bond terms remain present for constrained bonds; an evaluation backend must
-/// decide how to handle constrained degrees of freedom. Improper interactions
+/// decide how to handle constrained degrees of freedom. Atom vdW parameters
+/// assigned by the same rule share one allocation. Improper interactions
 /// are the three SMIRNOFF trefoil terms, with the central atom FIRST, matching
 /// Interchange's exported four-atom dihedral convention. This differs from the
 /// central atom's second position in an improper SMIRKS pattern or label key.
@@ -96,7 +141,7 @@ pub struct ParameterizedTopology {
     pub(crate) propers: Vec<Interaction<4, TorsionParameter>>,
     pub(crate) impropers: Vec<Interaction<4, TorsionParameter>>,
     pub(crate) constraints: Vec<Interaction<2, ConstraintParameter>>,
-    pub(crate) vdw: Vec<VdwParameter>,
+    pub(crate) vdw: Vec<Arc<VdwParameter>>,
     pub(crate) charges: Quantity<Vec<f64>>,
     pub(crate) charge_sources: Vec<crate::ChargeSource>,
     pub(crate) exceptions: Vec<PairException>,
@@ -121,7 +166,7 @@ impl ParameterizedTopology {
     pub fn constraints(&self) -> &[Interaction<2, ConstraintParameter>] {
         &self.constraints
     }
-    pub fn vdw(&self) -> &[VdwParameter] {
+    pub fn vdw(&self) -> &[Arc<VdwParameter>] {
         &self.vdw
     }
     pub fn charges(&self) -> &Quantity<Vec<f64>> {

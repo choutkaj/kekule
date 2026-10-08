@@ -13,17 +13,14 @@ database, review informational warnings, and run the repository's documented
 format, check, Clippy, test, documentation, and package gates. CI also checks the
 declared Rust 1.89 minimum against all workspace targets and features.
 
-## Tracked maintenance concern
+## Tracked maintenance concerns
 
-As reviewed on 9 September 2026, the pinned DREIDING dependency tree brings in
-`paste` 1.0.15 through its numerical libraries. The
-[RustSec advisory RUSTSEC-2024-0436](https://rustsec.org/advisories/RUSTSEC-2024-0436.html)
-reports that this compile-time procedural macro is unmaintained; it does not
-report a vulnerability. It remains an accepted maintenance warning while those
-upstream dependencies require it, and must be reconsidered on each DREIDING
-dependency update or release review.
+None are currently tracked. The unmaintained `paste` warning
+([RUSTSEC-2024-0436](https://rustsec.org/advisories/RUSTSEC-2024-0436.html))
+reviewed on 9 September 2026 came only from the DREIDING dependency tree, which
+was removed together with the DREIDING potential.
 
-Prefer an upstream maintained replacement when the dependency chain supports
+When a new informational advisory is accepted, prefer an upstream maintained replacement when the dependency chain supports
 one. Changes to the pinned scientific dependencies must preserve their numerical
 contracts and pass the relevant regression and scientific-reference checks.
 Do not hide the warning, remove asserted scientific fields, or regenerate

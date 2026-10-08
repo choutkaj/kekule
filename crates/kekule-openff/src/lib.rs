@@ -3,7 +3,8 @@
 //! Parameterization consumes explicit-hydrogen molecular graphs. It perceives
 //! private copies using MDL aromaticity and never rewrites the input topology.
 //! Results retain the exact topology snapshot and use Kekule's canonical units:
-//! nm, kJ/mol, radians, and elementary charges. Force evaluation is a separate task.
+//! nm, kJ/mol, radians, and elementary charges. Energies, gradients, and
+//! minimization are evaluated separately by `kekule-potentials`.
 //! Use [`ForceField::from_file`] or [`ForceField::from_offxml`] for custom rules
 //! within the supported SMIRNOFF subset. [`NaglModel`] loads a compatible model
 //! bundle; its checkpoint identity must match the OFFXML charge handler.
