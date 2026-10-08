@@ -5,6 +5,7 @@ mod hierarchy;
 mod identity;
 mod properties;
 mod publication;
+pub use publication::EditCorrespondence;
 
 use super::{
     AtomSiteId, AtomSiteMetadata, ChainId, HierarchyError, InstanceAtomId, InstanceBondId,
@@ -627,6 +628,48 @@ impl TopologyEditor {
             .retain(|id, _| !component.contains(id));
         self.molecule_classes.insert(atom, class);
         self.revision += 1;
+        Ok(())
+    }
+
+    /// Replaces stereo on one intact source occurrence. Elements use that
+    /// occurrence's molecule-local IDs. Call on a fresh editor before structural
+    /// edits to this occurrence; other occurrences may still be edited normally.
+    /// Existing enhanced stereo groups are deliberately removed. Atomic on error.
+    pub fn replace_source_instance_stereo(
+        &mut self,
+        instance: MoleculeInstanceId,
+        elements: &[crate::core::StereoElement],
+    ) -> Result<(), TopologyEditError> {
+        let source = self
+            .source
+            .as_ref()
+            .ok_or(TopologyEditError::InvalidSourceInstance(instance))?;
+        let molecule = source
+            .molecule(instance)
+            .map_err(|_| TopologyEditError::InvalidSourceInstance(instance))?;
+        let atom = molecule.atoms().next().unwrap().0;
+        let handle = self.atom_handle(atom)?;
+        let group = self.atom_location(handle)?.group;
+        let stored = self.groups[group].as_ref().unwrap();
+        if stored.changed || stored.atoms.len() != molecule.molecule().atom_count() {
+            return Err(TopologyEditError::InvalidSourceInstance(instance));
+        }
+        let mut draft = self.molecule(group).edit();
+        let groups = draft.stereo_groups().map(|(id, _)| id).collect::<Vec<_>>();
+        for id in groups {
+            draft.remove_stereo_group(id)?;
+        }
+        let ids = draft.stereo_element_ids().collect::<Vec<_>>();
+        for id in ids {
+            draft.remove_stereo_element(id)?;
+        }
+        for element in elements {
+            draft.add_stereo_element(element.clone())?;
+        }
+        draft.clone().finish()?;
+        self.groups[group].as_mut().unwrap().chemistry = GroupChemistry::Draft(Box::new(draft));
+        self.mark_group_changed(group);
+        self.changed();
         Ok(())
     }
 

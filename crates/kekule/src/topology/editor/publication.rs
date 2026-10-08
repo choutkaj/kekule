@@ -16,7 +16,67 @@ struct Targets {
     bond_slots: Vec<usize>,
 }
 
+/// Correspondence for one successful editor publication. Deleted or foreign
+/// handles have no target. Dense indices refer to the returned topology only.
+#[derive(Debug, Clone, Default)]
+pub struct EditCorrespondence {
+    atoms: BTreeMap<EditAtomId, (InstanceAtomId, super::super::TopologyAtomIndex)>,
+    bonds: BTreeMap<EditBondId, (InstanceBondId, super::super::TopologyBondIndex)>,
+}
+impl EditCorrespondence {
+    pub fn atom(
+        &self,
+        id: EditAtomId,
+    ) -> Option<(InstanceAtomId, super::super::TopologyAtomIndex)> {
+        self.atoms.get(&id).copied()
+    }
+    pub fn bond(
+        &self,
+        id: EditBondId,
+    ) -> Option<(InstanceBondId, super::super::TopologyBondIndex)> {
+        self.bonds.get(&id).copied()
+    }
+}
+
 impl TopologyEditor {
+    /// Publishes a topology with mappings for every surviving editing handle.
+    pub fn finish_with_correspondence(
+        self,
+    ) -> Result<(Arc<Topology>, EditCorrespondence), TopologyEditError> {
+        let (published, correspondence) = self.into_mapped_publication()?;
+        Ok((published.topology, correspondence))
+    }
+
+    pub(crate) fn into_mapped_publication(
+        self,
+    ) -> Result<(TopologyPublication, EditCorrespondence), TopologyEditError> {
+        let atoms: BTreeMap<_, _> = self.atoms.iter().map(|(&id, loc)| (loc.slot, id)).collect();
+        let bonds: BTreeMap<_, _> = self.bonds.iter().map(|(&id, loc)| (loc.slot, id)).collect();
+        let published = self.into_publication()?;
+        let mut correspondence = EditCorrespondence::default();
+        for (slot, &target) in published
+            .atom_slots
+            .iter()
+            .zip(published.topology.atom_ids())
+        {
+            correspondence.atoms.insert(
+                atoms[slot],
+                (target, published.topology.atom_index(target).unwrap()),
+            );
+        }
+        for (slot, &target) in published
+            .bond_slots
+            .iter()
+            .zip(published.topology.bond_ids())
+        {
+            correspondence.bonds.insert(
+                bonds[slot],
+                (target, published.topology.bond_index(target).unwrap()),
+            );
+        }
+        Ok((published, correspondence))
+    }
+
     /// Checks full component publication, classification, hierarchy and properties.
     /// This evaluates a snapshot and leaves all draft state and handles unchanged.
     pub fn validate(&self) -> Result<(), TopologyEditError> {
