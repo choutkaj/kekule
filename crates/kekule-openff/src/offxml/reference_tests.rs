@@ -31,8 +31,8 @@ fn snapshot(ff: &ForceField) -> Value {
             "vdw_cutoff":s.vdw_cutoff.value(), "vdw_switch_width":s.vdw_switch_width.value(),
             "electrostatics_cutoff":s.electrostatics_cutoff.value(),"electrostatics_switch_width":s.electrostatics_switch_width.value(),
             "vdw_scales":s.vdw_scales,"electrostatics_scales":s.electrostatics_scales,
-            "vdw_periodic_method":s.vdw_periodic_method,"vdw_nonperiodic_method":s.vdw_nonperiodic_method,
-            "electrostatics_periodic_method":s.electrostatics_periodic_method,"electrostatics_nonperiodic_method":s.electrostatics_nonperiodic_method
+            "vdw_periodic_method":s.vdw_periodic_method.smirnoff_name(),"vdw_nonperiodic_method":s.vdw_nonperiodic_method.smirnoff_name(),
+            "electrostatics_periodic_method":s.electrostatics_periodic_method.smirnoff_name(),"electrostatics_nonperiodic_method":s.electrostatics_nonperiodic_method.smirnoff_name()
         }
     })
 }

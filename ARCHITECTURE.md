@@ -435,3 +435,18 @@ Model bundles own feature ordering, supported network configuration, domain and
 lookup data. OFFXML retains the required checkpoint identity; parameterization
 checks it against the supplied model before assigning any molecule. Chemistry
 preparation is a versioned model profile, separate from SMIRNOFF MDL perception.
+
+`kekule-potentials` owns energy evaluation and geometry optimization; the
+foundational crate owns no potential. A prepared `Potential` binds one exact
+`Arc<Topology>`, does not change during evaluation, and accepts any `ModelView`
+of that snapshot; an independently equal topology is incompatible. Energies and
+gradients are separate result objects in canonical units, not model properties.
+Backends lower explicit parameters, currently an OpenFF `ParameterizedTopology`,
+into private functional-form kernels. Parameter assignment stays in its own
+companion crate. Unsupported realization state, such as a periodic cell, is
+rejected rather than ignored. Gradients are exact derivatives and never capped;
+coordinates fail only where a requested energy or gradient is undefined.
+Minimization reads a borrowed view and returns new positions without changing
+chemistry, topology, cell, or properties. See the
+[potential contract](crates/kekule-potentials/src/lib.rs) and
+[OpenFF backend](crates/kekule-potentials/src/openff.rs).

@@ -78,12 +78,6 @@ impl Vector3 {
     pub fn norm(self) -> f64 {
         self.x.hypot(self.y).hypot(self.z)
     }
-
-    pub(crate) fn add_scaled(&mut self, other: Self, scale: f64) {
-        self.x += other.x * scale;
-        self.y += other.y * scale;
-        self.z += other.z * scale;
-    }
 }
 
 impl ScaleValue for Vector3 {

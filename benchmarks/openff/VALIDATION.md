@@ -81,7 +81,8 @@ not validation of arbitrary force fields or arbitrary neural architectures.
 
 ![Total-energy parity and signed residuals with identical charges and independently assigned charges.](figures/energy-parity.png)
 
-**Figure 2.** Rust energy evaluation using `potentials` versus OpenMM, for all
+**Figure 2.** Rust energy evaluation (recorded with the then benchmark-local
+evaluator built on `potentials`) versus OpenMM, for all
 660 geometry/atom-order comparisons. Left: both engines use the OpenFF charges,
 isolating parameter assignment and energy evaluation. Right: Kekule uses its
 own assigned charges, exposing their propagated electrostatic effect. The
@@ -120,8 +121,8 @@ comparison while making the effect of charge roundoff explicit.
 The benchmark now evaluates analytical **gradients, dE/dx**, in kJ mol⁻¹ nm⁻¹.
 OpenMM returns forces; these are negated once at the reference boundary. Charges
 stay fixed during differentiation: NAGL in this model depends on the molecular
-graph, not coordinates. This remains an optional benchmark consumer; a public
-OpenFF energy/gradient adapter has not yet been added.
+graph, not coordinates. The recorded snapshot predates the public evaluator; see
+[the public evaluator rerun](#public-evaluator-rerun-2026-10-08).
 
 The same 110 molecules, three geometries and two atom orders give **660 geometry
 comparisons**. Every Cartesian component is checked separately for bonds, angles,
@@ -198,9 +199,9 @@ torsion gradients at the original coordinates agree with OpenMM within `1e-9`.
 This sensitivity is recorded, not relabeled as a passing comparison. Both
 atom-order cases remain failures, and the full gradient command exits nonzero.
 
-Before exposing a general evaluator, near-singular geometry handling needs an
-explicit policy and further stress tests. This validation does not establish
-periodic forces, minimizer behavior, constraint integration or MD stability.
+The public evaluator adopts an explicit near-singular policy: exact, uncapped
+derivatives, rejecting only undefined quantities. This validation does not
+establish periodic forces, minimizer behavior, constraint integration or MD stability.
 The [independent reference](data/gradients.json.gz),
 [full native results](results/gradients.json.gz), and
 [initial failing observations](archive/gradient-before-fix.json.gz) retain the
@@ -212,6 +213,31 @@ micromamba run -p target/openff-reference python benchmarks/openff/run.py gradie
 # Reproduce the diagnosed case alone:
 micromamba run -p target/openff-reference python benchmarks/openff/run.py gradients compare --case pubchem-443915 --output target/openff-gradients-edge-new.json.gz
 ```
+
+### Public evaluator rerun, 2026-10-08
+
+The benchmark now calls the public `kekule_potentials::openff::OpenFfPotential`
+instead of its own evaluator, so these comparisons cover shipped code. Both
+commands were rerun against the unchanged frozen references
+(`data/reference.json.gz` and `data/gradients.json.gz`) and unchanged tolerances;
+the fingerprinted snapshot in `results/` and the figures above were not replaced.
+
+- Energy: all 660 geometry comparisons pass for both charge policies, and every
+  case keeps its recorded status: 214 passed, with the same six InChI-limit
+  diagnostic failures. The identical-charge total maximum is unchanged at
+  `6.170e-9 kJ/mol`. The angle maximum rose from `7.640e-11` to `4.280e-9 kJ/mol`,
+  entirely in the first PubChem 443915 geometry: the recorded value used `acos`
+  angles, and the public evaluator uses the `atan2` form adopted for gradients.
+  Recomputing that molecule's angle energy both ways from the frozen reference
+  gives exactly this `-4.2799e-9 kJ/mol` difference. All other component maxima
+  changed by less than `3e-11 kJ/mol`.
+- Gradients: all 220 cases keep their recorded status, 218 passed. The two
+  failures are the same PubChem 443915 near-linear observations, with the same
+  failed checks, components and counts, including the `2.021e3 kJ mol⁻¹ nm⁻¹`
+  angle difference from OpenMM's capped derivative. Only their total-gradient
+  rotation residuals, about `2.205e-4 kJ mol⁻¹ nm⁻¹`, moved, by at most
+  `4e-12`: the total is now accumulated in one array instead of summed from
+  separately evaluated components.
 
 ## CPU inference and parameterization time
 

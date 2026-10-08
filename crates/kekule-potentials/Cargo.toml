@@ -8,21 +8,20 @@ license.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-description = "Concrete potential implementations for topology-bound Kekule structural views."
+description = "Energy, gradient, and geometry-optimization machinery for topology-bound Kekule models."
 publish = true
 
 [features]
-default = ["dreiding"]
-dreiding = ["dep:dreid-forge", "dep:dreid-kernel"]
+default = ["openff"]
+openff = ["dep:kekule-openff"]
 
 [dependencies]
-dreid-forge = { version = "=0.4.2", default-features = false, optional = true }
-dreid-kernel = { version = "=0.4.2", optional = true }
 kekule = { version = "0.2.1", path = "../kekule" }
+kekule-openff = { version = "0.2.1", path = "../kekule-openff", optional = true }
 
 [dev-dependencies]
 kekule-traj = { version = "0.2.1", path = "../kekule-traj" }
 
 [[example]]
-name = "ligand_workflow"
-required-features = ["dreiding"]
+name = "openff_workflow"
+required-features = ["openff"]
