@@ -243,7 +243,7 @@ pub(crate) fn max_norm(vectors: &[Vector3]) -> f64 {
 pub enum SingularGeometry {
     /// Two interacting atoms share a position.
     CoincidentAtoms,
-    /// An angle arm has zero length.
+    /// An angle arm has zero (or underflowing) length.
     DegenerateAngle,
     /// A strained angle is exactly linear, so its gradient direction is undefined.
     LinearAngle,

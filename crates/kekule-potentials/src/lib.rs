@@ -25,7 +25,7 @@
 //! so near-singular coordinates produce large but finite gradients. Coordinates
 //! are rejected with [`EvaluationError::InvalidGeometry`] only when a requested
 //! quantity is mathematically undefined: nonbonded atoms closer than `1e-12` nm;
-//! a zero-length angle arm; a torsion with an axis shorter than `1e-12` nm or
+//! a zero-length angle arm (or one whose squared length underflows); a torsion with an axis shorter than `1e-12` nm or
 //! with outer atoms whose perpendicular distances from the axis multiply to less
 //! than `1e-18` nm^2; and, when a gradient is requested, a bond shorter than
 //! `1e-12` nm or an exactly linear angle away from its equilibrium value.

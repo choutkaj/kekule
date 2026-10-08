@@ -152,18 +152,21 @@ pub(crate) fn angles(
         let v = delta(x[c], x[b]);
         let r1 = u.norm_squared();
         let r2 = v.norm_squared();
-        if r1 < MIN_DISTANCE_SQUARED || r2 < MIN_DISTANCE_SQUARED {
+        let normal = u.cross(v);
+        let cosine = u.dot(v);
+        // A zero arm has no direction. Arms so short that both the sine and
+        // cosine terms underflow are indistinguishable from zero.
+        if r1 == 0.0 || r2 == 0.0 || (normal == Vector3::zero() && cosine == 0.0) {
             return Err(singular(
                 "harmonic angle",
                 &term.atoms,
                 SingularGeometry::DegenerateAngle,
             ));
         }
-        let normal = u.cross(v);
         let norm = normal.norm_squared().sqrt();
         // atan2 avoids acos cancellation near linearity. Neither the normal nor
         // the derivative is capped, so the gradient matches the energy exactly.
-        let offset = norm.atan2(u.dot(v)) - term.angle;
+        let offset = norm.atan2(cosine) - term.angle;
         energy += 0.5 * term.k * offset * offset;
         if !gradients.enabled() {
             continue;
@@ -522,6 +525,21 @@ mod tests {
         assert!((energy - expected).abs() < 1e-12);
         let error = angles(&angle, &linear, &mut Gradients::total(3)).unwrap_err();
         assert_eq!(error.kind, SingularGeometry::LinearAngle);
+        // Short but nonzero arms still define the angle and its gradient.
+        let short = [p(1e-13, 0., 0.), p(0., 0., 0.), p(0., 2e-13, 0.)];
+        let mut gradients = Gradients::total(3);
+        let energy = angles(&angle, &short, &mut gradients).unwrap();
+        let expected = 0.5 * 100.0 * (std::f64::consts::FRAC_PI_2 - 2.0).powi(2);
+        assert!((energy - expected).abs() < 1e-12);
+        let numerical = numerical_gradient(&short, 1e-15, |x| {
+            angles(&angle, x, &mut Gradients::None).unwrap()
+        });
+        assert_gradient(&total(gradients), &numerical, 1e-6);
+        let zero_arm = [p(0., 0., 0.), p(0., 0., 0.), p(0.1, 0., 0.)];
+        for mut gradients in [Gradients::None, Gradients::total(3)] {
+            let error = angles(&angle, &zero_arm, &mut gradients).unwrap_err();
+            assert_eq!(error.kind, SingularGeometry::DegenerateAngle);
+        }
         // A linear equilibrium is stationary, so its zero gradient is defined.
         let straight = [HarmonicAngle {
             atoms: [0, 1, 2],

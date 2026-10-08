@@ -523,14 +523,18 @@ fn flatten_vectors(vectors: &[Vector3]) -> Vec<f64> {
 }
 
 fn to_points(x: &[f64]) -> Vec<Point3> {
-    x.chunks_exact(3)
-        .map(|c| Point3::new(c[0], c[1], c[2]))
+    x.as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&[x, y, z]| Point3::new(x, y, z))
         .collect()
 }
 
 fn max_atom_norm(x: &[f64]) -> f64 {
-    x.chunks_exact(3)
-        .map(|c| Vector3::new(c[0], c[1], c[2]).norm())
+    x.as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&[x, y, z]| Vector3::new(x, y, z).norm())
         .fold(0.0, f64::max)
 }
 
