@@ -14,6 +14,17 @@
 
 mod data;
 
+/// Neutral atomic mass used for inertia and vibrational analysis. Unlabeled
+/// elements use standard atomic weights; labeled atoms use exact isotope masses.
+/// No implicit hydrogens or formal-charge electron corrections are included.
+pub fn atomic_mass(element: Element, isotope: Option<u16>) -> Option<Quantity<f64>> {
+    let mass = match isotope {
+        Some(number) => data::exact_isotope_mass(element, number),
+        None => data::standard_atomic_weight(element),
+    }?;
+    Some(Quantity::new(mass, DALTON))
+}
+
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::error::Error;

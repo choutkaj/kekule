@@ -80,6 +80,16 @@ impl ModelEditor {
     pub fn topology_editor(&self) -> &TopologyEditor {
         &self.topology
     }
+    /// Replaces represented stereo for an intact source occurrence; see
+    /// [`TopologyEditor::replace_source_instance_stereo`] for identity semantics.
+    pub fn replace_source_instance_stereo(
+        &mut self,
+        instance: MoleculeInstanceId,
+        elements: &[crate::core::StereoElement],
+    ) -> Result<(), ModelEditError> {
+        self.structural(|topology| topology.replace_source_instance_stereo(instance, elements))
+    }
+
     pub fn atom_count(&self) -> usize {
         self.topology.atom_count()
     }
@@ -657,7 +667,13 @@ impl ModelEditor {
     /// Publishes the completed model, preserving coordinates and entity properties.
     /// Editing handles are draft-only; inspect the returned model for its final IDs.
     pub fn finish(self) -> Result<Model, ModelEditError> {
-        let published = self.topology.into_publication()?;
+        self.finish_with_correspondence().map(|(model, _)| model)
+    }
+    /// Publishes the model and maps surviving draft atom/bond handles to its layout.
+    pub fn finish_with_correspondence(
+        self,
+    ) -> Result<(Model, crate::topology::EditCorrespondence), ModelEditError> {
+        let (published, correspondence) = self.topology.into_mapped_publication()?;
         let positions = Positions::from_canonical_values(
             published
                 .atom_slots
@@ -671,12 +687,10 @@ impl ModelEditor {
         for (key, value) in self.properties.iter() {
             properties.insert(key.clone(), value.clone())?;
         }
-        Ok(Model::with_properties(
-            published.topology,
-            positions,
-            self.cell,
-            properties,
-        )?)
+        Ok((
+            Model::with_properties(published.topology, positions, self.cell, properties)?,
+            correspondence,
+        ))
     }
     /// Publishes a model, returning the draft with any publication error.
     pub fn try_finish(self) -> Result<Model, ModelFinishError> {
