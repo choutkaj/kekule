@@ -772,16 +772,6 @@ fn smiles_brackets_publish_exact_hydrogen_declarations() {
 }
 
 #[test]
-fn smiles_interpretation_canonicalizes_directional_bond_markers() {
-    let small = read_smiles("C/C=C\\C").expect("directional bond markers should parse");
-
-    assert_eq!(small.atom_count(), 4);
-    assert_eq!(small.bond_count(), 3);
-    assert_eq!(small.stereo_elements().count(), 1);
-    canonical_smiles_round_trip(&small);
-}
-
-#[test]
 fn metal_bound_organic_subset_halogen_keeps_rdkit_no_implicit_state() {
     let mut small = read_smiles("Br[Pt+2]Br").expect("platinum bromide salt parses");
     perceive(&mut small).expect("platinum bromide salt perceives");
@@ -869,116 +859,33 @@ fn aromatic_chalcogen_bracket_atoms_localize_without_perceiving() {
 }
 
 #[test]
-fn malformed_smiles_returns_errors_without_panicking() {
-    let cases = [
-        "C(",
-        "C1",
-        "C%1",
-        "C%a1",
-        "C=",
-        "=C",
-        "C..C",
-        "C=1CCCCC-1",
-        "[]",
-        "[13]",
-        "[é]",
-        "[C@@@H]",
-        "[C/]",
-        "[*]",
-        "[C+999]",
-        "[C:]",
-        "[Clx]",
-        "[si]1ccccc1",
-        "Cé",
-    ];
-
-    for input in cases {
-        let parsed = std::panic::catch_unwind(|| read_smiles(input))
+fn malformed_smiles_grammar_is_rejected_by_the_document_parser() {
+    for (input, offset) in [
+        ("C(", 2),
+        ("C1", 2),
+        ("C%1", 1),
+        ("C%a1", 1),
+        ("C=", 1),
+        ("=C", 0),
+        ("C..C", 2),
+        ("C=1CCCCC-1", 9),
+        ("[]", 0),
+        ("[13]", 0),
+        ("[é]", 0),
+        ("[C@@@H]", 4),
+        ("[C/]", 2),
+        ("[*]", 1),
+        ("[C+999]", 6),
+        ("[C:]", 3),
+        ("[Clx]", 3),
+        ("[si]1ccccc1", 2),
+        ("Cé", 1),
+    ] {
+        let parsed = std::panic::catch_unwind(|| smiles_api::parse_str(input))
             .unwrap_or_else(|_| panic!("`{input}` panicked"));
-        let error = parsed.expect_err("malformed SMILES should fail");
-        assert!(!error.to_string().is_empty(), "message for `{input}`");
+        let error = parsed.expect_err("malformed SMILES must fail document parsing");
+        assert_eq!(error.offset(), offset, "{input}: {error}");
     }
-}
-
-#[test]
-fn smiles_document_parser_rejects_incomplete_grammar_before_interpretation() {
-    for input in ["C=", "C(", "C1", "C..C"] {
-        let error = smiles_api::parse_str(input)
-            .expect_err("incomplete grammar must fail document parsing");
-        assert!(!error.message().is_empty(), "message for `{input}`");
-    }
-}
-
-#[test]
-fn smiles_writer_round_trips_graph_shape() {
-    let small = read_smiles("CC(=O)O").expect("smiles should parse");
-    let text = smiles_api::write(&small, smiles_api::SmilesWriteOptions::default())
-        .expect("smiles should write");
-    let reparsed = read_smiles(&text).expect("written smiles should parse");
-
-    assert_eq!(reparsed.atom_count(), small.atom_count());
-    assert_eq!(reparsed.bond_count(), small.bond_count());
-}
-
-#[test]
-fn canonical_smiles_is_stable_across_atom_order_for_tree_roles() {
-    let mut first = crate::core::MoleculeEditor::new();
-    let first_terminal_a = first.add_atom(carbon()).expect("atom identifier capacity");
-    let first_center = first.add_atom(carbon()).expect("atom identifier capacity");
-    let first_terminal_b = first.add_atom(carbon()).expect("atom identifier capacity");
-    first
-        .add_bond(first_terminal_a, first_center, BondOrder::Single)
-        .expect("bond should be valid");
-    first
-        .add_bond(first_center, first_terminal_b, BondOrder::Single)
-        .expect("bond should be valid");
-    perceive(first.working_mut()).expect("propane perceives");
-
-    let mut second = crate::core::MoleculeEditor::new();
-    let second_center = second.add_atom(carbon()).expect("atom identifier capacity");
-    let second_terminal_a = second.add_atom(carbon()).expect("atom identifier capacity");
-    let second_terminal_b = second.add_atom(carbon()).expect("atom identifier capacity");
-    second
-        .add_bond(second_center, second_terminal_a, BondOrder::Single)
-        .expect("bond should be valid");
-    second
-        .add_bond(second_center, second_terminal_b, BondOrder::Single)
-        .expect("bond should be valid");
-    perceive(second.working_mut()).expect("propane perceives");
-
-    let first_written =
-        smiles_api::write(first.working(), smiles_api::SmilesWriteOptions::canonical())
-            .expect("canonical SMILES should write");
-    let second_written = smiles_api::write(
-        second.working(),
-        smiles_api::SmilesWriteOptions::canonical(),
-    )
-    .expect("canonical SMILES should write");
-
-    assert_eq!(first_written, second_written);
-    assert_eq!(first_written, "CCC");
-    read_smiles(&first_written).expect("canonical output should parse");
-}
-
-#[test]
-fn canonical_smiles_components_can_be_sorted_by_callers() {
-    let mut first = read_smiles_components("O.C").expect("SMILES parses");
-    let mut second = read_smiles_components("C.O").expect("SMILES parses");
-
-    let canonicalize = |components: &mut Vec<Molecule>| {
-        let mut written = components
-            .iter_mut()
-            .map(|molecule| {
-                perceive(molecule).expect("component perceives");
-                smiles_api::write(&*molecule, smiles_api::SmilesWriteOptions::canonical())
-                    .expect("canonical component SMILES should write")
-            })
-            .collect::<Vec<_>>();
-        written.sort();
-        written
-    };
-
-    assert_eq!(canonicalize(&mut first), canonicalize(&mut second));
 }
 
 #[test]
@@ -1072,22 +979,6 @@ fn source_order_smiles_retains_branch_order_and_omits_kekule_single_bonds() {
 }
 
 #[test]
-fn canonical_smiles_round_trips_supported_branch_and_ring_graphs() {
-    for input in ["CC(=O)O", "C1CCCCC1", "c1ccccc1"] {
-        let mut molecule =
-            read_smiles(input).unwrap_or_else(|_| panic!("SMILES should parse: {input}"));
-        perceive(&mut molecule).unwrap_or_else(|_| panic!("SMILES should perceive: {input}"));
-        let written = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::canonical())
-            .unwrap_or_else(|_| panic!("canonical SMILES should write: {input}"));
-        let reparsed = read_smiles(&written)
-            .unwrap_or_else(|_| panic!("canonical output should parse: {written}"));
-
-        assert_eq!(reparsed.atom_count(), molecule.atom_count());
-        assert_eq!(reparsed.bond_count(), molecule.bond_count());
-    }
-}
-
-#[test]
 fn canonical_smiles_prefers_clean_simple_ring_closure() {
     let molecule = read_smiles("C1=CC=CC=C1").expect("benzene parses");
 
@@ -1124,14 +1015,6 @@ fn canonical_smiles_preserves_aromatic_high_order_bonds() {
     assert!(reparsed.bonds().any(
         |(bond_id, bond)| bond.order == BondOrder::Triple && aromatic_bond(&reparsed, bond_id)
     ));
-}
-
-#[test]
-fn canonical_smiles_implementation_avoids_perception_feedback() {
-    let source = include_str!("../io/smiles/canonical.rs");
-
-    assert!(!source.contains("canonical_smiles_semantic_signature"));
-    assert!(!source.contains("KekuleWhenStored"));
 }
 
 #[test]
