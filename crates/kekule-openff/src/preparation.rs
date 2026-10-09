@@ -1,7 +1,40 @@
 //! Compatibility with RDKit's nitrogen/phosphorus cleanup on a private copy.
 //! See THIRD_PARTY.md for the reference revision and BSD attribution.
-use crate::{error, Result};
+use crate::{Error, ErrorKind, Result};
 use kekule::core::{BondOrder, Molecule};
+
+/// A perceived private copy of an explicit-hydrogen molecule, with
+/// RDKit-compatible valence normalization, ready for assignment.
+///
+/// Atom IDs are preserved, so per-atom results computed on the copy apply
+/// to the input atom for atom.
+pub(crate) fn explicit(molecule: &Molecule) -> Result<Molecule> {
+    let mut copy = normalize_valence(molecule)?;
+    copy.perceive().map_err(Error::chemistry)?;
+    if !copy.atom_ids().eq(molecule.atom_ids()) {
+        return Err(Error::new(
+            ErrorKind::Chemistry,
+            "molecule preparation changed atom identities",
+        ));
+    }
+    for (id, atom) in copy.atoms() {
+        if copy.implicit_hydrogens(id).map_err(Error::chemistry)? != Some(0) {
+            return Err(Error::new(
+                ErrorKind::UnsupportedMolecule,
+                format!(
+                    "atom {id} has implicit hydrogens; expand hydrogens before parameterization"
+                ),
+            ));
+        }
+        if atom.radical.is_some() {
+            return Err(Error::new(
+                ErrorKind::UnsupportedMolecule,
+                "radicals are outside the supported parameterization domain",
+            ));
+        }
+    }
+    Ok(copy)
+}
 
 pub(crate) fn normalize_valence(input: &Molecule) -> Result<Molecule> {
     let mut copy = input.clone();
@@ -12,7 +45,7 @@ pub(crate) fn normalize_valence(input: &Molecule) -> Result<Molecule> {
         }
         let valence: u32 = input
             .neighbors(id)
-            .map_err(error)?
+            .map_err(Error::chemistry)?
             .map(|next| {
                 match input
                     .bond(input.bond_between(id, next).unwrap().unwrap())
@@ -36,26 +69,38 @@ pub(crate) fn normalize_valence(input: &Molecule) -> Result<Molecule> {
         (7, BondOrder::Triple, BondOrder::Double),
     ] {
         for &id in &nitrogen {
-            let found = copy.neighbors(id).map_err(error)?.find_map(|next| {
-                let atom = copy.atom(next).unwrap();
-                let bond = copy.bond_between(id, next).unwrap().unwrap();
-                (atom.element.atomic_number() == element
-                    && atom.formal_charge == 0
-                    && copy.bond(bond).unwrap().order == old)
-                    .then_some((next, bond))
-            });
+            let found = copy
+                .neighbors(id)
+                .map_err(Error::chemistry)?
+                .find_map(|next| {
+                    let atom = copy.atom(next).unwrap();
+                    let bond = copy.bond_between(id, next).unwrap().unwrap();
+                    (atom.element.atomic_number() == element
+                        && atom.formal_charge == 0
+                        && copy.bond(bond).unwrap().order == old)
+                        .then_some((next, bond))
+                });
             if let Some((next, bond)) = found {
                 let mut editor = copy.edit();
-                editor.atom_mut(id).map_err(error)?.formal_charge = 1;
-                editor.atom_mut(next).map_err(error)?.formal_charge = -1;
-                editor.bond_mut(bond).map_err(error)?.set_order(new);
-                copy = editor.finish().map_err(error)?;
+                editor.atom_mut(id).map_err(Error::chemistry)?.formal_charge = 1;
+                editor
+                    .atom_mut(next)
+                    .map_err(Error::chemistry)?
+                    .formal_charge = -1;
+                editor
+                    .bond_mut(bond)
+                    .map_err(Error::chemistry)?
+                    .set_order(new);
+                copy = editor.finish().map_err(Error::chemistry)?;
             }
         }
     }
     let copy = normalize_phosphorus(&copy)?;
     if copy.formal_charge() != input.formal_charge() {
-        return Err(error("input valence normalization changed total charge"));
+        return Err(Error::new(
+            ErrorKind::Chemistry,
+            "input valence normalization changed total charge",
+        ));
     }
     Ok(copy)
 }
@@ -69,7 +114,10 @@ pub(crate) fn normalize_phosphorus(input: &Molecule) -> Result<Molecule> {
         if atom.element.atomic_number() != 15 || atom.formal_charge != 0 {
             continue;
         }
-        let neighbors = input.neighbors(id).map_err(error)?.collect::<Vec<_>>();
+        let neighbors = input
+            .neighbors(id)
+            .map_err(Error::chemistry)?
+            .collect::<Vec<_>>();
         if neighbors.len() != 3 {
             continue;
         }
@@ -77,20 +125,23 @@ pub(crate) fn normalize_phosphorus(input: &Molecule) -> Result<Molecule> {
         let mut oxygen = None;
         let mut carbon_or_nitrogen = false;
         for next in neighbors {
-            let bond_id = input.bond_between(id, next).map_err(error)?.unwrap();
-            let bond = input.bond(bond_id).map_err(error)?;
+            let bond_id = input
+                .bond_between(id, next)
+                .map_err(Error::chemistry)?
+                .unwrap();
+            let bond = input.bond(bond_id).map_err(Error::chemistry)?;
             valence += match bond.order {
                 BondOrder::Single => 1,
                 BondOrder::Double => 2,
                 BondOrder::Triple => 3,
                 _ => 100,
             };
-            let neighbor = input.atom(next).map_err(error)?;
+            let neighbor = input.atom(next).map_err(Error::chemistry)?;
             if bond.order == BondOrder::Double {
                 if neighbor.element.atomic_number() == 8 && neighbor.formal_charge == 0 {
                     oxygen = Some((next, bond_id));
                 } else if matches!(neighbor.element.atomic_number(), 6 | 7)
-                    && input.neighbors(next).map_err(error)?.count() >= 2
+                    && input.neighbors(next).map_err(Error::chemistry)?.count() >= 2
                 {
                     carbon_or_nitrogen = true;
                 }
@@ -107,14 +158,14 @@ pub(crate) fn normalize_phosphorus(input: &Molecule) -> Result<Molecule> {
     }
     let mut editor = input.edit();
     for (p, o, bond) in edits {
-        editor.atom_mut(p).map_err(error)?.formal_charge = 1;
-        editor.atom_mut(o).map_err(error)?.formal_charge = -1;
+        editor.atom_mut(p).map_err(Error::chemistry)?.formal_charge = 1;
+        editor.atom_mut(o).map_err(Error::chemistry)?.formal_charge = -1;
         editor
             .bond_mut(bond)
-            .map_err(error)?
+            .map_err(Error::chemistry)?
             .set_order(BondOrder::Single);
     }
-    editor.finish().map_err(error)
+    editor.finish().map_err(Error::chemistry)
 }
 
 #[cfg(test)]

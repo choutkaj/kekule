@@ -1,77 +1,78 @@
-//! SMIRNOFF parameter assignment and configurable NAGL charge inference.
+//! SMIRNOFF parameter assignment and NAGL partial charges for Kekule.
 //!
-//! Parameterization consumes explicit-hydrogen molecular graphs. It perceives
-//! private copies using MDL aromaticity and never rewrites the input topology.
-//! Results retain the exact topology snapshot and use Kekule's canonical units:
-//! nm, kJ/mol, radians, and elementary charges. Energies, gradients, and
-//! minimization are evaluated separately by `kekule-potentials`.
-//! Use [`ForceField::from_file`] or [`ForceField::from_offxml`] for custom rules
-//! within the supported SMIRNOFF subset. [`NaglModel`] loads a compatible model
-//! bundle; its checkpoint identity must match the OFFXML charge handler.
-//! [`ForceField::append`] composes compatible compiled rule sets. Complete
-//! library-charge systems can use [`ForceField::parameterize_without_nagl`]
-//! without a model bundle. Explicit distance constraints may join nonbonded
-//! atoms within one molecule; they do not change chemical connectivity.
-//! Rosemary and Ash remain the independently validated presets.
+//! [`ForceField::rosemary`] compiles the bundled Rosemary force field, and
+//! `NaglModel::ash` (default `ash` feature) loads the bundled Ash charge model it requires, so a
+//! complete OpenFF parameterization needs no external files.
+#![cfg_attr(
+    feature = "ash",
+    doc = r#"
+```
+use kekule::smiles;
+use kekule_openff::{ForceField, NaglModel};
+
+let mut molecule = smiles::to_molecules("CCO")?.remove(0);
+molecule.perceive()?;
+molecule.add_hydrogens()?;
+let atoms = molecule.atom_count();
+let model = NaglModel::ash()?;
+let parameters = ForceField::rosemary()?.parameterize_molecule(molecule, &model)?;
+assert_eq!(parameters.charges().value().len(), atoms);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+"#
+)]
 //!
-//! ```no_run
-//! use kekule::{hydrogens, smiles};
-//! use kekule_openff::{ForceField, NaglModel};
+//! For systems, [`ForceField::parameterize`] takes a shared topology and
+//! parameterizes each reusable definition once. Charges come from complete
+//! LibraryCharges, then the model's lookup table, then neural inference;
+//! [`ChargeMethod::LibraryOnly`] parameterizes library-charged systems without
+//! a model. There is no molecule size limit: work grows linearly with the
+//! molecule, and bounded searches only stop pathological patterns.
 //!
-//! let mut molecule = smiles::to_molecules("CCO")?.remove(0);
-//! molecule.perceive()?;
-//! molecule.add_hydrogens()?;
-//! let model = NaglModel::load("path/to/exported-ash")?;
-//! let parameters = ForceField::rosemary()?.parameterize_molecule(&molecule, &model)?;
-//! assert_eq!(parameters.charges().value().len(), molecule.atom_count());
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
+//! Parameterization consumes explicit-hydrogen molecules. It perceives private
+//! copies with MDL aromaticity and never changes the input topology. Results
+//! retain the exact topology snapshot and use Kekule's canonical units: nm,
+//! kJ/mol, radians, and elementary charges. Energies, gradients, and
+//! minimization live in `kekule-potentials`.
+//!
+//! [`ForceField::from_file`] and [`ForceField::from_offxml`] compile custom
+//! rules within the supported SMIRNOFF subset, [`ForceField::append`] composes
+//! compatible rule sets, and [`NaglModel::load`] loads another exported model
+//! bundle, whose identity must match the force field's NAGLCharges handler.
+//! Every failure is an [`Error`] with a stable [`ErrorKind`]. See `CONTRACT.md`
+//! for the supported subset, assignment semantics, and validation record.
+//!
+//! The bundled Ash weights are CC BY 4.0 (see the `kekule-openff-ash` crate);
+//! disable the default `ash` feature to load models only from files.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
 mod assignment;
+pub mod diagnostics;
+mod error;
 mod identity;
 mod nagl;
 mod offxml;
 mod parameters;
+mod preparation;
 
+pub use assignment::ChargeMethod;
+pub use error::{Error, ErrorKind};
 pub use nagl::{ChargeAssignment, ChargeSource, ModelIdentity, NaglModel};
 pub use offxml::ForceField;
 pub use parameters::*;
 
-/// An explicit input, format, coverage, or resource-limit failure.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Error(String);
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-impl std::error::Error for Error {}
-pub(crate) type Result<T> = std::result::Result<T, Error>;
-pub(crate) fn error(e: impl std::fmt::Display) -> Error {
-    Error(e.to_string())
-}
+pub(crate) use error::Result;
+pub(crate) use preparation::explicit;
 
-pub(crate) fn explicit(molecule: &kekule::core::Molecule) -> Result<kekule::core::Molecule> {
-    let mut copy = preparation::normalize_valence(molecule)?;
-    copy.perceive().map_err(error)?;
-    for (id, atom) in copy.atoms() {
-        if copy.implicit_hydrogens(id).map_err(error)? != Some(0) {
-            return Err(error(format!(
-                "atom {id} has implicit hydrogens; expand hydrogens before parameterization"
-            )));
-        }
-        if atom.radical.is_some() {
-            return Err(error(
-                "radicals are outside the supported parameterization domain",
-            ));
-        }
-    }
-    Ok(copy)
-}
+// Compile and run the contract's examples so they cannot drift from the API.
+#[cfg(all(doctest, feature = "ash"))]
+#[doc = include_str!("../CONTRACT.md")]
+struct ContractExamples;
 
-mod preparation;
+#[cfg(all(doctest, feature = "ash"))]
+#[doc = include_str!("../README.md")]
+struct ReadmeExamples;
 
 #[cfg(test)]
 fn reference_records() -> Vec<serde_json::Value> {

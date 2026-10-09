@@ -20,11 +20,9 @@ fn rosemary_compiles_and_last_rule_wins() {
         .unwrap();
     assert_eq!(overridden.bonds.len(), 5);
     assert!(overridden.bonds.values().all(|p| p.id == "override"));
-    assert!(ff
-        .label_molecule(&molecule("CO"))
-        .unwrap_err()
-        .to_string()
-        .contains("implicit hydrogens"));
+    let error = ff.label_molecule(&molecule("CO")).unwrap_err();
+    assert_eq!(error.kind(), kekule_openff::ErrorKind::UnsupportedMolecule);
+    assert!(error.to_string().contains("implicit hydrogens"));
 }
 #[test]
 fn unsupported_functional_forms_fail() {
@@ -128,14 +126,13 @@ fn all_reference_rule_labels_match_in_atom_map_space() {
 }
 
 #[test]
-#[ignore = "requires the separately exported, checksum-pinned Ash model; set KEKULE_OPENFF_MODEL"]
+#[cfg(feature = "ash")]
 fn native_charges_match_external_reference() {
-    let model = kekule_openff::NaglModel::load(
-        std::env::var("KEKULE_OPENFF_MODEL")
-            .expect("set KEKULE_OPENFF_MODEL to the exported bundle"),
-    )
-    .unwrap();
-    assert_eq!(model.lookup_entry_count(), 13944);
+    let model = kekule_openff::NaglModel::ash().unwrap();
+    assert_eq!(
+        kekule_openff::diagnostics::lookup_entry_count(&model),
+        13944
+    );
     // Isotope masses do not change the reference toolkit's charge lookup.
     let mut isotope = molecule("[2H]OC");
     isotope.perceive().unwrap();
@@ -158,17 +155,25 @@ fn native_charges_match_external_reference() {
     ));
     assert_eq!(
         assignment.charges,
-        model.infer_charges(&large).unwrap().charges
+        kekule_openff::diagnostics::infer_charges(&model, &large)
+            .unwrap()
+            .charges
     );
     assert!(assignment.charges.value().iter().sum::<f64>().abs() < 1e-10);
-    let oversized = molecule(&"C".repeat(4097));
-    for error in [
-        model.assign_charges(&oversized).unwrap_err(),
-        model.infer_charges(&oversized).unwrap_err(),
-        model.atom_features(&oversized).unwrap_err(),
-    ] {
-        assert!(error.to_string().contains("4096"));
-    }
+    // Regression: inference had a 4096-atom cap.
+    let mut oversized = molecule(&"C".repeat(1500));
+    oversized.perceive().unwrap();
+    oversized.add_hydrogens().unwrap();
+    assert!(oversized.atom_count() > 4096);
+    let assignment = model.assign_charges(&oversized).unwrap();
+    assert_eq!(assignment.charges.value().len(), oversized.atom_count());
+    assert!(assignment.charges.value().iter().sum::<f64>().abs() < 1e-10);
+    assert_eq!(
+        kekule_openff::diagnostics::atom_features(&model, &oversized)
+            .unwrap()
+            .len(),
+        oversized.atom_count()
+    );
     assert!(matches!(
         q.source,
         kekule_openff::ChargeSource::Lookup { .. }
@@ -180,7 +185,7 @@ fn native_charges_match_external_reference() {
     let ff = ForceField::rosemary().unwrap();
     for r in report["records"].as_array().unwrap() {
         let m = molecule(r["mapped_smiles"].as_str().unwrap());
-        let p = ff.parameterize_molecule(&m, &model).unwrap();
+        let p = ff.parameterize_molecule(m.clone(), &model).unwrap();
         let expected = &r["system"]["charges"];
         for (i, (_, a)) in m.atoms().enumerate() {
             let q = expected[a.atom_map.unwrap() as usize - 1]["charge"]
@@ -206,7 +211,7 @@ fn native_charges_match_external_reference() {
     let expected: Vec<_> = cases
         .iter()
         .map(|m| {
-            ff.parameterize_molecule(m, &model)
+            ff.parameterize_molecule(m.clone(), &model)
                 .unwrap()
                 .charges()
                 .clone()
@@ -217,7 +222,12 @@ fn native_charges_match_external_reference() {
             scope.spawn(|| {
                 for (m, q) in cases.iter().zip(&expected) {
                     let before = m.clone();
-                    assert_eq!(ff.parameterize_molecule(m, &model).unwrap().charges(), q);
+                    assert_eq!(
+                        ff.parameterize_molecule(m.clone(), &model)
+                            .unwrap()
+                            .charges(),
+                        q
+                    );
                     assert_eq!(*m, before);
                 }
             });

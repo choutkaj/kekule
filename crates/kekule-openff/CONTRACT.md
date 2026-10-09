@@ -13,7 +13,7 @@ path. Both entry points use the same compiler as the Rosemary preset.
 
 ```rust,no_run
 let force_field = kekule_openff::ForceField::from_file("my-forcefield.offxml")?;
-# Ok::<(), Box<dyn std::error::Error>>(())
+# Ok::<(), kekule_openff::Error>(())
 ```
 
 ## Custom OFFXML subset
@@ -21,12 +21,12 @@ let force_field = kekule_openff::ForceField::from_file("my-forcefield.offxml")?;
 The root must declare SMIRNOFF `0.3` and `OEAroModel_MDL`. `NAGLCharges`
 version `0.3` declares a nonempty `model_file` and a 64-digit SHA-256
 `model_file_hash`. `ForceField::charge_model()` exposes an optional identity.
-Parameterization with `&NaglModel` requires an exact model identifier and
-checkpoint digest match when a handler is declared, including for library-only inputs.
-`parameterize_without_nagl(Arc<Topology>)` needs no model bundle and requires
-complete, charge-conserving LibraryCharges for every molecule. Missing coverage
-is an error, even if an unused NAGL handler is declared. Without a NAGL handler,
-supplying a model does not enable implicit charge inference.
+`ChargeMethod::Nagl(&model)` (or plain `&model`) requires an exact model
+identifier and checkpoint digest match with a declared handler, including for
+library-only inputs; supplying a model to a force field without a NAGLCharges
+handler is a `ModelMismatch` error. `ChargeMethod::LibraryOnly` needs no model
+and requires complete, charge-conserving LibraryCharges for every molecule.
+Missing coverage is an error, even if an unused NAGL handler is declared.
 Hexadecimal digests are case-insensitive. Model identifiers are literal strings,
 not paths to resolve or download. Other charge methods and implicit overrides
 remain unsupported. The Rosemary preset continues to require Ash 1.0.0.
@@ -90,23 +90,56 @@ omitted optional sections. See [OFFXML validation](../../benchmarks/openff/VALID
 
 ## API and ownership
 
-```rust,no_run
-use kekule::{hydrogens, smiles};
-use kekule_openff::{ForceField, NaglModel};
+```rust
+use kekule::smiles;
+use kekule_openff::{ChargeMethod, ForceField, NaglModel};
 
 let mut molecule = smiles::to_molecules("CCO")?.remove(0);
 molecule.perceive()?;
-hydrogens::add_hydrogens(&mut molecule)?;
-let model = NaglModel::load("target/openff-ash")?;
-let parameters = ForceField::rosemary()?.parameterize_molecule(&molecule, &model)?;
+molecule.add_hydrogens()?;
+let model = NaglModel::ash()?;
+let rosemary = ForceField::rosemary()?;
+let parameters = rosemary.parameterize_molecule(molecule, &model)?;
+assert_eq!(parameters.charge_sources().len(), 1);
+
+// Library-charged systems need no model.
+let sodium = smiles::to_molecules("[Na+]")?.remove(0);
+let ion = rosemary.parameterize_molecule(sodium, ChargeMethod::LibraryOnly)?;
+assert_eq!(ion.charges().value(), &[1.0]);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-For systems, call `parameterize(Arc<Topology>, &model)`. Results retain that exact
-snapshot; reusable definitions are assigned once and expanded to qualified
-instance atoms. Dense charge and vdW arrays follow `topology.atom_ids()` order.
-Input molecules must already contain all hydrogen atoms. The engine neither
-adds atoms nor changes the input topology or its properties.
+For systems, call `parameterize(topology, charges)` with an `Arc<Topology>`.
+Results retain that exact snapshot; reusable definitions are assigned once and
+expanded to qualified instance atoms. Dense charge and vdW arrays follow
+`topology.atom_ids()` order. Input molecules must already contain all hydrogen
+atoms. The engine neither adds atoms nor changes the input topology or its
+properties. `ForceField`, `NaglModel`, and results are `Send + Sync`, so one
+compiled force field and model can serve concurrent parameterizations.
+
+## Errors
+
+Every failure is a `kekule_openff::Error`. `Error::kind()` returns a stable
+`ErrorKind` for programmatic handling; the display text adds the specific
+detail. Failures inside one molecule of a system name its definition through
+`Error::definition()`, and file failures name the file through `Error::path()`.
+A wrapped lower-level error (I/O, XML, JSON, or a Kekule perception error) is
+available through `Error::get_ref()` for downcasting; as with `std::io::Error`,
+the wrapper is transparent and its source chain never repeats a message.
+
+| Kind | Meaning |
+| --- | --- |
+| `Io` | Reading an OFFXML file or bundle file failed |
+| `ForceField` | OFFXML is malformed or outside the supported subset, or a rule matches invalid connectivity |
+| `Composition` | `ForceField::append` received incompatible settings or models |
+| `Model` | A model bundle is malformed, corrupt, unsupported, or has inconsistent lookup data |
+| `ModelMismatch` | The supplied model is not the force field's declared model, or the force field declares none |
+| `UnsupportedMolecule` | Implicit hydrogens, radicals, delocalized bonds, or elements, connectivities, or patterns outside the model domain |
+| `Unparameterized` | The rules leave an atom or interaction without parameters |
+| `Charges` | Library charges are incomplete or do not conserve the formal charge, or a model produced invalid values |
+| `Identity` | The fixed-H InChI lookup identifier cannot be computed |
+| `ResourceLimit` | A bounded combinatorial search exceeded its limit |
+| `Chemistry` | An underlying Kekule perception, matching, or editing operation failed |
 
 Private copies receive RDKit-compatible neutral valence-five nitrogen and
 phosphorus cleanup, preserving total charge, followed by MDL aromaticity for
@@ -159,11 +192,18 @@ evaluation, and charge assignment are separate internal modules with one public
 `NaglModel` type. No Python, PyTorch, RDKit, network access or pickle loading
 occurs in the Rust runtime. Direct `.pt` import is not implemented.
 
-Schema-2 bundles contain `model.json` and little-endian float32 `weights.bin`.
-The manifest declares original checkpoint identity, weights checksum, complete
-tensor layout, NAGL configuration, chemical domain, optional lookup tables and
-preparation profile. The original checksum-pinned schema-1 Ash export remains
-accepted unchanged. New exports use schema 2.
+`NaglModel::ash()` loads the Ash model (`openff-gnn-am1bcc-1.0.0`) bundled in the
+`kekule-openff-ash` crate, which the default `ash` feature enables. The bundle was
+exported from the checksum-pinned checkpoint with the exporter below; re-exporting
+reproduces it byte for byte. It stores the unchanged float32 weights as zlib-compressed
+byte planes, which keeps the crate within the crates.io size limit, and decoding is
+validated exactly like a bundle loaded from files. The weights are CC BY 4.0; see
+that crate's `ATTRIBUTION.md`. Disable the `ash` feature to load models only from files.
+
+`NaglModel::load(directory)` loads a schema-2 bundle: `model.json` and
+little-endian float32 `weights.bin`. The manifest declares original checkpoint
+identity, weights checksum, complete tensor layout, NAGL configuration, chemical
+domain, optional lookup tables and preparation profile.
 
 | Configuration | Supported subset |
 | --- | --- |
@@ -184,11 +224,14 @@ finite weights and checksums. Unknown fields, schemas, profiles, features or
 operations fail explicitly. An empty domain element list means unrestricted
 elements at the domain-check stage; feature categories still must cover inputs.
 
-Prepare an Ash bundle once in the reference environment (output must be new):
+Export a bundle in the reference environment (output must be new); with no
+`--checkpoint`, this exports the Ash bundle that `kekule-openff-ash` ships, and
+`package_ash.py` converts such an export into that crate's data:
 
 ```text
 micromamba run -p target/openff-reference python benchmarks/openff/scripts/export_model.py target/ash-bundle
-cargo run -p kekule-openff --release --example parameterize -- target/ash-bundle CCO
+python benchmarks/openff/scripts/package_ash.py target/ash-bundle crates/kekule-openff-ash/data
+cargo run -p kekule-openff --release --example parameterize -- CCO --model target/ash-bundle
 ```
 
 For another trusted checkpoint, supply `--checkpoint PATH` and
@@ -209,7 +252,11 @@ The `inchi` and `inchi-sys` dependencies are pinned to 0.1.4, using the official
 InChI 1.07.5 C implementation. This companion therefore requires a C toolchain
 at build time; core `kekule` has no InChI dependency. The adapter handles isotope
 labels, tetrahedral parity and alkene stereo, including absolute stereo groups.
-Relative/mixture groups and axial stereo currently fail explicitly.
+Relative/mixture groups and axial stereo currently fail explicitly. The InChI
+library accepts at most 1,024 atoms; this limits only the
+`diagnostics::lookup_identifier` hook, because charge assignment computes an
+identifier only for molecules no larger than the model's largest lookup entry
+(11 atoms for Ash).
 
 ## Boundaries and validation
 
@@ -244,9 +291,17 @@ Focused tests cover precedence, constraints, library charge fallback, repeated
 instances, topology identity and improper expansion. An optional model test
 also checks charges against the archived official observations:
 
+This test runs by default against the bundled Ash model:
+
+```text
+cargo test -p kekule-openff --test contracts
+```
+
+The two-model suite still needs both exported bundles:
+
 ```powershell
-$env:KEKULE_OPENFF_MODEL = (Resolve-Path target/openff-ash).Path
-cargo test -p kekule-openff --test contracts -- --ignored
+$env:KEKULE_OPENFF_MODELS = (Resolve-Path target/openff-models).Path
+cargo test --release -p kekule-openff --test models -- --include-ignored
 ```
 
 The original Ash live comparison contains those 23 molecules plus ten independently
@@ -281,10 +336,22 @@ Charge lookup ignores isotopic masses on a private copy, matching the reference
 toolkit while preserving the input graph. The panel does not establish protein
 force-field accuracy, periodic electrostatics, forces, or trajectory stability.
 
-Limits fail rather than silently truncate: 256 atoms/one million search states
-for lookup mapping, 4096 atoms for features, 200 normalization applications per
-rule, one million resonance path visits, and bounded resonance state/product
-queues. Higher limits or broader chemical support need explicit validation.
+There is no molecule size limit. SMIRKS assignment, normalization, resonance
+averaging, features, and inference all scale linearly with the molecule, so
+large protein chains parameterize like small molecules. The remaining bounds
+stop only pathological combinatorial searches, and fail rather than silently
+truncate:
+
+- SMIRKS matching per rule: at least 1,000,000 matches, 10,000,000 search
+  states, and 16,000,000 candidate pairs, growing by 64 matches, 1,000 states,
+  and 64 pairs per atom.
+- Lookup mapping: at least 1,000,000 search states, growing by 1,000 per atom.
+- Normalization: as many applications of one rule as the molecule has atoms
+  (at least 200, upstream NAGL's fixed limit), which only a cycling rule reaches.
+- Resonance averaging, per conjugated fragment: one million transfer-path
+  visits and 10,000 stored or queued states, independent of molecule size.
+
+Broader chemical support still needs explicit validation.
 
 See the report for reference execution commands and the historical prerequisite
 audit, and [THIRD_PARTY.md](THIRD_PARTY.md) for attribution.

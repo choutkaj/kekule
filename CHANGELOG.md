@@ -6,6 +6,37 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** `kekule-openff` reports every failure as an `Error` with a stable
+  `ErrorKind` (`ForceField`, `Model`, `ModelMismatch`, `UnsupportedMolecule`,
+  `Unparameterized`, `Charges`, `ResourceLimit`, ...), the failing molecule
+  definition for system parameterization, the file for loading failures, and
+  the wrapped lower-level error through `Error::get_ref`. `Error` is no longer
+  `PartialEq`.
+- **Breaking:** `ForceField::parameterize(topology, charges)` and
+  `parameterize_molecule(molecule, charges)` take a `ChargeMethod`: `&model`
+  for NAGL charges or `ChargeMethod::LibraryOnly`, replacing
+  `parameterize_without_nagl`. `parameterize_molecule` takes the molecule by
+  value. Supplying a model to a force field without a NAGLCharges handler is now
+  a `ModelMismatch` error instead of being ignored.
+- **Breaking:** `NaglModel::atom_features`, `infer_charges`, `lookup_identifier`,
+  and `lookup_entry_count` move to the `kekule_openff::diagnostics` module.
+- **Breaking:** NAGL bundles must use schema 2; the legacy schema-1 Ash export is
+  no longer accepted. Re-export with `export_model.py`, or use `NaglModel::ash`.
+- Default perception has no molecule size limit. `Molecule::perceive`,
+  `perceive_ring_set`, and `perceive_aromaticity` scale their ring and
+  aromaticity work bounds with the molecule (`RingPerceptionOptions::for_graph`,
+  `AromaticityOptions::for_graph`); explicitly supplied options stay absolute.
+  Smallest-ring searches traverse only ring bonds with workspace proportional to
+  what they visit, so ring perception no longer costs rings times molecule size:
+  a 70,000-atom polymer with 10,000 rings perceives in well under a second. Ring
+  sets are unchanged.
+- `kekule-openff` has no molecule size limit. The 4,096-atom NAGL cap is removed,
+  resonance averaging works per conjugated fragment so its cost no longer grows
+  with the rest of the molecule, normalization is no longer capped at 200
+  applications per rule, ring features no longer scan every ring per atom, and
+  SMIRKS and lookup search bounds grow with the molecule. Charge-equilibration
+  sums accumulate in f64.
+
 - **Breaking:** `Trajectory`, `TrajectoryFrame`, `Velocities`, and `Forces` move
   from `kekule-traj` into `kekule::structure`, next to `Ensemble`. The two
   collections stay distinct types over one private store and share `new`,
@@ -121,6 +152,12 @@ All notable changes to Kekule are documented in this file.
 
 ### Added
 
+- `NaglModel::ash()` loads the Ash charge model bundled in the new
+  `kekule-openff-ash` data crate (default `ash` feature), so `ForceField::rosemary`
+  works without exporting a model.
+- A large-protein validation panel of four chains with 4,615-13,818 atoms in
+  `benchmarks/openff`; all eight parameterizations match OpenFF/OpenMM within
+  the main panel's tolerances.
 - Add `kekule_potentials::openff::OpenFfPotential`, which evaluates OpenFF
   energies, gradients, and per-component gradients from a `ParameterizedTopology`
   in vacuum without cutoffs, with optional replacement charges.

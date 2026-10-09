@@ -75,7 +75,10 @@ fn model(topology: &Arc<Topology>) -> Model {
 fn parameterize(topology: &Arc<Topology>) -> ParameterizedTopology {
     ForceField::from_offxml(TOY)
         .unwrap()
-        .parameterize_without_nagl(Arc::clone(topology))
+        .parameterize(
+            Arc::clone(topology),
+            kekule_openff::ChargeMethod::LibraryOnly,
+        )
         .unwrap()
 }
 
@@ -433,7 +436,10 @@ fn nonperiodic_vdw_cutoff_is_rejected_at_preparation() {
     let topology = topology(1);
     let p = ForceField::from_offxml(&xml)
         .unwrap()
-        .parameterize_without_nagl(Arc::clone(&topology))
+        .parameterize(
+            Arc::clone(&topology),
+            kekule_openff::ChargeMethod::LibraryOnly,
+        )
         .unwrap();
     assert_eq!(
         OpenFfPotential::new(&p).unwrap_err(),

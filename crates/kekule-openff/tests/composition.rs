@@ -33,7 +33,12 @@ fn library_only_repeated_definitions_retain_exact_binding_and_nonbonded_constrai
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     let topology = Arc::new(builder.build().unwrap());
-    let p = ff.parameterize_without_nagl(Arc::clone(&topology)).unwrap();
+    let p = ff
+        .parameterize(
+            Arc::clone(&topology),
+            kekule_openff::ChargeMethod::LibraryOnly,
+        )
+        .unwrap();
     assert!(Arc::ptr_eq(p.topology(), &topology));
     assert_eq!(
         p.charges().value_in(ELEMENTARY_CHARGE).unwrap(),
@@ -61,7 +66,12 @@ fn composition_is_ordered_and_keeps_rosemary_model_and_unrelated_parameters() {
     assert_eq!(ff.label_molecule(&organic).unwrap().bonds, original.bonds);
     assert_eq!(ff.label_molecule(&organic).unwrap().vdw, original.vdw);
     let topology = Arc::new(Topology::from_molecule((molecule("O")).clone()).unwrap());
-    let p = ff.parameterize_without_nagl(Arc::clone(&topology)).unwrap();
+    let p = ff
+        .parameterize(
+            Arc::clone(&topology),
+            kekule_openff::ChargeMethod::LibraryOnly,
+        )
+        .unwrap();
     assert!(p
         .bonds()
         .iter()
@@ -75,7 +85,7 @@ fn composition_is_ordered_and_keeps_rosemary_model_and_unrelated_parameters() {
     .unwrap();
     ff.append(&newer).unwrap();
     assert_eq!(
-        ff.parameterize_without_nagl(topology)
+        ff.parameterize(topology, kekule_openff::ChargeMethod::LibraryOnly)
             .unwrap()
             .charges()
             .value()[0],
@@ -100,20 +110,16 @@ fn failed_composition_is_atomic_for_settings_and_model_conflicts() {
         &WATER.replace("<vdW version", "<vdW cutoff=\"1.2*nanometer\" version"),
     )
     .unwrap();
-    assert!(ff
-        .append(&incompatible)
-        .unwrap_err()
-        .to_string()
-        .contains("nonbonded settings"));
+    let error = ff.append(&incompatible).unwrap_err();
+    assert_eq!(error.kind(), kekule_openff::ErrorKind::Composition);
+    assert!(error.to_string().contains("nonbonded settings"));
     let rosemary = include_str!("../data/rosemary.offxml");
     let incompatible =
         ForceField::from_offxml(&rosemary.replace("openff-gnn-am1bcc-1.0.0.pt", "different.pt"))
             .unwrap();
-    assert!(ff
-        .append(&incompatible)
-        .unwrap_err()
-        .to_string()
-        .contains("NAGL models"));
+    let error = ff.append(&incompatible).unwrap_err();
+    assert_eq!(error.kind(), kekule_openff::ErrorKind::Composition);
+    assert!(error.to_string().contains("NAGL models"));
     assert_eq!(
         ff.label_molecule(&molecule("O")).unwrap().bonds,
         original.bonds
@@ -158,15 +164,22 @@ fn incomplete_or_nonconserving_charges_and_implicit_nonbonded_distances_fail() {
         WATER.replace(" distance=\"0.15*nanometer\"", ""),
     ] {
         let ff = ForceField::from_offxml(&xml).unwrap();
-        assert!(ff.parameterize_without_nagl(Arc::clone(&topology)).is_err());
+        assert!(ff
+            .parameterize(
+                Arc::clone(&topology),
+                kekule_openff::ChargeMethod::LibraryOnly
+            )
+            .is_err());
     }
     let ff = ForceField::rosemary().unwrap();
-    let organic = Arc::new(Topology::from_molecule((molecule("CC")).clone()).unwrap());
-    assert!(ff
-        .parameterize_without_nagl(organic)
-        .unwrap_err()
-        .to_string()
-        .contains("incomplete library charges"));
+    let organic = Arc::new(Topology::from_molecule(molecule("CC")).unwrap());
+    let error = ff
+        .parameterize(organic, kekule_openff::ChargeMethod::LibraryOnly)
+        .unwrap_err();
+    assert_eq!(error.kind(), kekule_openff::ErrorKind::Charges);
+    // System failures name the molecule definition that failed.
+    assert_eq!(error.definition().map(|d| d.index()), Some(0));
+    assert!(error.to_string().starts_with("molecule definition 0: "));
 }
 
 fn two_waters() -> Arc<Topology> {
@@ -182,7 +195,7 @@ fn two_waters() -> Arc<Topology> {
 fn interactions_from_one_rule_share_one_parameter_allocation() {
     let p = ForceField::from_offxml(WATER)
         .unwrap()
-        .parameterize_without_nagl(two_waters())
+        .parameterize(two_waters(), kekule_openff::ChargeMethod::LibraryOnly)
         .unwrap();
     let first = &p.bonds()[0];
     assert!(p
@@ -209,7 +222,7 @@ fn nonbonded_methods_are_typed_and_keep_smirnoff_spelling() {
     let settings = |xml: &str| {
         ForceField::from_offxml(xml)
             .unwrap()
-            .parameterize_without_nagl(two_waters())
+            .parameterize(two_waters(), kekule_openff::ChargeMethod::LibraryOnly)
             .unwrap()
             .nonbonded_settings()
             .clone()

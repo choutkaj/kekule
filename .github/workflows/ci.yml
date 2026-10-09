@@ -62,13 +62,16 @@ jobs:
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
       - run: cargo test -p kekule-potentials --no-default-features --locked
       - run: RUSTDOCFLAGS="-D warnings" cargo doc -p kekule-potentials --no-default-features --no-deps --locked
+      - run: cargo test -p kekule-openff --no-default-features --locked
       - name: Check packaged license copies
         run: |
-          for package in kekule kekule-potentials kekule-traj kekule-openff; do
+          for package in kekule kekule-potentials kekule-traj kekule-openff kekule-openff-ash; do
             cmp LICENSE-APACHE "crates/$package/LICENSE-APACHE"
             cmp LICENSE-MIT "crates/$package/LICENSE-MIT"
           done
       - run: cargo package -p kekule --locked
+      # The data-only model crate has no Kekule dependency and packages fully.
+      - run: cargo package -p kekule-openff-ash --locked
       # Full companion packaging resolves `kekule` through crates.io and is
       # enabled only after the foundational crate is published. Until then,
       # validate each exact package file set.

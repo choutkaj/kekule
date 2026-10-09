@@ -15,17 +15,16 @@ fn file_loader_uses_literal_paths_and_reports_path_on_failure() {
         ForceField::rosemary().unwrap().nonbonded_settings()
     );
     std::fs::write(&path, "<SMIRNOFF>").unwrap();
-    assert!(ForceField::from_file(&path)
-        .unwrap_err()
-        .to_string()
-        .contains(path.to_str().unwrap()));
+    let error = ForceField::from_file(&path).unwrap_err();
+    assert_eq!(error.kind(), kekule_openff::ErrorKind::ForceField);
+    assert_eq!(error.path(), Some(path.as_path()));
+    assert!(error.to_string().contains(path.to_str().unwrap()));
     std::fs::write(&path, [0xff, 0xfe]).unwrap();
     assert!(ForceField::from_file(&path).is_err());
     std::fs::remove_file(&path).unwrap();
-    assert!(ForceField::from_file(&path)
-        .unwrap_err()
-        .to_string()
-        .contains(path.to_str().unwrap()));
+    let error = ForceField::from_file(&path).unwrap_err();
+    assert_eq!(error.kind(), kekule_openff::ErrorKind::Io);
+    assert!(error.to_string().contains(path.to_str().unwrap()));
 }
 
 #[test]

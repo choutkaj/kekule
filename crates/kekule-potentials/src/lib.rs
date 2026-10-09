@@ -43,7 +43,7 @@
 //!
 //! # fn explicit_hydrogen_model() -> Model { unimplemented!() }
 //! let model = explicit_hydrogen_model();
-//! let nagl = NaglModel::load("path/to/exported-model")?;
+//! let nagl = NaglModel::ash()?;
 //! let parameters = ForceField::rosemary()?.parameterize(model.shared_topology(), &nagl)?;
 //! let potential = OpenFfPotential::new(&parameters)?;
 //!

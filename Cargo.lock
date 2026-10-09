@@ -333,12 +333,17 @@ dependencies = [
  "inchi",
  "inchi-sys",
  "kekule",
+ "kekule-openff-ash",
  "ndarray",
  "roxmltree",
  "serde",
  "serde_json",
  "sha2 0.10.9",
 ]
+
+[[package]]
+name = "kekule-openff-ash"
+version = "0.2.1"
 
 [[package]]
 name = "kekule-potentials"

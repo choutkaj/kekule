@@ -1,5 +1,6 @@
 //! Bounded, non-evaluating parser for OFFXML multiplicative unit expressions.
-use crate::{error, Result};
+use super::{error, invalid};
+use crate::Result;
 use kekule::units::*;
 
 struct Value {
@@ -44,10 +45,10 @@ impl Parser<'_> {
                     return Err(error("division by zero in quantity"));
                 }
                 value.magnitude /= right.magnitude;
-                value.unit = value.unit.try_div(right.unit).map_err(error)?;
+                value.unit = value.unit.try_div(right.unit).map_err(invalid)?;
             } else {
                 value.magnitude *= right.magnitude;
-                value.unit = value.unit.try_mul(right.unit).map_err(error)?;
+                value.unit = value.unit.try_mul(right.unit).map_err(invalid)?;
             }
             finite(value.magnitude)?;
         }
@@ -116,7 +117,7 @@ impl Parser<'_> {
             }
             let power = self.source[start..self.position]
                 .parse::<i32>()
-                .map_err(error)?;
+                .map_err(invalid)?;
             if !(-32..=32).contains(&power) {
                 return Err(error("quantity exponent limit exceeded (32)"));
             }
@@ -124,7 +125,7 @@ impl Parser<'_> {
                 return Err(error("invalid parenthesized quantity exponent"));
             }
             value.magnitude = value.magnitude.powi(power);
-            value.unit = value.unit.try_powi(power).map_err(error)?;
+            value.unit = value.unit.try_powi(power).map_err(invalid)?;
             finite(value.magnitude)?;
         }
         Ok(value)
@@ -178,7 +179,7 @@ pub(crate) fn parse_quantity(source: &str, target: Unit) -> Result<Quantity<f64>
     }
     let converted = Quantity::new(value.magnitude, value.unit)
         .to_unit(target)
-        .map_err(error)?;
+        .map_err(invalid)?;
     finite(*converted.value())?;
     Ok(converted)
 }

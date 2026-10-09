@@ -1,7 +1,12 @@
 //! Narrow InChI boundary and bounded whole-molecule lookup correspondence.
-use crate::{error, Result};
+use crate::{Error, ErrorKind, Result};
+
 use kekule::core::*;
 use std::collections::BTreeMap;
+
+fn error(detail: impl std::fmt::Display) -> Error {
+    Error::new(ErrorKind::Identity, detail)
+}
 
 pub(crate) fn fixed_h_inchi(molecule: &Molecule) -> Result<String> {
     if molecule
@@ -40,7 +45,7 @@ pub(crate) fn fixed_h_inchi(molecule: &Molecule) -> Result<String> {
         };
         native
             .add_bond(indices[&bond.a()], indices[&bond.b()], order)
-            .map_err(error)?;
+            .map_err(Error::chemistry)?;
     }
     for (_, element) in molecule.stereo_elements() {
         match &element.kind {
@@ -109,32 +114,29 @@ pub(crate) fn fixed_h_inchi(molecule: &Molecule) -> Result<String> {
     native
         .to_inchi(inchi::Options::new().fixed_h(true))
         .map(|x| x.into_inchi())
-        .map_err(error)
+        .map_err(|e| Error::wrap(ErrorKind::Identity, e))
 }
 
 pub(crate) fn mapping(query: &Molecule, entry: &Molecule) -> Result<Vec<AtomId>> {
     if query.atom_count() != entry.atom_count() || query.bond_count() != entry.bond_count() {
         return Err(error("InChI lookup hit has incompatible graph size"));
     }
-    if query.atom_count() > 256 {
-        return Err(error("lookup mapping atom limit exceeded (256)"));
-    }
     let ids: Vec<_> = query.atom_ids().collect();
     let targets: Vec<_> = entry.atom_ids().collect();
     for mode in 0..3 {
         let mut candidates = Vec::new();
         for &a in &ids {
-            let qa = query.atom(a).map_err(error)?;
-            let degree = query.neighbors(a).map_err(error)?.count();
+            let qa = query.atom(a).map_err(Error::chemistry)?;
+            let degree = query.neighbors(a).map_err(Error::chemistry)?.count();
             let mut row = Vec::new();
             for &b in &targets {
-                let eb = entry.atom(b).map_err(error)?;
+                let eb = entry.atom(b).map_err(Error::chemistry)?;
                 if qa.element == eb.element
                     && qa.isotope == eb.isotope
-                    && degree == entry.neighbors(b).map_err(error)?.count()
+                    && degree == entry.neighbors(b).map_err(Error::chemistry)?.count()
                     && (mode > 0 || qa.formal_charge == eb.formal_charge)
-                    && query.atom_is_aromatic(a).map_err(error)?
-                        == entry.atom_is_aromatic(b).map_err(error)?
+                    && query.atom_is_aromatic(a).map_err(Error::chemistry)?
+                        == entry.atom_is_aromatic(b).map_err(Error::chemistry)?
                 {
                     row.push(b);
                 }
@@ -158,6 +160,7 @@ pub(crate) fn mapping(query: &Molecule, entry: &Molecule) -> Result<Vec<AtomId>>
             order: &order,
             candidates: &candidates,
             mode,
+            state_limit: 1_000_000_usize.max(ids.len().saturating_mul(1_000)),
         };
         if search.visit(0, &mut assigned, &mut states)? {
             return Ok(ids.iter().map(|id| assigned[id]).collect());
@@ -174,6 +177,7 @@ struct Search<'a> {
     order: &'a [usize],
     candidates: &'a [Vec<AtomId>],
     mode: u8,
+    state_limit: usize,
 }
 impl Search<'_> {
     fn visit(
@@ -183,8 +187,12 @@ impl Search<'_> {
         states: &mut usize,
     ) -> Result<bool> {
         *states += 1;
-        if *states > 1_000_000 {
-            return Err(error("lookup mapping search limit exceeded"));
+        // Bounds pathological symmetry, not molecule size.
+        if *states > self.state_limit {
+            return Err(Error::new(
+                ErrorKind::ResourceLimit,
+                "lookup mapping search limit exceeded",
+            ));
         }
         if depth == self.ids.len() {
             return Ok(self.mode == 2 || stereo_matches(self.query, self.entry, map));
@@ -197,20 +205,20 @@ impl Search<'_> {
             }
             let mut compatible = true;
             for (&x, &y) in map.iter() {
-                let qb = self.query.bond_between(a, x).map_err(error)?;
-                let eb = self.entry.bond_between(b, y).map_err(error)?;
+                let qb = self.query.bond_between(a, x).map_err(Error::chemistry)?;
+                let eb = self.entry.bond_between(b, y).map_err(Error::chemistry)?;
                 match (qb, eb) {
                     (None, None) => {}
                     (Some(q), Some(e)) => {
-                        if self.query.bond_is_aromatic(q).map_err(error)?
-                            != self.entry.bond_is_aromatic(e).map_err(error)?
+                        if self.query.bond_is_aromatic(q).map_err(Error::chemistry)?
+                            != self.entry.bond_is_aromatic(e).map_err(Error::chemistry)?
                         {
                             compatible = false;
                             break;
                         }
                         if self.mode == 0
-                            && self.query.bond(q).map_err(error)?.order
-                                != self.entry.bond(e).map_err(error)?.order
+                            && self.query.bond(q).map_err(Error::chemistry)?.order
+                                != self.entry.bond(e).map_err(Error::chemistry)?.order
                         {
                             compatible = false;
                             break;

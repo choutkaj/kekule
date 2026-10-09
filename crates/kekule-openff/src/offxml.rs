@@ -1,4 +1,4 @@
-use crate::{error, parameters::*, ModelIdentity, Result};
+use crate::{parameters::*, Error, ErrorKind, ModelIdentity, Result};
 use kekule::{
     query::{parse_smarts, QueryGraph},
     substructure::TaggedQuery,
@@ -11,6 +11,14 @@ mod quantity;
 pub(crate) use quantity::parse_quantity;
 #[cfg(test)]
 mod reference_tests;
+
+fn error(detail: impl std::fmt::Display) -> Error {
+    Error::new(ErrorKind::ForceField, detail)
+}
+
+fn invalid(source: impl std::error::Error + Send + Sync + 'static) -> Error {
+    Error::wrap(ErrorKind::ForceField, source)
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct Rule<P> {
@@ -54,13 +62,15 @@ impl ForceField {
     /// complete supported documents, not arbitrary partial handler fragments.
     pub fn append(&mut self, other: &Self) -> Result<()> {
         if !compatible_settings(&self.settings, &other.settings) {
-            return Err(error(
+            return Err(Error::new(
+                ErrorKind::Composition,
                 "cannot combine force fields with different nonbonded settings",
             ));
         }
         if let (Some(a), Some(b)) = (self.charge_model(), other.charge_model()) {
             if a != b {
-                return Err(error(
+                return Err(Error::new(
+                    ErrorKind::Composition,
                     "cannot combine force fields with different NAGL models",
                 ));
             }
@@ -94,8 +104,8 @@ impl ForceField {
     /// ```
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let load = || Self::from_offxml(&std::fs::read_to_string(path).map_err(error)?);
-        load().map_err(|e| error(format!("OFFXML {}: {e}", path.display())))
+        let xml = std::fs::read_to_string(path).map_err(|e| Error::io(path, e))?;
+        Self::from_offxml(&xml).map_err(|e| e.at_path(path))
     }
     /// Compile one SMIRNOFF 0.3 document with MDL aromaticity.
     ///
@@ -105,213 +115,11 @@ impl ForceField {
     /// Supported optional attributes use specification defaults.
     /// Unknown physics, attributes and section versions fail explicitly.
     pub fn from_offxml(xml: &str) -> Result<Self> {
-        let document = roxmltree::Document::parse(xml).map_err(error)?;
+        let document = roxmltree::Document::parse(xml).map_err(invalid)?;
         let root = document.root_element();
-        if root.tag_name().name() != "SMIRNOFF" || root.tag_name().namespace().is_some() {
-            return Err(error("expected SMIRNOFF root"));
-        }
-        require(root, "version", "0.3")?;
-        require(root, "aromaticity_model", "OEAroModel_MDL")?;
-        allowed_attributes(root, &["version", "aromaticity_model"])?;
-        let mut seen = BTreeSet::new();
-        for node in root.children().filter(Node::is_element) {
-            let tag = node.tag_name().name();
-            if !matches!(
-                tag,
-                "Author"
-                    | "Date"
-                    | "Constraints"
-                    | "Bonds"
-                    | "Angles"
-                    | "ProperTorsions"
-                    | "ImproperTorsions"
-                    | "vdW"
-                    | "Electrostatics"
-                    | "LibraryCharges"
-                    | "NAGLCharges"
-            ) {
-                return Err(error(format!("unsupported SMIRNOFF handler {tag}")));
-            }
-            if !seen.insert(tag) {
-                return Err(error(format!("duplicate section {tag}")));
-            }
-            let extra: &[&str] = match tag {
-                "Author" | "Date" => &[],
-                "Bonds" => &[
-                    "potential",
-                    "fractional_bondorder_method",
-                    "fractional_bondorder_interpolation",
-                ],
-                "Angles" => &["potential"],
-                "ProperTorsions" => &[
-                    "potential",
-                    "default_idivf",
-                    "fractional_bondorder_method",
-                    "fractional_bondorder_interpolation",
-                ],
-                "ImproperTorsions" => &["potential", "default_idivf"],
-                "vdW" => &[
-                    "method",
-                    "potential",
-                    "combining_rules",
-                    "scale12",
-                    "scale13",
-                    "scale14",
-                    "scale15",
-                    "cutoff",
-                    "switch_width",
-                    "periodic_method",
-                    "nonperiodic_method",
-                ],
-                "Electrostatics" => &[
-                    "method",
-                    "scale12",
-                    "scale13",
-                    "scale14",
-                    "scale15",
-                    "cutoff",
-                    "switch_width",
-                    "periodic_potential",
-                    "nonperiodic_potential",
-                    "exception_potential",
-                ],
-                "NAGLCharges" => &["model_file", "model_file_hash"],
-                _ => &[],
-            };
-            let mut attrs = extra.to_vec();
-            if !matches!(tag, "Author" | "Date") {
-                attrs.push("version");
-            }
-            allowed_attributes(node, &attrs)?;
-            if matches!(tag, "Electrostatics" | "NAGLCharges" | "Author" | "Date")
-                && node.children().any(|n| n.is_element())
-            {
-                return Err(error(format!("unexpected child in {tag}")));
-            }
-        }
-        let optional_section = |name| root.children().find(|n| n.has_tag_name(name));
-        let section =
-            |name| optional_section(name).ok_or_else(|| error(format!("missing handler {name}")));
-        let bonds = section("Bonds")?;
-        let angles = section("Angles")?;
-        let propers = section("ProperTorsions")?;
-        let impropers = optional_section("ImproperTorsions");
-        let vdw = section("vdW")?;
-        let electrostatics = section("Electrostatics")?;
-        let charge_model = optional_section("NAGLCharges")
-            .map(|nagl| {
-                require(nagl, "version", "0.3")?;
-                ModelIdentity::new(
-                    attr(nagl, "model_file")?.to_owned(),
-                    attr(nagl, "model_file_hash")?.to_owned(),
-                )
-            })
-            .transpose()?;
-        choice(
-            bonds,
-            "potential",
-            "harmonic",
-            &["harmonic", "(k/2)*(r-length)^2"],
-        )?;
-        choice(angles, "potential", "harmonic", &["harmonic"])?;
-        for n in [Some(propers), impropers].into_iter().flatten() {
-            choice(
-                n,
-                "potential",
-                "k*(1+cos(periodicity*theta-phase))",
-                &["k*(1+cos(periodicity*theta-phase))"],
-            )?;
-            let divisor = n.attribute("default_idivf").unwrap_or("auto");
-            if divisor != "auto" && number(divisor)? <= 0.0 {
-                return Err(error("default_idivf must be positive or auto"));
-            }
-        }
-        choice(
-            vdw,
-            "potential",
-            "Lennard-Jones-12-6",
-            &["Lennard-Jones-12-6"],
-        )?;
-        choice(
-            vdw,
-            "combining_rules",
-            "Lorentz-Berthelot",
-            &["Lorentz-Berthelot"],
-        )?;
-        for (name, versions) in [
-            ("Bonds", &["0.3", "0.4"][..]),
-            ("Angles", &["0.3"][..]),
-            ("ProperTorsions", &["0.3", "0.4"][..]),
-            ("ImproperTorsions", &["0.3"][..]),
-            ("Constraints", &["0.3"][..]),
-            ("vdW", &["0.3", "0.4"][..]),
-            ("Electrostatics", &["0.3", "0.4"][..]),
-            ("LibraryCharges", &["0.3"][..]),
-        ] {
-            if let Some(n) = optional_section(name) {
-                let version = attr(n, "version")?;
-                choice(n, "version", version, versions)?;
-            }
-        }
-        // These declarations are inert for fixed bond/torsion parameters. Actual
-        // bond-order indexed attributes remain rejected by children().
-        for n in [bonds, propers] {
-            let default_method = if n.has_tag_name("Bonds") && attr(n, "version")? == "0.3" {
-                "none"
-            } else {
-                "AM1-Wiberg"
-            };
-            choice(
-                n,
-                "fractional_bondorder_method",
-                default_method,
-                &["none", "AM1-Wiberg"],
-            )?;
-            choice(
-                n,
-                "fractional_bondorder_interpolation",
-                "linear",
-                &["linear"],
-            )?;
-        }
-        let (vdw_periodic_method, vdw_nonperiodic_method) = vdw_methods(vdw)?;
-        let electrostatics_periodic_method = electrostatics_method(electrostatics)?;
-        let settings = NonbondedSettings {
-            vdw_cutoff: quantity_default(vdw, "cutoff", "9*angstrom", NANOMETER)?,
-            vdw_switch_width: quantity_default(vdw, "switch_width", "1*angstrom", NANOMETER)?,
-            electrostatics_cutoff: quantity_default(
-                electrostatics,
-                "cutoff",
-                "9*angstrom",
-                NANOMETER,
-            )?,
-            electrostatics_switch_width: quantity_default(
-                electrostatics,
-                "switch_width",
-                "0*angstrom",
-                NANOMETER,
-            )?,
-            vdw_scales: scales(vdw, "0.5")?,
-            electrostatics_scales: scales(electrostatics, "0.833333")?,
-            vdw_periodic_method,
-            vdw_nonperiodic_method,
-            electrostatics_periodic_method,
-            electrostatics_nonperiodic_method: ElectrostaticsMethod::Coulomb,
-        };
-        if settings.vdw_scales[3] != 1.0 || settings.electrostatics_scales[3] != 1.0 {
-            return Err(error("only scale15=1 is supported"));
-        }
-        for (cutoff, width) in [
-            (&settings.vdw_cutoff, &settings.vdw_switch_width),
-            (
-                &settings.electrostatics_cutoff,
-                &settings.electrostatics_switch_width,
-            ),
-        ] {
-            if *cutoff.value() <= 0.0 || *width.value() < 0.0 || width.value() > cutoff.value() {
-                return Err(error("invalid cutoff/switch width"));
-            }
-        }
+        check_document(root)?;
+        let sections = Sections::find(root)?;
+        check_headers(&sections)?;
         let mut ff = Self {
             bonds: vec![],
             angles: vec![],
@@ -320,10 +128,285 @@ impl ForceField {
             constraints: vec![],
             vdw: vec![],
             library: vec![],
-            settings,
-            charge_model,
+            settings: nonbonded_settings(sections.vdw, sections.electrostatics)?,
+            charge_model: sections.charge_model()?,
         };
-        for n in children(bonds, "Bond")? {
+        ff.compile_valence(&sections)?;
+        ff.compile_torsions(&sections)?;
+        ff.compile_nonbonded(&sections)?;
+        Ok(ff)
+    }
+    pub fn nonbonded_settings(&self) -> &NonbondedSettings {
+        &self.settings
+    }
+}
+
+/// Checks the root element and every handler section's tag, uniqueness,
+/// attributes, and child policy.
+fn check_document(root: Node<'_, '_>) -> Result<()> {
+    if root.tag_name().name() != "SMIRNOFF" || root.tag_name().namespace().is_some() {
+        return Err(error("expected SMIRNOFF root"));
+    }
+    require(root, "version", "0.3")?;
+    require(root, "aromaticity_model", "OEAroModel_MDL")?;
+    allowed_attributes(root, &["version", "aromaticity_model"])?;
+    let mut seen = BTreeSet::new();
+    for node in root.children().filter(Node::is_element) {
+        let tag = node.tag_name().name();
+        if !matches!(
+            tag,
+            "Author"
+                | "Date"
+                | "Constraints"
+                | "Bonds"
+                | "Angles"
+                | "ProperTorsions"
+                | "ImproperTorsions"
+                | "vdW"
+                | "Electrostatics"
+                | "LibraryCharges"
+                | "NAGLCharges"
+        ) {
+            return Err(error(format!("unsupported SMIRNOFF handler {tag}")));
+        }
+        if !seen.insert(tag) {
+            return Err(error(format!("duplicate section {tag}")));
+        }
+        let extra: &[&str] = match tag {
+            "Author" | "Date" => &[],
+            "Bonds" => &[
+                "potential",
+                "fractional_bondorder_method",
+                "fractional_bondorder_interpolation",
+            ],
+            "Angles" => &["potential"],
+            "ProperTorsions" => &[
+                "potential",
+                "default_idivf",
+                "fractional_bondorder_method",
+                "fractional_bondorder_interpolation",
+            ],
+            "ImproperTorsions" => &["potential", "default_idivf"],
+            "vdW" => &[
+                "method",
+                "potential",
+                "combining_rules",
+                "scale12",
+                "scale13",
+                "scale14",
+                "scale15",
+                "cutoff",
+                "switch_width",
+                "periodic_method",
+                "nonperiodic_method",
+            ],
+            "Electrostatics" => &[
+                "method",
+                "scale12",
+                "scale13",
+                "scale14",
+                "scale15",
+                "cutoff",
+                "switch_width",
+                "periodic_potential",
+                "nonperiodic_potential",
+                "exception_potential",
+            ],
+            "NAGLCharges" => &["model_file", "model_file_hash"],
+            _ => &[],
+        };
+        let mut attrs = extra.to_vec();
+        if !matches!(tag, "Author" | "Date") {
+            attrs.push("version");
+        }
+        allowed_attributes(node, &attrs)?;
+        if matches!(tag, "Electrostatics" | "NAGLCharges" | "Author" | "Date")
+            && node.children().any(|n| n.is_element())
+        {
+            return Err(error(format!("unexpected child in {tag}")));
+        }
+    }
+    Ok(())
+}
+
+/// The handler sections of one checked SMIRNOFF document.
+struct Sections<'a, 'input> {
+    bonds: Node<'a, 'input>,
+    angles: Node<'a, 'input>,
+    propers: Node<'a, 'input>,
+    impropers: Option<Node<'a, 'input>>,
+    constraints: Option<Node<'a, 'input>>,
+    vdw: Node<'a, 'input>,
+    electrostatics: Node<'a, 'input>,
+    library: Option<Node<'a, 'input>>,
+    nagl: Option<Node<'a, 'input>>,
+    root: Node<'a, 'input>,
+}
+
+impl<'a, 'input> Sections<'a, 'input> {
+    fn find(root: Node<'a, 'input>) -> Result<Self> {
+        let optional = |name| {
+            root.children()
+                .find(|n: &Node<'_, '_>| n.has_tag_name(name))
+        };
+        let required =
+            |name| optional(name).ok_or_else(|| error(format!("missing handler {name}")));
+        Ok(Self {
+            bonds: required("Bonds")?,
+            angles: required("Angles")?,
+            propers: required("ProperTorsions")?,
+            impropers: optional("ImproperTorsions"),
+            constraints: optional("Constraints"),
+            vdw: required("vdW")?,
+            electrostatics: required("Electrostatics")?,
+            library: optional("LibraryCharges"),
+            nagl: optional("NAGLCharges"),
+            root,
+        })
+    }
+
+    fn optional(&self, name: &str) -> Option<Node<'a, 'input>> {
+        self.root.children().find(|n| n.has_tag_name(name))
+    }
+
+    /// The NAGL model identity declared by the NAGLCharges handler, if any.
+    fn charge_model(&self) -> Result<Option<ModelIdentity>> {
+        self.nagl
+            .map(|nagl| {
+                require(nagl, "version", "0.3")?;
+                ModelIdentity::new(
+                    attr(nagl, "model_file")?.to_owned(),
+                    attr(nagl, "model_file_hash")?.to_owned(),
+                )
+                .ok_or_else(|| {
+                    error("NAGL requires a nonempty model_file and a 64-digit SHA-256 model_file_hash")
+                })
+            })
+            .transpose()
+    }
+}
+
+/// Checks every handler's potential, divisor, version, and inert
+/// fractional-bond-order declarations.
+fn check_headers(sections: &Sections<'_, '_>) -> Result<()> {
+    choice(
+        sections.bonds,
+        "potential",
+        "harmonic",
+        &["harmonic", "(k/2)*(r-length)^2"],
+    )?;
+    choice(sections.angles, "potential", "harmonic", &["harmonic"])?;
+    for n in [Some(sections.propers), sections.impropers]
+        .into_iter()
+        .flatten()
+    {
+        choice(
+            n,
+            "potential",
+            "k*(1+cos(periodicity*theta-phase))",
+            &["k*(1+cos(periodicity*theta-phase))"],
+        )?;
+        let divisor = n.attribute("default_idivf").unwrap_or("auto");
+        if divisor != "auto" && number(divisor)? <= 0.0 {
+            return Err(error("default_idivf must be positive or auto"));
+        }
+    }
+    choice(
+        sections.vdw,
+        "potential",
+        "Lennard-Jones-12-6",
+        &["Lennard-Jones-12-6"],
+    )?;
+    choice(
+        sections.vdw,
+        "combining_rules",
+        "Lorentz-Berthelot",
+        &["Lorentz-Berthelot"],
+    )?;
+    for (name, versions) in [
+        ("Bonds", &["0.3", "0.4"][..]),
+        ("Angles", &["0.3"][..]),
+        ("ProperTorsions", &["0.3", "0.4"][..]),
+        ("ImproperTorsions", &["0.3"][..]),
+        ("Constraints", &["0.3"][..]),
+        ("vdW", &["0.3", "0.4"][..]),
+        ("Electrostatics", &["0.3", "0.4"][..]),
+        ("LibraryCharges", &["0.3"][..]),
+    ] {
+        if let Some(n) = sections.optional(name) {
+            let version = attr(n, "version")?;
+            choice(n, "version", version, versions)?;
+        }
+    }
+    // These declarations are inert for fixed bond/torsion parameters. Actual
+    // bond-order indexed attributes remain rejected by children().
+    for n in [sections.bonds, sections.propers] {
+        let default_method = if n.has_tag_name("Bonds") && attr(n, "version")? == "0.3" {
+            "none"
+        } else {
+            "AM1-Wiberg"
+        };
+        choice(
+            n,
+            "fractional_bondorder_method",
+            default_method,
+            &["none", "AM1-Wiberg"],
+        )?;
+        choice(
+            n,
+            "fractional_bondorder_interpolation",
+            "linear",
+            &["linear"],
+        )?;
+    }
+    Ok(())
+}
+
+/// Nonbonded settings with specification defaults, checked for support.
+fn nonbonded_settings(
+    vdw: Node<'_, '_>,
+    electrostatics: Node<'_, '_>,
+) -> Result<NonbondedSettings> {
+    let (vdw_periodic_method, vdw_nonperiodic_method) = vdw_methods(vdw)?;
+    let electrostatics_periodic_method = electrostatics_method(electrostatics)?;
+    let settings = NonbondedSettings {
+        vdw_cutoff: quantity_default(vdw, "cutoff", "9*angstrom", NANOMETER)?,
+        vdw_switch_width: quantity_default(vdw, "switch_width", "1*angstrom", NANOMETER)?,
+        electrostatics_cutoff: quantity_default(electrostatics, "cutoff", "9*angstrom", NANOMETER)?,
+        electrostatics_switch_width: quantity_default(
+            electrostatics,
+            "switch_width",
+            "0*angstrom",
+            NANOMETER,
+        )?,
+        vdw_scales: scales(vdw, "0.5")?,
+        electrostatics_scales: scales(electrostatics, "0.833333")?,
+        vdw_periodic_method,
+        vdw_nonperiodic_method,
+        electrostatics_periodic_method,
+        electrostatics_nonperiodic_method: ElectrostaticsMethod::Coulomb,
+    };
+    if settings.vdw_scales[3] != 1.0 || settings.electrostatics_scales[3] != 1.0 {
+        return Err(error("only scale15=1 is supported"));
+    }
+    for (cutoff, width) in [
+        (&settings.vdw_cutoff, &settings.vdw_switch_width),
+        (
+            &settings.electrostatics_cutoff,
+            &settings.electrostatics_switch_width,
+        ),
+    ] {
+        if *cutoff.value() <= 0.0 || *width.value() < 0.0 || width.value() > cutoff.value() {
+            return Err(error("invalid cutoff/switch width"));
+        }
+    }
+    Ok(settings)
+}
+
+impl ForceField {
+    /// Compiles bond, angle, and constraint rules.
+    fn compile_valence(&mut self, sections: &Sections<'_, '_>) -> Result<()> {
+        for n in children(sections.bonds, "Bond")? {
             let p = BondParameter {
                 source: identity(n)?,
                 length: quantity(n, "length", NANOMETER)?,
@@ -332,12 +415,12 @@ impl ForceField {
             if *p.length.value() <= 0.0 || *p.k.value() < 0.0 {
                 return Err(error("invalid harmonic bond parameter"));
             }
-            ff.bonds.push(rule(n, 2, p)?);
+            self.bonds.push(rule(n, 2, p)?);
         }
         let angle_k = KILOJOULE_PER_MOLE
-            .try_div(RADIAN.try_powi(2).map_err(error)?)
-            .map_err(error)?;
-        for n in children(angles, "Angle")? {
+            .try_div(RADIAN.try_powi(2).map_err(invalid)?)
+            .map_err(invalid)?;
+        for n in children(sections.angles, "Angle")? {
             let p = AngleParameter {
                 source: identity(n)?,
                 angle: quantity(n, "angle", RADIAN)?,
@@ -346,9 +429,24 @@ impl ForceField {
             if !(0.0..=std::f64::consts::PI).contains(p.angle.value()) || *p.k.value() < 0.0 {
                 return Err(error("invalid harmonic angle parameter"));
             }
-            ff.angles.push(rule(n, 3, p)?);
+            self.angles.push(rule(n, 3, p)?);
         }
-        for (section, improper) in [(Some(propers), false), (impropers, true)] {
+        for n in optional_children(sections.constraints, "Constraint")? {
+            let distance = n
+                .attribute("distance")
+                .map(|_| quantity(n, "distance", NANOMETER))
+                .transpose()?;
+            if distance.as_ref().is_some_and(|x| *x.value() <= 0.0) {
+                return Err(error("constraint distance must be positive"));
+            }
+            self.constraints.push(rule(n, 2, (identity(n)?, distance))?);
+        }
+        Ok(())
+    }
+
+    /// Compiles proper and improper torsion rules.
+    fn compile_torsions(&mut self, sections: &Sections<'_, '_>) -> Result<()> {
+        for (section, improper) in [(Some(sections.propers), false), (sections.impropers, true)] {
             let Some(section) = section else { continue };
             let default = section.attribute("default_idivf").unwrap_or("auto");
             for n in children(section, if improper { "Improper" } else { "Proper" })? {
@@ -358,7 +456,7 @@ impl ForceField {
                     if n.attribute(name.as_str()).is_none() {
                         break;
                     }
-                    let periodicity = attr(n, &name)?.parse::<u32>().map_err(error)?;
+                    let periodicity = attr(n, &name)?.parse::<u32>().map_err(invalid)?;
                     let divisor = n.attribute(format!("idivf{i}").as_str()).unwrap_or(default);
                     let idivf = if divisor == "auto" {
                         if improper {
@@ -418,23 +516,18 @@ impl ForceField {
                     },
                 )?;
                 if improper {
-                    ff.impropers.push(p);
+                    self.impropers.push(p);
                 } else {
-                    ff.propers.push(p);
+                    self.propers.push(p);
                 }
             }
         }
-        for n in optional_children(optional_section("Constraints"), "Constraint")? {
-            let distance = n
-                .attribute("distance")
-                .map(|_| quantity(n, "distance", NANOMETER))
-                .transpose()?;
-            if distance.as_ref().is_some_and(|x| *x.value() <= 0.0) {
-                return Err(error("constraint distance must be positive"));
-            }
-            ff.constraints.push(rule(n, 2, (identity(n)?, distance))?);
-        }
-        for n in children(vdw, "Atom")? {
+        Ok(())
+    }
+
+    /// Compiles vdW and library charge rules.
+    fn compile_nonbonded(&mut self, sections: &Sections<'_, '_>) -> Result<()> {
+        for n in children(sections.vdw, "Atom")? {
             let sigma = match (n.attribute("sigma"), n.attribute("rmin_half")) {
                 (Some(_), None) => quantity(n, "sigma", NANOMETER)?,
                 (None, Some(_)) => Quantity::new(
@@ -447,7 +540,7 @@ impl ForceField {
             if *sigma.value() <= 0.0 || *epsilon.value() < 0.0 {
                 return Err(error("invalid vdW parameter"));
             }
-            ff.vdw.push(rule(
+            self.vdw.push(rule(
                 n,
                 1,
                 VdwParameter {
@@ -457,9 +550,9 @@ impl ForceField {
                 },
             )?);
         }
-        for n in optional_children(optional_section("LibraryCharges"), "LibraryCharge")? {
-            let query = parse_smarts(attr(n, "smirks")?).map_err(error)?;
-            let size = TaggedQuery::new(&query).map_err(error)?.tags().len();
+        for n in optional_children(sections.library, "LibraryCharge")? {
+            let query = parse_smarts(attr(n, "smirks")?).map_err(invalid)?;
+            let size = TaggedQuery::new(&query).map_err(invalid)?.tags().len();
             if size == 0
                 || n.attributes()
                     .filter(|a| a.name().starts_with("charge"))
@@ -473,7 +566,7 @@ impl ForceField {
                     quantity(n, &format!("charge{i}"), ELEMENTARY_CHARGE).map(Quantity::into_value)
                 })
                 .collect::<Result<Vec<_>>>()?;
-            ff.library.push(rule(
+            self.library.push(rule(
                 n,
                 size,
                 LibraryCharge {
@@ -482,10 +575,7 @@ impl ForceField {
                 },
             )?);
         }
-        Ok(ff)
-    }
-    pub fn nonbonded_settings(&self) -> &NonbondedSettings {
-        &self.settings
+        Ok(())
     }
 }
 
@@ -692,15 +782,15 @@ fn identity(n: Node<'_, '_>) -> Result<ParameterIdentity> {
     })
 }
 fn rule<P>(n: Node<'_, '_>, size: usize, parameter: P) -> Result<Rule<P>> {
-    let query = parse_smarts(attr(n, "smirks")?).map_err(error)?;
-    let tagged = TaggedQuery::new(&query).map_err(error)?;
+    let query = parse_smarts(attr(n, "smirks")?).map_err(invalid)?;
+    let tagged = TaggedQuery::new(&query).map_err(invalid)?;
     if tagged.tags().iter().map(|(t, _)| *t).ne(1..=size as u32) {
         return Err(error("SMIRKS tags must be exactly 1..N"));
     }
     Ok(Rule { query, parameter })
 }
 fn number(s: &str) -> Result<f64> {
-    let x = s.parse::<f64>().map_err(error)?;
+    let x = s.parse::<f64>().map_err(invalid)?;
     if x.is_finite() {
         Ok(x)
     } else {

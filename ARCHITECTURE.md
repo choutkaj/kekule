@@ -504,6 +504,12 @@ Model bundles own feature ordering, supported network configuration, domain and
 lookup data. OFFXML retains the required checkpoint identity; parameterization
 checks it against the supplied model before assigning any molecule. Chemistry
 preparation is a versioned model profile, separate from SMIRNOFF MDL perception.
+The converted Ash model that the bundled Rosemary preset requires ships as data
+in the separate `kekule-openff-ash` crate, a default feature, so the preset works
+without external files while the main crate stays within the crates.io package
+size limit. Parameterization has no molecule size limit: its work grows linearly
+with the molecule, and bounded searches only stop pathological patterns. Every
+failure is one typed error with a stable kind and the failing molecule definition.
 
 `kekule-potentials` owns energy evaluation and geometry optimization; the
 foundational crate owns no potential. A prepared `Potential` binds one topology
