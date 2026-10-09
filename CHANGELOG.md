@@ -205,6 +205,11 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Canonical SMILES of a perceived molecule with explicit hydrogen atoms matches
+  its hydrogen-suppressed form. Collapsing those atoms used to discard the
+  perceived hydrogen counts, so an aromatic NH such as pteridine-2,4-dione's
+  failed with a request to perceive the molecule, and other parents were ranked
+  as if they carried no hydrogens.
 - Trajectories read with an interpreted structure topology assign coordinates
   to the right atoms when the source interleaves molecules, for example a
   covalently linked ligand listed after water. Dense order used to follow

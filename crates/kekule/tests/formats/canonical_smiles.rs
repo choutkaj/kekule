@@ -348,6 +348,39 @@ fn canonical_hydrogen_normalization_preserves_isotope_vertices() {
 }
 
 #[test]
+fn canonical_hydrogen_normalization_keeps_perceived_hydrogen_counts() {
+    // Expected strings are RDKit 2026.03.3 canonical SMILES, whose parser
+    // suppresses these graph hydrogens. Aromatic NH needs its collapsed count
+    // to write [nH]; every collapsed parent needs it to rank as the
+    // hydrogen-suppressed molecule does.
+    let canonical = |molecule: &mut Molecule| {
+        molecule.perceive().unwrap();
+        smiles::write(&*molecule, smiles::SmilesWriteOptions::canonical()).unwrap()
+    };
+    for (source, expected) in [
+        ("[H]n1cccc1", "c1cc[nH]c1"),
+        // Pteridine-2,4(1H,3H)-dione, PubChem CID 10250.
+        (
+            "[H]N1C(=O)N([H])C2=NC([H])=C([H])N=C2C1=O",
+            "O=c1[nH]c(=O)c2nccnc2[nH]1",
+        ),
+        (
+            "[H]OC(=O)C1=C([H])C([H])=C([H])C([H])=C1OC(=O)C([H])([H])[H]",
+            "CC(=O)Oc1ccccc1C(=O)O",
+        ),
+    ] {
+        let mut molecule = smiles::to_molecules(source).unwrap().pop().unwrap();
+        assert_eq!(canonical(&mut molecule), expected, "{source}");
+        molecule.remove_hydrogens().unwrap();
+        assert_eq!(
+            canonical(&mut molecule),
+            expected,
+            "{source} without graph hydrogens"
+        );
+    }
+}
+
+#[test]
 fn canonical_input_complexity_is_bounded_before_export() {
     let mut editor = MoleculeEditor::new();
     let mut previous = None;

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::algorithms::{allowed_valences, rdkit_default_valence};
+use crate::algorithms::{allowed_valences, rdkit_default_valence, RemoveHydrogensReport};
 use crate::core::Molecule;
 use crate::core::*;
 use crate::io::MolWriteError;
@@ -95,7 +95,9 @@ fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, Mol
             "canonical SMILES hydrogen normalization requires known hydrogen perception: {error}"
         ))
     })?;
-    // Removal publishes dense IDs; translate the original aromatic system.
+    // Removal publishes dense IDs and clears perception; translate the
+    // original hydrogen counts and aromatic system.
+    restore_projection_valence(&mut normalized, mol.perception(), &removal);
     let ids = &removal.correspondence;
     restore_projection_aromaticity(
         &mut normalized,
@@ -121,6 +123,38 @@ fn canonical_projection_graph(
     }
     restore_projection_aromaticity(&mut projected, mol.perception(), Some, Some);
     Ok(projected)
+}
+
+fn restore_projection_valence(
+    normalized: &mut Molecule,
+    original: &Perception,
+    removal: &RemoveHydrogensReport,
+) {
+    // Collapsing graph hydrogens changes only their parents' bonds and
+    // declarations, so every other atom keeps its inferred contribution.
+    // Removal verified each parent's reconstructed count. Translate these
+    // counts instead of reperceiving the copy under a model nobody selected.
+    let Some(valence) = original.valence_state() else {
+        return;
+    };
+    let ids = &removal.correspondence;
+    let mut inferred = valence
+        .inferred_hydrogens()
+        .filter_map(|(atom, count)| Some((ids.atom(atom)?, count)))
+        .collect::<BTreeMap<_, _>>();
+    for adjustment in &removal.adjustments {
+        if let Some(parent) = ids.atom(adjustment.parent) {
+            inferred.insert(parent, adjustment.inferred_hydrogens);
+        }
+    }
+    match valence.model() {
+        Some(model) => normalized.install_valence(model, inferred),
+        None => {
+            for (atom, count) in inferred {
+                normalized.set_inferred_hydrogens(atom, count);
+            }
+        }
+    }
 }
 
 fn restore_projection_aromaticity(
