@@ -137,7 +137,7 @@ the wrapper is transparent and its source chain never repeats a message.
 | `UnsupportedMolecule` | Implicit hydrogens, radicals, delocalized bonds, or elements, connectivities, or patterns outside the model domain |
 | `Unparameterized` | The rules leave an atom or interaction without parameters |
 | `Charges` | Library charges are incomplete or do not conserve the formal charge, or a model produced invalid values |
-| `Identity` | The fixed-H InChI lookup identifier cannot be computed |
+| `Identity` | A lookup hit cannot be mapped onto its entry |
 | `ResourceLimit` | A bounded combinatorial search exceeded its limit |
 | `Chemistry` | An underlying Kekule perception, matching, or editing operation failed |
 
@@ -178,8 +178,18 @@ Nonbonded cutoffs, switching widths, methods and combining rules are retained.
 
 Charge precedence is complete LibraryCharges coverage, then the model's optional lookup
 table, then neural inference. A partial library assignment falls back for the
-whole molecule. Lookup uses the full fixed-H InChI string and bounded graph
-mapping, relaxing formal charge/bond order and finally stereo as upstream does.
+whole molecule. Lookup selects an entry when the prepared input is exactly that
+entry's molecule (elements, connectivity, formal charges, bond orders and stereo;
+isotopes ignored), then maps it with bounded graph matching, relaxing formal
+charge/bond order and finally stereo as upstream does. Upstream instead keys the
+table by fixed-H InChI, which also merges some other bond-order and
+charge-placement forms of an entry's molecule; those forms use inference here.
+For Ash, whose entries have at most three heavy atoms, upstream's own lookup was
+observed for 484,369 valid forms of the entries' constitutions. Every native hit
+selects upstream's entry, apart from six inputs whose molecule two entries share
+with identical charges and two S#N+ species upstream cannot identify. Upstream
+hits not written as their entry, mostly with formal charges of magnitude 2-6,
+use inference here.
 It retains the table's small asymmetries rather than averaging equivalent atoms.
 NAGL results receive the toolkit's uniform total-charge correction. Both lookup
 and inference provenance retain the model identifier and original checkpoint
@@ -248,16 +258,10 @@ retain source licenses. The two validation bundles are externally supplied and
 are not checked into Git. Supporting their configuration does not establish
 scientific accuracy for arbitrary user-trained weights.
 
-The `inchi` and `inchi-sys` dependencies are pinned to 0.1.4, using the official
-InChI 1.07.5 C implementation. This companion therefore requires a C toolchain
-at build time; core `kekule` has no InChI dependency. The adapter handles isotope
-labels, tetrahedral parity and alkene stereo, including absolute stereo groups.
-Relative/mixture groups and axial stereo currently fail explicitly. The InChI
-library accepts at most 1,023 atoms; this limits only the
-`diagnostics::lookup_identifier` hook, because charge assignment computes an
-identifier only for molecules no larger than the model's largest lookup entry
-(11 atoms for Ash). Loading rejects a bundle with a lookup entry above 1,023
-atoms, which upstream could identify but this adapter cannot.
+No InChI implementation is linked; the crate is pure Rust and needs no C
+toolchain. `diagnostics::lookup_key` reports the stored key of the selected
+entry. There is no identifier size limit; molecules larger than the largest
+lookup entry are never looked up.
 
 ## Boundaries and validation
 
@@ -314,12 +318,12 @@ The largest forced-inference error was `2.54e-7 e`; the largest system charge
 error was `3.00e-5 e`. The user-approved absolute charge cutoff is `5e-5 e`.
 Parameter labels remain exact; numerical parameters use `atol=1e-10, rtol=1e-12`.
 
-Exhaustive identity checks against the 13,944 stored lookup entries yield
-13,235 identical stored keys. Of 709 disagreements, the current official toolkit
+Archived checks of the former native InChI adapter against the 13,944 stored
+lookup entries yielded 13,235 identical stored keys. Of 709 disagreements, the current official toolkit
 rejects 689 inputs; 19 native identifiers agree with the current toolkit but
 differ from the stored key; one input is accepted by the toolkit but rejected
-by native InChI and is outside the Ash inference domain. Raw failures are retained
-in the implementation reports. These are identity checks, not exhaustive charge
+by that adapter and is outside the Ash inference domain. Raw failures are retained
+in the archived reports. These are identity checks, not exhaustive charge
 remapping or whole-domain validation. Broader molecules, all normalizations and
 large-system performance still warrant independent reference coverage.
 
@@ -329,10 +333,10 @@ The panel contains
 100 independently selected PubChem molecules and ten prepared PDB protein chains
 (up to 2,940 atoms). All 220 atom-order parameterization cases and 660 geometry
 energy comparisons pass. Charge error is at most `2.23e-7 e`; total energy error
-with identical charges is at most `6.18e-9 kJ/mol`. Strict reports still flag six
-standalone identifier failures on three proteins above the InChI adapter's
-1,023-atom limit. Lookup safely bypasses InChI for inputs larger than the frozen
-table's largest entry (11 atoms), so those proteins parameterize successfully.
+with identical charges is at most `6.18e-9 kJ/mol`. The recorded strict reports
+flag six standalone identifier failures on three proteins above the former InChI
+adapter's 1,023-atom limit; that diagnostic no longer exists, and charge
+assignment never looked those proteins up.
 Charge lookup ignores isotopic masses on a private copy, matching the reference
 toolkit while preserving the input graph. The panel does not establish protein
 force-field accuracy, periodic electrostatics, forces, or trajectory stability.

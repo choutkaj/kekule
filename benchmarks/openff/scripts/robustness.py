@@ -224,6 +224,8 @@ def compare(args):
     inputs=read(args.inputs)
     reference=read(args.reference)
     assert reference['inputs_sha256']==digest(args.inputs)
+    tables=json.loads((args.model/'model.json').read_text(encoding='utf-8'))['lookup_tables']
+    lookup_keys={e['inchi'] for entries in tables.values() for e in entries}
     rows=[]
     journal=args.output.with_suffix('.jsonl').open('x',encoding='utf-8')
     observer=Observer(args.binary,args.model)
@@ -249,8 +251,10 @@ def compare(args):
                     order=[native['maps'].index(i+1) for i in range(len(ref['charges']))]
                     errors,summary=compare_parameters(ref['parameters'],native)
                     row['errors'].extend(errors);row['parameters']=summary
-                    if ref['inchi']!=native['fixed_h_inchi']:
-                        row['errors'].append(dict(identity=native.get('identity_error','fixed-H InChI mismatch')))
+                    # Upstream selects the entry keyed by its fixed-H InChI, if any.
+                    expected=ref['inchi'] if ref['inchi'] in lookup_keys else None
+                    if 'identity_error' in native or native['lookup_key']!=expected:
+                        row['errors'].append(dict(identity=native.get('identity_error','lookup selection mismatch')))
                     q=np.asarray(native['system']['charges'])[order]
                     delta=np.abs(q-ref['charges'])
                     row['charge_max_error_e']=float(delta.max())

@@ -126,16 +126,17 @@ fn exported_ash_layout_loads_like_the_bundled_model_and_rejects_corruption() {
     let entries = changed["lookup_tables"]["am1bcc_charges"]
         .as_array_mut()
         .unwrap();
-    let methane = kekule_openff::diagnostics::lookup_identifier(&{
+    let methane = kekule_openff::diagnostics::lookup_key(&bundled, &{
         let mut methane = kekule::smiles::to_molecules("C").unwrap().remove(0);
         methane.perceive().unwrap();
         methane.add_hydrogens().unwrap();
         methane
     })
+    .unwrap()
     .unwrap();
     let entry = entries
         .iter_mut()
-        .find(|entry| entry["inchi"] == methane.as_str())
+        .find(|entry| entry["inchi"] == methane)
         .unwrap();
     entry["charges"].as_array_mut().unwrap().push(json!(0.0));
     scratch.write(&changed, &weights);
@@ -146,15 +147,9 @@ fn exported_ash_layout_loads_like_the_bundled_model_and_rejects_corruption() {
     let error = broken.assign_charges(&molecule).unwrap_err();
     assert_eq!(error.kind(), ErrorKind::Model);
 
-    // A lookup entry above the InChI adapter's limit could never be matched,
-    // so 1,024..=entry-size inputs would fail identification; reject on load.
+    // Lookup entries have no identifier size limit; selection computes none.
     let mut changed = manifest.clone();
-    changed["lookup_tables"]["am1bcc_charges"][0]["charges"] = json!(vec![0.0; 1024]);
-    scratch.write(&changed, &weights);
-    let error = NaglModel::load(&scratch.0).unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::Model, "{error}");
-    assert!(error.to_string().contains("1024 atoms"), "{error}");
-    changed["lookup_tables"]["am1bcc_charges"][0]["charges"] = json!(vec![0.0; 1023]);
+    changed["lookup_tables"]["am1bcc_charges"][0]["charges"] = json!(vec![0.0; 5000]);
     scratch.write(&changed, &weights);
     NaglModel::load(&scratch.0).unwrap();
 }

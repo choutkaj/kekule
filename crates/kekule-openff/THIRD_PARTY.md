@@ -31,15 +31,14 @@ materials retain their own licenses; the package license does not relicense them
   Its unchanged weights are exported with configuration and an empty lookup
   table. Checkpoint/bundle fingerprints and package versions are recorded in
   `benchmarks/openff/data/models.lock.json` and `tests/fixtures/models.json.gz`.
-* **Greg Landrum and other RDKit contributors**: private nitrogen/phosphorus
-  preparation and InChI carrier/H-policy conversion follow
+* **Greg Landrum and other RDKit contributors**: private nitrogen and phosphorus
+  preparation follows
   [RDKit Release_2026_03_3](https://github.com/rdkit/rdkit/tree/Release_2026_03_3),
-  especially `Code/GraphMol/MolOps.cpp` and `External/INCHI-API/inchi.cpp`.
+  especially `Code/GraphMol/MolOps.cpp`.
   BSD license included at `data/LICENSE-rdkit`; RDKit itself is reference-only.
 * SMIRNOFF handler semantics follow the OpenFF Toolkit 0.19.0 and Interchange
   0.5.5 reference implementations. Rust code uses Kekule's existing graph and
-  SMARTS engine. InChI 1.07.5 is compiled by the separately licensed `inchi-sys`
-  dependency; no InChI C source is copied into this crate.
+  SMARTS engine. No InChI implementation is linked or copied.
 
 `tests/fixtures/audit.json.gz` is a byte-identical copy of the original external
 reference observations, SHA-256

@@ -115,19 +115,12 @@ pub(super) fn parse(metadata: &[u8], weights: &[u8]) -> Result<Bundle> {
         }
         for entry in entries {
             // Upstream Ash includes one entry with an empty InChI. Retain it
-            // verbatim; the identity adapter never returns an empty success.
+            // verbatim; only its molecule matters for native selection.
             if entry.mapped_smiles.is_empty()
                 || entry.charges.is_empty()
                 || entry.charges.iter().any(|q| !q.is_finite())
             {
                 return Err(error("invalid NAGL lookup entry"));
-            }
-            if entry.charges.len() > crate::identity::MAX_INCHI_ATOMS {
-                return Err(error(format!(
-                    "NAGL lookup entry has {} atoms; the InChI adapter identifies at most {}",
-                    entry.charges.len(),
-                    crate::identity::MAX_INCHI_ATOMS
-                )));
             }
             if lookup.insert(entry.inchi.clone(), entry).is_some() {
                 return Err(error("duplicate NAGL lookup identifier"));

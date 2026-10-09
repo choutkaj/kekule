@@ -18,8 +18,16 @@ All notable changes to Kekule are documented in this file.
   `parameterize_without_nagl`. `parameterize_molecule` takes the molecule by
   value. Supplying a model to a force field without a NAGLCharges handler is now
   a `ModelMismatch` error instead of being ignored.
-- **Breaking:** `NaglModel::atom_features`, `infer_charges`, `lookup_identifier`,
-  and `lookup_entry_count` move to the `kekule_openff::diagnostics` module.
+- **Breaking:** `NaglModel::atom_features`, `infer_charges`, and
+  `lookup_entry_count` move to the `kekule_openff::diagnostics` module.
+  `lookup_identifier` is replaced by `diagnostics::lookup_key`, which reports the
+  stored key of the selected entry.
+- **Breaking:** `kekule-openff` is pure Rust and no longer depends on the `inchi`
+  and `inchi-sys` crates or a C toolchain. NAGL lookup selects an entry when the
+  input is exactly that entry's molecule (isotopes ignored). Other bond-order or
+  charge-placement forms that upstream's fixed-H InChI also merges now use
+  inference; for Ash these are exotic, mostly with formal charges of magnitude
+  2-6. There is no identifier size limit.
 - **Breaking:** NAGL bundles must use schema 2; the legacy schema-1 Ash export is
   no longer accepted. Re-export with `export_model.py`, or use `NaglModel::ash`.
 - Default perception has no molecule size limit. `Molecule::perceive`,

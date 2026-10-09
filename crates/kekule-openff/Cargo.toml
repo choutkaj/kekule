@@ -19,9 +19,6 @@ ash = ["dep:kekule-openff-ash", "dep:flate2"]
 kekule = { version = "0.2.1", path = "../kekule" }
 kekule-openff-ash = { version = "0.2.1", path = "../kekule-openff-ash", optional = true }
 flate2 = { version = "1", optional = true }
-# Lookup identity is a versioned scientific dependency, including its C backend.
-inchi = { version = "=0.1.4", default-features = false }
-inchi-sys = { version = "=0.1.4", default-features = false }
 roxmltree = "0.20"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

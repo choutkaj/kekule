@@ -39,21 +39,16 @@ fn observe(
         .atoms()
         .map(|(_, a)| a.atom_map.ok_or("missing atom map"))
         .collect::<Result<Vec<_>, _>>()?;
-    if mode == "identity" {
-        return Ok(
-            json!({"status":"ok","fixed_h_inchi":kekule_openff::diagnostics::lookup_identifier(&molecule)?}),
-        );
-    }
     let labels_ = ff.label_molecule(&molecule)?;
     let mut result = json!({"status":"ok","maps":maps,"labels":{
         "Bonds":labels(&labels_.bonds,&molecule),"Angles":labels(&labels_.angles,&molecule),
         "ProperTorsions":labels(&labels_.proper_torsions,&molecule),"ImproperTorsions":labels(&labels_.improper_torsions,&molecule),
         "Constraints":labels(&labels_.constraints,&molecule),"vdW":labels(&labels_.vdw,&molecule)}});
     if let Some(model) = model {
-        match kekule_openff::diagnostics::lookup_identifier(&molecule) {
-            Ok(identifier) => result["fixed_h_inchi"] = json!(identifier),
+        match kekule_openff::diagnostics::lookup_key(model, &molecule) {
+            Ok(key) => result["lookup_key"] = json!(key),
             Err(e) => {
-                result["fixed_h_inchi"] = Value::Null;
+                result["lookup_key"] = Value::Null;
                 result["identity_error"] = json!(e.to_string());
             }
         }

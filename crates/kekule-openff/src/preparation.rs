@@ -170,15 +170,22 @@ pub(crate) fn normalize_phosphorus(input: &Molecule) -> Result<Molecule> {
 
 #[cfg(test)]
 mod tests {
+    // Expected graphs are RDKit's sanitized forms, which upstream identifies.
+    fn same_graph(prepared: &kekule::core::Molecule, expected: &str) -> bool {
+        let mut expected = kekule::smiles::to_molecules(expected).unwrap().remove(0);
+        expected.perceive().unwrap();
+        crate::identity::same_graph(prepared, &expected).unwrap()
+    }
+
     #[test]
     fn neutral_valence_five_nitrogen_matches_charge_separated_input() {
         for (s, expected) in [
-            ("[H:4][N:2](=[O:1])=[O:3]", "InChI=1/HNO2/c2-1-3/h1H"),
-            ("[H:4][N:2](#[N:3])[F:1]", "InChI=1/FHN2/c1-3-2/h3H"),
+            ("[H:4][N:2](=[O:1])=[O:3]", "[H][N+](=O)[O-]"),
+            ("[H:4][N:2](#[N:3])[F:1]", "[H][N+](=[N-])F"),
         ] {
             let input = kekule::smiles::to_molecules(s).unwrap().remove(0);
             let prepared = crate::explicit(&input).unwrap();
-            assert_eq!(crate::identity::fixed_h_inchi(&prepared).unwrap(), expected);
+            assert!(same_graph(&prepared, expected), "{s}");
             assert!(input.atoms().all(|(_, a)| a.formal_charge == 0));
         }
     }
@@ -188,10 +195,7 @@ mod tests {
             .unwrap()
             .remove(0);
         let normalized = crate::explicit(&input).unwrap();
-        assert_eq!(
-            crate::identity::fixed_h_inchi(&normalized).unwrap(),
-            "InChI=1/H2NOP/c1-3-2/h3H,(H-,1,2)/f/h1H"
-        );
+        assert!(same_graph(&normalized, "[H]N=[P+]([H])[O-]"));
         assert!(input.atoms().all(|(_, a)| a.formal_charge == 0));
         assert_eq!(
             input.atom_ids().collect::<Vec<_>>(),
