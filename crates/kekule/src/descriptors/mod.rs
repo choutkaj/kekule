@@ -508,6 +508,14 @@ mod tests {
     }
 
     #[test]
+    fn atomic_masses_are_neutral_and_do_not_require_a_molecule() {
+        let carbon = element("C");
+        assert_eq!(mass_value(atomic_mass(carbon, Some(12)).unwrap()), 12.0);
+        assert!((mass_value(atomic_mass(carbon, Some(13)).unwrap()) - 13.003_354_835).abs() < 1e-7);
+        assert!(atomic_mass(carbon, Some(999)).is_none());
+    }
+
+    #[test]
     fn average_and_monoisotopic_mass_use_pinned_tables() {
         let mut water = crate::tests::read_smiles("O").expect("water parses");
         water.perceive().expect("water perceives");

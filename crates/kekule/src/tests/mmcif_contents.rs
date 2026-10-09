@@ -2374,103 +2374,116 @@ fn mmcif_writer_rejects_ambiguous_atom_identity() {
 }
 
 #[test]
-fn mmcif_writer_derives_small_molecule_classification_for_hierarchy() {
-    let model = hierarchical_single_atom_model("LIG", "C1", "C");
-    let automatic = mmcif::write([&model], MmcifWriteOptions::default()).unwrap();
-    assert!(automatic.contains("1 non-polymer"));
-
-    let classifications = classifications_for(&model, MmcifEntityKind::NonPolymer);
-    let written = mmcif::write(
-        [mmcif::MmcifBlockSource::model(&model).with_classifications(&classifications)],
-        MmcifWriteOptions::default(),
-    )
-    .unwrap();
-    assert!(written.contains("1 non-polymer"));
-    assert!(!written.contains("1 polymer"));
-}
-
-#[test]
-fn mmcif_writer_derives_small_molecule_classification_without_hierarchy() {
-    let model = small_single_atom_model("C");
-    let written = mmcif::write([&model], MmcifWriteOptions::default()).unwrap();
-    assert!(written.contains("1 non-polymer"));
-}
-
-#[test]
-fn mmcif_writer_does_not_infer_water_from_neutral_oxygen() {
-    let model = small_single_atom_model("O");
-    let written = mmcif::write([&model], MmcifWriteOptions::default()).unwrap();
-    assert!(written.contains("1 non-polymer"));
-
-    let classifications = classifications_for(&model, MmcifEntityKind::NonPolymer);
-    let written = mmcif::write(
-        [mmcif::MmcifBlockSource::model(&model).with_classifications(&classifications)],
-        MmcifWriteOptions::default(),
-    )
-    .unwrap();
-    assert!(written.contains("1 non-polymer"));
-    assert!(!written.contains("1 water"));
-
-    let classifications = classifications_for(&model, MmcifEntityKind::Water);
-    let written = mmcif::write(
-        [mmcif::MmcifBlockSource::model(&model).with_classifications(&classifications)],
-        MmcifWriteOptions::default(),
-    )
-    .unwrap();
-    assert!(written.contains("1 water"));
-}
-
-#[test]
-fn mmcif_writer_with_report_preserves_every_supported_source_kind() {
-    assert_report_kind(
-        &hierarchical_single_atom_model("GLY", "CA", "C"),
-        MmcifEntityKind::Polymer,
-        "polymer",
-    );
-    assert_report_kind(
-        &hierarchical_single_atom_model("NAG", "C1", "C"),
-        MmcifEntityKind::Branched,
-        "branched",
-    );
-    assert_report_kind(
-        &small_single_atom_model("C"),
-        MmcifEntityKind::NonPolymer,
-        "non-polymer",
-    );
-    assert_report_kind(
-        &small_single_atom_model("O"),
-        MmcifEntityKind::Water,
-        "water",
-    );
-}
-
-#[test]
-fn mmcif_writer_uses_explicit_polymer_and_branched_kinds() {
-    let model = hierarchical_single_atom_model("NAG", "C1", "C");
-    let classifications = classifications_for(&model, MmcifEntityKind::Branched);
-    let written = mmcif::write(
-        [mmcif::MmcifBlockSource::model(&model).with_classifications(&classifications)],
-        MmcifWriteOptions::default(),
-    )
-    .unwrap();
-    assert!(written.contains("1 branched"));
-
-    let classifications = classifications_for(&model, MmcifEntityKind::Polymer);
-    let written = mmcif::write(
-        [mmcif::MmcifBlockSource::model(&model).with_classifications(&classifications)],
-        MmcifWriteOptions::default(),
-    )
-    .unwrap();
-    assert!(written.contains("1 polymer"));
-}
-
-#[test]
-fn mmcif_writer_maps_one_residue_carbohydrate_to_non_polymer() {
-    let model = carbohydrate_model(&["GLC"], &[]);
-    let written = mmcif::write([&model], MmcifWriteOptions::default()).unwrap();
-    assert!(written.contains("1 non-polymer"));
-    assert!(!written.contains("1 polymer"));
-    assert!(!written.contains("1 branched"));
+fn mmcif_writer_entity_types_follow_inference_reports_and_explicit_classes() {
+    enum Source {
+        Inferred,
+        Report(MmcifEntityKind),
+        Explicit(MmcifEntityKind),
+    }
+    use MmcifEntityKind::{Branched, NonPolymer, Polymer, Water};
+    let ligand = hierarchical_single_atom_model("LIG", "C1", "C");
+    let glycine = hierarchical_single_atom_model("GLY", "CA", "C");
+    let sugar_atom = hierarchical_single_atom_model("NAG", "C1", "C");
+    let carbon = small_single_atom_model("C");
+    let oxygen = small_single_atom_model("O");
+    let glucose = carbohydrate_model(&["GLC"], &[]);
+    let trisaccharide = carbohydrate_model(&["GLC", "GAL", "GLC"], &[(0, 1), (1, 2)]);
+    for (case, model, source, expected) in [
+        (
+            "hierarchical ligand",
+            &ligand,
+            Source::Inferred,
+            "non-polymer",
+        ),
+        (
+            "hierarchical ligand",
+            &ligand,
+            Source::Explicit(NonPolymer),
+            "non-polymer",
+        ),
+        ("bare carbon", &carbon, Source::Inferred, "non-polymer"),
+        (
+            "bare carbon",
+            &carbon,
+            Source::Report(NonPolymer),
+            "non-polymer",
+        ),
+        // A neutral oxygen atom is not inferred to be water.
+        ("bare oxygen", &oxygen, Source::Inferred, "non-polymer"),
+        (
+            "bare oxygen",
+            &oxygen,
+            Source::Explicit(NonPolymer),
+            "non-polymer",
+        ),
+        ("bare oxygen", &oxygen, Source::Explicit(Water), "water"),
+        ("bare oxygen", &oxygen, Source::Report(Water), "water"),
+        (
+            "glycine residue",
+            &glycine,
+            Source::Report(Polymer),
+            "polymer",
+        ),
+        (
+            "NAG residue",
+            &sugar_atom,
+            Source::Report(Branched),
+            "branched",
+        ),
+        (
+            "NAG residue",
+            &sugar_atom,
+            Source::Explicit(Branched),
+            "branched",
+        ),
+        (
+            "NAG residue",
+            &sugar_atom,
+            Source::Explicit(Polymer),
+            "polymer",
+        ),
+        (
+            "one-residue carbohydrate",
+            &glucose,
+            Source::Inferred,
+            "non-polymer",
+        ),
+        (
+            "trisaccharide",
+            &trisaccharide,
+            Source::Explicit(Branched),
+            "branched",
+        ),
+        (
+            "trisaccharide",
+            &trisaccharide,
+            Source::Explicit(Polymer),
+            "polymer",
+        ),
+    ] {
+        let written =
+            match source {
+                Source::Inferred => mmcif::write([model], MmcifWriteOptions::default()),
+                Source::Report(kind) => {
+                    let report = report_with_entity_kinds(model, &[kind]);
+                    mmcif::write(
+                        [mmcif::MmcifBlockSource::model(model)
+                            .with_reports(std::slice::from_ref(&report))],
+                        MmcifWriteOptions::default(),
+                    )
+                }
+                Source::Explicit(kind) => {
+                    let classifications = classifications_for(model, kind);
+                    mmcif::write(
+                        [mmcif::MmcifBlockSource::model(model)
+                            .with_classifications(&classifications)],
+                        MmcifWriteOptions::default(),
+                    )
+                }
+            }
+            .unwrap_or_else(|error| panic!("{case}: {error}"));
+        assert_eq!(written_entity_types(&written), [expected], "{case}");
+    }
 }
 
 #[test]
@@ -2487,23 +2500,6 @@ fn mmcif_writer_does_not_infer_multi_residue_carbohydrate_entity_semantics() {
                 classification: MoleculeClass::Carbohydrate,
             })
         );
-    }
-}
-
-#[test]
-fn mmcif_writer_accepts_explicit_multi_residue_carbohydrate_semantics() {
-    let model = carbohydrate_model(&["GLC", "GAL", "GLC"], &[(0, 1), (1, 2)]);
-    for (kind, expected) in [
-        (MmcifEntityKind::Branched, "branched"),
-        (MmcifEntityKind::Polymer, "polymer"),
-    ] {
-        let classifications = classifications_for(&model, kind);
-        let written = mmcif::write(
-            [mmcif::MmcifBlockSource::model(&model).with_classifications(&classifications)],
-            MmcifWriteOptions::default(),
-        )
-        .unwrap();
-        assert!(written.contains(&format!("1 {expected}")));
     }
 }
 
@@ -2532,7 +2528,7 @@ fn mmcif_writer_preserves_source_branched_carbohydrate_semantics() {
         MmcifWriteOptions::default(),
     )
     .unwrap();
-    assert!(written.contains("1 branched"));
+    assert_eq!(written_entity_types(&written), ["branched"]);
 }
 
 #[test]
@@ -2628,22 +2624,24 @@ fn mmcif_writer_partial_overrides_still_validate_shared_asymmetry_semantics() {
     ));
 }
 
+/// `_entity.type` of every entity in written mmCIF, in entity order.
+fn written_entity_types(text: &str) -> Vec<String> {
+    let document = parse(text);
+    let block = &document.blocks()[0];
+    match block.loop_with_tag("_entity.type") {
+        Some(table) => (0..table.row_count())
+            .map(|row| table.value(row, "_entity.type").unwrap().text().to_owned())
+            .collect(),
+        None => vec![block.item("_entity.type").unwrap().text().to_owned()],
+    }
+}
+
 fn classifications_for(model: &Model, kind: MmcifEntityKind) -> MmcifEntityClassifications {
     let mut classifications = MmcifEntityClassifications::new();
     for molecule in model.topology().molecules().map(|molecule| molecule.id()) {
         classifications.insert(molecule, kind.clone()).unwrap();
     }
     classifications
-}
-
-fn assert_report_kind(model: &Model, kind: MmcifEntityKind, expected: &str) {
-    let report = report_with_entity_kinds(model, &[kind]);
-    let written = mmcif::write(
-        [mmcif::MmcifBlockSource::model(model).with_reports(std::slice::from_ref(&report))],
-        MmcifWriteOptions::default(),
-    )
-    .unwrap();
-    assert!(written.contains(&format!("1 {expected}")));
 }
 
 fn report_with_entity_kinds(model: &Model, kinds: &[MmcifEntityKind]) -> MmcifInterpretationReport {

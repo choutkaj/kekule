@@ -82,22 +82,6 @@ fn atom_new_sets_chemically_general_defaults() {
 }
 
 #[test]
-fn atom_payload_fields_can_be_set_and_read() {
-    let mut atom = carbon();
-    atom.isotope = Some(13);
-    atom.formal_charge = -1;
-    atom.radical = AtomRadical::new(1, Some(2));
-    atom.hydrogens = HydrogenDeclaration::Fixed(3);
-    atom.atom_map = Some(7);
-
-    assert_eq!(atom.isotope, Some(13));
-    assert_eq!(atom.formal_charge, -1);
-    assert_eq!(atom.radical, AtomRadical::new(1, Some(2)));
-    assert_eq!(atom.hydrogens, HydrogenDeclaration::Fixed(3));
-    assert_eq!(atom.atom_map, Some(7));
-}
-
-#[test]
 fn hydrogen_declaration_expresses_each_canonical_policy_without_overlap() {
     for (declaration, explicit, allows_inference) in [
         (HydrogenDeclaration::Infer { specified: 0 }, 0, true),
@@ -165,12 +149,6 @@ fn bond_new_sets_endpoints_and_order() {
     assert_eq!(single.endpoints(), (a, b));
     assert_eq!(single.order, BondOrder::Single);
     assert_eq!(double.order, BondOrder::Double);
-}
-
-#[test]
-fn bond_payload_fields_can_be_set_and_read() {
-    let bond = Bond::new(AtomId::new(1), AtomId::new(2), BondOrder::Dative);
-    assert_eq!(bond.order, BondOrder::Dative);
 }
 
 #[test]
@@ -697,26 +675,6 @@ fn topology_deletions_prune_referencing_stereo_state() {
     mol.delete_atom(c).expect("delete atom");
     assert!(mol.stereo_element(atom_element).is_err());
     assert!(mol.bond(bc).is_err());
-}
-
-#[test]
-fn property_value_equality_covers_all_initial_variants() {
-    assert_eq!(
-        PropertyValue::String("value".to_owned()),
-        PropertyValue::String("value".to_owned())
-    );
-    assert_eq!(PropertyValue::Int(42), PropertyValue::Int(42));
-    assert_eq!(
-        PropertyValue::Real {
-            value: 2.5,
-            unit: crate::units::DIMENSIONLESS
-        },
-        PropertyValue::Real {
-            value: 2.5,
-            unit: crate::units::DIMENSIONLESS
-        }
-    );
-    assert_eq!(PropertyValue::Bool(true), PropertyValue::Bool(true));
 }
 
 #[test]

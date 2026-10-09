@@ -458,6 +458,35 @@ pub(super) fn assert_all_stale(mol: &Molecule) {
     assert!(!mol.perception().has_stereo());
 }
 
+pub(super) fn tetrahedral_marked_graph() -> (MoleculeEditor, AtomId, Vec<AtomId>, BondId) {
+    let mut mol = crate::core::MoleculeEditor::new();
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let carriers = ["F", "Cl", "Br", "I"]
+        .into_iter()
+        .map(element_atom)
+        .map(|atom| mol.add_atom(atom).expect("atom identifier capacity"))
+        .collect::<Vec<_>>();
+    let mut bonds = Vec::new();
+    for carrier in &carriers {
+        bonds.push(
+            mol.add_bond(center, *carrier, BondOrder::Single)
+                .expect("tetrahedral carrier bond"),
+        );
+    }
+    (mol, center, carriers, bonds[0])
+}
+
+/// Bypasses checked insertion so validation can observe malformed stereo.
+pub(super) fn insert_unchecked_stereo(
+    editor: &mut MoleculeEditor,
+    element: StereoElement,
+) -> StereoElementId {
+    let slots = &mut editor.working_mut().graph.stereo_elements;
+    let id = StereoElementId::new(u32::try_from(slots.len()).unwrap());
+    slots.push(Some(element));
+    id
+}
+
 pub(super) fn implicit_h_wedge_geometry_molblock() -> &'static str {
     "\
 implicit H geometry wedge
@@ -526,6 +555,7 @@ pub(super) fn rdkit_macrocycle8_ortho_hash_molblock() -> &'static str {
 mod canonical;
 mod chemistry;
 mod cip;
+mod coordinate_stereo;
 mod core_payload;
 mod graph;
 mod hierarchy;
@@ -535,11 +565,12 @@ mod mmcif_contents;
 pub(crate) mod mmcif_syntax;
 mod normalization;
 mod perception;
-mod public_api;
 mod query;
+mod represented_stereo;
 mod ring_limits;
 mod rotatable_bonds;
 mod smiles;
+mod source_stereo;
 mod stereo_symmetry;
 mod v2000;
 mod v3000;

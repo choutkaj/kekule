@@ -1,0 +1,50 @@
+# Externally supplied regression records not covered by aromaticity.tsv:
+# salts, mixtures, oxohalogens, organometallics and stereo-rich PubChem and
+# Enamine records. They carry no expected values; the invariant suite checks
+# every component. Columns: label<TAB>SMILES or CXSMILES record.
+charged_bracket_bismuth_salt	C1CC2CCC[N-]C2C(C1)[OH2+].C1C=CC2=CC=CC(C2=N1)[OH2+].[ClH2+].Cl.[Bi+3]
+oxide_transition_metal_salt	[O-2].[O-2].[O-2].[Cr+3].[Fe+3]
+niobium_hydroxide	[OH-].[Nb+5]
+indium_formate	C(=O)[O-].C(=O)[O-].C(=O)[O-].[In+3]
+periodate	[O-]I(=O)(=O)=O
+sodium_chlorate	[O-]Cl(=O)=O.[Na+]
+uranyl_beta_diketonate	C1=CC=C(C=C1)C(=O)[CH-]C(=O)C2=CC=CC=C2.C1=CC=C(C=C1)C(=O)[CH-]C(=O)C2=CC=CC=C2.O=[U+2]=O
+cyclopentadienyl_chromium_salt	C1CCOC1.[CH-]1[C-]=[C-][C-]=[C-]1.Cl[Cr]Cl
+mitoxantrone_salt	CNCCN=C1C=CC2=C3C1=C(C4=C(C=CC(=O)C4=C3NN2CCNCCO)O)O.O.Cl.Cl
+tacrine_like_salt	C1CCC2=NC3=CC=CC=C3C(=C2C1)[NH2+]CCSCCCl.[Cl-]
+fluorenone_diazonium_salt	C1=CC=C2C(=C1)C3=C(C2=O)C=C(C=C3)[N+]#N.C(=O)(C(F)(F)F)O
+copper_phthalocyanine_mixture	CN(C)CCO.C1=CC=C2C(=C1)C3=NC4=C5C=CC=CC5=C([N-]4)N=C6C7=CC=CC=C7C(=N6)N=C8C9=CC=CC=C9C(=N8)N=C2[N-]3.[Cu+2]
+iron_porphyrin_salt	CC1=C(C2=CC3=NC(=CC4=C(C(=C([N-]4)C=C5C(=C(C(=N5)C=C1[N-]2)C)C=C)C)C=C)C(=C3CCC(=O)O)C)CCC(=O)O.[Fe+2]
+azo_indole_salt	CN1C=NN(C)C1N=NC1=C(C2=CC=CC=C2)NC2=CC=CC=C12.[Cl-]
+n_aryl_indole_salt	CCOC(=O)C1=C(N(C2=C1C=C(C=C2)OCC(C[NH2+]CC3=CC=CC=C3)O)C4=CC=CC=C4)C.[Cl-]
+benzodiazepinone_salt	CN(C)CCN1C(NC(=O)C2=C1C=C(C=C2)Cl)C3=CC=C(C=C3)Cl.Cl
+pilocarpine_acrylic_acid	CC[C@H]1[C@H](COC1=O)CC2=CN=CN2C.C=CC(=O)O
+pyridinium_nitrobarbiturate	CCCCCC(=O)C[N+]1=CC=CC=C1.C1(C(=O)NC(=O)NC1=O)[N+](=O)[O-]
+oxygen_rich_mixture	CC(CO)O.CC(C)(C)CCCCC(CC1CO1)C(=O)O.C1=CC=C2C(=C1)C(=O)OC2=O.C1=CC2=C(C=C1C(=O)O)C(=O)OC2=O.C(CCC(=O)O)CC(=O)O
+nitroaryl_mercury	C1=CC=C(C(=C1)[N+](=O)[O-])[Hg]
+phosphorous_acid	OP(=O)O
+aryl_germanium	C1=CC=C(C=C1)[Ge](Cl)(Cl)Cl
+aryl_tin	C1=CC=C(C=C1)[SnH](C2=CC=CC=C2)Cl
+lactam_enone_stereo	CN1CC[C@@]23[C@H]4[C@H]1CC5=C2C(=C(C=C5)OC)O[C@@H]3[C@]6(C4)C(=O)C7=C8N6CCC9=C8C(=C(C=C9)OC)OC1=C7C=CC(=C1O)OC
+anthraquinone_glycoside_dimer	CC1C(C(CC(O1)O[C@H]2C[C@@](CC3=C2C(=C4C(=C3O)C(=O)C5=C(C4=O)C(=CC=C5)OC)O)(C(=O)C)O)N=C(CCSSCCC(=NC6CC(OC(C6O)C)O[C@H]7C[C@@](CC8=C7C(=C9C(=C8O)C(=O)C1=C(C9=O)C(=CC=C1)OC)O)(C(=O)C)O)N)N)O
+fused_quaternary_center	C[C@]12CCCC(C1CCC3=CC(=C(C=C23)C(=O)OC)C(=O)OC)(C)C
+conjugated_directional_polyene	CC1=C(C(CCC1)(C)C)/C=C/C(=C/C=C/C(C)C=C)/C
+iodous_acid	OI=O
+iodyl_methane	CI(=O)=O
+iodane_with_nitrogen_neighbor	COI(=O)(N)C
+ethylmercury_cation	CC[Hg+]
+trimethylthallium	C[Tl](C)C
+trimethylstibine	C[Sb](C)C
+pubchem_retinoid_polyene_1	CC1=C(C(CCC1)(C)C)/C=C/C(=C/C=C/C(=C/CN)/C)/C
+pubchem_retinoid_polyene_2	CC1=C(C(CCC1)(C)C)/C=C/C(=C/C=C/C(C)C=C)/C
+pubchem_retinoid_polyene_3	CC1=C(C(CCC1)(C)C)/C=C/C(=C/C=C/C(C)CCN)/C
+pubchem_retinoid_polyene_4	CC1=C(C(CCC1)(C)C)/C=C/C(=C/C=C/C(=CC(=O)O)C)/C
+pubchem_retinoid_polyene_5	CC1=CCCC(C1/C=C/C(=C/C=C/C(=C/C=C/C=C(/C=C/C=C(/C=C/C2C(CCC=C2C)(C)C)\C)\C)/C)/C)(C)C
+pubchem_retinoid_polyene_6	C/C=C(\C)/C=C\C=C(/C)\C=C\C1=C(CCCC1(C)C)C
+pubchem_retinoid_polyene_7	CC(=CCC/C(=C/CC/C(=C/C=C/C(=C/C=C\C=C(/C)\C=C\C=C(/C)\C=C\C=C(/C)\C=C\CC(C)(C)OC)/C)/C)/C)C
+pubchem_retinoid_polyene_8	CC1=C(C(C[C@H](C1)O)(C)C)/C=C/C(=C/C=C/C(=C/C=C/C=C(\C)/C=C/C=C(\C)/C=C/[C@H]2C(=C[C@@H](CC2(C)C)O)C)/C)/C
+enamine_spiro_Z9237738672	O[C@@H]1C[C@@]2(C[C@H](C2)NC=3N=CC=C(N3)C=4C=CC=NC4)[C@H]1O |&1:1,3,5,20,r| ID:Z9237738672
+enamine_spiro_Z5188334346	COC(=O)[C@H]1C(F)(F)[C@@]21C[C@H](C2)C3=NC(=NO3)C4=NC(C)=NN4C |&1:4,8,10,r| ID:Z5188334346
+enamine_spiro_Z3510155828	O=C(O)[C@H]1C[C@@]21C[C@H](C2)NC(=O)C3=CC=C(COC=4C=CC=CC4)O3 |&1:3,5,7,r| ID:Z3510155828
+enamine_spiro_Z4875774646	COC(=O)[C@H]1C(F)(F)[C@@]21C[C@H](C2)C3=NC(=NO3)C(C)C4=CC=CO4 |&1:4,8,10,r| ID:Z4875774646
+enamine_spiro_Z3510152401	O=C(O)[C@H]1C[C@@]21C[C@H](C2)NC(=O)C=3C=CC=C(C3)OCC4=CN5C=CC=CC5=N4 |&1:3,5,7,r| ID:Z3510152401

@@ -1,0 +1,973 @@
+use std::fs;
+use std::io::Cursor;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
+use kekule::topology::Topology;
+use kekule::units::{
+    Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, DIMENSIONLESS, NANOMETER, PICOSECOND,
+};
+use kekule_traj::io::trr::{
+    TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrScalarPrecision, TrrWriteOptions, TrrWriter,
+    TRR_LAMBDA_PROPERTY,
+};
+use kekule_traj::io::{
+    open_indexed_trajectory_with_options, open_trajectory_with_options, CoordinateEncoding,
+    ScalarPrecision, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
+};
+use kekule_traj::{
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryError,
+    TrajectoryReader, TrajectoryWriter,
+};
+use sha2::{Digest, Sha256};
+
+use crate::support;
+use support::{
+    buffer_snapshot, codec_kind, topology as build_topology, x_coordinates as xs, GuardedCursor,
+    RestoreSeekFailure,
+};
+
+fn topology() -> Arc<Topology> {
+    build_topology(&["C", "H", "O"], &[(0, 1), (0, 2)])
+}
+
+fn lambda_key() -> PropertyKey {
+    PropertyKey::new(TRR_LAMBDA_PROPERTY).unwrap()
+}
+
+fn lambda(value: f64) -> PropertyValue {
+    PropertyValue::Real {
+        value,
+        unit: DIMENSIONLESS,
+    }
+}
+
+fn assert_xs_close(buffer: &FrameBuffer, expected: &[f64]) {
+    let actual = xs(buffer);
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.into_iter().zip(expected) {
+        assert!(
+            (actual - expected).abs() <= 1.0e-5,
+            "{actual} differs from {expected}"
+        );
+    }
+}
+
+fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer {
+    let mut frame = FrameBuffer::new(Arc::clone(topology));
+    frame
+        .frame_mut()
+        .conformation_mut()
+        .set_positions(Quantity::new(
+            [
+                Point3::new(0.0 + shift, 1.0, 2.0),
+                Point3::new(3.0 + shift, 4.0, 5.0),
+                Point3::new(6.0 + shift, 7.0, 8.0),
+            ],
+            NANOMETER,
+        ))
+        .unwrap();
+    frame
+        .set_velocities(Some(Quantity::new(
+            [
+                Vector3::new(1.0, 2.0, 3.0),
+                Vector3::new(4.0, 5.0, 6.0),
+                Vector3::new(7.0, 8.0, 9.0),
+            ],
+            CANONICAL_VELOCITY_UNIT,
+        )))
+        .unwrap();
+    frame
+        .set_forces(Some(Quantity::new(
+            [
+                Vector3::new(10.0, 20.0, 30.0),
+                Vector3::new(40.0, 50.0, 60.0),
+                Vector3::new(70.0, 80.0, 90.0),
+            ],
+            CANONICAL_FORCE_UNIT,
+        )))
+        .unwrap();
+    frame.frame_mut().conformation_mut().set_cell(Some(
+        PeriodicCell::new(
+            Quantity::new(
+                [
+                    Vector3::new(2.0, 0.0, 0.0),
+                    Vector3::new(0.2, 2.1, 0.0),
+                    Vector3::new(0.3, 0.4, 2.2),
+                ],
+                NANOMETER,
+            ),
+            [true; 3],
+        )
+        .unwrap(),
+    ));
+    frame
+        .frame_mut()
+        .set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))
+        .unwrap();
+    frame.frame_mut().set_step(Some(step));
+    frame
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(lambda_key(), lambda(0.125))
+        .unwrap();
+    frame
+}
+
+#[test]
+fn trr_cell_validation_uses_the_encoded_precision_before_appending_bytes() {
+    let topology = topology();
+    let cell = PeriodicCell::new(
+        Quantity::new(
+            [
+                Vector3::new(1.0, 1.0, 0.0),
+                Vector3::new(1.0, 1.0 + 1e-8, 0.0),
+                Vector3::new(0.0, 0.0, 1.0),
+            ],
+            NANOMETER,
+        ),
+        [true; 3],
+    )
+    .unwrap();
+    for precision in [TrrScalarPrecision::Float32, TrrScalarPrecision::Float64] {
+        let mut writer = TrrWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            TrrWriteOptions::default().with_precision(precision),
+            "box-rounding.trr",
+        )
+        .unwrap();
+        let mut frame = populated_frame(&topology, 0.0, 0);
+        let ordinary_cell = frame.cell().copied();
+        writer.write_frame(frame.frame_view()).unwrap();
+        frame.frame_mut().set_step(Some(1));
+        frame.frame_mut().conformation_mut().set_cell(Some(cell));
+        let before = writer.writer().clone();
+        if precision == TrrScalarPrecision::Float32 {
+            assert_eq!(
+                codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+                Some(TrajectoryCodecErrorKind::InvalidFrame)
+            );
+            assert_eq!(writer.writer(), &before);
+            frame.frame_mut().conformation_mut().set_cell(ordinary_cell);
+        }
+        writer.write_frame(frame.frame_view()).unwrap();
+        let mut reader = TrrReader::new(
+            Cursor::new(writer.finish().unwrap().into_inner()),
+            Arc::clone(&topology),
+            TrrReadOptions::default(),
+        )
+        .unwrap();
+        let mut destination = reader.frame_buffer();
+        for step in [0, 1] {
+            assert!(reader.read_next(&mut destination).unwrap());
+            assert_eq!(destination.frame_view().step(), Some(step));
+        }
+        if precision == TrrScalarPrecision::Float64 {
+            assert_eq!(destination.cell(), Some(&cell));
+        }
+        assert!(!reader.read_next(&mut destination).unwrap());
+    }
+}
+
+#[test]
+fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
+    let topology = topology();
+    let mut combined = Vec::new();
+    for (precision, step) in [
+        (TrrScalarPrecision::Float32, 0),
+        (TrrScalarPrecision::Float64, 1),
+        (TrrScalarPrecision::Float32, 2),
+    ] {
+        let mut writer = TrrWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            TrrWriteOptions::default().with_precision(precision),
+            "scratch.trr",
+        )
+        .unwrap();
+        let mut frame = populated_frame(&topology, step as f64, step);
+        if step == 1 {
+            frame.frame_mut().conformation_mut().set_cell(None);
+            frame.clear_velocities();
+            frame.clear_forces();
+        }
+        frame
+            .frame_mut()
+            .conformation_mut()
+            .properties_mut()
+            .owner_mut()
+            .insert(lambda_key(), lambda(step as f64 * 0.125))
+            .unwrap();
+        writer.write_frame(frame.frame_view()).unwrap();
+        combined.extend(writer.finish().unwrap().into_inner());
+    }
+    let open = |limit| {
+        TrrReader::new(
+            Cursor::new(combined.clone()),
+            Arc::clone(&topology),
+            TrrReadOptions::default().with_limits(TrajectoryIoLimits {
+                max_scratch_bytes: limit,
+                ..TrajectoryIoLimits::default()
+            }),
+        )
+    };
+    let dense_bytes = topology.atom_count() * std::mem::size_of::<Vector3>() * 3;
+    let f32_total = dense_bytes + topology.atom_count() * 3 * std::mem::size_of::<f32>();
+    let f64_total = dense_bytes + topology.atom_count() * 3 * std::mem::size_of::<f64>();
+
+    assert_eq!(
+        codec_kind(&open(dense_bytes - 1).err().unwrap()),
+        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+    );
+    let mut too_small = open(f32_total - 1).unwrap();
+    let mut destination = populated_frame(&topology, 99.0, 99);
+    let before = buffer_snapshot(&destination);
+    assert_eq!(
+        codec_kind(&too_small.read_next(&mut destination).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+    );
+    assert_eq!(buffer_snapshot(&destination), before);
+
+    // The first frame fits exactly; a wider later record must be rejected
+    // before replacing any field of the published destination.
+    for limit in [f32_total, f64_total - 1] {
+        let mut reader = open(limit).unwrap();
+        assert!(reader.read_next(&mut destination).unwrap());
+        let before = buffer_snapshot(&destination);
+        assert_eq!(
+            codec_kind(&reader.read_next(&mut destination).unwrap_err()),
+            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        );
+        assert_eq!(buffer_snapshot(&destination), before);
+        assert_eq!(
+            codec_kind(&open(limit).unwrap().into_indexed().err().unwrap()),
+            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        );
+    }
+
+    let mut sequential = open(f64_total).unwrap();
+    let mut expected = Vec::new();
+    while sequential.read_next(&mut destination).unwrap() {
+        expected.push(destination.frame_view().payload().clone());
+    }
+    let mut indexed = open(f64_total).unwrap().into_indexed().unwrap();
+    assert_eq!(indexed.frame_count(), Some(3));
+    // Indexing retained the largest raw capacity. Mixing reads must not need
+    // duplicate scratch, nor publish fields left over from the last read.
+    for (random, next) in [(1, 0), (0, 1), (1, 2)] {
+        indexed.read_frame(random as u64, &mut destination).unwrap();
+        assert_eq!(destination.frame_view().payload().clone(), expected[random]);
+        assert!(indexed.read_next(&mut destination).unwrap());
+        assert_eq!(destination.frame_view().payload().clone(), expected[next]);
+    }
+    indexed.read_frame(0, &mut destination).unwrap();
+    assert!(!indexed.read_next(&mut destination).unwrap());
+}
+
+#[test]
+fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
+    for precision in [TrrScalarPrecision::Float32, TrrScalarPrecision::Float64] {
+        let topology = topology();
+        let options = TrrWriteOptions::default().with_precision(precision);
+        let mut writer = TrrWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            options,
+            "memory.trr",
+        )
+        .unwrap();
+        let first = populated_frame(&topology, 0.0, 4);
+        writer.write_frame(first.frame_view()).unwrap();
+        let mut second = populated_frame(&topology, 1.0, 5);
+        second.frame_mut().conformation_mut().set_cell(None);
+        second.set_velocities::<&[Vector3]>(None).unwrap();
+        second.set_forces::<&[Vector3]>(None).unwrap();
+        second
+            .frame_mut()
+            .conformation_mut()
+            .properties_mut()
+            .owner_mut()
+            .insert(lambda_key(), lambda(0.25))
+            .unwrap();
+        writer.write_frame(second.frame_view()).unwrap();
+        let mut third = populated_frame(&topology, 2.0, 6);
+        third
+            .frame_mut()
+            .conformation_mut()
+            .properties_mut()
+            .owner_mut()
+            .insert(lambda_key(), lambda(0.375))
+            .unwrap();
+        writer.write_frame(third.frame_view()).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+
+        let mut reader = TrrReader::new(
+            Cursor::new(bytes.clone()),
+            Arc::clone(&topology),
+            TrrReadOptions::default()
+                .with_limits(TrajectoryIoLimits::default())
+                .with_source_label("memory.trr"),
+        )
+        .unwrap();
+        support::assert_rejects_unrelated_buffer(&mut reader);
+        let mut destination = FrameBuffer::new(Arc::clone(&topology));
+        let pointer = destination.positions().values().value().as_ptr();
+        assert!(reader.read_next(&mut destination).unwrap());
+        assert_xs_close(&destination, &[0.0, 3.0, 6.0]);
+        assert_eq!(destination.frame_view().step(), Some(4));
+        assert_eq!(destination.frame_view().time().unwrap().value(), &1.0);
+        assert!(destination.cell().is_some());
+        assert!(destination.frame_view().velocities().is_some());
+        assert!(destination.frame_view().forces().is_some());
+        let velocity_pointer = destination
+            .frame_view()
+            .velocities()
+            .unwrap()
+            .values()
+            .value()
+            .as_ptr();
+        let force_pointer = destination
+            .frame_view()
+            .forces()
+            .unwrap()
+            .values()
+            .value()
+            .as_ptr();
+        assert_eq!(
+            destination.properties().owner().get(&lambda_key()),
+            Some(&lambda(0.125))
+        );
+        assert!(reader.read_next(&mut destination).unwrap());
+        assert_xs_close(&destination, &[1.0, 4.0, 7.0]);
+        assert!(destination.cell().is_none());
+        assert!(destination.frame_view().velocities().is_none());
+        assert!(destination.frame_view().forces().is_none());
+        assert_eq!(
+            destination.properties().owner().get(&lambda_key()),
+            Some(&lambda(0.25))
+        );
+        assert_eq!(destination.positions().values().value().as_ptr(), pointer);
+        assert!(reader.read_next(&mut destination).unwrap());
+        assert_xs_close(&destination, &[2.0, 5.0, 8.0]);
+        assert_eq!(
+            destination
+                .frame_view()
+                .velocities()
+                .unwrap()
+                .values()
+                .value()
+                .as_ptr(),
+            velocity_pointer
+        );
+        assert_eq!(
+            destination
+                .frame_view()
+                .forces()
+                .unwrap()
+                .values()
+                .value()
+                .as_ptr(),
+            force_pointer
+        );
+        assert_eq!(
+            destination.properties().owner().get(&lambda_key()),
+            Some(&lambda(0.375))
+        );
+        assert!(!reader.read_next(&mut destination).unwrap());
+
+        let mut indexed = TrrReader::new(
+            Cursor::new(bytes),
+            Arc::clone(&topology),
+            TrrReadOptions::default()
+                .with_limits(TrajectoryIoLimits::default())
+                .with_source_label("memory.trr"),
+        )
+        .unwrap()
+        .into_indexed()
+        .unwrap();
+        assert_eq!(indexed.frame_count(), Some(3));
+        indexed.read_frame(1, &mut destination).unwrap();
+        assert_xs_close(&destination, &[1.0, 4.0, 7.0]);
+        assert!(indexed.read_next(&mut destination).unwrap());
+        assert_xs_close(&destination, &[0.0, 3.0, 6.0]);
+    }
+}
+
+#[test]
+fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
+    let topology = topology();
+    let mut writer = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        TrrWriteOptions::default(),
+        "exact-limit.trr",
+    )
+    .unwrap();
+    writer
+        .write_frame(populated_frame(&topology, 0.0, 4).frame_view())
+        .unwrap();
+    writer
+        .write_frame(populated_frame(&topology, 1.0, 5).frame_view())
+        .unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+    let limits = TrajectoryIoLimits {
+        max_frames: 2,
+        max_index_entries: 2,
+        max_index_bytes: 2 * std::mem::size_of::<u64>(),
+        ..TrajectoryIoLimits::default()
+    };
+    let mut reader = TrrReader::new(
+        Cursor::new(bytes.clone()),
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(limits.clone())
+            .with_source_label("exact-limit.trr"),
+    )
+    .unwrap();
+    let mut buffer = FrameBuffer::new(Arc::clone(&topology));
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert!(!reader.read_next(&mut buffer).unwrap());
+
+    let indexed = TrrReader::new(
+        Cursor::new(bytes),
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(limits)
+            .with_source_label("exact-index-limit.trr"),
+    )
+    .unwrap()
+    .into_indexed()
+    .unwrap();
+    assert_eq!(indexed.frame_count(), Some(2));
+}
+
+#[test]
+fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
+    let topology = topology();
+    let mut writer = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        TrrWriteOptions::default(),
+        "restore-failure.trr",
+    )
+    .unwrap();
+    writer
+        .write_frame(populated_frame(&topology, 0.0, 0).frame_view())
+        .unwrap();
+    writer
+        .write_frame(populated_frame(&topology, 1.0, 1).frame_view())
+        .unwrap();
+    let (stream, control) = RestoreSeekFailure::new(writer.finish().unwrap().into_inner());
+    let mut indexed = TrrReader::new(
+        stream,
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("restore-failure.trr"),
+    )
+    .unwrap()
+    .into_indexed()
+    .unwrap();
+    let mut destination = populated_frame(&topology, 9.0, 99);
+    destination
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(
+            PropertyKey::new("sentinel").unwrap(),
+            PropertyValue::Bool(true),
+        )
+        .unwrap();
+    let before = buffer_snapshot(&destination);
+    control.arm_at_current_position();
+    let error = indexed.read_frame(1, &mut destination).unwrap_err();
+    assert!(matches!(error, TrajectoryError::Io(_)));
+    assert_eq!(buffer_snapshot(&destination), before);
+}
+
+#[test]
+fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
+    let topology = topology();
+    let mut writer = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        TrrWriteOptions::default(),
+        "guarded.trr",
+    )
+    .unwrap();
+    writer
+        .write_frame(populated_frame(&topology, 0.0, 0).frame_view())
+        .unwrap();
+    let second_offset = writer.writer().position();
+    writer
+        .write_frame(populated_frame(&topology, 1.0, 1).frame_view())
+        .unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+
+    let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
+    let mut reader = TrrReader::new(
+        stream,
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(TrajectoryIoLimits {
+                max_frames: 1,
+                ..TrajectoryIoLimits::default()
+            })
+            .with_source_label("guarded-sequential.trr"),
+    )
+    .unwrap();
+    let mut destination = FrameBuffer::new(Arc::clone(&topology));
+    assert!(reader.read_next(&mut destination).unwrap());
+    assert_eq!(
+        codec_kind(&reader.read_next(&mut destination).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+    );
+    assert!(!control.violated());
+    assert_eq!(control.probed_bytes(), 1);
+
+    for limits in [
+        TrajectoryIoLimits {
+            max_frames: 1,
+            ..TrajectoryIoLimits::default()
+        },
+        TrajectoryIoLimits {
+            max_index_entries: 1,
+            ..TrajectoryIoLimits::default()
+        },
+        TrajectoryIoLimits {
+            max_index_bytes: std::mem::size_of::<u64>(),
+            ..TrajectoryIoLimits::default()
+        },
+    ] {
+        let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
+        let error = TrrReader::new(
+            stream,
+            Arc::clone(&topology),
+            TrrReadOptions::default()
+                .with_limits(limits)
+                .with_source_label("guarded-index.trr"),
+        )
+        .unwrap()
+        .into_indexed()
+        .err()
+        .unwrap();
+        assert_eq!(
+            codec_kind(&error),
+            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        );
+        assert!(!control.violated());
+        assert_eq!(control.probed_bytes(), 1);
+    }
+}
+
+#[test]
+fn trr_lambda_policy_and_writer_contract_are_explicit() {
+    let topology = topology();
+    let mut frame = populated_frame(&topology, 0.0, 0);
+    let mut writer = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
+        "zero.trr",
+    )
+    .unwrap();
+    assert_eq!(
+        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::UnsupportedField)
+    );
+    frame
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .clear();
+    writer.write_frame(frame.frame_view()).unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+    let mut reader = TrrReader::new(
+        Cursor::new(bytes),
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_lambda_policy(TrrLambdaPolicy::RequireZero)
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("zero.trr"),
+    )
+    .unwrap();
+    let mut destination = FrameBuffer::new(topology);
+    reader.read_next(&mut destination).unwrap();
+    assert!(destination.properties().is_empty());
+}
+
+#[test]
+fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
+    let topology = topology();
+    let mut writer = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        TrrWriteOptions::default(),
+        "memory.trr",
+    )
+    .unwrap();
+    let first = populated_frame(&topology, 0.0, 0);
+    let second = populated_frame(&topology, 1.0, 1);
+    writer.write_frame(first.frame_view()).unwrap();
+    writer.write_frame(second.frame_view()).unwrap();
+    let valid = writer.finish().unwrap().into_inner();
+
+    let mut invalid_size = valid.clone();
+    invalid_size[52..56].copy_from_slice(&5_i32.to_be_bytes());
+    let error = TrrReader::new(
+        Cursor::new(invalid_size),
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("size.trr"),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::InvalidRecordLength)
+    );
+
+    let mut truncated = valid.clone();
+    truncated.pop();
+    let mut reader = TrrReader::new(
+        Cursor::new(truncated),
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("truncated.trr"),
+    )
+    .unwrap();
+    let mut destination = FrameBuffer::new(Arc::clone(&topology));
+    assert!(reader.read_next(&mut destination).unwrap());
+    let before = xs(&destination);
+    let error = reader.read_next(&mut destination).unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::TruncatedRecord)
+    );
+    let TrajectoryError::Codec(context) = &error else {
+        panic!("expected typed TRR codec context");
+    };
+    assert_eq!(context.frame(), Some(1));
+    assert!(context.byte_offset().is_some());
+    assert_eq!(xs(&destination), before);
+
+    let limits = TrajectoryIoLimits {
+        max_frame_bytes: 128,
+        ..TrajectoryIoLimits::default()
+    };
+    let mut reader = TrrReader::new(
+        Cursor::new(valid),
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(limits)
+            .with_source_label("limited.trr"),
+    )
+    .unwrap();
+    let error = reader.read_next(&mut destination).unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+    );
+}
+
+#[test]
+fn trr_triplet_fields_reject_nonfinite_input_without_publishing_partial_frames() {
+    let topology = topology();
+    for (precision, width) in [
+        (TrrScalarPrecision::Float32, 4),
+        (TrrScalarPrecision::Float64, 8),
+    ] {
+        let first = populated_frame(&topology, 0.0, 0);
+        let mut writer = TrrWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            TrrWriteOptions::default().with_precision(precision),
+            "triplets.trr",
+        )
+        .unwrap();
+        writer.write_frame(first.frame_view()).unwrap();
+        let valid = writer.finish().unwrap().into_inner();
+        for (field_index, field) in ["position", "velocity", "force"].into_iter().enumerate() {
+            let mut invalid = valid.clone();
+            // These three atom-array blocks end the TRR frame. Corrupt the last
+            // scalar of each block to exercise late failure in each shared loop.
+            let offset = invalid.len() - (2 - field_index) * 9 * width - width;
+            let nan = match precision {
+                TrrScalarPrecision::Float32 => f32::NAN.to_be_bytes().to_vec(),
+                TrrScalarPrecision::Float64 => f64::NAN.to_be_bytes().to_vec(),
+                _ => unreachable!("test uses the two supported scalar widths"),
+            };
+            invalid[offset..offset + width].copy_from_slice(&nan);
+            let mut reader = TrrReader::new(
+                Cursor::new(invalid),
+                Arc::clone(&topology),
+                TrrReadOptions::default().with_source_label("triplets.trr"),
+            )
+            .unwrap();
+            let mut destination = populated_frame(&topology, 10.0, 7);
+            let snapshot = buffer_snapshot(&destination);
+            let error = reader.read_next(&mut destination).unwrap_err();
+            assert!(error
+                .to_string()
+                .contains(&format!("TRR {field} contains a non-finite value")));
+            assert_eq!(buffer_snapshot(&destination), snapshot);
+        }
+    }
+
+    for field in ["position", "velocity", "force"] {
+        let mut frame = populated_frame(&topology, 0.0, 0);
+        let huge_vectors = [Vector3::new(0.0, 0.0, 1.0e39); 3];
+        match field {
+            "position" => frame
+                .frame_mut()
+                .conformation_mut()
+                .set_positions(Quantity::new([Point3::new(0.0, 0.0, 1.0e39); 3], NANOMETER))
+                .unwrap(),
+            "velocity" => frame
+                .set_velocities(Some(Quantity::new(huge_vectors, CANONICAL_VELOCITY_UNIT)))
+                .unwrap(),
+            "force" => frame
+                .set_forces(Some(Quantity::new(huge_vectors, CANONICAL_FORCE_UNIT)))
+                .unwrap(),
+            _ => unreachable!(),
+        }
+        let mut writer = TrrWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            TrrWriteOptions::default().with_precision(TrrScalarPrecision::Float32),
+            "triplets.trr",
+        )
+        .unwrap();
+        let error = writer.write_frame(frame.frame_view()).unwrap_err();
+        assert_eq!(
+            codec_kind(&error),
+            Some(TrajectoryCodecErrorKind::InvalidFrame)
+        );
+        assert!(error.to_string().contains(field));
+        assert!(writer.writer().get_ref().is_empty());
+    }
+}
+
+#[test]
+fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
+    let topology = topology();
+    let mut writer = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        TrrWriteOptions::default(),
+        "late-invalid.trr",
+    )
+    .unwrap();
+    let mut frame = populated_frame(&topology, 0.0, 0);
+    frame
+        .frame_mut()
+        .conformation_mut()
+        .set_positions(Quantity::new(
+            [
+                Point3::new(1.0e39, 0.0, 0.0),
+                Point3::new(1.0, 1.0, 1.0),
+                Point3::new(2.0, 2.0, 2.0),
+            ],
+            NANOMETER,
+        ))
+        .unwrap();
+    assert_eq!(
+        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::InvalidFrame)
+    );
+    assert!(writer.writer().get_ref().is_empty());
+
+    let mut bond_annotated = populated_frame(&topology, 0.0, 0);
+    bond_annotated
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .bonds_mut()
+        .insert(
+            PropertyKey::new("conformational_entropy").unwrap(),
+            PropertyColumn::Real {
+                unit: NANOMETER,
+                values: vec![Some(1.0); topology.bond_count()],
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        codec_kind(&writer.write_frame(bond_annotated.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::UnsupportedField)
+    );
+    assert!(writer.writer().get_ref().is_empty());
+}
+
+#[test]
+fn indexed_trr_accepts_per_frame_precision_and_verifies_both_payloads() {
+    let topology = topology();
+    let mut combined = Vec::new();
+    for (precision, shift, step) in [
+        (TrrScalarPrecision::Float32, 0.0, 0),
+        (TrrScalarPrecision::Float64, 1.0, 1),
+    ] {
+        let mut writer = TrrWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            TrrWriteOptions::default().with_precision(precision),
+            "mixed.trr",
+        )
+        .unwrap();
+        let frame = populated_frame(&topology, shift, step);
+        writer.write_frame(frame.frame_view()).unwrap();
+        combined.extend(writer.finish().unwrap().into_inner());
+    }
+    let mut reader = TrrReader::new(
+        Cursor::new(combined),
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("mixed.trr"),
+    )
+    .unwrap()
+    .into_indexed()
+    .unwrap();
+    let mut destination = FrameBuffer::new(topology);
+    assert_eq!(reader.frame_count(), Some(2));
+    reader.read_frame(1, &mut destination).unwrap();
+    assert_xs_close(&destination, &[1.0, 4.0, 7.0]);
+}
+
+#[test]
+fn format_agnostic_trr_metadata_tracks_mixed_precision_sequentially_and_indexed() {
+    let topology = topology();
+    let mut combined = Vec::new();
+    for (precision, shift, step) in [
+        (TrrScalarPrecision::Float32, 0.0, 0),
+        (TrrScalarPrecision::Float64, 1.0, 1),
+    ] {
+        let mut writer = TrrWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            TrrWriteOptions::default().with_precision(precision),
+            "mixed-metadata.trr",
+        )
+        .unwrap();
+        writer
+            .write_frame(populated_frame(&topology, shift, step).frame_view())
+            .unwrap();
+        combined.extend(writer.finish().unwrap().into_inner());
+    }
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path: PathBuf = std::env::temp_dir().join(format!(
+        "kekule-mixed-metadata-{}-{nonce}.trr",
+        std::process::id()
+    ));
+    fs::write(&path, combined).unwrap();
+    let options = TrajectoryOpenOptions::default().with_format_hint(
+        TrajectoryFormatHint::Explicit(kekule_traj::TrajectoryFormat::Trr),
+    );
+
+    let mut sequential =
+        open_trajectory_with_options(&path, Arc::clone(&topology), options.clone()).unwrap();
+    assert_eq!(
+        sequential.metadata().coordinate_encoding(),
+        CoordinateEncoding::Lossless {
+            precision: ScalarPrecision::Float32
+        }
+    );
+    let mut destination = FrameBuffer::new(Arc::clone(&topology));
+    assert!(sequential.read_next(&mut destination).unwrap());
+    assert_eq!(
+        sequential.metadata().coordinate_encoding(),
+        CoordinateEncoding::Lossless {
+            precision: ScalarPrecision::Float32
+        }
+    );
+    assert!(sequential.read_next(&mut destination).unwrap());
+    assert_eq!(
+        sequential.metadata().coordinate_encoding(),
+        CoordinateEncoding::Lossless {
+            precision: ScalarPrecision::Mixed
+        }
+    );
+
+    let indexed =
+        open_indexed_trajectory_with_options(&path, Arc::clone(&topology), options).unwrap();
+    assert_eq!(
+        indexed.metadata().coordinate_encoding(),
+        CoordinateEncoding::Lossless {
+            precision: ScalarPrecision::Mixed
+        }
+    );
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn empty_trr_writer_is_rejected() {
+    let topology = topology();
+    let error = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        topology,
+        TrrWriteOptions::default(),
+        "empty.trr",
+    )
+    .unwrap()
+    .finish()
+    .unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::InvalidFrame)
+    );
+}
+
+#[test]
+fn independently_generated_mdanalysis_trr_preserves_all_supported_fields() {
+    let topology = topology();
+    let fixture = include_bytes!("../fixtures/mdanalysis-2.9.0-three-atoms.trr");
+    let digest = Sha256::digest(fixture);
+    let actual_digest = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert_eq!(
+        actual_digest,
+        "ff960f93b192e71f9b8962a7f8fe70c0aae23fd842e15aa65f3d3fd26a6b07c0"
+    );
+    let mut reader = TrrReader::new(
+        Cursor::new(fixture),
+        Arc::clone(&topology),
+        TrrReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("mdanalysis-2.9.0-three-atoms.trr"),
+    )
+    .unwrap();
+    let mut buffer = FrameBuffer::new(topology);
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert_xs_close(&buffer, &[0.0, 0.3, 0.6]);
+    assert!(buffer.cell().is_some());
+    assert!(buffer.frame_view().velocities().is_some());
+    assert!(buffer.frame_view().forces().is_some());
+    assert_eq!(buffer.frame_view().step(), Some(0));
+    assert_eq!(
+        buffer.properties().owner().get(&lambda_key()),
+        Some(&lambda(0.125))
+    );
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert_xs_close(&buffer, &[0.1, 0.4, 0.7]);
+    assert_eq!(buffer.frame_view().step(), Some(1));
+    assert_eq!(
+        buffer.properties().owner().get(&lambda_key()),
+        Some(&lambda(0.25))
+    );
+    assert!(!reader.read_next(&mut buffer).unwrap());
+}

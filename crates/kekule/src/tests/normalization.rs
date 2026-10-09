@@ -64,7 +64,8 @@ fn normalization_is_idempotent() {
 
 #[test]
 fn oxohalogen_cleanup_matches_rdkit_for_ester_and_declared_hydrogen_forms() {
-    // Full represented charges and bond orders verified against RDKit 2026.03.3.
+    // Full represented charges and bond orders verified against RDKit 2026.03.3;
+    // the periodate, chlorate and iodous acid rows against RDKit 2026.09.1.
     for (source, charges, inferred_hydrogens) in [
         (
             "CC(C)(C)OCl(=O)(=O)=O",
@@ -73,6 +74,13 @@ fn oxohalogen_cleanup_matches_rdkit_for_ester_and_declared_hydrogen_forms() {
         ),
         ("[IH]=O", vec![1, -1], vec![0, 0]),
         ("[O-]=I(O)", vec![-1, 1, 0], vec![0, 0, 1]),
+        (
+            "[O-]I(=O)(=O)=O",
+            vec![-1, 3, -1, -1, -1],
+            vec![0, 0, 0, 0, 0],
+        ),
+        ("[O-]Cl(=O)=O", vec![-1, 2, -1, -1], vec![0, 0, 0, 0]),
+        ("OI=O", vec![0, 1, -1], vec![1, 0, 0]),
     ] {
         let mut molecule = read_smiles(source).expect(source);
         assert_eq!(
@@ -108,7 +116,13 @@ fn oxohalogen_cleanup_matches_rdkit_for_ester_and_declared_hydrogen_forms() {
 
 #[test]
 fn oxohalogen_cleanup_requires_only_oxygen_neighbors_and_odd_modeled_valence() {
-    for source in ["OI(=O)(C)C", "OI(=O)O"] {
+    // RDKit 2026.09.1 likewise keeps CI(=O)=O and COI(=O)(N)C uncharged.
+    for (source, double_bonds) in [
+        ("OI(=O)(C)C", 1),
+        ("OI(=O)O", 1),
+        ("CI(=O)=O", 2),
+        ("COI(=O)(N)C", 1),
+    ] {
         let mut molecule = read_smiles(source).expect(source);
         assert!(
             molecule.atoms().all(|(_, atom)| atom.formal_charge == 0),
@@ -119,7 +133,7 @@ fn oxohalogen_cleanup_requires_only_oxygen_neighbors_and_odd_modeled_valence() {
                 .bonds()
                 .filter(|(_, bond)| bond.order == BondOrder::Double)
                 .count(),
-            1,
+            double_bonds,
             "{source}"
         );
         molecule.perceive().expect(source);

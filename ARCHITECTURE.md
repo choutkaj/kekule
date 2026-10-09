@@ -467,7 +467,7 @@ restores definitions, instances, classes, hierarchy, qualified IDs, and dense
 layout consistently before validating realization payloads. Disconnected persisted
 graphs must be partitioned or rejected. Export to scientific formats is not exact
 native persistence and must not weaken these boundaries. See
-[reconstruction regressions](crates/kekule/tests/canonical_reconstruction.rs).
+[reconstruction regressions](crates/kekule/tests/molecule/identity.rs).
 
 ## API and maintenance rules
 
