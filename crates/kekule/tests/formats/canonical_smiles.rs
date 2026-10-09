@@ -7,6 +7,12 @@ use crate::support::renumbered;
 fn canonical_smiles_matches_rdkit_charge_closures_stereo_and_cx_radicals() {
     for (source, expected) in [
         ("CC([O-])=O", "CC(=O)[O-]"),
+        // RDKit 2026.03.3 writes these graph-hydrogen forms like their
+        // implicit-hydrogen equivalents.
+        ("[H]OC(=O)C", "CC(=O)O"),
+        ("OC(=O)C[H]", "CC(=O)O"),
+        ("[H]OC(=O)c1ccccc1", "O=C(O)c1ccccc1"),
+        ("[H]n1cccc1", "c1cc[nH]c1"),
         ("[O-][N+](=O)c1ccccc1", "O=[N+]([O-])c1ccccc1"),
         (
             "CC12CCC3C(CCC4CC(O)CCC43C)C2CCC1=O",
@@ -293,6 +299,14 @@ fn canonical_smiles_ranks_the_emitted_hydrogen_and_isotope_projection() {
         ["CC(=O)OC(C)CN", "CC(=[18O])OC(C)CN", "CC(=O)O[CH](C)CN"],
         ["C1CC2CCC1C2", "[13CH2]1CC2CCC1C2", "[CH2]1CC2CCC1C2"],
         ["c1ccccc1", "[H]c1ccccc1", "[2H]c1ccccc1"],
+        // Collapsing graph hydrogens keeps perceived counts: an aromatic NH
+        // still writes [nH], and even a remote H keeps the acid ranking.
+        ["c1cc[nH]c1", "[H]n1cccc1", "[2H]n1cccc1"],
+        [
+            "CC(=O)Oc1ccccc1C(=O)O",
+            "[H]OC(=O)c1ccccc1OC(C)=O",
+            "CC(=O)Oc1c([H])cccc1C(=O)O",
+        ],
         ["N1C=CC=C1", "[NH]1C=CC=C1", "[15NH]1C=CC=C1"],
         [
             "CC1=CC(C)=CC=C1O",
