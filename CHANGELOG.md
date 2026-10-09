@@ -209,9 +209,10 @@ All notable changes to Kekule are documented in this file.
   atoms or implicit counts. Any collapsible explicit hydrogen used to leave the
   writer's collapsed copy without hydrogen counts, so ties such as the carbonyl
   and hydroxyl oxygens of a carboxylic acid broke differently: `[H]OC(=O)C`
-  wrote `CC(O)=O`, which canonicalizes again to `CC(=O)O`. Explicit-hydrogen
-  inputs, including PubChem SDF records, now write the same fixed point as
-  their implicit form.
+  wrote `CC(O)=O`, which canonicalizes again to `CC(=O)O`, and `[H]n1cccc1`
+  failed because its aromatic NH appeared to lack hydrogen perception.
+  Explicit-hydrogen inputs, including PubChem SDF records, now write the same
+  fixed point as their implicit form.
 - Trajectories read with an interpreted structure topology assign coordinates
   to the right atoms when the source interleaves molecules, for example a
   covalently linked ligand listed after water. Dense order used to follow
