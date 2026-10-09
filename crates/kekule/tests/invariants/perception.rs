@@ -1,6 +1,8 @@
 //! Perception derives state; it never rewrites what a molecule represents.
 
-use kekule::core::Perception;
+use std::collections::BTreeMap;
+
+use kekule::core::{AtomId, Perception};
 use kekule::smiles::{self, SmilesWriteOptions};
 
 use crate::corpus::{assert_invariant, molecules};
@@ -37,7 +39,8 @@ fn perception_is_idempotent_and_never_rewrites_represented_chemistry() {
 }
 
 /// Materializing implicit hydrogens as atoms and collapsing them again keeps
-/// the molecule's identity and stereo descriptors.
+/// the molecule's identity and the descriptor of every stereo focus, followed
+/// through the atom correspondence of each transform.
 #[test]
 fn explicit_hydrogen_round_trip_preserves_identity() {
     let mut failures = Vec::new();
@@ -45,27 +48,47 @@ fn explicit_hydrogen_round_trip_preserves_identity() {
         let mut fail = |message: String| failures.push((sample.label.clone(), message));
         let mut original = sample.perceived();
         let canonical = smiles::write(&original, SmilesWriteOptions::canonical()).ok();
-        let mut labels = cip_labels(&mut original).into_values().collect::<Vec<_>>();
-        labels.sort();
+        let labels = cip_labels(&mut original);
+        // Addition keeps every existing atom ID, so the foci are unchanged.
         let mut explicit = original.clone();
         explicit
             .add_hydrogens()
             .unwrap_or_else(|error| panic!("{}: {error}", sample.label));
         explicit.perceive().unwrap();
         let mut collapsed = explicit.clone();
-        collapsed
+        let removal = collapsed
             .remove_hydrogens()
             .unwrap_or_else(|error| panic!("{}: {error}", sample.label));
         collapsed.perceive().unwrap();
-        for (stage, molecule) in [("explicit", &mut explicit), ("collapsed", &mut collapsed)] {
+        let collapsed_labels = labels
+            .iter()
+            .map(|(focus, label)| {
+                let image = focus.try_map(|atom| {
+                    removal
+                        .correspondence
+                        .atom(AtomId::new(u32::try_from(atom).unwrap()))
+                        .map(|id| id.index())
+                });
+                (image, label.clone())
+            })
+            .collect::<Vec<_>>();
+        if collapsed_labels.iter().any(|(image, _)| image.is_none()) {
+            fail(format!(
+                "collapsed: a stereo focus lost its atoms: {labels:?}"
+            ));
+            continue;
+        }
+        let collapsed_labels = collapsed_labels
+            .into_iter()
+            .map(|(image, label)| (image.unwrap(), label))
+            .collect::<BTreeMap<_, _>>();
+        for (stage, molecule, expected) in [
+            ("explicit", &mut explicit, &labels),
+            ("collapsed", &mut collapsed, &collapsed_labels),
+        ] {
             match try_cip_labels(molecule) {
-                Ok(actual) => {
-                    let mut actual = actual.into_values().collect::<Vec<_>>();
-                    actual.sort();
-                    if actual != labels {
-                        fail(format!("{stage}: CIP {actual:?} != {labels:?}"));
-                    }
-                }
+                Ok(actual) if &actual == expected => {}
+                Ok(actual) => fail(format!("{stage}: CIP {actual:?} != {expected:?}")),
                 Err(error) => fail(format!("{stage}: CIP failed: {error}")),
             }
         }

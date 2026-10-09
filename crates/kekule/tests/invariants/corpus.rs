@@ -60,58 +60,88 @@ pub const EXPECTED_REJECTIONS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Samples that expose a known, unfixed defect, as (invariant, sample label,
-/// defect). An entry must keep failing its invariant; when a fix makes it
+/// A corpus sample that exposes a known, unfixed defect in one invariant.
+pub struct KnownDefect {
+    pub invariant: &'static str,
+    pub sample: &'static str,
+    /// Text that identifies the expected failure message. Only matching
+    /// failures are exempt; any other failure of the sample is still reported.
+    pub failure: &'static str,
+    pub defect: &'static str,
+}
+
+const EXPLICIT_H_CANONICAL: &str = "canonical SMILES depends on explicit hydrogen atoms";
+const EXPLICIT_H_WRITER: &str =
+    "canonical writer demands hydrogen perception for a perceived explicit-H aromatic NH";
+const COLLAPSED_AXIS: &str =
+    "CIP leaves an atropisomeric axis unresolved after explicit hydrogens are collapsed";
+
+/// Each entry must keep failing exactly as described; when a fix makes it
 /// pass, the invariant reports the entry so it can be deleted.
-pub const KNOWN_DEFECTS: &[(&str, &str, &str)] = &[
-    (
-        "smiles_round_trip",
-        "molfile:cid_2244.sdf#0",
-        "canonical SMILES depends on explicit hydrogen atoms",
-    ),
-    (
-        "hydrogen_round_trip",
-        "molfile:cid_2244.sdf#0",
-        "canonical SMILES depends on explicit hydrogen atoms",
-    ),
-    (
-        "smiles_round_trip",
-        "molfile:pubchem-10250.sdf#0",
-        "canonical writer demands hydrogen perception for a perceived explicit-H aromatic NH",
-    ),
-    (
-        "hydrogen_round_trip",
-        "molfile:pubchem-10250.sdf#0",
-        "canonical writer demands hydrogen perception for a perceived explicit-H aromatic NH",
-    ),
-    (
-        "hydrogen_round_trip",
-        "molfile:JDQ443_3d.mol#0",
-        "CIP leaves an atropisomeric axis unresolved after explicit hydrogens are collapsed",
-    ),
-    (
-        "hydrogen_round_trip",
-        "molfile:Sotorasib_3d.mol#0",
-        "CIP leaves an atropisomeric axis unresolved after explicit hydrogens are collapsed",
-    ),
+pub const KNOWN_DEFECTS: &[KnownDefect] = &[
+    KnownDefect {
+        invariant: "smiles_round_trip",
+        sample: "molfile:cid_2244.sdf#0",
+        failure: "left: \"CC(=O)Oc1ccccc1C(=O)O\"\n right: \"CC(=O)Oc1ccccc1C(O)=O\"",
+        defect: EXPLICIT_H_CANONICAL,
+    },
+    KnownDefect {
+        invariant: "hydrogen_round_trip",
+        sample: "molfile:cid_2244.sdf#0",
+        failure: r#"collapsed canonical Some("CC(=O)Oc1ccccc1C(=O)O") != Some("CC(=O)Oc1ccccc1C(O)=O")"#,
+        defect: EXPLICIT_H_CANONICAL,
+    },
+    KnownDefect {
+        invariant: "smiles_round_trip",
+        sample: "molfile:pubchem-10250.sdf#0",
+        failure: "canonical writer failed: canonical SMILES bracket atom a2 requires installed \
+                  hydrogen perception",
+        defect: EXPLICIT_H_WRITER,
+    },
+    KnownDefect {
+        invariant: "hydrogen_round_trip",
+        sample: "molfile:pubchem-10250.sdf#0",
+        failure: r#"collapsed canonical Some("O=c1[nH]c(=O)c2nccnc2[nH]1") != None"#,
+        defect: EXPLICIT_H_WRITER,
+    },
+    KnownDefect {
+        invariant: "hydrogen_round_trip",
+        sample: "molfile:JDQ443_3d.mol#0",
+        failure: "collapsed: CIP failed: CipAssignmentError { issues: [UnresolvedPriority",
+        defect: COLLAPSED_AXIS,
+    },
+    KnownDefect {
+        invariant: "hydrogen_round_trip",
+        sample: "molfile:Sotorasib_3d.mol#0",
+        failure: "collapsed: CIP failed: CipAssignmentError { issues: [UnresolvedPriority",
+        defect: COLLAPSED_AXIS,
+    },
 ];
 
-/// Fails on every (sample label, message) failure that is not a known defect
-/// of `invariant`, and on every known defect of `invariant` that now passes.
+/// Fails on every (sample label, message) failure that does not match a known
+/// defect of `invariant`, and on every known defect of `invariant` that no
+/// longer produces its expected failure.
 pub fn assert_invariant(invariant: &str, failures: Vec<(String, String)>) {
     let known = KNOWN_DEFECTS
         .iter()
-        .filter(|(name, ..)| *name == invariant)
+        .filter(|defect| defect.invariant == invariant)
         .collect::<Vec<_>>();
+    let expected = |label: &str, message: &str, defect: &KnownDefect| {
+        defect.sample == label && message.contains(defect.failure)
+    };
     let mut report = failures
         .iter()
-        .filter(|(label, _)| !known.iter().any(|(_, known, _)| known == label))
+        .filter(|(label, message)| !known.iter().any(|defect| expected(label, message, defect)))
         .map(|(label, message)| format!("{label}: {message}"))
         .collect::<Vec<_>>();
-    for (_, label, defect) in known {
-        if !failures.iter().any(|(failed, _)| failed == label) {
+    for defect in known {
+        if !failures
+            .iter()
+            .any(|(label, message)| expected(label, message, defect))
+        {
             report.push(format!(
-                "{label}: known defect ({defect}) no longer reproduces; remove it from KNOWN_DEFECTS"
+                "{}: known defect ({}) no longer fails as expected; remove it from KNOWN_DEFECTS",
+                defect.sample, defect.defect
             ));
         }
     }

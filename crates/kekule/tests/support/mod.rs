@@ -195,10 +195,15 @@ pub enum StereoFocus {
 
 impl StereoFocus {
     pub fn mapped(self, mapping: &[AtomId]) -> Self {
-        match self {
-            Self::Atom(atom) => Self::Atom(mapping[atom].index()),
-            Self::Bond(left, right) => Self::bond(mapping[left].index(), mapping[right].index()),
-        }
+        self.try_map(|atom| Some(mapping[atom].index())).unwrap()
+    }
+
+    /// Maps every focus atom index, or returns `None` if one has no image.
+    pub fn try_map(self, atom: impl Fn(usize) -> Option<usize>) -> Option<Self> {
+        Some(match self {
+            Self::Atom(center) => Self::Atom(atom(center)?),
+            Self::Bond(left, right) => Self::bond(atom(left)?, atom(right)?),
+        })
     }
 
     fn bond(left: usize, right: usize) -> Self {
