@@ -8,6 +8,11 @@ fn error(detail: impl std::fmt::Display) -> Error {
     Error::new(ErrorKind::Identity, detail)
 }
 
+/// The most atoms the InChI library accepts without its `LargeMolecules`
+/// option, which the `inchi` crate does not expose. Upstream can identify larger molecules, so bundles with larger
+/// lookup entries are rejected rather than silently missing their hits.
+pub(crate) const MAX_INCHI_ATOMS: usize = 1023;
+
 pub(crate) fn fixed_h_inchi(molecule: &Molecule) -> Result<String> {
     if molecule
         .stereo_groups()
@@ -304,6 +309,22 @@ fn stereo_matches(query: &Molecule, entry: &Molecule, map: &BTreeMap<AtomId, Ato
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn adapter_atom_limit_matches_the_inchi_library() {
+        let inchi = |smiles: &str| {
+            let mut m = kekule::smiles::to_molecules(smiles).unwrap().remove(0);
+            m.perceive().unwrap();
+            m.add_hydrogens().unwrap();
+            fixed_h_inchi(&m)
+        };
+        // C340H682O has 1,023 atoms; C340H683N has 1,024.
+        inchi(&format!("{}O", "C".repeat(340))).unwrap();
+        assert_eq!(
+            inchi(&format!("{}N", "C".repeat(340))).unwrap_err().kind(),
+            ErrorKind::Identity
+        );
+        assert_eq!(MAX_INCHI_ATOMS, 1023);
+    }
     #[test]
     fn identifiers_match_all_pinned_reference_molecules() {
         for r in crate::reference_records() {

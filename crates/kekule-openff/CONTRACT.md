@@ -253,10 +253,11 @@ InChI 1.07.5 C implementation. This companion therefore requires a C toolchain
 at build time; core `kekule` has no InChI dependency. The adapter handles isotope
 labels, tetrahedral parity and alkene stereo, including absolute stereo groups.
 Relative/mixture groups and axial stereo currently fail explicitly. The InChI
-library accepts at most 1,024 atoms; this limits only the
+library accepts at most 1,023 atoms; this limits only the
 `diagnostics::lookup_identifier` hook, because charge assignment computes an
 identifier only for molecules no larger than the model's largest lookup entry
-(11 atoms for Ash).
+(11 atoms for Ash). Loading rejects a bundle with a lookup entry above 1,023
+atoms, which upstream could identify but this adapter cannot.
 
 ## Boundaries and validation
 
@@ -330,7 +331,7 @@ The panel contains
 energy comparisons pass. Charge error is at most `2.23e-7 e`; total energy error
 with identical charges is at most `6.18e-9 kJ/mol`. Strict reports still flag six
 standalone identifier failures on three proteins above the InChI adapter's
-1,024-atom limit. Lookup safely bypasses InChI for inputs larger than the frozen
+1,023-atom limit. Lookup safely bypasses InChI for inputs larger than the frozen
 table's largest entry (11 atoms), so those proteins parameterize successfully.
 Charge lookup ignores isotopic masses on a private copy, matching the reference
 toolkit while preserving the input graph. The panel does not establish protein

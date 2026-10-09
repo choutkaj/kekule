@@ -8,9 +8,10 @@ use crate::{identity, nagl::lookup_molecule, ChargeAssignment, NaglModel, Result
 /// explicit-hydrogen molecule. Isotopes are ignored, as in the OpenFF
 /// Toolkit's charge representation.
 ///
-/// The InChI library accepts at most 1,024 atoms. Charge assignment is not
+/// The InChI library accepts at most 1,023 atoms. Charge assignment is not
 /// limited by this: it computes an identifier only for molecules no larger
-/// than the model's largest lookup entry.
+/// than the model's largest lookup entry, and model loading rejects lookup
+/// entries above 1,023 atoms.
 pub fn lookup_identifier(molecule: &Molecule) -> Result<String> {
     identity::fixed_h_inchi(&lookup_molecule(molecule)?)
 }

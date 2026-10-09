@@ -315,7 +315,7 @@ passes the Coulomb error bound for independently assigned charges. Each
 chain's native charges sum to its formal charge within 4 × 10⁻¹³ e.
 
 All eight strict failures are the standalone fixed-H InChI diagnostic, which
-exceeds the InChI adapter's 1,024-atom limit, as for the three largest
+exceeds the InChI adapter's 1,023-atom limit, as for the three largest
 main-panel proteins. Charge assignment does not compute this identifier for
 molecules larger than Ash's 11-atom largest lookup entry.
 
@@ -371,7 +371,7 @@ established. Ash inference has no molecule size limit; see the
 
 The six strict diagnostic failures are the original and reversed forms of
 `pdb-3ABD-A`, `pdb-9B3P-B` and `pdb-8J90-E`: each exceeds the InChI adapter's
-1,024-atom limit. Ash's largest lookup entry has 11 atoms, so charge assignment
+1,023-atom limit. Ash's largest lookup entry has 11 atoms, so charge assignment
 bypasses lookup for these proteins and their parameterizations pass. The energy
 comparison command deliberately retains a nonzero exit status for these diagnostic
 failures; they are not removed from the report.

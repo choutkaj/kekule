@@ -122,6 +122,13 @@ pub(super) fn parse(metadata: &[u8], weights: &[u8]) -> Result<Bundle> {
             {
                 return Err(error("invalid NAGL lookup entry"));
             }
+            if entry.charges.len() > crate::identity::MAX_INCHI_ATOMS {
+                return Err(error(format!(
+                    "NAGL lookup entry has {} atoms; the InChI adapter identifies at most {}",
+                    entry.charges.len(),
+                    crate::identity::MAX_INCHI_ATOMS
+                )));
+            }
             if lookup.insert(entry.inchi.clone(), entry).is_some() {
                 return Err(error("duplicate NAGL lookup identifier"));
             }

@@ -186,8 +186,9 @@ impl NaglModel {
     pub fn assign_charges(&self, molecule: &Molecule) -> Result<ChargeAssignment> {
         let molecule = lookup_molecule(molecule)?;
         // A full-graph lookup hit must have one charge for every input atom.
-        // The model table bounds the size of any possible full-graph hit. Do not
-        // let the identifier library's unrelated size limit block inference.
+        // The model table bounds the size of any possible full-graph hit, and
+        // loading keeps every entry within the identifier library's limit, so
+        // that limit never blocks inference.
         if molecule.atom_count() > self.max_lookup_atoms {
             return self.infer_prepared(&molecule);
         }

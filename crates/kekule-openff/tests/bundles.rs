@@ -145,4 +145,16 @@ fn exported_ash_layout_loads_like_the_bundled_model_and_rejects_corruption() {
     molecule.add_hydrogens().unwrap();
     let error = broken.assign_charges(&molecule).unwrap_err();
     assert_eq!(error.kind(), ErrorKind::Model);
+
+    // A lookup entry above the InChI adapter's limit could never be matched,
+    // so 1,024..=entry-size inputs would fail identification; reject on load.
+    let mut changed = manifest.clone();
+    changed["lookup_tables"]["am1bcc_charges"][0]["charges"] = json!(vec![0.0; 1024]);
+    scratch.write(&changed, &weights);
+    let error = NaglModel::load(&scratch.0).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Model, "{error}");
+    assert!(error.to_string().contains("1024 atoms"), "{error}");
+    changed["lookup_tables"]["am1bcc_charges"][0]["charges"] = json!(vec![0.0; 1023]);
+    scratch.write(&changed, &weights);
+    NaglModel::load(&scratch.0).unwrap();
 }
