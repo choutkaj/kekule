@@ -24,7 +24,7 @@ use kekule_traj::{
 };
 use sha2::{Digest, Sha256};
 
-mod support;
+use crate::support;
 use support::{
     buffer_snapshot, codec_kind, topology as build_topology, x_coordinates as xs, GuardedCursor,
     RestoreSeekFailure,
@@ -933,7 +933,7 @@ fn empty_trr_writer_is_rejected() {
 #[test]
 fn independently_generated_mdanalysis_trr_preserves_all_supported_fields() {
     let topology = topology();
-    let fixture = include_bytes!("fixtures/mdanalysis-2.9.0-three-atoms.trr");
+    let fixture = include_bytes!("../fixtures/mdanalysis-2.9.0-three-atoms.trr");
     let digest = Sha256::digest(fixture);
     let actual_digest = digest
         .iter()

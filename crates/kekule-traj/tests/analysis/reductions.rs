@@ -10,7 +10,7 @@ use kekule::{
 use kekule_traj::analysis::{self, ContactOccupancyAccumulator, ReductionError, RmsfAccumulator};
 use kekule_traj::{MemoryTrajectoryReader, TrajectoryReader};
 
-mod support;
+use crate::support;
 use support::linear_carbon_topology;
 
 fn trajectory(top: &Arc<Topology>, rows: &[[f64; 3]]) -> Trajectory {

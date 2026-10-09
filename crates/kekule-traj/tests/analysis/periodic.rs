@@ -10,7 +10,7 @@ use kekule::units::{
 };
 use kekule_traj::periodic::{self, PeriodicError};
 
-mod support;
+use crate::support;
 use support::{linear_carbon_topology, topology};
 
 fn cell(length: f64) -> PeriodicCell {

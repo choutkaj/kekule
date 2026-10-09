@@ -13,7 +13,7 @@ use kekule_traj::{
 };
 use sha2::{Digest, Sha256};
 
-mod support;
+use crate::support;
 use support::{
     buffer_snapshot, codec_kind, linear_carbon_topology as topology, x_coordinates as x_values,
     GuardedCursor, RestoreSeekFailure,
@@ -882,7 +882,7 @@ fn empty_xtc_writer_is_rejected() {
 #[test]
 fn independently_generated_mdanalysis_xtc_matches_lossy_profile() {
     let topology = topology(12);
-    let fixture = include_bytes!("fixtures/mdanalysis-2.9.0-twelve-atoms.xtc");
+    let fixture = include_bytes!("../fixtures/mdanalysis-2.9.0-twelve-atoms.xtc");
     let digest = Sha256::digest(fixture);
     let actual_digest = digest
         .iter()

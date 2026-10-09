@@ -13,7 +13,7 @@ use kekule_traj::io::{
 };
 use kekule_traj::{TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat};
 
-mod support;
+use crate::support;
 use support::{codec_kind, linear_carbon_topology, topology};
 
 fn fixture(name: &str) -> PathBuf {

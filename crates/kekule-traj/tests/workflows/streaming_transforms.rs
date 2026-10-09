@@ -10,7 +10,7 @@ use kekule_traj::analysis::FrameSuperposer;
 use kekule_traj::periodic::{self, MoleculeImager, PeriodicError, TrajectoryUnwrapper};
 use kekule_traj::{FrameBuffer, MemoryTrajectoryReader, TrajectoryReader};
 
-mod support;
+use crate::support;
 use support::linear_carbon_topology;
 
 fn source() -> Trajectory {

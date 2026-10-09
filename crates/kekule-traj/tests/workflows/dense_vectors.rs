@@ -3,7 +3,7 @@ use kekule::structure::{ConformationError, Forces, Velocities};
 use kekule::units::{Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT};
 use kekule_traj::FrameBuffer;
 
-mod support;
+use crate::support;
 
 struct ChangingSlice {
     calls: std::cell::Cell<usize>,

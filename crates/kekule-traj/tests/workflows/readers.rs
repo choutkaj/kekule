@@ -14,7 +14,7 @@ use kekule_traj::{
     TrajectoryError, TrajectoryFormat, TrajectoryReader,
 };
 
-mod support;
+use crate::support;
 use support::topology as build_topology;
 
 fn topology() -> Arc<Topology> {

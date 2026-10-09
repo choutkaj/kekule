@@ -15,7 +15,7 @@ use kekule_traj::io::{
 };
 use kekule_traj::{TrajectoryError, TrajectoryFormat};
 
-mod support;
+use crate::support;
 use support::{linear_carbon_topology, topology};
 
 struct Directory(PathBuf);

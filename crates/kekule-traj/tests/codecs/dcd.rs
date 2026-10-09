@@ -15,7 +15,7 @@ use kekule_traj::{
 };
 use sha2::{Digest, Sha256};
 
-mod support;
+use crate::support;
 use support::{
     buffer_snapshot, codec_kind, topology as build_topology, x_coordinates as xs, GuardedCursor,
     NoBackwardSeekCursor, RestoreSeekFailure,
@@ -904,7 +904,7 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
 #[test]
 fn independently_generated_mdanalysis_fixture_is_interoperable() {
     let topology = topology();
-    let fixture = include_bytes!("fixtures/mdanalysis-2.9.0-three-atoms.dcd");
+    let fixture = include_bytes!("../fixtures/mdanalysis-2.9.0-three-atoms.dcd");
     let digest = Sha256::digest(fixture);
     let actual_digest = digest
         .iter()

@@ -13,7 +13,7 @@ use kekule_traj::{
     MemoryTrajectoryReader, SeekableTrajectoryReader, TrajectoryError, TrajectoryReader,
 };
 
-mod support;
+use crate::support;
 use support::linear_carbon_topology;
 
 fn annotated() -> Trajectory {

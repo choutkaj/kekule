@@ -20,7 +20,7 @@ use kekule_traj::{
 };
 use sha2::{Digest, Sha256};
 
-mod support;
+use crate::support;
 use support::{codec_kind, topology as build_topology, x_coordinates as point_xs, GuardedCursor};
 
 const TWO_FRAMES: &str = "2\r\nfirst\r\nC 0.0 1.0 2.0\r\nH 3.0 4.0 5.0\r\n\
@@ -651,7 +651,7 @@ fn compressed_wrappers_and_insufficient_signatures_are_not_extension_dispatched(
 #[test]
 fn independently_generated_ase_fixture_matches_expected_frames() {
     let topology = water_topology();
-    let fixture = include_str!("fixtures/ase-3.26.0-water.xyz");
+    let fixture = include_str!("../fixtures/ase-3.26.0-water.xyz");
     let digest = Sha256::digest(fixture.as_bytes());
     let actual_digest = digest
         .iter()
