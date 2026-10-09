@@ -463,3 +463,58 @@ fn potentials_are_shareable_trait_objects() {
     let result = minimize(potential.as_ref(), view, &MinimizeOptions::default()).unwrap();
     assert!(result.iterations() > 0);
 }
+
+#[test]
+fn atom_parameters_follow_an_interleaved_dense_order() {
+    use kekule::core::AtomId;
+    use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
+
+    let ordered = topology(2);
+    // Alternate the two instances atom by atom, as a source file's rows may.
+    let interleaved_order = (0..7).flat_map(|local| {
+        [0, 1].map(|instance| {
+            InstanceAtomId::new(MoleculeInstanceId::new(instance), AtomId::new(local))
+        })
+    });
+    let mut builder = Arc::try_unwrap(topology(2)).unwrap().into_builder();
+    builder.set_atom_order(interleaved_order).unwrap();
+    let interleaved = Arc::new(builder.build().unwrap());
+    let reference = model(&ordered);
+    let moved = Model::new(
+        Arc::clone(&interleaved),
+        Positions::new(Quantity::new(
+            interleaved
+                .atom_ids()
+                .iter()
+                .map(|&atom| reference.position(atom).unwrap().into_value())
+                .collect::<Vec<_>>(),
+            NANOMETER,
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let (source, target) = (parameterize(&ordered), parameterize(&interleaved));
+    for (dense, &atom) in interleaved.atom_ids().iter().enumerate() {
+        let original = ordered.atom_index(atom).unwrap().index();
+        assert_eq!(target.vdw()[dense].sigma, source.vdw()[original].sigma);
+        assert_eq!(target.vdw()[dense].epsilon, source.vdw()[original].epsilon);
+        assert_eq!(
+            target.charges().value()[dense],
+            source.charges().value()[original]
+        );
+    }
+    let expected = OpenFfPotential::new(&source)
+        .unwrap()
+        .energy(reference.view())
+        .unwrap()
+        .total()
+        .into_value();
+    let actual = OpenFfPotential::new(&target)
+        .unwrap()
+        .energy(moved.view())
+        .unwrap()
+        .total()
+        .into_value();
+    assert!((actual - expected).abs() <= 1e-10 * (1.0 + expected.abs()));
+}

@@ -24,9 +24,10 @@ use super::*;
 ///
 /// Construction and structural editing publish through
 /// [`MoleculeEditor::finish`]. Temporary disconnectedness is allowed inside the
-/// editor but never in a published `Molecule`. Equality compares authoritative
-/// graph chemistry; cached perception and generic properties do not change
-/// molecular identity.
+/// editor but never in a published `Molecule`. Published atom, bond, and stereo
+/// IDs are dense: `0..atom_count()` and likewise for the other ID spaces.
+/// Equality compares authoritative graph chemistry; cached perception and
+/// generic properties do not change molecular identity.
 #[derive(Debug, Clone)]
 pub struct Molecule {
     pub(crate) graph: Graph,
@@ -393,7 +394,7 @@ impl Molecule {
         self.properties.clear_owner();
     }
 
-    /// Reads the complete stable-slot atom property table.
+    /// Reads the atom property table; row `i` describes [`AtomId`] `i`.
     ///
     /// Mutation is intentionally available only through [`Self::set_atom_property`],
     /// which validates that the target atom is live.
@@ -401,7 +402,7 @@ impl Molecule {
         self.properties.atoms()
     }
 
-    /// Reads the complete stable-slot bond property table.
+    /// Reads the bond property table; row `i` describes [`BondId`] `i`.
     ///
     /// Mutation is intentionally available only through [`Self::set_bond_property`],
     /// which validates that the target bond is live.
@@ -680,42 +681,146 @@ impl Molecule {
             .filter_map(|(raw, group)| group.as_ref().map(|group| (StereoGroupId::new(raw), group)))
     }
 
-    /// Returns the complete stereo-group stable-slot count, including tombstones.
-    pub fn stereo_group_slot_count(&self) -> usize {
-        self.graph.stereo_groups.len()
-    }
-
-    /// Iterates every stereo-group stable slot, including interior and trailing tombstones.
-    pub fn stereo_group_slots(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (StereoGroupId, Option<&StereoGroup>)> + DoubleEndedIterator + '_
-    {
-        self.graph
-            .stereo_groups
-            .iter()
-            .enumerate()
-            .map(|(slot, group)| {
-                let raw = u32::try_from(slot)
-                    .expect("stereo-group slot capacity is checked before insertion");
-                (StereoGroupId::new(raw), group.as_ref())
-            })
-    }
-
-    /// Appends one deleted stereo-group slot without changing live stereo or CIP state.
-    pub(crate) fn append_stereo_group_tombstone(&mut self) -> Result<StereoGroupId> {
-        let id = checked_molecule_id(
-            self.graph.stereo_groups.len(),
-            MoleculeIdKind::StereoGroup,
-            StereoGroupId::new,
-        )?;
-        self.graph.stereo_groups.push(None);
-        self.properties.clear_owner();
-        Ok(id)
-    }
-
     /// Removes all installed derived perception without changing represented chemistry.
     pub fn clear_perception(&mut self) {
         self.perception = Perception::default();
+    }
+
+    /// Renumbers every identifier space densely, preserving relative order.
+    ///
+    /// Publication calls this after validation so a published molecule has no
+    /// deleted slots. Monotonic renumbering preserves canonical stereo carrier
+    /// order. Renumbered atoms or bonds clear perception; deleting them already
+    /// invalidated it. Renumbered stereo elements clear only CIP state.
+    pub(super) fn compact_ids(&mut self) -> SlotCompaction {
+        let compaction = SlotCompaction {
+            atoms: dense_slots(&self.graph.atoms, AtomId::new),
+            bonds: dense_slots(&self.graph.bonds, BondId::new),
+            stereo_elements: dense_slots(&self.graph.stereo_elements, StereoElementId::new),
+            stereo_groups: dense_slots(&self.graph.stereo_groups, StereoGroupId::new),
+        };
+        let atoms_changed = self.graph.atoms.iter().any(Option::is_none);
+        let bonds_changed = self.graph.bonds.iter().any(Option::is_none);
+        let elements_changed = self.graph.stereo_elements.iter().any(Option::is_none);
+        let groups_changed = self.graph.stereo_groups.iter().any(Option::is_none);
+        if !(atoms_changed || bonds_changed || elements_changed || groups_changed) {
+            return compaction;
+        }
+        let atom = |id: AtomId| compaction.atoms[id.index()].expect("live atom reference");
+        let bond = |id: BondId| compaction.bonds[id.index()].expect("live bond reference");
+        let carrier = |carrier: StereoCarrier| match carrier {
+            StereoCarrier::Atom(id) => StereoCarrier::Atom(atom(id)),
+            other => other,
+        };
+
+        let live_atoms = (0..self.graph.atoms.len())
+            .filter(|&slot| self.graph.atoms[slot].is_some())
+            .collect::<Vec<_>>();
+        let live_bonds = (0..self.graph.bonds.len())
+            .filter(|&slot| self.graph.bonds[slot].is_some())
+            .collect::<Vec<_>>();
+        let adjacency = live_atoms
+            .iter()
+            .map(|&slot| {
+                self.graph.adjacency[slot]
+                    .iter()
+                    .map(|&id| bond(id))
+                    .collect()
+            })
+            .collect();
+        let bonds = self
+            .graph
+            .bonds
+            .iter()
+            .flatten()
+            .map(|value| Bond::new(atom(value.a), atom(value.b), value.order))
+            .map(Some)
+            .collect();
+        let stereo_elements = self
+            .graph
+            .stereo_elements
+            .iter()
+            .flatten()
+            .map(|element| {
+                let mut kind = element.kind.clone();
+                match &mut kind {
+                    StereoElementKind::Tetrahedral(stereo) => {
+                        stereo.center = atom(stereo.center);
+                        for value in &mut stereo.carriers {
+                            *value = carrier(*value);
+                        }
+                    }
+                    StereoElementKind::DoubleBond(stereo) => {
+                        stereo.bond = bond(stereo.bond);
+                        stereo.left = atom(stereo.left);
+                        stereo.right = atom(stereo.right);
+                        stereo.left_carrier = carrier(stereo.left_carrier);
+                        stereo.right_carrier = carrier(stereo.right_carrier);
+                    }
+                    StereoElementKind::Axis(stereo) => {
+                        stereo.axis = bond(stereo.axis);
+                        for value in &mut stereo.carriers {
+                            *value = carrier(*value);
+                        }
+                    }
+                }
+                Some(StereoElement {
+                    kind,
+                    group: element.group.map(|id| {
+                        compaction.stereo_groups[id.index()].expect("live stereo group reference")
+                    }),
+                })
+            })
+            .collect();
+        let stereo_groups = self
+            .graph
+            .stereo_groups
+            .iter()
+            .flatten()
+            .map(|group| {
+                Some(StereoGroup {
+                    kind: group.kind,
+                    members: group
+                        .members
+                        .iter()
+                        .map(|id| {
+                            compaction.stereo_elements[id.index()]
+                                .expect("live stereo group member")
+                        })
+                        .collect(),
+                })
+            })
+            .collect();
+        let atom_properties = self
+            .properties
+            .atoms()
+            .select_indices(&live_atoms)
+            .expect("published atom properties match atom slots");
+        let bond_properties = self
+            .properties
+            .bonds()
+            .select_indices(&live_bonds)
+            .expect("published bond properties match bond slots");
+
+        self.graph = Graph {
+            atoms: std::mem::take(&mut self.graph.atoms)
+                .into_iter()
+                .flatten()
+                .map(Some)
+                .collect(),
+            bonds,
+            adjacency,
+            stereo_elements,
+            stereo_groups,
+        };
+        *self.properties.atoms_mut() = atom_properties;
+        *self.properties.bonds_mut() = bond_properties;
+        if atoms_changed || bonds_changed {
+            self.clear_perception();
+        } else if elements_changed {
+            self.invalidate_stereo();
+        }
+        compaction
     }
 
     fn remove_incident_bond(&mut self, atom: AtomId, bond: BondId) {
@@ -1245,6 +1350,31 @@ impl Molecule {
             }
         }
     }
+}
+
+/// Dense renumbering of one molecule's identifier spaces at publication.
+///
+/// Each vector is indexed by a former stable slot. Deleted slots map to `None`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct SlotCompaction {
+    pub(crate) atoms: Vec<Option<AtomId>>,
+    pub(crate) bonds: Vec<Option<BondId>>,
+    pub(crate) stereo_elements: Vec<Option<StereoElementId>>,
+    pub(crate) stereo_groups: Vec<Option<StereoGroupId>>,
+}
+
+fn dense_slots<T, Id>(slots: &[Option<T>], id: impl Fn(u32) -> Id) -> Vec<Option<Id>> {
+    let mut next = 0u32;
+    slots
+        .iter()
+        .map(|slot| {
+            slot.as_ref().map(|_| {
+                let dense = id(next);
+                next += 1;
+                dense
+            })
+        })
+        .collect()
 }
 
 fn sort_stereo_carriers(carriers: &mut Vec<StereoCarrier>) -> bool {

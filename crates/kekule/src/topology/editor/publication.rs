@@ -12,7 +12,7 @@ struct Targets {
     atoms: BTreeMap<EditAtomId, InstanceAtomId>,
     chains: BTreeMap<EditChainId, ChainId>,
     residues: BTreeMap<EditResidueId, ResidueId>,
-    atom_slots: Vec<usize>,
+    atom_order: Vec<(usize, InstanceAtomId)>,
     bond_slots: Vec<usize>,
 }
 
@@ -224,7 +224,8 @@ impl TopologyEditor {
                     );
                 }
                 GroupChemistry::Draft(draft) if draft.is_connected() => {
-                    let published = (*draft).finish()?;
+                    // Publication renumbers deleted draft slots densely.
+                    let (published, ids) = (*draft).finish_with_correspondence()?;
                     let definition = builder.add_molecule_definition_owned(published)?;
                     let handles = group.atoms.values().copied().collect();
                     if let Some(class) = self.component_class(&handles, group.class) {
@@ -233,13 +234,12 @@ impl TopologyEditor {
                         builder.preserve_molecule_class(definition, class, explicit)?;
                     }
                     let instance = builder.add_instance(definition)?;
-                    let molecule = builder.definition(definition)?.molecule();
                     instance_sources
                         .push((!group.changed).then_some(group.instance_slot).flatten());
                     self.record_component(
                         (&group.atoms, &group.bonds),
-                        molecule.atom_ids().map(|a| (a, a)),
-                        molecule.bond_ids(),
+                        ids.atoms().iter().map(|(&draft, &local)| (draft, local)),
+                        ids.bonds().keys().copied(),
                         instance,
                         &mut targets,
                     );
@@ -279,6 +279,15 @@ impl TopologyEditor {
                 }
             }
         }
+        // Publish atoms in slot order: survivors keep their source dense
+        // order, and added atoms follow in creation order.
+        targets.atom_order.sort_unstable_by_key(|&(slot, _)| slot);
+        builder.set_atom_order(targets.atom_order.iter().map(|&(_, atom)| atom))?;
+        let atom_slots = targets
+            .atom_order
+            .iter()
+            .map(|&(slot, _)| slot)
+            .collect::<Vec<_>>();
         let mut chain_slots = Vec::new();
         let mut residue_slots = Vec::new();
         let mut site_slots = Vec::new();
@@ -320,7 +329,7 @@ impl TopologyEditor {
         }
         let mut properties = self.properties.project_topology(
             &instance_sources,
-            &targets.atom_slots,
+            &atom_slots,
             &targets.bond_slots,
             &chain_slots,
             &residue_slots,
@@ -333,7 +342,7 @@ impl TopologyEditor {
         let target = Arc::new(builder.build()?);
         Ok(TopologyPublication {
             topology: target,
-            atom_slots: targets.atom_slots,
+            atom_slots,
             bond_slots: targets.bond_slots,
         })
     }
@@ -348,10 +357,9 @@ impl TopologyEditor {
     ) {
         for (source, local) in atoms {
             let handle = handles.0[&source];
-            targets
-                .atoms
-                .insert(handle, InstanceAtomId::new(instance, local));
-            targets.atom_slots.push(self.atoms[&handle].slot);
+            let target = InstanceAtomId::new(instance, local);
+            targets.atoms.insert(handle, target);
+            targets.atom_order.push((self.atoms[&handle].slot, target));
         }
         for source in bonds {
             let handle = handles.1[&source];

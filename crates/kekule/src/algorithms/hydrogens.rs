@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::core::{
-    Atom, AtomId, BondId, BondOrder, Element, HydrogenDeclaration, Molecule, MoleculeEditor,
-    MoleculeError, MoleculePublicationError, StereoCarrier, StereoElementId, StereoElementKind,
+    Atom, AtomId, BondId, BondOrder, Element, HydrogenDeclaration, Molecule,
+    MoleculeCorrespondence, MoleculeEditor, MoleculeError, MoleculePublicationError, StereoCarrier,
+    StereoElementId, StereoElementKind,
 };
 
 use super::{perceive_valence_with_options, ValenceModel, ValenceOptions};
@@ -47,6 +48,9 @@ pub struct AddedHydrogen {
 }
 
 /// Complete mapping produced by a successful addition.
+///
+/// Addition deletes nothing: existing atom IDs are unchanged and each added
+/// hydrogen receives a new ID after them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AddHydrogensReport {
     pub added: Vec<AddedHydrogen>,
@@ -99,11 +103,17 @@ pub struct HydrogenCountAdjustment {
 }
 
 /// Complete topology mapping and count reconstruction from removal.
+///
+/// IDs in `removed`, `retained`, and `adjustments` refer to the input molecule.
+/// The transformed molecule is published with dense IDs, so surviving atoms
+/// after a removed hydrogen are renumbered; `correspondence` maps every
+/// surviving input ID to its ID in the transformed molecule.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RemoveHydrogensReport {
     pub removed: Vec<RemovedHydrogen>,
     pub retained: Vec<RetainedHydrogen>,
     pub adjustments: Vec<HydrogenCountAdjustment>,
+    pub correspondence: MoleculeCorrespondence,
 }
 
 /// Failure from planning or committing a transactional hydrogen transform.
@@ -293,6 +303,7 @@ pub(crate) fn remove_hydrogens_from_molecule(
 
     if by_parent.is_empty() {
         report.retained.sort_by_key(|entry| entry.hydrogen);
+        report.correspondence = MoleculeCorrespondence::identity(molecule);
         return Ok(report);
     }
 
@@ -343,8 +354,9 @@ pub(crate) fn remove_hydrogens_from_molecule(
     report.removed.sort_by_key(|entry| entry.hydrogen);
     report.retained.sort_by_key(|entry| entry.hydrogen);
     report.adjustments.sort_by_key(|entry| entry.parent);
-    let published = editor.finish()?;
+    let (published, correspondence) = editor.finish_with_correspondence()?;
     *molecule = published;
+    report.correspondence = correspondence;
     Ok(report)
 }
 

@@ -1101,11 +1101,34 @@ impl ModelBuilder {
         })
     }
 
-    pub fn atom_ids(&self) -> impl Iterator<Item = InstanceAtomId> + '_ {
+    /// Staged qualified atom IDs in current dense order.
+    pub fn atom_ids(&self) -> &[InstanceAtomId] {
         self.topology.atom_ids()
     }
-    pub fn bond_ids(&self) -> impl Iterator<Item = InstanceBondId> + '_ {
+    /// Staged qualified bond IDs in dense order.
+    pub fn bond_ids(&self) -> &[InstanceBondId] {
         self.topology.bond_ids()
+    }
+    /// Replaces the dense atom order with a permutation of every staged atom.
+    ///
+    /// Positions, realization atom properties, and staged topology atom
+    /// properties move with their atoms. See [`TopologyBuilder::set_atom_order`].
+    /// A rejected order leaves the builder unchanged.
+    pub fn set_atom_order(
+        &mut self,
+        order: impl IntoIterator<Item = InstanceAtomId>,
+    ) -> Result<(), ModelBuildError> {
+        let previous = self.topology.reorder_atoms(order)?;
+        self.positions = self
+            .positions
+            .select_indices(&previous)
+            .expect("staged positions follow staged atoms");
+        *self.properties.atoms_mut() = self
+            .properties
+            .atoms()
+            .select_indices(&previous)
+            .expect("staged realization atom rows follow staged atoms");
+        Ok(())
     }
     pub fn atom_property(
         &self,
@@ -1184,14 +1207,12 @@ impl ModelBuilder {
     }
     fn atom_index(&self, atom: InstanceAtomId) -> Result<usize, ModelBuildError> {
         self.topology
-            .atom_ids()
-            .position(|id| id == atom)
+            .atom_index(atom)
             .ok_or_else(|| ModelError::InvalidAtomId(atom).into())
     }
     fn bond_index(&self, bond: InstanceBondId) -> Result<usize, ModelBuildError> {
         self.topology
-            .bond_ids()
-            .position(|id| id == bond)
+            .bond_index(bond)
             .ok_or_else(|| ModelError::InvalidBondId(bond).into())
     }
     fn extend_properties(&mut self, added_bonds: usize) {

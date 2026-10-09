@@ -252,7 +252,8 @@ impl ModelEditor {
         Ok(self.topology.set_molecule_class(atom, class)?)
     }
 
-    /// Copies dense positions in current live atom-handle order.
+    /// Copies positions in live atom-handle order, which is the dense atom order
+    /// of the model this draft publishes.
     pub fn positions(&self) -> Positions {
         Positions::from_canonical_values(
             self.atom_ids()

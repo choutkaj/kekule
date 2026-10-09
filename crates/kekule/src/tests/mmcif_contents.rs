@@ -632,6 +632,9 @@ ATOM 2 C C1 GLY Z 1 1 1.0 0.0 0.0 1
     .expect("one connected molecule may retain two source asymmetries");
     let round_trip = mmcif::interpret(&parse(&written), MmcifInterpretOptions::default()).unwrap();
     assert_eq!(round_trip.topology().instance_count(), 1);
+    // Rows are written in dense order, which keeps the source atom-site order
+    // (A before Z). Without a written polymer sequence scheme, the reread
+    // hierarchy orders chains by first row; atom order and coordinates match.
     assert_eq!(
         round_trip
             .topology()
@@ -639,7 +642,18 @@ ATOM 2 C C1 GLY Z 1 1 1.0 0.0 0.0 1
             .chains()
             .map(|(_, chain)| chain.label_id())
             .collect::<Vec<_>>(),
-        ["Z", "A"]
+        ["A", "Z"]
+    );
+    assert_eq!(round_trip.model().positions(), result.model().positions());
+    let elements = |topology: &crate::topology::Topology| {
+        topology
+            .atoms()
+            .map(|(_, atom)| atom.element)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        elements(round_trip.topology()),
+        elements(result.model().topology())
     );
     assert_eq!(round_trip.topology().bond_count(), 1);
 }

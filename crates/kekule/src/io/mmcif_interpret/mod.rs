@@ -262,6 +262,18 @@ fn publish_model(
             qualified_atom_data.extend(atom_data);
         }
     }
+    // Dense atom order follows the selected atom-site rows, so coordinate
+    // files in this row order address the same atoms.
+    let mut rows = report
+        .instances
+        .iter()
+        .flat_map(|instance| instance.atoms.iter())
+        .map(|atom| (atom.source_order, atom.atom))
+        .collect::<Vec<_>>();
+    rows.sort_unstable_by_key(|&(row, _)| row);
+    builder
+        .set_atom_order(rows.into_iter().map(|(_, atom)| atom))
+        .map_err(graph_error)?;
     *builder.topology_builder_mut().hierarchy_mut() =
         build_topology_hierarchy(&report.instances, polymer_asym_order)?;
     let mut model = builder.build().map_err(graph_error)?;

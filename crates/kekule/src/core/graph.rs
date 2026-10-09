@@ -2,9 +2,10 @@ use super::{Atom, Bond, BondId, StereoElement, StereoGroup};
 
 /// Authoritative represented chemistry for one molecule.
 ///
-/// `Graph` owns stable local atom and bond slots, adjacency, represented
-/// stereochemistry. Structural mutation is kept
-/// crate-private and is published only through `MoleculeEditor::finish`.
+/// `Graph` owns local atom and bond slots, adjacency, and represented
+/// stereochemistry. Structural mutation is kept crate-private; editing drafts
+/// may hold deleted slots, which `MoleculeEditor::finish` removes by
+/// renumbering every ID space densely.
 #[derive(Debug, Clone, Default)]
 pub struct Graph {
     pub(crate) atoms: Vec<Option<Atom>>,
@@ -26,12 +27,12 @@ impl PartialEq for Graph {
 }
 
 impl Graph {
-    /// Number of live atoms. Stable slot tombstones are not counted.
+    /// Number of live atoms. Deleted draft slots are not counted.
     pub fn atom_count(&self) -> usize {
         self.atoms.iter().flatten().count()
     }
 
-    /// Number of live bonds. Stable slot tombstones are not counted.
+    /// Number of live bonds. Deleted draft slots are not counted.
     pub fn bond_count(&self) -> usize {
         self.bonds.iter().flatten().count()
     }

@@ -253,7 +253,7 @@ fn localized_aromatic_valence_replaces_previous_valence_transactionally() {
         )
         .expect("valid previous valence")
         .with_rings(
-            RingMembership::from_slot_flags(vec![true; atom_ids.len()], vec![true; bond_ids.len()]),
+            RingMembership::from_flags(vec![true; atom_ids.len()], vec![true; bond_ids.len()]),
             None,
         )
         .with_aromaticity(AromaticityModel::RdkitLike, atom_ids.clone(), bond_ids)

@@ -11,7 +11,7 @@ use crate::core::{
     MoleculeEditor, StereoCarrier, StereoElement, StereoElementId, StereoElementKind,
     TetrahedralOrientation, TetrahedralStereo,
 };
-use crate::topology::{Topology, TopologyBuildError};
+use crate::topology::{InstanceAtomId, Topology, TopologyBuildError, TopologyBuilder};
 
 use super::cx::{CxFeatures, CxStereoGroup};
 use super::parse::{
@@ -208,10 +208,29 @@ impl SmilesInterpretation {
 
     /// Projects every source component into one topology occurrence.
     ///
-    /// Component order becomes authoritative topology instance order. The
-    /// projection fabricates no hierarchy and runs no perception.
+    /// Component order becomes authoritative topology instance order. Dense
+    /// atom order is the source atom order ([`SmilesAtomMapping::source_index`]),
+    /// which interleaves components when ring closures join atoms across dots.
+    /// The projection fabricates no hierarchy and runs no perception.
     pub fn into_topology(self) -> Result<Topology, TopologyBuildError> {
-        Topology::from_molecules(&self.into_molecules())
+        let mut builder = TopologyBuilder::new();
+        builder.reserve_definitions(self.components.len())?;
+        builder.reserve_instances(self.components.len())?;
+        let mut source = Vec::new();
+        for component in self.components {
+            let (molecule, report) = component.into_parts();
+            let definition = builder.add_molecule_definition_owned(molecule)?;
+            let instance = builder.add_instance(definition)?;
+            source.extend(report.atom_mappings.iter().map(|mapping| {
+                (
+                    mapping.source_index,
+                    InstanceAtomId::new(instance, mapping.atom),
+                )
+            }));
+        }
+        source.sort_unstable_by_key(|&(index, _)| index);
+        builder.set_atom_order(source.into_iter().map(|(_, atom)| atom))?;
+        builder.build()
     }
 
     /// Convenience access for callers that require exactly one component.
@@ -537,18 +556,37 @@ fn interpret_smiles_program_component(
     })?;
     debug_assert!(publication_report.warnings.is_empty());
     super::cx::install_stereo_groups(&mut editor, &source_to_atom, &component.groups)?;
-    let molecule = editor.finish().map_err(|error| SmilesInterpretError {
-        offset: atom_mappings
-            .first()
-            .map_or(end_offset, |mapping| mapping.source_span.start),
-        message: error.to_string(),
-    })?;
+    let (molecule, ids) =
+        editor
+            .finish_with_correspondence()
+            .map_err(|error| SmilesInterpretError {
+                offset: atom_mappings
+                    .first()
+                    .map_or(end_offset, |mapping| mapping.source_span.start),
+                message: error.to_string(),
+            })?;
+    // Publication renumbers IDs densely and may prune canonicalized stereo.
+    for mapping in &mut atom_mappings {
+        mapping.atom = ids
+            .atom(mapping.atom)
+            .expect("interpreted atoms survive publication");
+    }
+    for mapping in &mut bond_mappings {
+        mapping.bond = ids
+            .bond(mapping.bond)
+            .expect("interpreted bonds survive publication");
+    }
+    let created_stereo_elements = publication_report
+        .created_stereo_elements
+        .into_iter()
+        .filter_map(|element| ids.stereo_element(element))
+        .collect();
     Ok((
         molecule,
         SmilesInterpretationReport {
             atom_mappings,
             bond_mappings,
-            created_stereo_elements: publication_report.created_stereo_elements,
+            created_stereo_elements,
         },
     ))
 }

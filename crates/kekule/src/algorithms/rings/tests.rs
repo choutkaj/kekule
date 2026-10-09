@@ -147,39 +147,42 @@ fn cycles_and_membership_match_an_independent_oracle_under_numbering_changes() {
 }
 
 #[test]
-fn ring_limits_include_deleted_storage_before_allocating_scratch_arrays() {
+fn ring_limits_bound_compact_storage_after_deletions() {
     let mut editor = graph(4, &[(0, 1), (1, 2), (2, 0), (0, 3)]).into_editor();
     editor.delete_atom(AtomId::new(3)).unwrap();
     let mut molecule = editor.finish().unwrap();
+    // Publication drops the deleted slots, so scratch storage equals live counts.
+    assert_eq!(molecule.graph().atom_slot_count(), 3);
+    assert_eq!(molecule.graph().bond_slot_count(), 3);
     perceive_ring_set(&mut molecule).unwrap();
     let previous = molecule.perception().clone();
     for (options, resource, observed, limit) in [
         (
             RingPerceptionOptions {
-                max_atoms: 3,
+                max_atoms: 2,
                 ..Default::default()
             },
             "atoms",
-            4,
             3,
+            2,
         ),
         (
             RingPerceptionOptions {
-                max_bonds: 3,
+                max_bonds: 2,
                 ..Default::default()
             },
             "bonds",
-            4,
             3,
+            2,
         ),
         (
             RingPerceptionOptions {
-                max_total_work: 7,
+                max_total_work: 5,
                 ..Default::default()
             },
             "total work",
-            8,
-            7,
+            6,
+            5,
         ),
     ] {
         assert_eq!(
@@ -332,7 +335,7 @@ fn high_degree_graph_uses_rdkit_depth_first_fallback() {
     assert!(molecule
         .ring_membership()
         .unwrap()
-        .bond_slot_flags()
+        .bond_flags()
         .iter()
         .all(|flag| *flag));
 }

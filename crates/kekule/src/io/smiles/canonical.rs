@@ -90,12 +90,19 @@ fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, Mol
     // Metadata does not affect a molecular identifier. Use the common hydrogen
     // transform so carrier remapping and count reconstruction have one owner.
     normalized.clear_properties();
-    normalized.remove_hydrogens().map_err(|error| {
+    let removal = normalized.remove_hydrogens().map_err(|error| {
         MolWriteError::new(format!(
             "canonical SMILES hydrogen normalization requires known hydrogen perception: {error}"
         ))
     })?;
-    restore_projection_aromaticity(&mut normalized, mol.perception());
+    // Removal publishes dense IDs; translate the original aromatic system.
+    let ids = &removal.correspondence;
+    restore_projection_aromaticity(
+        &mut normalized,
+        mol.perception(),
+        |atom| ids.atom(atom),
+        |bond| ids.bond(bond),
+    );
     Ok(normalized)
 }
 
@@ -112,23 +119,28 @@ fn canonical_projection_graph(
         projected.graph.atoms[atom_id.index()] = Some(payload);
         projected.set_inferred_hydrogens(atom_id, inferred_hydrogens);
     }
-    restore_projection_aromaticity(&mut projected, mol.perception());
+    restore_projection_aromaticity(&mut projected, mol.perception(), Some, Some);
     Ok(projected)
 }
 
-fn restore_projection_aromaticity(projected: &mut Molecule, original: &Perception) {
+fn restore_projection_aromaticity(
+    projected: &mut Molecule,
+    original: &Perception,
+    atom_id: impl Fn(AtomId) -> Option<AtomId>,
+    bond_id: impl Fn(BondId) -> Option<BondId>,
+) {
     // Changing the storage location of an unchanged hydrogen count invalidates
     // aromaticity through the ordinary edit helper. This private export copy
     // retains the original perceived aromatic system: isotope/H projection
     // neither changes its valence nor selects another aromaticity model.
     if let Some(aromaticity) = original.aromaticity_state() {
         projected.begin_aromaticity(aromaticity.model());
-        for atom in aromaticity.atoms() {
+        for atom in aromaticity.atoms().filter_map(&atom_id) {
             if projected.atom(atom).is_ok() {
                 projected.set_atom_aromatic(atom, true);
             }
         }
-        for bond in aromaticity.bonds() {
+        for bond in aromaticity.bonds().filter_map(&bond_id) {
             if projected.bond(bond).is_ok() {
                 projected.set_bond_aromatic(bond, true);
             }
@@ -601,7 +613,7 @@ mod resource_tests {
     }
 
     #[test]
-    fn canonical_export_checks_deleted_slots_before_dense_scratch_allocation() {
+    fn canonical_export_bounds_compact_graph_storage_before_scratch_allocation() {
         let mut editor = MoleculeEditor::new();
         let carbon = Atom::new(Element::from_symbol("C").unwrap());
         editor.add_atom(carbon.clone()).unwrap();
@@ -609,9 +621,17 @@ mod resource_tests {
             let deleted = editor.add_atom(carbon.clone()).unwrap();
             editor.delete_atom(deleted).unwrap();
         }
-        let molecule = editor.finish().unwrap();
-        assert_eq!(molecule.atom_count(), 1);
-        let error = write_canonical_smiles_with_limits(&molecule, usize::MAX, 4).unwrap_err();
+        let mut molecule = editor.finish().unwrap();
+        // Deleted draft slots do not survive publication into scratch sizing.
+        assert_eq!(molecule.graph().atom_slot_count(), 1);
+        molecule.perceive().unwrap();
+        assert_eq!(
+            write_canonical_smiles_with_limits(&molecule, usize::MAX, 1).unwrap(),
+            "C"
+        );
+        let mut chain = crate::smiles::to_molecules("CCC").unwrap().pop().unwrap();
+        chain.perceive().unwrap();
+        let error = write_canonical_smiles_with_limits(&chain, usize::MAX, 4).unwrap_err();
         assert_eq!(error.kind(), MolWriteErrorKind::ResourceLimit);
         assert!(error.to_string().contains("graph storage"));
     }

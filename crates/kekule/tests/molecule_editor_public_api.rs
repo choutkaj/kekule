@@ -535,3 +535,78 @@ fn failed_finish_returns_exact_draft_for_repair() {
     editor.add_bond(a, b, BondOrder::Single).unwrap();
     assert_eq!(editor.try_finish().unwrap().atom_count(), 2);
 }
+
+#[test]
+fn publication_compacts_every_id_space_and_carries_annotations() {
+    let mut source = molecule("[2H]C[C@@H](F)Cl |&1:2|");
+    source.perceive().unwrap();
+    let tag = key("source_atom");
+    for id in source.atom_ids().collect::<Vec<_>>() {
+        source
+            .set_atom_property(id, tag.clone(), Some(PropertyValue::Int(id.raw().into())))
+            .unwrap();
+    }
+    let element = source.stereo_element_ids().next().unwrap();
+    let (group, _) = source.stereo_groups().next().unwrap();
+
+    let mut editor = source.edit();
+    // Leave deleted slots in every identifier space before the survivors.
+    editor.delete_atom(AtomId::new(0)).unwrap();
+    let kind = editor.remove_stereo_group(group).unwrap().kind;
+    let regrouped = editor
+        .add_stereo_group(StereoGroup {
+            kind,
+            members: vec![element],
+        })
+        .unwrap();
+    assert_eq!(regrouped, StereoGroupId::new(1));
+    let (published, ids) = editor.finish_with_correspondence().unwrap();
+
+    assert_eq!(ids.atom(AtomId::new(0)), None);
+    assert_eq!(ids.bond(BondId::new(0)), None);
+    for raw in 1..5 {
+        assert_eq!(ids.atom(AtomId::new(raw)), Some(AtomId::new(raw - 1)));
+    }
+    assert_eq!(ids.stereo_group(group), None);
+    assert_eq!(ids.stereo_group(regrouped), Some(StereoGroupId::new(0)));
+    assert_eq!(
+        published.atom_ids().collect::<Vec<_>>(),
+        (0..4).map(AtomId::new).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        published.bond_ids().collect::<Vec<_>>(),
+        (0..3).map(BondId::new).collect::<Vec<_>>()
+    );
+    assert_eq!(published.atom_properties().len(), published.atom_count());
+    assert_eq!(published.bond_properties().len(), published.bond_count());
+    for (source_id, target) in ids.atoms() {
+        assert_eq!(
+            published.atom_property(*target, &tag).unwrap(),
+            Some(PropertyValue::Int(source_id.raw().into()))
+        );
+    }
+    let element = ids.stereo_element(element).unwrap();
+    let StereoElementKind::Tetrahedral(stereo) = &published.stereo_element(element).unwrap().kind
+    else {
+        panic!("tetrahedral stereo survives");
+    };
+    assert_eq!(stereo.center, AtomId::new(1));
+    assert!(stereo
+        .carriers
+        .contains(&StereoCarrier::Atom(AtomId::new(0))));
+    assert_eq!(
+        published.stereo_element(element).unwrap().group,
+        Some(StereoGroupId::new(0))
+    );
+    let groups = published.stereo_groups().collect::<Vec<_>>();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].0, StereoGroupId::new(0));
+    assert_eq!(groups[0].1.members, vec![element]);
+    // Renumbering atoms invalidates perception like the deletion that caused it.
+    assert_eq!(published.perception(), &Perception::default());
+    // An unchanged draft publishes the identity and retains perception.
+    let (again, identity) = published.edit().finish_with_correspondence().unwrap();
+    assert_eq!(identity.atoms().len(), published.atom_count());
+    assert!(identity.atoms().iter().all(|(from, to)| from == to));
+    assert_eq!(again, published);
+}

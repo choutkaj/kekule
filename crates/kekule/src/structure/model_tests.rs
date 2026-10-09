@@ -26,12 +26,17 @@ fn two_atom_small(distance: f64) -> (Molecule, Positions, AtomId, AtomId, BondId
         ANGSTROM,
     ))
     .unwrap();
+    let (molecule, ids) = graph
+        .finish_with_correspondence()
+        .expect("connected test molecule");
+    // Publication drops the deleted slot and renumbers later atoms densely.
+    assert_eq!(ids.atom(tombstone), None);
     (
-        graph.finish().expect("connected test molecule"),
+        molecule,
         positions,
-        a,
-        b,
-        bond,
+        ids.atom(a).unwrap(),
+        ids.atom(b).unwrap(),
+        ids.bond(bond).unwrap(),
     )
 }
 
@@ -45,7 +50,7 @@ fn one_atom_macro() -> (Molecule, Positions, AtomId) {
 }
 
 #[test]
-fn model_preserves_local_ids_and_dense_round_trips() {
+fn model_uses_compact_local_ids_and_dense_round_trips() {
     let (small, positions, a, b, _) = two_atom_small(1.5);
     let mut builder = Model::builder();
     let instance = builder.add_molecule(&small, &positions).unwrap();
@@ -63,9 +68,10 @@ fn model_preserves_local_ids_and_dense_round_trips() {
         model.position(qb).unwrap(),
         Quantity::new(Point3::new(0.15, 0.0, 0.0), CANONICAL_LENGTH_UNIT)
     );
+    assert_eq!((a, b), (AtomId::new(0), AtomId::new(1)));
     assert!(model
         .topology()
-        .atom(InstanceAtomId::new(instance, AtomId::new(1)))
+        .atom(InstanceAtomId::new(instance, AtomId::new(2)))
         .is_err());
 }
 

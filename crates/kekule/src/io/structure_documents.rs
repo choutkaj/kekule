@@ -434,6 +434,9 @@ pub enum MolfileInterpretationWarning {
 }
 
 /// One final canonical model and source reports in molecule-instance order.
+///
+/// Each connected component is one instance. Dense atom order is the source
+/// atom-block order, so components may interleave in the dense order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MolfileInterpretation {
     model: Model,
@@ -484,6 +487,7 @@ fn publish_molfile_components(
 ) -> Result<MolfileInterpretation, ModelBuildError> {
     let mut builder = ModelBuilder::new();
     let mut reports = Vec::with_capacity(components.len());
+    let mut lines = Vec::new();
     let chain = builder
         .topology_builder_mut()
         .hierarchy_mut()
@@ -506,8 +510,17 @@ fn publish_molfile_components(
                 crate::topology::AtomSiteMetadata::default(),
             )?;
         }
+        lines.extend(report.atom_mappings.iter().map(|mapping| {
+            (
+                mapping.source_line,
+                crate::topology::InstanceAtomId::new(instance, mapping.atom),
+            )
+        }));
         reports.push(report);
     }
+    // Dense atom order follows the atom block, even when components interleave.
+    lines.sort_unstable_by_key(|&(line, _)| line);
+    builder.set_atom_order(lines.into_iter().map(|(_, atom)| atom))?;
     Ok(MolfileInterpretation {
         model: builder.build()?,
         reports,
@@ -756,7 +769,7 @@ pub fn interpret_molfile_document(
         .map(|record| record.number)
         .collect();
     let mut components = Vec::new();
-    for raw in partition_molfile_staging(staging, &geometry, &source_stereo)? {
+    for mut raw in partition_molfile_staging(staging, &geometry, &source_stereo)? {
         let mut editor = raw.editor;
         let mut publication_report = canonicalize_molecule_for_publication(
             editor.working_mut(),
@@ -798,15 +811,34 @@ pub fn interpret_molfile_document(
             );
         }
         install_molfile_stereo_groups(editor.working_mut(), &raw.atom_map, stereo_groups)?;
-        let molecule = editor.finish().map_err(|error| MolfileInterpretError {
-            line: raw
-                .old_atoms
-                .first()
-                .and_then(|atom| atom_lines.get(atom.index()))
-                .copied()
-                .unwrap_or(1),
-            message: error.to_string(),
-        })?;
+        let (molecule, ids) =
+            editor
+                .finish_with_correspondence()
+                .map_err(|error| MolfileInterpretError {
+                    line: raw
+                        .old_atoms
+                        .first()
+                        .and_then(|atom| atom_lines.get(atom.index()))
+                        .copied()
+                        .unwrap_or(1),
+                    message: error.to_string(),
+                })?;
+        // Publication renumbers IDs densely and may prune canonicalized stereo.
+        for target in raw.atom_map.values_mut() {
+            *target = ids
+                .atom(*target)
+                .expect("interpreted atoms survive publication");
+        }
+        for target in raw.bond_map.values_mut() {
+            *target = ids
+                .bond(*target)
+                .expect("interpreted bonds survive publication");
+        }
+        publication_report.created_stereo_elements = publication_report
+            .created_stereo_elements
+            .into_iter()
+            .filter_map(|element| ids.stereo_element(element))
+            .collect();
         let positions =
             raw.geometry
                 .to_positions(&molecule)
@@ -824,6 +856,7 @@ pub fn interpret_molfile_document(
             .into_iter()
             .map(|warning| match warning {
                 NormalizationWarning::ConflictingAtropisomericWedgeMarks { axis, mark_count } => {
+                    let axis = ids.bond(axis).expect("warned bonds survive publication");
                     let source_line = raw
                         .bond_map
                         .iter()
@@ -836,6 +869,7 @@ pub fn interpret_molfile_document(
                     }
                 }
                 NormalizationWarning::AmbiguousTetrahedralWedgeMarks { center, mark_count } => {
+                    let center = ids.atom(center).expect("warned atoms survive publication");
                     let source_line = raw
                         .atom_map
                         .iter()

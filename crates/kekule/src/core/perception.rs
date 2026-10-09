@@ -40,7 +40,7 @@ pub enum RingBasisModel {
     DepthFirstFallback,
 }
 
-/// Cycle membership over the stable atom and bond slots of a molecule.
+/// Cycle membership indexed by a molecule's atom and bond IDs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RingMembership {
     pub(crate) atom_flags: Vec<bool>,
@@ -48,24 +48,24 @@ pub struct RingMembership {
 }
 
 impl RingMembership {
-    /// Constructs detached ring membership over complete stable atom and bond slots.
+    /// Constructs detached ring membership with one flag per atom and bond ID.
     ///
-    /// Slot lengths and live references are checked when the containing
-    /// [`Perception`] is installed on a molecule.
-    pub fn from_slot_flags(atom_flags: Vec<bool>, bond_flags: Vec<bool>) -> Self {
+    /// Lengths and references are checked when the containing [`Perception`]
+    /// is installed on a molecule.
+    pub fn from_flags(atom_flags: Vec<bool>, bond_flags: Vec<bool>) -> Self {
         Self {
             atom_flags,
             bond_flags,
         }
     }
 
-    /// Returns the complete stable atom-slot flags, including tombstones.
-    pub fn atom_slot_flags(&self) -> &[bool] {
+    /// Returns one ring-membership flag per atom, indexed by [`AtomId::index`].
+    pub fn atom_flags(&self) -> &[bool] {
         &self.atom_flags
     }
 
-    /// Returns the complete stable bond-slot flags, including tombstones.
-    pub fn bond_slot_flags(&self) -> &[bool] {
+    /// Returns one ring-membership flag per bond, indexed by [`BondId::index`].
+    pub fn bond_flags(&self) -> &[bool] {
         &self.bond_flags
     }
 
@@ -979,8 +979,8 @@ fn validate_ring_state(
     state: &RingPerception,
 ) -> std::result::Result<(), PerceptionInstallError> {
     let membership = &state.membership;
-    let atom_slots = membership.atom_slot_flags().len();
-    let bond_slots = membership.bond_slot_flags().len();
+    let atom_slots = membership.atom_flags().len();
+    let bond_slots = membership.bond_flags().len();
     check_install_component_capacity(atom_slots, PerceptionComponent::RingAtomSlots)?;
     check_install_component_capacity(bond_slots, PerceptionComponent::RingBondSlots)?;
     if atom_slots != molecule.graph.atoms.len() {
@@ -995,7 +995,7 @@ fn validate_ring_state(
             actual: bond_slots,
         });
     }
-    for (raw, in_ring) in (0..=u32::MAX).zip(membership.atom_slot_flags()) {
+    for (raw, in_ring) in (0..=u32::MAX).zip(membership.atom_flags()) {
         if *in_ring
             && molecule
                 .graph
@@ -1007,7 +1007,7 @@ fn validate_ring_state(
             return Err(PerceptionInstallError::InvalidAtomId(AtomId::new(raw)));
         }
     }
-    for (raw, in_ring) in (0..=u32::MAX).zip(membership.bond_slot_flags()) {
+    for (raw, in_ring) in (0..=u32::MAX).zip(membership.bond_flags()) {
         if *in_ring
             && molecule
                 .graph

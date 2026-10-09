@@ -35,7 +35,9 @@ See the [crate overview](crates/kekule/src/lib.rs),
 ## Represented and derived chemistry
 
 `Graph` is authoritative atom, bond, connectivity, and represented stereo state.
-Local `AtomId` and `BondId` identify entities within one molecule. Atom chemistry
+Local `AtomId` and `BondId` identify entities within one molecule. Published IDs
+are dense in every ID space; drafts may hold deleted slots, and publication
+renumbers survivors in draft order and reports the correspondence. Atom chemistry
 includes element, isotope, charge, radical, hydrogen declaration, and atom map;
 annotations use properties instead of extending every atom or bond with a map.
 Bonds carry localized orders. Aromaticity is perceived state, not a bond order.
@@ -98,7 +100,12 @@ chemical owner.
 System atom and bond identities qualify a molecule-local ID with its instance.
 Hierarchy chain, residue, and atom-site IDs are topology-global. Dense indices
 are a separate coordinate/property ordering, never interchangeable with semantic
-IDs. Publication establishes complete, deterministic mappings between them.
+IDs. Publication establishes complete, deterministic, constant-time mappings
+between them. Dense atom order is stored, not derived: it is chosen at
+publication and need not keep an instance's atoms contiguous. Format
+interpretation keeps source atom-row order, builders default to instance order
+or accept an explicit permutation, and editors and subsets keep surviving atoms
+in source order. Dense bond order is instance order, then local bond ID.
 
 `Hierarchy` is owned exactly once by `Topology`. Atom sites refer to live
 `InstanceAtomId` values; they do not copy atoms. One chain or residue may span
@@ -154,7 +161,9 @@ are preserved; new atoms require supplied coordinates, never invented geometry.
 Geometry-only edits retain the exact shared topology.
 
 Append-oriented construction preserves existing IDs and dense order. General
-structural edits publish deterministic new layouts. Hierarchy is filtered and
+structural edits keep surviving atoms in source dense order and append new
+atoms in creation order, while repartitioned molecules receive deterministic new
+definitions and instances. Hierarchy is filtered and
 empty nodes are pruned; its partition is independent of molecule splits/merges.
 Per-entity annotations follow the operation's explicit correspondence. Generic
 owner annotations are conservatively cleared when their owner changes, including
@@ -272,6 +281,9 @@ Consuming frame projections transfer payloads rather than cloning them.
 File readers receive the topology and interpret file atom index as its dense atom
 index. They validate counts and available metadata; equal counts alone do not
 prove atom identity. Callers may independently validate semantic atom order.
+Because interpretation keeps source atom-row order and structure writers emit
+dense order, a coordinate file written in a structure file's row order addresses
+the same atoms through that file's topology.
 Streaming buffers bind to the exact topology and publish complete frames
 transactionally. Eager reads use the same decoder path through clean EOF.
 Path writers stage output and publish only a completed nonempty trajectory;
@@ -350,7 +362,8 @@ owners. See the [public format namespaces](crates/kekule/src/lib.rs),
 
 Writers live in format namespaces and accept the richest supported source.
 Models share a borrowed realization path; string-returning conveniences wrap sink
-writers. Unsupported representational content must fail explicitly. There is no
+writers. Coordinate-bearing writers emit atoms in dense order. Unsupported
+representational content must fail explicitly. There is no
 universal save trait or implicit trajectory-to-structure export.
 
 - SMILES exports represented chemistry and supported stereo. Canonical output

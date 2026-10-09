@@ -392,7 +392,7 @@ fn errors_leave_every_part_of_model_unchanged() {
 #[test]
 fn original_entities_properties_and_existing_water_survive() {
     let mut builder = model("[H]O[H]").into_builder();
-    let ids: Vec<_> = builder.topology_builder().atom_ids().collect();
+    let ids = builder.topology_builder().atom_ids().to_vec();
     let chain = builder.hierarchy_mut().add_chain("SOL1", None).unwrap();
     let residue = builder
         .hierarchy_mut()

@@ -60,7 +60,7 @@ fn installed(topology: &Topology) -> Vec<Perception> {
 }
 
 #[test]
-fn perceived_topology_preserves_sparse_ids_reuse_hierarchy_and_annotations() {
+fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
     let mut editor = MoleculeEditor::new();
     let carbon = editor
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
@@ -75,7 +75,13 @@ fn perceived_topology_preserves_sparse_ids_reuse_hierarchy_and_annotations() {
     let deleted_bond = editor.add_bond(carbon, oxygen, BondOrder::Single).unwrap();
     editor.delete_bond(deleted_bond).unwrap();
     let bond = editor.add_bond(carbon, oxygen, BondOrder::Double).unwrap();
-    let mut molecule = editor.finish().unwrap();
+    let (mut molecule, ids) = editor.finish_with_correspondence().unwrap();
+    // Publication renumbers the surviving atoms and bond densely.
+    let (carbon, oxygen, bond) = (
+        ids.atom(carbon).unwrap(),
+        ids.atom(oxygen).unwrap(),
+        ids.bond(bond).unwrap(),
+    );
     molecule
         .insert_property(key(), PropertyValue::Int(1))
         .unwrap();

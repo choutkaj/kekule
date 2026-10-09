@@ -34,9 +34,14 @@ impl TopologyEditor {
         self.properties
             .molecule_instances_mut()
             .resize_missing(instance_start + source.instance_count());
+        // Imported atoms keep the source dense order after existing rows.
+        let bases = (self.properties.atoms().len(), self.properties.bonds().len());
+        let (atom_handles, bond_handles) = GroupIdentity::source_handles(&source);
         for (instance, value) in source.instances() {
             let molecule = &definitions[&value.definition()];
             let group_index = self.groups.len();
+            let identity =
+                GroupIdentity::dense(&source, instance, (&atom_handles, &bond_handles), bases);
             let added = self.register_group(
                 GroupChemistry::Added(Arc::clone(molecule)),
                 molecule,
@@ -45,6 +50,7 @@ impl TopologyEditor {
                 source
                     .molecule_class_overrides
                     .contains_key(&value.definition()),
+                identity,
             );
             self.groups[group_index].as_mut().unwrap().instance_slot =
                 Some(instance_start + instance.index());

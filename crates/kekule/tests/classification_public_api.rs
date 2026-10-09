@@ -326,7 +326,13 @@ fn subsets_reuse_compact_definitions_and_preserve_only_complete_entity_classes()
     editor.add_bond(removed, first, BondOrder::Single).unwrap();
     let bond = editor.add_bond(first, second, BondOrder::Single).unwrap();
     editor.delete_atom(removed).unwrap();
-    let molecule = editor.finish().unwrap();
+    let (molecule, ids) = editor.finish_with_correspondence().unwrap();
+    // Publication compacts the deleted leading slot.
+    let (first, second, bond) = (
+        ids.atom(first).unwrap(),
+        ids.atom(second).unwrap(),
+        ids.bond(bond).unwrap(),
+    );
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(&molecule).unwrap();
     builder
