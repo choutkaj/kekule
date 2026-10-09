@@ -59,6 +59,8 @@ fn assert_xs_close(buffer: &FrameBuffer, expected: &[f64]) {
 fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer {
     let mut frame = FrameBuffer::new(Arc::clone(topology));
     frame
+        .frame_mut()
+        .conformation_mut()
         .set_positions(Quantity::new(
             [
                 Point3::new(0.0 + shift, 1.0, 2.0),
@@ -88,7 +90,7 @@ fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuff
             CANONICAL_FORCE_UNIT,
         )))
         .unwrap();
-    frame.set_cell(Some(
+    frame.frame_mut().conformation_mut().set_cell(Some(
         PeriodicCell::new(
             Quantity::new(
                 [
@@ -103,10 +105,17 @@ fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuff
         .unwrap(),
     ));
     frame
+        .frame_mut()
         .set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))
         .unwrap();
-    frame.set_step(Some(step));
-    frame.insert_property(lambda_key(), lambda(0.125)).unwrap();
+    frame.frame_mut().set_step(Some(step));
+    frame
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(lambda_key(), lambda(0.125))
+        .unwrap();
     frame
 }
 
@@ -136,8 +145,8 @@ fn trr_cell_validation_uses_the_encoded_precision_before_appending_bytes() {
         let mut frame = populated_frame(&topology, 0.0, 0);
         let ordinary_cell = frame.cell().copied();
         writer.write_frame(frame.frame_view()).unwrap();
-        frame.set_step(Some(1));
-        frame.set_cell(Some(cell));
+        frame.frame_mut().set_step(Some(1));
+        frame.frame_mut().conformation_mut().set_cell(Some(cell));
         let before = writer.writer().clone();
         if precision == TrrScalarPrecision::Float32 {
             assert_eq!(
@@ -145,7 +154,7 @@ fn trr_cell_validation_uses_the_encoded_precision_before_appending_bytes() {
                 Some(TrajectoryCodecErrorKind::InvalidFrame)
             );
             assert_eq!(writer.writer(), &before);
-            frame.set_cell(ordinary_cell);
+            frame.frame_mut().conformation_mut().set_cell(ordinary_cell);
         }
         writer.write_frame(frame.frame_view()).unwrap();
         let mut reader = TrrReader::new(
@@ -184,12 +193,16 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
         .unwrap();
         let mut frame = populated_frame(&topology, step as f64, step);
         if step == 1 {
-            frame.set_cell(None);
+            frame.frame_mut().conformation_mut().set_cell(None);
             frame.clear_velocities();
             frame.clear_forces();
         }
         frame
-            .insert_property(lambda_key(), lambda(step as f64 * 0.125))
+            .frame_mut()
+            .conformation_mut()
+            .properties_mut()
+            .owner_mut()
+            .insert(lambda_key(), lambda(step as f64 * 0.125))
             .unwrap();
         writer.write_frame(frame.frame_view()).unwrap();
         combined.extend(writer.finish().unwrap().into_inner());
@@ -241,7 +254,7 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
     let mut sequential = open(f64_total).unwrap();
     let mut expected = Vec::new();
     while sequential.read_next(&mut destination).unwrap() {
-        expected.push(destination.frame_view().to_frame());
+        expected.push(destination.frame_view().payload().clone());
     }
     let mut indexed = open(f64_total).unwrap().into_indexed().unwrap();
     assert_eq!(indexed.frame_count(), Some(3));
@@ -249,9 +262,9 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
     // duplicate scratch, nor publish fields left over from the last read.
     for (random, next) in [(1, 0), (0, 1), (1, 2)] {
         indexed.read_frame(random as u64, &mut destination).unwrap();
-        assert_eq!(destination.frame_view().to_frame(), expected[random]);
+        assert_eq!(destination.frame_view().payload().clone(), expected[random]);
         assert!(indexed.read_next(&mut destination).unwrap());
-        assert_eq!(destination.frame_view().to_frame(), expected[next]);
+        assert_eq!(destination.frame_view().payload().clone(), expected[next]);
     }
     indexed.read_frame(0, &mut destination).unwrap();
     assert!(!indexed.read_next(&mut destination).unwrap());
@@ -272,13 +285,25 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         let first = populated_frame(&topology, 0.0, 4);
         writer.write_frame(first.frame_view()).unwrap();
         let mut second = populated_frame(&topology, 1.0, 5);
-        second.set_cell(None);
+        second.frame_mut().conformation_mut().set_cell(None);
         second.set_velocities::<&[Vector3]>(None).unwrap();
         second.set_forces::<&[Vector3]>(None).unwrap();
-        second.insert_property(lambda_key(), lambda(0.25)).unwrap();
+        second
+            .frame_mut()
+            .conformation_mut()
+            .properties_mut()
+            .owner_mut()
+            .insert(lambda_key(), lambda(0.25))
+            .unwrap();
         writer.write_frame(second.frame_view()).unwrap();
         let mut third = populated_frame(&topology, 2.0, 6);
-        third.insert_property(lambda_key(), lambda(0.375)).unwrap();
+        third
+            .frame_mut()
+            .conformation_mut()
+            .properties_mut()
+            .owner_mut()
+            .insert(lambda_key(), lambda(0.375))
+            .unwrap();
         writer.write_frame(third.frame_view()).unwrap();
         let bytes = writer.finish().unwrap().into_inner();
 
@@ -304,11 +329,18 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
             .frame_view()
             .velocities()
             .unwrap()
+            .values()
             .value()
             .as_ptr();
-        let force_pointer = destination.frame_view().forces().unwrap().value().as_ptr();
+        let force_pointer = destination
+            .frame_view()
+            .forces()
+            .unwrap()
+            .values()
+            .value()
+            .as_ptr();
         assert_eq!(
-            destination.properties().get(&lambda_key()),
+            destination.properties().owner().get(&lambda_key()),
             Some(&lambda(0.125))
         );
         assert!(reader.read_next(&mut destination).unwrap());
@@ -317,7 +349,7 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         assert!(destination.frame_view().velocities().is_none());
         assert!(destination.frame_view().forces().is_none());
         assert_eq!(
-            destination.properties().get(&lambda_key()),
+            destination.properties().owner().get(&lambda_key()),
             Some(&lambda(0.25))
         );
         assert_eq!(destination.positions().values().value().as_ptr(), pointer);
@@ -328,16 +360,23 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
                 .frame_view()
                 .velocities()
                 .unwrap()
+                .values()
                 .value()
                 .as_ptr(),
             velocity_pointer
         );
         assert_eq!(
-            destination.frame_view().forces().unwrap().value().as_ptr(),
+            destination
+                .frame_view()
+                .forces()
+                .unwrap()
+                .values()
+                .value()
+                .as_ptr(),
             force_pointer
         );
         assert_eq!(
-            destination.properties().get(&lambda_key()),
+            destination.properties().owner().get(&lambda_key()),
             Some(&lambda(0.375))
         );
         assert!(!reader.read_next(&mut destination).unwrap());
@@ -438,7 +477,11 @@ fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
     .unwrap();
     let mut destination = populated_frame(&topology, 9.0, 99);
     destination
-        .insert_property(
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("sentinel").unwrap(),
             PropertyValue::Bool(true),
         )
@@ -540,7 +583,12 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
         codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
         Some(TrajectoryCodecErrorKind::UnsupportedField)
     );
-    frame.clear_properties();
+    frame
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .clear();
     writer.write_frame(frame.frame_view()).unwrap();
     let bytes = writer.finish().unwrap().into_inner();
     let mut reader = TrrReader::new(
@@ -682,6 +730,8 @@ fn trr_triplet_fields_reject_nonfinite_input_without_publishing_partial_frames()
         let huge_vectors = [Vector3::new(0.0, 0.0, 1.0e39); 3];
         match field {
             "position" => frame
+                .frame_mut()
+                .conformation_mut()
                 .set_positions(Quantity::new([Point3::new(0.0, 0.0, 1.0e39); 3], NANOMETER))
                 .unwrap(),
             "velocity" => frame
@@ -721,6 +771,8 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
     .unwrap();
     let mut frame = populated_frame(&topology, 0.0, 0);
     frame
+        .frame_mut()
+        .conformation_mut()
         .set_positions(Quantity::new(
             [
                 Point3::new(1.0e39, 0.0, 0.0),
@@ -738,7 +790,11 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
 
     let mut bond_annotated = populated_frame(&topology, 0.0, 0);
     bond_annotated
-        .insert_bond_property_column(
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .bonds_mut()
+        .insert(
             PropertyKey::new("conformational_entropy").unwrap(),
             PropertyColumn::Real {
                 unit: NANOMETER,
@@ -902,10 +958,16 @@ fn independently_generated_mdanalysis_trr_preserves_all_supported_fields() {
     assert!(buffer.frame_view().velocities().is_some());
     assert!(buffer.frame_view().forces().is_some());
     assert_eq!(buffer.frame_view().step(), Some(0));
-    assert_eq!(buffer.properties().get(&lambda_key()), Some(&lambda(0.125)));
+    assert_eq!(
+        buffer.properties().owner().get(&lambda_key()),
+        Some(&lambda(0.125))
+    );
     assert!(reader.read_next(&mut buffer).unwrap());
     assert_xs_close(&buffer, &[0.1, 0.4, 0.7]);
     assert_eq!(buffer.frame_view().step(), Some(1));
-    assert_eq!(buffer.properties().get(&lambda_key()), Some(&lambda(0.25)));
+    assert_eq!(
+        buffer.properties().owner().get(&lambda_key()),
+        Some(&lambda(0.25))
+    );
     assert!(!reader.read_next(&mut buffer).unwrap());
 }

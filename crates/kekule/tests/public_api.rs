@@ -119,15 +119,20 @@ fn smiles_default_options_and_topology_projection_are_consistent() {
 #[test]
 fn smiles_writers_remain_available_through_the_format_namespace() {
     let ethanol = one_smiles("CCO");
-    assert_eq!(smiles::write(&ethanol).expect("SMILES writes"), "CCO");
     assert_eq!(
-        smiles::write_canonical(&ethanol).expect("canonical SMILES writes"),
+        smiles::write(&ethanol, smiles::SmilesWriteOptions::default()).expect("SMILES writes"),
+        "CCO"
+    );
+    assert_eq!(
+        smiles::write(&ethanol, smiles::SmilesWriteOptions::canonical())
+            .expect("canonical SMILES writes"),
         "CCO"
     );
 
     let chiral = one_smiles("F[C@H](Cl)Br");
     assert_eq!(
-        smiles::write_isomeric(&chiral).expect("isomeric SMILES writes"),
+        smiles::write(&chiral, smiles::SmilesWriteOptions::isomeric())
+            .expect("isomeric SMILES writes"),
         "F[C@H](Cl)Br"
     );
 }
@@ -156,7 +161,7 @@ fn model_consumes_explicit_detached_geometry() {
         ANGSTROM,
     ))
     .unwrap();
-    let model = Model::from_molecule(&molecule, &positions).unwrap();
+    let model = Model::from_molecule(molecule.clone(), &positions).unwrap();
     assert_eq!(model.atom_count(), molecule.atom_count());
     assert_eq!(model.positions().len(), molecule.atom_count());
 }

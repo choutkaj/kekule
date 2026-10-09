@@ -2,8 +2,8 @@
 
 use std::io::{Cursor, Seek};
 
-use libfuzzer_sys::fuzz_target;
 use kekule_traj::io::{detect_trajectory_format, TrajectoryFormatHint, TrajectoryIoLimits};
+use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let mut limits = TrajectoryIoLimits::default();

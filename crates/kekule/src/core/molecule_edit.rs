@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::properties::{Properties, PropertyKey, PropertyTable, PropertyValue};
+use crate::properties::{MoleculeProperties, MoleculePropertiesMut};
 
 use super::{
     Atom, AtomId, Bond, BondId, BondOrder, Graph, Molecule, MoleculeCorrespondence, Perception,
@@ -42,6 +42,13 @@ pub enum MoleculePublicationError {
     DisconnectedGraph(MoleculeConnectivityError),
     InvalidGraph(GraphValidationError),
     InvalidStereo(StereoPublicationError),
+    /// A neutral chlorine, bromine, or iodine with only oxygen neighbors and
+    /// explicit valence 3, 5, or 7 still has `X=O` bonds. Canonical chemistry
+    /// separates them as `[X+]-[O-]`; call
+    /// [`MoleculeEditor::normalize_oxohalogens`] before publishing.
+    UnnormalizedOxohalogen {
+        atom: AtomId,
+    },
 }
 
 impl fmt::Display for MoleculePublicationError {
@@ -51,6 +58,11 @@ impl fmt::Display for MoleculePublicationError {
             Self::DisconnectedGraph(error) => write!(formatter, "{error}"),
             Self::InvalidGraph(error) => write!(formatter, "invalid molecular graph: {error}"),
             Self::InvalidStereo(error) => write!(formatter, "invalid represented stereo: {error}"),
+            Self::UnnormalizedOxohalogen { atom } => write!(
+                formatter,
+                "halogen atom{} has oxo double bonds; normalize oxohalogens before publishing",
+                atom.raw()
+            ),
         }
     }
 }
@@ -61,7 +73,7 @@ impl std::error::Error for MoleculePublicationError {
             Self::DisconnectedGraph(error) => Some(error),
             Self::InvalidGraph(error) => Some(error),
             Self::InvalidStereo(error) => Some(error),
-            Self::EmptyGraph => None,
+            Self::EmptyGraph | Self::UnnormalizedOxohalogen { .. } => None,
         }
     }
 }
@@ -211,7 +223,7 @@ impl std::error::Error for StereoPublicationError {}
 impl Molecule {
     /// Starts a detached transaction from this published molecule.
     pub fn edit(&self) -> MoleculeEditor {
-        MoleculeEditor::from_molecule(self)
+        self.clone().into_editor()
     }
 
     /// Moves this molecule into an editor without cloning its graph or properties.
@@ -245,10 +257,10 @@ impl Molecule {
 /// | Task | Operations |
 /// | --- | --- |
 /// | Start | [`Self::new`], [`Molecule::edit`], [`Molecule::into_editor`] |
-/// | Inspect | [`Self::atoms`], [`Self::bonds`], [`Self::neighbors`], [`Self::connected_components`] |
+/// | Inspect | [`Graph`] reads through `Deref` ([`Graph::atoms`], [`Graph::bonds`], [`Graph::neighbors`]), [`Self::connected_components`] |
 /// | Change graph | [`Self::replace_atom`], [`Self::replace_bond`], [`Self::delete_atoms`], [`Self::retain_atoms`] |
 /// | Combine fragments | [`Self::append_molecule`] with returned ID mappings |
-/// | Annotate | [`Self::set_atom_property`], [`Self::set_atom_properties`], [`Self::set_atom_property_column`] and bond counterparts |
+/// | Annotate | [`Self::properties_mut`] (rows are draft atom and bond slots) |
 /// | Edit stereo | [`Self::replace_stereo_element`], [`Self::replace_stereo_group`] |
 ///
 /// Structural changes invalidate perception and clear owner properties while
@@ -315,13 +327,23 @@ impl std::error::Error for MoleculeFinishError {
     }
 }
 
+impl std::ops::Deref for MoleculeEditor {
+    type Target = Graph;
+
+    /// Graph reads of the draft. Draft IDs may be sparse; the editor never
+    /// dereferences to a published [`Molecule`].
+    fn deref(&self) -> &Graph {
+        &self.working.graph
+    }
+}
+
 impl Default for MoleculeEditor {
     fn default() -> Self {
         Self {
             working: Molecule {
                 graph: Graph::default(),
                 perception: Perception::default(),
-                properties: Properties::molecule(0, 0),
+                properties: MoleculeProperties::new(0, 0),
             },
         }
     }
@@ -332,139 +354,20 @@ impl MoleculeEditor {
         Self::default()
     }
 
-    pub fn from_molecule(molecule: &Molecule) -> Self {
-        Self {
-            working: molecule.clone(),
-        }
-    }
-
+    /// The draft graph, also reachable through `Deref`.
     pub fn graph(&self) -> &Graph {
         &self.working.graph
     }
 
-    pub fn atom_count(&self) -> usize {
-        self.working.atom_count()
-    }
-
-    pub fn bond_count(&self) -> usize {
-        self.working.bond_count()
-    }
-
-    pub fn formal_charge(&self) -> i64 {
-        self.working.formal_charge()
-    }
-
-    pub fn atom(&self, id: AtomId) -> Result<&Atom> {
-        self.working.atom(id)
-    }
-
-    pub fn atoms(&self) -> impl Iterator<Item = (AtomId, &Atom)> {
-        self.working.atoms()
-    }
-
-    pub fn atom_ids(&self) -> impl Iterator<Item = AtomId> + '_ {
-        self.working.atom_ids()
-    }
-
-    pub fn bond(&self, id: BondId) -> Result<&Bond> {
-        self.working.bond(id)
-    }
-
-    pub fn bonds(&self) -> impl Iterator<Item = (BondId, &Bond)> {
-        self.working.bonds()
-    }
-
-    pub fn bond_ids(&self) -> impl Iterator<Item = BondId> + '_ {
-        self.working.bond_ids()
-    }
-
-    pub fn neighbors(&self, id: AtomId) -> Result<impl Iterator<Item = AtomId> + '_> {
-        self.working.neighbors(id)
-    }
-
-    pub fn incident_bonds(&self, id: AtomId) -> Result<impl Iterator<Item = (BondId, &Bond)> + '_> {
-        self.working.incident_bonds(id)
-    }
-
-    pub fn bond_between(&self, a: AtomId, b: AtomId) -> Result<Option<BondId>> {
-        self.working.bond_between(a, b)
-    }
-
-    pub const fn properties(&self) -> &Properties {
+    /// Draft annotations; rows are draft atom and bond slots.
+    pub fn properties(&self) -> &MoleculeProperties {
         self.working.properties()
     }
 
-    /// Inspects storage-slot rows, including deleted slots. Complete column
-    /// round trips should use [`Self::atom_property_column`] in live atom order.
-    pub const fn atom_properties(&self) -> &PropertyTable {
-        self.working.atom_properties()
-    }
-
-    /// Inspects storage-slot rows. Use [`Self::bond_property_column`] for live order.
-    pub const fn bond_properties(&self) -> &PropertyTable {
-        self.working.bond_properties()
-    }
-
-    pub fn atom_property(&self, id: AtomId, key: &PropertyKey) -> Result<Option<PropertyValue>> {
-        self.working.atom_property(id, key)
-    }
-
-    pub fn bond_property(&self, id: BondId, key: &PropertyKey) -> Result<Option<PropertyValue>> {
-        self.working.bond_property(id, key)
-    }
-
-    pub fn set_atom_property(
-        &mut self,
-        id: AtomId,
-        key: PropertyKey,
-        value: Option<PropertyValue>,
-    ) -> Result<()> {
-        self.working.set_atom_property(id, key, value)
-    }
-
-    pub fn set_bond_property(
-        &mut self,
-        id: BondId,
-        key: PropertyKey,
-        value: Option<PropertyValue>,
-    ) -> Result<()> {
-        self.working.set_bond_property(id, key, value)
-    }
-
-    pub fn insert_property(
-        &mut self,
-        key: PropertyKey,
-        value: PropertyValue,
-    ) -> Result<Option<PropertyValue>> {
-        self.working.insert_property(key, value)
-    }
-
-    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
-        self.working.remove_property(key)
-    }
-
-    pub fn clear_properties(&mut self) {
-        self.working.clear_properties()
-    }
-
-    pub fn stereo_element(&self, id: StereoElementId) -> Result<&StereoElement> {
-        self.working.stereo_element(id)
-    }
-
-    pub fn stereo_elements(&self) -> impl Iterator<Item = (StereoElementId, &StereoElement)> {
-        self.working.stereo_elements()
-    }
-
-    pub fn stereo_element_ids(&self) -> impl Iterator<Item = StereoElementId> + '_ {
-        self.working.stereo_element_ids()
-    }
-
-    pub fn stereo_group(&self, id: StereoGroupId) -> Result<&StereoGroup> {
-        self.working.stereo_group(id)
-    }
-
-    pub fn stereo_groups(&self) -> impl Iterator<Item = (StereoGroupId, &StereoGroup)> {
-        self.working.stereo_groups()
+    /// Length-preserving mutable access to draft annotations. Rows are draft
+    /// slots, so they follow draft IDs; deleted slots are dropped at publication.
+    pub fn properties_mut(&mut self) -> MoleculePropertiesMut<'_> {
+        self.working.properties_mut()
     }
 
     pub fn perception(&self) -> &Perception {
@@ -640,6 +543,35 @@ impl MoleculeEditor {
         })
     }
 
+    /// Applies Kekule's canonical oxohalogen representation (the RDKit halogen
+    /// cleanup): each neutral Cl, Br, or I with only oxygen neighbors and
+    /// explicit valence 3, 5, or 7 becomes `[X+n]` with its `n` oxo double
+    /// bonds rewritten as single bonds to `[O-]`. Returns the rewritten
+    /// halogens; a rewrite clears perception and owner annotations, like any
+    /// chemistry edit. Publication rejects unnormalized oxohalogens instead of
+    /// rewriting them silently.
+    ///
+    /// ```
+    /// use kekule::core::{Atom, BondOrder, Element, MoleculeEditor, MoleculePublicationError};
+    /// let mut editor = MoleculeEditor::new();
+    /// let chlorine = editor.add_atom(Atom::new(Element::from_symbol("Cl").unwrap()))?;
+    /// for order in [BondOrder::Single, BondOrder::Double, BondOrder::Double, BondOrder::Double] {
+    ///     let oxygen = editor.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
+    ///     editor.add_bond(chlorine, oxygen, order)?;
+    /// }
+    /// assert!(matches!(
+    ///     editor.validate(),
+    ///     Err(MoleculePublicationError::UnnormalizedOxohalogen { .. })
+    /// ));
+    /// assert_eq!(editor.normalize_oxohalogens(), [chlorine]);
+    /// let perchlorate = editor.finish()?;
+    /// assert_eq!(perchlorate.atom(chlorine)?.formal_charge, 3);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn normalize_oxohalogens(&mut self) -> Vec<AtomId> {
+        normalize_oxohalogens(&mut self.working)
+    }
+
     /// Checks whether a snapshot would publish successfully, leaving this editor
     /// unchanged. This clones the working state to check canonicalization too.
     pub fn validate(&self) -> std::result::Result<(), MoleculePublicationError> {
@@ -671,9 +603,12 @@ fn publish_molecule(
         .validate_connected()
         .map_err(MoleculePublicationError::DisconnectedGraph)?;
     validate_stereo(&molecule).map_err(MoleculePublicationError::InvalidStereo)?;
+    if let Some(atom) = unnormalized_oxohalogens(&molecule).first() {
+        return Err(MoleculePublicationError::UnnormalizedOxohalogen { atom: *atom });
+    }
     let perceived_graph =
         (molecule.perception != Perception::default()).then(|| molecule.graph.clone());
-    canonicalize_represented_chemistry(&mut molecule);
+    molecule.canonicalize_stored_stereo_elements();
     if perceived_graph.is_some_and(|graph| graph != molecule.graph) {
         molecule.clear_perception();
     }
@@ -682,16 +617,16 @@ fn publish_molecule(
 }
 
 fn validate_graph(molecule: &Molecule) -> std::result::Result<(), GraphValidationError> {
-    if molecule.atom_properties().len() != molecule.graph.atoms.len() {
+    if molecule.properties().atoms().len() != molecule.graph.atoms.len() {
         return Err(GraphValidationError::AtomPropertySlotCount {
             expected: molecule.graph.atoms.len(),
-            actual: molecule.atom_properties().len(),
+            actual: molecule.properties().atoms().len(),
         });
     }
-    if molecule.bond_properties().len() != molecule.graph.bonds.len() {
+    if molecule.properties().bonds().len() != molecule.graph.bonds.len() {
         return Err(GraphValidationError::BondPropertySlotCount {
             expected: molecule.graph.bonds.len(),
-            actual: molecule.bond_properties().len(),
+            actual: molecule.properties().bonds().len(),
         });
     }
     if molecule.graph.adjacency.len() != molecule.graph.atoms.len() {
@@ -800,24 +735,33 @@ fn validate_stereo(molecule: &Molecule) -> std::result::Result<(), StereoPublica
     Ok(())
 }
 
+/// Rewrites every in-model neutral oxohalogen and canonicalizes stored stereo.
+/// Format interpreters apply this to imported chemistry before publication.
 pub(crate) fn canonicalize_represented_chemistry(molecule: &mut Molecule) {
-    let halogens = molecule
+    normalize_oxohalogens(molecule);
+    molecule.canonicalize_stored_stereo_elements();
+}
+
+/// Neutral in-model oxohalogens that still carry oxo double bonds.
+fn unnormalized_oxohalogens(molecule: &Molecule) -> Vec<AtomId> {
+    molecule
         .atoms()
         .filter_map(|(atom_id, atom)| {
             (atom.formal_charge == 0
                 && matches!(atom.element.symbol(), "Cl" | "Br" | "I")
-                && is_rdkit_oxohalogen(molecule, atom_id, atom))
+                && is_rdkit_oxohalogen(molecule, atom_id, atom)
+                && !oxo_bonds_to_oxygen(molecule, atom_id).is_empty())
             .then_some(atom_id)
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
 
-    let mut rewritten = false;
-    for atom_id in halogens {
+/// Separates `X=O` bonds of neutral oxohalogens into `[X+]-[O-]`, returning
+/// the rewritten halogens.
+pub(crate) fn normalize_oxohalogens(molecule: &mut Molecule) -> Vec<AtomId> {
+    let halogens = unnormalized_oxohalogens(molecule);
+    for &atom_id in &halogens {
         let oxo_bonds = oxo_bonds_to_oxygen(molecule, atom_id);
-        if oxo_bonds.is_empty() {
-            continue;
-        }
-        rewritten = true;
         // Explicit valence is at most seven, hence at most three oxo bonds.
         // Out-of-model graphs are left for valence validation.
         let formal_charge = i8::try_from(oxo_bonds.len()).expect("at most three oxo bonds");
@@ -835,10 +779,11 @@ pub(crate) fn canonicalize_represented_chemistry(molecule: &mut Molecule) {
             molecule.prune_stereo_for_bond(bond_id);
         }
     }
-    if rewritten {
+    if !halogens.is_empty() {
+        molecule.properties.owner_mut().clear();
         molecule.clear_perception();
     }
-    molecule.canonicalize_stored_stereo_elements();
+    halogens
 }
 
 fn is_rdkit_oxohalogen(molecule: &Molecule, atom_id: AtomId, atom: &Atom) -> bool {
@@ -901,9 +846,9 @@ mod tests {
             let mut editor = MoleculeEditor::new();
             editor.add_atom(carbon()).unwrap();
             if bonds {
-                editor.working.properties.resize_bonds(1);
+                editor.working.properties.bonds_mut().resize_missing(1);
             } else {
-                editor.working.properties.resize_atoms(0);
+                editor.working.properties.atoms_mut().resize_missing(0);
             }
             let before = format!("{editor:#?}");
             let error = editor.try_finish().unwrap_err();
@@ -1056,13 +1001,14 @@ mod tests {
                 },
             )))
             .unwrap();
+        assert_eq!(editor.normalize_oxohalogens(), [chlorine]);
         let molecule = editor.finish().unwrap();
         assert_eq!(molecule.bond(bond).unwrap().order, BondOrder::Single);
         assert_eq!(molecule.stereo_elements().count(), 0);
     }
 
     #[test]
-    fn builder_publishes_canonical_hypervalent_representation() {
+    fn explicit_normalization_publishes_canonical_hypervalent_representation() {
         let mut builder = crate::core::MoleculeEditor::new();
         let chlorine = builder.add_atom(atom("Cl")).expect("chlorine");
         let oxo = builder.add_atom(atom("O")).expect("oxo oxygen");
@@ -1074,6 +1020,24 @@ mod tests {
             .add_bond(chlorine, hydroxyl, BondOrder::Single)
             .expect("hydroxyl bond");
 
+        let before = builder.clone();
+        assert_eq!(
+            builder.validate(),
+            Err(MoleculePublicationError::UnnormalizedOxohalogen { atom: chlorine })
+        );
+        assert_eq!(builder, before, "validation never rewrites chemistry");
+        let error = builder.try_finish().unwrap_err();
+        assert_eq!(
+            error.error(),
+            &MoleculePublicationError::UnnormalizedOxohalogen { atom: chlorine }
+        );
+        let mut builder = error.into_editor();
+        assert_eq!(builder, before);
+        assert_eq!(builder.normalize_oxohalogens(), [chlorine]);
+        assert!(
+            builder.normalize_oxohalogens().is_empty(),
+            "normalization is idempotent"
+        );
         let molecule = builder.finish().expect("canonical publication");
 
         assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);
@@ -1129,7 +1093,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_canonicalizes_before_transactional_publication() {
+    fn editor_rejects_unnormalized_oxohalogen_edits_until_normalized() {
         let mut builder = crate::core::MoleculeEditor::new();
         let chlorine = builder.add_atom(atom("Cl")).expect("chlorine");
         let hydroxyl = builder.add_atom(atom("O")).expect("hydroxyl oxygen");
@@ -1143,6 +1107,11 @@ mod tests {
         editor
             .add_bond(chlorine, oxo, BondOrder::Double)
             .expect("source-convention oxo bond");
+        assert!(matches!(
+            editor.validate(),
+            Err(MoleculePublicationError::UnnormalizedOxohalogen { .. })
+        ));
+        editor.normalize_oxohalogens();
         let molecule = editor.finish().expect("canonical edit publication");
 
         assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);
@@ -1152,7 +1121,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_canonicalizes_direct_bond_order_changes_before_publication() {
+    fn explicit_normalization_covers_direct_bond_order_changes() {
         let mut builder = crate::core::MoleculeEditor::new();
         let chlorine = builder.add_atom(atom("Cl")).unwrap();
         let anchor = builder.add_atom(atom("O")).unwrap();
@@ -1168,6 +1137,7 @@ mod tests {
             .bond_mut(oxo_bond)
             .unwrap()
             .set_order(BondOrder::Double);
+        assert_eq!(editor.normalize_oxohalogens(), [chlorine]);
         let molecule = editor.finish().expect("canonical edit publication");
 
         assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);

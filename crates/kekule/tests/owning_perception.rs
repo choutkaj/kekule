@@ -7,7 +7,7 @@ use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Ensemble, EnsembleMember, Model, Positions};
 use kekule::topology::{
     AtomSelection, AtomSiteMetadata, InstanceAtomId, MoleculeClass, MoleculeDefinitionId,
-    ResidueClass, SelectionError, Topology, TopologyBuilder,
+    ResidueClass, SelectionError, Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuilder,
 };
 use kekule::units::{Quantity, NANOMETER};
 use kekule::{perception, smiles, stereo};
@@ -17,7 +17,7 @@ fn key() -> PropertyKey {
 }
 
 fn assert_default_perception(topology: &Topology) {
-    for (_, definition) in topology.definitions() {
+    for definition in topology.definitions() {
         let molecule = definition.molecule();
         let mut expected = molecule.clone();
         expected.clear_perception();
@@ -49,13 +49,13 @@ fn failing_topology() -> Arc<Topology> {
     editor.add_atom(carbon).unwrap();
     let mut bad = editor.finish().unwrap();
     perception::rings::perceive_ring_membership(&mut bad);
-    Arc::new(Topology::from_molecules(&[good, bad]).unwrap())
+    Arc::new(Topology::from_molecules([good, bad].clone()).unwrap())
 }
 
 fn installed(topology: &Topology) -> Vec<Perception> {
     topology
         .definitions()
-        .map(|(_, d)| d.molecule().perception().clone())
+        .map(|d| d.molecule().perception().clone())
         .collect()
 }
 
@@ -83,17 +83,23 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
         ids.bond(bond).unwrap(),
     );
     molecule
-        .insert_property(key(), PropertyValue::Int(1))
+        .properties_mut()
+        .owner_mut()
+        .insert(key(), PropertyValue::Int(1))
         .unwrap();
     molecule
-        .set_atom_property(carbon, key(), Some(PropertyValue::Int(2)))
+        .properties_mut()
+        .atoms_mut()
+        .set_value(key(), carbon, Some(PropertyValue::Int(2)))
         .unwrap();
     molecule
-        .set_bond_property(bond, key(), Some(PropertyValue::Int(3)))
+        .properties_mut()
+        .bonds_mut()
+        .set_value(key(), bond, Some(PropertyValue::Int(3)))
         .unwrap();
 
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     let first = builder.add_instance(definition).unwrap();
     let second = builder.add_instance(definition).unwrap();
     builder
@@ -120,10 +126,13 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
         }
     }
     builder
-        .insert_property(key(), PropertyValue::Int(4))
+        .properties_mut()
+        .owner_mut()
+        .insert(key(), PropertyValue::Int(4))
         .unwrap();
     builder
-        .atom_properties_mut()
+        .properties_mut()
+        .atoms_mut()
         .insert(key(), PropertyColumn::Int(vec![Some(5); 4]))
         .unwrap();
     let source = Arc::new(builder.build().unwrap());
@@ -161,7 +170,7 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
 
 #[test]
 fn model_perception_changes_snapshot_preserving_realization_and_existing_bindings() {
-    let topology = Arc::new(smiles::to_topology("c1ccccc1").unwrap());
+    let topology = smiles::to_topology("c1ccccc1").unwrap();
     let selection = AtomSelection::from_atoms(&topology, [topology.atom_ids()[0]]).unwrap();
     let positions = Positions::new(Quantity::new(
         (0..6)
@@ -171,14 +180,29 @@ fn model_perception_changes_snapshot_preserving_realization_and_existing_binding
     ))
     .unwrap();
     let mut model = Model::new(Arc::clone(&topology), positions).unwrap();
-    model.insert_property(key(), PropertyValue::Int(7)).unwrap();
-    model
-        .set_atom_property(topology.atom_ids()[0], key(), Some(PropertyValue::Int(8)))
+    let mut conformation = model.conformation_mut();
+    let mut properties = conformation.properties_mut();
+    properties
+        .owner_mut()
+        .insert(key(), PropertyValue::Int(7))
         .unwrap();
-    model
-        .set_bond_property(topology.bond_ids()[0], key(), Some(PropertyValue::Int(9)))
+    properties
+        .atoms_mut()
+        .set_value(
+            key(),
+            TopologyAtomIndex::new(0),
+            Some(PropertyValue::Int(8)),
+        )
         .unwrap();
-    model.set_cell(Some(
+    properties
+        .bonds_mut()
+        .set_value(
+            key(),
+            TopologyBondIndex::new(0),
+            Some(PropertyValue::Int(9)),
+        )
+        .unwrap();
+    conformation.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), NANOMETER),
             [true; 3],
@@ -206,9 +230,9 @@ fn model_perception_changes_snapshot_preserving_realization_and_existing_binding
     selection
         .ensure_compatible(&original.shared_topology())
         .unwrap();
-    let sliced = model.slice(&selection).unwrap();
+    let sliced = model.subset(&selection).unwrap();
     assert_eq!(sliced.atom_count(), 1);
-    let independent = Arc::new(smiles::to_topology("c1ccccc1").unwrap());
+    let independent = smiles::to_topology("c1ccccc1").unwrap();
     assert_eq!(
         selection.ensure_compatible(&independent),
         Err(SelectionError::TopologyMismatch)
@@ -227,7 +251,7 @@ fn reperception_replaces_even_a_uniquely_owned_snapshot_and_clears_cip() {
     stereo::assign_cip_descriptors(&mut molecule).unwrap();
     assert!(molecule.perception().has_stereo());
     let mut model =
-        Model::from_molecule(&molecule, &Positions::zeros(molecule.atom_count())).unwrap();
+        Model::from_molecule(molecule.clone(), &Positions::zeros(molecule.atom_count())).unwrap();
     let old = Arc::downgrade(&model.shared_topology());
     assert_eq!(old.strong_count(), 1);
     model.perceive().unwrap();
@@ -244,34 +268,49 @@ fn reperception_replaces_even_a_uniquely_owned_snapshot_and_clears_cip() {
 
 #[test]
 fn ensemble_perception_preserves_members_weights_and_collection_properties() {
-    let topology = Arc::new(smiles::to_topology("c1ccccc1").unwrap());
-    let mut member = EnsembleMember::new(Positions::zeros(6));
-    member.set_weight(Some(0.25)).unwrap();
-    member.set_cell(Some(
+    let topology = smiles::to_topology("c1ccccc1").unwrap();
+    let mut member = EnsembleMember::new(Positions::zeros(6), 1.0).unwrap();
+    member.set_weight(0.25).unwrap();
+    let mut conformation = member.conformation_mut();
+    conformation.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), NANOMETER),
             [true; 3],
         )
         .unwrap(),
     ));
-    member
-        .insert_property(key(), PropertyValue::Int(10))
+    let mut properties = conformation.properties_mut();
+    properties
+        .owner_mut()
+        .insert(key(), PropertyValue::Int(10))
         .unwrap();
-    member
-        .set_atom_property(0, key(), Some(PropertyValue::Int(11)))
+    properties
+        .atoms_mut()
+        .set_value(
+            key(),
+            TopologyAtomIndex::new(0),
+            Some(PropertyValue::Int(11)),
+        )
         .unwrap();
-    member
-        .insert_bond_property_column(key(), PropertyColumn::Int(vec![Some(12); 6]))
-        .unwrap();
-    let mut second = EnsembleMember::new(Positions::zeros(6));
-    second.set_weight(Some(0.75)).unwrap();
-    let mut ensemble = Ensemble::from_members(Arc::clone(&topology), [member, second]).unwrap();
+    let mut second = EnsembleMember::new(Positions::zeros(6), 1.0).unwrap();
+    second.set_weight(0.75).unwrap();
+    let mut ensemble = Ensemble::from_items(Arc::clone(&topology), [member, second]).unwrap();
+    // Bond rows exist once the member is bound to the ensemble topology.
     ensemble
-        .insert_property(key(), PropertyValue::Int(13))
+        .get_mut(0)
+        .unwrap()
+        .conformation_mut()
+        .properties_mut()
+        .bonds_mut()
+        .insert(key(), PropertyColumn::Int(vec![Some(12); 6]))
+        .unwrap();
+    ensemble
+        .properties_mut()
+        .insert(key(), PropertyValue::Int(13))
         .unwrap();
     let before = ensemble.clone();
     let pointers = ensemble
-        .members()
+        .iter()
         .map(|m| m.positions().values().value().as_ptr())
         .collect::<Vec<_>>();
     ensemble.perceive().unwrap();
@@ -281,7 +320,7 @@ fn ensemble_perception_preserves_members_weights_and_collection_properties() {
     assert!(!Arc::ptr_eq(&topology, &ensemble.shared_topology()));
     assert!(Arc::ptr_eq(&topology, &before.shared_topology()));
     assert_eq!(ensemble.properties(), before.properties());
-    for ((member, original), pointer) in ensemble.members().zip(before.members()).zip(pointers) {
+    for ((member, original), pointer) in ensemble.iter().zip(before.iter()).zip(pointers) {
         assert!(Arc::ptr_eq(
             &member.shared_topology(),
             &ensemble.shared_topology()
@@ -295,7 +334,7 @@ fn ensemble_perception_preserves_members_weights_and_collection_properties() {
     let mut empty = Ensemble::new(topology);
     empty.perceive().unwrap();
     assert_default_perception(empty.topology());
-    assert_eq!(empty.members().len(), 0);
+    assert_eq!(empty.iter().len(), 0);
 }
 
 #[test]
@@ -318,40 +357,42 @@ fn topology_model_and_ensemble_failure_preserve_complete_previous_state() {
     )
     .unwrap();
     model
-        .insert_property(key(), PropertyValue::Int(14))
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(key(), PropertyValue::Int(14))
         .unwrap();
     let before = model.clone();
     assert_eq!(model.perceive(), Err(error.clone()));
     assert_eq!(model, before);
     assert_eq!(installed(model.topology()), previous);
 
-    let mut ensemble = Ensemble::from_members(
+    let mut ensemble = Ensemble::from_items(
         Arc::clone(&topology),
-        [EnsembleMember::new(Positions::zeros(topology.atom_count()))],
+        [EnsembleMember::new(Positions::zeros(topology.atom_count()), 1.0).unwrap()],
     )
     .unwrap();
     ensemble
-        .insert_property(key(), PropertyValue::Int(15))
+        .properties_mut()
+        .insert(key(), PropertyValue::Int(15))
         .unwrap();
     let before = ensemble.clone();
     assert_eq!(ensemble.perceive(), Err(error));
     assert!(Arc::ptr_eq(&topology, &ensemble.shared_topology()));
     assert_eq!(ensemble.properties(), before.properties());
     assert_eq!(
-        ensemble.member(0).unwrap().to_model(),
-        before.member(0).unwrap().to_model()
+        ensemble.get(0).unwrap().to_model(),
+        before.get(0).unwrap().to_model()
     );
     assert_eq!(installed(ensemble.topology()), previous);
 }
 
 #[test]
 fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
-    use kekule::substructure::{
-        find_topology_substructure_matches_complete, SubstructureMatchOptions,
-    };
+    use kekule::substructure::{find_topology_matches_with_options, SubstructureMatchOptions};
     use kekule::topology::TopologyEditor;
 
-    let source = Arc::new(smiles::to_topology("c1ccccc1.[Na+]").unwrap());
+    let source = smiles::to_topology("c1ccccc1.[Na+]").unwrap();
     let perceived = Arc::new(source.perceived().unwrap());
     let again = Arc::new(perceived.perceived().unwrap());
     assert!(perceived.shares_layout(&source) && again.shares_layout(&source));
@@ -364,13 +405,14 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     assert!(std::ptr::eq(source.properties(), perceived.properties()));
 
     // Publication always creates a new layout, even with equal contents.
-    let rebuilt = Arc::new(smiles::to_topology("c1ccccc1.[Na+]").unwrap());
+    let rebuilt = smiles::to_topology("c1ccccc1.[Na+]").unwrap();
     assert!(rebuilt.same_layout(&source) && !rebuilt.shares_layout(&source));
     let republished = Topology::from_molecules(
-        &source
+        (source
             .molecules()
             .map(|m| m.molecule().clone())
-            .collect::<Vec<_>>(),
+            .collect::<Vec<_>>())
+        .clone(),
     )
     .unwrap();
     assert!(!republished.shares_layout(&source));
@@ -401,12 +443,9 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     // Perception-dependent matches keep their exact snapshot but select atoms
     // by layout.
     let query = kekule::query::parse_smarts("c").unwrap();
-    let matches = find_topology_substructure_matches_complete(
-        &perceived,
-        &query,
-        SubstructureMatchOptions::default(),
-    )
-    .unwrap();
+    let matches =
+        find_topology_matches_with_options(&perceived, &query, SubstructureMatchOptions::default())
+            .unwrap();
     assert_eq!(matches.len(), 6);
     assert!(matches
         .iter()

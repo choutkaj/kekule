@@ -32,9 +32,11 @@ fn source_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer 
         })
         .collect::<Vec<_>>();
     frame
+        .frame_mut()
+        .conformation_mut()
         .set_positions(Quantity::new(positions, NANOMETER))
         .unwrap();
-    frame.set_cell(Some(
+    frame.frame_mut().conformation_mut().set_cell(Some(
         PeriodicCell::new(
             Quantity::new(
                 [
@@ -49,9 +51,10 @@ fn source_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer 
         .unwrap(),
     ));
     frame
+        .frame_mut()
         .set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))
         .unwrap();
-    frame.set_step(Some(step));
+    frame.frame_mut().set_step(Some(step));
     frame
 }
 
@@ -124,7 +127,7 @@ fn xtc_rejects_cells_degenerate_after_f32_rounding_before_appending_bytes() {
     let valid_cell = frame.cell().copied();
     writer.write_frame(frame.frame_view()).unwrap();
     let before = writer.writer().clone();
-    frame.set_cell(Some(
+    frame.frame_mut().conformation_mut().set_cell(Some(
         PeriodicCell::new(
             Quantity::new(
                 [
@@ -143,8 +146,8 @@ fn xtc_rejects_cells_degenerate_after_f32_rounding_before_appending_bytes() {
         Some(TrajectoryCodecErrorKind::InvalidFrame)
     );
     assert_eq!(writer.writer(), &before);
-    frame.set_cell(valid_cell);
-    frame.set_step(Some(1));
+    frame.frame_mut().conformation_mut().set_cell(valid_cell);
+    frame.frame_mut().set_step(Some(1));
     writer.write_frame(frame.frame_view()).unwrap();
     let mut reader = XtcReader::new(
         Cursor::new(writer.finish().unwrap().into_inner()),
@@ -172,6 +175,8 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
                 let mut frame = source_frame(&topology, step as f64 * 0.01, step);
                 if step == 1 {
                     frame
+                        .frame_mut()
+                        .conformation_mut()
                         .set_positions(Quantity::new(
                             (0..atom_count)
                                 .map(|i| {
@@ -250,7 +255,7 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
             let mut destination = sequential.frame_buffer();
             let mut expected = Vec::new();
             while sequential.read_next(&mut destination).unwrap() {
-                expected.push(destination.frame_view().to_frame());
+                expected.push(destination.frame_view().payload().clone());
             }
             if atom_count > 9 {
                 assert!(
@@ -276,9 +281,9 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
             // or reuse cached coordinates for the wrong pending frame.
             for (random, next) in [(1, 0), (0, 1), (1, 2)] {
                 indexed.read_frame(random as u64, &mut destination).unwrap();
-                assert_eq!(destination.frame_view().to_frame(), expected[random]);
+                assert_eq!(destination.frame_view().payload().clone(), expected[random]);
                 assert!(indexed.read_next(&mut destination).unwrap());
-                assert_eq!(destination.frame_view().to_frame(), expected[next]);
+                assert_eq!(destination.frame_view().payload().clone(), expected[next]);
             }
             indexed.read_frame(0, &mut destination).unwrap();
             assert!(!indexed.read_next(&mut destination).unwrap());
@@ -527,7 +532,11 @@ fn indexed_xtc_restoration_failure_does_not_publish_or_change_destination() {
     .unwrap();
     let mut destination = source_frame(&topology, 9.0, 99);
     destination
-        .insert_property(
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("sentinel").unwrap(),
             PropertyValue::Bool(true),
         )
@@ -804,14 +813,21 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     )
     .unwrap();
     let mut frame = source_frame(&topology, 0.0, 0);
-    frame.set_cell(None);
+    frame.frame_mut().conformation_mut().set_cell(None);
     assert_eq!(
         codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
         Some(TrajectoryCodecErrorKind::InconsistentMetadata)
     );
-    frame.set_cell(source_frame(&topology, 0.0, 0).cell().copied());
     frame
-        .insert_property(
+        .frame_mut()
+        .conformation_mut()
+        .set_cell(source_frame(&topology, 0.0, 0).cell().copied());
+    frame
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("unsupported").unwrap(),
             PropertyValue::Bool(true),
         )
@@ -820,9 +836,18 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
         codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
         Some(TrajectoryCodecErrorKind::UnsupportedField)
     );
-    frame.clear_properties();
     frame
-        .insert_bond_property_column(
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .clear();
+    frame
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .bonds_mut()
+        .insert(
             PropertyKey::new("conformational_entropy").unwrap(),
             PropertyColumn::Real {
                 unit: NANOMETER,

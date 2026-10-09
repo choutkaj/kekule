@@ -22,31 +22,53 @@ fn topology() -> Arc<Topology> {
 }
 
 #[test]
-fn trajectory_payload_and_buffer_reject_foreign_property_domains() {
-    use kekule::properties::{PropertyColumn, PropertyKey};
-    use kekule::structure::Positions;
-    use kekule_traj::{FrameBuffer, FrameBufferData, TrajectoryFrame};
+fn trajectory_payload_and_buffer_reject_mismatched_annotation_rows() {
+    use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
+    use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+    use kekule_traj::{FrameBuffer, FrameBufferData};
 
-    let mut builder = Arc::try_unwrap(topology()).unwrap().into_builder();
+    let topology = topology();
     let key = PropertyKey::new("tag").unwrap();
-    builder
-        .molecule_instance_properties_mut()
-        .insert(key, PropertyColumn::Int(vec![Some(7)]))
-        .unwrap();
-    let topology = Arc::new(builder.build().unwrap());
-    let foreign = topology.properties().clone();
     let positions = Positions::zeros(1);
+    // Annotations of a larger realization do not fit this topology's rows.
+    let mut larger = TrajectoryFrame::new(Positions::zeros(2));
+    larger
+        .conformation_mut()
+        .properties_mut()
+        .atoms_mut()
+        .insert(key.clone(), PropertyColumn::Int(vec![Some(7), Some(8)]))
+        .unwrap();
+    let foreign = larger.properties().clone();
     let mut frame = TrajectoryFrame::new(positions.clone());
     let original = frame.properties().clone();
-    assert!(frame.set_properties(foreign.clone()).is_err());
+    assert!(frame
+        .conformation_mut()
+        .set_properties(foreign.clone())
+        .is_err());
     assert_eq!(frame.properties(), &original);
     let mut buffer = FrameBuffer::new(topology);
-    assert!(buffer.set_properties(foreign.clone()).is_err());
     assert!(buffer
-        .replace_from_data(FrameBufferData::new(positions.values()).with_properties(&foreign))
+        .frame_mut()
+        .conformation_mut()
+        .set_properties(foreign)
+        .is_err());
+    assert!(buffer
+        .replace_from_data(FrameBufferData::from_frame_view(
+            Trajectory::from_items(kekule::smiles::to_topology("CC").unwrap(), [larger])
+                .unwrap()
+                .get(0)
+                .unwrap()
+        ))
         .is_err());
     assert_eq!(buffer.properties(), &original);
     assert_eq!(buffer.positions(), &positions);
+    // Owner annotations publish with the decoded frame.
+    let mut owner = kekule::properties::OwnerProperties::new();
+    owner.insert(key.clone(), PropertyValue::Int(3)).unwrap();
+    buffer
+        .replace_from_data(FrameBufferData::new(positions.values()).with_owner_properties(&owner))
+        .unwrap();
+    assert_eq!(buffer.properties().owner(), &owner);
 }
 
 fn temporary_xyz() -> PathBuf {

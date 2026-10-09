@@ -22,7 +22,7 @@ fn oxygen() -> Molecule {
 fn water_builder(label: &str) -> (TopologyBuilder, ResidueId) {
     let molecule = oxygen();
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&molecule).unwrap();
+    let instance = builder.add_molecule(molecule.clone()).unwrap();
     let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue = builder
         .hierarchy_mut()
@@ -75,9 +75,9 @@ fn represented_equality_ignores_adjacency_history_but_not_bond_chemistry() {
             .collect::<Vec<_>>()
     );
     assert_eq!(molecule, rewired);
-    assert!(Topology::from_molecule(&molecule)
+    assert!(Topology::from_molecule(molecule.clone())
         .unwrap()
-        .same_layout(&Topology::from_molecule(&rewired).unwrap()));
+        .same_layout(&Topology::from_molecule(rewired.clone()).unwrap()));
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn no_op_and_append_preserve_untouched_classes_and_explicit_intent() {
     let source = Arc::new(water_builder("HOH").0.build().unwrap());
     assert!(Arc::ptr_eq(&source, &source.edit().finish().unwrap()));
     let mut editor = source.edit();
-    editor.add_molecule(&oxygen()).unwrap();
+    editor.add_molecule(oxygen().clone()).unwrap();
     let appended = editor.finish().unwrap();
     assert_eq!(classes(&appended), classes(&source));
     assert_eq!(
@@ -154,14 +154,14 @@ fn no_op_and_append_preserve_untouched_classes_and_explicit_intent() {
         MoleculeClass::SmallMolecule
     );
     let mut builder = Arc::try_unwrap(source).unwrap().into_builder();
-    builder.add_molecule(&oxygen()).unwrap();
+    builder.add_molecule(oxygen().clone()).unwrap();
     let appended_builder = builder.build().unwrap();
     assert!(appended.same_layout(&appended_builder));
 }
 
 #[test]
 fn hierarchy_edits_reinfer_source_molecule_classes_and_preserve_shared_snapshot() {
-    let source = Arc::new(Topology::from_molecule(&oxygen()).unwrap());
+    let source = Arc::new(Topology::from_molecule(oxygen().clone()).unwrap());
     let mut editor = source.edit();
     let atom = editor.atom_ids().next().unwrap();
     let chain = editor.add_chain("A", None).unwrap();
@@ -272,7 +272,7 @@ fn preserved_inferred_class_survives_no_op_rebuilding_until_its_evidence_changes
         (MoleculeClass::Other, ResidueClass::Water)
     );
     let mut builder = rebuilt.into_builder();
-    builder.add_molecule(&oxygen()).unwrap();
+    builder.add_molecule(oxygen().clone()).unwrap();
     let appended = builder.build().unwrap();
     assert_eq!(
         classes(&appended),
@@ -293,7 +293,7 @@ fn preserved_inferred_class_survives_no_op_rebuilding_until_its_evidence_changes
 fn consuming_publication_moves_unique_source_definitions_and_modified_drafts() {
     let molecule = oxygen();
     let local = molecule.atom_ids().next().unwrap();
-    let source = Topology::from_molecule(&molecule).unwrap();
+    let source = Topology::from_molecule(molecule.clone()).unwrap();
     let original_pointer = source
         .molecules()
         .next()
@@ -348,7 +348,7 @@ fn consuming_publication_moves_unique_source_definitions_and_modified_drafts() {
 #[test]
 fn consuming_publication_moves_added_molecules_and_preserves_owner_annotations() {
     let mut editor = TopologyEditor::new();
-    editor.add_molecule(&oxygen()).unwrap();
+    editor.add_molecule(oxygen().clone()).unwrap();
     let atom = editor.atom_ids().next().unwrap();
     let pointer = editor.atom(atom).unwrap() as *const Atom;
     let key = PropertyKey::new("label").unwrap();
@@ -356,9 +356,12 @@ fn consuming_publication_moves_added_molecules_and_preserves_owner_annotations()
         .insert_property(key.clone(), PropertyValue::String("draft".into()))
         .unwrap();
     let topology = editor.finish().unwrap();
-    assert_eq!(topology.atoms().next().unwrap().1 as *const Atom, pointer);
     assert_eq!(
-        topology.properties().get(&key),
+        topology.atoms().next().unwrap().atom() as *const Atom,
+        pointer
+    );
+    assert_eq!(
+        topology.properties().owner().get(&key),
         Some(&PropertyValue::String("draft".into()))
     );
 }

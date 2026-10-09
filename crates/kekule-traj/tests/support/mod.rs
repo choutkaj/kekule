@@ -14,7 +14,7 @@ use kekule_traj::{FrameBuffer, TrajectoryCodecErrorKind, TrajectoryError, Trajec
 /// Call before reading and checking the first expected frame in the caller.
 pub fn assert_rejects_unrelated_buffer(reader: &mut impl TrajectoryReader) {
     let mut wrong = FrameBuffer::new(linear_carbon_topology(reader.topology().atom_count()));
-    wrong.set_step(Some(99));
+    wrong.frame_mut().set_step(Some(99));
     let before = buffer_snapshot(&wrong);
     assert!(matches!(
         reader.read_next(&mut wrong),
@@ -45,7 +45,7 @@ pub fn topology(symbols: &[&str], bonds: &[(usize, usize)]) -> Arc<Topology> {
 
     let molecule = graph.finish().unwrap();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     builder.add_instance(definition).unwrap();
     Arc::new(builder.build().unwrap())
 }

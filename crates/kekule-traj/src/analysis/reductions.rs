@@ -8,7 +8,7 @@ use kekule::topology::{
 };
 use kekule::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 
-use crate::{Trajectory, TrajectoryFrameView};
+use kekule::structure::{AsModelView, Trajectory};
 
 /// Invalid reduction inputs or a failed frame observation.
 #[derive(Debug, Clone, PartialEq)]
@@ -97,12 +97,12 @@ struct Moments {
 /// let mut index = 0;
 /// while reader.read_next(&mut buffer)? {
 ///     // Apply any intended periodic preprocessing and fitting here.
-///     rmsf.observe(index, buffer.frame_view())?;
+///     rmsf.observe(index, &buffer)?;
 ///     index += 1;
 /// }
 /// let result = rmsf.finish()?;
 /// for (atom, fluctuation) in result.atoms() {
-///     let residue = result.selection().topology().residue_for_atom(atom)?;
+///     let residue = result.selection().topology().atom(atom).and_then(|atom| atom.residue());
 ///     // Atom identity, optional residue, and the unit-bearing value stay associated.
 ///     # let _ = (residue, fluctuation);
 /// }
@@ -135,8 +135,9 @@ impl RmsfAccumulator {
     pub fn observe(
         &mut self,
         frame_index: usize,
-        frame: TrajectoryFrameView<'_>,
+        frame: &(impl AsModelView + ?Sized),
     ) -> Result<(), ReductionError> {
+        let frame = frame.as_model_view();
         self.selection
             .ensure_compatible(&frame.shared_topology())
             .map_err(|_| ReductionError::TopologyMismatch { frame: frame_index })?;
@@ -226,7 +227,7 @@ impl RmsfResult {
     }
 
     /// Resolves each value to its source atom. Residues can be obtained through
-    /// `result.selection().topology().residue_for_atom(atom)`.
+    /// `result.selection().topology().atom(atom).and_then(|atom| atom.residue())`.
     pub fn atoms(&self) -> impl ExactSizeIterator<Item = (InstanceAtomId, Quantity<f64>)> + '_ {
         self.selection.atom_ids().zip(
             self.values
@@ -305,8 +306,9 @@ impl ContactOccupancyAccumulator {
     pub fn observe(
         &mut self,
         frame_index: usize,
-        frame: TrajectoryFrameView<'_>,
+        frame: &(impl AsModelView + ?Sized),
     ) -> Result<(), ReductionError> {
+        let frame = frame.as_model_view();
         if !self.topology.shares_layout(frame.topology()) {
             return Err(ReductionError::TopologyMismatch { frame: frame_index });
         }
@@ -387,31 +389,45 @@ impl ContactOccupancyResult {
     }
 }
 
-impl Trajectory {
-    /// Per-atom population RMSF about mean stored positions. Align and perform
-    /// periodic preprocessing beforehand. Uses [`RmsfAccumulator`] internally.
-    pub fn rmsf(&self, selection: &AtomSelection) -> Result<RmsfResult, ReductionError> {
-        selection
-            .ensure_compatible(&self.shared_topology())
-            .map_err(ReductionError::Selection)?;
-        let mut accumulator = RmsfAccumulator::new(selection)?;
-        for (index, frame) in self.frames().enumerate() {
-            accumulator.observe(index, frame)?;
-        }
-        accumulator.finish()
+/// Per-atom population RMSF about mean stored positions over every frame of
+/// a trajectory, each frame counting once. Align and perform periodic
+/// preprocessing beforehand. Uses [`RmsfAccumulator`].
+///
+/// Ensemble statistics must use member weights, so this does not accept an
+/// [`kekule::structure::Ensemble`]:
+///
+/// ```compile_fail,E0308
+/// # use kekule::{structure::Ensemble, topology::AtomSelection};
+/// fn unweighted(ensemble: &Ensemble, atoms: &AtomSelection) {
+///     let _ = kekule_traj::analysis::rmsf(ensemble, atoms);
+/// }
+/// ```
+pub fn rmsf(
+    trajectory: &Trajectory,
+    selection: &AtomSelection,
+) -> Result<RmsfResult, ReductionError> {
+    selection
+        .ensure_compatible(&trajectory.shared_topology())
+        .map_err(ReductionError::Selection)?;
+    let mut accumulator = RmsfAccumulator::new(selection)?;
+    for (index, item) in trajectory.iter().enumerate() {
+        accumulator.observe(index, &item)?;
     }
+    accumulator.finish()
+}
 
-    /// Cartesian contact occupancies using the same implementation as streaming.
-    pub fn contact_occupancy(
-        &self,
-        pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
-        cutoff: Quantity<f64>,
-    ) -> Result<ContactOccupancyResult, ReductionError> {
-        let mut accumulator =
-            ContactOccupancyAccumulator::new(&self.shared_topology(), pairs, cutoff)?;
-        for (index, frame) in self.frames().enumerate() {
-            accumulator.observe(index, frame)?;
-        }
-        accumulator.finish()
+/// Cartesian contact occupancies over every frame of a trajectory, each frame
+/// counting once, using the same implementation as streaming
+/// [`ContactOccupancyAccumulator`].
+pub fn contact_occupancy(
+    trajectory: &Trajectory,
+    pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
+    cutoff: Quantity<f64>,
+) -> Result<ContactOccupancyResult, ReductionError> {
+    let mut accumulator =
+        ContactOccupancyAccumulator::new(&trajectory.shared_topology(), pairs, cutoff)?;
+    for (index, item) in trajectory.iter().enumerate() {
+        accumulator.observe(index, &item)?;
     }
+    accumulator.finish()
 }

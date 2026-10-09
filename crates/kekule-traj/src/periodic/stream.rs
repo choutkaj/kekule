@@ -1,18 +1,18 @@
 use std::sync::Arc;
 
 use kekule::geometry::Point3;
-use kekule::structure::Positions;
+use kekule::structure::{ModelView, Positions, RealizationError, TrajectoryFrameView};
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex};
 
 use super::{checked_image, positions, Lattice, MoleculePlan, PeriodicError};
-use crate::{FrameBuffer, TrajectoryFrame, TrajectoryFrameView};
+use crate::FrameBuffer;
 
 /// A reusable bond traversal for making molecules whole and imaging them.
 ///
 /// The plan binds one topology layout. Operations are independent between frames;
 /// `frame_index` is the caller's zero-based source index for error reporting.
 /// All non-position state is retained. These are the same operations used by
-/// [`crate::Trajectory::make_molecules_whole`] and [`crate::Trajectory::image_molecules`].
+/// [`super::make_molecules_whole`] and [`super::image_molecules`].
 pub struct MoleculeImager {
     topology: Arc<Topology>,
     plan: MoleculePlan,
@@ -29,46 +29,26 @@ impl MoleculeImager {
         &self.topology
     }
 
+    /// Makes every bonded molecule of the buffered frame whole.
     pub fn make_whole(
         &self,
         frame_index: usize,
-        source: TrajectoryFrameView<'_>,
-    ) -> Result<TrajectoryFrame, PeriodicError> {
-        Ok(source.with_positions(self.frame_positions(frame_index, source, None)?))
-    }
-
-    pub fn make_whole_in_place(
-        &self,
-        frame_index: usize,
         frame: &mut FrameBuffer,
     ) -> Result<(), PeriodicError> {
-        let positions = self.frame_positions(frame_index, frame.frame_view(), None)?;
-        frame
-            .set_positions(positions.values())
-            .map_err(|e| PeriodicError::Publication(Box::new(e.into())))
+        let positions = self.frame_positions(frame_index, frame.as_model_view(), None)?;
+        publish_buffer(frame, &positions)
     }
 
+    /// Images whole molecules of the buffered frame around the selected anchors.
     pub fn image(
         &self,
         frame_index: usize,
-        source: TrajectoryFrameView<'_>,
-        anchors: &AtomSelection,
-    ) -> Result<TrajectoryFrame, PeriodicError> {
-        let anchors = self.anchor_groups(anchors)?;
-        Ok(source.with_positions(self.frame_positions(frame_index, source, Some(&anchors))?))
-    }
-
-    pub fn image_in_place(
-        &self,
-        frame_index: usize,
         frame: &mut FrameBuffer,
         anchors: &AtomSelection,
     ) -> Result<(), PeriodicError> {
         let anchors = self.anchor_groups(anchors)?;
-        let positions = self.frame_positions(frame_index, frame.frame_view(), Some(&anchors))?;
-        frame
-            .set_positions(positions.values())
-            .map_err(|e| PeriodicError::Publication(Box::new(e.into())))
+        let positions = self.frame_positions(frame_index, frame.as_model_view(), Some(&anchors))?;
+        publish_buffer(frame, &positions)
     }
 
     pub(super) fn anchor_groups(
@@ -91,7 +71,7 @@ impl MoleculeImager {
     pub(super) fn frame_positions(
         &self,
         frame_index: usize,
-        source: TrajectoryFrameView<'_>,
+        source: ModelView<'_>,
         anchors: Option<&[bool]>,
     ) -> Result<Positions, PeriodicError> {
         if !self.topology().shares_layout(source.topology()) {
@@ -115,7 +95,7 @@ impl MoleculeImager {
 /// change neither the caller's buffer nor the unwrapping state, so a corrected
 /// frame can be retried. Use [`Self::reset`] for a new independent sequence.
 /// Available times must not decrease; missing times are allowed. This follows the
-/// scientific convention and sampling assumptions of [`crate::Trajectory::unwrap`].
+/// scientific convention and sampling assumptions of [`super::unwrap`].
 pub struct TrajectoryUnwrapper {
     topology: Arc<Topology>,
     previous: Option<PreviousFrame>,
@@ -151,26 +131,15 @@ impl TrajectoryUnwrapper {
         self.previous = None;
     }
 
-    /// Returns the next unwrapped frame and advances state only on success.
-    pub fn unwrap_frame(
-        &mut self,
-        frame_index: usize,
-        source: TrajectoryFrameView<'_>,
-    ) -> Result<TrajectoryFrame, PeriodicError> {
-        let step = self.prepare(frame_index, source)?;
-        Ok(source.with_positions(self.commit(step)))
-    }
-
-    /// Transactionally unwraps a reusable buffer and advances the sequence.
-    pub fn unwrap_in_place(
+    /// Transactionally unwraps a reusable buffer and advances the sequence
+    /// only on success.
+    pub fn unwrap(
         &mut self,
         frame_index: usize,
         frame: &mut FrameBuffer,
     ) -> Result<(), PeriodicError> {
         let step = self.prepare(frame_index, frame.frame_view())?;
-        frame
-            .set_positions(step.positions.values())
-            .map_err(|e| PeriodicError::Publication(Box::new(e.into())))?;
+        publish_buffer(frame, &step.positions)?;
         self.commit(step);
         Ok(())
     }
@@ -262,4 +231,14 @@ impl TrajectoryUnwrapper {
             },
         })
     }
+}
+
+fn publish_buffer(frame: &mut FrameBuffer, positions: &Positions) -> Result<(), PeriodicError> {
+    frame
+        .frame_mut()
+        .conformation_mut()
+        .set_positions(positions.values())
+        .map_err(|error| {
+            PeriodicError::Publication(Box::new(RealizationError::Conformation(error)))
+        })
 }

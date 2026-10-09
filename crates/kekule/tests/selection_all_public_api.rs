@@ -9,7 +9,7 @@ use kekule::{
 fn all_selects_dense_atoms_across_reused_definitions_and_binds_the_exact_topology() {
     let molecule = smiles::to_molecules("CO").unwrap().pop().unwrap();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     let topology = Arc::new(builder.build().unwrap());
@@ -28,7 +28,9 @@ fn all_selects_dense_atoms_across_reused_definitions_and_binds_the_exact_topolog
     assert!(std::ptr::eq(all.topology(), topology.as_ref()));
     assert!(all.ensure_compatible(&topology).is_ok());
     let mut independent = TopologyBuilder::new();
-    let definition = independent.add_molecule_definition(&molecule).unwrap();
+    let definition = independent
+        .add_molecule_definition(molecule.clone())
+        .unwrap();
     independent.add_instance(definition).unwrap();
     independent.add_instance(definition).unwrap();
     let independent = Arc::new(independent.build().unwrap());

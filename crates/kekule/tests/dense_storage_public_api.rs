@@ -1,6 +1,7 @@
 use kekule::geometry::Point3;
-use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyValue};
-use kekule::structure::{PositionError, Positions};
+use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
+use kekule::structure::{Conformation, PositionError, Positions};
+use kekule::topology::TopologyAtomIndex;
 use kekule::units::{Quantity, ANGSTROM, DIMENSIONLESS};
 
 #[test]
@@ -9,21 +10,23 @@ fn public_dense_containers_are_topology_free() {
     assert_eq!(positions.len(), 1);
     assert!((positions.values().value()[0].x - 1.0).abs() < 1.0e-15);
 
-    let mut atoms = PropertyTable::new(2);
+    let mut conformation = Conformation::new(Positions::zeros(2));
+    let mut properties = conformation.properties_mut();
+    let mut atoms = properties.atoms_mut();
     let key = PropertyKey::new("score").unwrap();
     atoms
         .set_value(
             key.clone(),
-            1,
+            TopologyAtomIndex::new(1),
             Some(PropertyValue::Real {
                 value: 0.5,
                 unit: DIMENSIONLESS,
             }),
         )
         .unwrap();
-    assert_eq!(atoms.value(&key, 0).unwrap(), None);
+    assert_eq!(atoms.value(&key, TopologyAtomIndex::new(0)).unwrap(), None);
     assert_eq!(
-        atoms.value(&key, 1).unwrap(),
+        atoms.value(&key, TopologyAtomIndex::new(1)).unwrap(),
         Some(PropertyValue::Real {
             value: 0.5,
             unit: DIMENSIONLESS

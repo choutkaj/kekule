@@ -2,7 +2,7 @@ use super::builder::{checked_future_len, checked_id};
 use super::*;
 use std::sync::Arc;
 
-use crate::core::{BondOrder, Element};
+use crate::core::{Atom, BondOrder, Element};
 use crate::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use crate::query;
 use crate::substructure;
@@ -60,7 +60,7 @@ fn edited_molecule() -> (Molecule, AtomId, AtomId, BondId) {
 fn topology_with_reused_definition() -> (Arc<Topology>, AtomId, AtomId, BondId) {
     let (molecule, carbon, oxygen, bond) = edited_molecule();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     (Arc::new(builder.build().unwrap()), carbon, oxygen, bond)
@@ -76,7 +76,7 @@ fn topology_with_two_distinct_definitions(reverse: bool) -> Arc<Topology> {
     };
     let mut builder = TopologyBuilder::new();
     for molecule in molecules {
-        let definition = builder.add_molecule_definition(molecule).unwrap();
+        let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
         builder.add_instance(definition).unwrap();
     }
     Arc::new(builder.build().unwrap())
@@ -93,8 +93,8 @@ fn topology_reuses_definitions_and_preserves_qualified_dense_order() {
     let first = MoleculeInstanceId::new(0);
     let second = MoleculeInstanceId::new(1);
     assert!(std::ptr::eq(
-        topology.definition_for_instance(first).unwrap(),
-        topology.definition_for_instance(second).unwrap()
+        topology.molecule(first).unwrap().definition(),
+        topology.molecule(second).unwrap().definition()
     ));
     assert_eq!(
         topology.atom_ids(),
@@ -137,14 +137,20 @@ fn molecule_views_are_instance_qualified_and_share_definition_state() {
         molecules[1].molecule()
     ));
     assert_eq!(
-        molecules[0].atoms().map(|(id, _)| id).collect::<Vec<_>>(),
+        molecules[0]
+            .atoms()
+            .map(|view| view.id())
+            .collect::<Vec<_>>(),
         vec![
             InstanceAtomId::new(molecules[0].id(), carbon),
             InstanceAtomId::new(molecules[0].id(), oxygen),
         ]
     );
     assert_eq!(
-        molecules[1].bonds().map(|(id, _)| id).collect::<Vec<_>>(),
+        molecules[1]
+            .bonds()
+            .map(|view| view.id())
+            .collect::<Vec<_>>(),
         vec![InstanceBondId::new(molecules[1].id(), bond)]
     );
     assert_eq!(
@@ -162,9 +168,9 @@ fn builder_rejects_empty_topologies_and_unused_definitions() {
 
     let molecule = perceived_molecule("O");
     let mut builder = TopologyBuilder::new();
-    let used = builder.add_molecule_definition(&molecule).unwrap();
+    let used = builder.add_molecule_definition(molecule.clone()).unwrap();
     builder.add_instance(used).unwrap();
-    let unused = builder.add_molecule_definition(&molecule).unwrap();
+    let unused = builder.add_molecule_definition(molecule.clone()).unwrap();
     assert!(matches!(
         builder.build(),
         Err(TopologyBuildError::UnusedMoleculeDefinition(id)) if id == unused
@@ -176,7 +182,7 @@ fn canonical_molecule_constructors_preserve_order_without_interning_or_perceptio
     let carbon = crate::tests::read_smiles("C").expect("carbon interprets");
     let carbon_oxygen = crate::tests::read_smiles("CO").expect("methanol fragment interprets");
 
-    let single = Topology::from_molecule(&carbon_oxygen).expect("single topology builds");
+    let single = Topology::from_molecule(carbon_oxygen.clone()).expect("single topology builds");
     assert_eq!(single.definition_count(), 1);
     assert_eq!(single.instance_count(), 1);
     assert_eq!(single.atom_count(), 2);
@@ -188,7 +194,7 @@ fn canonical_molecule_constructors_preserve_order_without_interning_or_perceptio
     );
 
     let molecules = vec![carbon.clone(), carbon_oxygen.clone(), carbon];
-    let several = Topology::from_molecules(&molecules).expect("multi topology builds");
+    let several = Topology::from_molecules(molecules.clone()).expect("multi topology builds");
     assert_eq!(several.definition_count(), 3);
     assert_eq!(several.instance_count(), 3);
     assert_eq!(several.atom_count(), 4);
@@ -206,7 +212,7 @@ fn canonical_molecule_constructors_preserve_order_without_interning_or_perceptio
     ));
 
     assert!(matches!(
-        Topology::from_molecules(&[]),
+        Topology::from_molecules([] as [_; 0]),
         Err(TopologyBuildError::NoMoleculeInstances)
     ));
 }
@@ -215,7 +221,7 @@ fn canonical_molecule_constructors_preserve_order_without_interning_or_perceptio
 fn builder_add_molecule_is_the_concise_single_instance_path() {
     let molecule = perceived_molecule("CO");
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&molecule).unwrap();
+    let instance = builder.add_molecule(molecule.clone()).unwrap();
     let topology = builder.build().unwrap();
     assert_eq!(instance, MoleculeInstanceId::new(0));
     assert_eq!(topology.definition_count(), 1);
@@ -226,7 +232,7 @@ fn builder_add_molecule_is_the_concise_single_instance_path() {
 fn annotated_topology() -> Topology {
     let (molecule, carbon, oxygen, bond) = edited_molecule();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     let first = builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     let chain = builder
@@ -252,10 +258,12 @@ fn annotated_topology() -> Topology {
     let owner_key = PropertyKey::new("source").unwrap();
     let value_key = PropertyKey::new("tag").unwrap();
     builder
-        .insert_property(owner_key, PropertyValue::String("annotated".into()))
+        .properties_mut()
+        .owner_mut()
+        .insert(owner_key, PropertyValue::String("annotated".into()))
         .unwrap();
-    fn insert_values(
-        mut table: crate::properties::PropertyTableMut<'_>,
+    fn insert_values<R>(
+        mut table: crate::properties::PropertyTableMut<'_, R>,
         key: &PropertyKey,
         values: Vec<Option<i64>>,
     ) {
@@ -264,30 +272,42 @@ fn annotated_topology() -> Topology {
             .unwrap();
     }
     insert_values(
-        builder.molecule_instance_properties_mut(),
+        builder.properties_mut().molecule_instances_mut(),
         &value_key,
         vec![Some(10), Some(20)],
     );
     insert_values(
-        builder.atom_properties_mut(),
+        builder.properties_mut().atoms_mut(),
         &value_key,
         vec![Some(1), Some(2), Some(3), Some(4)],
     );
     insert_values(
-        builder.bond_properties_mut(),
+        builder.properties_mut().bonds_mut(),
         &value_key,
         vec![Some(5), Some(6)],
     );
-    insert_values(builder.chain_properties_mut(), &value_key, vec![Some(30)]);
-    insert_values(builder.residue_properties_mut(), &value_key, vec![Some(40)]);
     insert_values(
-        builder.atom_site_properties_mut(),
+        builder.properties_mut().chains_mut(),
+        &value_key,
+        vec![Some(30)],
+    );
+    insert_values(
+        builder.properties_mut().residues_mut(),
+        &value_key,
+        vec![Some(40)],
+    );
+    insert_values(
+        builder.properties_mut().atom_sites_mut(),
         &value_key,
         vec![Some(50)],
     );
 
     assert_eq!(
-        builder.bond_properties_mut().value(&value_key, 0).unwrap(),
+        builder
+            .properties_mut()
+            .bonds_mut()
+            .value(&value_key, TopologyBondIndex::new(0))
+            .unwrap(),
         Some(PropertyValue::Int(5))
     );
     // Edited definitions publish compact local IDs.
@@ -330,7 +350,7 @@ fn into_builder_appends_after_preserved_layout_hierarchy_and_properties() {
 
     let ligand = perceived_molecule("CN");
     let mut builder = topology.into_builder();
-    let appended_instance = builder.add_molecule(&ligand).unwrap();
+    let appended_instance = builder.add_molecule(ligand.clone()).unwrap();
     let extended = builder.build().unwrap();
 
     assert_eq!(appended_instance, MoleculeInstanceId::new(2));
@@ -370,16 +390,19 @@ fn into_builder_appends_after_preserved_layout_hierarchy_and_properties() {
         );
     }
     assert_eq!(extended.layout.hierarchy, old_hierarchy);
-    assert_eq!(extended.chain_properties(), old_properties.chains());
-    assert_eq!(extended.residue_properties(), old_properties.residues());
-    assert_eq!(extended.atom_site_properties(), old_properties.atom_sites());
-    assert_eq!(extended.properties().get(&owner_key), None);
+    assert_eq!(extended.properties().chains(), old_properties.chains());
+    assert_eq!(extended.properties().residues(), old_properties.residues());
     assert_eq!(
-        extended.molecule_instance_properties().get(&value_key),
+        extended.properties().atom_sites(),
+        old_properties.atom_sites()
+    );
+    assert_eq!(extended.properties().owner().get(&owner_key), None);
+    assert_eq!(
+        extended.properties().molecule_instances().get(&value_key),
         Some(&PropertyColumn::Int(vec![Some(10), Some(20), None]))
     );
     assert_eq!(
-        extended.atom_properties().get(&value_key),
+        extended.properties().atoms().get(&value_key),
         Some(&PropertyColumn::Int(vec![
             Some(1),
             Some(2),
@@ -390,7 +413,7 @@ fn into_builder_appends_after_preserved_layout_hierarchy_and_properties() {
         ]))
     );
     assert_eq!(
-        extended.bond_properties().get(&value_key),
+        extended.properties().bonds().get(&value_key),
         Some(&PropertyColumn::Int(vec![Some(5), Some(6), None]))
     );
     let appended_atoms = ligand
@@ -467,7 +490,7 @@ fn layout_equality_does_not_reorder_definitions_instances_or_dense_state() {
 fn topology_properties_cover_every_domain_and_do_not_change_layout_identity() {
     let (molecule, carbon, oxygen, bond) = edited_molecule();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     let instance = builder.add_instance(definition).unwrap();
     let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue = builder
@@ -489,60 +512,59 @@ fn topology_properties_cover_every_domain_and_do_not_change_layout_identity() {
     let owner_key = PropertyKey::new("source").unwrap();
     let value_key = PropertyKey::new("tag").unwrap();
     builder
-        .insert_property(owner_key.clone(), PropertyValue::String("test".into()))
+        .properties_mut()
+        .owner_mut()
+        .insert(owner_key.clone(), PropertyValue::String("test".into()))
         .unwrap();
-    fn insert_tag(mut table: crate::properties::PropertyTableMut<'_>, key: &PropertyKey) {
+    fn insert_tag<R>(mut table: crate::properties::PropertyTableMut<'_, R>, key: &PropertyKey) {
         table
             .insert(key.clone(), PropertyColumn::Int(vec![Some(1); table.len()]))
             .unwrap();
     }
-    insert_tag(builder.molecule_instance_properties_mut(), &value_key);
-    insert_tag(builder.atom_properties_mut(), &value_key);
-    insert_tag(builder.bond_properties_mut(), &value_key);
-    insert_tag(builder.chain_properties_mut(), &value_key);
-    insert_tag(builder.residue_properties_mut(), &value_key);
-    insert_tag(builder.atom_site_properties_mut(), &value_key);
+    insert_tag(
+        builder.properties_mut().molecule_instances_mut(),
+        &value_key,
+    );
+    insert_tag(builder.properties_mut().atoms_mut(), &value_key);
+    insert_tag(builder.properties_mut().bonds_mut(), &value_key);
+    insert_tag(builder.properties_mut().chains_mut(), &value_key);
+    insert_tag(builder.properties_mut().residues_mut(), &value_key);
+    insert_tag(builder.properties_mut().atom_sites_mut(), &value_key);
     let enriched = builder.build().unwrap();
 
     assert_eq!(
-        enriched.properties().get(&owner_key),
+        enriched.properties().owner().get(&owner_key),
         Some(&PropertyValue::String("test".into()))
     );
-    assert_eq!(enriched.molecule_instance_properties().len(), 1);
-    assert_eq!(enriched.atom_properties().len(), 2);
-    assert_eq!(enriched.bond_properties().len(), 1);
-    assert_eq!(enriched.chain_properties().len(), 1);
-    assert_eq!(enriched.residue_properties().len(), 1);
-    assert_eq!(enriched.atom_site_properties().len(), 1);
+    assert_eq!(enriched.properties().molecule_instances().len(), 1);
+    assert_eq!(enriched.properties().atoms().len(), 2);
+    assert_eq!(enriched.properties().bonds().len(), 1);
+    assert_eq!(enriched.properties().chains().len(), 1);
+    assert_eq!(enriched.properties().residues().len(), 1);
+    assert_eq!(enriched.properties().atom_sites().len(), 1);
     assert_eq!(
-        enriched
-            .molecule_instance_property(instance, &value_key)
-            .unwrap(),
+        enriched.molecule(instance).unwrap().property(&value_key),
         Some(PropertyValue::Int(1))
     );
     assert_eq!(
         enriched
-            .molecule(instance)
+            .atom(InstanceAtomId::new(instance, oxygen))
             .unwrap()
-            .property(&value_key)
-            .unwrap(),
+            .property(&value_key),
         Some(PropertyValue::Int(1))
     );
     assert_eq!(
         enriched
-            .atom_property(InstanceAtomId::new(instance, oxygen), &value_key)
-            .unwrap(),
-        Some(PropertyValue::Int(1))
-    );
-    assert_eq!(
-        enriched
-            .bond_property(InstanceBondId::new(instance, bond), &value_key)
-            .unwrap(),
+            .bond(InstanceBondId::new(instance, bond))
+            .unwrap()
+            .property(&value_key),
         Some(PropertyValue::Int(1))
     );
 
     let mut plain_builder = TopologyBuilder::new();
-    let definition = plain_builder.add_molecule_definition(&molecule).unwrap();
+    let definition = plain_builder
+        .add_molecule_definition(molecule.clone())
+        .unwrap();
     let instance = plain_builder.add_instance(definition).unwrap();
     let chain = plain_builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue = plain_builder
@@ -568,7 +590,7 @@ fn topology_properties_cover_every_domain_and_do_not_change_layout_identity() {
 fn builder_is_transactional_and_does_not_intern_equal_definitions() {
     let (molecule, ..) = edited_molecule();
     let mut builder = TopologyBuilder::new();
-    let first = builder.add_molecule_definition(&molecule).unwrap();
+    let first = builder.add_molecule_definition(molecule.clone()).unwrap();
     assert_eq!(
         builder.add_instance(MoleculeDefinitionId::new(99)),
         Err(TopologyBuildError::InvalidMoleculeDefinitionId(
@@ -577,7 +599,7 @@ fn builder_is_transactional_and_does_not_intern_equal_definitions() {
     );
     assert!(builder.instances.is_empty());
     builder.add_instance(first).unwrap();
-    let second = builder.add_molecule_definition(&molecule).unwrap();
+    let second = builder.add_molecule_definition(molecule.clone()).unwrap();
     builder.add_instance(second).unwrap();
     let topology = Arc::new(builder.build().unwrap());
     assert_eq!(topology.definition_count(), 2);
@@ -640,8 +662,8 @@ fn selections_distinguish_instances_elements_and_queries() {
     let ethane = perceived_molecule("CC");
     let water = perceived_molecule("O");
     let mut builder = TopologyBuilder::new();
-    let ethane_definition = builder.add_molecule_definition(&ethane).unwrap();
-    let water_definition = builder.add_molecule_definition(&water).unwrap();
+    let ethane_definition = builder.add_molecule_definition(ethane.clone()).unwrap();
+    let water_definition = builder.add_molecule_definition(water.clone()).unwrap();
     let ethane_instance = builder.add_instance(ethane_definition).unwrap();
     let water_instance = builder.add_instance(water_definition).unwrap();
     let topology = Arc::new(builder.build().unwrap());
@@ -658,7 +680,7 @@ fn selections_distinguish_instances_elements_and_queries() {
     assert_eq!(oxygen.indices().len(), 1);
 
     let query = query::parse_smarts("O").unwrap();
-    let matches = substructure::find_substructure_matches(&water, &query).unwrap();
+    let matches = substructure::find_matches(&water, &query).unwrap();
     let from_query =
         AtomSelection::from_query_matches(&topology, water_instance, &matches).unwrap();
     assert_eq!(
@@ -668,7 +690,7 @@ fn selections_distinguish_instances_elements_and_queries() {
 
     let mut independent_builder = TopologyBuilder::new();
     let definition = independent_builder
-        .add_molecule_definition(&ethane)
+        .add_molecule_definition(ethane.clone())
         .unwrap();
     independent_builder.add_instance(definition).unwrap();
     let independent = Arc::new(independent_builder.build().unwrap());
@@ -687,10 +709,10 @@ fn topology_global_hierarchy_crosses_molecule_boundaries() {
     let molecule = macro_builder.finish().unwrap();
 
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     let first = builder.add_instance(definition).unwrap();
     let small = perceived_molecule("O");
-    let small_definition = builder.add_molecule_definition(&small).unwrap();
+    let small_definition = builder.add_molecule_definition(small.clone()).unwrap();
     let small_instance = builder.add_instance(small_definition).unwrap();
     let second = builder.add_instance(definition).unwrap();
     let chain = builder
@@ -753,31 +775,19 @@ fn topology_global_hierarchy_crosses_molecule_boundaries() {
     let chain_view = topology.chain(chain).unwrap();
     assert_eq!(chain_view.residues().count(), 2);
 
-    assert_eq!(topology.atom_for_site(first_site).unwrap(), first_atom);
     assert_eq!(
-        topology
-            .atom_site_for_atom(first_atom)
-            .unwrap()
-            .unwrap()
-            .id(),
-        first_site
+        topology.atom_site(first_site).unwrap().atom().id(),
+        first_atom
     );
+    let atom = topology.atom(first_atom).unwrap();
+    assert_eq!(atom.atom_site().unwrap().id(), first_site);
+    assert_eq!(atom.residue().unwrap().id(), first_residue);
+    assert_eq!(atom.chain().unwrap().id(), chain);
     assert_eq!(
-        topology.residue_for_atom(first_atom).unwrap().unwrap().id(),
+        topology.atom_site(first_site).unwrap().residue().id(),
         first_residue
     );
-    assert_eq!(
-        topology.chain_for_atom(first_atom).unwrap().unwrap().id(),
-        chain
-    );
-    assert_eq!(
-        topology.residue_for_site(first_site).unwrap().id(),
-        first_residue
-    );
-    assert_eq!(
-        topology.chain_for_residue(first_residue).unwrap().id(),
-        chain
-    );
+    assert_eq!(topology.residue(first_residue).unwrap().chain().id(), chain);
 
     let small_atom = topology
         .atom_ids()
@@ -785,9 +795,10 @@ fn topology_global_hierarchy_crosses_molecule_boundaries() {
         .copied()
         .find(|id| id.molecule() == small_instance)
         .unwrap();
-    assert!(topology.atom_site_for_atom(small_atom).unwrap().is_none());
-    assert!(topology.residue_for_atom(small_atom).unwrap().is_none());
-    assert!(topology.chain_for_atom(small_atom).unwrap().is_none());
+    let small = topology.atom(small_atom).unwrap();
+    assert!(small.atom_site().is_none());
+    assert!(small.residue().is_none());
+    assert!(small.chain().is_none());
 
     assert_eq!(
         AtomSelection::for_chains(&topology, [chain])
@@ -847,7 +858,9 @@ fn sparse_subset_retains_only_selected_component_storage() {
             .unwrap();
     }
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&editor.finish().unwrap()).unwrap();
+    let instance = builder
+        .add_molecule(editor.finish().unwrap().clone())
+        .unwrap();
     let source = Arc::new(builder.build().unwrap());
     let selection = AtomSelection::from_atoms(
         &source,
@@ -866,8 +879,8 @@ fn sparse_subset_retains_only_selected_component_storage() {
         assert_eq!(molecule.graph().atom_slot_count(), 1);
         assert_eq!(molecule.graph().bond_slot_count(), 0);
         assert_eq!(molecule.graph().adjacency.len(), 1);
-        assert_eq!(molecule.atom_properties().len(), 1);
-        assert_eq!(molecule.bond_properties().len(), 0);
+        assert_eq!(molecule.properties().atoms().len(), 1);
+        assert_eq!(molecule.properties().bonds().len(), 0);
     }
     assert_eq!(
         subset.correspondence().source_atom_indices(),
@@ -893,22 +906,28 @@ fn compact_subset_projects_properties_bonds_and_model_positions() {
     let mut molecule = editor.finish().unwrap();
     let key = PropertyKey::new("source_id").unwrap();
     molecule
-        .insert_property(key.clone(), PropertyValue::Int(99))
+        .properties_mut()
+        .owner_mut()
+        .insert(key.clone(), PropertyValue::Int(99))
         .unwrap();
     for atom in [carbon, oxygen, tail] {
         molecule
-            .set_atom_property(
-                atom,
+            .properties_mut()
+            .atoms_mut()
+            .set_value(
                 key.clone(),
+                atom,
                 Some(PropertyValue::Int(atom.raw().into())),
             )
             .unwrap();
     }
     molecule
-        .set_bond_property(bond, key.clone(), Some(PropertyValue::Int(17)))
+        .properties_mut()
+        .bonds_mut()
+        .set_value(key.clone(), bond, Some(PropertyValue::Int(17)))
         .unwrap();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     let instances = [
         builder.add_instance(definition).unwrap(),
         builder.add_instance(definition).unwrap(),
@@ -942,7 +961,7 @@ fn compact_subset_projects_properties_bonds_and_model_positions() {
             .unwrap();
         let target = subset
             .topology()
-            .definition_for_instance(mapped_carbon.molecule())
+            .molecule(mapped_carbon.molecule())
             .unwrap()
             .molecule();
         assert_eq!(target.graph().atom_slot_count(), 2);
@@ -963,14 +982,22 @@ fn compact_subset_projects_properties_bonds_and_model_positions() {
             (AtomId::new(0), AtomId::new(1), BondOrder::Double)
         );
         assert_eq!(
-            target.atom_property(AtomId::new(1), &key).unwrap(),
+            target
+                .properties()
+                .atoms()
+                .value(&key, AtomId::new(1))
+                .unwrap(),
             Some(PropertyValue::Int(oxygen.raw().into()))
         );
         assert_eq!(
-            target.bond_property(BondId::new(0), &key).unwrap(),
+            target
+                .properties()
+                .bonds()
+                .value(&key, BondId::new(0))
+                .unwrap(),
             Some(PropertyValue::Int(17))
         );
-        assert!(target.properties().owner_is_empty());
+        assert!(target.properties().owner().is_empty());
     }
     let positions = Positions::new(Quantity::new(
         (0..6)
@@ -980,7 +1007,7 @@ fn compact_subset_projects_properties_bonds_and_model_positions() {
     ))
     .unwrap();
     let model = Model::new(source, positions).unwrap();
-    let sliced = model.slice(&selection).unwrap();
+    let sliced = model.subset(&selection).unwrap();
     assert_eq!(
         sliced
             .positions()
@@ -1073,7 +1100,9 @@ fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_ca
         })
         .unwrap();
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&editor.finish().unwrap()).unwrap();
+    let instance = builder
+        .add_molecule(editor.finish().unwrap().clone())
+        .unwrap();
     let source = Arc::new(builder.build().unwrap());
     let selection = AtomSelection::from_atoms(
         &source,
@@ -1170,7 +1199,7 @@ fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
     assert_eq!(last.raw(), 2);
 
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&molecule).unwrap();
+    let instance = builder.add_molecule(molecule.clone()).unwrap();
     let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     for (sequence, atom) in [(1, first), (2, middle), (3, last)] {
         let residue = builder
@@ -1189,39 +1218,47 @@ fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
     let owner_key = PropertyKey::new("owner_note").unwrap();
     let value_key = PropertyKey::new("source_index").unwrap();
     builder
-        .insert_property(owner_key.clone(), PropertyValue::Bool(true))
+        .properties_mut()
+        .owner_mut()
+        .insert(owner_key.clone(), PropertyValue::Bool(true))
         .unwrap();
     builder
-        .molecule_instance_properties_mut()
+        .properties_mut()
+        .molecule_instances_mut()
         .insert(value_key.clone(), PropertyColumn::Int(vec![Some(10)]))
         .unwrap();
     builder
-        .atom_properties_mut()
+        .properties_mut()
+        .atoms_mut()
         .insert(
             value_key.clone(),
             PropertyColumn::Int(vec![Some(1), Some(2), Some(3)]),
         )
         .unwrap();
     builder
-        .bond_properties_mut()
+        .properties_mut()
+        .bonds_mut()
         .insert(
             value_key.clone(),
             PropertyColumn::Int(vec![Some(4), Some(5)]),
         )
         .unwrap();
     builder
-        .chain_properties_mut()
+        .properties_mut()
+        .chains_mut()
         .insert(value_key.clone(), PropertyColumn::Int(vec![Some(6)]))
         .unwrap();
     builder
-        .residue_properties_mut()
+        .properties_mut()
+        .residues_mut()
         .insert(
             value_key.clone(),
             PropertyColumn::Int(vec![Some(7), Some(8), Some(9)]),
         )
         .unwrap();
     builder
-        .atom_site_properties_mut()
+        .properties_mut()
+        .atom_sites_mut()
         .insert(
             value_key.clone(),
             PropertyColumn::Int(vec![Some(10), Some(11), Some(12)]),
@@ -1237,7 +1274,8 @@ fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
     assert_eq!(
         whole
             .topology()
-            .molecule_instance_properties()
+            .properties()
+            .molecule_instances()
             .get(&value_key),
         Some(&PropertyColumn::Int(vec![Some(10)]))
     );
@@ -1248,7 +1286,11 @@ fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
     )
     .unwrap();
     let partial = source.subset(&partial_selection).unwrap();
-    assert!(!partial.topology().molecule_instance_properties().has_data());
+    assert!(!partial
+        .topology()
+        .properties()
+        .molecule_instances()
+        .has_data());
 
     let selection = AtomSelection::from_atoms(
         &source,
@@ -1288,23 +1330,23 @@ fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
         .expect("selected atom is mapped");
     assert_eq!(subset.topology().atom_index(target_last).unwrap().raw(), 1);
     let projected = subset.topology();
-    assert!(projected.properties().get(&owner_key).is_none());
-    assert!(!projected.molecule_instance_properties().has_data());
+    assert!(projected.properties().owner().get(&owner_key).is_none());
+    assert!(!projected.properties().molecule_instances().has_data());
     assert_eq!(
-        projected.atom_properties().get(&value_key).unwrap(),
+        projected.properties().atoms().get(&value_key).unwrap(),
         &PropertyColumn::Int(vec![Some(1), Some(3)])
     );
-    assert!(!projected.bond_properties().has_data());
+    assert!(!projected.properties().bonds().has_data());
     assert_eq!(
-        projected.chain_properties().get(&value_key).unwrap(),
+        projected.properties().chains().get(&value_key).unwrap(),
         &PropertyColumn::Int(vec![Some(6)])
     );
     assert_eq!(
-        projected.residue_properties().get(&value_key).unwrap(),
+        projected.properties().residues().get(&value_key).unwrap(),
         &PropertyColumn::Int(vec![Some(7), Some(9)])
     );
     assert_eq!(
-        projected.atom_site_properties().get(&value_key).unwrap(),
+        projected.properties().atom_sites().get(&value_key).unwrap(),
         &PropertyColumn::Int(vec![Some(10), Some(12)])
     );
 }
@@ -1317,12 +1359,13 @@ fn retaining_one_whole_instance_projects_exactly_one_instance_property_row() {
         .unwrap();
     let molecule = editor.finish().unwrap();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     builder.add_instance(definition).unwrap();
     let second = builder.add_instance(definition).unwrap();
     let key = PropertyKey::new("instance_score").unwrap();
     builder
-        .molecule_instance_properties_mut()
+        .properties_mut()
+        .molecule_instances_mut()
         .insert(key.clone(), PropertyColumn::Int(vec![Some(10), Some(20)]))
         .unwrap();
     let source = Arc::new(builder.build().unwrap());
@@ -1330,7 +1373,7 @@ fn retaining_one_whole_instance_projects_exactly_one_instance_property_row() {
     let retained = transform::retain_instances(&source, [second]).unwrap();
     assert_eq!(retained.instance_count(), 1);
     assert_eq!(
-        retained.molecule_instance_properties().get(&key),
+        retained.properties().molecule_instances().get(&key),
         Some(&PropertyColumn::Int(vec![Some(20)]))
     );
 }

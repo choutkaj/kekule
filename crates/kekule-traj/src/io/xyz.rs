@@ -5,11 +5,12 @@ use std::sync::Arc;
 
 use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
-    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryFrameView,
-    TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryIoOperation,
+    TrajectoryReader, TrajectoryWriter,
 };
 use kekule::core::Element;
 use kekule::geometry::Point3;
+use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
@@ -285,15 +286,7 @@ impl<R: BufRead> XyzReader<R> {
             let expected_element = self
                 .topology()
                 .atom(atom_id)
-                .map_err(|error| {
-                    frame_codec_error(
-                        TrajectoryCodecErrorKind::InconsistentMetadata,
-                        operation,
-                        &self.options.source_label,
-                        self.frame_cursor,
-                        format!("topology atom lookup failed: {error}"),
-                    )
-                })?
+                .expect("dense topology atom IDs name topology atoms")
                 .element;
             let Some(line) = read_line(
                 &mut self.reader,
@@ -761,18 +754,14 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
             (frame.forces().is_some(), "forces"),
             (frame.time().is_some(), "time"),
             (frame.step().is_some(), "step"),
+            (frame.properties().atoms().has_data(), "atom properties"),
+            (frame.properties().bonds().has_data(), "bond properties"),
             (
-                frame.properties().realization_atom_properties().has_data(),
-                "atom properties",
-            ),
-            (
-                frame.properties().realization_bond_properties().has_data(),
-                "bond properties",
-            ),
-            (
-                !frame.properties().owner_is_empty(),
+                !frame.properties().owner().is_empty(),
                 "frame owner properties",
             ),
+            (frame.occupancies().is_some(), "occupancies"),
+            (frame.b_factors().is_some(), "B-factors"),
         ];
         if let Some((_, field)) = unsupported.into_iter().find(|(present, _)| *present) {
             return Err(writer_field_error(
@@ -823,15 +812,10 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
         })?;
         for (atom_index, point) in positions.value().iter().enumerate() {
             let atom_id = self.topology.atom_ids()[atom_index];
-            let element = self.topology.atom(atom_id).map_err(|error| {
-                codec_context(
-                    TrajectoryCodecErrorKind::InconsistentMetadata,
-                    TrajectoryIoOperation::WriteFrame,
-                    Some(TrajectoryFormat::Xyz),
-                    &self.source_label,
-                    format!("topology atom lookup failed: {error}"),
-                )
-            })?;
+            let element = self
+                .topology
+                .atom(atom_id)
+                .expect("dense topology atom IDs name topology atoms");
             writeln!(
                 self.writer,
                 "{} {x:.precision$} {y:.precision$} {z:.precision$}",

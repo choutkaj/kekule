@@ -20,7 +20,7 @@
 //!
 //! let mut molecule = smiles::to_molecules("CCO")?.remove(0);
 //! molecule.perceive()?;
-//! hydrogens::add_hydrogens(&mut molecule)?;
+//! molecule.add_hydrogens()?;
 //! let model = NaglModel::load("path/to/exported-ash")?;
 //! let parameters = ForceField::rosemary()?.parameterize_molecule(&molecule, &model)?;
 //! assert_eq!(parameters.charges().value().len(), molecule.atom_count());

@@ -5,7 +5,7 @@
 //! geometry, and units.
 //!
 //! Start with [`read_trajectory`] to load an entire file into an in-memory
-//! [`crate::Trajectory`], and [`write_trajectory`] to save it atomically. Use
+//! [`kekule::structure::Trajectory`], and [`write_trajectory`] to save it atomically. Use
 //! their `_with_options` variants for explicit codec and field policies.
 //! Use [`open_trajectory`] for sequential processing with
 //! a reusable frame buffer, [`open_indexed_trajectory`] for verified random access, or

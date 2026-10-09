@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::altloc::{MmcifAltLocDecision, MmcifAltLocPolicy, MmcifResidueId};
 use crate::core::Molecule;
-use crate::structure::{Ensemble, EnsembleError, Model};
+use crate::structure::{Ensemble, Model, RealizationError};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -588,7 +588,7 @@ pub enum MmcifEnsembleInterpretError {
     InconsistentDenseAtomOrder {
         model_id: String,
     },
-    Ensemble(Box<EnsembleError>),
+    Ensemble(Box<RealizationError>),
 }
 
 impl fmt::Display for MmcifEnsembleInterpretError {

@@ -511,7 +511,7 @@ fn removable_hydrogen(
     if molecule
         .properties()
         .atoms()
-        .row_has_data(hydrogen.index())
+        .row_has_data(hydrogen)
         .expect("live atom has a property-table row")
     {
         return Ok(Err(RetainedHydrogenReason::AtomProperties));
@@ -534,7 +534,7 @@ fn removable_hydrogen(
     if molecule
         .properties()
         .bonds()
-        .row_has_data(bond_id.index())
+        .row_has_data(bond_id)
         .expect("live bond has a property-table row")
     {
         return Ok(Err(RetainedHydrogenReason::BondProperties));

@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use crate::core::Bond;
 use crate::topology::{
-    InstanceAtomId, InstanceBondId, MoleculeDefinitionId, MoleculeInstanceId, Topology,
+    BondView, InstanceAtomId, InstanceBondId, MoleculeDefinitionId, MoleculeInstanceId, Topology,
     TopologyBondIndex,
 };
 
@@ -41,7 +40,7 @@ pub enum BondSelectionMode {
 /// use std::sync::Arc;
 /// use kekule::{smiles, topology::BondSelection};
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let topology = Arc::new(smiles::to_topology("CCC")?);
+/// let topology = smiles::to_topology("CCC")?;
 /// let selected = BondSelection::from_bonds(&topology, [topology.bond_ids()[0]])?;
 /// selected.ensure_compatible(&topology)?;
 /// let mut editor = topology.edit();
@@ -149,28 +148,32 @@ impl BondSelection {
             .to_bonds(BondSelectionMode::Internal))
     }
 
-    /// Selects bonds satisfying a predicate, in dense order. The ID permits
-    /// property or perception lookup; perception is never computed implicitly.
+    /// Selects bonds satisfying a predicate, in dense order. The [`BondView`]
+    /// exposes chemistry, endpoints, properties, and stored perception;
+    /// perception is never computed implicitly.
     pub fn from_predicate(
         topology: &Arc<Topology>,
-        mut predicate: impl FnMut(InstanceBondId, &Bond) -> bool,
+        mut predicate: impl FnMut(BondView<'_>) -> bool,
     ) -> Self {
         Self::from_bonds(
             topology,
             topology
                 .bonds()
-                .filter(|(id, bond)| predicate(*id, bond))
-                .map(|(id, _)| id),
+                .filter(|bond| predicate(*bond))
+                .map(BondView::id),
         )
         .expect("predicate selects validated topology bonds")
     }
 
     /// Keeps selected bonds satisfying a predicate, preserving dense order.
-    pub fn filter(&self, mut predicate: impl FnMut(InstanceBondId, &Bond) -> bool) -> Self {
+    pub fn filter(&self, mut predicate: impl FnMut(BondView<'_>) -> bool) -> Self {
         Self::from_bonds(
             &self.topology,
-            self.bond_ids()
-                .filter(|id| predicate(*id, self.topology.bond(*id).expect("validated bond"))),
+            self.indices
+                .iter()
+                .map(|index| self.topology.bond_at(*index).expect("validated bond"))
+                .filter(|bond| predicate(*bond))
+                .map(BondView::id),
         )
         .expect("filter selects validated topology bonds")
     }

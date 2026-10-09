@@ -23,7 +23,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Write canonical connectivity and a stereo-preserving SMILES form.
-    println!("canonical SMILES: {}", smiles::write_canonical(&molecule)?);
-    println!("isomeric SMILES: {}", smiles::write_isomeric(&molecule)?);
+    println!(
+        "canonical SMILES: {}",
+        smiles::write(&molecule, smiles::SmilesWriteOptions::canonical())?
+    );
+    println!(
+        "isomeric SMILES: {}",
+        smiles::write(&molecule, smiles::SmilesWriteOptions::isomeric())?
+    );
     Ok(())
 }

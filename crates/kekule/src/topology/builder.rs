@@ -3,7 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::core::Molecule;
-use crate::properties::{Properties, PropertyError, PropertyKey, PropertyTableMut, PropertyValue};
+use crate::properties::{PropertyError, TopologyProperties, TopologyPropertiesMut};
 
 use super::layout::{DenseLayout, OrderError};
 use super::{
@@ -35,7 +35,7 @@ use super::{
 ///
 /// let water = smiles::to_molecules("O")?.pop().unwrap();
 /// let mut builder = TopologyBuilder::new();
-/// let definition = builder.add_molecule_definition(&water)?;
+/// let definition = builder.add_molecule_definition(water)?;
 /// builder.add_instance(definition)?;
 /// builder.add_instance(definition)?;
 /// let topology = builder.build()?;
@@ -51,7 +51,7 @@ pub struct TopologyBuilder {
     atoms: DenseLayout<InstanceAtomId>,
     bonds: DenseLayout<InstanceBondId>,
     hierarchy: Hierarchy,
-    properties: Properties,
+    properties: TopologyProperties,
     molecule_class_overrides: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
     residue_class_overrides: BTreeMap<ResidueId, ResidueClass>,
     preserved_molecule_classes: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
@@ -66,7 +66,7 @@ impl TopologyBuilder {
         Self::default()
     }
 
-    pub(super) fn install_properties(&mut self, properties: Properties) {
+    pub(super) fn install_properties(&mut self, properties: TopologyProperties) {
         self.properties = properties;
     }
 
@@ -111,9 +111,6 @@ impl TopologyBuilder {
     pub(crate) fn atom_index(&self, atom: InstanceAtomId) -> Option<usize> {
         self.atoms.index(atom)
     }
-    pub(crate) fn bond_index(&self, bond: InstanceBondId) -> Option<usize> {
-        self.bonds.index(bond)
-    }
 
     /// Replaces the dense atom order with a permutation of every staged atom.
     ///
@@ -125,8 +122,8 @@ impl TopologyBuilder {
     /// use kekule::{smiles, topology::{InstanceAtomId, TopologyBuilder}};
     ///
     /// let mut builder = TopologyBuilder::new();
-    /// let water = builder.add_molecule(&smiles::to_molecules("O")?.remove(0))?;
-    /// let methanol = builder.add_molecule(&smiles::to_molecules("CO")?.remove(0))?;
+    /// let water = builder.add_molecule(smiles::to_molecules("O")?.remove(0))?;
+    /// let methanol = builder.add_molecule(smiles::to_molecules("CO")?.remove(0))?;
     /// let [carbon, oxygen] = [0, 1].map(|raw| {
     ///     InstanceAtomId::new(methanol, kekule::core::AtomId::new(raw))
     /// });
@@ -162,6 +159,7 @@ impl TopologyBuilder {
         let rows = self
             .properties
             .atoms()
+            .raw()
             .select_indices(&previous)
             .map_err(|error| TopologyBuildError::Property(Box::new(error)))?;
         self.atoms = atoms;
@@ -170,7 +168,7 @@ impl TopologyBuilder {
     }
     /// Inspects stored annotations; hierarchy-domain dimensions synchronize at
     /// mutable table access or publication after raw hierarchy staging.
-    pub fn properties(&self) -> &Properties {
+    pub fn properties(&self) -> &TopologyProperties {
         &self.properties
     }
     /// Validates a cloned snapshot without consuming staged state.
@@ -240,50 +238,12 @@ impl TopologyBuilder {
         &mut self.hierarchy
     }
 
-    pub fn insert_property(
-        &mut self,
-        key: PropertyKey,
-        value: PropertyValue,
-    ) -> Result<Option<PropertyValue>, PropertyError> {
-        self.properties.insert(key, value)
-    }
-
-    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
-        self.properties.remove(key)
-    }
-
-    pub fn clear_properties(&mut self) {
-        self.properties.clear_owner();
-    }
-
-    pub fn molecule_instance_properties_mut(&mut self) -> PropertyTableMut<'_> {
+    /// Length-preserving mutable access to staged static annotations, with
+    /// every entity table sized to the staged instances, atoms, bonds, and
+    /// hierarchy. Atom rows follow the current staged dense order.
+    pub fn properties_mut(&mut self) -> TopologyPropertiesMut<'_> {
         self.sync_property_dimensions();
-        PropertyTableMut::new(self.properties.molecule_instances_mut())
-    }
-
-    pub fn atom_properties_mut(&mut self) -> PropertyTableMut<'_> {
-        self.sync_property_dimensions();
-        PropertyTableMut::new(self.properties.atoms_mut())
-    }
-
-    pub fn bond_properties_mut(&mut self) -> PropertyTableMut<'_> {
-        self.sync_property_dimensions();
-        PropertyTableMut::new(self.properties.bonds_mut())
-    }
-
-    pub fn chain_properties_mut(&mut self) -> PropertyTableMut<'_> {
-        self.sync_property_dimensions();
-        PropertyTableMut::new(self.properties.chains_mut())
-    }
-
-    pub fn residue_properties_mut(&mut self) -> PropertyTableMut<'_> {
-        self.sync_property_dimensions();
-        PropertyTableMut::new(self.properties.residues_mut())
-    }
-
-    pub fn atom_site_properties_mut(&mut self) -> PropertyTableMut<'_> {
-        self.sync_property_dimensions();
-        PropertyTableMut::new(self.properties.atom_sites_mut())
+        TopologyPropertiesMut::new(&mut self.properties)
     }
 
     pub fn reserve_definitions(&mut self, additional: usize) -> Result<(), TopologyBuildError> {
@@ -380,14 +340,9 @@ impl TopologyBuilder {
         Ok(())
     }
 
+    /// Stages a reusable definition. The molecule moves into the topology;
+    /// clone it first to keep using it.
     pub fn add_molecule_definition(
-        &mut self,
-        molecule: &Molecule,
-    ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
-        self.commit_definition(molecule.clone())
-    }
-
-    pub fn add_molecule_definition_owned(
         &mut self,
         molecule: Molecule,
     ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
@@ -409,7 +364,7 @@ impl TopologyBuilder {
         self.extend_layouts(id, definition)?;
         self.instances.push(MoleculeInstance { id, definition });
         if self.extending_topology {
-            self.properties.clear_owner();
+            self.properties.owner_mut().clear();
         }
         Ok(id)
     }
@@ -417,9 +372,9 @@ impl TopologyBuilder {
     /// Adds one fresh definition and one instance in a single operation.
     pub fn add_molecule(
         &mut self,
-        molecule: &Molecule,
+        molecule: Molecule,
     ) -> Result<MoleculeInstanceId, TopologyBuildError> {
-        self.commit_definition_and_instance(molecule.clone())
+        self.commit_definition_and_instance(molecule)
             .map(|(_, instance)| instance)
     }
 
@@ -472,23 +427,17 @@ impl TopologyBuilder {
             &self.preserved_residue_classes,
         );
 
-        self.properties.resize_domains(
+        let dimensions = [
             self.instances.len(),
             atom_count,
             bond_count,
             self.hierarchy.chains().count(),
             self.hierarchy.residues().count(),
             self.hierarchy.atom_sites().count(),
-        );
+        ];
+        self.properties.resize_domains(dimensions);
         self.properties
-            .validate_topology_dimensions([
-                self.instances.len(),
-                atom_count,
-                bond_count,
-                self.hierarchy.chains().count(),
-                self.hierarchy.residues().count(),
-                self.hierarchy.atom_sites().count(),
-            ])
+            .validate_dimensions(dimensions)
             .map_err(|error| TopologyBuildError::Property(Box::new(error)))?;
 
         Ok(Topology {
@@ -552,16 +501,14 @@ impl TopologyBuilder {
     }
 
     fn sync_property_dimensions(&mut self) {
-        let atom_count = self.atoms.len();
-        let bond_count = self.bonds.len();
-        self.properties.resize_domains(
+        self.properties.resize_domains([
             self.instances.len(),
-            atom_count,
-            bond_count,
+            self.atoms.len(),
+            self.bonds.len(),
             self.hierarchy.chains().count(),
             self.hierarchy.residues().count(),
             self.hierarchy.atom_sites().count(),
-        );
+        ]);
     }
 
     fn invalidate_changed_hierarchy_classes(&mut self) {
@@ -667,7 +614,7 @@ impl TopologyBuilder {
             definition,
         });
         if self.extending_topology {
-            self.properties.clear_owner();
+            self.properties.owner_mut().clear();
         }
         Ok((definition, instance))
     }

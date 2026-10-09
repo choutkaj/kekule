@@ -20,7 +20,7 @@
 //! # fn bonded_angle(model: &Model, a: InstanceAtomId, b: InstanceAtomId,
 //! # c: InstanceAtomId) -> Result<(), Box<dyn std::error::Error>> {
 //! let angle = measure::angle_with_connectivity(
-//!     model.view(), a, b, c, ConnectivityCheck::ConsecutiveBonds,
+//!     model.as_model_view(), a, b, c, ConnectivityCheck::ConsecutiveBonds,
 //! )?;
 //! # Ok(())
 //! # }
@@ -43,9 +43,9 @@
 //! )?;
 //! let candidates = AtomSelection::all(&topology).difference(&hydrogen)?;
 //! let atoms = measure::within(
-//!     model.view(), &candidates, &reference, Quantity::new(5.0, ANGSTROM),
+//!     model.as_model_view(), &candidates, &reference, Quantity::new(5.0, ANGSTROM),
 //! )?.expand_to_residues();
-//! let pocket = model.slice(&atoms)?;
+//! let pocket = model.subset(&atoms)?;
 //! # Ok(pocket)
 //! # }
 //! ```
@@ -149,9 +149,10 @@ fn check_connectivity(
     for pair in atoms.windows(2) {
         let (a, b) = (pair[0], pair[1]);
         let bonded = topology
-            .neighbors(a)
-            .map_err(|_| MeasurementError::InvalidAtomId(a))?
-            .any(|neighbor| neighbor == b);
+            .atom(a)
+            .ok_or(MeasurementError::InvalidAtomId(a))?
+            .neighbors()
+            .any(|neighbor| neighbor.id() == b);
         if !bonded {
             return Err(MeasurementError::MissingBond { a, b });
         }

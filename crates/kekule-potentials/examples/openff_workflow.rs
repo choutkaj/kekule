@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let parameters = ForceField::rosemary()?.parameterize(model.shared_topology(), &nagl)?;
     let potential = OpenFfPotential::new(&parameters)?;
 
-    let energy = potential.energy(model.view())?;
+    let energy = potential.energy(model.as_model_view())?;
     println!("initial energy: {:.4} kJ/mol", energy.total().into_value());
     for component in energy.components() {
         println!(
@@ -41,14 +41,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
 
-    let result = minimize(&potential, model.view(), &MinimizeOptions::default())?;
+    let result = minimize(
+        &potential,
+        model.as_model_view(),
+        &MinimizeOptions::default(),
+    )?;
     let final_energy = result.final_evaluation().energy().total().into_value();
     println!(
         "minimized energy: {final_energy:.4} kJ/mol after {} iterations ({:?})",
         result.iterations(),
         result.status()
     );
-    let minimized = result.to_model(model.view())?;
+    let minimized = result.to_model(model.as_model_view())?;
     println!("minimized model has {} atoms", minimized.atom_count());
     Ok(())
 }

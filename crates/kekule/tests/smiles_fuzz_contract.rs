@@ -47,7 +47,7 @@ fn fuzz_contract_detects_invalid_output_composition_connectivity_and_stereo_loss
         ("F[C@H](Cl)[C@@H](Br)I |&1:1,3|", "F[C@H](Cl)[C@@H](Br)I"),
     ] {
         let original = molecule(source);
-        let canonical = smiles::write_canonical(&original).unwrap();
+        let canonical = smiles::write(&original, smiles::SmilesWriteOptions::canonical()).unwrap();
         assert!(
             std::panic::catch_unwind(|| contract::assert_output(
                 &original,

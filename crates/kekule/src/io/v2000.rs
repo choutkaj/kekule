@@ -7,11 +7,10 @@ use crate::chemistry::{
 };
 use crate::core::*;
 use crate::geometry::Point3;
-use crate::structure::ModelView;
 use crate::units::{Quantity, ANGSTROM};
 
 use super::molfile_write::MolfileRecord;
-use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
+use super::sdf_document::SdfDataField;
 use super::staged_coordinates::StagedCoordinates;
 use super::structure_documents::{
     apply_molfile_declared_valence, checked_line_number, interpret_molfile_atom_fields,
@@ -808,18 +807,6 @@ impl fmt::Display for MolWriteError {
 
 impl std::error::Error for MolWriteError {}
 
-pub fn write_mol_v2000(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
-    let record = MolfileRecord::molecule(molecule)?;
-    render_mol_v2000(&record, "")
-}
-
-pub(crate) fn write_model_v2000(
-    model: ModelView<'_>,
-) -> std::result::Result<String, MolWriteError> {
-    let record = MolfileRecord::model(model, MolfileVersion::V2000)?;
-    render_mol_v2000(&record, "")
-}
-
 pub(super) fn render_mol_v2000(
     record: &MolfileRecord<'_>,
     title: &str,
@@ -925,25 +912,6 @@ pub(super) fn render_mol_v2000(
     }
     push_m_record(&mut out, "RAD", radical_records);
     out.push_str("M  END\n");
-    Ok(out)
-}
-
-pub fn write_sdf_v2000(
-    records: &[SdfRecordInterpretation],
-) -> std::result::Result<String, MolWriteError> {
-    let mut out = String::new();
-    for record in records {
-        validate_sdf_title(record.title())?;
-        for field in record.data_fields() {
-            validate_sdf_data_field(field)?;
-        }
-        let structural = MolfileRecord::model(record.model().view(), MolfileVersion::V2000)?;
-        out.push_str(&render_mol_v2000(&structural, record.title())?);
-        for field in record.data_fields() {
-            out.push_str(&format!(">  <{}>\n{}\n\n", field.name(), field.value()));
-        }
-        out.push_str("$$$$\n");
-    }
     Ok(out)
 }
 

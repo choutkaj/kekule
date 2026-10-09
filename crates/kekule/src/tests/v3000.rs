@@ -7,7 +7,7 @@ fn v3000_fixed_hydrogens_use_molecular_valence_not_query_constraints() {
         let original = read_smiles(source).unwrap();
         let written = if source == "F[C@H](Cl)Br" {
             let model = Model::from_molecule(
-                &original,
+                original.clone(),
                 &test_positions(vec![
                     Point3::new(1.0, 0.0, 0.0),
                     Point3::origin(),
@@ -16,9 +16,21 @@ fn v3000_fixed_hydrogens_use_molecular_valence_not_query_constraints() {
                 ]),
             )
             .unwrap();
-            molfile::write_model_v3000(&model).unwrap()
+            molfile::write(
+                &model,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V3000,
+                },
+            )
+            .unwrap()
         } else {
-            molfile::write_v3000(&original).unwrap()
+            molfile::write(
+                &original,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V3000,
+                },
+            )
+            .unwrap()
         };
         assert!(!written.contains("HCOUNT="), "{written}");
         assert!(written.contains("VAL="), "{written}");
@@ -40,13 +52,13 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
     let interpreted = molfile::interpret(&document).unwrap();
     let model = interpreted.model();
     let expected = model
-        .position(model.atom_ids()[0])
+        .position(model.topology().atom_ids()[0])
         .unwrap()
         .value_in(crate::units::ANGSTROM)
         .unwrap();
     let check = |actual: &crate::structure::Model| {
         let point = actual
-            .position(actual.atom_ids()[0])
+            .position(actual.topology().atom_ids()[0])
             .unwrap()
             .value_in(crate::units::ANGSTROM)
             .unwrap();
@@ -62,8 +74,20 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
         }
     };
     // The map exceeds the V2000 limit, so Auto must use fresh V3000 geometry.
-    assert!(molfile::write_model_v2000(model).is_err());
-    let direct = molfile::write_model_v3000(model).unwrap();
+    assert!(molfile::write(
+        model,
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V2000
+        }
+    )
+    .is_err());
+    let direct = molfile::write(
+        model,
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000,
+        },
+    )
+    .unwrap();
     let parsed = molfile::parse_str(&direct).unwrap();
     check(molfile::interpret(&parsed).unwrap().model());
     for version in [
@@ -71,14 +95,14 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
         molfile::MolfileWriteVersion::Auto,
     ] {
         let options = molfile::MolfileWriteOptions { version };
-        let text = molfile::write_model(model, options).unwrap();
+        let text = molfile::write(model, options).unwrap();
         assert!(text.lines().nth(3).unwrap().ends_with("V3000"));
         let mut sink = Vec::new();
-        molfile::write_model_to(&mut sink, model, options).unwrap();
+        molfile::write_to(&mut sink, model, options).unwrap();
         assert_eq!(sink, text.as_bytes());
         let parsed = molfile::parse_str(&text).unwrap();
         check(molfile::interpret(&parsed).unwrap().model());
-        let text = sdf::write_model(model, sdf::SdfWriteOptions { version }).unwrap();
+        let text = sdf::write([model], sdf::SdfWriteOptions { version }).unwrap();
         let parsed = sdf::parse_str(&text).unwrap();
         check(sdf::interpret(&parsed).unwrap().records()[0].model());
     }
@@ -95,12 +119,18 @@ fn v3000_stereo_projection_uses_unrounded_coordinates() {
         matches!(expected, StereoElementKind::DoubleBond(stereo) if stereo.orientation.is_some())
     );
     // Four-place rounding collapses the drawing and cannot preserve its E/Z.
-    assert!(molfile::write_model_v2000(interpreted.model()).is_err());
+    assert!(molfile::write(
+        interpreted.model(),
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V2000
+        }
+    )
+    .is_err());
     for version in [
         molfile::MolfileWriteVersion::V3000,
         molfile::MolfileWriteVersion::Auto,
     ] {
-        let text = molfile::write_model(
+        let text = molfile::write(
             interpreted.model(),
             molfile::MolfileWriteOptions { version },
         )
@@ -169,8 +199,20 @@ fn v3000_atom_cfg_preserves_parity_unknown_and_atom_block_order() {
             let document = molfile::parse_str(&source).unwrap();
             let interpreted = molfile::interpret(&document).unwrap();
             for output in [
-                molfile::write_model_v2000(interpreted.model()).unwrap(),
-                molfile::write_model_v3000(interpreted.model()).unwrap(),
+                molfile::write(
+                    interpreted.model(),
+                    molfile::MolfileWriteOptions {
+                        version: molfile::MolfileWriteVersion::V2000,
+                    },
+                )
+                .unwrap(),
+                molfile::write(
+                    interpreted.model(),
+                    molfile::MolfileWriteOptions {
+                        version: molfile::MolfileWriteVersion::V3000,
+                    },
+                )
+                .unwrap(),
             ] {
                 let mut reread = read_molfile(&output).unwrap();
                 perceive(&mut reread).unwrap();
@@ -197,7 +239,13 @@ fn v3000_atom_cfg_checks_redundant_wedges_and_unknown_precedence() {
     let molecule = read_molfile(&source).unwrap();
     let document = molfile::parse_str(&source).unwrap();
     let interpreted = molfile::interpret(&document).unwrap();
-    let wedged = molfile::write_model_v3000(interpreted.model()).unwrap();
+    let wedged = molfile::write(
+        interpreted.model(),
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000,
+        },
+    )
+    .unwrap();
     let atom_line = wedged
         .lines()
         .find(|line| line.starts_with("M  V30 1 C "))
@@ -285,11 +333,24 @@ fn molfile_model_preserves_drawn_e_z_and_rejects_inconsistent_or_degenerate_outp
             Point3::new(1.0, 0.0, 0.0),
             Point3::new(2.0, last_y, 0.0),
         ];
-        let model = Model::from_molecule(&molecule, &test_positions(points.clone())).unwrap();
+        let model =
+            Model::from_molecule(molecule.clone(), &test_positions(points.clone())).unwrap();
         let original = model.clone();
         for output in [
-            molfile::write_model_v2000(&model).unwrap(),
-            molfile::write_model_v3000(&model).unwrap(),
+            molfile::write(
+                &model,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V2000,
+                },
+            )
+            .unwrap(),
+            molfile::write(
+                &model,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V3000,
+                },
+            )
+            .unwrap(),
         ] {
             let mut reread = read_molfile(&output).unwrap();
             assert_eq!(reread.stereo_elements().count(), 1);
@@ -305,18 +366,39 @@ fn molfile_model_preserves_drawn_e_z_and_rejects_inconsistent_or_degenerate_outp
         }
         assert_eq!(model, original);
         for output in [
-            molfile::write_v2000(&molecule),
-            molfile::write_v3000(&molecule),
+            molfile::write(
+                &molecule,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V2000,
+                },
+            ),
+            molfile::write(
+                &molecule,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V3000,
+                },
+            ),
         ] {
             assert!(output.unwrap_err().message().contains("requires a Model"));
         }
         for invalid_y in [-last_y, 0.0, 0.00000001 * last_y] {
             let mut invalid_points = points.clone();
             invalid_points[3].y = invalid_y;
-            let model = Model::from_molecule(&molecule, &test_positions(invalid_points)).unwrap();
+            let model =
+                Model::from_molecule(molecule.clone(), &test_positions(invalid_points)).unwrap();
             for output in [
-                molfile::write_model_v2000(&model),
-                molfile::write_model_v3000(&model),
+                molfile::write(
+                    &model,
+                    molfile::MolfileWriteOptions {
+                        version: molfile::MolfileWriteVersion::V2000,
+                    },
+                ),
+                molfile::write(
+                    &model,
+                    molfile::MolfileWriteOptions {
+                        version: molfile::MolfileWriteVersion::V3000,
+                    },
+                ),
             ] {
                 assert!(output
                     .unwrap_err()
@@ -336,10 +418,22 @@ fn molfile_model_preserves_drawn_stereo_on_large_ring_imines() {
             Point3::new(angle.cos(), angle.sin(), 0.0)
         })
         .collect();
-    let model = Model::from_molecule(&molecule, &test_positions(points)).unwrap();
+    let model = Model::from_molecule(molecule.clone(), &test_positions(points)).unwrap();
     for output in [
-        molfile::write_model_v2000(&model).unwrap(),
-        molfile::write_model_v3000(&model).unwrap(),
+        molfile::write(
+            &model,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V2000,
+            },
+        )
+        .unwrap(),
+        molfile::write(
+            &model,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V3000,
+            },
+        )
+        .unwrap(),
     ] {
         let actual = read_molfile(&output).unwrap();
         assert_eq!(actual.stereo_elements().count(), 1);
@@ -379,7 +473,7 @@ fn molfile_drawn_double_bond_unknown_annotations_override_coordinates() {
 
     let molecule = read_smiles("F/C=C/Cl").unwrap();
     let model = Model::from_molecule(
-        &molecule,
+        molecule.clone(),
         &test_positions(vec![
             Point3::new(-1.0, 1.0, 0.0),
             Point3::new(0.0, 0.0, 0.0),
@@ -388,7 +482,13 @@ fn molfile_drawn_double_bond_unknown_annotations_override_coordinates() {
         ]),
     )
     .unwrap();
-    let source = molfile::write_model_v3000(&model).unwrap();
+    let source = molfile::write(
+        &model,
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000,
+        },
+    )
+    .unwrap();
     for marked in [
         source.replace("M  V30 2 2 2 3", "M  V30 2 2 2 3 CFG=2"),
         source.replace("M  V30 1 1 1 2", "M  V30 1 1 1 2 CFG=2"),
@@ -416,7 +516,7 @@ fn molfile_model_does_not_promote_unasserted_alkene_geometry_to_specified_stereo
     let molecule = read_smiles("FC=CCl").unwrap();
     assert_eq!(molecule.stereo_elements().count(), 0);
     let model = Model::from_molecule(
-        &molecule,
+        molecule.clone(),
         &test_positions(vec![
             Point3::new(-1.0, 1.0, 0.0),
             Point3::new(0.0, 0.0, 0.0),
@@ -426,8 +526,20 @@ fn molfile_model_does_not_promote_unasserted_alkene_geometry_to_specified_stereo
     )
     .unwrap();
     for output in [
-        molfile::write_model_v2000(&model).unwrap(),
-        molfile::write_model_v3000(&model).unwrap(),
+        molfile::write(
+            &model,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V2000,
+            },
+        )
+        .unwrap(),
+        molfile::write(
+            &model,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V3000,
+            },
+        )
+        .unwrap(),
     ] {
         let mut reread = read_molfile(&output).unwrap();
         assert_eq!(reread.stereo_elements().count(), 1);
@@ -455,7 +567,7 @@ fn molfile_model_e_z_preserves_explicit_carrier_pairs_and_explicit_hydrogen() {
             .unwrap()
             .assigned;
         let model = Model::from_molecule(
-            &molecule,
+            molecule.clone(),
             &test_positions(vec![
                 Point3::new(-1.0, 1.0, 0.0),
                 Point3::new(0.0, 0.0, 0.0),
@@ -467,8 +579,20 @@ fn molfile_model_e_z_preserves_explicit_carrier_pairs_and_explicit_hydrogen() {
         )
         .unwrap();
         for output in [
-            molfile::write_model_v2000(&model).unwrap(),
-            molfile::write_model_v3000(&model).unwrap(),
+            molfile::write(
+                &model,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V2000,
+                },
+            )
+            .unwrap(),
+            molfile::write(
+                &model,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V3000,
+                },
+            )
+            .unwrap(),
         ] {
             let mut reread = read_molfile(&output).unwrap();
             perceive(&mut reread).unwrap();
@@ -517,6 +641,7 @@ M  END
     assert_eq!(mol.bond_count(), 2);
     assert!(mol
         .properties()
+        .owner()
         .get(&PropertyKey::new("sdf.title").unwrap())
         .is_none());
     let atom0 = mol.atom(AtomId::new(0)).expect("atom exists");
@@ -619,8 +744,13 @@ M  END
 
         let document = molfile::parse_str(&input).unwrap();
         let interpreted = molfile::interpret(&document).unwrap();
-        let written = molfile::write_model_v3000(interpreted.model())
-            .expect("canonical stereo should project with its drawing");
+        let written = molfile::write(
+            interpreted.model(),
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V3000,
+            },
+        )
+        .expect("canonical stereo should project with its drawing");
         let (reparsed, report) =
             read_molfile_with_report(&written).expect("projected V3000 stereo should re-interpret");
         assert_eq!(report.created_stereo_elements().len(), 1);
@@ -673,7 +803,13 @@ M  END
         StereoElementKind::DoubleBond(stereo) if stereo.orientation.is_none()
     ));
 
-    let written = molfile::write_v3000(&molecule).expect("unknown stereo should project");
+    let written = molfile::write(
+        &molecule,
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000,
+        },
+    )
+    .expect("unknown stereo should project");
     assert!(written.contains("CFG=2"));
     let reparsed = read_molfile(&written).expect("projected unknown stereo should interpret");
     assert!(reparsed.stereo_elements().any(|(_, element)| matches!(
@@ -934,19 +1070,25 @@ M  END
 fn mol_v3000_writer_round_trips_supported_metadata() {
     let mut molecule = crate::core::MoleculeEditor::new();
     molecule
-        .insert_property(
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("sdf.title").unwrap(),
             PropertyValue::String("metadata title".to_owned()),
         )
         .unwrap();
     molecule
-        .insert_property(
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("sdf.program").unwrap(),
             PropertyValue::String("metadata program".to_owned()),
         )
         .unwrap();
     molecule
-        .insert_property(
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("sdf.comment").unwrap(),
             PropertyValue::String("metadata comment".to_owned()),
         )
@@ -975,7 +1117,13 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
         .add_bond(c, o, BondOrder::Double)
         .expect("double bond");
 
-    let written = molfile::write_v3000(molecule.working()).expect("V3000 should write");
+    let written = molfile::write(
+        molecule.working(),
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000,
+        },
+    )
+    .expect("V3000 should write");
     assert_eq!(written.lines().nth(1), Some("kekule"));
     assert!(written.contains("V3000"));
     assert!(written.contains("CHG=1"));
@@ -985,6 +1133,7 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
     let reparsed = read_molfile(&written).expect("written V3000 should parse");
     assert!(reparsed
         .properties()
+        .owner()
         .get(&PropertyKey::new("sdf.title").unwrap())
         .is_none());
     assert_eq!(
@@ -1021,8 +1170,18 @@ fn mol_writers_reject_radical_states_that_require_guessing_or_losing_spin() {
         editor.add_atom(atom).unwrap();
         let molecule = editor.finish().unwrap();
         for result in [
-            molfile::write_v2000(&molecule),
-            molfile::write_v3000(&molecule),
+            molfile::write(
+                &molecule,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V2000,
+                },
+            ),
+            molfile::write(
+                &molecule,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V3000,
+                },
+            ),
         ] {
             assert!(result
                 .unwrap_err()
@@ -1036,12 +1195,27 @@ fn mol_writers_reject_radical_states_that_require_guessing_or_losing_spin() {
 #[test]
 fn v3000_explicit_zero_radical_matches_the_default() {
     let molecule = read_smiles("CC").unwrap();
-    let source = molfile::write_v3000(&molecule).unwrap();
+    let source = molfile::write(
+        &molecule,
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000,
+        },
+    )
+    .unwrap();
     let explicit = source.replace("M  V30 1 C 0 0 0 0", "M  V30 1 C 0 0 0 0 RAD=0");
     assert_ne!(source, explicit, "fixture must contain an explicit RAD=0");
     let parsed = read_molfile(&explicit).expect("RAD=0 is a supported nonradical atom");
     assert!(parsed.atoms().all(|(_, atom)| atom.radical.is_none()));
-    assert_eq!(molfile::write_v3000(&parsed).unwrap(), source);
+    assert_eq!(
+        molfile::write(
+            &parsed,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V3000
+            }
+        )
+        .unwrap(),
+        source
+    );
 }
 
 #[test]
@@ -1061,10 +1235,15 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
                 orientation: Some(TetrahedralOrientation::Clockwise),
             },
         ))));
-    assert!(molfile::write_v3000(molecule.working())
-        .expect_err("invalid stereo element should be rejected")
-        .message
-        .contains("cannot encode"));
+    assert!(molfile::write(
+        molecule.working(),
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000
+        }
+    )
+    .expect_err("invalid stereo element should be rejected")
+    .message
+    .contains("cannot encode"));
 
     let mut molecule = crate::core::MoleculeEditor::new();
     let a = molecule
@@ -1098,10 +1277,15 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
             },
         )))
         .expect("double-bond stereo");
-    assert!(molfile::write_v3000(molecule.working())
-        .expect_err("specified double-bond stereo should be rejected")
-        .message
-        .contains("specified stereo"));
+    assert!(molfile::write(
+        molecule.working(),
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000
+        }
+    )
+    .expect_err("specified double-bond stereo should be rejected")
+    .message
+    .contains("specified stereo"));
 
     let element = molecule
         .stereo_element_ids()
@@ -1114,8 +1298,13 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         .bond_mut(bond)
         .expect("bond")
         .set_order(BondOrder::Quadruple);
-    assert!(molfile::write_v3000(molecule.working())
-        .expect_err("quadruple should be rejected")
-        .message
-        .contains("quadruple"));
+    assert!(molfile::write(
+        molecule.working(),
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000
+        }
+    )
+    .expect_err("quadruple should be rejected")
+    .message
+    .contains("quadruple"));
 }

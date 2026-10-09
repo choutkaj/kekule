@@ -1051,7 +1051,9 @@ fn atom_map_only_mutation_invalidates_perception_and_owner_properties() {
         .expect("atom identifier capacity");
     let owner_key = PropertyKey::new("calculation_label").unwrap();
     molecule
-        .insert_property(
+        .properties_mut()
+        .owner_mut()
+        .insert(
             owner_key.clone(),
             PropertyValue::String("before mutation".to_owned()),
         )
@@ -1061,7 +1063,7 @@ fn atom_map_only_mutation_invalidates_perception_and_owner_properties() {
     molecule.atom_mut(atom).unwrap().atom_map = Some(7);
 
     assert_all_stale(molecule.working());
-    assert_eq!(molecule.properties().get(&owner_key), None);
+    assert_eq!(molecule.properties().owner().get(&owner_key), None);
 }
 
 #[test]

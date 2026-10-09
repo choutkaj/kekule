@@ -240,7 +240,7 @@ fn explicit_preparation_preserves_chemistry_aromaticity_cip_and_output() {
         kekule::stereo::assign_cip_descriptors(&mut m).unwrap();
         let chemistry = m.clone();
         let before = m.perception().clone();
-        let text = smiles::write_canonical(&m).unwrap();
+        let text = smiles::write(&m, smiles::SmilesWriteOptions::canonical()).unwrap();
         perceive_conjugation(&mut m, ConjugationModel::RdkitLike).unwrap();
         perceive_resonance(&mut m).unwrap();
         enumerate_resonance(&m, Default::default()).unwrap();
@@ -250,7 +250,10 @@ fn explicit_preparation_preserves_chemistry_aromaticity_cip_and_output() {
             before.aromaticity_state()
         );
         assert_eq!(m.perception().stereo_state(), before.stereo_state());
-        assert_eq!(smiles::write_canonical(&m).unwrap(), text);
+        assert_eq!(
+            smiles::write(&m, smiles::SmilesWriteOptions::canonical()).unwrap(),
+            text
+        );
         let state = m.perception().clone();
         m.clear_perception();
         m.install_perception(state.clone()).unwrap();

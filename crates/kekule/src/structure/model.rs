@@ -1,82 +1,70 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::{Atom, Bond, Molecule};
+use crate::core::Molecule;
 use crate::geometry::{PeriodicCell, Point3};
-use crate::properties::{
-    Properties, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue,
-};
 use crate::topology::transform::TopologySubsetError;
 use crate::topology::{
-    AtomSelection, AtomSiteId, AtomSiteView, ChainId, ChainView, Hierarchy, InstanceAtomId,
-    InstanceBondId, MoleculeClass, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId,
-    ResidueClass, ResidueId, ResidueView, Topology, TopologyAtomIndex, TopologyBuildError,
-    TopologyBuilder, TopologyError, TopologyPerceptionError,
+    AtomSelection, Hierarchy, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeDefinitionId,
+    MoleculeInstanceId, ResidueClass, ResidueId, Topology, TopologyAtomIndex, TopologyBuildError,
+    TopologyBuilder, TopologyPerceptionError,
 };
 use crate::units::Quantity;
 
-use super::{PositionError, Positions};
+use super::{Conformation, ConformationError, ConformationMut, PositionError, Positions};
 
 /// One concrete realization of one immutable topology.
 ///
-/// A model owns a shared [`Topology`], one position for every topology atom, an
-/// optional [`PeriodicCell`], and realization-scoped properties. The topology
-/// remains coordinate-free and may be shared with other models, ensemble
-/// members, trajectory frames, selections, and prepared modelling systems.
+/// A model owns a shared [`Topology`] and one bound [`Conformation`]: a
+/// position for every topology atom, an optional [`PeriodicCell`], optional
+/// occupancies and B-factors, and realization properties. The topology stays
+/// coordinate-free and may be shared with other models, ensemble members,
+/// trajectory frames, selections, and prepared potentials.
+///
+/// Conformation state reads through `Deref` (`model.positions()`,
+/// `model.cell()`, `model.properties()`); mutate it through
+/// [`Self::conformation_mut`]. Static annotations live on
+/// [`Self::topology`].
 ///
 /// Use [`Self::from_molecule`] for a single connected molecule,
-/// [`Self::builder`] to assemble several molecules and their positions together,
-/// or [`Self::new`] when an existing topology and correctly ordered dense
-/// positions are already available.
+/// [`Self::builder`] to assemble several molecules and their positions, or
+/// [`Self::new`] when a topology and correctly ordered positions exist.
 #[derive(Debug, Clone)]
 pub struct Model {
     pub(super) topology: Arc<Topology>,
-    pub(super) positions: Positions,
-    pub(super) cell: Option<PeriodicCell>,
-    pub(super) properties: Properties,
+    pub(super) conformation: Conformation,
 }
 
 impl PartialEq for Model {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.topology, &other.topology)
-            && self.positions == other.positions
-            && self.cell == other.cell
-            && self.properties == other.properties
+        Arc::ptr_eq(&self.topology, &other.topology) && self.conformation == other.conformation
+    }
+}
+
+impl std::ops::Deref for Model {
+    type Target = Conformation;
+
+    fn deref(&self) -> &Self::Target {
+        &self.conformation
     }
 }
 
 impl Model {
-    /// Creates a non-periodic model with empty atom and bond property tables.
+    /// Binds a conformation (or plain [`Positions`]) to a topology.
+    ///
+    /// Positions must follow the topology's dense atom order. Bond property
+    /// rows of a detached conformation are allocated here.
     pub fn new(
         topology: impl Into<Arc<Topology>>,
-        positions: Positions,
+        conformation: impl Into<Conformation>,
     ) -> Result<Self, ModelError> {
         let topology = topology.into();
-        validate_positions_len(&topology, &positions)?;
-        let properties = Properties::realization(topology.atom_count(), topology.bond_count());
+        let mut conformation = conformation.into();
+        conformation.validate_for(&topology)?;
+        conformation.bind(&topology);
         Ok(Self {
             topology,
-            positions,
-            cell: None,
-            properties,
-        })
-    }
-
-    /// Creates a model from complete geometry and realization properties.
-    pub fn with_properties(
-        topology: impl Into<Arc<Topology>>,
-        positions: Positions,
-        cell: Option<PeriodicCell>,
-        properties: Properties,
-    ) -> Result<Self, ModelError> {
-        let topology = topology.into();
-        validate_dimensions(&topology, &positions, &properties)?;
-        properties.validate_realization_properties()?;
-        Ok(Self {
-            topology,
-            positions,
-            cell,
-            properties,
+            conformation,
         })
     }
 
@@ -88,9 +76,7 @@ impl Model {
     pub fn into_builder(self) -> ModelBuilder {
         ModelBuilder {
             topology: TopologyBuilder::from_shared(self.topology),
-            positions: self.positions,
-            properties: self.properties,
-            cell: self.cell,
+            conformation: self.conformation,
             extending_model: true,
         }
     }
@@ -100,11 +86,8 @@ impl Model {
     }
 
     /// Builds a single-molecule model from dense positions in molecule atom order.
-    ///
-    /// Position construction performs unit conversion and finite-value
-    /// validation before this topology-owning operation.
     pub fn from_molecule(
-        molecule: &Molecule,
+        molecule: Molecule,
         positions: &Positions,
     ) -> Result<Self, ModelBuildError> {
         let mut builder = ModelBuilder::new();
@@ -120,14 +103,43 @@ impl Model {
         Arc::clone(&self.topology)
     }
 
+    pub fn conformation(&self) -> &Conformation {
+        &self.conformation
+    }
+
+    /// Borrows this model as the common kernel input without copying.
+    pub fn as_model_view(&self) -> ModelView<'_> {
+        ModelView::bound(&self.topology, &self.conformation)
+    }
+
+    /// Dimension-preserving mutable access to the conformation.
+    pub fn conformation_mut(&mut self) -> ConformationMut<'_> {
+        ConformationMut::new(&mut self.conformation)
+    }
+
+    /// Replaces the conformation after validating it against the topology,
+    /// returning the previous one.
+    pub fn replace_conformation(
+        &mut self,
+        conformation: impl Into<Conformation>,
+    ) -> Result<Conformation, ModelError> {
+        let mut conformation = conformation.into();
+        conformation.validate_for(&self.topology)?;
+        conformation.bind(&self.topology);
+        Ok(std::mem::replace(&mut self.conformation, conformation))
+    }
+
+    /// Consumes the model without copying either part.
+    pub fn into_parts(self) -> (Arc<Topology>, Conformation) {
+        (self.topology, self.conformation)
+    }
+
     /// Installs default perception through a new topology snapshot.
     ///
     /// Delegates to [`Topology::perceived`], perceiving each definition once.
-    /// Positions, the periodic cell, and all properties are retained without
-    /// copying realization state. Failure leaves the entire model unchanged.
-    /// Other owners keep their original topology. The new snapshot shares the
-    /// original layout, so selections, buffers, and prepared potentials bound
-    /// before perception remain usable with this model.
+    /// The conformation is kept without copying. Failure leaves the model
+    /// unchanged. The new snapshot shares the original layout, so selections,
+    /// buffers, and prepared potentials bound before perception remain usable.
     ///
     /// ```
     /// use kekule::{smiles, structure::{Model, Positions}};
@@ -143,136 +155,42 @@ impl Model {
         Ok(())
     }
 
-    /// Constructs an induced structural slice and transfers all dense model state.
-    pub fn slice(&self, selection: &AtomSelection) -> Result<Self, ModelSliceError> {
+    /// Publishes an induced topology subset and projects the conformation onto
+    /// it. Realization owner properties are dropped.
+    pub fn subset(&self, selection: &AtomSelection) -> Result<Self, ModelError> {
         let subset = self.topology.subset(selection)?;
         let correspondence = subset.correspondence();
-        let atom_indices = correspondence
+        let atoms = correspondence
             .source_atom_indices()
             .iter()
             .map(|index| index.index())
             .collect::<Vec<_>>();
-        let bond_indices = correspondence
+        let bonds = correspondence
             .source_bond_indices()
             .iter()
             .map(|index| index.index())
             .collect::<Vec<_>>();
-        let positions = self
-            .positions
-            .select_indices(&atom_indices)
-            .map_err(ModelError::from)?;
-        let properties = self
-            .properties
-            .project_realization(&atom_indices, &bond_indices)
-            .map_err(ModelError::Property)?;
-        Ok(Self::with_properties(
-            subset.shared_topology(),
-            positions,
-            self.cell,
-            properties,
-        )?)
-    }
-
-    pub fn atom(&self, atom: InstanceAtomId) -> Result<&Atom, TopologyError> {
-        self.topology.atom(atom)
-    }
-
-    pub fn bond(&self, bond: InstanceBondId) -> Result<&Bond, TopologyError> {
-        self.topology.bond(bond)
-    }
-
-    pub fn atoms(&self) -> impl ExactSizeIterator<Item = (InstanceAtomId, &Atom)> {
-        self.topology.atoms()
-    }
-
-    pub fn bonds(&self) -> impl ExactSizeIterator<Item = (InstanceBondId, &Bond)> {
-        self.topology.bonds()
-    }
-
-    pub fn instances(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &MoleculeInstance)> {
-        self.topology.instances()
-    }
-
-    pub fn hierarchy(&self) -> &Hierarchy {
-        self.topology.hierarchy()
-    }
-
-    pub fn chains(&self) -> impl Iterator<Item = ChainView<'_>> {
-        self.topology.chains()
-    }
-
-    pub fn residues(&self) -> impl Iterator<Item = ResidueView<'_>> {
-        self.topology.residues()
-    }
-
-    pub fn atom_sites(&self) -> impl Iterator<Item = AtomSiteView<'_>> {
-        self.topology.atom_sites()
-    }
-
-    pub fn chain(&self, chain: ChainId) -> Result<ChainView<'_>, TopologyError> {
-        self.topology.chain(chain)
-    }
-
-    pub fn residue(&self, residue: ResidueId) -> Result<ResidueView<'_>, TopologyError> {
-        self.topology.residue(residue)
-    }
-
-    pub fn atom_site(&self, atom_site: AtomSiteId) -> Result<AtomSiteView<'_>, TopologyError> {
-        self.topology.atom_site(atom_site)
-    }
-
-    pub fn atom_for_site(&self, atom_site: AtomSiteId) -> Result<InstanceAtomId, TopologyError> {
-        self.topology.atom_for_site(atom_site)
-    }
-
-    pub fn atom_site_for_atom(
-        &self,
-        atom: InstanceAtomId,
-    ) -> Result<Option<AtomSiteView<'_>>, TopologyError> {
-        self.topology.atom_site_for_atom(atom)
-    }
-
-    pub fn residue_for_atom(
-        &self,
-        atom: InstanceAtomId,
-    ) -> Result<Option<ResidueView<'_>>, TopologyError> {
-        self.topology.residue_for_atom(atom)
-    }
-
-    pub fn chain_for_atom(
-        &self,
-        atom: InstanceAtomId,
-    ) -> Result<Option<ChainView<'_>>, TopologyError> {
-        self.topology.chain_for_atom(atom)
-    }
-
-    pub fn residue_for_site(
-        &self,
-        atom_site: AtomSiteId,
-    ) -> Result<ResidueView<'_>, TopologyError> {
-        self.topology.residue_for_site(atom_site)
-    }
-
-    pub fn chain_for_residue(&self, residue: ResidueId) -> Result<ChainView<'_>, TopologyError> {
-        self.topology.chain_for_residue(residue)
-    }
-
-    pub const fn positions(&self) -> &Positions {
-        &self.positions
+        let conformation = self.conformation.project(&atoms, &bonds)?;
+        Self::new(subset.shared_topology(), conformation)
     }
 
     pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelError> {
-        let index = self
-            .topology
-            .atom_index(atom)
-            .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.positions.position_at(index.index())?)
+        self.as_model_view().position(atom)
     }
 
-    pub fn position_at(&self, index: TopologyAtomIndex) -> Result<Quantity<Point3>, PositionError> {
-        self.positions.position_at(index.index())
+    /// One atom with its topology identity and realization state; see
+    /// [`ModelAtomView`].
+    pub fn atom(&self, atom: InstanceAtomId) -> Option<ModelAtomView<'_>> {
+        self.as_model_view().atom(atom)
+    }
+
+    pub fn atom_at(&self, index: TopologyAtomIndex) -> Option<ModelAtomView<'_>> {
+        self.as_model_view().atom_at(index)
+    }
+
+    /// Atoms with their realization state, in dense order.
+    pub fn atoms(&self) -> impl ExactSizeIterator<Item = ModelAtomView<'_>> + '_ {
+        self.as_model_view().atoms()
     }
 
     pub fn set_position(
@@ -280,364 +198,117 @@ impl Model {
         atom: InstanceAtomId,
         position: Quantity<Point3>,
     ) -> Result<(), ModelError> {
-        let index = self
-            .topology
-            .atom_index(atom)
-            .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.positions.set_position_at(index.index(), position)?)
+        let index = atom_index(&self.topology, atom)?;
+        Ok(self.conformation.set_position(index, position)?)
     }
 
-    pub fn set_positions<T>(&mut self, positions: Quantity<T>) -> Result<(), PositionError>
-    where
-        T: AsRef<[Point3]>,
-    {
-        self.positions.set_all(positions)
-    }
-
-    pub fn set_position_at(
-        &mut self,
-        index: TopologyAtomIndex,
-        position: Quantity<Point3>,
-    ) -> Result<(), PositionError> {
-        self.positions.set_position_at(index.index(), position)
-    }
-
-    /// Applies a sparse coordinate batch atomically; duplicates follow input order.
+    /// Applies a sparse coordinate batch atomically; repeated atoms use the
+    /// last value. Only the batch is staged, never the complete array.
     pub fn set_atom_positions(
         &mut self,
         values: impl IntoIterator<Item = (InstanceAtomId, Quantity<Point3>)>,
     ) -> Result<(), ModelError> {
-        let mut positions = self.positions.clone();
-        for (id, value) in values {
-            let index = self
-                .topology
-                .atom_index(id)
-                .ok_or(ModelError::InvalidAtomId(id))?;
-            positions.set_position_at(index.index(), value)?;
-        }
-        self.positions = positions;
-        Ok(())
-    }
-
-    pub const fn cell(&self) -> Option<&PeriodicCell> {
-        self.cell.as_ref()
-    }
-
-    pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
-        self.cell = cell;
-    }
-
-    pub const fn properties(&self) -> &Properties {
-        &self.properties
-    }
-
-    pub fn insert_property(
-        &mut self,
-        key: PropertyKey,
-        value: PropertyValue,
-    ) -> Result<Option<PropertyValue>, ModelError> {
-        Ok(self.properties.insert(key, value)?)
-    }
-
-    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
-        self.properties.remove(key)
-    }
-
-    pub fn clear_properties(&mut self) {
-        self.properties.clear_owner();
-    }
-
-    pub const fn atom_properties(&self) -> &PropertyTable {
-        self.properties.realization_atom_properties()
-    }
-
-    pub const fn bond_properties(&self) -> &PropertyTable {
-        self.properties.realization_bond_properties()
-    }
-
-    pub fn set_properties(&mut self, properties: Properties) -> Result<(), ModelError> {
-        if properties.atoms().len() != self.topology.atom_count() {
-            return Err(ModelError::AtomPropertyCountMismatch {
-                expected: self.topology.atom_count(),
-                actual: properties.atoms().len(),
-            });
-        }
-        if properties.bonds().len() != self.topology.bond_count() {
-            return Err(ModelError::BondPropertyCountMismatch {
-                expected: self.topology.bond_count(),
-                actual: properties.bonds().len(),
-            });
-        }
-        properties.validate_realization_properties()?;
-        self.properties = properties;
-        Ok(())
-    }
-
-    pub fn occupancy(&self, atom: InstanceAtomId) -> Result<Option<f64>, ModelError> {
-        let index = self
-            .topology
-            .atom_index(atom)
-            .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.properties.occupancy_at(index.index())?)
-    }
-
-    pub fn b_factor(&self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, ModelError> {
-        let index = self
-            .topology
-            .atom_index(atom)
-            .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.properties.b_factor_at(index.index())?)
-    }
-
-    pub fn set_occupancy(
-        &mut self,
-        atom: InstanceAtomId,
-        value: Option<f64>,
-    ) -> Result<(), ModelError> {
-        let index = self
-            .topology
-            .atom_index(atom)
-            .ok_or(ModelError::InvalidAtomId(atom))?;
-        self.properties.set_occupancy_at(index.index(), value)?;
-        Ok(())
-    }
-
-    pub fn set_b_factor(
-        &mut self,
-        atom: InstanceAtomId,
-        value: Option<Quantity<f64>>,
-    ) -> Result<(), ModelError> {
-        let index = self
-            .topology
-            .atom_index(atom)
-            .ok_or(ModelError::InvalidAtomId(atom))?;
-        self.properties.set_b_factor_at(index.index(), value)?;
-        Ok(())
-    }
-
-    pub(crate) fn install_canonical_atom_properties(
-        &mut self,
-        occupancies: Vec<Option<f64>>,
-        b_factors: Vec<Option<f64>>,
-    ) -> Result<(), ModelError> {
+        let staged = values
+            .into_iter()
+            .enumerate()
+            .map(|(order, (atom, position))| {
+                let index = atom_index(&self.topology, atom)?.index();
+                let point = position
+                    .into_unit(crate::units::CANONICAL_LENGTH_UNIT)
+                    .map_err(PositionError::from)?
+                    .into_value();
+                if !point.is_finite() {
+                    return Err(PositionError::NonFinitePosition { index: order }.into());
+                }
+                Ok((index, point))
+            })
+            .collect::<Result<Vec<_>, ModelError>>()?;
         Ok(self
-            .properties
-            .install_canonical_realization_atom_columns(occupancies, b_factors)?)
-    }
-
-    pub fn atom_property(
-        &self,
-        atom: InstanceAtomId,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyValue>, ModelError> {
-        let index = self
-            .topology
-            .atom_index(atom)
-            .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.atom_properties().value(key, index.index())?)
-    }
-
-    pub fn set_atom_property(
-        &mut self,
-        atom: InstanceAtomId,
-        key: PropertyKey,
-        value: Option<PropertyValue>,
-    ) -> Result<(), ModelError> {
-        let index = self
-            .topology
-            .atom_index(atom)
-            .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self
-            .properties
-            .set_realization_atom_value(key, index.index(), value)?)
-    }
-
-    pub fn insert_atom_property_column(
-        &mut self,
-        key: PropertyKey,
-        column: PropertyColumn,
-    ) -> Result<Option<PropertyColumn>, ModelError> {
-        Ok(self
-            .properties
-            .insert_realization_atom_column(key, column)?)
-    }
-
-    pub fn remove_atom_property_column(
-        &mut self,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyColumn>, ModelError> {
-        Ok(self.properties.remove_realization_atom_column(key)?)
-    }
-
-    pub fn bond_property(
-        &self,
-        bond: InstanceBondId,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyValue>, ModelError> {
-        let index = self
-            .topology
-            .bond_index(bond)
-            .ok_or(ModelError::InvalidBondId(bond))?;
-        Ok(self.bond_properties().value(key, index.index())?)
-    }
-
-    pub fn set_bond_property(
-        &mut self,
-        bond: InstanceBondId,
-        key: PropertyKey,
-        value: Option<PropertyValue>,
-    ) -> Result<(), ModelError> {
-        let index = self
-            .topology
-            .bond_index(bond)
-            .ok_or(ModelError::InvalidBondId(bond))?;
-        Ok(self
-            .properties
-            .set_realization_bond_value(key, index.index(), value)?)
-    }
-
-    pub fn insert_bond_property_column(
-        &mut self,
-        key: PropertyKey,
-        column: PropertyColumn,
-    ) -> Result<Option<PropertyColumn>, ModelError> {
-        Ok(self
-            .properties
-            .insert_realization_bond_column(key, column)?)
-    }
-
-    pub fn remove_bond_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
-        self.properties.remove_realization_bond_column(key)
-    }
-
-    pub fn atom_count(&self) -> usize {
-        self.topology.atom_count()
-    }
-
-    pub fn bond_count(&self) -> usize {
-        self.topology.bond_count()
-    }
-    pub fn atom_ids(&self) -> &[InstanceAtomId] {
-        self.topology.atom_ids()
-    }
-    pub fn bond_ids(&self) -> &[InstanceBondId] {
-        self.topology.bond_ids()
-    }
-    pub fn atom_property_column(&self, key: &PropertyKey) -> Option<&PropertyColumn> {
-        self.atom_properties().get(key)
-    }
-    pub fn bond_property_column(&self, key: &PropertyKey) -> Option<&PropertyColumn> {
-        self.bond_properties().get(key)
-    }
-    pub fn set_atom_properties(
-        &mut self,
-        key: PropertyKey,
-        values: impl IntoIterator<Item = (InstanceAtomId, Option<PropertyValue>)>,
-    ) -> Result<(), ModelError> {
-        let mut properties = self.properties.clone();
-        for (id, value) in values {
-            let index = self
-                .topology
-                .atom_index(id)
-                .ok_or(ModelError::InvalidAtomId(id))?;
-            properties.set_realization_atom_value(key.clone(), index.index(), value)?;
-        }
-        self.properties = properties;
-        Ok(())
-    }
-    pub fn set_bond_properties(
-        &mut self,
-        key: PropertyKey,
-        values: impl IntoIterator<Item = (InstanceBondId, Option<PropertyValue>)>,
-    ) -> Result<(), ModelError> {
-        let mut properties = self.properties.clone();
-        for (id, value) in values {
-            let index = self
-                .topology
-                .bond_index(id)
-                .ok_or(ModelError::InvalidBondId(id))?;
-            properties.set_realization_bond_value(key.clone(), index.index(), value)?;
-        }
-        self.properties = properties;
-        Ok(())
-    }
-
-    pub fn view(&self) -> ModelView<'_> {
-        ModelView {
-            topology: &self.topology,
-            positions: &self.positions,
-            cell: self.cell.as_ref(),
-            properties: &self.properties,
-        }
+            .conformation
+            .positions_mut()
+            .set_canonical_batch(&staged)?)
     }
 }
 
-fn validate_positions_len(topology: &Topology, positions: &Positions) -> Result<(), ModelError> {
-    if positions.len() != topology.atom_count() {
-        return Err(ModelError::PositionCountMismatch {
-            expected: topology.atom_count(),
-            actual: positions.len(),
-        });
-    }
-    Ok(())
-}
-
-fn validate_dimensions(
+pub(super) fn atom_index(
     topology: &Topology,
-    positions: &Positions,
-    properties: &Properties,
-) -> Result<(), ModelError> {
-    validate_positions_len(topology, positions)?;
-    if properties.atoms().len() != topology.atom_count() {
-        return Err(ModelError::AtomPropertyCountMismatch {
-            expected: topology.atom_count(),
-            actual: properties.atoms().len(),
-        });
-    }
-    if properties.bonds().len() != topology.bond_count() {
-        return Err(ModelError::BondPropertyCountMismatch {
-            expected: topology.bond_count(),
-            actual: properties.bonds().len(),
-        });
-    }
-    Ok(())
+    atom: InstanceAtomId,
+) -> Result<TopologyAtomIndex, ModelError> {
+    topology
+        .atom_index(atom)
+        .ok_or(ModelError::InvalidAtomId(atom))
 }
 
-/// Borrowed topology, positions, cell, and realization properties for structural
-/// kernels.
+/// Anything that can be borrowed as a [`ModelView`] without copying: models,
+/// views, ensemble members, trajectory frames, and frame buffers.
 ///
-/// `ModelView` is the common coordinate-dependent input contract. It can borrow
-/// an owned [`Model`], an ensemble member, or a trajectory frame without
-/// allocating a temporary model. Views preserve exact topology identity.
-#[derive(Debug, Clone, Copy)]
-pub struct ModelView<'a> {
-    topology: &'a Arc<Topology>,
-    positions: &'a Positions,
-    cell: Option<&'a PeriodicCell>,
-    properties: &'a Properties,
+/// Each implementor also has an inherent `as_model_view` method, so the trait
+/// only needs importing for generic code.
+pub trait AsModelView {
+    fn as_model_view(&self) -> ModelView<'_>;
+}
+
+impl AsModelView for Model {
+    fn as_model_view(&self) -> ModelView<'_> {
+        Model::as_model_view(self)
+    }
+}
+
+impl AsModelView for ModelView<'_> {
+    fn as_model_view(&self) -> ModelView<'_> {
+        *self
+    }
 }
 
 impl<'a> From<&'a Model> for ModelView<'a> {
     fn from(model: &'a Model) -> Self {
-        model.view()
+        model.as_model_view()
+    }
+}
+
+/// A borrowed topology plus bound conformation: the common input contract of
+/// coordinate-dependent kernels.
+///
+/// Conformation state reads through `Deref`. The inherent accessors below
+/// return borrows with the view's full lifetime. Views preserve exact
+/// topology identity.
+#[derive(Debug, Clone, Copy)]
+pub struct ModelView<'a> {
+    topology: &'a Arc<Topology>,
+    conformation: &'a Conformation,
+}
+
+impl std::ops::Deref for ModelView<'_> {
+    type Target = Conformation;
+
+    fn deref(&self) -> &Self::Target {
+        self.conformation
     }
 }
 
 impl<'a> ModelView<'a> {
+    /// Borrows a conformation that already has every row `topology` requires.
     pub fn new(
         topology: &'a Arc<Topology>,
-        positions: &'a Positions,
-        cell: Option<&'a PeriodicCell>,
-        properties: &'a Properties,
-    ) -> Result<Self, ModelError> {
-        validate_dimensions(topology, positions, properties)?;
-        properties.validate_realization_properties()?;
-        Ok(Self {
+        conformation: &'a Conformation,
+    ) -> Result<Self, ConformationError> {
+        conformation.validate_for(topology)?;
+        if !conformation.is_bound_to(topology) {
+            return Err(ConformationError::BondCountMismatch {
+                expected: topology.bond_count(),
+                actual: conformation.properties().bonds().len(),
+            });
+        }
+        Ok(Self::bound(topology, conformation))
+    }
+
+    /// Only owners that already enforce binding may use this.
+    pub(crate) fn bound(topology: &'a Arc<Topology>, conformation: &'a Conformation) -> Self {
+        debug_assert!(conformation.is_bound_to(topology));
+        Self {
             topology,
-            positions,
-            cell,
-            properties,
-        })
+            conformation,
+        }
     }
 
     pub fn topology(self) -> &'a Topology {
@@ -652,207 +323,142 @@ impl<'a> ModelView<'a> {
         Arc::clone(self.topology)
     }
 
-    /// Materializes this validated borrowed realization as an owned model.
-    pub fn to_model(self) -> Model {
-        Model {
-            topology: Arc::clone(self.topology),
-            positions: self.positions.clone(),
-            cell: self.cell.cloned(),
-            properties: self.properties.clone(),
-        }
+    pub fn conformation(self) -> &'a Conformation {
+        self.conformation
     }
 
-    pub fn atom(self, atom: InstanceAtomId) -> Result<&'a Atom, TopologyError> {
-        self.topology.atom(atom)
+    pub fn positions(self) -> &'a Positions {
+        self.conformation.positions()
     }
 
-    pub fn bond(self, bond: InstanceBondId) -> Result<&'a Bond, TopologyError> {
-        self.topology.bond(bond)
+    pub fn cell(self) -> Option<&'a PeriodicCell> {
+        self.conformation.cell()
     }
 
-    pub fn atoms(self) -> impl ExactSizeIterator<Item = (InstanceAtomId, &'a Atom)> + 'a {
-        self.topology.atoms()
-    }
-
-    pub fn bonds(self) -> impl ExactSizeIterator<Item = (InstanceBondId, &'a Bond)> + 'a {
-        self.topology.bonds()
-    }
-
-    pub fn instances(
-        self,
-    ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &'a MoleculeInstance)> + 'a {
-        self.topology.instances()
-    }
-
-    pub fn hierarchy(self) -> &'a Hierarchy {
-        self.topology.hierarchy()
-    }
-
-    pub fn chains(self) -> impl Iterator<Item = ChainView<'a>> + 'a {
-        self.topology.chains()
-    }
-
-    pub fn residues(self) -> impl Iterator<Item = ResidueView<'a>> + 'a {
-        self.topology.residues()
-    }
-
-    pub fn atom_sites(self) -> impl Iterator<Item = AtomSiteView<'a>> + 'a {
-        self.topology.atom_sites()
-    }
-
-    pub fn chain(self, chain: ChainId) -> Result<ChainView<'a>, TopologyError> {
-        self.topology.chain(chain)
-    }
-
-    pub fn residue(self, residue: ResidueId) -> Result<ResidueView<'a>, TopologyError> {
-        self.topology.residue(residue)
-    }
-
-    pub fn atom_site(self, atom_site: AtomSiteId) -> Result<AtomSiteView<'a>, TopologyError> {
-        self.topology.atom_site(atom_site)
-    }
-
-    pub fn atom_for_site(self, atom_site: AtomSiteId) -> Result<InstanceAtomId, TopologyError> {
-        self.topology.atom_for_site(atom_site)
-    }
-
-    pub fn atom_site_for_atom(
-        self,
-        atom: InstanceAtomId,
-    ) -> Result<Option<AtomSiteView<'a>>, TopologyError> {
-        self.topology.atom_site_for_atom(atom)
-    }
-
-    pub fn residue_for_atom(
-        self,
-        atom: InstanceAtomId,
-    ) -> Result<Option<ResidueView<'a>>, TopologyError> {
-        self.topology.residue_for_atom(atom)
-    }
-
-    pub fn chain_for_atom(
-        self,
-        atom: InstanceAtomId,
-    ) -> Result<Option<ChainView<'a>>, TopologyError> {
-        self.topology.chain_for_atom(atom)
-    }
-
-    pub fn residue_for_site(self, atom_site: AtomSiteId) -> Result<ResidueView<'a>, TopologyError> {
-        self.topology.residue_for_site(atom_site)
-    }
-
-    pub fn chain_for_residue(self, residue: ResidueId) -> Result<ChainView<'a>, TopologyError> {
-        self.topology.chain_for_residue(residue)
-    }
-
-    pub const fn positions(self) -> &'a Positions {
-        self.positions
+    pub fn properties(self) -> &'a crate::properties::RealizationProperties {
+        self.conformation.properties()
     }
 
     pub fn position(self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelError> {
-        let index = self
-            .topology
-            .atom_index(atom)
-            .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.positions.position_at(index.index())?)
+        let index = atom_index(self.topology, atom)?;
+        Ok(self.conformation.positions().position_at(index.index())?)
     }
 
-    pub fn position_at(self, index: TopologyAtomIndex) -> Result<Quantity<Point3>, PositionError> {
-        self.positions.position_at(index.index())
+    /// One atom with its topology identity and realization state.
+    pub fn atom(self, atom: InstanceAtomId) -> Option<ModelAtomView<'a>> {
+        let atom = self.topology.atom(atom)?;
+        Some(ModelAtomView {
+            atom,
+            conformation: self.conformation,
+        })
     }
 
-    pub const fn cell(self) -> Option<&'a PeriodicCell> {
-        self.cell
+    /// One atom by dense index.
+    pub fn atom_at(self, index: TopologyAtomIndex) -> Option<ModelAtomView<'a>> {
+        let atom = self.topology.atom_at(index)?;
+        Some(ModelAtomView {
+            atom,
+            conformation: self.conformation,
+        })
     }
 
-    pub const fn properties(self) -> &'a Properties {
-        self.properties
+    /// Atoms with their realization state, in dense order.
+    pub fn atoms(self) -> impl ExactSizeIterator<Item = ModelAtomView<'a>> + 'a {
+        let conformation = self.conformation;
+        self.topology
+            .atoms()
+            .map(move |atom| ModelAtomView { atom, conformation })
     }
 
-    pub const fn atom_properties(self) -> &'a PropertyTable {
-        self.properties.realization_atom_properties()
+    /// Materializes this borrowed realization as an owned model.
+    pub fn to_model(self) -> Model {
+        Model {
+            topology: Arc::clone(self.topology),
+            conformation: self.conformation.clone(),
+        }
+    }
+}
+
+/// One atom of a realization: its topology view (through `Deref`) plus the
+/// coordinate-dependent state stored for it.
+///
+/// ```
+/// use kekule::{smiles, structure::{Model, Positions}};
+/// let model = Model::new(smiles::to_topology("CO")?, Positions::zeros(2))?;
+/// let oxygen = model.atoms().find(|atom| atom.element.symbol() == "O").unwrap();
+/// assert_eq!(oxygen.occupancy(), None);
+/// assert_eq!(oxygen.position().into_value(), kekule::geometry::Point3::origin());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct ModelAtomView<'a> {
+    atom: crate::topology::AtomView<'a>,
+    conformation: &'a Conformation,
+}
+
+impl<'a> std::ops::Deref for ModelAtomView<'a> {
+    type Target = crate::topology::AtomView<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.atom
+    }
+}
+
+impl<'a> ModelAtomView<'a> {
+    /// The topology view with the model's full lifetime.
+    pub const fn topology_atom(self) -> crate::topology::AtomView<'a> {
+        self.atom
     }
 
-    pub const fn bond_properties(self) -> &'a PropertyTable {
-        self.properties.realization_bond_properties()
+    pub fn position(self) -> Quantity<Point3> {
+        self.conformation
+            .positions()
+            .position_at(self.atom.index().index())
+            .expect("bound conformations cover every atom")
     }
 
-    pub fn atom_property(
+    pub fn occupancy(self) -> Option<f64> {
+        self.conformation
+            .occupancy(self.atom.index())
+            .expect("bound conformations cover every atom")
+    }
+
+    pub fn b_factor(self) -> Option<Quantity<f64>> {
+        self.conformation
+            .b_factor(self.atom.index())
+            .expect("bound conformations cover every atom")
+    }
+
+    /// One realization annotation of this atom. Static annotations are
+    /// available through [`crate::topology::AtomView::property`].
+    pub fn realization_property(
         self,
-        atom: InstanceAtomId,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyValue>, ModelError> {
-        let index = self
-            .topology
-            .atom_index(atom)
-            .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.atom_properties().value(key, index.index())?)
-    }
-
-    pub fn bond_property(
-        self,
-        bond: InstanceBondId,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyValue>, ModelError> {
-        let index = self
-            .topology
-            .bond_index(bond)
-            .ok_or(ModelError::InvalidBondId(bond))?;
-        Ok(self.bond_properties().value(key, index.index())?)
-    }
-
-    pub fn occupancy(self, atom: InstanceAtomId) -> Result<Option<f64>, ModelError> {
-        let index = self
-            .topology
-            .atom_index(atom)
-            .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.properties.occupancy_at(index.index())?)
-    }
-
-    pub fn b_factor(self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, ModelError> {
-        let index = self
-            .topology
-            .atom_index(atom)
-            .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.properties.b_factor_at(index.index())?)
-    }
-
-    pub fn atom_count(self) -> usize {
-        self.topology.atom_count()
+        key: &crate::properties::PropertyKey,
+    ) -> Option<crate::properties::PropertyValue> {
+        self.conformation
+            .properties()
+            .atoms()
+            .value(key, self.atom.index())
+            .expect("bound conformations cover every atom")
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ModelError {
-    PositionCountMismatch { expected: usize, actual: usize },
-    AtomPropertyCountMismatch { expected: usize, actual: usize },
-    BondPropertyCountMismatch { expected: usize, actual: usize },
     InvalidAtomId(InstanceAtomId),
     InvalidBondId(InstanceBondId),
-    Position(PositionError),
-    Property(PropertyError),
+    Conformation(ConformationError),
+    Subset(TopologySubsetError),
 }
 
 impl fmt::Display for ModelError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PositionCountMismatch { expected, actual } => write!(
-                formatter,
-                "topology requires {expected} positions, but received {actual}"
-            ),
-            Self::AtomPropertyCountMismatch { expected, actual } => write!(
-                formatter,
-                "topology requires atom properties of length {expected}, but received {actual}"
-            ),
-            Self::BondPropertyCountMismatch { expected, actual } => write!(
-                formatter,
-                "topology requires bond properties of length {expected}, but received {actual}"
-            ),
             Self::InvalidAtomId(atom) => write!(formatter, "invalid topology atom: {atom}"),
             Self::InvalidBondId(bond) => write!(formatter, "invalid topology bond: {bond}"),
-            Self::Position(error) => write!(formatter, "invalid position data: {error}"),
-            Self::Property(error) => write!(formatter, "invalid model property: {error}"),
+            Self::Conformation(error) => write!(formatter, "invalid model conformation: {error}"),
+            Self::Subset(error) => write!(formatter, "cannot subset model topology: {error}"),
         }
     }
 }
@@ -860,76 +466,52 @@ impl fmt::Display for ModelError {
 impl std::error::Error for ModelError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Position(e) => Some(e),
-            Self::Property(e) => Some(e),
+            Self::Conformation(error) => Some(error),
+            Self::Subset(error) => Some(error),
             _ => None,
         }
     }
 }
 
-/// Failure to subset topology or transfer one model's dense state.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum ModelSliceError {
-    Topology(TopologySubsetError),
-    Model(Box<ModelError>),
-}
-
-impl fmt::Display for ModelSliceError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Topology(error) => write!(formatter, "cannot subset model topology: {error}"),
-            Self::Model(error) => write!(formatter, "cannot transfer model state: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for ModelSliceError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Topology(error) => Some(error),
-            Self::Model(error) => Some(error.as_ref()),
-        }
-    }
-}
-
-impl From<TopologySubsetError> for ModelSliceError {
-    fn from(error: TopologySubsetError) -> Self {
-        Self::Topology(error)
-    }
-}
-
-impl From<ModelError> for ModelSliceError {
-    fn from(error: ModelError) -> Self {
-        Self::Model(Box::new(error))
+impl From<ConformationError> for ModelError {
+    fn from(error: ConformationError) -> Self {
+        Self::Conformation(error)
     }
 }
 
 impl From<PositionError> for ModelError {
     fn from(error: PositionError) -> Self {
-        Self::Position(error)
+        Self::Conformation(error.into())
     }
 }
 
-impl From<PropertyError> for ModelError {
-    fn from(error: PropertyError) -> Self {
-        Self::Property(error)
+impl From<TopologySubsetError> for ModelError {
+    fn from(error: TopologySubsetError) -> Self {
+        Self::Subset(error)
     }
 }
 
 /// Convenience builder that assembles topology and one complete model.
 ///
-/// Each call to [`Self::add_molecule`] adds one explicit molecule occurrence and
-/// its dense positions. Geometry is supplied explicitly and remains outside the
-/// molecule. [`Self::build`] publishes both the coordinate-free topology and the
-/// matching model transactionally.
-#[derive(Debug, Clone, Default, PartialEq)]
+/// Each call to [`Self::add_molecule`] adds one molecule occurrence and its
+/// dense positions. [`Self::build`] publishes the coordinate-free topology and
+/// the matching model transactionally. The staged conformation follows staged
+/// dense atom order; use [`Self::atom_index`] to address it by atom ID.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ModelBuilder {
     topology: TopologyBuilder,
-    positions: Positions,
-    properties: Properties,
-    cell: Option<PeriodicCell>,
+    conformation: Conformation,
     extending_model: bool,
+}
+
+impl Default for ModelBuilder {
+    fn default() -> Self {
+        Self {
+            topology: TopologyBuilder::default(),
+            conformation: Conformation::new(Positions::default()),
+            extending_model: false,
+        }
+    }
 }
 
 impl ModelBuilder {
@@ -963,135 +545,93 @@ impl ModelBuilder {
     pub fn hierarchy(&self) -> &Hierarchy {
         self.topology.hierarchy()
     }
+
     pub fn hierarchy_mut(&mut self) -> &mut Hierarchy {
         self.topology.hierarchy_mut()
     }
+
     pub fn atom_count(&self) -> usize {
         self.topology.atom_count()
     }
+
     pub fn bond_count(&self) -> usize {
         self.topology.bond_count()
     }
-    pub fn positions(&self) -> &Positions {
-        &self.positions
+
+    /// Staged qualified atom IDs in current dense order.
+    pub fn atom_ids(&self) -> &[InstanceAtomId] {
+        self.topology.atom_ids()
     }
+
+    /// Staged qualified bond IDs in dense order.
+    pub fn bond_ids(&self) -> &[InstanceBondId] {
+        self.topology.bond_ids()
+    }
+
+    /// Staged dense index of one atom, valid until the atom order changes.
+    pub fn atom_index(&self, atom: InstanceAtomId) -> Option<TopologyAtomIndex> {
+        self.topology
+            .atom_index(atom)
+            .map(|index| TopologyAtomIndex::new(index as u32))
+    }
+
+    /// Staged conformation in staged dense atom order.
+    pub fn conformation(&self) -> &Conformation {
+        &self.conformation
+    }
+
+    pub fn conformation_mut(&mut self) -> ConformationMut<'_> {
+        ConformationMut::new(&mut self.conformation)
+    }
+
     pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelBuildError> {
-        Ok(self.positions.position_at(self.atom_index(atom)?)?)
+        let index = self.checked_atom_index(atom)?;
+        Ok(self.conformation.positions().position_at(index.index())?)
     }
+
     pub fn set_position(
         &mut self,
         atom: InstanceAtomId,
         position: Quantity<Point3>,
     ) -> Result<(), ModelBuildError> {
-        let index = self.atom_index(atom)?;
-        Ok(self.positions.set_position_at(index, position)?)
-    }
-    pub fn set_positions<T: AsRef<[Point3]>>(
-        &mut self,
-        positions: Quantity<T>,
-    ) -> Result<(), ModelBuildError> {
-        Ok(self.positions.set_all(positions)?)
-    }
-    pub fn cell(&self) -> Option<&PeriodicCell> {
-        self.cell.as_ref()
-    }
-    pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
-        self.cell = cell;
-    }
-    pub fn properties(&self) -> &Properties {
-        &self.properties
-    }
-    pub fn insert_property(
-        &mut self,
-        key: PropertyKey,
-        value: PropertyValue,
-    ) -> Result<Option<PropertyValue>, ModelBuildError> {
-        Ok(self.properties.insert(key, value)?)
-    }
-    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
-        self.properties.remove(key)
-    }
-    pub fn clear_properties(&mut self) {
-        self.properties.clear_owner();
-    }
-    pub fn set_properties(&mut self, properties: Properties) -> Result<(), ModelBuildError> {
-        if properties.atoms().len() != self.atom_count() {
-            return Err(ModelError::AtomPropertyCountMismatch {
-                expected: self.atom_count(),
-                actual: properties.atoms().len(),
-            }
-            .into());
-        }
-        if properties.bonds().len() != self.bond_count() {
-            return Err(ModelError::BondPropertyCountMismatch {
-                expected: self.bond_count(),
-                actual: properties.bonds().len(),
-            }
-            .into());
-        }
-        properties.validate_realization_properties()?;
-        self.properties = properties;
-        Ok(())
-    }
-    pub fn set_atom_property(
-        &mut self,
-        atom: InstanceAtomId,
-        key: PropertyKey,
-        value: Option<PropertyValue>,
-    ) -> Result<(), ModelBuildError> {
-        let index = self.atom_index(atom)?;
+        let index = self.checked_atom_index(atom)?;
         Ok(self
-            .properties
-            .set_realization_atom_value(key, index, value)?)
+            .conformation
+            .set_position(index, position)
+            .map_err(ModelError::from)?)
     }
-    pub fn set_bond_property(
+
+    /// Applies a sparse coordinate batch atomically; repeated atoms use the
+    /// last value.
+    pub fn set_atom_positions(
         &mut self,
-        bond: InstanceBondId,
-        key: PropertyKey,
-        value: Option<PropertyValue>,
+        values: impl IntoIterator<Item = (InstanceAtomId, Quantity<Point3>)>,
     ) -> Result<(), ModelBuildError> {
-        let index = self.bond_index(bond)?;
+        let staged = values
+            .into_iter()
+            .enumerate()
+            .map(|(order, (atom, position))| {
+                let index = self.checked_atom_index(atom)?.index();
+                let point = position
+                    .into_unit(crate::units::CANONICAL_LENGTH_UNIT)
+                    .map_err(PositionError::from)?
+                    .into_value();
+                if !point.is_finite() {
+                    return Err(PositionError::NonFinitePosition { index: order }.into());
+                }
+                Ok((index, point))
+            })
+            .collect::<Result<Vec<_>, ModelBuildError>>()?;
         Ok(self
-            .properties
-            .set_realization_bond_value(key, index, value)?)
+            .conformation
+            .positions_mut()
+            .set_canonical_batch(&staged)?)
     }
-    pub fn set_occupancy(
-        &mut self,
-        atom: InstanceAtomId,
-        value: Option<f64>,
-    ) -> Result<(), ModelBuildError> {
-        let index = self.atom_index(atom)?;
-        Ok(self.properties.set_occupancy_at(index, value)?)
-    }
-    pub fn set_b_factor(
-        &mut self,
-        atom: InstanceAtomId,
-        value: Option<Quantity<f64>>,
-    ) -> Result<(), ModelBuildError> {
-        let index = self.atom_index(atom)?;
-        Ok(self.properties.set_b_factor_at(index, value)?)
-    }
-    pub fn insert_atom_property_column(
-        &mut self,
-        key: PropertyKey,
-        column: PropertyColumn,
-    ) -> Result<Option<PropertyColumn>, ModelBuildError> {
-        Ok(self
-            .properties
-            .insert_realization_atom_column(key, column)?)
-    }
-    pub fn insert_bond_property_column(
-        &mut self,
-        key: PropertyKey,
-        column: PropertyColumn,
-    ) -> Result<Option<PropertyColumn>, ModelBuildError> {
-        Ok(self
-            .properties
-            .insert_realization_bond_column(key, column)?)
-    }
+
     pub fn validate(&self) -> Result<(), ModelBuildError> {
         self.clone().build().map(|_| ())
     }
+
     pub fn try_build(self) -> Result<Model, ModelBuilderError> {
         self.clone().build().map_err(|error| ModelBuilderError {
             error,
@@ -1099,132 +639,24 @@ impl ModelBuilder {
         })
     }
 
-    /// Staged qualified atom IDs in current dense order.
-    pub fn atom_ids(&self) -> &[InstanceAtomId] {
-        self.topology.atom_ids()
-    }
-    /// Staged qualified bond IDs in dense order.
-    pub fn bond_ids(&self) -> &[InstanceBondId] {
-        self.topology.bond_ids()
-    }
     /// Replaces the dense atom order with a permutation of every staged atom.
     ///
-    /// Positions, realization atom properties, and staged topology atom
-    /// properties move with their atoms. See [`TopologyBuilder::set_atom_order`].
-    /// A rejected order leaves the builder unchanged.
+    /// Conformation atom state and staged topology atom properties move with
+    /// their atoms. See [`TopologyBuilder::set_atom_order`]. A rejected order
+    /// leaves the builder unchanged.
     pub fn set_atom_order(
         &mut self,
         order: impl IntoIterator<Item = InstanceAtomId>,
     ) -> Result<(), ModelBuildError> {
         let previous = self.topology.reorder_atoms(order)?;
-        self.positions = self
-            .positions
-            .select_indices(&previous)
-            .expect("staged positions follow staged atoms");
-        *self.properties.atoms_mut() = self
-            .properties
-            .atoms()
-            .select_indices(&previous)
-            .expect("staged realization atom rows follow staged atoms");
+        self.conformation.reorder_atoms(&previous);
         Ok(())
-    }
-    pub fn atom_property(
-        &self,
-        atom: InstanceAtomId,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyValue>, ModelBuildError> {
-        Ok(self.properties.atoms().value(key, self.atom_index(atom)?)?)
-    }
-    pub fn bond_property(
-        &self,
-        bond: InstanceBondId,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyValue>, ModelBuildError> {
-        Ok(self.properties.bonds().value(key, self.bond_index(bond)?)?)
-    }
-    pub fn occupancy(&self, atom: InstanceAtomId) -> Result<Option<f64>, ModelBuildError> {
-        Ok(self.properties.occupancy_at(self.atom_index(atom)?)?)
-    }
-    pub fn b_factor(&self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, ModelBuildError> {
-        Ok(self.properties.b_factor_at(self.atom_index(atom)?)?)
-    }
-    pub fn atom_property_column(&self, key: &PropertyKey) -> Option<&PropertyColumn> {
-        self.properties.atoms().get(key)
-    }
-    pub fn bond_property_column(&self, key: &PropertyKey) -> Option<&PropertyColumn> {
-        self.properties.bonds().get(key)
-    }
-    pub fn remove_atom_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
-        self.properties.atoms_mut().remove(key)
-    }
-    pub fn remove_bond_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
-        self.properties.bonds_mut().remove(key)
-    }
-    /// Applies a checked sparse coordinate batch in input order, committing only on success.
-    pub fn set_atom_positions(
-        &mut self,
-        values: impl IntoIterator<Item = (InstanceAtomId, Quantity<Point3>)>,
-    ) -> Result<(), ModelBuildError> {
-        let mut staged = self.positions.clone();
-        for (atom, value) in values {
-            staged.set_position_at(self.atom_index(atom)?, value)?;
-        }
-        self.positions = staged;
-        Ok(())
-    }
-    /// Applies one property batch transactionally; repeated IDs use the last value.
-    pub fn set_atom_properties(
-        &mut self,
-        key: PropertyKey,
-        values: impl IntoIterator<Item = (InstanceAtomId, Option<PropertyValue>)>,
-    ) -> Result<(), ModelBuildError> {
-        let mut staged = self.properties.clone();
-        for (atom, value) in values {
-            staged.set_realization_atom_value(key.clone(), self.atom_index(atom)?, value)?;
-        }
-        self.properties = staged;
-        Ok(())
-    }
-    pub fn set_bond_properties(
-        &mut self,
-        key: PropertyKey,
-        values: impl IntoIterator<Item = (InstanceBondId, Option<PropertyValue>)>,
-    ) -> Result<(), ModelBuildError> {
-        let mut staged = self.properties.clone();
-        for (bond, value) in values {
-            staged.set_realization_bond_value(key.clone(), self.bond_index(bond)?, value)?;
-        }
-        self.properties = staged;
-        Ok(())
-    }
-    pub fn add_molecule_definition_owned(
-        &mut self,
-        molecule: Molecule,
-    ) -> Result<MoleculeDefinitionId, ModelBuildError> {
-        Ok(self.topology.add_molecule_definition_owned(molecule)?)
-    }
-    fn atom_index(&self, atom: InstanceAtomId) -> Result<usize, ModelBuildError> {
-        self.topology
-            .atom_index(atom)
-            .ok_or_else(|| ModelError::InvalidAtomId(atom).into())
-    }
-    fn bond_index(&self, bond: InstanceBondId) -> Result<usize, ModelBuildError> {
-        self.topology
-            .bond_index(bond)
-            .ok_or_else(|| ModelError::InvalidBondId(bond).into())
-    }
-    fn extend_properties(&mut self, added_bonds: usize) {
-        self.properties.resize_atoms(self.positions.len());
-        self.properties
-            .resize_bonds(self.properties.bonds().len() + added_bonds);
-        if self.extending_model {
-            self.properties.clear_owner();
-        }
     }
 
+    /// Stages a reusable definition; the molecule moves into the topology.
     pub fn add_molecule_definition(
         &mut self,
-        molecule: &Molecule,
+        molecule: Molecule,
     ) -> Result<MoleculeDefinitionId, ModelBuildError> {
         Ok(self.topology.add_molecule_definition(molecule)?)
     }
@@ -1256,38 +688,54 @@ impl ModelBuilder {
         let molecule = self.topology.definition(definition)?.molecule();
         let added_bonds = molecule.bond_count();
         validate_position_count(molecule.atom_count(), positions.len())?;
-        self.positions
-            .try_reserve(positions.len())
-            .map_err(|_| ModelBuildError::CapacityOverflow)?;
+        self.reserve(positions.len())?;
         let instance = self.topology.add_instance(definition)?;
-        self.positions.extend_canonical(positions);
-        self.extend_properties(added_bonds);
+        self.extend(positions, added_bonds);
         Ok(instance)
     }
 
     /// Adds a molecule and dense positions in that molecule's atom order.
     pub fn add_molecule(
         &mut self,
-        molecule: &Molecule,
+        molecule: Molecule,
         positions: &Positions,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
         validate_position_count(molecule.atom_count(), positions.len())?;
-        self.positions
-            .try_reserve(positions.len())
-            .map_err(|_| ModelBuildError::CapacityOverflow)?;
+        self.reserve(positions.len())?;
+        let bonds = molecule.bond_count();
         let instance = self.topology.add_molecule(molecule)?;
-        self.positions.extend_canonical(positions);
-        self.extend_properties(molecule.bond_count());
+        self.extend(positions, bonds);
         Ok(instance)
     }
 
     /// Validates and publishes the staged topology and model.
-    ///
-    /// Checks topology, hierarchy, coordinates, and realization properties together.
     pub fn build(self) -> Result<Model, ModelBuildError> {
         let topology = Arc::new(self.topology.build()?);
-        Model::with_properties(topology, self.positions, self.cell, self.properties)
-            .map_err(ModelBuildError::from)
+        Ok(Model::new(topology, self.conformation)?)
+    }
+
+    fn checked_atom_index(
+        &self,
+        atom: InstanceAtomId,
+    ) -> Result<TopologyAtomIndex, ModelBuildError> {
+        self.atom_index(atom)
+            .ok_or_else(|| ModelError::InvalidAtomId(atom).into())
+    }
+
+    fn reserve(&mut self, additional: usize) -> Result<(), ModelBuildError> {
+        self.conformation
+            .try_reserve_atoms(additional)
+            .map_err(|_| ModelBuildError::CapacityOverflow)
+    }
+
+    fn extend(&mut self, positions: &Positions, added_bonds: usize) {
+        self.conformation.extend(positions, added_bonds);
+        if self.extending_model {
+            self.conformation
+                .properties_storage_mut()
+                .owner_mut()
+                .clear();
+        }
     }
 }
 
@@ -1345,8 +793,9 @@ impl From<PositionError> for ModelBuildError {
         ModelError::from(error).into()
     }
 }
-impl From<PropertyError> for ModelBuildError {
-    fn from(error: PropertyError) -> Self {
+
+impl From<ConformationError> for ModelBuildError {
+    fn from(error: ConformationError) -> Self {
         ModelError::from(error).into()
     }
 }
@@ -1357,6 +806,7 @@ pub struct ModelBuilderError {
     error: ModelBuildError,
     builder: Box<ModelBuilder>,
 }
+
 impl ModelBuilderError {
     pub fn error(&self) -> &ModelBuildError {
         &self.error
@@ -1368,11 +818,13 @@ impl ModelBuilderError {
         *self.builder
     }
 }
+
 impl fmt::Display for ModelBuilderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.error.fmt(f)
     }
 }
+
 impl std::error::Error for ModelBuilderError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.error)
@@ -1385,37 +837,15 @@ impl std::error::Error for ModelBuilderError {
 pub struct ModelTopologyMut<'a> {
     topology: &'a mut TopologyBuilder,
 }
+
 impl<'a> ModelTopologyMut<'a> {
     pub fn hierarchy_mut(self) -> &'a mut Hierarchy {
         self.topology.hierarchy_mut()
     }
-    pub fn insert_property(
-        self,
-        key: PropertyKey,
-        value: PropertyValue,
-    ) -> Result<Option<PropertyValue>, PropertyError> {
-        self.topology.insert_property(key, value)
-    }
-    pub fn remove_property(self, key: &PropertyKey) -> Option<PropertyValue> {
-        self.topology.remove_property(key)
-    }
-    pub fn atom_properties_mut(self) -> crate::properties::PropertyTableMut<'a> {
-        self.topology.atom_properties_mut()
-    }
-    pub fn bond_properties_mut(self) -> crate::properties::PropertyTableMut<'a> {
-        self.topology.bond_properties_mut()
-    }
-    pub fn molecule_instance_properties_mut(self) -> crate::properties::PropertyTableMut<'a> {
-        self.topology.molecule_instance_properties_mut()
-    }
-    pub fn chain_properties_mut(self) -> crate::properties::PropertyTableMut<'a> {
-        self.topology.chain_properties_mut()
-    }
-    pub fn residue_properties_mut(self) -> crate::properties::PropertyTableMut<'a> {
-        self.topology.residue_properties_mut()
-    }
-    pub fn atom_site_properties_mut(self) -> crate::properties::PropertyTableMut<'a> {
-        self.topology.atom_site_properties_mut()
+
+    /// Length-preserving mutable access to staged static topology annotations.
+    pub fn properties_mut(self) -> crate::properties::TopologyPropertiesMut<'a> {
+        self.topology.properties_mut()
     }
 }
 

@@ -64,7 +64,7 @@ fn loading_detects_every_supported_format_and_retains_frame_order_and_topology()
         let trajectory = read_trajectory(fixture(name), topology.clone()).unwrap();
         assert!(Arc::ptr_eq(&topology, &trajectory.shared_topology()));
         assert_eq!(trajectory.len(), 2, "{name}");
-        for (frame, expected_x) in trajectory.frames().zip(first_xs) {
+        for (frame, expected_x) in trajectory.iter().zip(first_xs) {
             assert_eq!(frame.positions().len(), topology.atom_count());
             let actual_x = frame.positions().values().value()[0].x;
             assert!((actual_x - expected_x).abs() < 1.0e-6, "{name}: {actual_x}");
@@ -78,22 +78,22 @@ fn loading_retains_trr_cell_vectors_time_step_and_properties() {
     let trajectory =
         read_trajectory(fixture("mdanalysis-2.9.0-three-atoms.trr"), topology).unwrap();
     let lambda_key = PropertyKey::new(TRR_LAMBDA_PROPERTY).unwrap();
-    for (index, frame) in trajectory.frames().enumerate() {
+    for (index, frame) in trajectory.iter().enumerate() {
         let index = index as f64;
         assert!(frame.cell().is_some());
         let velocities = frame.velocities().unwrap();
         let forces = frame.forces().unwrap();
-        assert_eq!(velocities.value().len(), 3);
-        assert_eq!(forces.value().len(), 3);
-        assert!((velocities.value()[0].x - (index + 0.5) * 0.1).abs() < 1.0e-6);
-        assert!((forces.value()[0].x - (index + 1.0) * 10.0).abs() < 1.0e-5);
+        assert_eq!(velocities.values().value().len(), 3);
+        assert_eq!(forces.values().value().len(), 3);
+        assert!((velocities.values().value()[0].x - (index + 0.5) * 0.1).abs() < 1.0e-6);
+        assert!((forces.values().value()[0].x - (index + 1.0) * 10.0).abs() < 1.0e-5);
         assert_eq!(
             frame.time().unwrap().value_in(PICOSECOND).unwrap(),
             index * 0.25
         );
         assert_eq!(frame.step(), Some(index as u64));
         assert_eq!(
-            frame.properties().get(&lambda_key),
+            frame.properties().owner().get(&lambda_key),
             Some(&PropertyValue::Real {
                 value: 0.125 + index * 0.125,
                 unit: DIMENSIONLESS,
@@ -124,14 +124,14 @@ fn loading_accepts_owned_topology_and_honors_format_units_and_sequential_limits(
     let trajectory = read_trajectory_with_options(&input.0, owned, options).unwrap();
     assert_eq!(trajectory.len(), 2);
     assert_eq!(
-        trajectory.frame(0).unwrap().positions().values().value()[0].x,
+        trajectory.get(0).unwrap().positions().values().value()[0].x,
         1.0
     );
     assert_eq!(
-        trajectory.frame(1).unwrap().positions().values().value()[0].x,
+        trajectory.get(1).unwrap().positions().values().value()[0].x,
         4.0
     );
-    for frame in trajectory.frames() {
+    for frame in trajectory.iter() {
         assert!(frame.cell().is_none());
         assert!(frame.velocities().is_none());
         assert!(frame.forces().is_none());

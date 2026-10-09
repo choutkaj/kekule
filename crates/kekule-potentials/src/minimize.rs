@@ -21,7 +21,9 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use kekule::geometry::{Point3, Vector3};
-use kekule::structure::{Model, ModelError, ModelView, PositionError, Positions};
+use kekule::structure::{
+    Conformation, ConformationError, Model, ModelView, PositionError, Positions,
+};
 use kekule::topology::Topology;
 use kekule::units::{
     Quantity, UnitError, CANONICAL_GRADIENT_UNIT, CANONICAL_LENGTH_UNIT,
@@ -134,7 +136,9 @@ impl Minimization {
             return Err(MinimizationError::IncompatibleTopology);
         }
         let mut model = source.to_model();
-        model.set_positions(self.positions.values())?;
+        model
+            .conformation_mut()
+            .set_positions(self.positions.values())?;
         Ok(model)
     }
 }
@@ -164,7 +168,7 @@ pub fn minimize_with_observer<P: Potential + ?Sized>(
     let mut search = Search {
         potential,
         topology: model.shared_topology(),
-        model,
+        trial: model.conformation().clone(),
         evaluations: 1,
     };
     let mut current = Point {
@@ -352,10 +356,11 @@ fn two_loop(history: &VecDeque<Pair>, gradient: &[f64]) -> Vec<f64> {
     q
 }
 
-struct Search<'a, 'm, P: ?Sized> {
+struct Search<'a, P: ?Sized> {
     potential: &'a P,
     topology: Arc<Topology>,
-    model: ModelView<'m>,
+    /// Scratch conformation carrying the cell and annotations of the input.
+    trial: Conformation,
     evaluations: usize,
 }
 
@@ -367,7 +372,7 @@ struct Sample {
     point: Option<Point>,
 }
 
-impl<P: Potential + ?Sized> Search<'_, '_, P> {
+impl<P: Potential + ?Sized> Search<'_, P> {
     /// Evaluates `x + alpha d`. Singular coordinates yield an infinite energy;
     /// coordinates that round back to `x` yield `None`.
     fn sample(
@@ -386,12 +391,8 @@ impl<P: Potential + ?Sized> Search<'_, '_, P> {
             return Ok(None);
         }
         let positions = Positions::from_vec(Quantity::new(to_points(&x), CANONICAL_LENGTH_UNIT))?;
-        let view = ModelView::new(
-            &self.topology,
-            &positions,
-            self.model.cell(),
-            self.model.properties(),
-        )?;
+        self.trial.set_positions(positions.values())?;
+        let view = ModelView::new(&self.topology, &self.trial)?;
         self.evaluations += 1;
         match self.potential.evaluate(view) {
             Ok(evaluation) => {
@@ -563,7 +564,7 @@ pub enum MinimizationError {
     Evaluation(EvaluationError),
     /// [`Minimization::to_model`] received a view of a different topology.
     IncompatibleTopology,
-    Model(Box<ModelError>),
+    Conformation(ConformationError),
     Position(PositionError),
     Unit(UnitError),
 }
@@ -579,7 +580,9 @@ impl fmt::Display for MinimizationError {
             Self::IncompatibleTopology => f.write_str(
                 "model view belongs to a different topology layout than the minimization",
             ),
-            Self::Model(error) => write!(f, "cannot build the minimized realization: {error}"),
+            Self::Conformation(error) => {
+                write!(f, "cannot build the minimized realization: {error}")
+            }
             Self::Position(error) => write!(f, "cannot update positions: {error}"),
             Self::Unit(error) => write!(f, "invalid minimization quantity unit: {error}"),
         }
@@ -590,7 +593,7 @@ impl std::error::Error for MinimizationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Evaluation(error) => Some(error),
-            Self::Model(error) => Some(error.as_ref()),
+            Self::Conformation(error) => Some(error),
             Self::Position(error) => Some(error),
             Self::Unit(error) => Some(error),
             Self::InvalidOptions(_) | Self::NumericalFailure(_) | Self::IncompatibleTopology => {
@@ -606,9 +609,9 @@ impl From<EvaluationError> for MinimizationError {
     }
 }
 
-impl From<ModelError> for MinimizationError {
-    fn from(error: ModelError) -> Self {
-        Self::Model(Box::new(error))
+impl From<ConformationError> for MinimizationError {
+    fn from(error: ConformationError) -> Self {
+        Self::Conformation(error)
     }
 }
 

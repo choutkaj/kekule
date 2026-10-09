@@ -34,7 +34,8 @@ fn every_conjugated_diene_and_triene_configuration_round_trips() {
                 if perceive {
                     original.perceive().unwrap();
                 }
-                let written = smiles::write_isomeric(&original).unwrap();
+                let written =
+                    smiles::write(&original, smiles::SmilesWriteOptions::isomeric()).unwrap();
                 let restored = molecule(&written);
                 assert_eq!(
                     original
@@ -48,7 +49,10 @@ fn every_conjugated_diene_and_triene_configuration_round_trips() {
                     "{source} -> {written}"
                 );
                 assert_eq!(restored.stereo_elements().count(), double_bonds);
-                assert_eq!(smiles::write_isomeric(&restored).unwrap(), written);
+                assert_eq!(
+                    smiles::write(&restored, smiles::SmilesWriteOptions::isomeric()).unwrap(),
+                    written
+                );
             }
         }
     }
@@ -132,7 +136,7 @@ fn conjugated_stereo_export_is_independent_of_atom_bond_and_endpoint_numbering()
     for reverse in [false, true] {
         let mut original = mapped_polyene(&source, reverse);
         assert_eq!(mapped_cip(&mut original), expected);
-        let written = smiles::write_isomeric(&original).unwrap();
+        let written = smiles::write(&original, smiles::SmilesWriteOptions::isomeric()).unwrap();
         let mut restored = molecule(&written);
         assert_eq!(mapped_cip(&mut restored), expected, "{written}");
     }
@@ -169,7 +173,7 @@ fn conjugated_stereo_round_trips_with_implicit_hydrogen_carriers() {
         }
         let mut source = editor.finish().unwrap();
         assert_eq!(mapped_cip(&mut source), expected);
-        let written = smiles::write_isomeric(&source).unwrap();
+        let written = smiles::write(&source, smiles::SmilesWriteOptions::isomeric()).unwrap();
         let mut restored = molecule(&written);
         assert_eq!(mapped_cip(&mut restored), expected, "{written}");
     }
@@ -182,7 +186,7 @@ fn contradictory_double_bond_assertions_are_rejected_before_export() {
     stereo::assign_cip_descriptors(&mut original).unwrap();
     let (id, element) = original.stereo_elements().next().unwrap();
     let expected = original.cip_descriptor(id).unwrap();
-    let expected_export = smiles::write_isomeric(&original).unwrap();
+    let expected_export = smiles::write(&original, smiles::SmilesWriteOptions::isomeric()).unwrap();
     let mut opposite = element.clone();
     let StereoElementKind::DoubleBond(stereo) = &mut opposite.kind else {
         panic!("expected double-bond assertion");
@@ -202,7 +206,7 @@ fn contradictory_double_bond_assertions_are_rejected_before_export() {
     let preserved = editor.finish().unwrap();
     assert_eq!(preserved.stereo_elements().count(), 1);
     assert_eq!(preserved.cip_descriptor(id).unwrap(), expected);
-    let written = smiles::write_isomeric(&preserved).unwrap();
+    let written = smiles::write(&preserved, smiles::SmilesWriteOptions::isomeric()).unwrap();
     assert_eq!(written, expected_export);
     let mut restored = molecule(&written);
     restored.perceive().unwrap();
@@ -223,8 +227,8 @@ fn canonical_smiles_keeps_aromaticity_when_explicit_hydrogens_precede_ring_atoms
         let mut implicit = molecule(implicit);
         implicit.perceive().unwrap();
         assert_eq!(
-            smiles::write_canonical(&explicit).unwrap(),
-            smiles::write_canonical(&implicit).unwrap()
+            smiles::write(&explicit, smiles::SmilesWriteOptions::canonical()).unwrap(),
+            smiles::write(&implicit, smiles::SmilesWriteOptions::canonical()).unwrap()
         );
     }
 }

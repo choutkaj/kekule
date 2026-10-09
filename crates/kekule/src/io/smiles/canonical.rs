@@ -89,7 +89,7 @@ fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, Mol
     let mut normalized = mol.clone();
     // Metadata does not affect a molecular identifier. Use the common hydrogen
     // transform so carrier remapping and count reconstruction have one owner.
-    normalized.clear_properties();
+    normalized.properties_mut().owner_mut().clear();
     let removal = normalized.remove_hydrogens().map_err(|error| {
         MolWriteError::new(format!(
             "canonical SMILES hydrogen normalization requires known hydrogen perception: {error}"

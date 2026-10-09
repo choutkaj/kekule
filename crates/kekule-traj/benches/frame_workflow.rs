@@ -3,8 +3,8 @@
 //! Real coordinates and annotations are repeated to isolate container costs;
 //! this measures API overhead, not physical trajectory sampling or scaling limits.
 
+use kekule::structure::{Trajectory, TrajectoryFrame};
 use kekule::{mmcif, topology::AtomSelection};
-use kekule_traj::{Trajectory, TrajectoryFrame};
 use std::{error::Error, hint::black_box, time::Instant};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -14,17 +14,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let model = mmcif::parse_str(&std::fs::read_to_string(path)?)?
         .interpret()?
         .into_model();
-    let mut frame = TrajectoryFrame::new(model.positions().clone());
-    frame.set_properties(model.properties().clone())?;
+    let frame = TrajectoryFrame::new(model.conformation().clone());
     let trajectory =
-        Trajectory::from_frames(model.shared_topology(), (0..64).map(|_| frame.clone()))?;
+        Trajectory::from_items(model.shared_topology(), (0..64).map(|_| frame.clone()))?;
     let atoms = AtomSelection::all(&trajectory.shared_topology());
     let iterations = 1_000_000;
     let start = Instant::now();
     for index in 0..iterations {
         black_box(
             black_box(&trajectory)
-                .frame(index % trajectory.len())
+                .get(index % trajectory.len())
                 .unwrap()
                 .positions()
                 .len(),
@@ -33,14 +32,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let access_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
     let start = Instant::now();
     for _ in 0..iterations / 64 {
-        for frame in black_box(&trajectory).frames() {
+        for frame in black_box(&trajectory).iter() {
             black_box(frame.positions().len());
         }
     }
     let iteration_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
     let start = Instant::now();
     for _ in 0..20 {
-        let _ = black_box(trajectory.superpose_to_frame(0, &atoms)?);
+        let mut aligned = trajectory.clone();
+        black_box(aligned.superpose(0, &atoms)?);
+        black_box(aligned);
     }
     let superposition_ms = start.elapsed().as_secs_f64() * 1000.0 / 20.0;
     println!("{{\"atoms\":{},\"frames\":{},\"frame_access_ns\":{access_ns},\"iteration_ns_per_frame\":{iteration_ns},\"superposition_ms\":{superposition_ms}}}", trajectory.topology().atom_count(), trajectory.len());

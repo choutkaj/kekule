@@ -1,46 +1,41 @@
-//! Rigid molecular alignment through selections or explicit atom correspondence.
+//! Rigid alignment and RMSD through selections or explicit atom correspondence.
 //!
-//! [`kabsch`] requires one shared topology. For independent models, construct
-//! [`AtomCorrespondence`] and use [`kabsch_with_correspondence`]. Both paths
-//! use the same numerical kernel and return the same moving-to-reference transform.
+//! Atoms are paired by [`FitAtoms`]: an [`AtomSelection`] pairs each selected
+//! atom with itself (both sides share one topology layout), and an
+//! [`AtomCorrespondence`] pairs atoms of independent topologies. Every
+//! operation accepts either through `impl Into<FitAtoms>`.
 //!
-//! The returned transform always maps moving coordinates into reference
-//! coordinates:
+//! - [`kabsch`] fits one view onto another and returns the moving-to-reference
+//!   transform and post-fit RMSD.
+//! - [`rmsd`] measures coordinates exactly as stored, without fitting.
+//! - `superpose`, `rmsd`, and `aligned_rmsd` on
+//!   [`Ensemble`](crate::structure::Ensemble::superpose) and
+//!   [`Trajectory`](crate::structure::Trajectory::superpose) apply the same
+//!   kernels to every member or frame against a [`Reference`]: an item of the
+//!   collection or any external view.
+//!
+//! Each has an `_with_options` variant taking [`AlignmentOptions`]. The
+//! returned transform maps moving coordinates into reference coordinates:
 //!
 //! ```text
 //! aligned = result.transform().transform_point(canonical_moving)
 //! ```
 //!
-//! Alignment is read-only. It does not image periodic coordinates or
-//! materialize transformed canonical coordinates. The default fit uses stored
-//! Cartesian coordinates, including when a cell is present. Use an explicit
-//! [`PeriodicAlignmentPolicy::RejectPeriodic`] option to reject periodic inputs.
+//! Alignment never images periodic coordinates. The default fit uses stored
+//! Cartesian coordinates, including when a cell is present; use
+//! [`PeriodicPolicy::RejectPeriodic`] to reject periodic inputs.
 //!
 //! # Examples
 //!
 //! ```
 //! use kekule::alignment::kabsch;
-//! use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
 //! use kekule::geometry::Point3;
+//! use kekule::smiles;
 //! use kekule::structure::{Model, Positions};
-//! use kekule::topology::{AtomSelection, TopologyBuilder};
+//! use kekule::topology::AtomSelection;
 //! use kekule::units::{Quantity, ANGSTROM};
-//! use std::sync::Arc;
 //!
-//! let mut graph = MoleculeEditor::new();
-//! let mut previous = None;
-//! for _ in 0..3 {
-//!     let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
-//!     if let Some(parent) = previous {
-//!         graph.add_bond(parent, atom, BondOrder::Single)?;
-//!     }
-//!     previous = Some(atom);
-//! }
-//! let molecule = graph.finish()?;
-//! let mut builder = TopologyBuilder::new();
-//! let definition = builder.add_molecule_definition(&molecule)?;
-//! builder.add_instance(definition)?;
-//! let topology = Arc::new(builder.build()?);
+//! let topology = smiles::to_topology("CCC")?;
 //! let moving_points = [
 //!     Point3::new(0.0, 0.0, 0.0),
 //!     Point3::new(1.0, 0.0, 0.0),
@@ -52,16 +47,16 @@
 //!     point.z + 0.5,
 //! ));
 //! let moving = Model::new(
-//!     Arc::clone(&topology),
+//!     topology.clone(),
 //!     Positions::new(Quantity::new(moving_points, ANGSTROM))?,
 //! )?;
 //! let reference = Model::new(
-//!     Arc::clone(&topology),
+//!     topology.clone(),
 //!     Positions::new(Quantity::new(reference_points, ANGSTROM))?,
 //! )?;
 //! let selection = AtomSelection::all(&topology);
 //!
-//! let result = kabsch(moving.view(), reference.view(), &selection)?;
+//! let result = kabsch(moving.as_model_view(), reference.as_model_view(), &selection)?;
 //! let canonical_moving = moving.positions().position_at(1)?.into_value();
 //! let canonical_reference = reference.positions().position_at(1)?.into_value();
 //! let aligned = result.transform().transform_point(canonical_moving);
@@ -73,17 +68,19 @@
 use std::fmt;
 
 use crate::geometry::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
-use crate::structure::ModelView;
+use crate::structure::{ConformationError, ModelView};
 use crate::topology::{AtomSelection, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
+mod collection;
 mod correspondence;
+pub use collection::{AlignedRmsdOptions, Reference, SuperpositionReport};
 pub use correspondence::{AtomCorrespondence, AtomCorrespondenceError, CorrespondenceSide};
 
 #[cfg(test)]
 mod correspondence_tests;
 
-const MIN_SELECTED_ATOMS: usize = 3;
+const MIN_FIT_ATOMS: usize = 3;
 
 /// Variance-relative rank threshold used for centered selected geometry.
 ///
@@ -93,130 +90,209 @@ const RANK_RELATIVE_TOLERANCE: f64 = 1.0e-12;
 const JACOBI_RELATIVE_TOLERANCE: f64 = 64.0 * f64::EPSILON;
 const JACOBI_MAX_SWEEPS: usize = 24;
 
+/// The atoms paired between a moving and a reference view.
+#[derive(Debug, Clone, Copy)]
+pub enum FitAtoms<'a> {
+    /// Each selected atom pairs with itself; both views and the selection share
+    /// one topology layout. Pairs follow sorted selection order.
+    Selection(&'a AtomSelection),
+    /// Explicit ordered pairs between two topologies, in pair order.
+    Correspondence(&'a AtomCorrespondence),
+}
+
+impl<'a> From<&'a AtomSelection> for FitAtoms<'a> {
+    fn from(selection: &'a AtomSelection) -> Self {
+        Self::Selection(selection)
+    }
+}
+
+impl<'a> From<&'a AtomCorrespondence> for FitAtoms<'a> {
+    fn from(correspondence: &'a AtomCorrespondence) -> Self {
+        Self::Correspondence(correspondence)
+    }
+}
+
+impl FitAtoms<'_> {
+    /// Number of atom pairs.
+    pub fn len(self) -> usize {
+        match self {
+            Self::Selection(selection) => selection.indices().len(),
+            Self::Correspondence(correspondence) => correspondence.len(),
+        }
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+
+    /// Validates the pairing against both views and returns its index pairs.
+    pub(crate) fn pairs(
+        self,
+        moving: ModelView<'_>,
+        reference: ModelView<'_>,
+    ) -> Result<Vec<(TopologyAtomIndex, TopologyAtomIndex)>, AlignmentError> {
+        match self {
+            Self::Selection(selection) => {
+                if !moving.topology().shares_layout(reference.topology()) {
+                    return Err(AlignmentError::TopologyMismatch);
+                }
+                selection
+                    .ensure_compatible(moving.topology_arc())
+                    .map_err(|_| AlignmentError::SelectionTopologyMismatch)?;
+                Ok(selection
+                    .indices()
+                    .iter()
+                    .map(|index| (*index, *index))
+                    .collect())
+            }
+            Self::Correspondence(correspondence) => {
+                correspondence
+                    .ensure_compatible(moving.topology(), reference.topology())
+                    .map_err(AlignmentError::Correspondence)?;
+                Ok(correspondence.index_pairs().to_vec())
+            }
+        }
+    }
+}
+
 /// Fits `moving` onto `reference` with uniform weights.
 ///
-/// This is equivalent to [`kabsch_with_options`] with
-/// [`KabschOptions::default`]. The result maps moving coordinates into the
+/// See [`kabsch_with_options`]. The result maps moving coordinates into the
 /// reference coordinate system.
-pub fn kabsch(
+pub fn kabsch<'a>(
     moving: ModelView<'_>,
     reference: ModelView<'_>,
-    selection: &AtomSelection,
+    atoms: impl Into<FitAtoms<'a>>,
 ) -> Result<RigidAlignment, AlignmentError> {
-    kabsch_with_options(moving, reference, selection, KabschOptions::default())
+    kabsch_with_options(moving, reference, atoms, AlignmentOptions::default())
 }
 
 /// Fits `moving` onto `reference` with explicit weighting and periodic policy.
 ///
-/// Correspondence follows the selection's sorted dense-index order. The two
-/// views and selection must share one topology layout
-/// ([`crate::topology::Topology::shares_layout`]). Explicit weights
-/// use selection order, not complete-topology order.
-///
 /// The fit minimizes `sum(w_i * |R x_i + t - y_i|^2)` subject to a proper
-/// right-handed rotation. The returned RMSD is the weighted post-fit value in
-/// [`CANONICAL_LENGTH_UNIT`].
-pub fn kabsch_with_options(
+/// right-handed rotation, over at least three pairs spanning two dimensions.
+/// Explicit weights follow pair order. The returned RMSD is the weighted
+/// post-fit value in [`CANONICAL_LENGTH_UNIT`].
+pub fn kabsch_with_options<'a>(
     moving: ModelView<'_>,
     reference: ModelView<'_>,
-    selection: &AtomSelection,
-    options: KabschOptions<'_>,
+    atoms: impl Into<FitAtoms<'a>>,
+    options: AlignmentOptions<'_>,
 ) -> Result<RigidAlignment, AlignmentError> {
-    if !moving.topology().shares_layout(reference.topology()) {
-        return Err(AlignmentError::TopologyMismatch);
-    }
-    selection
-        .ensure_compatible(moving.topology_arc())
-        .map_err(|_| AlignmentError::SelectionTopologyMismatch)?;
-
-    kabsch_pairs(
-        moving,
-        reference,
-        selection
-            .indices()
-            .iter()
-            .copied()
-            .map(|index| (index, index)),
-        options,
-    )
+    let pairs = atoms.into().pairs(moving, reference)?;
+    let weights = NormalizedWeights::new(options.weighting, pairs.len())?;
+    kabsch_pairs(moving, reference, &pairs, weights, options.periodic_policy)
 }
 
-/// Fits independent models using explicitly paired atoms and uniform weights.
-///
-/// The correspondence retains both exact topology snapshots. Neither input is
-/// mutated or rebound, and no reordered copy of either coordinate array is made.
-///
-/// ```no_run
-/// use kekule::{alignment::{self, AtomCorrespondence}, sdf};
-/// let document = sdf::parse_str(&std::fs::read_to_string("compound.sdf")?)?;
-/// let moving = document.records()[0].to_model()?;
-/// let reference = document.records()[0].to_model()?;
-/// let pairs = AtomCorrespondence::from_same_layout(
-///     &moving.shared_topology(), &reference.shared_topology(),
-/// )?;
-/// let fit = alignment::kabsch_with_correspondence(moving.view(), reference.view(), &pairs)?;
-/// println!("{:?}", fit.rmsd());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn kabsch_with_correspondence(
+/// Direct RMSD over paired atoms, measured exactly as stored without fitting.
+pub fn rmsd<'a>(
     moving: ModelView<'_>,
     reference: ModelView<'_>,
-    correspondence: &AtomCorrespondence,
-) -> Result<RigidAlignment, AlignmentError> {
-    kabsch_with_correspondence_and_options(
-        moving,
-        reference,
-        correspondence,
-        KabschOptions::default(),
-    )
+    atoms: impl Into<FitAtoms<'a>>,
+) -> Result<Quantity<f64>, AlignmentError> {
+    rmsd_with_options(moving, reference, atoms, AlignmentOptions::default())
 }
 
-/// Fits paired atoms with explicit weighting and periodic policy.
-///
-/// Weights follow correspondence pair order. Both sides must span at least two
-/// dimensions and contain at least three pairs, as in [`kabsch_with_options`].
-pub fn kabsch_with_correspondence_and_options(
+/// Direct RMSD with explicit weighting (in pair order) and periodic policy.
+pub fn rmsd_with_options<'a>(
     moving: ModelView<'_>,
     reference: ModelView<'_>,
-    correspondence: &AtomCorrespondence,
-    options: KabschOptions<'_>,
-) -> Result<RigidAlignment, AlignmentError> {
-    correspondence
-        .ensure_compatible(moving.topology(), reference.topology())
-        .map_err(AlignmentError::Correspondence)?;
-    kabsch_pairs(
+    atoms: impl Into<FitAtoms<'a>>,
+    options: AlignmentOptions<'_>,
+) -> Result<Quantity<f64>, AlignmentError> {
+    let pairs = atoms.into().pairs(moving, reference)?;
+    let weights = NormalizedWeights::new(options.weighting, pairs.len())?;
+    let value = measure_pairs(
         moving,
         reference,
-        correspondence.index_pairs().iter().copied(),
-        options,
-    )
+        &pairs,
+        weights,
+        options.periodic_policy,
+        None,
+    )?;
+    Ok(Quantity::new(value, CANONICAL_LENGTH_UNIT))
 }
 
-fn kabsch_pairs(
+fn check_periodic(
     moving: ModelView<'_>,
     reference: ModelView<'_>,
-    pairs: impl ExactSizeIterator<Item = (TopologyAtomIndex, TopologyAtomIndex)> + Clone,
-    options: KabschOptions<'_>,
-) -> Result<RigidAlignment, AlignmentError> {
-    let selected_atom_count = pairs.len();
-    if selected_atom_count < MIN_SELECTED_ATOMS {
-        return Err(AlignmentError::InsufficientSelectedAtoms {
-            selected: selected_atom_count,
-            minimum: MIN_SELECTED_ATOMS,
-        });
-    }
-
-    let weights = NormalizedWeights::new(options.weighting, selected_atom_count)?;
+    policy: PeriodicPolicy,
+) -> Result<(), AlignmentError> {
     let moving_periodic = moving.cell().is_some();
     let reference_periodic = reference.cell().is_some();
-    if options.periodic_policy == PeriodicAlignmentPolicy::RejectPeriodic
-        && (moving_periodic || reference_periodic)
-    {
+    if policy == PeriodicPolicy::RejectPeriodic && (moving_periodic || reference_periodic) {
         return Err(AlignmentError::PeriodicCoordinates {
             moving: moving_periodic,
             reference: reference_periodic,
         });
     }
+    Ok(())
+}
+
+/// RMSD requires at least one pair.
+pub(crate) fn check_measurement_count(pairs: usize) -> Result<(), AlignmentError> {
+    if pairs == 0 {
+        return Err(AlignmentError::EmptySelection);
+    }
+    Ok(())
+}
+
+/// A determined rigid fit requires at least [`MIN_FIT_ATOMS`] pairs.
+pub(crate) fn check_fit_count(pairs: usize) -> Result<(), AlignmentError> {
+    if pairs < MIN_FIT_ATOMS {
+        return Err(AlignmentError::InsufficientSelectedAtoms {
+            selected: pairs,
+            minimum: MIN_FIT_ATOMS,
+        });
+    }
+    Ok(())
+}
+
+/// Weighted RMSD over validated pairs, optionally after moving coordinates
+/// are transformed.
+pub(crate) fn measure_pairs(
+    moving: ModelView<'_>,
+    reference: ModelView<'_>,
+    pairs: &[(TopologyAtomIndex, TopologyAtomIndex)],
+    weights: NormalizedWeights<'_>,
+    policy: PeriodicPolicy,
+    transform: Option<RigidTransform>,
+) -> Result<f64, AlignmentError> {
+    check_measurement_count(pairs.len())?;
+    check_periodic(moving, reference, policy)?;
+    let moving_positions = moving.positions().values();
+    let reference_positions = reference.positions().values();
+    let moving_positions = moving_positions.value();
+    let reference_positions = reference_positions.value();
+    let mut squared_residual = CompensatedSum::default();
+    let mut weight_sum = CompensatedSum::default();
+    for (pair_index, (moving_index, reference_index)) in pairs.iter().enumerate() {
+        let mut point = moving_positions[moving_index.index()];
+        if let Some(transform) = transform {
+            point = transform.transform_point(point);
+        }
+        let residual = point - reference_positions[reference_index.index()];
+        let weight = weights.at(pair_index);
+        squared_residual.add(weight * residual.norm_squared());
+        weight_sum.add(weight);
+    }
+    let mean_squared_residual = squared_residual.value() / weight_sum.value();
+    if !mean_squared_residual.is_finite() || mean_squared_residual < 0.0 {
+        return Err(AlignmentError::NumericalFailure);
+    }
+    Ok(mean_squared_residual.sqrt())
+}
+
+pub(crate) fn kabsch_pairs(
+    moving: ModelView<'_>,
+    reference: ModelView<'_>,
+    pairs: &[(TopologyAtomIndex, TopologyAtomIndex)],
+    weights: NormalizedWeights<'_>,
+    policy: PeriodicPolicy,
+) -> Result<RigidAlignment, AlignmentError> {
+    let selected_atom_count = pairs.len();
+    check_fit_count(selected_atom_count)?;
+    check_periodic(moving, reference, policy)?;
 
     let moving_positions = moving.positions().values();
     let reference_positions = reference.positions().values();
@@ -224,11 +300,11 @@ fn kabsch_pairs(
     let reference_positions = reference_positions.value();
 
     let mut moments = AlignmentMoments::default();
-    for (selection_index, (moving_index, reference_index)) in pairs.clone().enumerate() {
+    for (pair_index, (moving_index, reference_index)) in pairs.iter().enumerate() {
         moments.add(
             point_components(moving_positions[moving_index.index()]),
             point_components(reference_positions[reference_index.index()]),
-            weights.at(selection_index),
+            weights.at(pair_index),
         );
     }
     let moments = moments.finish()?;
@@ -244,14 +320,14 @@ fn kabsch_pairs(
         .map_err(AlignmentError::InvalidRigidTransform)?;
 
     let mut weighted_squared_residual = CompensatedSum::default();
-    for (selection_index, (moving_index, reference_index)) in pairs.enumerate() {
+    for (pair_index, (moving_index, reference_index)) in pairs.iter().enumerate() {
         let moving_centered = point_components(moving_positions[moving_index.index()]);
         let reference_centered = point_components(reference_positions[reference_index.index()]);
         let moving_centered = subtract(moving_centered, moments.moving_centroid);
         let reference_centered = subtract(reference_centered, moments.reference_centroid);
         let residual = rotation.transform_vector(components_vector(moving_centered))
             - components_vector(reference_centered);
-        weighted_squared_residual.add(weights.at(selection_index) * residual.norm_squared());
+        weighted_squared_residual.add(weights.at(pair_index) * residual.norm_squared());
     }
     let mean_squared_residual = weighted_squared_residual.value() / moments.weight_sum;
     if !mean_squared_residual.is_finite() || mean_squared_residual < 0.0 {
@@ -265,32 +341,32 @@ fn kabsch_pairs(
     })
 }
 
-/// Options for [`kabsch_with_options`].
+/// Options shared by fitting and RMSD measurement.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct KabschOptions<'a> {
-    /// Per-selected-atom or per-correspondence-pair weighting policy.
-    pub weighting: AlignmentWeighting<'a>,
-    /// Handling of models carrying periodic cells.
-    pub periodic_policy: PeriodicAlignmentPolicy,
+pub struct AlignmentOptions<'a> {
+    /// Per-pair weighting.
+    pub weighting: Weighting<'a>,
+    /// Handling of views carrying periodic cells.
+    pub periodic_policy: PeriodicPolicy,
 }
 
-/// Per-selected-atom weighting for rigid alignment.
+/// Per-pair weighting for fitting and RMSD.
 #[derive(Debug, Clone, Copy, Default)]
-pub enum AlignmentWeighting<'a> {
-    /// Give every selected atom equal weight.
+pub enum Weighting<'a> {
+    /// Give every pair equal weight.
     #[default]
     Uniform,
-    /// Use positive finite weights in selection order or correspondence pair order.
+    /// Positive finite weights in pair order.
     Explicit(&'a [f64]),
 }
 
-/// Policy for models carrying periodic cells.
+/// Policy for views carrying periodic cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
-pub enum PeriodicAlignmentPolicy {
-    /// Explicitly reject either input when it carries a periodic cell.
+pub enum PeriodicPolicy {
+    /// Reject either input when it carries a periodic cell.
     RejectPeriodic,
-    /// Ignore cells and fit the stored Cartesian coordinates directly.
+    /// Ignore cells and use the stored Cartesian coordinates directly.
     ///
     /// This performs no imaging, wrapping, unwrapping, minimum-image
     /// correction, or molecule reconstruction.
@@ -337,12 +413,12 @@ pub enum AlignmentGeometry {
 }
 
 /// A structured rigid-alignment failure.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum AlignmentError {
-    /// Moving and reference views do not share one topology allocation.
+    /// Moving and reference views do not share one topology layout.
     TopologyMismatch,
-    /// The atom selection belongs to another topology allocation.
+    /// The atom selection belongs to another topology layout.
     SelectionTopologyMismatch,
     /// An explicit correspondence belongs to a different topology snapshot.
     Correspondence(AtomCorrespondenceError),
@@ -388,6 +464,17 @@ pub enum AlignmentError {
     NumericalFailure,
     /// The existing rigid-transform invariant rejected the fitted result.
     InvalidRigidTransform(RigidTransformError),
+    /// RMSD requires at least one atom pair.
+    EmptySelection,
+    /// A collection reference index does not exist.
+    ReferenceOutOfRange { index: usize, len: usize },
+    /// One collection item failed.
+    Item {
+        index: usize,
+        source: Box<AlignmentError>,
+    },
+    /// A fitted transform could not be applied to one item's state.
+    Transform(ConformationError),
 }
 
 impl fmt::Display for AlignmentError {
@@ -432,6 +519,13 @@ impl fmt::Display for AlignmentError {
             Self::InvalidRigidTransform(error) => {
                 write!(formatter, "fitted rigid transform is invalid: {error}")
             }
+            Self::EmptySelection => formatter.write_str("RMSD requires at least one atom pair"),
+            Self::ReferenceOutOfRange { index, len } => write!(
+                formatter,
+                "reference index {index} is out of range for {len} realizations"
+            ),
+            Self::Item { index, source } => write!(formatter, "realization {index}: {source}"),
+            Self::Transform(error) => write!(formatter, "cannot apply fitted transform: {error}"),
         }
     }
 }
@@ -451,25 +545,27 @@ impl std::error::Error for AlignmentError {
         match self {
             Self::Correspondence(error) => Some(error),
             Self::InvalidRigidTransform(error) => Some(error),
+            Self::Item { source, .. } => Some(source.as_ref()),
+            Self::Transform(error) => Some(error),
             _ => None,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-enum NormalizedWeights<'a> {
+pub(crate) enum NormalizedWeights<'a> {
     Uniform,
     Explicit { values: &'a [f64], maximum: f64 },
 }
 
 impl<'a> NormalizedWeights<'a> {
-    fn new(
-        weighting: AlignmentWeighting<'a>,
+    pub(crate) fn new(
+        weighting: Weighting<'a>,
         selected_atom_count: usize,
     ) -> Result<Self, AlignmentError> {
         match weighting {
-            AlignmentWeighting::Uniform => Ok(Self::Uniform),
-            AlignmentWeighting::Explicit(values) => {
+            Weighting::Uniform => Ok(Self::Uniform),
+            Weighting::Explicit(values) => {
                 if values.len() != selected_atom_count {
                     return Err(AlignmentError::WeightCountMismatch {
                         expected: selected_atom_count,
@@ -491,7 +587,7 @@ impl<'a> NormalizedWeights<'a> {
         }
     }
 
-    fn at(self, selection_index: usize) -> f64 {
+    pub(crate) fn at(self, selection_index: usize) -> f64 {
         match self {
             Self::Uniform => 1.0,
             Self::Explicit { values, maximum } => values[selection_index] / maximum,
@@ -917,7 +1013,7 @@ mod tests {
         }
         let molecule = graph.finish().unwrap();
         let mut builder = TopologyBuilder::new();
-        let definition = builder.add_molecule_definition(&molecule).unwrap();
+        let definition = builder.add_molecule_definition(molecule).unwrap();
         builder.add_instance(definition).unwrap();
         Arc::new(builder.build().unwrap())
     }
@@ -1024,7 +1120,12 @@ mod tests {
         let reference_before = reference.positions().values().value().to_vec();
         let selection_before = selection.clone();
 
-        let result = kabsch(moving.view(), reference.view(), &selection).unwrap();
+        let result = kabsch(
+            moving.as_model_view(),
+            reference.as_model_view(),
+            &selection,
+        )
+        .unwrap();
 
         assert_transform_close(result.transform(), RigidTransform::identity(), 1.0e-12);
         assert_close(result.rmsd().into_value(), 0.0, 1.0e-14);
@@ -1049,7 +1150,12 @@ mod tests {
         let reference = transform_points(&moving, expected);
         let (topology, moving_model, reference_model) = models(&moving, &reference);
 
-        let result = kabsch(moving_model.view(), reference_model.view(), &all(&topology)).unwrap();
+        let result = kabsch(
+            moving_model.as_model_view(),
+            reference_model.as_model_view(),
+            &all(&topology),
+        )
+        .unwrap();
 
         assert_transform_close(result.transform(), expected, 1.0e-12);
         for (moving, reference) in moving.into_iter().zip(reference) {
@@ -1069,7 +1175,12 @@ mod tests {
         let reference = transform_points(&moving, expected);
         let (topology, moving, reference_model) = models(&moving, &reference);
 
-        let result = kabsch(moving.view(), reference_model.view(), &all(&topology)).unwrap();
+        let result = kabsch(
+            moving.as_model_view(),
+            reference_model.as_model_view(),
+            &all(&topology),
+        )
+        .unwrap();
 
         assert_transform_close(result.transform(), expected, 2.0e-12);
         assert!(result.rmsd().into_value() < 2.0e-12);
@@ -1086,7 +1197,12 @@ mod tests {
         let selection =
             AtomSelection::from_atoms(&topology, topology.atom_ids()[..3].iter().copied()).unwrap();
 
-        let result = kabsch(moving_model.view(), reference_model.view(), &selection).unwrap();
+        let result = kabsch(
+            moving_model.as_model_view(),
+            reference_model.as_model_view(),
+            &selection,
+        )
+        .unwrap();
 
         assert_eq!(result.selected_atom_count(), 3);
         for index in 0..3 {
@@ -1108,7 +1224,12 @@ mod tests {
         reference[4].z += 0.03;
         let (topology, moving_model, reference_model) = models(&moving, &reference);
         let selection = all(&topology);
-        let result = kabsch(moving_model.view(), reference_model.view(), &selection).unwrap();
+        let result = kabsch(
+            moving_model.as_model_view(),
+            reference_model.as_model_view(),
+            &selection,
+        )
+        .unwrap();
         let unaligned = moving
             .iter()
             .zip(&reference)
@@ -1131,26 +1252,31 @@ mod tests {
         reference[4].y -= 1.5;
         let (topology, moving_model, reference_model) = models(&moving, &reference);
         let selection = all(&topology);
-        let uniform = kabsch(moving_model.view(), reference_model.view(), &selection).unwrap();
+        let uniform = kabsch(
+            moving_model.as_model_view(),
+            reference_model.as_model_view(),
+            &selection,
+        )
+        .unwrap();
         let weights = [10.0, 10.0, 10.0, 10.0, 0.1];
         let scaled_weights = [30.0, 30.0, 30.0, 30.0, 0.3];
         let weighted = kabsch_with_options(
-            moving_model.view(),
-            reference_model.view(),
+            moving_model.as_model_view(),
+            reference_model.as_model_view(),
             &selection,
-            KabschOptions {
-                weighting: AlignmentWeighting::Explicit(&weights),
-                ..KabschOptions::default()
+            AlignmentOptions {
+                weighting: Weighting::Explicit(&weights),
+                ..AlignmentOptions::default()
             },
         )
         .unwrap();
         let scaled = kabsch_with_options(
-            moving_model.view(),
-            reference_model.view(),
+            moving_model.as_model_view(),
+            reference_model.as_model_view(),
             &selection,
-            KabschOptions {
-                weighting: AlignmentWeighting::Explicit(&scaled_weights),
-                ..KabschOptions::default()
+            AlignmentOptions {
+                weighting: Weighting::Explicit(&scaled_weights),
+                ..AlignmentOptions::default()
             },
         )
         .unwrap();
@@ -1197,22 +1323,22 @@ mod tests {
         let selection_order_weights = [100.0, 1.0, 1.0, 0.1];
         let insertion_order_interpretation = [0.1, 1.0, 1.0, 100.0];
         let selection_order_fit = kabsch_with_options(
-            moving_model.view(),
-            reference_model.view(),
+            moving_model.as_model_view(),
+            reference_model.as_model_view(),
             &selection,
-            KabschOptions {
-                weighting: AlignmentWeighting::Explicit(&selection_order_weights),
-                ..KabschOptions::default()
+            AlignmentOptions {
+                weighting: Weighting::Explicit(&selection_order_weights),
+                ..AlignmentOptions::default()
             },
         )
         .unwrap();
         let insertion_order_fit = kabsch_with_options(
-            moving_model.view(),
-            reference_model.view(),
+            moving_model.as_model_view(),
+            reference_model.as_model_view(),
             &selection,
-            KabschOptions {
-                weighting: AlignmentWeighting::Explicit(&insertion_order_interpretation),
-                ..KabschOptions::default()
+            AlignmentOptions {
+                weighting: Weighting::Explicit(&insertion_order_interpretation),
+                ..AlignmentOptions::default()
             },
         )
         .unwrap();
@@ -1274,12 +1400,12 @@ mod tests {
         let expected_rmsd = 0.029397741136029633_f64;
 
         let result = kabsch_with_options(
-            moving_model.view(),
-            reference_model.view(),
+            moving_model.as_model_view(),
+            reference_model.as_model_view(),
             &all(&topology),
-            KabschOptions {
-                weighting: AlignmentWeighting::Explicit(&weights),
-                ..KabschOptions::default()
+            AlignmentOptions {
+                weighting: Weighting::Explicit(&weights),
+                ..AlignmentOptions::default()
             },
         )
         .unwrap();
@@ -1295,7 +1421,12 @@ mod tests {
         let reference = moving.map(|point| Point3::new(-point.x, point.y, point.z));
         let (topology, moving, reference) = models(&moving, &reference);
 
-        let result = kabsch(moving.view(), reference.view(), &all(&topology)).unwrap();
+        let result = kabsch(
+            moving.as_model_view(),
+            reference.as_model_view(),
+            &all(&topology),
+        )
+        .unwrap();
 
         assert_close(result.transform().rotation().determinant(), 1.0, 1.0e-12);
         assert!(result.rmsd().into_value() > 0.1);
@@ -1318,7 +1449,12 @@ mod tests {
         let reference = transform_points(&moving, expected);
         let (topology, moving, reference) = models(&moving, &reference);
 
-        let result = kabsch(moving.view(), reference.view(), &all(&topology)).unwrap();
+        let result = kabsch(
+            moving.as_model_view(),
+            reference.as_model_view(),
+            &all(&topology),
+        )
+        .unwrap();
 
         assert_transform_close(result.transform(), expected, 3.0e-12);
         assert!(result.rmsd().into_value() < 2.0e-12);
@@ -1341,7 +1477,11 @@ mod tests {
         let (topology, moving, reference) = models(&moving, &reference);
 
         assert_eq!(
-            kabsch(moving.view(), reference.view(), &all(&topology)),
+            kabsch(
+                moving.as_model_view(),
+                reference.as_model_view(),
+                &all(&topology)
+            ),
             Err(AlignmentError::DegenerateGeometry {
                 geometry: AlignmentGeometry::CrossCovariance,
             })
@@ -1357,7 +1497,11 @@ mod tests {
                 AtomSelection::from_atoms(&topology, topology.atom_ids()[..count].iter().copied())
                     .unwrap();
             assert_eq!(
-                kabsch(moving.view(), reference.view(), &selection),
+                kabsch(
+                    moving.as_model_view(),
+                    reference.as_model_view(),
+                    &selection
+                ),
                 Err(AlignmentError::InsufficientSelectedAtoms {
                     selected: count,
                     minimum: 3,
@@ -1383,14 +1527,22 @@ mod tests {
         ];
         let (topology, moving, reference) = models(&coincident, &valid);
         assert_eq!(
-            kabsch(moving.view(), reference.view(), &all(&topology)),
+            kabsch(
+                moving.as_model_view(),
+                reference.as_model_view(),
+                &all(&topology)
+            ),
             Err(AlignmentError::DegenerateGeometry {
                 geometry: AlignmentGeometry::Moving,
             })
         );
         let (topology, moving, reference) = models(&valid, &collinear);
         assert_eq!(
-            kabsch(moving.view(), reference.view(), &all(&topology)),
+            kabsch(
+                moving.as_model_view(),
+                reference.as_model_view(),
+                &all(&topology)
+            ),
             Err(AlignmentError::DegenerateGeometry {
                 geometry: AlignmentGeometry::Reference,
             })
@@ -1410,12 +1562,21 @@ mod tests {
         for scale in [1.0, 1.0e8] {
             let accepted = points(1.0e-5, scale);
             let (topology, moving, reference) = models(&accepted, &accepted);
-            assert!(kabsch(moving.view(), reference.view(), &all(&topology)).is_ok());
+            assert!(kabsch(
+                moving.as_model_view(),
+                reference.as_model_view(),
+                &all(&topology)
+            )
+            .is_ok());
 
             let rejected = points(1.0e-7, scale);
             let (topology, moving, reference) = models(&rejected, &rejected);
             assert!(matches!(
-                kabsch(moving.view(), reference.view(), &all(&topology)),
+                kabsch(
+                    moving.as_model_view(),
+                    reference.as_model_view(),
+                    &all(&topology)
+                ),
                 Err(AlignmentError::DegenerateGeometry {
                     geometry: AlignmentGeometry::Moving
                 })
@@ -1434,11 +1595,19 @@ mod tests {
         let reference_a = model(&topology_a, &points);
         let reference_b = model(&topology_b, &points);
         assert_eq!(
-            kabsch(moving_a.view(), reference_b.view(), &all(&topology_a)),
+            kabsch(
+                moving_a.as_model_view(),
+                reference_b.as_model_view(),
+                &all(&topology_a)
+            ),
             Err(AlignmentError::TopologyMismatch)
         );
         assert_eq!(
-            kabsch(moving_a.view(), reference_a.view(), &all(&topology_b)),
+            kabsch(
+                moving_a.as_model_view(),
+                reference_a.as_model_view(),
+                &all(&topology_b)
+            ),
             Err(AlignmentError::SelectionTopologyMismatch)
         );
     }
@@ -1450,12 +1619,12 @@ mod tests {
         let selection = all(&topology);
         let fit = |weights: &[f64]| {
             kabsch_with_options(
-                moving.view(),
-                reference.view(),
+                moving.as_model_view(),
+                reference.as_model_view(),
                 &selection,
-                KabschOptions {
-                    weighting: AlignmentWeighting::Explicit(weights),
-                    ..KabschOptions::default()
+                AlignmentOptions {
+                    weighting: Weighting::Explicit(weights),
+                    ..AlignmentOptions::default()
                 },
             )
         };
@@ -1500,18 +1669,18 @@ mod tests {
             [true; 3],
         )
         .unwrap();
-        moving.set_cell(Some(cell));
-        reference.set_cell(Some(cell));
+        moving.conformation_mut().set_cell(Some(cell));
+        reference.conformation_mut().set_cell(Some(cell));
         let selection = all(&topology);
         let moving_before = moving.positions().values().value().to_vec();
 
         assert_eq!(
             kabsch_with_options(
-                moving.view(),
-                reference.view(),
+                moving.as_model_view(),
+                reference.as_model_view(),
                 &selection,
-                KabschOptions {
-                    periodic_policy: PeriodicAlignmentPolicy::RejectPeriodic,
+                AlignmentOptions {
+                    periodic_policy: PeriodicPolicy::RejectPeriodic,
                     ..Default::default()
                 }
             ),
@@ -1520,7 +1689,12 @@ mod tests {
                 reference: true,
             })
         );
-        let result = kabsch(moving.view(), reference.view(), &selection).unwrap();
+        let result = kabsch(
+            moving.as_model_view(),
+            reference.as_model_view(),
+            &selection,
+        )
+        .unwrap();
         assert_transform_close(result.transform(), expected, 3.0e-12);
         assert_eq!(moving.cell(), Some(&cell));
         assert_eq!(reference.cell(), Some(&cell));
@@ -1540,7 +1714,12 @@ mod tests {
         let reference = transform_points(&moving, expected);
         let (topology, moving, reference_model) = models(&moving, &reference);
 
-        let result = kabsch(moving.view(), reference_model.view(), &all(&topology)).unwrap();
+        let result = kabsch(
+            moving.as_model_view(),
+            reference_model.as_model_view(),
+            &all(&topology),
+        )
+        .unwrap();
 
         assert_close(result.transform().rotation().determinant(), 1.0, 1.0e-12);
         for (moving, reference) in moving.positions().values().value().iter().zip(reference) {

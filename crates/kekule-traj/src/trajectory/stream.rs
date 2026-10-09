@@ -1,14 +1,12 @@
 use std::sync::Arc;
 
 use kekule::geometry::Point3;
-use kekule::structure::Positions;
+use kekule::structure::{ConformationError, Positions, Trajectory, TrajectoryFrameView};
 use kekule::topology::{InstanceAtomId, Topology};
 use kekule::units::Quantity;
 
 use super::buffer::FrameBuffer;
-use super::collection::Trajectory;
-use super::frame::TrajectoryFrameView;
-use super::{validate_atom_count, TrajectoryError};
+use super::TrajectoryError;
 
 /// Sequential reader that publishes complete frames into reusable storage.
 ///
@@ -83,10 +81,10 @@ impl TrajectoryReader for MemoryTrajectoryReader<'_> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        let Some(frame) = self.trajectory.frames.get(self.cursor) else {
+        let Some(frame) = self.trajectory.get(self.cursor) else {
             return Ok(false);
         };
-        destination.copy_from(frame.validated_view(&self.trajectory.topology))?;
+        destination.copy_from(frame)?;
         self.cursor += 1;
         Ok(true)
     }
@@ -106,10 +104,9 @@ impl SeekableTrajectoryReader for MemoryTrajectoryReader<'_> {
             usize::try_from(index).map_err(|_| TrajectoryError::FrameIndexOutOfRange(index))?;
         let frame = self
             .trajectory
-            .frames
             .get(index)
             .ok_or(TrajectoryError::FrameIndexOutOfRange(index as u64))?;
-        destination.copy_from(frame.validated_view(&self.trajectory.topology))?;
+        destination.copy_from(frame)?;
         Ok(())
     }
 }
@@ -144,10 +141,10 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
-        if !self.trajectory.topology.shares_layout(frame.topology) {
+        if !self.trajectory.topology().shares_layout(frame.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
-        self.trajectory.push(frame.to_frame())
+        Ok(self.trajectory.push(frame.payload().clone())?)
     }
 }
 
@@ -185,8 +182,14 @@ impl CoordinateFrameReader {
         let frames = frames
             .into_iter()
             .map(|frame| {
-                let positions = Positions::new(frame).map_err(TrajectoryError::Position)?;
-                validate_atom_count(topology.atom_count(), positions.len())?;
+                let positions = Positions::new(frame)?;
+                if positions.len() != topology.atom_count() {
+                    return Err(ConformationError::AtomCountMismatch {
+                        expected: topology.atom_count(),
+                        actual: positions.len(),
+                    }
+                    .into());
+                }
                 Ok::<_, TrajectoryError>(positions.values().value().to_vec())
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -208,17 +211,16 @@ impl TrajectoryReader for CoordinateFrameReader {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        if !self.topology.shares_layout(&destination.topology) {
+        if !self.topology.shares_layout(destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let Some(frame) = self.frames.get(self.cursor) else {
             return Ok(false);
         };
-        destination.set_positions(Quantity::new(
+        destination.replace_from_data(crate::FrameBufferData::new(Quantity::new(
             frame.as_slice(),
             kekule::units::CANONICAL_LENGTH_UNIT,
-        ))?;
-        destination.reset_dynamic_state();
+        )))?;
         self.cursor += 1;
         Ok(true)
     }

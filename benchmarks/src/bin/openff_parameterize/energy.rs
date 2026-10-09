@@ -33,9 +33,11 @@ fn evaluate(
         Positions::from_vec(Quantity::new(points, NANOMETER)).map_err(|e| e.to_string())?;
     let model = Model::new(Arc::clone(system.topology()), positions).map_err(|e| e.to_string())?;
     let energy = if derivatives {
-        potential.evaluate(model.view()).map(|e| e.energy().clone())
+        potential
+            .evaluate(model.as_model_view())
+            .map(|e| e.energy().clone())
     } else {
-        potential.energy(model.view())
+        potential.energy(model.as_model_view())
     }
     .map_err(|e| e.to_string())?;
     let mut result = serde_json::Map::new();
@@ -53,7 +55,7 @@ fn evaluate(
         };
         let mut values = serde_json::Map::new();
         for (component, (kind, name)) in potential
-            .evaluate_components(model.view())
+            .evaluate_components(model.as_model_view())
             .map_err(|e| e.to_string())?
             .into_iter()
             .zip(COMPONENTS)
@@ -64,7 +66,7 @@ fn evaluate(
             values.insert(name.into(), vectors(component.gradient.value()));
         }
         let total = potential
-            .evaluate(model.view())
+            .evaluate(model.as_model_view())
             .map_err(|e| e.to_string())?;
         values.insert("Total".into(), vectors(total.gradient().value()));
         result["gradients"] = Value::Object(values);

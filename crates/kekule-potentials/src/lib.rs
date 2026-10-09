@@ -47,11 +47,11 @@
 //! let parameters = ForceField::rosemary()?.parameterize(model.shared_topology(), &nagl)?;
 //! let potential = OpenFfPotential::new(&parameters)?;
 //!
-//! let energy = potential.energy(model.view())?;
+//! let energy = potential.energy(model.as_model_view())?;
 //! println!("single point: {}", energy.total().into_value());
 //!
-//! let result = minimize(&potential, model.view(), &MinimizeOptions::default())?;
-//! let minimized = result.to_model(model.view())?;
+//! let result = minimize(&potential, model.as_model_view(), &MinimizeOptions::default())?;
+//! let minimized = result.to_model(model.as_model_view())?;
 //! # let _ = minimized;
 //! # Ok(())
 //! # }

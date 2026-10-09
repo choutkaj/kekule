@@ -1,9 +1,9 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
 use crate::core::BondOrder;
 use crate::io::mmcif_interpret::{
-    MmcifEnsembleInterpretation, MmcifEntityKind, MmcifInterpretationReport,
+    MmcifEnsembleInterpretation, MmcifEntityKind, MmcifInterpretation, MmcifInterpretationReport,
 };
-use crate::structure::{Ensemble, Model};
+use crate::structure::{AsModelView, Ensemble, Model, ModelView};
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -311,282 +311,209 @@ impl MmcifEntityClassifications {
     }
 }
 
-pub fn write_mmcif_model(
-    model: &Model,
-    options: MmcifWriteOptions,
-) -> Result<String, MmcifWriteError> {
-    let mut output = Vec::new();
-    write_mmcif_model_to(&mut output, model, options)?;
-    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
+/// One mmCIF data block to write: a model or an ensemble, plus the entity
+/// semantics used for its `_entity` and asymmetry assignments.
+///
+/// Convert from `&Model`, `&Ensemble`, `&MmcifInterpretation`, or
+/// `&MmcifEnsembleInterpretation`; interpretations keep their source reports.
+/// [`Self::model`] accepts any borrowed model view, such as an ensemble member.
+#[derive(Debug, Clone, Copy)]
+pub struct MmcifBlockSource<'a> {
+    content: BlockContent<'a>,
+    entities: EntitySemantics<'a>,
 }
 
-pub fn write_mmcif_model_to(
-    writer: &mut impl Write,
-    model: &Model,
-    options: MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
-    validate_options(&options)?;
-    let view = model.view();
-    let classifications = normalize_entity_classifications(view, std::iter::empty())?;
-    let plan = generic_entity_plan(view, &classifications)?;
-    let prepared = prepare_model(view, plan)?;
-    render_model_to(writer, &prepared, &options)
+#[derive(Debug, Clone, Copy)]
+enum BlockContent<'a> {
+    Model(ModelView<'a>),
+    Ensemble(&'a Ensemble),
 }
 
-pub fn write_mmcif_model_with_classifications(
-    model: &Model,
-    classifications: &MmcifEntityClassifications,
-    options: MmcifWriteOptions,
-) -> Result<String, MmcifWriteError> {
-    let mut output = Vec::new();
-    write_mmcif_model_with_classifications_to(&mut output, model, classifications, options)?;
-    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
+#[derive(Debug, Clone, Copy)]
+enum EntitySemantics<'a> {
+    Canonical,
+    Classifications(&'a MmcifEntityClassifications),
+    Reports(&'a [MmcifInterpretationReport]),
 }
 
-pub fn write_mmcif_model_with_classifications_to(
-    writer: &mut impl Write,
-    model: &Model,
-    classifications: &MmcifEntityClassifications,
-    options: MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
-    validate_options(&options)?;
-    let view = model.view();
-    let classifications = normalize_entity_classifications(
-        view,
-        classifications
-            .iter()
-            .map(|(molecule, kind)| (molecule, vec![kind.clone()])),
-    )?;
-    let plan = generic_entity_plan(view, &classifications)?;
-    let prepared = prepare_model(view, plan)?;
-    render_model_to(writer, &prepared, &options)
-}
-
-pub fn write_mmcif_model_with_report(
-    model: &Model,
-    report: &MmcifInterpretationReport,
-    options: MmcifWriteOptions,
-) -> Result<String, MmcifWriteError> {
-    let mut output = Vec::new();
-    write_mmcif_model_with_report_to(&mut output, model, report, options)?;
-    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
-}
-
-pub fn write_mmcif_model_with_report_to(
-    writer: &mut impl Write,
-    model: &Model,
-    report: &MmcifInterpretationReport,
-    options: MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
-    validate_options(&options)?;
-    let view = model.view();
-    let plan = entity_plan_from_report(view, report)?;
-    let prepared = prepare_model(view, plan)?;
-    render_model_to(writer, &prepared, &options)
-}
-
-pub fn write_mmcif_models(
-    models: &[Model],
-    options: MmcifWriteOptions,
-) -> Result<String, MmcifWriteError> {
-    let mut output = Vec::new();
-    write_mmcif_models_to(&mut output, models, options)?;
-    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
-}
-
-pub fn write_mmcif_models_with_classifications(
-    models: &[Model],
-    classifications: &[MmcifEntityClassifications],
-    options: MmcifWriteOptions,
-) -> Result<String, MmcifWriteError> {
-    let mut output = Vec::new();
-    write_mmcif_models_with_classifications_to(&mut output, models, classifications, options)?;
-    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
-}
-
-pub fn write_mmcif_models_with_classifications_to(
-    writer: &mut impl Write,
-    models: &[Model],
-    classifications: &[MmcifEntityClassifications],
-    options: MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
-    if classifications.len() != models.len() {
-        return Err(MmcifWriteError::ClassificationCountMismatch {
-            expected: models.len(),
-            actual: classifications.len(),
-        });
+impl<'a> MmcifBlockSource<'a> {
+    /// One model block with entity kinds derived from canonical topology
+    /// classification.
+    pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
+        Self {
+            content: BlockContent::Model(model.as_model_view()),
+            entities: EntitySemantics::Canonical,
+        }
     }
-    write_independent_models_to(writer, models, Some(classifications), None, options)
-}
 
-pub fn write_mmcif_models_with_reports(
-    models: &[Model],
-    reports: &[MmcifInterpretationReport],
-    options: MmcifWriteOptions,
-) -> Result<String, MmcifWriteError> {
-    let mut output = Vec::new();
-    write_mmcif_models_with_reports_to(&mut output, models, reports, options)?;
-    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
-}
-
-pub fn write_mmcif_models_with_reports_to(
-    writer: &mut impl Write,
-    models: &[Model],
-    reports: &[MmcifInterpretationReport],
-    options: MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
-    if reports.len() != models.len() {
-        return Err(MmcifWriteError::ReportCountMismatch {
-            expected: models.len(),
-            actual: reports.len(),
-        });
+    /// One multi-model block with one model per ensemble member.
+    pub fn ensemble(ensemble: &'a Ensemble) -> Self {
+        Self {
+            content: BlockContent::Ensemble(ensemble),
+            entities: EntitySemantics::Canonical,
+        }
     }
-    write_independent_models_to(writer, models, None, Some(reports), options)
-}
 
-pub fn write_mmcif_ensemble(
-    ensemble: &Ensemble,
-    options: MmcifWriteOptions,
-) -> Result<String, MmcifWriteError> {
-    let mut output = Vec::new();
-    write_mmcif_ensemble_to(&mut output, ensemble, options)?;
-    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
-}
-
-pub fn write_mmcif_ensemble_with_classifications(
-    ensemble: &Ensemble,
-    classifications: &MmcifEntityClassifications,
-    options: MmcifWriteOptions,
-) -> Result<String, MmcifWriteError> {
-    let mut output = Vec::new();
-    write_mmcif_ensemble_with_classifications_to(&mut output, ensemble, classifications, options)?;
-    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
-}
-
-pub fn write_mmcif_ensemble_with_classifications_to(
-    writer: &mut impl Write,
-    ensemble: &Ensemble,
-    classifications: &MmcifEntityClassifications,
-    options: MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
-    write_ensemble_views_to(writer, ensemble, Some(classifications), None, options)
-}
-
-pub fn write_mmcif_ensemble_with_reports(
-    ensemble: &Ensemble,
-    reports: &[MmcifInterpretationReport],
-    options: MmcifWriteOptions,
-) -> Result<String, MmcifWriteError> {
-    let mut output = Vec::new();
-    write_mmcif_ensemble_with_reports_to(&mut output, ensemble, reports, options)?;
-    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
-}
-
-pub fn write_mmcif_ensemble_with_reports_to(
-    writer: &mut impl Write,
-    ensemble: &Ensemble,
-    reports: &[MmcifInterpretationReport],
-    options: MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
-    if reports.len() != ensemble.len() {
-        return Err(MmcifWriteError::ReportCountMismatch {
-            expected: ensemble.len(),
-            actual: reports.len(),
-        });
+    /// Overrides derived entity kinds for the listed molecule instances;
+    /// omitted instances keep canonical classification.
+    ///
+    /// One mmCIF entity is assigned to each populated hierarchy chain (and one
+    /// to each hierarchy-free instance), so instances touched by the same chain
+    /// must have the same classification.
+    #[must_use]
+    pub fn with_classifications(mut self, classifications: &'a MmcifEntityClassifications) -> Self {
+        self.entities = EntitySemantics::Classifications(classifications);
+        self
     }
-    write_ensemble_views_to(writer, ensemble, None, Some(reports), options)
+
+    /// Preserves interpreted mmCIF entity and asymmetry semantics: one report
+    /// for a model block, one per member for an ensemble block.
+    ///
+    /// Atom-level provenance keeps one source entity and structural asymmetry
+    /// consistent even when it spans several molecule instances; conflicting
+    /// source identity is rejected. An auth-only source is normalized by
+    /// copying author identifiers into the required label fields.
+    #[must_use]
+    pub fn with_reports(mut self, reports: &'a [MmcifInterpretationReport]) -> Self {
+        self.entities = EntitySemantics::Reports(reports);
+        self
+    }
 }
 
-pub fn write_mmcif_ensemble_interpretation(
-    interpretation: &MmcifEnsembleInterpretation,
+impl<'a> From<&'a Model> for MmcifBlockSource<'a> {
+    fn from(model: &'a Model) -> Self {
+        Self::model(model)
+    }
+}
+
+impl<'a> From<&'a Ensemble> for MmcifBlockSource<'a> {
+    fn from(ensemble: &'a Ensemble) -> Self {
+        Self::ensemble(ensemble)
+    }
+}
+
+impl<'a> From<&'a MmcifInterpretation> for MmcifBlockSource<'a> {
+    fn from(interpretation: &'a MmcifInterpretation) -> Self {
+        Self::model(interpretation.model())
+            .with_reports(std::slice::from_ref(interpretation.report()))
+    }
+}
+
+impl<'a> From<&'a MmcifEnsembleInterpretation> for MmcifBlockSource<'a> {
+    fn from(interpretation: &'a MmcifEnsembleInterpretation) -> Self {
+        Self::ensemble(interpretation.ensemble()).with_reports(interpretation.reports())
+    }
+}
+
+/// Writes data blocks to a string. See [`write_mmcif_to`].
+pub fn write_mmcif<'a, B: Into<MmcifBlockSource<'a>>>(
+    blocks: impl IntoIterator<Item = B>,
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
     let mut output = Vec::new();
-    write_mmcif_ensemble_interpretation_to(&mut output, interpretation, options)?;
+    write_mmcif_to(&mut output, blocks, options)?;
     Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
 }
 
-pub fn write_mmcif_ensemble_interpretation_to(
+/// Writes one deterministic data block per source in input order.
+///
+/// A single block is named [`MmcifWriteOptions::block_name`]; several blocks
+/// are named `{block_name}_1`, `{block_name}_2`, and so on. Rows follow
+/// dense atom order.
+pub fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
     writer: &mut impl Write,
-    interpretation: &MmcifEnsembleInterpretation,
-    options: MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
-    write_mmcif_ensemble_with_reports_to(
-        writer,
-        interpretation.ensemble(),
-        interpretation.reports(),
-        options,
-    )
-}
-
-pub fn write_mmcif_models_to(
-    writer: &mut impl Write,
-    models: &[Model],
-    options: MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
-    write_independent_models_to(writer, models, None, None, options)
-}
-
-pub fn write_mmcif_ensemble_to(
-    writer: &mut impl Write,
-    ensemble: &Ensemble,
-    options: MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
-    write_ensemble_views_to(writer, ensemble, None, None, options)
-}
-
-fn write_independent_models_to(
-    writer: &mut impl Write,
-    models: &[Model],
-    classifications: Option<&[MmcifEntityClassifications]>,
-    reports: Option<&[MmcifInterpretationReport]>,
+    blocks: impl IntoIterator<Item = B>,
     options: MmcifWriteOptions,
 ) -> Result<(), MmcifWriteError> {
     validate_options(&options)?;
-    for (index, model) in models.iter().enumerate() {
+    let blocks = blocks.into_iter().map(Into::into).collect::<Vec<_>>();
+    let numbered = blocks.len() > 1;
+    for (index, block) in blocks.into_iter().enumerate() {
         let block_options = MmcifWriteOptions {
-            block_name: format!("{}_{}", options.block_name, index + 1),
+            block_name: if numbered {
+                format!("{}_{}", options.block_name, index + 1)
+            } else {
+                options.block_name.clone()
+            },
             coordinate_precision: options.coordinate_precision,
         };
-        let view = model.view();
-        let plan = if let Some(reports) = reports {
-            entity_plan_from_report(view, &reports[index])?
-        } else {
-            let normalized = normalize_entity_classifications(
-                view,
-                classifications
-                    .map(|all| all[index].iter().map(|(id, kind)| (id, vec![kind.clone()])))
-                    .into_iter()
-                    .flatten(),
-            )?;
-            generic_entity_plan(view, &normalized)?
-        };
-        let prepared = prepare_model(view, plan)?;
-        render_model_to(writer, &prepared, &block_options)?;
+        match block.content {
+            BlockContent::Model(view) => {
+                write_model_block_to(writer, view, block.entities, &block_options)?
+            }
+            BlockContent::Ensemble(ensemble) => {
+                write_ensemble_block_to(writer, ensemble, block.entities, &block_options)?
+            }
+        }
     }
     Ok(())
 }
 
-fn write_ensemble_views_to(
+fn write_model_block_to(
+    writer: &mut impl Write,
+    view: ModelView<'_>,
+    entities: EntitySemantics<'_>,
+    options: &MmcifWriteOptions,
+) -> Result<(), MmcifWriteError> {
+    let plan = match entities {
+        EntitySemantics::Reports(reports) => {
+            let [report] = reports else {
+                return Err(MmcifWriteError::ReportCountMismatch {
+                    expected: 1,
+                    actual: reports.len(),
+                });
+            };
+            entity_plan_from_report(view, report)?
+        }
+        EntitySemantics::Classifications(classifications) => {
+            let normalized = normalize_entity_classifications(
+                view,
+                classifications
+                    .iter()
+                    .map(|(molecule, kind)| (molecule, vec![kind.clone()])),
+            )?;
+            generic_entity_plan(view, &normalized)?
+        }
+        EntitySemantics::Canonical => {
+            let normalized = normalize_entity_classifications(view, std::iter::empty())?;
+            generic_entity_plan(view, &normalized)?
+        }
+    };
+    let prepared = prepare_model(view, plan)?;
+    render_model_to(writer, &prepared, options)
+}
+
+fn write_ensemble_block_to(
     writer: &mut impl Write,
     ensemble: &Ensemble,
-    classifications: Option<&MmcifEntityClassifications>,
-    reports: Option<&[MmcifInterpretationReport]>,
-    options: MmcifWriteOptions,
+    entities: EntitySemantics<'_>,
+    options: &MmcifWriteOptions,
 ) -> Result<(), MmcifWriteError> {
-    validate_options(&options)?;
-    let mut members = ensemble.members().enumerate();
+    let (classifications, reports) = match entities {
+        EntitySemantics::Canonical => (None, None),
+        EntitySemantics::Classifications(classifications) => (Some(classifications), None),
+        EntitySemantics::Reports(reports) => {
+            if reports.len() != ensemble.len() {
+                return Err(MmcifWriteError::ReportCountMismatch {
+                    expected: ensemble.len(),
+                    actual: reports.len(),
+                });
+            }
+            (None, Some(reports))
+        }
+    };
+    let mut members = ensemble.iter().enumerate();
     let (_, first_member) = members.next().ok_or(MmcifWriteError::EmptyEnsemble)?;
-    let first_view = first_member.as_model();
+    let first_view = first_member.as_model_view();
     let first_plan = ensemble_entity_plan(first_view, classifications, reports.map(|all| &all[0]))?;
     let first = prepare_model(first_view, first_plan)?;
 
-    write_block_start(writer, &first, &options)?;
+    write_block_start(writer, &first, options)?;
     let mut atom_serial = 1u64;
-    write_atom_rows(writer, &first.atoms, 1, &mut atom_serial, &options)?;
+    write_atom_rows(writer, &first.atoms, 1, &mut atom_serial, options)?;
 
     for (index, member) in members {
-        let view = member.as_model();
+        let view = member.as_model_view();
         let plan = ensemble_entity_plan(view, classifications, reports.map(|all| &all[index]))?;
         let candidate = prepare_model(view, plan)?;
         validate_ensemble_member(&first, &candidate, index + 1)?;
@@ -595,7 +522,7 @@ fn write_ensemble_views_to(
             &candidate.atoms,
             index + 1,
             &mut atom_serial,
-            &options,
+            options,
         )?;
     }
     write_block_end(writer, &first)

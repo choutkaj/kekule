@@ -1,23 +1,22 @@
 use std::sync::Arc;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::properties::{
-    Properties, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue,
+use kekule::properties::OwnerProperties;
+use kekule::structure::{
+    AsModelView, Conformation, ConformationError, Forces, ModelView, Positions, Trajectory,
+    TrajectoryFrame, TrajectoryFrameMut, TrajectoryFrameView, Velocities,
 };
-use kekule::structure::{ModelView, Positions};
 use kekule::topology::Topology;
-use kekule::units::{Quantity, CANONICAL_TIME_UNIT};
+use kekule::units::Quantity;
 
-use super::frame::{Forces, TrajectoryFrameView, Velocities};
-use super::{validate_atom_count, FrameError};
+use super::TrajectoryError;
 
 /// Complete borrowed frame state ready for transactional publication.
 ///
 /// A decoder builds this value only after it has read one complete frame into
-/// reusable scratch. [`FrameBuffer::replace_from_data`] validates every field,
-/// including atom and bond property-table dimensions, before changing the destination,
-/// converts units once, reuses dense-array allocations, and clears optional
-/// fields omitted from this value.
+/// reusable scratch. [`FrameBuffer::replace_from_data`] validates every field
+/// before changing the destination, converts units once, reuses dense-array
+/// allocations, and clears optional fields omitted from this value.
 #[derive(Debug, Clone, Copy)]
 pub struct FrameBufferData<'a> {
     positions: Quantity<&'a [Point3]>,
@@ -26,7 +25,8 @@ pub struct FrameBufferData<'a> {
     forces: Option<Quantity<&'a [Vector3]>>,
     time: Option<Quantity<f64>>,
     step: Option<u64>,
-    properties: Option<&'a Properties>,
+    owner: Option<&'a OwnerProperties>,
+    annotations: Option<&'a Conformation>,
 }
 
 impl<'a> FrameBufferData<'a> {
@@ -39,20 +39,24 @@ impl<'a> FrameBufferData<'a> {
             forces: None,
             time: None,
             step: None,
-            properties: None,
+            owner: None,
+            annotations: None,
         }
     }
 
-    /// Borrows every field from an already validated frame view.
+    /// Borrows every field, including occupancies, B-factors, and all
+    /// realization properties, from a topology-bound frame.
     pub fn from_frame_view(frame: TrajectoryFrameView<'a>) -> Self {
+        let frame = frame.payload();
         Self {
-            positions: frame.positions.values(),
-            cell: frame.cell.copied(),
-            velocities: frame.velocities,
-            forces: frame.forces,
-            time: frame.time,
-            step: frame.step,
-            properties: Some(frame.properties),
+            positions: frame.positions().values(),
+            cell: frame.cell().copied(),
+            velocities: frame.velocities().map(Velocities::values),
+            forces: frame.forces().map(Forces::values),
+            time: frame.time(),
+            step: frame.step(),
+            owner: None,
+            annotations: Some(frame.conformation()),
         }
     }
 
@@ -81,299 +85,288 @@ impl<'a> FrameBufferData<'a> {
         self
     }
 
-    pub const fn with_properties(mut self, properties: &'a Properties) -> Self {
-        self.properties = Some(properties);
+    /// Frame-level owner annotations, such as a decoded format scalar.
+    pub const fn with_owner_properties(mut self, owner: &'a OwnerProperties) -> Self {
+        self.owner = Some(owner);
         self
     }
 }
 
-/// Reusable caller-owned frame storage owning one topology snapshot.
+/// Reusable caller-owned frame storage bound to one topology snapshot.
 ///
-/// It accepts frames and readers of any snapshot sharing that layout.
+/// It accepts frames and readers of any snapshot sharing that layout. Frame
+/// state reads through `Deref` (`buffer.positions()`, `buffer.velocities()`,
+/// ...); edit it through [`Self::frame_mut`] or publish a complete frame with
+/// [`Self::replace_from_data`]. Velocity and force allocations are reused
+/// across frames.
 #[derive(Debug, Clone)]
 pub struct FrameBuffer {
-    pub(super) topology: Arc<Topology>,
-    positions: Positions,
-    cell: Option<PeriodicCell>,
-    properties: Properties,
-    pub(super) velocities: Velocities,
-    has_velocities: bool,
-    pub(super) forces: Forces,
-    has_forces: bool,
-    time: Option<Quantity<f64>>,
-    step: Option<u64>,
+    /// Exactly one frame; the collection binds and validates it.
+    storage: Trajectory,
+    spare_velocities: Option<Velocities>,
+    spare_forces: Option<Forces>,
+}
+
+impl std::ops::Deref for FrameBuffer {
+    type Target = TrajectoryFrame;
+
+    fn deref(&self) -> &Self::Target {
+        self.frame_view().payload()
+    }
+}
+
+impl AsModelView for FrameBuffer {
+    fn as_model_view(&self) -> ModelView<'_> {
+        FrameBuffer::as_model_view(self)
+    }
 }
 
 impl FrameBuffer {
     pub fn new(topology: Arc<Topology>) -> Self {
+        let frame = TrajectoryFrame::new(Positions::zeros(topology.atom_count()));
+        let storage = Trajectory::from_items(topology, [frame])
+            .expect("zero positions match the topology atom count");
         Self {
-            positions: Positions::zeros(topology.atom_count()),
-            cell: None,
-            properties: Properties::realization(topology.atom_count(), topology.bond_count()),
-            velocities: Velocities::zeros(topology.atom_count()),
-            has_velocities: false,
-            forces: Forces::zeros(topology.atom_count()),
-            has_forces: false,
-            time: None,
-            step: None,
-            topology,
+            storage,
+            spare_velocities: None,
+            spare_forces: None,
         }
     }
 
     pub fn topology(&self) -> &Topology {
-        &self.topology
+        self.storage.topology()
     }
 
     pub fn shared_topology(&self) -> Arc<Topology> {
-        Arc::clone(&self.topology)
+        self.storage.shared_topology()
     }
 
-    pub fn positions(&self) -> &Positions {
-        &self.positions
+    /// The buffered frame bound to its topology.
+    pub fn frame_view(&self) -> TrajectoryFrameView<'_> {
+        self.storage.get(0).expect("frame buffer holds one frame")
     }
 
-    pub const fn cell(&self) -> Option<&PeriodicCell> {
-        self.cell.as_ref()
+    pub fn as_model_view(&self) -> ModelView<'_> {
+        self.frame_view().as_model_view()
     }
 
-    pub const fn properties(&self) -> &Properties {
-        &self.properties
+    /// Dimension-preserving editor for the buffered frame.
+    pub fn frame_mut(&mut self) -> TrajectoryFrameMut<'_> {
+        self.storage
+            .get_mut(0)
+            .expect("frame buffer holds one frame")
     }
 
-    pub fn insert_property(
+    /// Copies velocities into reusable storage, or clears them with `None`.
+    pub fn set_velocities<T>(
         &mut self,
-        key: PropertyKey,
-        value: PropertyValue,
-    ) -> Result<Option<PropertyValue>, PropertyError> {
-        self.properties.insert(key, value)
-    }
-
-    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
-        self.properties.remove(key)
-    }
-
-    pub fn clear_properties(&mut self) {
-        self.properties.clear_owner();
-    }
-
-    realization_property_api!();
-
-    fn insert_bond_column(
-        &mut self,
-        key: PropertyKey,
-        column: PropertyColumn,
-    ) -> Result<Option<PropertyColumn>, FrameError> {
-        Ok(self
-            .properties
-            .insert_realization_bond_column(key, column)?)
-    }
-
-    pub fn set_positions<T>(&mut self, positions: Quantity<T>) -> Result<(), FrameError>
-    where
-        T: AsRef<[Point3]>,
-    {
-        self.positions.set_all(positions)?;
-        Ok(())
-    }
-
-    pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
-        self.cell = cell;
-    }
-
-    /// Copies velocities into reusable storage. Use [`Self::clear_velocities`]
-    /// to clear them without specifying a generic container type for `None`.
-    pub fn set_velocities<T>(&mut self, velocities: Option<Quantity<T>>) -> Result<(), FrameError>
+        velocities: Option<Quantity<T>>,
+    ) -> Result<(), ConformationError>
     where
         T: AsRef<[Vector3]>,
     {
-        match velocities {
-            Some(values) => {
-                self.velocities.set_all(values)?;
-                self.has_velocities = true;
-            }
-            None => self.has_velocities = false,
-        }
+        let staged = velocities
+            .map(|values| self.stage_velocities(values))
+            .transpose()?;
+        self.publish_velocities(staged);
         Ok(())
     }
 
-    /// Copies forces into reusable storage. Use [`Self::clear_forces`] to clear
-    /// them without specifying a generic container type for `None`.
-    pub fn set_forces<T>(&mut self, forces: Option<Quantity<T>>) -> Result<(), FrameError>
+    /// Copies forces into reusable storage, or clears them with `None`.
+    pub fn set_forces<T>(&mut self, forces: Option<Quantity<T>>) -> Result<(), ConformationError>
     where
         T: AsRef<[Vector3]>,
     {
-        match forces {
-            Some(values) => {
-                self.forces.set_all(values)?;
-                self.has_forces = true;
-            }
-            None => self.has_forces = false,
-        }
+        let staged = forces.map(|values| self.stage_forces(values)).transpose()?;
+        self.publish_forces(staged);
         Ok(())
     }
 
     /// Clears velocities while retaining the reusable backing allocation.
     pub fn clear_velocities(&mut self) {
-        self.has_velocities = false;
+        self.publish_velocities(None);
     }
 
     /// Clears forces while retaining the reusable backing allocation.
     pub fn clear_forces(&mut self) {
-        self.has_forces = false;
+        self.publish_forces(None);
     }
 
-    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), FrameError> {
-        self.time = match time {
-            Some(time) => {
-                let time = time.into_unit(CANONICAL_TIME_UNIT)?;
-                if !time.value().is_finite() {
-                    return Err(FrameError::NonFiniteTime);
-                }
-                Some(time)
-            }
-            None => None,
-        };
-        Ok(())
-    }
-
-    pub fn set_step(&mut self, step: Option<u64>) {
-        self.step = step;
-    }
-
-    pub fn set_properties(&mut self, properties: Properties) -> Result<(), FrameError> {
-        if properties.realization_atom_properties().len() != self.topology.atom_count() {
-            return Err(FrameError::AtomCountMismatch {
-                expected: self.topology.atom_count(),
-                actual: properties.realization_atom_properties().len(),
-            });
-        }
-        if properties.realization_bond_properties().len() != self.topology.bond_count() {
-            return Err(FrameError::BondCountMismatch {
-                expected: self.topology.bond_count(),
-                actual: properties.realization_bond_properties().len(),
-            });
-        }
-        properties.validate_realization_properties()?;
-        self.properties = properties;
-        Ok(())
-    }
-
-    /// Clears all per-frame state except positions while retaining reusable
-    /// array allocations and the bound topology.
+    /// Clears all per-frame state except positions, keeping allocations and
+    /// the bound topology.
     pub fn reset_dynamic_state(&mut self) {
-        self.cell = None;
-        self.properties =
-            Properties::realization(self.topology.atom_count(), self.topology.bond_count());
-        self.has_velocities = false;
-        self.has_forces = false;
-        self.time = None;
-        self.step = None;
-    }
-
-    pub fn model_view(&self) -> ModelView<'_> {
-        ModelView::new(
-            &self.topology,
-            &self.positions,
-            self.cell.as_ref(),
-            &self.properties,
-        )
-        .expect("frame buffer state is bound to its topology")
-    }
-
-    pub fn frame_view(&self) -> TrajectoryFrameView<'_> {
-        TrajectoryFrameView {
-            topology: &self.topology,
-            positions: &self.positions,
-            cell: self.cell.as_ref(),
-            properties: &self.properties,
-            velocities: self.has_velocities.then(|| self.velocities.values()),
-            forces: self.has_forces.then(|| self.forces.values()),
-            time: self.time,
-            step: self.step,
-        }
+        self.publish_velocities(None);
+        self.publish_forces(None);
+        let mut frame = self.frame_mut();
+        frame.set_step(None);
+        frame.set_time(None).expect("clearing time is always valid");
+        let mut conformation = frame.conformation_mut();
+        conformation.set_cell(None);
+        clear_annotations(&mut conformation);
     }
 
     /// Replaces the complete visible frame transactionally.
     ///
-    /// All count, unit, finite-value, property-table, and optional-array
-    /// validation completes before any destination field changes.
-    /// Existing position, velocity, and force allocations are reused. Optional
-    /// fields absent from `data`, including properties, are cleared.
-    pub fn replace_from_data(&mut self, data: FrameBufferData<'_>) -> Result<(), FrameError> {
-        self.positions.validate_all(&data.positions)?;
-        let velocities = data
-            .velocities
-            .map(|values| {
-                self.velocities
-                    .0
-                    .validate_replacement(&values)
-                    .map(|factor| (values, factor))
-            })
-            .transpose()?;
-        let forces = data
-            .forces
-            .map(|values| {
-                self.forces
-                    .0
-                    .validate_replacement(&values)
-                    .map(|factor| (values, factor))
-            })
-            .transpose()?;
-        let time = data
-            .time
-            .map(|time| {
-                let time = time.into_unit(CANONICAL_TIME_UNIT)?;
-                if !time.value().is_finite() {
-                    return Err(FrameError::NonFiniteTime);
-                }
-                Ok(time)
-            })
-            .transpose()?;
-        if let Some(properties) = data.properties {
-            validate_atom_count(
-                self.topology.atom_count(),
-                properties.realization_atom_properties().len(),
-            )?;
-            if properties.realization_bond_properties().len() != self.topology.bond_count() {
-                return Err(FrameError::BondCountMismatch {
-                    expected: self.topology.bond_count(),
-                    actual: properties.realization_bond_properties().len(),
+    /// All count, unit, finite-value, and annotation validation completes
+    /// before any field changes. Optional fields absent from `data`, including
+    /// annotations, are cleared.
+    pub fn replace_from_data(
+        &mut self,
+        data: FrameBufferData<'_>,
+    ) -> Result<(), ConformationError> {
+        self.positions().validate_all(&data.positions)?;
+        let time = validated_time(data.time)?;
+        if let Some(source) = data.annotations {
+            if source.atom_count() != self.atom_count() {
+                return Err(ConformationError::AtomCountMismatch {
+                    expected: self.atom_count(),
+                    actual: source.atom_count(),
                 });
             }
-            properties.validate_realization_properties()?;
+            if source.properties().bonds().len() != self.properties().bonds().len() {
+                return Err(ConformationError::BondCountMismatch {
+                    expected: self.properties().bonds().len(),
+                    actual: source.properties().bonds().len(),
+                });
+            }
         }
-        let properties = data.properties.cloned().unwrap_or_else(|| {
-            Properties::realization(self.topology.atom_count(), self.topology.bond_count())
-        });
+        let velocities = data
+            .velocities
+            .map(|values| self.stage_velocities(values))
+            .transpose()?;
+        let forces = match data
+            .forces
+            .map(|values| self.stage_forces(values))
+            .transpose()
+        {
+            Ok(forces) => forces,
+            Err(error) => {
+                self.spare_velocities = velocities.or(self.spare_velocities.take());
+                return Err(error);
+            }
+        };
 
-        self.positions.set_all(data.positions)?;
-        self.cell = data.cell;
-        match velocities {
-            Some((values, factor)) => {
-                self.velocities
-                    .0
-                    .copy_from_validated(values.value(), factor);
-                self.has_velocities = true;
+        // Every check passed; publication cannot fail from here on.
+        self.publish_velocities(velocities);
+        self.publish_forces(forces);
+        let mut frame = self.frame_mut();
+        frame.set_step(data.step);
+        frame.set_time(time).expect("time was validated");
+        let mut conformation = frame.conformation_mut();
+        conformation
+            .set_positions(data.positions)
+            .expect("positions were validated");
+        conformation.set_cell(data.cell);
+        match data.annotations {
+            Some(source) => {
+                conformation
+                    .set_occupancies(source.occupancies().map(<[_]>::to_vec))
+                    .expect("source occupancies are valid");
+                conformation
+                    .set_b_factors(
+                        source
+                            .b_factors()
+                            .map(|values| Quantity::new(values.value().to_vec(), values.unit())),
+                    )
+                    .expect("source B-factors are valid");
+                conformation
+                    .set_properties(source.properties().clone())
+                    .expect("annotation dimensions were validated");
             }
-            None => self.has_velocities = false,
-        }
-        match forces {
-            Some((values, factor)) => {
-                self.forces.0.copy_from_validated(values.value(), factor);
-                self.has_forces = true;
+            None => {
+                clear_annotations(&mut conformation);
+                if let Some(owner) = data.owner {
+                    *conformation.properties_mut().owner_mut() = owner.clone();
+                }
             }
-            None => self.has_forces = false,
         }
-        self.time = time;
-        self.step = data.step;
-        self.properties = properties;
         Ok(())
     }
 
-    pub fn copy_from(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), FrameError> {
-        if !self.topology.shares_layout(frame.topology) {
-            return Err(FrameError::TopologyMismatch);
+    /// Copies a complete frame of any snapshot sharing this buffer's layout.
+    pub fn copy_from(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
+        if !self.topology().shares_layout(frame.topology()) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
-        self.replace_from_data(FrameBufferData::from_frame_view(frame))
+        Ok(self.replace_from_data(FrameBufferData::from_frame_view(frame))?)
     }
+
+    fn stage_velocities<T: AsRef<[Vector3]>>(
+        &mut self,
+        values: Quantity<T>,
+    ) -> Result<Velocities, ConformationError> {
+        let atoms = self.atom_count();
+        let mut storage = self
+            .spare_velocities
+            .take()
+            .unwrap_or_else(|| Velocities::zeros(atoms));
+        match storage.set_all(values) {
+            Ok(()) => Ok(storage),
+            Err(error) => {
+                self.spare_velocities = Some(storage);
+                Err(error)
+            }
+        }
+    }
+
+    fn stage_forces<T: AsRef<[Vector3]>>(
+        &mut self,
+        values: Quantity<T>,
+    ) -> Result<Forces, ConformationError> {
+        let atoms = self.atom_count();
+        let mut storage = self
+            .spare_forces
+            .take()
+            .unwrap_or_else(|| Forces::zeros(atoms));
+        match storage.set_all(values) {
+            Ok(()) => Ok(storage),
+            Err(error) => {
+                self.spare_forces = Some(storage);
+                Err(error)
+            }
+        }
+    }
+
+    /// Swaps staged storage in; the previous allocation becomes the spare.
+    fn publish_velocities(&mut self, velocities: Option<Velocities>) {
+        let mut frame = self.frame_mut();
+        let previous = frame.take_velocities();
+        if velocities.is_some() {
+            frame
+                .set_velocities(velocities)
+                .expect("staged velocities have one vector per atom");
+        }
+        if previous.is_some() {
+            self.spare_velocities = previous;
+        }
+    }
+
+    fn publish_forces(&mut self, forces: Option<Forces>) {
+        let mut frame = self.frame_mut();
+        let previous = frame.take_forces();
+        if forces.is_some() {
+            frame
+                .set_forces(forces)
+                .expect("staged forces have one vector per atom");
+        }
+        if previous.is_some() {
+            self.spare_forces = previous;
+        }
+    }
+}
+
+fn validated_time(time: Option<Quantity<f64>>) -> Result<Option<Quantity<f64>>, ConformationError> {
+    let mut probe = TrajectoryFrame::new(Positions::zeros(0));
+    probe.set_time(time)?;
+    Ok(probe.time())
+}
+
+fn clear_annotations(conformation: &mut kekule::structure::ConformationMut<'_>) {
+    conformation
+        .set_occupancies(None)
+        .expect("clearing occupancies is always valid");
+    conformation
+        .set_b_factors(None)
+        .expect("clearing B-factors is always valid");
+    conformation.properties_mut().clear();
 }

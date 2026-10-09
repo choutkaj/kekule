@@ -172,7 +172,7 @@ impl TopologyEditor {
                     continue;
                 }
                 let class = definition.class();
-                let target = builder.add_molecule_definition_owned(definition.molecule)?;
+                let target = builder.add_molecule_definition(definition.molecule)?;
                 if !invalidated.contains(&id) || overrides.contains_key(&id) {
                     builder.preserve_molecule_class(target, class, overrides.contains_key(&id))?;
                 }
@@ -206,7 +206,7 @@ impl TopologyEditor {
                     } else {
                         let molecule =
                             Arc::try_unwrap(owned).unwrap_or_else(|shared| (*shared).clone());
-                        let id = builder.add_molecule_definition_owned(molecule)?;
+                        let id = builder.add_molecule_definition(molecule)?;
                         if let Some(class) = group.class {
                             if !invalidated_added.contains(&identity) || group.class_explicit {
                                 builder.preserve_molecule_class(id, class, group.class_explicit)?;
@@ -229,7 +229,7 @@ impl TopologyEditor {
                 GroupChemistry::Draft(draft) if draft.is_connected() => {
                     // Publication renumbers deleted draft slots densely.
                     let (published, ids) = (*draft).finish_with_correspondence()?;
-                    let definition = builder.add_molecule_definition_owned(published)?;
+                    let definition = builder.add_molecule_definition(published)?;
                     let handles = group.atoms.values().copied().collect();
                     if let Some(class) = self.component_class(&handles, group.class) {
                         let explicit = group.class_explicit
@@ -330,7 +330,7 @@ impl TopologyEditor {
             )?;
             site_slots.push(site.slot);
         }
-        let mut properties = self.properties.project_topology(
+        let mut properties = self.properties.project(
             &instance_sources,
             &atom_slots,
             &targets.bond_slots,
@@ -338,8 +338,8 @@ impl TopologyEditor {
             &residue_slots,
             &site_slots,
         )?;
-        for (key, value) in self.properties.iter() {
-            properties.insert(key.clone(), value.clone())?;
+        for (key, value) in self.properties.owner().iter() {
+            properties.owner_mut().insert(key.clone(), value.clone())?;
         }
         builder.install_properties(properties);
         let target = Arc::new(builder.build()?);

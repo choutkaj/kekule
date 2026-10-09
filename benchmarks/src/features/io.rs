@@ -47,7 +47,7 @@ pub(super) fn substructure_record_json(
     for smarts in BOUNDED_SUBSTRUCTURE_QUERIES.lines() {
         let graph =
             query::parse_smarts(smarts).expect("checked-in bounded benchmark SMARTS must parse");
-        let matches = substructure::find_substructure_matches_with_options(
+        let matches = substructure::find_matches_with_options(
             &record.molecule,
             &graph,
             substructure::SubstructureMatchOptions {

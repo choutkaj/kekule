@@ -2,13 +2,13 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::{Atom, Element};
+use crate::core::Element;
 use crate::substructure::{QueryMatch, TopologyQueryMatch};
 
 use super::{
-    AtomSiteId, AtomSiteView, ChainId, ChainView, InstanceAtomId, InstanceBondId, MoleculeClass,
-    MoleculeDefinitionId, MoleculeInstanceId, ResidueClass, ResidueId, ResidueView, Topology,
-    TopologyAtomIndex, TopologyBondIndex,
+    AtomSiteId, AtomSiteView, AtomView, ChainId, ChainView, InstanceAtomId, InstanceBondId,
+    MoleculeClass, MoleculeDefinitionId, MoleculeInstanceId, ResidueClass, ResidueId, ResidueView,
+    Topology, TopologyAtomIndex, TopologyBondIndex,
 };
 
 mod bonds;
@@ -49,7 +49,7 @@ pub use bonds::{BondSelection, BondSelectionMode};
 /// use std::sync::Arc;
 /// use kekule::{smiles, topology::{AtomSelection, BondSelectionMode}};
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let topology = Arc::new(smiles::to_topology("CCO")?);
+/// let topology = smiles::to_topology("CCO")?;
 /// let mut selected = AtomSelection::empty(&topology);
 /// selected.toggle(topology.atom_ids()[0])?; // e.g. a picked atom
 /// let neighborhood = selected.expand_bonded(1);
@@ -153,28 +153,31 @@ impl AtomSelection {
     }
 
     /// Selects all atoms for which the predicate returns true, in dense order.
-    /// The semantic ID allows inspecting hierarchy, properties, or perception
-    /// through the supplied topology. No perception is computed implicitly.
+    /// The [`AtomView`] exposes chemistry, hierarchy, properties, and stored
+    /// perception. No perception is computed implicitly.
     pub fn from_predicate(
         topology: &Arc<Topology>,
-        mut predicate: impl FnMut(InstanceAtomId, &Atom) -> bool,
+        mut predicate: impl FnMut(AtomView<'_>) -> bool,
     ) -> Self {
         Self::from_atoms(
             topology,
             topology
                 .atoms()
-                .filter(|(id, atom)| predicate(*id, atom))
-                .map(|(id, _)| id),
+                .filter(|atom| predicate(*atom))
+                .map(AtomView::id),
         )
         .expect("predicate selects validated topology atoms")
     }
 
     /// Keeps selected atoms satisfying a predicate, preserving dense order.
-    pub fn filter(&self, mut predicate: impl FnMut(InstanceAtomId, &Atom) -> bool) -> Self {
+    pub fn filter(&self, mut predicate: impl FnMut(AtomView<'_>) -> bool) -> Self {
         Self::from_atoms(
             &self.topology,
-            self.atom_ids()
-                .filter(|id| predicate(*id, self.topology.atom(*id).expect("validated atom"))),
+            self.indices
+                .iter()
+                .map(|index| self.topology.atom_at(*index).expect("validated atom"))
+                .filter(|atom| predicate(*atom))
+                .map(AtomView::id),
         )
         .expect("filter selects validated topology atoms")
     }
@@ -256,16 +259,17 @@ impl AtomSelection {
             .atom_ids()
             .filter_map(|atom| {
                 self.topology
-                    .hierarchy()
-                    .atom_site_for_atom(atom)
-                    .map(|site| site.residue())
+                    .atom(atom)
+                    .expect("validated atom")
+                    .residue()
+                    .map(|residue| residue.id())
             })
             .collect::<BTreeSet<_>>();
         let added = self
             .topology
             .atom_sites()
             .filter(|site| residues.contains(&site.residue().id()))
-            .map(|site| site.atom());
+            .map(|site| site.atom().id());
         Self::from_atoms(&self.topology, self.atom_ids().chain(added))
             .expect("residue expansion uses validated topology atoms")
     }
@@ -284,9 +288,10 @@ impl AtomSelection {
     pub fn expand_to_chains(&self) -> Self {
         let chains = self.atom_ids().filter_map(|atom| {
             self.topology
-                .atom_site_for_atom(atom)
+                .atom(atom)
                 .expect("validated atom")
-                .map(|site| site.residue().chain().id())
+                .chain()
+                .map(|chain| chain.id())
         });
         self.union(&Self::for_chains(&self.topology, chains).expect("valid chains"))
             .expect("same snapshot")
@@ -307,15 +312,16 @@ impl AtomSelection {
             }
             let mut next = Vec::new();
             for atom in frontier {
-                for neighbor in self.topology.neighbors(atom).expect("validated atom") {
-                    let index = self
-                        .topology
-                        .atom_index(neighbor)
-                        .expect("validated neighbor")
-                        .index();
+                for neighbor in self
+                    .topology
+                    .atom(atom)
+                    .expect("validated atom")
+                    .neighbors()
+                {
+                    let index = neighbor.index().index();
                     if !visited[index] {
                         visited[index] = true;
-                        next.push(neighbor);
+                        next.push(neighbor.id());
                     }
                 }
             }
@@ -335,9 +341,10 @@ impl AtomSelection {
     /// Selects bonds according to explicit endpoint membership. This does not
     /// modify atom membership or perform a structural subset operation.
     pub fn to_bonds(&self, mode: BondSelectionMode) -> BondSelection {
-        BondSelection::from_predicate(&self.topology, |id, bond| {
-            let a = self.contains(InstanceAtomId::new(id.molecule(), bond.a()));
-            let b = self.contains(InstanceAtomId::new(id.molecule(), bond.b()));
+        BondSelection::from_predicate(&self.topology, |bond| {
+            let [a, b] = bond.atoms();
+            let a = self.indices.binary_search(&a.index()).is_ok();
+            let b = self.indices.binary_search(&b.index()).is_ok();
             match mode {
                 BondSelectionMode::Internal => a && b,
                 BondSelectionMode::Incident => a || b,
@@ -363,7 +370,7 @@ impl AtomSelection {
                         .as_deref()
                         .is_some_and(|name| names.contains(name))
                 })
-                .map(AtomSiteView::atom),
+                .map(|site| site.atom().id()),
         )
     }
 
@@ -384,7 +391,7 @@ impl AtomSelection {
                         .as_deref()
                         .is_some_and(|name| names.contains(name))
                 })
-                .map(AtomSiteView::atom),
+                .map(|site| site.atom().id()),
         )
     }
 
@@ -442,8 +449,8 @@ impl AtomSelection {
         let instances = instances.into_iter().collect::<BTreeSet<_>>();
         for instance in &instances {
             topology
-                .instance(*instance)
-                .map_err(|_| SelectionError::InvalidMoleculeInstanceId(*instance))?;
+                .molecule(*instance)
+                .ok_or(SelectionError::InvalidMoleculeInstanceId(*instance))?;
         }
         Self::from_atoms(
             topology,
@@ -463,12 +470,12 @@ impl AtomSelection {
         for definition in &definitions {
             topology
                 .definition(*definition)
-                .map_err(|_| SelectionError::InvalidMoleculeDefinitionId(*definition))?;
+                .ok_or(SelectionError::InvalidMoleculeDefinitionId(*definition))?;
         }
         let instances = topology
-            .instances()
-            .filter(|(_, instance)| definitions.contains(&instance.definition()))
-            .map(|(id, _)| id);
+            .molecules()
+            .filter(|molecule| definitions.contains(&molecule.definition_id()))
+            .map(|molecule| molecule.id());
         Self::for_instances(topology, instances)
     }
 
@@ -496,8 +503,8 @@ impl AtomSelection {
             topology,
             topology
                 .atoms()
-                .filter(|(_, atom)| elements.contains(&atom.element))
-                .map(|(id, _)| id),
+                .filter(|atom| elements.contains(&atom.element))
+                .map(AtomView::id),
         )
     }
 
@@ -510,8 +517,9 @@ impl AtomSelection {
             .into_iter()
             .map(|site| {
                 topology
-                    .atom_for_site(site)
-                    .map_err(|_| SelectionError::InvalidAtomSiteId(site))
+                    .atom_site(site)
+                    .map(|site| site.atom().id())
+                    .ok_or(SelectionError::InvalidAtomSiteId(site))
             })
             .collect::<Result<Vec<_>, _>>()?;
         Self::from_atoms(topology, atoms)
@@ -525,7 +533,7 @@ impl AtomSelection {
         for residue in &residues {
             topology
                 .residue(*residue)
-                .map_err(|_| SelectionError::InvalidResidueId(*residue))?;
+                .ok_or(SelectionError::InvalidResidueId(*residue))?;
         }
         Self::for_atom_sites(
             topology,
@@ -559,7 +567,7 @@ impl AtomSelection {
         for chain in &chains {
             topology
                 .chain(*chain)
-                .map_err(|_| SelectionError::InvalidChainId(*chain))?;
+                .ok_or(SelectionError::InvalidChainId(*chain))?;
         }
         Self::for_residues(
             topology,
@@ -590,8 +598,8 @@ impl AtomSelection {
         matches: &[QueryMatch],
     ) -> Result<Self, SelectionError> {
         topology
-            .instance(instance)
-            .map_err(|_| SelectionError::InvalidMoleculeInstanceId(instance))?;
+            .molecule(instance)
+            .ok_or(SelectionError::InvalidMoleculeInstanceId(instance))?;
         Self::from_atoms(
             topology,
             matches.iter().flat_map(|query_match| {

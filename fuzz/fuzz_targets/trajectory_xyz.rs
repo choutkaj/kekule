@@ -29,7 +29,7 @@ fn topology() -> &'static Arc<Topology> {
         let molecule = graph.finish().expect("molecule");
         let mut builder = TopologyBuilder::new();
         let definition = builder
-            .add_molecule_definition(&molecule)
+            .add_molecule_definition(molecule)
             .expect("definition");
         builder.add_instance(definition).expect("instance");
         Arc::new(builder.build().expect("topology"))

@@ -71,7 +71,7 @@ fn mmcif_scalar_categories_support_document_block_and_ensemble_paths() {
         assert_eq!(actual.model().atom_count(), 1);
         assert_eq!(actual.report().entity_definitions(), 1);
         assert_eq!(actual.report().solvent_molecules(), 1);
-        assert_eq!(actual.model().residues().count(), 1);
+        assert_eq!(actual.model().topology().residues().count(), 1);
     }
     let ensemble = scalar.interpret_ensemble().unwrap();
     assert_eq!(ensemble.ensemble().len(), 1);
@@ -79,9 +79,9 @@ fn mmcif_scalar_categories_support_document_block_and_ensemble_paths() {
     assert_eq!(
         ensemble
             .ensemble()
-            .member(0)
+            .get(0)
             .unwrap()
-            .as_model()
+            .as_model_view()
             .positions(),
         expected.model().positions()
     );
@@ -253,16 +253,8 @@ fn mmcif_1ake_preserves_declared_sequence_and_polymer_connectivity() {
     )
     .unwrap();
     assert_eq!(protein.indices().len(), 3312);
-    for &atom in a.model().atom_ids() {
-        assert_eq!(
-            a.model().occupancy(atom).unwrap(),
-            b.model().occupancy(atom).unwrap()
-        );
-        assert_eq!(
-            a.model().b_factor(atom).unwrap(),
-            b.model().b_factor(atom).unwrap()
-        );
-    }
+    assert_eq!(a.model().occupancies(), b.model().occupancies());
+    assert_eq!(a.model().b_factors(), b.model().b_factors());
 }
 
 #[test]

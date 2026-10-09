@@ -1,4 +1,4 @@
-use kekule::{hydrogens, smiles};
+use kekule::smiles;
 use kekule_openff::{ForceField, NaglModel};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut molecule = molecules.remove(0);
     molecule.perceive()?;
-    hydrogens::add_hydrogens(&mut molecule)?;
+    molecule.add_hydrogens()?;
     let model = NaglModel::load(directory)?;
     let p = ForceField::rosemary()?.parameterize_molecule(&molecule, &model)?;
     println!(

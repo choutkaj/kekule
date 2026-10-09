@@ -25,7 +25,7 @@
 //!     Point3::new(1.5, 0.0, 0.0), Point3::new(1.5, 1.0, 1.0),
 //! ], ANGSTROM))?;
 //! let mut model = Model::new(topology, positions)?;
-//! let [a, b, c, d] = model.atom_ids().try_into().unwrap();
+//! let [a, b, c, d] = model.topology().atom_ids().try_into().unwrap();
 //! model.set_distance(b, c, Quantity::new(1.6, ANGSTROM))?;
 //! let edit = DihedralEdit::new(&model.shared_topology(), [a, b, c, d])?;
 //! for degrees in [-180.0, -60.0, 60.0, 180.0] {
@@ -41,7 +41,7 @@
 //! use kekule::{structure::{AngleEdit, Model}, topology::AtomSelection,
 //!     units::{Quantity, DEGREE}};
 //! # fn example(model: &mut Model) -> Result<(), Box<dyn std::error::Error>> {
-//! let [a, b, c] = model.atom_ids()[..3].try_into().unwrap();
+//! let [a, b, c] = model.topology().atom_ids()[..3].try_into().unwrap();
 //! let topology = model.shared_topology();
 //! let moving = AtomSelection::from_atoms(&topology, [c])?;
 //! let edit = AngleEdit::with_moving_atoms(&topology, [a, b, c], &moving)?;
@@ -56,20 +56,31 @@
 //! [`Model::translate`], [`Model::rotate`], and [`Model::apply_transform`] also
 //! support rigid selection manipulation. No relaxation is performed.
 
+mod conformation;
+mod dynamics;
 mod ensemble;
 mod geometry_edit;
 pub mod measure;
 mod model;
 mod model_editor;
 mod positions;
+mod realizations;
 mod solvation;
+mod trajectory;
 pub use solvation::*;
 
+pub use conformation::*;
+pub use dynamics::*;
 pub use ensemble::*;
 pub use geometry_edit::*;
 pub use model::*;
 pub use model_editor::*;
 pub use positions::*;
+pub(crate) use realizations::RealizationStore;
+pub use realizations::{
+    Realization, RealizationError, RealizationIter, RealizationMut, RealizationView,
+};
+pub use trajectory::*;
 
 #[cfg(test)]
 mod model_tests;

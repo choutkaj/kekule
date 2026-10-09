@@ -38,9 +38,9 @@ fuzz_target!(|data: &[u8]| {
             uniquify: false,
             ..Default::default()
         };
-        let collected = find_substructure_matches_complete(&target, &query, options);
+        let collected = find_matches_with_options(&target, &query, options);
         let mut streamed = Vec::new();
-        let completion = visit_substructure_matches(&target, &query, options, |m| {
+        let completion = visit_matches_with_options(&target, &query, options, |m| {
             streamed.push(m.clone());
             ControlFlow::Continue(())
         });

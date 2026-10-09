@@ -219,7 +219,7 @@ impl SmilesInterpretation {
         let mut source = Vec::new();
         for component in self.components {
             let (molecule, report) = component.into_parts();
-            let definition = builder.add_molecule_definition_owned(molecule)?;
+            let definition = builder.add_molecule_definition(molecule)?;
             let instance = builder.add_instance(definition)?;
             source.extend(report.atom_mappings.iter().map(|mapping| {
                 (

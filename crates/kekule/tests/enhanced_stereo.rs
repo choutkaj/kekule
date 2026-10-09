@@ -12,7 +12,7 @@ fn molecule(text: &str) -> Molecule {
 }
 
 fn canonical(text: &str) -> String {
-    smiles::write_canonical(&molecule(text)).unwrap()
+    smiles::write(&molecule(text), smiles::SmilesWriteOptions::canonical()).unwrap()
 }
 
 #[test]
@@ -22,7 +22,7 @@ fn enhanced_groups_round_trip_and_canonicalize_joint_inversion() {
         let inverted = format!("F[C@@H](Cl)[C@H](Br)I |{tag}:3,1|");
         let diastereomer = format!("F[C@H](Cl)[C@H](Br)I |{tag}:1,3|");
         let mol = molecule(&a);
-        let output = smiles::write_isomeric(&mol).unwrap();
+        let output = smiles::write(&mol, smiles::SmilesWriteOptions::isomeric()).unwrap();
         let restored = molecule(&output);
         assert_eq!(
             restored.stereo_groups().next().unwrap().1.kind,
@@ -51,8 +51,8 @@ fn topology_export_has_one_extension_and_record_global_indices() {
         smiles::SmilesWriteMode::Isomeric,
         smiles::SmilesWriteMode::Canonical,
     ] {
-        let topology = Topology::from_molecules(&[first.clone(), second.clone()]).unwrap();
-        let text = smiles::write_topology(&topology, smiles::SmilesWriteOptions { mode }).unwrap();
+        let topology = Topology::from_molecules([first.clone(), second.clone()].clone()).unwrap();
+        let text = smiles::write(&topology, smiles::SmilesWriteOptions { mode }).unwrap();
         assert_eq!(text.matches('|').count(), 2, "{text}");
         let restored = smiles::to_molecules(&text).unwrap();
         assert_eq!(restored.len(), 2);
@@ -78,7 +78,7 @@ fn relative_flag_does_not_weaken_ungrouped_absolute_centers() {
     group.kind = StereoGroupKind::Relative;
     edit.replace_stereo_group(id, group).unwrap();
     let mol = edit.finish().unwrap();
-    let text = smiles::write_isomeric(&mol).unwrap();
+    let text = smiles::write(&mol, smiles::SmilesWriteOptions::isomeric()).unwrap();
     let restored = molecule(&text);
     assert_eq!(
         restored
@@ -94,14 +94,14 @@ fn relative_flag_does_not_weaken_ungrouped_absolute_centers() {
             .count(),
         1
     );
-    let text = smiles::write_canonical(&mol).unwrap();
+    let text = smiles::write(&mol, smiles::SmilesWriteOptions::canonical()).unwrap();
     assert_eq!(canonical(&text), text);
 }
 
 fn matches(target: &str, query: &str) -> bool {
-    use kekule::substructure::{find_substructure_matches_with_options, SubstructureMatchOptions};
+    use kekule::substructure::{find_matches_with_options, SubstructureMatchOptions};
     let query = kekule::query::parse_smarts(query).unwrap();
-    !find_substructure_matches_with_options(
+    !find_matches_with_options(
         &molecule(target),
         &query,
         SubstructureMatchOptions {
@@ -171,7 +171,7 @@ fn topology_edits_reject_separating_correlated_groups() {
     use std::sync::Arc;
     for tag in ["a", "o1", "&1"] {
         let original = molecule(&format!("F[C@H](Cl)CCC[C@H](Br)I |{tag}:1,6|"));
-        let source = Arc::new(Topology::from_molecule(&original).unwrap());
+        let source = Arc::new(Topology::from_molecule(original.clone()).unwrap());
         let mut edit = source.edit();
         let instance = source.molecules().next().unwrap().id();
         let local = original
@@ -233,7 +233,7 @@ fn group_aware_symmetry_cleanup_compares_whole_relationships() {
             cleaned.stereo_groups().count(),
             source.stereo_groups().count()
         );
-        let text = smiles::write_canonical(&cleaned).unwrap();
+        let text = smiles::write(&cleaned, smiles::SmilesWriteOptions::canonical()).unwrap();
         assert_eq!(canonical(&text), text);
     }
 }
@@ -242,14 +242,17 @@ fn group_aware_symmetry_cleanup_compares_whole_relationships() {
 fn hydrogen_transforms_preserve_membership_and_configuration() {
     for tag in ["a", "o1", "&1"] {
         let mut mol = molecule(&format!("F[C@H](Cl)[C@@H](Br)I |{tag}:1,3|"));
-        let expected = smiles::write_canonical(&mol).unwrap();
+        let expected = smiles::write(&mol, smiles::SmilesWriteOptions::canonical()).unwrap();
         let groups = mol
             .stereo_groups()
             .map(|(id, g)| (id, g.clone()))
             .collect::<Vec<_>>();
         mol.add_hydrogens().unwrap();
         mol.perceive().unwrap();
-        assert_eq!(smiles::write_canonical(&mol).unwrap(), expected);
+        assert_eq!(
+            smiles::write(&mol, smiles::SmilesWriteOptions::canonical()).unwrap(),
+            expected
+        );
         assert_eq!(
             mol.stereo_groups()
                 .map(|(id, g)| (id, g.clone()))
@@ -258,7 +261,10 @@ fn hydrogen_transforms_preserve_membership_and_configuration() {
         );
         mol.remove_hydrogens().unwrap();
         mol.perceive().unwrap();
-        assert_eq!(smiles::write_canonical(&mol).unwrap(), expected);
+        assert_eq!(
+            smiles::write(&mol, smiles::SmilesWriteOptions::canonical()).unwrap(),
+            expected
+        );
     }
 }
 
@@ -268,14 +274,14 @@ fn topology_matching_does_not_correlate_reused_definitions() {
     use std::sync::Arc;
     let mol = molecule("F[C@H](Cl)Br |o1:1|");
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&mol).unwrap();
+    let definition = builder.add_molecule_definition(mol.clone()).unwrap();
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     let topology = Arc::new(builder.build().unwrap());
     // Each occurrence can choose its own orientation even though the definition
     // and its local group ID are shared.
     let query = parse_smarts("F[C@H](Cl)Br.F[C@@H](Cl)Br").unwrap();
-    let matches = find_topology_substructure_matches_complete(
+    let matches = find_topology_matches_with_options(
         &topology,
         &query,
         SubstructureMatchOptions {
@@ -347,10 +353,14 @@ fn canonical_groups_are_invariant_to_atom_bond_element_and_group_numbering() {
         "C[C@H](O)[C@@H](O)[C@H](O)[C@@H](O)C |a:1,&9:3,7,o5:5|",
     ] {
         let mol = molecule(text);
-        let expected = smiles::write_canonical(&mol).unwrap();
+        let expected = smiles::write(&mol, smiles::SmilesWriteOptions::canonical()).unwrap();
         for shift in 0..mol.atom_count() {
             assert_eq!(
-                smiles::write_canonical(&renumber(&mol, shift)).unwrap(),
+                smiles::write(
+                    &renumber(&mol, shift),
+                    smiles::SmilesWriteOptions::canonical()
+                )
+                .unwrap(),
                 expected,
                 "{text}, shift={shift}"
             );
@@ -368,8 +378,8 @@ fn unencodable_group_semantics_fail_explicitly() {
             edit.replace_stereo_group(id, group).unwrap();
         }
         let mol = edit.finish().unwrap();
-        assert!(smiles::write_isomeric(&mol).is_err());
-        assert!(smiles::write_canonical(&mol).is_err());
+        assert!(smiles::write(&mol, smiles::SmilesWriteOptions::isomeric()).is_err());
+        assert!(smiles::write(&mol, smiles::SmilesWriteOptions::canonical()).is_err());
     }
     assert!(smiles::to_molecules("F[C@H](Cl)Br.F[C@H](Cl)Br |o1:1,5|").is_err());
 }
@@ -425,11 +435,9 @@ fn enhanced_matching_respects_boolean_and_partial_carrier_queries() {
     assert!(!matches("NC(F)(Cl)Br", "N[C!@](F)(Cl)Br |o1:1|"));
     assert!(!matches(target, "N[C@,C@@](F)(Cl)Br |&1:1|"));
     let query = kekule::query::parse_smarts("N[C@@](F)(Cl)Br").unwrap();
-    assert!(
-        kekule::substructure::find_substructure_match(&molecule(target), &query)
-            .unwrap()
-            .is_none()
-    );
+    assert!(kekule::substructure::find_match(&molecule(target), &query)
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -447,11 +455,15 @@ fn canonical_projection_merges_absolute_sets_and_shields_relative_groups() {
             edit.replace_stereo_group(id, group).unwrap();
         }
         let mol = edit.finish().unwrap();
-        let expected = smiles::write_canonical(&mol).unwrap();
+        let expected = smiles::write(&mol, smiles::SmilesWriteOptions::canonical()).unwrap();
         assert_eq!(canonical(&expected), expected);
         for shift in 0..mol.atom_count() {
             assert_eq!(
-                smiles::write_canonical(&renumber(&mol, shift)).unwrap(),
+                smiles::write(
+                    &renumber(&mol, shift),
+                    smiles::SmilesWriteOptions::canonical()
+                )
+                .unwrap(),
                 expected
             );
         }

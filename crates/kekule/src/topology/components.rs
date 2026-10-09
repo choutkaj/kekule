@@ -127,14 +127,14 @@ pub(super) fn build_component_definitions(
 
     for mut component in components {
         let properties = &mut component.editor.working_mut().properties;
-        *properties.atoms_mut() = source_molecule.atom_properties().select_indices(
+        *properties.atoms_mut() = source_molecule.properties().atoms().raw().select_indices(
             &component
                 .source_atoms
                 .iter()
                 .map(|atom| atom.index())
                 .collect::<Vec<_>>(),
         )?;
-        *properties.bonds_mut() = source_molecule.bond_properties().select_indices(
+        *properties.bonds_mut() = source_molecule.properties().bonds().raw().select_indices(
             &component
                 .source_bonds
                 .iter()
@@ -142,12 +142,12 @@ pub(super) fn build_component_definitions(
                 .collect::<Vec<_>>(),
         )?;
         if whole_instance_selected {
-            for (key, value) in source_molecule.properties().iter() {
-                properties.insert(key.clone(), value.clone())?;
+            for (key, value) in source_molecule.properties().owner().iter() {
+                properties.owner_mut().insert(key.clone(), value.clone())?;
             }
         }
         let target_molecule = component.editor.finish()?;
-        let definition = builder.add_molecule_definition_owned(target_molecule)?;
+        let definition = builder.add_molecule_definition(target_molecule)?;
         if whole_instance_selected {
             if let Some((class, explicit)) = class {
                 builder.preserve_molecule_class(definition, class, explicit)?;

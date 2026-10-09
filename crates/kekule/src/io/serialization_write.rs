@@ -2,10 +2,10 @@ use std::fmt;
 use std::io::Write;
 
 use crate::core::Molecule;
-use crate::structure::{Ensemble, Model, ModelView};
+use crate::structure::{AsModelView, Model, ModelView, Realization, RealizationView};
 
 use super::molfile_write::MolfileRecord;
-use super::sdf_document::SdfRecordInterpretation;
+use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
 use super::v2000::{render_mol_v2000, validate_sdf_data_field, validate_sdf_title};
 use super::v3000::render_mol_v3000;
 use super::{MolWriteError, MolfileVersion};
@@ -72,30 +72,6 @@ impl From<MolWriteError> for SdfWriteError {
     }
 }
 
-pub fn write_molfile_molecule(
-    molecule: &Molecule,
-    options: MolfileWriteOptions,
-) -> Result<String, MolWriteError> {
-    render_molfile_record(&MolfileRecord::molecule(molecule)?, "", options.version)
-}
-
-pub fn write_molfile_model(
-    model: ModelView<'_>,
-    options: MolfileWriteOptions,
-) -> Result<String, MolWriteError> {
-    render_molfile_model(model, "", options.version)
-}
-
-pub fn write_molfile_model_to(
-    writer: &mut impl Write,
-    model: ModelView<'_>,
-    options: MolfileWriteOptions,
-) -> Result<(), MolWriteError> {
-    writer
-        .write_all(write_molfile_model(model, options)?.as_bytes())
-        .map_err(MolWriteError::io)
-}
-
 fn render_molfile_record(
     record: &MolfileRecord<'_>,
     title: &str,
@@ -129,121 +105,151 @@ fn render_molfile_model(
     }
 }
 
-pub fn write_sdf_model(model: &Model, options: SdfWriteOptions) -> Result<String, SdfWriteError> {
-    write_sdf_views(std::iter::once(model.view()), options)
+/// What one Molfile CTAB describes: a coordinate-free molecule written with
+/// zero coordinates, or a geometry-bearing model.
+///
+/// Convert from `&Molecule`, `&Model`, or any borrowed model view through
+/// [`Self::model`]. Specified stereo requires coordinates.
+#[derive(Debug, Clone, Copy)]
+pub enum MolfileSource<'a> {
+    Molecule(&'a Molecule),
+    Model(ModelView<'a>),
 }
 
-pub fn write_sdf_models(
-    models: &[Model],
-    options: SdfWriteOptions,
-) -> Result<String, SdfWriteError> {
-    write_sdf_views(models.iter().map(Model::view), options)
+impl<'a> MolfileSource<'a> {
+    pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
+        Self::Model(model.as_model_view())
+    }
 }
 
-pub fn write_sdf_ensemble(
-    ensemble: &Ensemble,
-    options: SdfWriteOptions,
-) -> Result<String, SdfWriteError> {
-    write_sdf_views(ensemble.members().map(|member| member.as_model()), options)
+impl<'a> From<&'a Molecule> for MolfileSource<'a> {
+    fn from(molecule: &'a Molecule) -> Self {
+        Self::Molecule(molecule)
+    }
 }
 
-pub fn write_sdf_model_to(
+impl<'a> From<&'a Model> for MolfileSource<'a> {
+    fn from(model: &'a Model) -> Self {
+        Self::model(model)
+    }
+}
+
+/// Writes one CTAB. V2000 rounds coordinates to four decimal places in
+/// angstroms; V3000 keeps round-trip decimal text. Stereo is projected
+/// against the coordinates emitted by the chosen version.
+pub fn write_molfile<'a>(
+    source: impl Into<MolfileSource<'a>>,
+    options: MolfileWriteOptions,
+) -> Result<String, MolWriteError> {
+    match source.into() {
+        MolfileSource::Molecule(molecule) => {
+            render_molfile_record(&MolfileRecord::molecule(molecule)?, "", options.version)
+        }
+        MolfileSource::Model(model) => render_molfile_model(model, "", options.version),
+    }
+}
+
+pub fn write_molfile_to<'a>(
     writer: &mut impl Write,
-    model: &Model,
-    options: SdfWriteOptions,
-) -> Result<(), SdfWriteError> {
-    write_sdf_views_to(writer, std::iter::once(model.view()), options)
+    source: impl Into<MolfileSource<'a>>,
+    options: MolfileWriteOptions,
+) -> Result<(), MolWriteError> {
+    writer
+        .write_all(write_molfile(source, options)?.as_bytes())
+        .map_err(MolWriteError::io)
 }
 
-pub fn write_sdf_models_to(
-    writer: &mut impl Write,
-    models: &[Model],
-    options: SdfWriteOptions,
-) -> Result<(), SdfWriteError> {
-    write_sdf_views_to(writer, models.iter().map(Model::view), options)
+/// One SDF record: a model view with an optional title and data fields.
+///
+/// Convert from `&Model`, a borrowed ensemble member or trajectory frame, or
+/// `&SdfRecordInterpretation` (which keeps its title and data fields).
+#[derive(Debug, Clone, Copy)]
+pub struct SdfRecordSource<'a> {
+    model: ModelView<'a>,
+    title: &'a str,
+    data_fields: &'a [SdfDataField],
 }
 
-pub fn write_sdf_ensemble_to(
-    writer: &mut impl Write,
-    ensemble: &Ensemble,
-    options: SdfWriteOptions,
-) -> Result<(), SdfWriteError> {
-    write_sdf_views_to(
-        writer,
-        ensemble.members().map(|member| member.as_model()),
-        options,
-    )
+impl<'a> SdfRecordSource<'a> {
+    pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
+        Self {
+            model: model.as_model_view(),
+            title: "",
+            data_fields: &[],
+        }
+    }
+
+    #[must_use]
+    pub fn with_title(mut self, title: &'a str) -> Self {
+        self.title = title;
+        self
+    }
+
+    #[must_use]
+    pub fn with_data_fields(mut self, data_fields: &'a [SdfDataField]) -> Self {
+        self.data_fields = data_fields;
+        self
+    }
 }
 
-pub fn write_sdf_records(
-    records: &[SdfRecordInterpretation],
+impl<'a> From<&'a Model> for SdfRecordSource<'a> {
+    fn from(model: &'a Model) -> Self {
+        Self::model(model)
+    }
+}
+
+impl<'a, P: Realization> From<RealizationView<'a, P>> for SdfRecordSource<'a> {
+    fn from(item: RealizationView<'a, P>) -> Self {
+        Self {
+            model: item.as_model_view(),
+            title: "",
+            data_fields: &[],
+        }
+    }
+}
+
+impl<'a> From<&'a SdfRecordInterpretation> for SdfRecordSource<'a> {
+    fn from(record: &'a SdfRecordInterpretation) -> Self {
+        Self::model(record.model())
+            .with_title(record.title())
+            .with_data_fields(record.data_fields())
+    }
+}
+
+/// Writes records to a string. See [`write_sdf_to`].
+pub fn write_sdf<'a, R: Into<SdfRecordSource<'a>>>(
+    records: impl IntoIterator<Item = R>,
     options: SdfWriteOptions,
 ) -> Result<String, SdfWriteError> {
     let mut output = Vec::new();
-    write_sdf_records_to(&mut output, records, options)?;
+    write_sdf_to(&mut output, records, options)?;
     Ok(String::from_utf8(output).expect("SDF writer emits UTF-8"))
 }
 
-pub fn write_sdf_records_to(
+/// Writes independent records in input order. An ensemble or trajectory
+/// writes one record per item (`sdf::write(&ensemble, options)`).
+pub fn write_sdf_to<'a, R: Into<SdfRecordSource<'a>>>(
     writer: &mut impl Write,
-    records: &[SdfRecordInterpretation],
+    records: impl IntoIterator<Item = R>,
     options: SdfWriteOptions,
 ) -> Result<(), SdfWriteError> {
     for record in records {
-        validate_title(record.title())?;
-        for field in record.data_fields() {
+        let record = record.into();
+        validate_title(record.title)?;
+        for field in record.data_fields {
             validate_sdf_data_field(field).map_err(|error| SdfWriteError::InvalidDataField {
                 name: field.name().to_owned(),
                 message: error.to_string(),
             })?;
         }
-        write_sdf_record_to(
-            writer,
-            record.model().view(),
-            record.title(),
-            record
-                .data_fields()
-                .iter()
-                .map(|field| (field.name(), field.value())),
-            options,
-        )?;
+        let ctab = render_molfile_model(record.model, record.title, options.version)?;
+        writer.write_all(ctab.as_bytes()).map_err(sdf_io)?;
+        for field in record.data_fields {
+            writeln!(writer, ">  <{}>\n{}\n", field.name(), field.value()).map_err(sdf_io)?;
+        }
+        writer.write_all(b"$$$$\n").map_err(sdf_io)?;
     }
     Ok(())
-}
-
-fn write_sdf_views<'a>(
-    views: impl IntoIterator<Item = ModelView<'a>>,
-    options: SdfWriteOptions,
-) -> Result<String, SdfWriteError> {
-    let mut output = Vec::new();
-    write_sdf_views_to(&mut output, views, options)?;
-    Ok(String::from_utf8(output).expect("SDF writer emits UTF-8"))
-}
-
-fn write_sdf_views_to<'a>(
-    writer: &mut impl Write,
-    views: impl IntoIterator<Item = ModelView<'a>>,
-    options: SdfWriteOptions,
-) -> Result<(), SdfWriteError> {
-    for view in views {
-        write_sdf_record_to(writer, view, "", std::iter::empty(), options)?;
-    }
-    Ok(())
-}
-
-fn write_sdf_record_to<'a>(
-    writer: &mut impl Write,
-    model: ModelView<'a>,
-    title: &str,
-    fields: impl IntoIterator<Item = (&'a str, &'a str)>,
-    options: SdfWriteOptions,
-) -> Result<(), SdfWriteError> {
-    let ctab = render_molfile_model(model, title, options.version)?;
-    writer.write_all(ctab.as_bytes()).map_err(sdf_io)?;
-    for (name, value) in fields {
-        writeln!(writer, ">  <{name}>\n{value}\n").map_err(sdf_io)?;
-    }
-    writer.write_all(b"$$$$\n").map_err(sdf_io)
 }
 
 fn validate_title(title: &str) -> Result<(), SdfWriteError> {

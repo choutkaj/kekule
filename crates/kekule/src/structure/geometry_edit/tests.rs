@@ -28,7 +28,7 @@ fn chain() -> Model {
 }
 
 fn ids(model: &Model) -> [InstanceAtomId; 4] {
-    model.atom_ids().try_into().unwrap()
+    model.topology().atom_ids().try_into().unwrap()
 }
 fn point(model: &Model, atom: InstanceAtomId) -> Point3 {
     model.position(atom).unwrap().into_value()
@@ -52,7 +52,7 @@ fn distance_moves_entire_branched_fragment_and_preserves_other_instances() {
             Point3::new(3.0, 4.0, 5.0),
         ],
     );
-    let atoms = model.atom_ids().to_vec();
+    let atoms = model.topology().atom_ids().to_vec();
     let baseline = model.clone();
     let edit = DistanceEdit::new(&model.shared_topology(), [atoms[0], atoms[1]]).unwrap();
     assert_eq!(
@@ -64,7 +64,7 @@ fn distance_moves_entire_branched_fragment_and_preserves_other_instances() {
         .set_distance(atoms[0], atoms[1], Quantity::new(15.0, ANGSTROM))
         .unwrap();
     close(
-        edit.measure(model.view())
+        edit.measure(model.as_model_view())
             .unwrap()
             .value_in(NANOMETER)
             .unwrap(),
@@ -97,7 +97,7 @@ fn angle_moves_fragment_rigidly_and_reversal_moves_opposite_side() {
             .set_angle(a, b, c, Quantity::new(target, DEGREE))
             .unwrap();
         close(
-            edit.measure(model.view())
+            edit.measure(model.as_model_view())
                 .unwrap()
                 .value_in(DEGREE)
                 .unwrap(),
@@ -128,7 +128,7 @@ fn dihedral_scan_uses_current_coordinates_and_matches_measurement_sign() {
     let edit = DihedralEdit::new(&model.shared_topology(), [a, b, c, d]).unwrap();
     assert_eq!(edit.atoms(), [a, b, c, d]);
     close(
-        edit.measure(model.view())
+        edit.measure(model.as_model_view())
             .unwrap()
             .value_in(DEGREE)
             .unwrap(),
@@ -139,7 +139,7 @@ fn dihedral_scan_uses_current_coordinates_and_matches_measurement_sign() {
     ] {
         edit.apply(&mut model, Quantity::new(target, DEGREE))
             .unwrap();
-        let actual = measure::dihedral(model.view(), a, b, c, d)
+        let actual = measure::dihedral(model.as_model_view(), a, b, c, d)
             .unwrap()
             .into_value();
         close(signed_angle(actual - target.to_radians()), 0.0);
@@ -172,7 +172,7 @@ fn dihedral_scan_uses_current_coordinates_and_matches_measurement_sign() {
         .set_dihedral(d, c, b, a, Quantity::new(-90.0, DEGREE))
         .unwrap();
     close(
-        measure::dihedral(reversed.view(), a, b, c, d)
+        measure::dihedral(reversed.as_model_view(), a, b, c, d)
             .unwrap()
             .value_in(DEGREE)
             .unwrap(),
@@ -192,7 +192,9 @@ fn half_turn_ties_and_large_finite_targets_wrap_without_overflow() {
         edit.apply(&mut model, Quantity::new(target, RADIAN))
             .unwrap();
         close(
-            signed_angle(edit.measure(model.view()).unwrap().into_value() - signed_angle(target)),
+            signed_angle(
+                edit.measure(model.as_model_view()).unwrap().into_value() - signed_angle(target),
+            ),
             0.0,
         );
     }
@@ -232,7 +234,10 @@ fn rings_reject_automatic_edits_but_explicit_edits_can_deform_them() {
     }
     close((point(&ring, d) - point(&ring, a)).norm(), 3.0_f64.sqrt());
     close(
-        edit.measure(ring.view()).unwrap().value_in(DEGREE).unwrap(),
+        edit.measure(ring.as_model_view())
+            .unwrap()
+            .value_in(DEGREE)
+            .unwrap(),
         90.0,
     );
 }
@@ -261,7 +266,7 @@ fn explicit_distance_and_angle_allow_disconnected_atoms_and_keep_pivots() {
     }
     close(
         angle
-            .measure(model.view())
+            .measure(model.as_model_view())
             .unwrap()
             .value_in(DEGREE)
             .unwrap(),
@@ -271,7 +276,13 @@ fn explicit_distance_and_angle_allow_disconnected_atoms_and_keep_pivots() {
     distance
         .apply(&mut model, Quantity::new(2.0, NANOMETER))
         .unwrap();
-    close(distance.measure(model.view()).unwrap().into_value(), 2.0);
+    close(
+        distance
+            .measure(model.as_model_view())
+            .unwrap()
+            .into_value(),
+        2.0,
+    );
     assert_ne!(point(&model, b), point(&baseline, b));
     assert_eq!(point(&model, d), point(&baseline, d));
 }
@@ -294,7 +305,7 @@ fn preparation_validates_references_connectivity_and_selections() {
         GeometryEditError::MissingBond { a: b, b: d }
     );
     let larger = fixture("CCCCC", &[Point3::origin(); 5]);
-    let invalid = larger.atom_ids()[4];
+    let invalid = larger.topology().atom_ids()[4];
     assert_eq!(
         DistanceEdit::new(&topology, [a, invalid]).unwrap_err(),
         GeometryEditError::InvalidAtomId(invalid)
@@ -325,7 +336,7 @@ fn prepared_edits_reject_independently_equal_topologies_atomically() {
     let mut other = chain();
     let baseline = other.clone();
     assert_eq!(
-        edit.measure(other.view()),
+        edit.measure(other.as_model_view()),
         Err(GeometryEditError::TopologyMismatch)
     );
     assert_eq!(
@@ -462,7 +473,7 @@ fn finite_but_unachievable_distance_returns_numerical_failure() {
             Point3::new(1.0e20 + 1.0e6, 0.0, 0.0),
         ],
     );
-    let [a, b] = model.atom_ids().try_into().unwrap();
+    let [a, b] = model.topology().atom_ids().try_into().unwrap();
     let baseline = model.clone();
     assert_eq!(
         model.set_distance(a, b, Quantity::new(1.0, NANOMETER)),
@@ -596,7 +607,7 @@ fn empty_selections_still_validate_binding_and_motion_arguments() {
 fn all_edits_preserve_shared_topology_cell_properties_and_chemistry() {
     let mut model = chain();
     let [a, b, c, d] = ids(&model);
-    model.set_cell(Some(
+    model.conformation_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(5.0, 6.0, 7.0), NANOMETER),
             [true; 3],
@@ -604,12 +615,19 @@ fn all_edits_preserve_shared_topology_cell_properties_and_chemistry() {
         .unwrap(),
     ));
     model
-        .insert_property(
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("test.note").unwrap(),
             PropertyValue::String("preserved".into()),
         )
         .unwrap();
-    model.set_occupancy(a, Some(0.75)).unwrap();
+    let a_index = model.topology().atom_index(a).unwrap();
+    model
+        .conformation_mut()
+        .set_occupancy(a_index, Some(0.75))
+        .unwrap();
     let baseline = model.clone();
     let all = AtomSelection::all(&model.shared_topology());
     model
@@ -656,6 +674,7 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
             .map(|p| Point3::new(p.x * scale, p.y * scale, p.z * scale))
             .collect::<Vec<_>>();
         model
+            .conformation_mut()
             .set_positions(Quantity::new(points, NANOMETER))
             .unwrap();
         let all = AtomSelection::all(&model.shared_topology());
@@ -678,14 +697,17 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
             .set_distance(b, c, Quantity::new(1.75 * scale, NANOMETER))
             .unwrap();
         close(
-            measure::distance(model.view(), b, c).unwrap().into_value() / scale,
+            measure::distance(model.as_model_view(), b, c)
+                .unwrap()
+                .into_value()
+                / scale,
             1.75,
         );
         model
             .set_angle(a, b, c, Quantity::new(47.0, DEGREE))
             .unwrap();
         close(
-            measure::angle(model.view(), a, b, c)
+            measure::angle(model.as_model_view(), a, b, c)
                 .unwrap()
                 .value_in(DEGREE)
                 .unwrap(),
@@ -695,7 +717,7 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
             .set_dihedral(a, b, c, d, Quantity::new(-139.0, DEGREE))
             .unwrap();
         close(
-            measure::dihedral(model.view(), a, b, c, d)
+            measure::dihedral(model.as_model_view(), a, b, c, d)
                 .unwrap()
                 .value_in(DEGREE)
                 .unwrap(),
@@ -713,7 +735,7 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
 #[test]
 fn automatic_fragments_may_contain_a_ring_on_the_moving_side() {
     let model = fixture("CCC1CC1", &[Point3::origin(); 5]);
-    let atoms = model.atom_ids();
+    let atoms = model.topology().atom_ids();
     let edit = AngleEdit::new(&model.shared_topology(), [atoms[0], atoms[1], atoms[2]]).unwrap();
     assert_eq!(
         edit.moving_atoms().atom_ids().collect::<Vec<_>>(),
@@ -725,7 +747,7 @@ fn automatic_fragments_may_contain_a_ring_on_the_moving_side() {
 fn prepared_selection_is_a_snapshot_and_repeated_definitions_stay_independent() {
     let molecule = smiles::to_molecules("CCCC").unwrap().pop().unwrap();
     let mut builder = crate::topology::TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     let baseline = chain();
@@ -736,7 +758,7 @@ fn prepared_selection_is_a_snapshot_and_repeated_definitions_stay_independent() 
     )
     .unwrap();
     let topology = model.shared_topology();
-    let [a, b, c, d] = model.atom_ids()[..4].try_into().unwrap();
+    let [a, b, c, d] = model.topology().atom_ids()[..4].try_into().unwrap();
     let mut moving = AtomSelection::from_atoms(&topology, [d]).unwrap();
     let edit = DihedralEdit::with_moving_atoms(&topology, [a, b, c, d], &moving).unwrap();
     moving.clear();
@@ -747,7 +769,7 @@ fn prepared_selection_is_a_snapshot_and_repeated_definitions_stay_independent() 
     model
         .set_distance(b, c, Quantity::new(2.0, NANOMETER))
         .unwrap();
-    for &atom in &model.atom_ids()[4..] {
+    for &atom in &model.topology().atom_ids()[4..] {
         assert_eq!(point(&model, atom), point(&before, atom));
     }
 }

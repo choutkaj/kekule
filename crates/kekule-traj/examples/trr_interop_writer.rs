@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     molecule.add_bond(atoms[0], atoms[2], BondOrder::Single)?;
     let molecule = molecule.finish()?;
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule)?;
+    let definition = builder.add_molecule_definition(molecule.clone())?;
     builder.add_instance(definition)?;
     let topology = Arc::new(builder.build()?);
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr)
@@ -51,15 +51,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let mut frame = FrameBuffer::new(topology);
     for (step, shift) in [(0, 0.0), (1, 0.1)] {
-        frame.set_positions(Quantity::new(
-            [
-                Point3::new(0.0 + shift, 0.1, 0.2),
-                Point3::new(0.3 + shift, 0.4, 0.5),
-                Point3::new(0.6 + shift, 0.7, 0.8),
-            ],
-            NANOMETER,
-        ))?;
-        frame.set_cell(Some(cell));
+        frame
+            .frame_mut()
+            .conformation_mut()
+            .set_positions(Quantity::new(
+                [
+                    Point3::new(0.0 + shift, 0.1, 0.2),
+                    Point3::new(0.3 + shift, 0.4, 0.5),
+                    Point3::new(0.6 + shift, 0.7, 0.8),
+                ],
+                NANOMETER,
+            ))?;
+        frame.frame_mut().conformation_mut().set_cell(Some(cell));
         frame.set_velocities(Some(Quantity::new(
             [
                 Vector3::new(1.0, 2.0, 3.0),
@@ -76,16 +79,28 @@ fn main() -> Result<(), Box<dyn Error>> {
             ],
             CANONICAL_FORCE_UNIT,
         )))?;
-        frame.set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))?;
-        frame.set_step(Some(step));
-        frame.clear_properties();
-        frame.insert_property(
-            PropertyKey::new("gromacs.trr.lambda")?,
-            PropertyValue::Real {
-                value: 0.125 + step as f64 * 0.125,
-                unit: DIMENSIONLESS,
-            },
-        )?;
+        frame
+            .frame_mut()
+            .set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))?;
+        frame.frame_mut().set_step(Some(step));
+        frame
+            .frame_mut()
+            .conformation_mut()
+            .properties_mut()
+            .owner_mut()
+            .clear();
+        frame
+            .frame_mut()
+            .conformation_mut()
+            .properties_mut()
+            .owner_mut()
+            .insert(
+                PropertyKey::new("gromacs.trr.lambda")?,
+                PropertyValue::Real {
+                    value: 0.125 + step as f64 * 0.125,
+                    unit: DIMENSIONLESS,
+                },
+            )?;
         writer.write_frame(frame.frame_view())?;
     }
     writer.finish()?;

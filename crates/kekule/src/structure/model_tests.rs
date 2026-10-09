@@ -2,7 +2,7 @@
 
 use crate::core::{Atom, AtomId, BondId, BondOrder, Element, Molecule};
 use crate::geometry::Point3;
-use crate::structure::{Model, ModelBuildError, PositionError, Positions};
+use crate::structure::{ConformationError, Model, ModelBuildError, PositionError, Positions};
 use crate::topology::AtomSiteMetadata;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, TopologyBuildError};
 use crate::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT, NANOMETER};
@@ -53,7 +53,7 @@ fn one_atom_macro() -> (Molecule, Positions, AtomId) {
 fn model_uses_compact_local_ids_and_dense_round_trips() {
     let (small, positions, a, b, _) = two_atom_small(1.5);
     let mut builder = Model::builder();
-    let instance = builder.add_molecule(&small, &positions).unwrap();
+    let instance = builder.add_molecule(small.clone(), &positions).unwrap();
     let model = builder.build().unwrap();
     let qa = InstanceAtomId::new(instance, a);
     let qb = InstanceAtomId::new(instance, b);
@@ -72,7 +72,7 @@ fn model_uses_compact_local_ids_and_dense_round_trips() {
     assert!(model
         .topology()
         .atom(InstanceAtomId::new(instance, AtomId::new(2)))
-        .is_err());
+        .is_none());
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn positions_convert_source_units_before_model_construction() {
     let positions = Positions::new(Quantity::new(source, NANOMETER)).unwrap();
     let small = graph.finish().unwrap();
 
-    let model = Model::from_molecule(&small, &positions).unwrap();
+    let model = Model::from_molecule(small.clone(), &positions).unwrap();
     let qualified = InstanceAtomId::new(MoleculeInstanceId::new(0), atom);
     assert_eq!(
         model.position(qualified).unwrap().unit(),
@@ -99,7 +99,7 @@ fn positions_convert_source_units_before_model_construction() {
 #[test]
 fn topology_allocation_is_shared_only_by_model_clones() {
     let (small, positions, _, b, _) = two_atom_small(1.5);
-    let model = Model::from_molecule(&small, &positions).unwrap();
+    let model = Model::from_molecule(small.clone(), &positions).unwrap();
     let mut cloned = model.clone();
     cloned
         .set_position(
@@ -107,7 +107,7 @@ fn topology_allocation_is_shared_only_by_model_clones() {
             Quantity::new(Point3::new(2.0, 0.0, 0.0), ANGSTROM),
         )
         .unwrap();
-    let rebuilt = Model::from_molecule(&small, &positions).unwrap();
+    let rebuilt = Model::from_molecule(small.clone(), &positions).unwrap();
 
     assert!(std::sync::Arc::ptr_eq(
         &model.shared_topology(),
@@ -127,9 +127,11 @@ fn mixed_instances_and_hierarchy_use_qualified_ids() {
     let (small, small_positions, _, _, _) = two_atom_small(1.0);
     let (macromolecule, macro_positions, atom) = one_atom_macro();
     let mut builder = Model::builder();
-    let small_id = builder.add_molecule(&small, &small_positions).unwrap();
+    let small_id = builder
+        .add_molecule(small.clone(), &small_positions)
+        .unwrap();
     let macro_id = builder
-        .add_molecule(&macromolecule, &macro_positions)
+        .add_molecule(macromolecule.clone(), &macro_positions)
         .unwrap();
     let chain = builder
         .topology_builder_mut()
@@ -156,13 +158,13 @@ fn mixed_instances_and_hierarchy_use_qualified_ids() {
         model.topology().molecule(small_id).unwrap().molecule(),
         model
             .topology()
-            .definition_for_instance(small_id)
+            .molecule(small_id)
             .unwrap()
+            .definition()
             .molecule()
     ));
-    let hierarchy = model.topology();
     assert_eq!(
-        hierarchy.atom_for_site(site).unwrap(),
+        model.topology().atom_site(site).unwrap().atom().id(),
         InstanceAtomId::new(macro_id, atom)
     );
 }
@@ -171,8 +173,8 @@ fn mixed_instances_and_hierarchy_use_qualified_ids() {
 fn repeated_molecules_get_distinct_instance_ids() {
     let (small, positions, atom, _, _) = two_atom_small(1.0);
     let mut builder = Model::builder();
-    let first = builder.add_molecule(&small, &positions).unwrap();
-    let second = builder.add_molecule(&small, &positions).unwrap();
+    let first = builder.add_molecule(small.clone(), &positions).unwrap();
+    let second = builder.add_molecule(small.clone(), &positions).unwrap();
     let model = builder.build().unwrap();
     assert_ne!(first, second);
     assert_ne!(
@@ -186,7 +188,7 @@ fn repeated_molecules_get_distinct_instance_ids() {
 fn construction_copies_positions_and_preserves_sources() {
     let (small, positions, _a, _, _) = two_atom_small(1.0);
     let source = small.clone();
-    let mut model = Model::from_molecule(&small, &positions).unwrap();
+    let mut model = Model::from_molecule(small.clone(), &positions).unwrap();
     let atom = InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(0));
     model
         .set_position(atom, Quantity::new(Point3::new(3.0, 0.0, 0.0), ANGSTROM))
@@ -211,7 +213,7 @@ fn construction_rejects_empty_and_mismatched_positions_transactionally() {
     let wrong_count = Positions::new(Quantity::new([Point3::origin()], ANGSTROM)).unwrap();
     let mut builder = Model::builder();
     assert!(matches!(
-        builder.add_molecule(&small, &wrong_count),
+        builder.add_molecule(small.clone(), &wrong_count),
         Err(ModelBuildError::InstancePositionCountMismatch {
             expected: 2,
             actual: 1
@@ -228,18 +230,26 @@ fn construction_rejects_empty_and_mismatched_positions_transactionally() {
 #[test]
 fn position_updates_are_complete_finite_and_transactional() {
     let (small, positions, _a, _, _) = two_atom_small(1.0);
-    let mut model = Model::from_molecule(&small, &positions).unwrap();
+    let mut model = Model::from_molecule(small.clone(), &positions).unwrap();
     let original = model.positions().values().value().to_vec();
     assert!(matches!(
-        model.set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
-        Err(PositionError::PositionCountMismatch { .. })
+        model
+            .conformation_mut()
+            .set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
+        Err(ConformationError::Position(
+            PositionError::PositionCountMismatch { .. }
+        ))
     ));
     assert_eq!(model.positions().values().into_value(), original.as_slice());
     let mut invalid = original.clone();
     invalid[0] = Point3::new(f64::INFINITY, 0.0, 0.0);
     assert!(matches!(
-        model.set_positions(Quantity::new(&invalid, ANGSTROM)),
-        Err(PositionError::NonFinitePosition { index: 0 })
+        model
+            .conformation_mut()
+            .set_positions(Quantity::new(&invalid, ANGSTROM)),
+        Err(ConformationError::Position(
+            PositionError::NonFinitePosition { index: 0 }
+        ))
     ));
     assert_eq!(model.positions().values().into_value(), original.as_slice());
 }

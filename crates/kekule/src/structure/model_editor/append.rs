@@ -1,12 +1,13 @@
 use super::*;
-use crate::structure::ModelView;
+use crate::structure::AsModelView;
 use crate::topology::{AppendMapping, Topology};
+use crate::topology::{AtomSiteId, ChainId, InstanceAtomId, InstanceBondId, ResidueId};
 
 impl ModelEditor {
     /// Appends a complete borrowed model, including its existing coordinates.
     ///
-    /// Accepts `&Model` or a [`ModelView`] from an ensemble member or trajectory
-    /// frame without first creating an owned model. Positions are used as supplied:
+    /// Accepts any [`AsModelView`] source, such as a model, an ensemble member,
+    /// or a trajectory frame, without first creating an owned model. Positions are used as supplied:
     /// the caller is responsible for their placement in the destination coordinate
     /// system. No fitting, imaging, bond inference or geometry generation is done.
     ///
@@ -34,7 +35,7 @@ impl ModelEditor {
     /// use kekule::{smiles, structure::{Model, Positions}, geometry::Point3,
     ///     units::{Quantity, ANGSTROM}};
     /// let molecule = smiles::to_molecules("CO")?.pop().unwrap();
-    /// let ligand = Model::from_molecule(&molecule, &Positions::new(Quantity::new(
+    /// let ligand = Model::from_molecule(molecule, &Positions::new(Quantity::new(
     ///     vec![Point3::origin(), Point3::new(1.4, 0.0, 0.0)], ANGSTROM))?)?;
     /// let mut editor = ligand.edit();
     /// let appended = editor.append_model(&ligand)?;
@@ -45,38 +46,36 @@ impl ModelEditor {
     /// assert_eq!(model.atom_count(), 4);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn append_model<'a>(
+    pub fn append_model(
         &mut self,
-        source: impl Into<ModelView<'a>>,
+        source: &(impl AsModelView + ?Sized),
     ) -> Result<ModelAppend, ModelEditError> {
-        let source = source.into();
-        let cell = match (self.cell, source.cell().copied()) {
+        let source = source.as_model_view();
+        let cell = match (self.cell().copied(), source.cell().copied()) {
             (None, cell) if self.is_empty() => cell,
             (cell, None) => cell,
             (Some(left), Some(right)) if compatible_cells(left, right) => Some(left),
             _ => return Err(ModelEditError::IncompatibleAppendCell),
         };
         let report = ModelAppendReport {
-            cleared_topology_properties: owner_keys(self.topology.properties()),
-            cleared_model_properties: owner_keys(&self.properties),
-            omitted_topology_properties: owner_keys(source.topology().properties()),
-            omitted_model_properties: owner_keys(source.properties()),
+            cleared_topology_properties: self.owner_properties_of_topology(),
+            cleared_model_properties: self.owner_properties().keys().cloned().collect(),
+            omitted_topology_properties: source
+                .topology()
+                .properties()
+                .owner()
+                .keys()
+                .cloned()
+                .collect(),
+            omitted_model_properties: source.properties().owner().keys().cloned().collect(),
         };
         let mut staged = self.clone();
-        staged
-            .positions
-            .try_reserve(source.positions().len())
-            .map_err(|_| ModelEditError::CapacityOverflow)?;
+        staged.slots.try_reserve_atoms(source.atom_count())?;
         let mapping = staged.topology.append_topology(source.shared_topology())?;
-        staged
-            .positions
-            .extend_from_slice(source.positions().values().value());
-        staged
-            .properties
-            .resize_atoms(staged.topology.atom_slot_count());
-        staged
-            .properties
-            .resize_bonds(staged.topology.bond_slot_count());
+        staged.slots.resize_slots(
+            staged.topology.atom_slot_count(),
+            staged.topology.bond_slot_count(),
+        );
         let atom_rows = source
             .topology()
             .atom_ids()
@@ -90,25 +89,31 @@ impl ModelEditor {
             .map(|id| staged.topology.bond_slot(mapping.bonds[id]))
             .collect::<Result<Vec<_>, _>>()?;
         staged
-            .properties
-            .atoms_mut()
-            .copy_rows_from(source.atom_properties(), &atom_rows)
+            .slots
+            .copy_atom_state_from(source.conformation(), &atom_rows);
+        let properties = staged.slots.properties_storage_mut();
+        properties
+            .atoms_raw_mut()
+            .copy_rows_from(source.properties().atoms().raw(), &atom_rows)
             .map_err(|error| ModelEditError::AppendProperty {
                 domain: "model atom",
                 error: Box::new(error),
             })?;
-        staged
-            .properties
-            .bonds_mut()
-            .copy_rows_from(source.bond_properties(), &bond_rows)
+        properties
+            .bonds_raw_mut()
+            .copy_rows_from(source.properties().bonds().raw(), &bond_rows)
             .map_err(|error| ModelEditError::AppendProperty {
                 domain: "model bond",
                 error: Box::new(error),
             })?;
-        staged.properties.clear_owner();
-        staged.cell = cell;
+        properties.owner_mut().clear();
+        staged.slots.set_cell(cell);
         *self = staged;
         Ok(ModelAppend { mapping, report })
+    }
+
+    fn owner_properties_of_topology(&self) -> Vec<PropertyKey> {
+        self.topology.owner_properties().keys().cloned().collect()
     }
 }
 
@@ -129,10 +134,6 @@ fn compatible_cells(left: PeriodicCell, right: PeriodicCell) -> bool {
             && (a.y - b.y).abs() <= tolerance
             && (a.z - b.z).abs() <= tolerance
     })
-}
-
-fn owner_keys(properties: &Properties) -> Vec<PropertyKey> {
-    properties.iter().map(|(key, _)| key.clone()).collect()
 }
 
 /// Owner annotations excluded by one successful append, in property-key order.

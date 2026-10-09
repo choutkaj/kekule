@@ -256,7 +256,7 @@ impl Model {
     /// ```
     /// use kekule::{smiles, structure::{Model, Positions, PeriodicBoxOptions,
     ///     BoxShape, SolventOptions}, units::{Quantity, NANOMETER, MOLAR}};
-    /// let mut model = Model::from_molecule(&smiles::to_molecules("[Na+]")?.remove(0),
+    /// let mut model = Model::from_molecule(smiles::to_molecules("[Na+]")?.remove(0),
     ///     &Positions::zeros(1))?;
     /// model.add_periodic_box(&PeriodicBoxOptions::Padding {
     ///     padding: Quantity::new(1.0, NANOMETER), shape: BoxShape::Cube,

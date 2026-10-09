@@ -194,11 +194,23 @@ fn molfile_writers_preserve_unasserted_3d_tetrahedra_as_unknown() {
             Point3::new(-1.0, -1.0, -1.0),
         ];
         let positions = test_positions(points[..molecule.atom_count()].to_vec());
-        let model = Model::from_molecule(&molecule, &positions).unwrap();
+        let model = Model::from_molecule(molecule.clone(), &positions).unwrap();
         let before = model.clone();
         for source in [
-            molfile::write_model_v2000(&model).unwrap(),
-            molfile::write_model_v3000(&model).unwrap(),
+            molfile::write(
+                &model,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V2000,
+                },
+            )
+            .unwrap(),
+            molfile::write(
+                &model,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V3000,
+                },
+            )
+            .unwrap(),
         ] {
             let (parsed, _) = read_molfile_with_report(&source).unwrap();
             assert_eq!(parsed.stereo_elements().count(), 1);
@@ -298,8 +310,18 @@ fn molfile_ambiguous_wedge_geometry_never_invents_a_configuration() {
 fn molfile_specified_tetrahedral_export_requires_a_drawing() {
     let molecule = read_smiles("F[C@](Cl)(Br)I").unwrap();
     for result in [
-        molfile::write_v2000(&molecule),
-        molfile::write_v3000(&molecule),
+        molfile::write(
+            &molecule,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V2000,
+            },
+        ),
+        molfile::write(
+            &molecule,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V3000,
+            },
+        ),
     ] {
         assert!(
             result.is_err(),
@@ -308,8 +330,18 @@ fn molfile_specified_tetrahedral_export_requires_a_drawing() {
     }
     let model = test_model(&molecule);
     for result in [
-        molfile::write_model_v2000(&model),
-        molfile::write_model_v3000(&model),
+        molfile::write(
+            &model,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V2000,
+            },
+        ),
+        molfile::write(
+            &model,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V3000,
+            },
+        ),
     ] {
         assert!(
             result.is_err(),
@@ -445,8 +477,20 @@ fn molfile_model_writing_preserves_tetrahedral_drawing_orientation() {
             let interpreted = molfile::interpret(&document).expect("interpreted drawing");
             let original = interpreted.molecules().next().unwrap();
             for written in [
-                molfile::write_model_v2000(interpreted.model()).expect("V2000 model writes"),
-                molfile::write_model_v3000(interpreted.model()).expect("V3000 model writes"),
+                molfile::write(
+                    interpreted.model(),
+                    molfile::MolfileWriteOptions {
+                        version: molfile::MolfileWriteVersion::V2000,
+                    },
+                )
+                .expect("V2000 model writes"),
+                molfile::write(
+                    interpreted.model(),
+                    molfile::MolfileWriteOptions {
+                        version: molfile::MolfileWriteVersion::V3000,
+                    },
+                )
+                .expect("V3000 model writes"),
             ] {
                 let reparsed = read_molfile(&written).expect("written drawing interprets");
                 assert_eq!(
@@ -512,7 +556,13 @@ fn molfile_redundant_wedges_preserve_consistent_and_unknown_configurations() {
 fn v3000_round_trips_absolute_or_and_stereo_groups_and_promotes_auto_output() {
     let document = molfile::parse_str(&wedged_tetrahedron("C", 0, false)).unwrap();
     let interpreted = molfile::interpret(&document).unwrap();
-    let source = molfile::write_model_v3000(interpreted.model()).unwrap();
+    let source = molfile::write(
+        interpreted.model(),
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000,
+        },
+    )
+    .unwrap();
     for (group, expected) in [
         ("MDLV30/STEABS", StereoGroupKind::Absolute),
         ("MDLV30/STEREL1", StereoGroupKind::Or),
@@ -536,15 +586,19 @@ fn v3000_round_trips_absolute_or_and_stereo_groups_and_promotes_auto_output() {
         assert_eq!(group.members.len(), 1);
         let mut molecule = interpreted.molecules().next().unwrap().clone();
         molecule.perceive().unwrap();
-        let cx = crate::smiles::write_canonical(&molecule).unwrap();
+        let cx = crate::smiles::write(&molecule, crate::smiles::SmilesWriteOptions::canonical())
+            .unwrap();
         let mut restored = crate::smiles::to_molecules(&cx).unwrap().pop().unwrap();
         restored.perceive().unwrap();
         assert_eq!(restored.stereo_groups().next().unwrap().1.kind, expected);
-        assert_eq!(crate::smiles::write_canonical(&restored).unwrap(), cx);
+        assert_eq!(
+            crate::smiles::write(&restored, crate::smiles::SmilesWriteOptions::canonical())
+                .unwrap(),
+            cx
+        );
         assert!(interpreted.reports()[0].ignored_record_lines().is_empty());
         let written =
-            molfile::write_model(interpreted.model(), molfile::MolfileWriteOptions::default())
-                .unwrap();
+            molfile::write(interpreted.model(), molfile::MolfileWriteOptions::default()).unwrap();
         assert!(written.contains("V3000"));
         let document = molfile::parse_str(&written).unwrap();
         let reparsed = molfile::interpret(&document).unwrap();
@@ -559,10 +613,15 @@ fn v3000_round_trips_absolute_or_and_stereo_groups_and_promotes_auto_output() {
                 .1,
             group
         );
-        assert!(molfile::write_model_v2000(interpreted.model())
-            .unwrap_err()
-            .message()
-            .contains("enhanced stereo groups"));
+        assert!(molfile::write(
+            interpreted.model(),
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V2000
+            }
+        )
+        .unwrap_err()
+        .message()
+        .contains("enhanced stereo groups"));
     }
 }
 
@@ -570,7 +629,13 @@ fn v3000_round_trips_absolute_or_and_stereo_groups_and_promotes_auto_output() {
 fn v3000_round_trips_atropisomeric_bond_group_members() {
     let document = molfile::parse_str(rdkit_rp6306_atrop_molblock()).unwrap();
     let interpreted = molfile::interpret(&document).unwrap();
-    let source = molfile::write_model_v3000(interpreted.model()).unwrap();
+    let source = molfile::write(
+        interpreted.model(),
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000,
+        },
+    )
+    .unwrap();
     // RDKit represents enhanced axis membership using either endpoint atom,
     // and collapses a pair of endpoint references to one bond member.
     for (name, kind) in [
@@ -588,7 +653,13 @@ fn v3000_round_trips_atropisomeric_bond_group_members() {
             assert!(
                 matches!(&molecule.stereo_element(group.members[0]).unwrap().kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(3))
             );
-            let output = molfile::write_model_v3000(interpretation.model()).unwrap();
+            let output = molfile::write(
+                interpretation.model(),
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V3000,
+                },
+            )
+            .unwrap();
             assert!(!output.contains("BONDS="));
             assert!(output.contains("ATOMS=(1 3)"));
             let reread = molfile::parse_str(&output).unwrap().interpret().unwrap();
@@ -638,8 +709,20 @@ M  V30 7 1 7 8\nM  V30 8 2 8 9\nM  V30 9 1 9 4\nM  V30 END BOND\nM  V30 END CTAB
             descriptors.push(assigned.assigned[0].descriptor);
             let interpretation = molfile::parse_str(&source).unwrap().interpret().unwrap();
             for output in [
-                molfile::write_model_v2000(interpretation.model()).unwrap(),
-                molfile::write_model_v3000(interpretation.model()).unwrap(),
+                molfile::write(
+                    interpretation.model(),
+                    molfile::MolfileWriteOptions {
+                        version: molfile::MolfileWriteVersion::V2000,
+                    },
+                )
+                .unwrap(),
+                molfile::write(
+                    interpretation.model(),
+                    molfile::MolfileWriteOptions {
+                        version: molfile::MolfileWriteVersion::V3000,
+                    },
+                )
+                .unwrap(),
             ] {
                 let mut reread = read_molfile(&output).unwrap();
                 perceive(&mut reread).unwrap();
@@ -701,7 +784,13 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
         );
     }
     let model = molfile::parse_str(&source).unwrap().interpret().unwrap();
-    let v3000 = molfile::write_model_v3000(model.model()).unwrap();
+    let v3000 = molfile::write(
+        model.model(),
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000,
+        },
+    )
+    .unwrap();
     let unmarked_v3000 = read_molfile(&v3000).unwrap();
     for cfg in [1, 3] {
         let conflicting = v3000
@@ -754,10 +843,15 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
             .unwrap()
             .assigned
             .is_empty());
-        assert!(molfile::write_v3000(&molecule)
-            .unwrap_err()
-            .message()
-            .contains("unknown axis"));
+        assert!(molfile::write(
+            &molecule,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V3000
+            }
+        )
+        .unwrap_err()
+        .message()
+        .contains("unknown axis"));
     }
 }
 
@@ -765,12 +859,17 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
 fn v3000_stereo_groups_validate_members_and_preserve_source_ids_and_continuations() {
     let document = molfile::parse_str(&wedged_tetrahedron("C", 0, false)).unwrap();
     let interpreted = molfile::interpret(&document).unwrap();
-    let source = molfile::write_model_v3000(interpreted.model())
-        .unwrap()
-        .replace("M  V30 1 C", "M  V30 101 C")
-        .replace("M  V30 1 1 1 2", "M  V30 1 1 101 2")
-        .replace("M  V30 2 1 1 3", "M  V30 2 1 101 3")
-        .replace("M  V30 3 1 1 4", "M  V30 3 1 101 4");
+    let source = molfile::write(
+        interpreted.model(),
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000,
+        },
+    )
+    .unwrap()
+    .replace("M  V30 1 C", "M  V30 101 C")
+    .replace("M  V30 1 1 1 2", "M  V30 1 1 101 2")
+    .replace("M  V30 2 1 1 3", "M  V30 2 1 101 3")
+    .replace("M  V30 3 1 1 4", "M  V30 3 1 101 4");
     let collection = |row: &str| {
         source.replace(
             "M  V30 END CTAB",
@@ -815,7 +914,7 @@ fn v3000_stereo_groups_validate_members_and_preserve_source_ids_and_continuation
 fn v3000_repeated_group_ids_preserve_one_relation() {
     let molecule = read_smiles("F[C@H](Cl)[C@H](Br)I").unwrap();
     let model = Model::from_molecule(
-        &molecule,
+        molecule.clone(),
         &test_positions(vec![
             Point3::new(-1.0, 1.0, 0.0),
             Point3::origin(),
@@ -826,7 +925,13 @@ fn v3000_repeated_group_ids_preserve_one_relation() {
         ]),
     )
     .unwrap();
-    let source = molfile::write_model_v3000(&model).unwrap();
+    let source = molfile::write(
+        &model,
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V3000,
+        },
+    )
+    .unwrap();
     for kind in ["STEREL", "STERAC"] {
         for number in ["1", "01"] {
             let grouped = source.replace("M  V30 END CTAB", &format!("M  V30 BEGIN COLLECTION\nM  V30 MDLV30/{kind}1 ATOMS=(1 2)\nM  V30 MDLV30/{kind}{number} ATOMS=(1 4)\nM  V30 END COLLECTION\nM  V30 END CTAB"));
@@ -844,7 +949,7 @@ fn v3000_repeated_group_ids_preserve_one_relation() {
 fn v3000_rejects_relative_groups_across_components_and_preserves_absolute_members() {
     let document = molfile::parse_str(&wedged_tetrahedron("C", 0, false)).unwrap();
     let interpreted = molfile::interpret(&document).unwrap();
-    let source = molfile::write_model_v3000(interpreted.model()).unwrap()
+    let source = molfile::write(interpreted.model(), molfile::MolfileWriteOptions { version: molfile::MolfileWriteVersion::V3000 }).unwrap()
         .replace("COUNTS 4 3", "COUNTS 8 6")
         .replace("M  V30 END ATOM", "M  V30 5 C 5 0 0 0\nM  V30 6 F 6 0 0 0\nM  V30 7 Cl 4 0 0 0\nM  V30 8 Br 5 1 0 0\nM  V30 END ATOM")
         .replace("M  V30 END BOND", "M  V30 4 1 5 6 CFG=1\nM  V30 5 1 5 7\nM  V30 6 1 5 8\nM  V30 END BOND");
@@ -857,7 +962,13 @@ fn v3000_rejects_relative_groups_across_components_and_preserves_absolute_member
             assert!(interpreted
                 .molecules()
                 .all(|molecule| molecule.stereo_groups().count() == 1));
-            let output = molfile::write_model_v3000(interpreted.model()).unwrap();
+            let output = molfile::write(
+                interpreted.model(),
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V3000,
+                },
+            )
+            .unwrap();
             assert_eq!(output.matches("MDLV30/STEABS").count(), 1);
             assert!(output.contains("ATOMS=(2 1 5)"));
             assert_eq!(
@@ -887,6 +998,7 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
     let molecule = interpretation.molecule();
     assert!(molecule
         .properties()
+        .owner()
         .get(&PropertyKey::new("sdf.title").unwrap())
         .is_none());
     assert_eq!(interpretation.report().atom_mappings().len(), 1);
@@ -902,6 +1014,7 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
     assert!(records[0]
         .molecule()
         .properties()
+        .owner()
         .get(&PropertyKey::new("sdf.field.FIELD").unwrap())
         .is_none());
     assert_eq!(interpretation.reports().len(), 1);
@@ -1364,7 +1477,13 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
         test_model(&molecule),
         vec![SdfDataField::new("NOTES", "> leading marker\nsecond line")],
     );
-    let written = sdf::write_v2000(&[record]).expect("representable field should write");
+    let written = sdf::write(
+        &[record],
+        sdf::SdfWriteOptions {
+            version: sdf::MolfileWriteVersion::V2000,
+        },
+    )
+    .expect("representable field should write");
     let reparsed = read_sdf_records(&written).expect("written field should parse");
     assert_eq!(
         reparsed[0].data_fields()[0].value(),
@@ -1390,9 +1509,14 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
         ),
     ] {
         let record = SdfRecordInterpretation::new(title, test_model(&molecule), vec![field]);
-        let error =
-            sdf::write_v2000(&[record]).expect_err("unrepresentable SDF metadata must fail");
-        assert!(error.message().contains(expected), "{expected}: {error}");
+        let error = sdf::write(
+            &[record],
+            sdf::SdfWriteOptions {
+                version: sdf::MolfileWriteVersion::V2000,
+            },
+        )
+        .expect_err("unrepresentable SDF metadata must fail");
+        assert!(error.to_string().contains(expected), "{expected}: {error}");
     }
 }
 
@@ -1412,7 +1536,13 @@ fn v2000_radical_codes_round_trip_exact_multiplicity() {
             Some(expected)
         );
 
-        let written = molfile::write_v2000(&parsed).expect("radical record should write");
+        let written = molfile::write(
+            &parsed,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V2000,
+            },
+        )
+        .expect("radical record should write");
         assert!(
             written.contains(&format!("M  RAD  1   1   {code}")),
             "written code {code}: {written}"
@@ -1487,8 +1617,13 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
             let document = molfile::parse_str(&input).expect("source syntax parses");
             let interpreted = molfile::interpret(&document).expect("source declaration interprets");
             assert_eq!(interpreted.report().created_stereo_elements().len(), 1);
-            let written = molfile::write_model_v2000(interpreted.model())
-                .expect("canonical stereo should project with its drawing");
+            let written = molfile::write(
+                interpreted.model(),
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V2000,
+                },
+            )
+            .expect("canonical stereo should project with its drawing");
             let molecule = interpreted.into_molecule();
             let center = molecule.atom(AtomId::new(0)).expect("stereo center");
             assert_eq!(
@@ -1598,10 +1733,15 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
             },
         )))
         .expect("double-bond stereo");
-    assert!(molfile::write_v2000(molecule.working())
-        .expect_err("specified double-bond stereo should be rejected")
-        .message
-        .contains("requires a Model"));
+    assert!(molfile::write(
+        molecule.working(),
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V2000
+        }
+    )
+    .expect_err("specified double-bond stereo should be rejected")
+    .message
+    .contains("requires a Model"));
 
     let element = molecule
         .stereo_element_ids()
@@ -1614,10 +1754,15 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
         .bond_mut(bond)
         .expect("bond")
         .set_order(BondOrder::Quadruple);
-    assert!(molfile::write_v2000(molecule.working())
-        .expect_err("quadruple bond should be rejected")
-        .message
-        .contains("quadruple"));
+    assert!(molfile::write(
+        molecule.working(),
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V2000
+        }
+    )
+    .expect_err("quadruple bond should be rejected")
+    .message
+    .contains("quadruple"));
 }
 
 #[test]
@@ -1644,7 +1789,13 @@ $$$$
 ";
 
     let records = read_sdf_records(input).expect("sdf should parse");
-    let sdf = sdf::write_v2000(&records).expect("sdf should write");
+    let sdf = sdf::write(
+        &records,
+        sdf::SdfWriteOptions {
+            version: sdf::MolfileWriteVersion::V2000,
+        },
+    )
+    .expect("sdf should write");
     let reparsed = read_sdf_records(&sdf).expect("written sdf parses");
 
     assert_eq!(reparsed.len(), 1);
@@ -1675,7 +1826,13 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
             parsed.atom(AtomId::new(0)).expect("atom").formal_charge,
             expected_charge
         );
-        let written = molfile::write_v2000(&parsed).expect("charge should write");
+        let written = molfile::write(
+            &parsed,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V2000,
+            },
+        )
+        .expect("charge should write");
         let reparsed = read_molfile(&written).expect("charge should reparse");
         assert_eq!(
             reparsed.atom(AtomId::new(0)).expect("atom").formal_charge,
@@ -1705,30 +1862,44 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         .finish()
         .expect("metadata fixture should be connected");
     molecule
-        .insert_property(
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("sdf.title").unwrap(),
             PropertyValue::String("metadata title".to_owned()),
         )
         .unwrap();
     molecule
-        .insert_property(
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("sdf.program").unwrap(),
             PropertyValue::String("metadata program".to_owned()),
         )
         .unwrap();
     molecule
-        .insert_property(
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("sdf.comment").unwrap(),
             PropertyValue::String("metadata comment".to_owned()),
         )
         .unwrap();
     molecule
-        .insert_property(
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("sdf.field.NOTES").unwrap(),
             PropertyValue::String("line one\nline two".to_owned()),
         )
         .unwrap();
-    let mol_text = molfile::write_v2000(&molecule).expect("metadata molecule should write");
+    let mol_text = molfile::write(
+        &molecule,
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V2000,
+        },
+    )
+    .expect("metadata molecule should write");
     assert_eq!(mol_text.lines().nth(1), Some("kekule"));
     assert_eq!(mol_text.matches("M  CHG").count(), 2);
     assert_eq!(mol_text.matches("M  ISO").count(), 2);
@@ -1739,7 +1910,13 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         SdfRecordInterpretation::new("metadata title", test_model(&molecule), fields.clone()),
         SdfRecordInterpretation::new("metadata title", test_model(&molecule), fields),
     ];
-    let sdf_text = sdf::write_v2000(&records).expect("two records should write");
+    let sdf_text = sdf::write(
+        &records,
+        sdf::SdfWriteOptions {
+            version: sdf::MolfileWriteVersion::V2000,
+        },
+    )
+    .expect("two records should write");
     assert_eq!(sdf_text.lines().nth(1), Some("kekule"));
     let records = read_sdf_records(&sdf_text).expect("written records should parse");
     assert_eq!(records.len(), 2);

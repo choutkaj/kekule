@@ -9,9 +9,10 @@ use std::sync::{
 use kekule::topology::Topology;
 
 use crate::{
-    Trajectory, TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryFrameView,
-    TrajectoryIoOperation, TrajectoryWriter,
+    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryIoOperation,
+    TrajectoryWriter,
 };
+use kekule::structure::{Trajectory, TrajectoryFrameView};
 
 use super::{codec_context, dcd, detect, io_context, trr, xtc, xyz};
 
@@ -278,7 +279,7 @@ impl Drop for FileTrajectoryWriter {
 /// succeeds. Empty trajectories are rejected by the writer.
 ///
 /// ```no_run
-/// # use kekule_traj::Trajectory;
+/// # use kekule::structure::Trajectory;
 /// # fn save(trajectory: &Trajectory) -> Result<(), kekule_traj::TrajectoryError> {
 /// kekule_traj::io::write_trajectory("aligned.trr", trajectory)?;
 /// # Ok(()) }
@@ -306,7 +307,7 @@ pub fn write_trajectory_with_options(
         return Err(TrajectoryError::UnsupportedField("collection properties"));
     }
     let mut writer = create_trajectory_writer(path, trajectory.shared_topology(), options)?;
-    for frame in trajectory.frames() {
+    for frame in trajectory {
         writer.write_frame(frame)?;
     }
     writer.finish()

@@ -36,10 +36,10 @@ fn targets() -> Result<&'static Vec<Target>, Box<dyn Error>> {
                         for molecule in &mut molecules {
                             molecule.perceive()?;
                         }
-                        let topology = Arc::new(Topology::from_molecules(&molecules)?);
+                        let topology = Arc::new(Topology::from_molecules(molecules)?);
                         let indices = topology
                             .molecules()
-                            .flat_map(|m| m.atoms().map(|(id, _)| id))
+                            .flat_map(|m| m.atoms().map(|atom| atom.id()))
                             .enumerate()
                             .map(|(i, id)| (id, i))
                             .collect();
@@ -82,7 +82,7 @@ pub(super) fn observe(graph: &query::QueryGraph) -> Result<Value, Box<dyn Error>
     let mut observations = Vec::new();
     for (target, prepared) in targets.iter().zip(prepared) {
         let matches = prepared
-            .find_matches_complete(graph, options)
+            .find_matches_with_options(graph, options)
             .map_err(|e| boxed_error(format!("SMARTS target {}: {e}", target.id)))?;
         let mut mappings = matches
             .iter()

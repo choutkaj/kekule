@@ -145,71 +145,55 @@ pub enum MatchCompletion {
     Stopped,
 }
 
-pub fn find_substructure_match(
+/// The first match in search order, if any.
+///
+/// Stops at the first embedding, so the match cap never applies.
+pub fn find_match(
     target: &Molecule,
     query: &QueryGraph,
 ) -> Result<Option<QueryMatch>, SubstructureMatchError> {
-    let options = SubstructureMatchOptions {
-        max_matches: 1,
-        uniquify: false,
-        ..Default::default()
-    };
-    Ok(
-        find_substructure_matches_with_options(target, query, options)?
-            .into_iter()
-            .next(),
-    )
+    PreparedTarget::new(target).find_match(query)
 }
-pub fn find_substructure_matches(
+
+/// Every match with default options. See [`find_matches_with_options`].
+pub fn find_matches(
     target: &Molecule,
     query: &QueryGraph,
 ) -> Result<Vec<QueryMatch>, SubstructureMatchError> {
-    find_substructure_matches_with_options(target, query, SubstructureMatchOptions::default())
+    find_matches_with_options(target, query, SubstructureMatchOptions::default())
 }
-/// Legacy bounded collection: reaching `max_matches` stops successfully.
-pub fn find_substructure_matches_with_options(
+
+/// Every match, retaining every embedding unless `uniquify` is requested.
+///
+/// The match cap is a resource bound: exceeding it returns an error, never a
+/// partial list. To stop early, use [`visit_matches`].
+pub fn find_matches_with_options(
     target: &Molecule,
     query: &QueryGraph,
     options: SubstructureMatchOptions,
 ) -> Result<Vec<QueryMatch>, SubstructureMatchError> {
-    let prepared = PreparedTarget::new(target);
-    let mut results = Vec::new();
-    prepared.visit(query, options, false, &mut |atoms| {
-        results.push(QueryMatch {
-            atoms: atoms.to_vec(),
-        });
-        true
-    })?;
-    Ok(results)
+    PreparedTarget::new(target).find_matches_with_options(query, options)
 }
-/// Complete collection, retaining every embedding unless `uniquify` is requested.
-/// The match cap is a resource bound: exceeding it returns an error, never a partial list.
-pub fn find_substructure_matches_complete(
+
+/// Streams matches with default options. See [`visit_matches_with_options`].
+pub fn visit_matches(
     target: &Molecule,
     query: &QueryGraph,
-    options: SubstructureMatchOptions,
-) -> Result<Vec<QueryMatch>, SubstructureMatchError> {
-    let mut matches = Vec::new();
-    visit_substructure_matches(target, query, options, |m| {
-        matches.push(m.clone());
-        std::ops::ControlFlow::Continue(())
-    })?;
-    Ok(matches)
-}
-/// Streams matches. Delivered matches remain provisional until `Complete` is returned.
-/// A resource error may follow earlier callbacks; no complete-result claim is then made.
-pub fn visit_substructure_matches(
-    target: &Molecule,
-    query: &QueryGraph,
-    options: SubstructureMatchOptions,
-    mut visitor: impl FnMut(&QueryMatch) -> std::ops::ControlFlow<()>,
+    visitor: impl FnMut(&QueryMatch) -> std::ops::ControlFlow<()>,
 ) -> Result<MatchCompletion, SubstructureMatchError> {
-    PreparedTarget::new(target).visit(query, options, true, &mut |atoms| {
-        visitor(&QueryMatch {
-            atoms: atoms.to_vec(),
-        })
-        .is_continue()
-    })
+    visit_matches_with_options(target, query, SubstructureMatchOptions::default(), visitor)
+}
+
+/// Streams matches until the visitor breaks. Delivered matches remain
+/// provisional until `Complete` is returned; a resource error may follow
+/// earlier callbacks.
+pub fn visit_matches_with_options(
+    target: &Molecule,
+    query: &QueryGraph,
+    options: SubstructureMatchOptions,
+    visitor: impl FnMut(&QueryMatch) -> std::ops::ControlFlow<()>,
+) -> Result<MatchCompletion, SubstructureMatchError> {
+    PreparedTarget::new(target).visit_matches_with_options(query, options, visitor)
 }
 
 fn validate_options(options: SubstructureMatchOptions) -> Result<(), SubstructureMatchError> {

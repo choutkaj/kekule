@@ -255,7 +255,7 @@ fn publish_model(
         built.complete_connectivity(connectivity)?;
         for built in built.publish_components()? {
             let id = builder
-                .add_molecule(&built.molecule, &built.positions)
+                .add_molecule(built.molecule, &built.positions)
                 .map_err(graph_error)?;
             let (provenance, atom_data) = built.provenance.qualify(id);
             report.instances.push(provenance);
@@ -290,8 +290,15 @@ fn publish_model(
         occupancies[index.index()] = occupancy;
         b_factors[index.index()] = b_factor.map(|value| value * b_factor_scale);
     }
-    model
-        .install_canonical_atom_properties(occupancies, b_factors)
+    let mut conformation = model.conformation_mut();
+    conformation
+        .set_occupancies(Some(occupancies))
+        .map_err(graph_error)?;
+    conformation
+        .set_b_factors(Some(crate::units::Quantity::new(
+            b_factors,
+            SQUARE_NANOMETER,
+        )))
         .map_err(graph_error)?;
     report.macromolecules = report
         .instances

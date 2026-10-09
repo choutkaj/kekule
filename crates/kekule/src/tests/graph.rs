@@ -370,32 +370,38 @@ fn properties_can_be_mutated_without_topology_changes() {
     let name = PropertyKey::new("name").unwrap();
     let role = PropertyKey::new("role").unwrap();
     let source = PropertyKey::new("source").unwrap();
-    mol.insert_property(
-        name.clone(),
-        PropertyValue::String("carbon monoxide".to_owned()),
-    )
-    .unwrap();
-    mol.set_atom_property(
-        a,
-        role.clone(),
-        Some(PropertyValue::String("donor".to_owned())),
-    )
-    .unwrap();
-    mol.set_bond_property(bond, source.clone(), Some(PropertyValue::Bool(true)))
+    mol.properties_mut()
+        .owner_mut()
+        .insert(
+            name.clone(),
+            PropertyValue::String("carbon monoxide".to_owned()),
+        )
+        .unwrap();
+    mol.properties_mut()
+        .atoms_mut()
+        .set_value(
+            role.clone(),
+            a,
+            Some(PropertyValue::String("donor".to_owned())),
+        )
+        .unwrap();
+    mol.properties_mut()
+        .bonds_mut()
+        .set_value(source.clone(), bond, Some(PropertyValue::Bool(true)))
         .unwrap();
 
     assert_eq!(mol.atom_count(), 2);
     assert_eq!(mol.bond_count(), 1);
     assert_eq!(
-        mol.properties().get(&name),
+        mol.properties().owner().get(&name),
         Some(&PropertyValue::String("carbon monoxide".to_owned()))
     );
     assert_eq!(
-        mol.atom_property(a, &role).unwrap(),
+        mol.properties().atoms().value(&role, a).unwrap(),
         Some(PropertyValue::String("donor".to_owned()))
     );
     assert_eq!(
-        mol.bond_property(bond, &source).unwrap(),
+        mol.properties().bonds().value(&source, bond).unwrap(),
         Some(PropertyValue::Bool(true))
     );
 }
@@ -412,12 +418,16 @@ fn atom_and_bond_properties_follow_stable_ids_across_tombstones() {
     let retained_bond = molecule.add_bond(first, last, BondOrder::Double).unwrap();
     let tag = PropertyKey::new("tag").unwrap();
     molecule
-        .set_atom_property(last, tag.clone(), Some(PropertyValue::Int(3)))
+        .properties_mut()
+        .atoms_mut()
+        .set_value(tag.clone(), last, Some(PropertyValue::Int(3)))
         .unwrap();
     molecule
-        .set_bond_property(
-            retained_bond,
+        .properties_mut()
+        .bonds_mut()
+        .set_value(
             tag.clone(),
+            retained_bond,
             Some(PropertyValue::String("retained".into())),
         )
         .unwrap();
@@ -425,26 +435,32 @@ fn atom_and_bond_properties_follow_stable_ids_across_tombstones() {
     molecule.delete_atom(removed).unwrap();
 
     assert!(molecule
-        .set_atom_property(removed, tag.clone(), Some(PropertyValue::Int(9)))
+        .properties_mut()
+        .atoms_mut()
+        .set_value(tag.clone(), removed, Some(PropertyValue::Int(9)))
         .is_err());
     assert!(molecule
-        .set_bond_property(removed_bond, tag.clone(), Some(PropertyValue::Int(9)))
+        .properties_mut()
+        .bonds_mut()
+        .set_value(tag.clone(), removed_bond, Some(PropertyValue::Int(9)))
         .is_err());
+    assert!(!molecule.properties().atoms().row_has_data(removed).unwrap());
     assert!(!molecule
-        .atom_properties()
-        .row_has_data(removed.index())
-        .unwrap());
-    assert!(!molecule
-        .bond_properties()
-        .row_has_data(removed_bond.index())
+        .properties()
+        .bonds()
+        .row_has_data(removed_bond)
         .unwrap());
 
     assert_eq!(
-        molecule.atom_property(last, &tag).unwrap(),
+        molecule.properties().atoms().value(&tag, last).unwrap(),
         Some(PropertyValue::Int(3))
     );
     assert_eq!(
-        molecule.bond_property(retained_bond, &tag).unwrap(),
+        molecule
+            .properties()
+            .bonds()
+            .value(&tag, retained_bond)
+            .unwrap(),
         Some(PropertyValue::String("retained".into()))
     );
 }
@@ -460,23 +476,29 @@ fn property_and_coordinate_edits_preserve_computed_state() {
     mol.begin_aromaticity(AromaticityModel::RdkitLike);
     let before = mol.perception().clone();
 
-    mol.set_atom_property(
-        atoms[0],
-        PropertyKey::new("label").unwrap(),
-        Some(PropertyValue::String("a".to_owned())),
-    )
-    .unwrap();
-    mol.set_bond_property(
-        bonds[0],
-        PropertyKey::new("score").unwrap(),
-        Some(PropertyValue::Int(1)),
-    )
-    .unwrap();
-    mol.insert_property(
-        PropertyKey::new("name").unwrap(),
-        PropertyValue::String("triangle".to_owned()),
-    )
-    .unwrap();
+    mol.properties_mut()
+        .atoms_mut()
+        .set_value(
+            PropertyKey::new("label").unwrap(),
+            atoms[0],
+            Some(PropertyValue::String("a".to_owned())),
+        )
+        .unwrap();
+    mol.properties_mut()
+        .bonds_mut()
+        .set_value(
+            PropertyKey::new("score").unwrap(),
+            bonds[0],
+            Some(PropertyValue::Int(1)),
+        )
+        .unwrap();
+    mol.properties_mut()
+        .owner_mut()
+        .insert(
+            PropertyKey::new("name").unwrap(),
+            PropertyValue::String("triangle".to_owned()),
+        )
+        .unwrap();
     assert_eq!(mol.perception(), &before);
     assert!(mol.ring_membership().is_some());
     assert!(mol.ring_set().is_some());

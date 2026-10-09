@@ -24,7 +24,7 @@ fn nitrogen_stereo_requires_constrained_unconjugated_pyramidal_geometry() {
         for expanded in [false, true] {
             if expanded {
                 molecule.perceive().unwrap();
-                crate::hydrogens::add_hydrogens(&mut molecule).unwrap();
+                molecule.add_hydrogens().unwrap();
             }
             let before = molecule.clone();
             let count = stereo_api::detect_stereo_candidates(&molecule)
@@ -87,7 +87,7 @@ fn stereo_symmetry_resolves_branches_rings_and_configuration_dependencies() {
         for expanded in [false, true] {
             if expanded {
                 molecule.perceive().unwrap();
-                crate::hydrogens::add_hydrogens(&mut molecule).unwrap();
+                molecule.add_hydrogens().unwrap();
             }
             let before = molecule.clone();
             let candidates = stereo_api::detect_stereo_candidates(&molecule).unwrap();

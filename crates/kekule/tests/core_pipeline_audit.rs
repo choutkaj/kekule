@@ -161,7 +161,7 @@ fn parse_perceive_cip_and_write_are_stable_across_supported_chemistry() {
         let mut original = molecule(source);
         original.perceive().unwrap();
         let expected_cip = assign_cip_descriptors(&mut original).unwrap();
-        let first = smiles::write_canonical(&original).unwrap();
+        let first = smiles::write(&original, smiles::SmilesWriteOptions::canonical()).unwrap();
         let mut restored = molecule(&first);
         restored.perceive().unwrap();
         let restored_cip = assign_cip_descriptors(&mut restored).unwrap();
@@ -185,7 +185,7 @@ fn parse_perceive_cip_and_write_are_stable_across_supported_chemistry() {
             "{source}"
         );
         assert_eq!(
-            smiles::write_canonical(&restored).unwrap(),
+            smiles::write(&restored, smiles::SmilesWriteOptions::canonical()).unwrap(),
             first,
             "{source}"
         );

@@ -6,6 +6,79 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** `Trajectory`, `TrajectoryFrame`, `Velocities`, and `Forces` move
+  from `kekule-traj` into `kekule::structure`, next to `Ensemble`. The two
+  collections stay distinct types over one private store and share `new`,
+  `from_items`, `get`/`get_mut`/`iter`, `push`, `replace`, `remove`,
+  `replace_positions`, `select`, `subset`, `perceive`, `into_parts`, and
+  `into_items`; item views are `EnsembleMemberView`/`EnsembleMemberMut` and
+  `TrajectoryFrameView`/`TrajectoryFrameMut`. `Ensemble::from_models` consumes
+  models. `Trajectory::into_ensemble` projects frames onto equally weighted
+  members without copying conformations.
+- **Breaking:** every `EnsembleMember` carries a finite, strictly positive
+  relative weight: `EnsembleMember::new(conformation, weight)` is fallible,
+  `weight()` returns `f64`, and `set_weight` takes `f64`. Models, mmCIF
+  coordinate models, and trajectory frames become equally weighted members
+  (weight `1.0`). `Ensemble::normalize_weights` keeps weight ratios and cannot
+  overflow; `RealizationError::MissingWeight` and `ZeroTotalWeight` are removed.
+- **Breaking:** realization payloads hold a `Conformation`: dense positions,
+  optional cell, typed occupancies and B factors, and `RealizationProperties`,
+  addressed by `TopologyAtomIndex`. `Model` is a topology plus one conformation;
+  `EnsembleMember` adds a weight and `TrajectoryFrame` adds velocities, forces,
+  time, and step. Conformation state is edited through the `ConformationMut`
+  guard from `conformation_mut()` on models, payloads, and collection items.
+  Kernels accept any `AsModelView` source (models, collection items, frame
+  buffers).
+- **Breaking:** typed, scoped properties. `Properties` is replaced by
+  `MoleculeProperties`, `TopologyProperties`, `RealizationProperties`, and
+  collection `OwnerProperties`, built from `PropertyTable<R>` columns whose row
+  type names the domain (`AtomId`, `TopologyAtomIndex`, `ChainId`, ...). Writes go
+  through `properties_mut()` guards with whole-column, single-cell, and
+  transactional batch updates. Keys are no longer reserved: occupancy and B
+  factors are typed conformation fields, and a generic `occupancy` property is
+  independent of them. A draft editor rejects values on deleted slots with
+  `PropertyError::RemovedRow`. Detached payloads have atom rows only and gain
+  bond rows when bound to a collection.
+- **Breaking:** superposition and RMSD move from `kekule-traj` to every
+  collection in `kekule::alignment`: `superpose`, `rmsd`, and `aligned_rmsd`
+  (each with `_with_options`) take a `Reference` (an item index or any borrowed
+  view) and `FitAtoms` (a selection or an `AtomCorrespondence`). Superposition
+  is in place and transactional and returns a `SuperpositionReport`; the
+  copy-returning, `_to_frame`, `_to_model`, and `_in_place` variants are removed.
+  One `AlignmentOptions` (`Weighting`, `PeriodicPolicy`) serves fitting and RMSD.
+  Collection-wide failures are reported once instead of per item.
+- **Breaking:** `kekule-traj` periodic operations are free functions that act in
+  place: `periodic::make_molecules_whole`, `image_molecules`, and `unwrap`.
+  `MoleculeImager`, `TrajectoryUnwrapper`, and `FrameSuperposer` act on a
+  `FrameBuffer`, and `FrameSuperposer::superpose` takes the caller's frame index
+  for diagnostics like the other streaming tools. `rmsf` and
+  `contact_occupancy` are free functions over a `Trajectory`, where every frame
+  counts once; they reject ensembles, whose statistics must be weighted.
+  `TrajectoryError` wraps core `ConformationError` and `RealizationError`.
+- **Breaking:** topology reads return views. `Topology::atom`, `bond`,
+  `molecule`, `chain`, `residue`, and `atom_site` return `Option` views
+  (`AtomView`, `BondView`, ...) with neighbors, hydrogens, aromaticity,
+  hierarchy, and static properties; `Model::atom` adds the atom's position,
+  occupancy, B factor, and realization properties. Selection predicates take one
+  view. Topology-level hydrogen counters and lookup forwarders on `Model` are
+  removed. `Molecule` and `MoleculeEditor` share their read API through `Deref`
+  to `Graph`.
+- **Breaking:** one writer pair per format: `write(source, options)` and
+  `write_to(writer, source, options)` for SMILES (`SmilesWriteOptions::ordinary`,
+  `isomeric`, `canonical`), Molfile (`MolfileSource`), SDF (records from models,
+  collection items, or interpreted records), and mmCIF (`MmcifBlockSource` with
+  optional classifications or reports; multiple blocks are suffixed `_1`, `_2`,
+  ...). Version- and source-specific writer functions are removed.
+- **Breaking:** constructors that take chemistry accept values:
+  `add_molecule_definition`, `add_molecule`, `Topology::from_molecule`,
+  `Topology::from_molecules`, and `Model::from_molecule` take `Molecule`; the
+  `_owned` variants are removed. Substructure search uses `find_match`,
+  `find_matches`, `visit_matches`, and `find_topology_matches` (with
+  `_with_options`); a match limit is a resource error, never a truncation.
+- **Breaking:** editor publication no longer rewrites oxohalogens silently.
+  Call `MoleculeEditor::normalize_oxohalogens` first; `finish` rejects
+  unnormalized ones with `UnnormalizedOxohalogen`. Format interpretation still
+  produces normalized molecules.
 - **Breaking:** perception keeps a topology's layout identity. `Topology::perceived`
   and model, ensemble, and trajectory `perceive` share the published layout
   instead of copying it. Selections, frame buffers, readers and writers,

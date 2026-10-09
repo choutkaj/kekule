@@ -1,3 +1,4 @@
+use kekule::structure::{Trajectory, TrajectoryFrame};
 use kekule::{
     geometry::Point3,
     smiles,
@@ -7,7 +8,6 @@ use kekule::{
     },
     units::{Quantity, NANOMETER},
 };
-use kekule_traj::{Trajectory, TrajectoryFrame};
 
 #[test]
 fn trajectory_frames_keep_the_same_tied_references_through_degenerate_geometry() {
@@ -22,21 +22,21 @@ fn trajectory_frames_keep_the_same_tied_references_through_degenerate_geometry()
         Point3::new(1.0, 1.0, 0.0),
     ];
     let model = Model::from_molecule(
-        &molecule,
+        molecule.clone(),
         &Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
     )
     .unwrap();
     let topology = model.shared_topology();
-    let axis = model.bond_ids()[2];
+    let axis = model.topology().bond_ids()[2];
     let definition = BondDihedral::new(&topology, axis).unwrap();
     let atoms = definition.atoms().unwrap();
     assert_eq!(
         atoms,
         [
-            model.atom_ids()[0],
-            model.atom_ids()[1],
-            model.atom_ids()[3],
-            model.atom_ids()[4]
+            model.topology().atom_ids()[0],
+            model.topology().atom_ids()[1],
+            model.topology().atom_ids()[3],
+            model.topology().atom_ids()[4]
         ]
     );
     let mut degenerate = points;
@@ -46,11 +46,11 @@ fn trajectory_frames_keep_the_same_tied_references_through_degenerate_geometry()
     let frames = [points, degenerate, rotated].map(|points| {
         TrajectoryFrame::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap())
     });
-    let trajectory = Trajectory::from_frames(topology, frames).unwrap();
+    let trajectory = Trajectory::from_items(topology, frames).unwrap();
     let angles = trajectory
-        .frames()
+        .iter()
         .map(|frame| {
-            let view = frame.as_model();
+            let view = frame.as_model_view();
             let prepared = definition.measure(view).unwrap();
             assert_eq!(prepared, measure::bond_dihedral(view, axis).unwrap());
             assert_eq!(

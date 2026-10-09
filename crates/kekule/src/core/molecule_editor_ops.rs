@@ -2,7 +2,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
-use crate::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue};
 
 /// Identifier correspondence from one molecular graph to another.
 ///
@@ -140,7 +139,7 @@ impl MoleculeEditor {
             self.remove_stereo_element(element)?;
         }
         self.working.clear_perception();
-        self.working.properties.clear_owner();
+        self.working.properties.owner_mut().clear();
         Ok(previous)
     }
 
@@ -211,116 +210,6 @@ impl MoleculeEditor {
         *self = Self::new();
     }
 
-    /// Applies a batch of values for one atom property transactionally. Repeated
-    /// IDs are applied in input order; `None` removes a value. Only the property
-    /// table is staged, without cloning graph or perception state.
-    pub fn set_atom_properties(
-        &mut self,
-        key: PropertyKey,
-        values: impl IntoIterator<Item = (AtomId, Option<PropertyValue>)>,
-    ) -> Result<()> {
-        let mut table = self.atom_properties().clone();
-        for (id, value) in values {
-            self.atom(id)?;
-            table
-                .set_value(key.clone(), id.index(), value)
-                .map_err(|e| MoleculeError::Property(Box::new(e)))?;
-        }
-        *self.working.properties.atoms_mut() = table;
-        Ok(())
-    }
-
-    /// Bond counterpart of [`Self::set_atom_properties`].
-    pub fn set_bond_properties(
-        &mut self,
-        key: PropertyKey,
-        values: impl IntoIterator<Item = (BondId, Option<PropertyValue>)>,
-    ) -> Result<()> {
-        let mut table = self.bond_properties().clone();
-        for (id, value) in values {
-            self.bond(id)?;
-            table
-                .set_value(key.clone(), id.index(), value)
-                .map_err(|e| MoleculeError::Property(Box::new(e)))?;
-        }
-        *self.working.properties.bonds_mut() = table;
-        Ok(())
-    }
-
-    pub fn remove_atom_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
-        let previous = self.atom_property_column(key).expect("live atom slots");
-        self.working.properties.atoms_mut().remove(key);
-        previous
-    }
-
-    pub fn remove_bond_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
-        let previous = self.bond_property_column(key).expect("live bond slots");
-        self.working.properties.bonds_mut().remove(key);
-        previous
-    }
-
-    /// Copies a column in live atom order, matching insertion and removal.
-    pub fn atom_property_column(&self, key: &PropertyKey) -> Result<Option<PropertyColumn>> {
-        live_column(
-            self.atom_properties(),
-            key,
-            self.atom_ids().map(AtomId::index),
-        )
-    }
-
-    /// Copies a column in live bond order, matching insertion and removal.
-    pub fn bond_property_column(&self, key: &PropertyKey) -> Result<Option<PropertyColumn>> {
-        live_column(
-            self.bond_properties(),
-            key,
-            self.bond_ids().map(BondId::index),
-        )
-    }
-
-    /// Inserts a live-order column, returning the previous column in live order.
-    pub fn insert_atom_property_column(
-        &mut self,
-        key: PropertyKey,
-        column: PropertyColumn,
-    ) -> Result<Option<PropertyColumn>> {
-        let previous = self.atom_property_column(&key)?;
-        let slots = live_column_slots(self.working.graph.atoms.iter().map(Option::is_some));
-        set_live_column(self.working.properties.atoms_mut(), key, column, &slots)?;
-        Ok(previous)
-    }
-
-    /// Bond counterpart of [`Self::insert_atom_property_column`].
-    pub fn insert_bond_property_column(
-        &mut self,
-        key: PropertyKey,
-        column: PropertyColumn,
-    ) -> Result<Option<PropertyColumn>> {
-        let previous = self.bond_property_column(&key)?;
-        let slots = live_column_slots(self.working.graph.bonds.iter().map(Option::is_some));
-        set_live_column(self.working.properties.bonds_mut(), key, column, &slots)?;
-        Ok(previous)
-    }
-
-    /// Replaces a complete column in current live [`Self::atom_ids`] order.
-    /// Deleted slots are filled with missing values automatically. Counts,
-    /// values, and units are checked before mutation; unrelated columns survive.
-    pub fn set_atom_property_column(
-        &mut self,
-        key: PropertyKey,
-        column: PropertyColumn,
-    ) -> Result<()> {
-        self.insert_atom_property_column(key, column).map(|_| ())
-    }
-
-    /// Bond counterpart of [`Self::set_atom_property_column`], in live bond order.
-    pub fn set_bond_property_column(
-        &mut self,
-        key: PropertyKey,
-        column: PropertyColumn,
-    ) -> Result<()> {
-        self.insert_bond_property_column(key, column).map(|_| ())
-    }
-
     /// Replaces a relation group without changing its ID. All membership checks
     /// precede mutation, and members already in another group are rejected.
     pub fn replace_stereo_group(
@@ -364,7 +253,7 @@ impl MoleculeEditor {
                 .group = Some(id);
         }
         self.working.graph.stereo_groups[id.index()] = Some(replacement);
-        self.working.properties.clear_owner();
+        self.working.properties.owner_mut().clear();
         self.working.invalidate_stereo();
         Ok(previous)
     }
@@ -392,16 +281,22 @@ impl MoleculeEditor {
                 staged.add_bond(map.atoms[&bond.a()], map.atoms[&bond.b()], bond.order)?,
             );
         }
-        for (old, new) in &map.atoms {
-            for (key, _) in source.atom_properties().iter() {
-                staged.set_atom_property(*new, key.clone(), source.atom_property(*old, key)?)?;
-            }
-        }
-        for (old, new) in &map.bonds {
-            for (key, _) in source.bond_properties().iter() {
-                staged.set_bond_property(*new, key.clone(), source.bond_property(*old, key)?)?;
-            }
-        }
+        // Published sources are compact, so each source row maps to one draft row.
+        let property_error = |error| MoleculeError::Property(Box::new(error));
+        let atom_rows = map.atoms.values().map(|id| id.index()).collect::<Vec<_>>();
+        staged
+            .working
+            .properties
+            .atoms_mut()
+            .copy_rows_from(source.properties().atoms().raw(), &atom_rows)
+            .map_err(property_error)?;
+        let bond_rows = map.bonds.values().map(|id| id.index()).collect::<Vec<_>>();
+        staged
+            .working
+            .properties
+            .bonds_mut()
+            .copy_rows_from(source.properties().bonds().raw(), &bond_rows)
+            .map_err(property_error)?;
         let carrier = |value| match value {
             StereoCarrier::Atom(id) => StereoCarrier::Atom(map.atoms[&id]),
             other => other,
@@ -445,48 +340,4 @@ impl MoleculeEditor {
         *self = staged;
         Ok(map)
     }
-}
-
-fn live_column(
-    table: &PropertyTable,
-    key: &PropertyKey,
-    indices: impl Iterator<Item = usize>,
-) -> Result<Option<PropertyColumn>> {
-    if table.get(key).is_none() {
-        return Ok(None);
-    }
-    let mut projected = table
-        .select_indices(&indices.collect::<Vec<_>>())
-        .map_err(|e| MoleculeError::Property(Box::new(e)))?;
-    Ok(projected.remove(key))
-}
-
-fn live_column_slots(live: impl Iterator<Item = bool>) -> Vec<Option<usize>> {
-    let mut next = 0;
-    live.map(|live| {
-        live.then(|| {
-            let index = next;
-            next += 1;
-            index
-        })
-    })
-    .collect()
-}
-
-fn set_live_column(
-    table: &mut PropertyTable,
-    key: PropertyKey,
-    column: PropertyColumn,
-    slots: &[Option<usize>],
-) -> Result<()> {
-    let mut dense = PropertyTable::new(slots.iter().flatten().count());
-    let map_error = |error: PropertyError| MoleculeError::Property(Box::new(error));
-    dense.insert(key.clone(), column).map_err(map_error)?;
-    let mut projected = dense.select_optional_indices(slots).map_err(map_error)?;
-    if let Some(column) = projected.remove(&key) {
-        table.insert(key, column).map_err(map_error)?;
-    } else {
-        table.remove(&key);
-    }
-    Ok(())
 }

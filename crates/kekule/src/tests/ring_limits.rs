@@ -47,7 +47,11 @@ fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
         .expect("long chain should perceive rings");
     assert!(ring_set.is_empty());
 
-    let written = smiles_api::write(molecule.working()).expect("long chain should write");
+    let written = smiles_api::write(
+        molecule.working(),
+        smiles_api::SmilesWriteOptions::default(),
+    )
+    .expect("long chain should write");
     assert_eq!(written.matches('C').count(), 20_000);
 }
 

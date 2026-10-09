@@ -17,7 +17,7 @@ fn topology() -> Arc<Topology> {
     let mut builder = TopologyBuilder::new();
     let mut atoms = Vec::new();
     for _ in 0..3 {
-        let instance = builder.add_molecule(&molecule).unwrap();
+        let instance = builder.add_molecule(molecule.clone()).unwrap();
         atoms.extend(local.iter().map(|id| InstanceAtomId::new(instance, *id)));
     }
     let chain = builder
@@ -158,11 +158,11 @@ fn lookup_respects_identifier_namespace_scope_insertion_and_ambiguity() {
         Err(HierarchyLookupError::NotFound { .. })
     ));
     assert_eq!(
-        first.atom_site_by_label("CA").unwrap().atom(),
+        first.atom_site_by_label("CA").unwrap().atom().id(),
         top.atom_ids()[0]
     );
     assert_eq!(
-        first.atom_site_by_author("alpha").unwrap().atom(),
+        first.atom_site_by_author("alpha").unwrap().atom().id(),
         top.atom_ids()[0]
     );
     assert!(matches!(
@@ -232,30 +232,34 @@ fn original_1ake_pocket_uses_checked_composition_and_retains_source_associations
     let hydrogen = AtomSelection::for_elements(&top, [Element::from_symbol("H").unwrap()]).unwrap();
     let candidates = AtomSelection::all(&top).difference(&hydrogen).unwrap();
     let nearby = measure::within(
-        model.view(),
+        model.as_model_view(),
         &candidates,
         &ligand,
         Quantity::new(5.0, ANGSTROM),
     )
     .unwrap();
     let selected = nearby.expand_to_residues();
-    let pocket = model.slice(&selected).unwrap();
+    let pocket = model.subset(&selected).unwrap();
     assert_eq!(pocket.atom_count(), 428);
-    assert_eq!(pocket.residues().count(), 69);
-    for (source, target) in selected.atom_ids().zip(pocket.atom_ids()) {
+    assert_eq!(pocket.topology().residues().count(), 69);
+    for (source, target) in selected.atom_ids().zip(pocket.topology().atom_ids()) {
         assert_eq!(
             model.position(source).unwrap(),
             pocket.position(*target).unwrap()
         );
         assert_eq!(
             model
-                .residue_for_atom(source)
+                .topology()
+                .atom(source)
                 .unwrap()
+                .residue()
                 .unwrap()
                 .author_seq_id(),
             pocket
-                .residue_for_atom(*target)
+                .topology()
+                .atom(*target)
                 .unwrap()
+                .residue()
                 .unwrap()
                 .author_seq_id()
         );

@@ -31,17 +31,17 @@ Trajectory I/O and selected potentials are available separately through the sist
 
 ## Concepts
 
-`Molecule` is the foundational type storing one molecule without its geometry. `Molecule` must be a connected graph. Its `Graph` owns authoritative chemistry, while its `Perception` stores derived chemical perception such as rings and aromaticity. Topology is a collection of one or more `Molecule`s together with `Hierarchy` (`Chain`, `Residue`, `AtomSite`). Molecules in `Topology` are not stored naively, but as `Definition`s and `Instance`s. For example, a hundred water molecules will be stored as one `Definition` and a hundred `Instances`. Coordinates are detached from `Molecule` and exist as a `Positions` type.
+`Molecule` is the foundational type storing one molecule without its geometry. `Molecule` must be a connected graph. Its `Graph` owns authoritative chemistry, while its `Perception` stores derived chemical perception such as rings and aromaticity. Topology is a collection of one or more `Molecule`s together with `Hierarchy` (`Chain`, `Residue`, `AtomSite`). Molecules in `Topology` are not stored naively, but as `Definition`s and `Instance`s. For example, a hundred water molecules will be stored as one `Definition` and a hundred `Instances`. Coordinates are detached from `Molecule`: one realization of a system's geometry is a `Conformation`, holding `Positions`, an optional periodic cell, occupancies, B-factors, and per-atom annotations.
 ```text
 Molecule = Graph + Perception + Properties
 Topology = collection of Molecules (stored as definitions and instances) + Hierarchy
 Hierarchy = Chain -> Residue -> AtomSite
 ```
-Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including `Positions`. `Model` is literally a model of one or more molecules. `Ensemble` and `Trajectory` contain several non-temporal or temporal realizations of a system, respectively.
+Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. `Model` is literally a model of one or more molecules. `Ensemble` and `Trajectory` are distinct collections of realizations of one system: an ensemble is a weighted, unordered sample (conformers, Monte Carlo samples, NMR models), and every member carries a statistical weight; a trajectory is a time-ordered sequence of frames produced by dynamics.
 ```text
-Model      = Topology + Positions
-Ensemble   = Topology + one or more EnsembleMembers
-Trajectory = Topology + one or more TrajectoryFrames
+Model           = Topology + Conformation
+Ensemble        = Topology + weighted EnsembleMembers (Conformation + weight)
+Trajectory      = Topology + time-ordered TrajectoryFrames (Conformation + time, step, velocities, forces)
 ```
 
 ## Examples
@@ -56,7 +56,8 @@ use std::error::Error;
 
 use kekule::{
     rotatable_bonds::{self, RotatableBondOptions},
-    smiles, stereo,
+    smiles::{self, SmilesWriteOptions},
+    stereo,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -70,8 +71,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("formal charge: {}", molecule.formal_charge());
     
     // Print canonical and isomeric SMILES
-    println!("canonical SMILES: {}", smiles::write_canonical(&molecule)?);
-    println!("isomeric SMILES: {}", smiles::write_isomeric(&molecule)?);
+    let canonical = smiles::write(&molecule, SmilesWriteOptions::canonical())?;
+    let isomeric = smiles::write(&molecule, SmilesWriteOptions::isomeric())?;
+    println!("canonical SMILES: {canonical}");
+    println!("isomeric SMILES: {isomeric}");
     
     // Assign and print stereochemistry
     let stereochemistry = stereo::assign_cip_descriptors(&mut molecule)?;
@@ -80,7 +83,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     
     // Assign and print rotatable bonds
-    let rotatable = rotatable_bonds::detect(&molecule, RotatableBondOptions::STRICT);
+    let rotatable = rotatable_bonds::detect(&molecule, RotatableBondOptions::STRICT)?;
     for &bond_id in rotatable.bond_ids() {
         let bond = molecule.bond(bond_id)?;
         println!("rotatable bond {bond_id}: {}-{}", bond.a(), bond.b());
@@ -100,7 +103,7 @@ use std::{
 };
 
 use kekule::{
-    mmcif::{self, MmcifInterpretOptions, MmcifWriteOptions},
+    mmcif::{self, MmcifBlockSource, MmcifInterpretOptions, MmcifWriteOptions},
     sdf::{self, SdfWriteOptions},
     structure::Model,
 };
@@ -121,9 +124,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let sdf_model = sdf_record.to_model()?;
     assert_eq!(sdf_model.topology().instance_count(), 1);
     print_model("SDF model", &sdf_model);
-    sdf::write_model_to(
+    sdf::write_to(
         &mut File::create("ligand-copy.sdf")?,
-        &sdf_model,
+        [&sdf_model],
         SdfWriteOptions::default(),
     )?;
 
@@ -134,30 +137,32 @@ fn main() -> Result<(), Box<dyn Error>> {
     let cif_model = cif_interpretation.model();
     assert_eq!(cif_model.topology().instance_count(), 1);
     print_model("mmCIF model", cif_model);
-    mmcif::write_model_with_report_to(
+    // Writing with the interpretation report keeps the source entity semantics.
+    let block = MmcifBlockSource::model(cif_model)
+        .with_reports(std::slice::from_ref(cif_interpretation.report()));
+    mmcif::write_to(
         &mut File::create("cofactor-copy.cif")?,
-        cif_model,
-        cif_interpretation.report(),
+        [block],
         MmcifWriteOptions::default(),
     )?;
 
     // Initiate Model builder and combine both Models
     let mut builder = Model::builder();
     builder.add_molecule(
-        sdf_model.topology().molecules().next().unwrap().molecule(),
+        sdf_model.topology().molecules().next().unwrap().molecule().clone(),
         sdf_model.positions(),
     )?;
     builder.add_molecule(
-        cif_model.topology().molecules().next().unwrap().molecule(),
+        cif_model.topology().molecules().next().unwrap().molecule().clone(),
         cif_model.positions(),
     )?;
     let combined = builder.build()?;
     print_model("combined model", &combined);
 
     // Write the combined Model into mmCIF file
-    mmcif::write_model_to(
+    mmcif::write_to(
         &mut File::create("combined.cif")?,
-        &combined,
+        [&combined],
         MmcifWriteOptions::default(),
     )?;
 

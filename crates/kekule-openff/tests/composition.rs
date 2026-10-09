@@ -29,7 +29,7 @@ fn library_only_repeated_definitions_retain_exact_binding_and_nonbonded_constrai
     let ff = ForceField::from_offxml(WATER).unwrap();
     let m = molecule("O");
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&m).unwrap();
+    let definition = builder.add_molecule_definition(m.clone()).unwrap();
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     let topology = Arc::new(builder.build().unwrap());
@@ -60,7 +60,7 @@ fn composition_is_ordered_and_keeps_rosemary_model_and_unrelated_parameters() {
     assert_eq!(ff.charge_model(), model.as_ref());
     assert_eq!(ff.label_molecule(&organic).unwrap().bonds, original.bonds);
     assert_eq!(ff.label_molecule(&organic).unwrap().vdw, original.vdw);
-    let topology = Arc::new(Topology::from_molecule(&molecule("O")).unwrap());
+    let topology = Arc::new(Topology::from_molecule((molecule("O")).clone()).unwrap());
     let p = ff.parameterize_without_nagl(Arc::clone(&topology)).unwrap();
     assert!(p
         .bonds()
@@ -148,7 +148,7 @@ fn composition_accepts_length_unit_roundoff_but_rejects_changed_scales() {
 
 #[test]
 fn incomplete_or_nonconserving_charges_and_implicit_nonbonded_distances_fail() {
-    let topology = Arc::new(Topology::from_molecule(&molecule("O")).unwrap());
+    let topology = Arc::new(Topology::from_molecule((molecule("O")).clone()).unwrap());
     for xml in [
         WATER.replace(
             "charge1=\"-0.8*elementary_charge\"",
@@ -161,7 +161,7 @@ fn incomplete_or_nonconserving_charges_and_implicit_nonbonded_distances_fail() {
         assert!(ff.parameterize_without_nagl(Arc::clone(&topology)).is_err());
     }
     let ff = ForceField::rosemary().unwrap();
-    let organic = Arc::new(Topology::from_molecule(&molecule("CC")).unwrap());
+    let organic = Arc::new(Topology::from_molecule((molecule("CC")).clone()).unwrap());
     assert!(ff
         .parameterize_without_nagl(organic)
         .unwrap_err()
@@ -172,7 +172,7 @@ fn incomplete_or_nonconserving_charges_and_implicit_nonbonded_distances_fail() {
 fn two_waters() -> Arc<Topology> {
     let m = molecule("O");
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&m).unwrap();
+    let definition = builder.add_molecule_definition(m.clone()).unwrap();
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     Arc::new(builder.build().unwrap())
