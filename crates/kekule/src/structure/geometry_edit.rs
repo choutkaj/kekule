@@ -145,9 +145,10 @@ impl<const N: usize> Prepared<N> {
         } else {
             for pair in atoms.windows(2) {
                 if !topology
-                    .neighbors(pair[0])
-                    .map_err(|_| GeometryEditError::InvalidAtomId(pair[0]))?
-                    .any(|a| a == pair[1])
+                    .atom(pair[0])
+                    .ok_or(GeometryEditError::InvalidAtomId(pair[0]))?
+                    .neighbors()
+                    .any(|a| a.id() == pair[1])
                 {
                     return Err(GeometryEditError::MissingBond {
                         a: pair[0],
@@ -164,8 +165,10 @@ impl<const N: usize> Prepared<N> {
             let mut pending = vec![right];
             while let Some(atom) = pending.pop() {
                 for neighbor in topology
-                    .neighbors(atom)
-                    .map_err(|_| GeometryEditError::InvalidAtomId(atom))?
+                    .atom(atom)
+                    .ok_or(GeometryEditError::InvalidAtomId(atom))?
+                    .neighbors()
+                    .map(|neighbor| neighbor.id())
                 {
                     if (atom == left && neighbor == right) || (atom == right && neighbor == left) {
                         continue;
@@ -225,7 +228,7 @@ impl<const N: usize> Prepared<N> {
     }
 
     fn apply(&self, model: &mut Model, target: Quantity<f64>) -> Result<(), GeometryEditError> {
-        self.ensure_compatible(model.view())?;
+        self.ensure_compatible(model.as_model_view())?;
         let mut target = target.into_unit(Self::unit())?.into_value();
         if !target.is_finite()
             || (N == 2 && target <= 0.0)
@@ -236,7 +239,7 @@ impl<const N: usize> Prepared<N> {
         if N == 4 {
             target = signed_angle(target);
         }
-        let points = self.points(model.view());
+        let points = self.points(model.as_model_view());
         let current = Self::value(points)?;
         let delta = if N == 4 {
             signed_angle(target - current)
@@ -457,7 +460,8 @@ fn stage(
 
 fn publish(model: &mut Model, staged: &[(usize, Point3)]) -> Result<(), GeometryEditError> {
     model
-        .positions
+        .conformation
+        .positions_mut()
         .set_canonical_batch(staged)
         .map_err(|_| GeometryEditError::NumericalFailure)
 }

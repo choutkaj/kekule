@@ -48,11 +48,11 @@ impl<'a> PreparedTopologyTarget<'a> {
         let data = engine::TargetData::new(topology.molecules().map(|m| m.molecule()));
         let ids = topology
             .molecules()
-            .flat_map(|m| m.atoms().map(|(id, _)| id))
+            .flat_map(|m| m.atoms().map(|atom| atom.id()))
             .collect();
         let definitions = topology
             .definitions()
-            .map(|(_, d)| {
+            .map(|d| {
                 let instances = topology
                     .molecules()
                     .filter(|m| m.definition_id() == d.id())
@@ -68,8 +68,16 @@ impl<'a> PreparedTopologyTarget<'a> {
             ids,
         }
     }
-    /// Dot-separated fragments can map to the same or different molecule instances.
     pub fn visit_matches(
+        &self,
+        query: &QueryGraph,
+        visitor: impl FnMut(&TopologyQueryMatch) -> ControlFlow<()>,
+    ) -> Result<MatchCompletion, SubstructureMatchError> {
+        self.visit_matches_with_options(query, SubstructureMatchOptions::default(), visitor)
+    }
+
+    /// Dot-separated fragments can map to the same or different molecule instances.
+    pub fn visit_matches_with_options(
         &self,
         query: &QueryGraph,
         options: SubstructureMatchOptions,
@@ -136,13 +144,21 @@ impl<'a> PreparedTopologyTarget<'a> {
             .is_continue()
         })
     }
-    pub fn find_matches_complete(
+    pub fn find_matches(
+        &self,
+        query: &QueryGraph,
+    ) -> Result<Vec<TopologyQueryMatch>, SubstructureMatchError> {
+        self.find_matches_with_options(query, SubstructureMatchOptions::default())
+    }
+
+    /// Every match; exceeding the match cap is an error, never a partial list.
+    pub fn find_matches_with_options(
         &self,
         query: &QueryGraph,
         options: SubstructureMatchOptions,
     ) -> Result<Vec<TopologyQueryMatch>, SubstructureMatchError> {
         let mut matches = Vec::new();
-        self.visit_matches(query, options, |m| {
+        self.visit_matches_with_options(query, options, |m| {
             matches.push(m.clone());
             ControlFlow::Continue(())
         })?;
@@ -150,10 +166,19 @@ impl<'a> PreparedTopologyTarget<'a> {
     }
 }
 
-pub fn find_topology_substructure_matches_complete(
+/// Every topology match with default options.
+pub fn find_topology_matches(
+    topology: &Arc<Topology>,
+    query: &QueryGraph,
+) -> Result<Vec<TopologyQueryMatch>, SubstructureMatchError> {
+    PreparedTopologyTarget::new(topology).find_matches(query)
+}
+
+/// Every topology match; exceeding the match cap is an error.
+pub fn find_topology_matches_with_options(
     topology: &Arc<Topology>,
     query: &QueryGraph,
     options: SubstructureMatchOptions,
 ) -> Result<Vec<TopologyQueryMatch>, SubstructureMatchError> {
-    PreparedTopologyTarget::new(topology).find_matches_complete(query, options)
+    PreparedTopologyTarget::new(topology).find_matches_with_options(query, options)
 }

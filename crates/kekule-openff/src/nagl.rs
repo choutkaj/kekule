@@ -6,7 +6,7 @@ use crate::{error, explicit, identity, Result};
 use kekule::{
     core::Molecule,
     query::{parse_smarts, QueryGraph},
-    substructure::find_substructure_match,
+    substructure::find_match,
     units::{Quantity, ELEMENTARY_CHARGE},
 };
 use std::{
@@ -216,10 +216,7 @@ impl NaglModel {
             }
         }
         for pattern in &self.forbidden {
-            if find_substructure_match(molecule, pattern)
-                .map_err(error)?
-                .is_some()
-            {
+            if find_match(molecule, pattern).map_err(error)?.is_some() {
                 return Err(error("molecule matches a forbidden model domain pattern"));
             }
         }

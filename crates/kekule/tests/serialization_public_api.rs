@@ -34,7 +34,7 @@ fn model(source: &str, points: &[[f64; 3]]) -> Model {
 
 fn classifications(model: &Model) -> MmcifEntityClassifications {
     let mut classifications = MmcifEntityClassifications::new();
-    for (instance, _) in model.topology().instances() {
+    for instance in model.topology().molecules().map(|molecule| molecule.id()) {
         classifications
             .insert(instance, MmcifEntityKind::NonPolymer)
             .unwrap();
@@ -69,39 +69,39 @@ fn smiles_writes_molecules_and_repeated_topology_instances_in_authoritative_orde
     let water = molecule("O");
     let sodium = molecule("[Na+]");
     let mut builder = TopologyBuilder::new();
-    let water_definition = builder.add_molecule_definition(&water).unwrap();
-    let sodium_definition = builder.add_molecule_definition(&sodium).unwrap();
+    let water_definition = builder.add_molecule_definition(water.clone()).unwrap();
+    let sodium_definition = builder.add_molecule_definition(sodium.clone()).unwrap();
     builder.add_instance(water_definition).unwrap();
     builder.add_instance(water_definition).unwrap();
     builder.add_instance(sodium_definition).unwrap();
     let topology = builder.build().unwrap();
 
     assert_eq!(
-        smiles::write_molecule(&water, SmilesWriteOptions::default()).unwrap(),
+        smiles::write(&water, SmilesWriteOptions::default()).unwrap(),
         "O"
     );
     assert_eq!(
-        smiles::write_topology(&topology, SmilesWriteOptions::default()).unwrap(),
+        smiles::write(&topology, SmilesWriteOptions::default()).unwrap(),
         "O.O.[Na+]"
     );
 
     let chiral = molecule("F[C@H](Cl)Br");
     assert_eq!(
-        smiles::write_molecule(
+        smiles::write(
             &chiral,
             SmilesWriteOptions {
                 mode: SmilesWriteMode::Isomeric,
-            },
+            }
         )
         .unwrap(),
-        smiles::write_isomeric(&chiral).unwrap()
+        smiles::write(&chiral, smiles::SmilesWriteOptions::isomeric()).unwrap()
     );
     assert_eq!(
-        smiles::write_molecule(
+        smiles::write(
             &molecule("OCC"),
             SmilesWriteOptions {
                 mode: SmilesWriteMode::Canonical,
-            },
+            }
         )
         .unwrap(),
         "CCO"
@@ -114,7 +114,7 @@ fn molfile_model_flattens_disconnected_topology_and_preserves_coordinates() {
         "CO.O",
         &[[1.25, 2.5, 3.75], [2.0, 2.5, 3.75], [-4.0, 0.5, 8.0]],
     );
-    let text = molfile::write_model(&model, MolfileWriteOptions::default()).unwrap();
+    let text = molfile::write(&model, MolfileWriteOptions::default()).unwrap();
     assert!(text.contains("V2000"));
 
     let interpreted = molfile::interpret(&molfile::parse_str(&text).unwrap()).unwrap();
@@ -144,10 +144,10 @@ fn molfile_model_flattens_disconnected_topology_and_preserves_coordinates() {
 fn molfile_version_policy_promotes_counts_and_explicit_v2000_fails() {
     let sodium = molecule("[Na+]");
     let molecules = vec![sodium; 1_000];
-    let topology = Topology::from_molecules(&molecules).unwrap();
+    let topology = Topology::from_molecules(molecules.clone()).unwrap();
     let model = Model::new(topology, Positions::zeros(1_000)).unwrap();
 
-    let error = molfile::write_model(
+    let error = molfile::write(
         &model,
         MolfileWriteOptions {
             version: MolfileWriteVersion::V2000,
@@ -156,7 +156,7 @@ fn molfile_version_policy_promotes_counts_and_explicit_v2000_fails() {
     .unwrap_err();
     assert_eq!(error.kind(), MolWriteErrorKind::UnsupportedRepresentation);
 
-    let promoted = molfile::write_model(&model, MolfileWriteOptions::default()).unwrap();
+    let promoted = molfile::write(&model, MolfileWriteOptions::default()).unwrap();
     assert!(promoted.contains("V3000"));
     assert!(promoted.contains("M  V30 COUNTS 1000 0 0 0 0"));
     assert_eq!(
@@ -173,8 +173,7 @@ fn molfile_version_policy_promotes_counts_and_explicit_v2000_fails() {
 fn sdf_writes_independent_models_and_ensemble_members_in_order() {
     let first = model("C", &[[1.0, 0.0, 0.0]]);
     let second = model("O", &[[2.0, 0.0, 0.0]]);
-    let text =
-        sdf::write_models(&[first.clone(), second.clone()], SdfWriteOptions::default()).unwrap();
+    let text = sdf::write(&[first.clone(), second.clone()], SdfWriteOptions::default()).unwrap();
     let interpreted = sdf::interpret(&sdf::parse_str(&text).unwrap()).unwrap();
     assert_eq!(interpreted.records().len(), 2);
     assert_eq!(
@@ -184,7 +183,6 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
             .atoms()
             .next()
             .unwrap()
-            .1
             .element
             .symbol(),
         "C"
@@ -196,7 +194,6 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
             .atoms()
             .next()
             .unwrap()
-            .1
             .element
             .symbol(),
         "O"
@@ -208,8 +205,8 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
         Positions::new(Quantity::new([Point3::new(9.0, 0.0, 0.0)], ANGSTROM)).unwrap(),
     )
     .unwrap();
-    let ensemble = Ensemble::from_models(&[first, later]).unwrap();
-    let ensemble_text = sdf::write_ensemble(&ensemble, SdfWriteOptions::default()).unwrap();
+    let ensemble = Ensemble::from_models([first, later]).unwrap();
+    let ensemble_text = sdf::write(&ensemble, SdfWriteOptions::default()).unwrap();
     let records = sdf::interpret(&sdf::parse_str(&ensemble_text).unwrap()).unwrap();
     assert_eq!(records.records().len(), 2);
     assert!(
@@ -247,7 +244,7 @@ fn sdf_explicit_records_preserve_title_and_data_fields() {
         model("CO.O", &[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [3.0, 0.0, 0.0]]),
         vec![SdfDataField::new("SOURCE", "round trip")],
     );
-    let text = sdf::write_records(&[record], SdfWriteOptions::default()).unwrap();
+    let text = sdf::write(&[record], SdfWriteOptions::default()).unwrap();
     let records = sdf::interpret(&sdf::parse_str(&text).unwrap()).unwrap();
     assert_eq!(records.records()[0].title(), "named record");
     assert_eq!(records.records()[0].data_fields()[0].name(), "SOURCE");
@@ -259,9 +256,13 @@ fn sdf_explicit_records_preserve_title_and_data_fields() {
 fn mmcif_distinguishes_independent_models_from_an_ensemble() {
     let first = model("CO", &[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]);
     let unrelated = model("N", &[[3.0, 0.0, 0.0]]);
-    let independent = mmcif::write_models_with_classifications(
-        &[first.clone(), unrelated.clone()],
-        &[classifications(&first), classifications(&unrelated)],
+    let independent = mmcif::write(
+        [first.clone(), unrelated.clone()]
+            .iter()
+            .zip(&[classifications(&first), classifications(&unrelated)])
+            .map(|(model, classifications)| {
+                mmcif::MmcifBlockSource::model(model).with_classifications(classifications)
+            }),
         MmcifWriteOptions::default(),
     )
     .unwrap();
@@ -285,10 +286,10 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
         .unwrap(),
     )
     .unwrap();
-    let ensemble = Ensemble::from_models(&[first.clone(), second]).unwrap();
-    let ensemble_text = mmcif::write_ensemble_with_classifications(
-        &ensemble,
-        &classifications(&first),
+    let ensemble = Ensemble::from_models([first.clone(), second]).unwrap();
+    let ensemble_text = mmcif::write(
+        [mmcif::MmcifBlockSource::ensemble(&ensemble)
+            .with_classifications(&classifications(&first))],
         MmcifWriteOptions::default(),
     )
     .unwrap();
@@ -301,7 +302,7 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
     assert!(
         (parsed
             .ensemble()
-            .member(0)
+            .get(0)
             .unwrap()
             .positions()
             .position_at(0)
@@ -316,7 +317,7 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
     assert!(
         (parsed
             .ensemble()
-            .member(1)
+            .get(1)
             .unwrap()
             .positions()
             .position_at(0)
@@ -329,8 +330,7 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
             <= 1e-9
     );
 
-    let round_trip =
-        mmcif::write_ensemble_interpretation(&parsed, MmcifWriteOptions::default()).unwrap();
+    let round_trip = mmcif::write([&parsed], MmcifWriteOptions::default()).unwrap();
     let reparsed = mmcif::interpret_ensemble(
         &mmcif::parse_str(&round_trip).unwrap(),
         MmcifEnsembleInterpretOptions::default(),
@@ -342,11 +342,10 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
 #[test]
 fn mmcif_model_is_one_block_with_coordinate_model_one_and_automatic_classification() {
     let model = model("C", &[[4.0, 5.0, 6.0]]);
-    let automatic = mmcif::write_model(&model, MmcifWriteOptions::default()).unwrap();
+    let automatic = mmcif::write([&model], MmcifWriteOptions::default()).unwrap();
     assert!(automatic.contains("1 non-polymer"));
-    let text = mmcif::write_model_with_classifications(
-        &model,
-        &classifications(&model),
+    let text = mmcif::write(
+        [mmcif::MmcifBlockSource::model(&model).with_classifications(&classifications(&model))],
         MmcifWriteOptions::default(),
     )
     .unwrap();
@@ -362,7 +361,7 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
     let water = molecule("O");
     let oxygen = water.atom_ids().next().unwrap();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&water).unwrap();
+    let definition = builder.add_molecule_definition(water.clone()).unwrap();
     let waters = (0..3)
         .map(|_| builder.add_instance(definition).unwrap())
         .collect::<Vec<_>>();
@@ -370,7 +369,7 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
     sodium.formal_charge = 1;
     let mut ion = MoleculeEditor::new();
     ion.add_atom(sodium).unwrap();
-    builder.add_molecule(&ion.finish().unwrap()).unwrap();
+    builder.add_molecule(ion.finish().unwrap().clone()).unwrap();
     let hierarchy = builder.hierarchy_mut();
     let chain = hierarchy.add_chain("W", Some("solvent".into())).unwrap();
     // Repeated local AtomIds resolve through their instances; hierarchy order
@@ -399,11 +398,16 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
     .unwrap();
     let mut model = Model::new(builder.build().unwrap(), positions).unwrap();
     for index in 0..3 {
+        let row = model
+            .topology()
+            .atom_index(model.topology().atom_ids()[index])
+            .unwrap();
         model
-            .set_occupancy(model.atom_ids()[index], Some((index + 1) as f64 / 10.0))
+            .conformation_mut()
+            .set_occupancy(row, Some((index + 1) as f64 / 10.0))
             .unwrap();
     }
-    let text = mmcif::write_model(&model, MmcifWriteOptions::default()).unwrap();
+    let text = mmcif::write([&model], MmcifWriteOptions::default()).unwrap();
     let document = mmcif::parse_str(&text).unwrap();
     let rows = document.blocks()[0].loop_with_tag("_atom_site.id").unwrap();
     assert_eq!(rows.row_count(), 4);
@@ -468,7 +472,7 @@ fn mmcif_export_still_rejects_a_partially_assigned_molecule() {
     let molecule = molecule("CO");
     let atoms = molecule.atom_ids().collect::<Vec<_>>();
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&molecule).unwrap();
+    let instance = builder.add_molecule(molecule.clone()).unwrap();
     let hierarchy = builder.hierarchy_mut();
     let chain = hierarchy.add_chain("A", None).unwrap();
     let residue = hierarchy
@@ -485,7 +489,7 @@ fn mmcif_export_still_rejects_a_partially_assigned_molecule() {
         .unwrap();
     let model = Model::new(builder.build().unwrap(), Positions::zeros(2)).unwrap();
     assert_eq!(
-        mmcif::write_model(&model, MmcifWriteOptions::default()),
+        mmcif::write([&model], MmcifWriteOptions::default()),
         Err(mmcif::MmcifWriteError::MissingAtomSite(
             InstanceAtomId::new(instance, atoms[0])
         ))
@@ -498,9 +502,13 @@ fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
     let unrelated = model("N", &[[3.0, 0.0, 0.0]]);
     let models = [first.clone(), unrelated.clone()];
     let model_classifications = [classifications(&first), classifications(&unrelated)];
-    let expected_models = mmcif::write_models_with_classifications(
-        &models,
-        &model_classifications,
+    let expected_models = mmcif::write(
+        models
+            .iter()
+            .zip(&model_classifications)
+            .map(|(model, classifications)| {
+                mmcif::MmcifBlockSource::model(model).with_classifications(classifications)
+            }),
         MmcifWriteOptions::default(),
     )
     .unwrap();
@@ -508,10 +516,14 @@ fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
         bytes: Vec::new(),
         maximum_chunk: 64,
     };
-    mmcif::write_models_with_classifications_to(
+    mmcif::write_to(
         &mut streamed_models,
-        &models,
-        &model_classifications,
+        models
+            .iter()
+            .zip(&model_classifications)
+            .map(|(model, classifications)| {
+                mmcif::MmcifBlockSource::model(model).with_classifications(classifications)
+            }),
         MmcifWriteOptions::default(),
     )
     .unwrap();
@@ -533,10 +545,10 @@ fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
         .unwrap(),
     )
     .unwrap();
-    let ensemble = Ensemble::from_models(&[first.clone(), second]).unwrap();
-    let expected_ensemble = mmcif::write_ensemble_with_classifications(
-        &ensemble,
-        &classifications(&first),
+    let ensemble = Ensemble::from_models([first.clone(), second]).unwrap();
+    let expected_ensemble = mmcif::write(
+        [mmcif::MmcifBlockSource::ensemble(&ensemble)
+            .with_classifications(&classifications(&first))],
         MmcifWriteOptions::default(),
     )
     .unwrap();
@@ -544,10 +556,10 @@ fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
         bytes: Vec::new(),
         maximum_chunk: 64,
     };
-    mmcif::write_ensemble_with_classifications_to(
+    mmcif::write_to(
         &mut streamed_ensemble,
-        &ensemble,
-        &classifications(&first),
+        [mmcif::MmcifBlockSource::ensemble(&ensemble)
+            .with_classifications(&classifications(&first))],
         MmcifWriteOptions::default(),
     )
     .unwrap();
@@ -574,28 +586,31 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
     )
     .unwrap();
 
-    let models_error = mmcif::write_models_with_reports(
-        &[first.clone(), second.clone()],
-        &[],
+    // Each model block carries its own reports, so a mismatch is reported
+    // per block in the same shape as an ensemble block's.
+    let model_error = mmcif::write(
+        [mmcif::MmcifBlockSource::model(&first).with_reports(&[])],
         MmcifWriteOptions::default(),
     )
     .unwrap_err();
     assert!(matches!(
-        &models_error,
+        &model_error,
         mmcif::MmcifWriteError::ReportCountMismatch {
-            expected: 2,
+            expected: 1,
             actual: 0
         }
     ));
     assert_eq!(
-        models_error.to_string(),
-        "mmCIF writing requires 2 interpretation reports, but received 0"
+        model_error.to_string(),
+        "mmCIF writing requires 1 interpretation reports, but received 0"
     );
 
-    let ensemble = Ensemble::from_models(&[first, second]).unwrap();
-    let ensemble_error =
-        mmcif::write_ensemble_with_reports(&ensemble, &[], MmcifWriteOptions::default())
-            .unwrap_err();
+    let ensemble = Ensemble::from_models([first, second]).unwrap();
+    let ensemble_error = mmcif::write(
+        [mmcif::MmcifBlockSource::ensemble(&ensemble).with_reports(&[])],
+        MmcifWriteOptions::default(),
+    )
+    .unwrap_err();
     assert!(matches!(
         &ensemble_error,
         mmcif::MmcifWriteError::ReportCountMismatch {
@@ -603,7 +618,10 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
             actual: 0
         }
     ));
-    assert_eq!(ensemble_error.to_string(), models_error.to_string());
+    assert_eq!(
+        ensemble_error.to_string(),
+        "mmCIF writing requires 2 interpretation reports, but received 0"
+    );
 }
 
 struct FailingWriter;
@@ -622,26 +640,24 @@ impl Write for FailingWriter {
 fn streaming_writers_report_structured_io_failures() {
     let model = model("C", &[[0.0, 0.0, 0.0]]);
     assert!(matches!(
-        molfile::write_model_to(
-            &mut FailingWriter,
-            &model,
-            MolfileWriteOptions::default()
-        ),
+        molfile::write_to(&mut FailingWriter, &model, MolfileWriteOptions::default()),
         Err(error) if error.kind() == MolWriteErrorKind::Io(io::ErrorKind::BrokenPipe)
     ));
     assert!(matches!(
-        sdf::write_model_to(&mut FailingWriter, &model, SdfWriteOptions::default()),
+        sdf::write_to(&mut FailingWriter, [&model], SdfWriteOptions::default()),
         Err(sdf::SdfWriteError::Io {
             kind: io::ErrorKind::BrokenPipe,
             ..
         })
     ));
     assert!(matches!(
-        mmcif::write_model_with_classifications_to(
+        mmcif::write_to(
             &mut FailingWriter,
-            &model,
-            &classifications(&model),
-            MmcifWriteOptions::default(),
+            [
+                mmcif::MmcifBlockSource::model(&model)
+                    .with_classifications(&classifications(&model))
+            ],
+            MmcifWriteOptions::default()
         ),
         Err(mmcif::MmcifWriteError::Io {
             kind: io::ErrorKind::BrokenPipe,

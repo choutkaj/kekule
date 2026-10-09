@@ -1,7 +1,7 @@
 #![no_main]
 
+use kekule::molfile::{interpret, parse_str, write, MolfileWriteOptions, MolfileWriteVersion};
 use libfuzzer_sys::fuzz_target;
-use kekule::molfile::{interpret, parse_str, write_v3000};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(input) = std::str::from_utf8(data) else {
@@ -12,7 +12,10 @@ fuzz_target!(|data: &[u8]| {
             return;
         };
         for molecule in interpreted.molecules() {
-            if let Ok(output) = write_v3000(molecule) {
+            let options = MolfileWriteOptions {
+                version: MolfileWriteVersion::V3000,
+            };
+            if let Ok(output) = write(molecule, options) {
                 if let Ok(document) = parse_str(&output) {
                     let _ = interpret(&document);
                 }

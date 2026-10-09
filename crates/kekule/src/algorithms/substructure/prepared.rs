@@ -31,7 +31,28 @@ impl<'a> PreparedTarget<'a> {
             visitor(&atoms)
         })
     }
-    pub fn find_matches_complete(
+    /// The first match in search order, if any.
+    pub fn find_match(
+        &self,
+        query: &QueryGraph,
+    ) -> Result<Option<QueryMatch>, SubstructureMatchError> {
+        let mut first = None;
+        self.visit_matches(query, |matched| {
+            first = Some(matched.clone());
+            ControlFlow::Break(())
+        })?;
+        Ok(first)
+    }
+
+    pub fn find_matches(
+        &self,
+        query: &QueryGraph,
+    ) -> Result<Vec<QueryMatch>, SubstructureMatchError> {
+        self.find_matches_with_options(query, SubstructureMatchOptions::default())
+    }
+
+    /// Every match; exceeding the match cap is an error, never a partial list.
+    pub fn find_matches_with_options(
         &self,
         query: &QueryGraph,
         options: SubstructureMatchOptions,
@@ -45,7 +66,16 @@ impl<'a> PreparedTarget<'a> {
         })?;
         Ok(matches)
     }
+
     pub fn visit_matches(
+        &self,
+        query: &QueryGraph,
+        visitor: impl FnMut(&QueryMatch) -> ControlFlow<()>,
+    ) -> Result<MatchCompletion, SubstructureMatchError> {
+        self.visit_matches_with_options(query, SubstructureMatchOptions::default(), visitor)
+    }
+
+    pub fn visit_matches_with_options(
         &self,
         query: &QueryGraph,
         options: SubstructureMatchOptions,

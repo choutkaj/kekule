@@ -1,6 +1,7 @@
 use kekule::geometry::Vector3;
+use kekule::structure::{ConformationError, Forces, Velocities};
 use kekule::units::{Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT};
-use kekule_traj::{Forces, FrameBuffer, FrameError, Velocities};
+use kekule_traj::FrameBuffer;
 
 mod support;
 
@@ -66,11 +67,11 @@ fn vector_replacement_validates_and_copies_one_borrowed_slice() {
         )))
         .unwrap();
     assert_eq!(
-        buffer.frame_view().velocities().unwrap().value(),
+        buffer.frame_view().velocities().unwrap().values().value(),
         velocities.values().value()
     );
     assert_eq!(
-        buffer.frame_view().forces().unwrap().value(),
+        buffer.frame_view().forces().unwrap().values().value(),
         forces.values().value()
     );
 }
@@ -98,28 +99,28 @@ fn owned_vector_construction_keeps_allocations_and_validates_converted_values() 
             vec![Vector3::new(f64::NAN, 0.0, 0.0)],
             CANONICAL_VELOCITY_UNIT
         )),
-        Err(FrameError::NonFiniteVector { index: 0 })
+        Err(ConformationError::NonFiniteVector { index: 0 })
     ));
     assert!(matches!(
         Forces::from_vec(Quantity::new(
             vec![Vector3::new(f64::MAX, 0.0, 0.0)],
             source_unit
         )),
-        Err(FrameError::NonFiniteVector { index: 0 })
+        Err(ConformationError::NonFiniteVector { index: 0 })
     ));
     assert!(matches!(
         Forces::from_vec(Quantity::new(
             vec![Vector3::zero()],
             CANONICAL_VELOCITY_UNIT
         )),
-        Err(FrameError::Unit(_))
+        Err(ConformationError::Unit(_))
     ));
 }
 
 #[test]
 fn buffer_vector_clear_methods_need_no_type_annotations_and_preserve_other_state() {
     let mut buffer = FrameBuffer::new(support::linear_carbon_topology(1));
-    buffer.set_step(Some(42));
+    buffer.frame_mut().set_step(Some(42));
     buffer
         .set_velocities(Some(Quantity::new(
             [Vector3::new(1.0, 2.0, 3.0)],
@@ -132,8 +133,20 @@ fn buffer_vector_clear_methods_need_no_type_annotations_and_preserve_other_state
             CANONICAL_FORCE_UNIT,
         )))
         .unwrap();
-    let velocity_pointer = buffer.frame_view().velocities().unwrap().value().as_ptr();
-    let force_pointer = buffer.frame_view().forces().unwrap().value().as_ptr();
+    let velocity_pointer = buffer
+        .frame_view()
+        .velocities()
+        .unwrap()
+        .values()
+        .value()
+        .as_ptr();
+    let force_pointer = buffer
+        .frame_view()
+        .forces()
+        .unwrap()
+        .values()
+        .value()
+        .as_ptr();
     buffer.clear_velocities();
     assert!(buffer.frame_view().velocities().is_none());
     assert!(buffer.frame_view().forces().is_some());
@@ -150,11 +163,23 @@ fn buffer_vector_clear_methods_need_no_type_annotations_and_preserve_other_state
         .set_forces(Some(Quantity::new([Vector3::zero()], CANONICAL_FORCE_UNIT)))
         .unwrap();
     assert_eq!(
-        buffer.frame_view().velocities().unwrap().value().as_ptr(),
+        buffer
+            .frame_view()
+            .velocities()
+            .unwrap()
+            .values()
+            .value()
+            .as_ptr(),
         velocity_pointer
     );
     assert_eq!(
-        buffer.frame_view().forces().unwrap().value().as_ptr(),
+        buffer
+            .frame_view()
+            .forces()
+            .unwrap()
+            .values()
+            .value()
+            .as_ptr(),
         force_pointer
     );
 }

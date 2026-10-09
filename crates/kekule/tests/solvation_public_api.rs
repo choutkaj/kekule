@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 fn model(smiles: &str) -> Model {
     let m = kekule::smiles::to_molecules(smiles).unwrap().remove(0);
-    Model::from_molecule(&m, &Positions::zeros(m.atom_count())).unwrap()
+    Model::from_molecule(m.clone(), &Positions::zeros(m.atom_count())).unwrap()
 }
 fn boxed(smiles: &str) -> Model {
     let mut m = model(smiles);
@@ -155,7 +155,7 @@ fn waters_are_whole_shared_classified_and_periodically_nonclashing() {
         let report = m.add_solvent(&options()).unwrap();
         assert!(report.waters_added > 100);
         assert_eq!(m.atom_count(), 1 + 3 * report.waters_added);
-        assert_eq!(m.bond_count(), 2 * report.waters_added);
+        assert_eq!(m.topology().bond_count(), 2 * report.waters_added);
         assert_eq!(m.topology().definition_count(), 2);
         assert_eq!(m.cell(), old.cell());
         assert_eq!(points(&m)[0], points(&old)[0]);
@@ -167,10 +167,10 @@ fn waters_are_whole_shared_classified_and_periodically_nonclashing() {
             assert_eq!(water.molecule().atom_count(), 3);
             assert_eq!(water.molecule().bond_count(), 2);
             let atoms: Vec<_> = water.atoms().collect();
-            assert_eq!(atoms[0].1.element.symbol(), "O");
+            assert_eq!(atoms[0].element.symbol(), "O");
             let p: Vec<_> = atoms
                 .iter()
-                .map(|(id, _)| m.position(*id).unwrap().into_value())
+                .map(|view| m.position(view.id()).unwrap().into_value())
                 .collect();
             for h in &p[1..] {
                 assert!(((*h - p[0]).norm() - 0.09572).abs() < 0.0002);
@@ -193,10 +193,10 @@ fn waters_are_whole_shared_classified_and_periodically_nonclashing() {
             }
             oxygens.push(p[0]);
         }
-        for residue in m.residues() {
+        for residue in m.topology().residues() {
             assert_eq!(residue.class(), ResidueClass::Water);
         }
-        assert_eq!(m.atom_sites().count(), 3 * report.waters_added);
+        assert_eq!(m.topology().atom_sites().count(), 3 * report.waters_added);
     }
 }
 
@@ -227,8 +227,9 @@ fn charge_salt_rounding_and_seeded_ion_placement() {
             nw
         );
         assert_eq!(
-            a.atoms()
-                .map(|(_, atom)| i64::from(atom.formal_charge))
+            a.topology()
+                .atoms()
+                .map(|atom| i64::from(atom.formal_charge))
                 .sum::<i64>(),
             0
         );
@@ -238,7 +239,7 @@ fn charge_salt_rounding_and_seeded_ion_placement() {
             .molecules()
             .filter(|m| m.class() == MoleculeClass::Ion)
             .map(|m| {
-                a.position(m.atoms().next().unwrap().0)
+                a.position(m.atoms().next().unwrap().id())
                     .unwrap()
                     .into_value()
             })
@@ -299,7 +300,7 @@ fn overrides_validate_topology_units_charge_and_ion_species() {
             .unwrap();
         assert_eq!(report.positive_ions_added, report.negative_ions_added + 2);
         assert_eq!(report.charge_basis, SolvationChargeBasis::Override);
-        assert_eq!(m.atoms().next().unwrap().1.formal_charge, 0);
+        assert_eq!(m.topology().atoms().next().unwrap().formal_charge, 0);
     }
     let composed = MOLE.try_div(METER.try_powi(3).unwrap()).unwrap();
     assert_eq!(
@@ -361,7 +362,7 @@ fn errors_leave_every_part_of_model_unchanged() {
         assert!(m.add_solvent(&opts).is_err());
         assert_eq!(m, before);
     }
-    m.set_cell(Some(
+    m.conformation_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(3.0, 3.0, 3.0), NANOMETER),
             [true, true, false],
@@ -374,7 +375,7 @@ fn errors_leave_every_part_of_model_unchanged() {
         Err(SolvationError::NotFullyPeriodic)
     ));
     assert_eq!(m, before);
-    m.set_cell(Some(
+    m.conformation_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(0.1, 3.0, 3.0), NANOMETER),
             [true; 3],
@@ -413,12 +414,21 @@ fn original_entities_properties_and_existing_water_survive() {
     }
     builder
         .topology_builder_mut()
-        .insert_property(key("topology_note"), PropertyValue::Int(1))
+        .properties_mut()
+        .owner_mut()
+        .insert(key("topology_note"), PropertyValue::Int(1))
         .unwrap();
     let mut m = builder.build().unwrap();
-    m.insert_property(key("model_note"), PropertyValue::Int(2))
+    m.conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(key("model_note"), PropertyValue::Int(2))
         .unwrap();
-    m.set_atom_property(ids[0], key("atom_note"), Some(PropertyValue::Int(3)))
+    let row = m.topology().atom_index(ids[0]).unwrap();
+    m.conformation_mut()
+        .properties_mut()
+        .atoms_mut()
+        .set_value(key("atom_note"), row, Some(PropertyValue::Int(3)))
         .unwrap();
     m.add_periodic_box(&PeriodicBoxOptions::Dimensions(Quantity::new(
         Vector3::new(3.0, 3.0, 3.0),
@@ -430,12 +440,15 @@ fn original_entities_properties_and_existing_water_survive() {
     assert_eq!(&m.topology().atom_ids()[..ids.len()], ids);
     assert_eq!(&points(&m)[..ids.len()], points(&before));
     assert_eq!(
-        m.atom_property(ids[0], &key("atom_note")).unwrap(),
+        m.atom(ids[0])
+            .unwrap()
+            .realization_property(&key("atom_note")),
         Some(PropertyValue::Int(3))
     );
     assert_eq!(
-        m.atom_property(m.topology().atom_ids()[3], &key("atom_note"))
-            .unwrap(),
+        m.atom(m.topology().atom_ids()[3])
+            .unwrap()
+            .realization_property(&key("atom_note")),
         None
     );
     assert_eq!(
@@ -444,14 +457,14 @@ fn original_entities_properties_and_existing_water_survive() {
     );
     assert_eq!(report.cleared_model_properties, vec![key("model_note")]);
     assert_eq!(
-        m.hierarchy().chain(chain).unwrap(),
-        before.hierarchy().chain(chain).unwrap()
+        m.topology().hierarchy().chain(chain).unwrap(),
+        before.topology().hierarchy().chain(chain).unwrap()
     );
     assert_eq!(
-        m.hierarchy().residue(residue).unwrap(),
-        before.hierarchy().residue(residue).unwrap()
+        m.topology().hierarchy().residue(residue).unwrap(),
+        before.topology().hierarchy().residue(residue).unwrap()
     );
-    assert!(m.chains().any(|c| c.label_id() == "SOL2"));
+    assert!(m.topology().chains().any(|c| c.label_id() == "SOL2"));
     assert_eq!(before.topology().instance_count(), 1);
 }
 
@@ -503,7 +516,7 @@ fn rotated_skewed_and_left_handed_cells_fill_without_moving_solute() {
         assert_eq!(m.position(atom).unwrap().into_value(), position);
         let geometry = PeriodicGeometry::new(cell).unwrap();
         for water in m.topology().molecules().skip(1) {
-            let oxygen = water.atoms().next().unwrap().0;
+            let oxygen = water.atoms().next().unwrap().id();
             let f = geometry
                 .fractional(m.position(oxygen).unwrap().into_value() - position)
                 .unwrap();
@@ -594,7 +607,7 @@ fn all_candidate_waters_can_be_replaced_without_unused_definitions() {
     assert_eq!(report.negative_ions_added, count);
     assert_eq!(m.topology().definition_count(), 2);
     assert_eq!(m.atom_count(), 1 + count);
-    assert_eq!(m.bond_count(), 0);
+    assert_eq!(m.topology().bond_count(), 0);
 }
 
 #[test]

@@ -138,20 +138,19 @@ fn topology_counts_follow_each_reused_definition_and_reject_foreign_atoms() {
     molecule.perceive().unwrap();
     let c = carbon(&molecule);
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     let first = builder.add_instance(definition).unwrap();
     let second = builder.add_instance(definition).unwrap();
     let topology = builder.build().unwrap();
     for instance in [first, second] {
         let atom = InstanceAtomId::new(instance, c);
-        assert_eq!(topology.explicit_hydrogens(atom).unwrap(), 1);
-        assert_eq!(topology.implicit_hydrogens(atom).unwrap(), Some(3));
-        assert_eq!(topology.total_hydrogens(atom).unwrap(), Some(4));
+        let atom = topology.atom(atom).unwrap();
+        assert_eq!(atom.explicit_hydrogens(), 1);
+        assert_eq!(atom.implicit_hydrogens(), Some(3));
+        assert_eq!(atom.total_hydrogens(), Some(4));
     }
     let invalid = InstanceAtomId::new(first, AtomId::new(999));
-    assert!(topology.explicit_hydrogens(invalid).is_err());
-    assert!(topology.implicit_hydrogens(invalid).is_err());
-    assert!(topology.total_hydrogens(invalid).is_err());
+    assert!(topology.atom(invalid).is_none());
 }
 
 #[test]
@@ -190,12 +189,15 @@ fn fixed_counts_materialize_without_perception_but_unresolved_counts_fail_atomic
     let mut fixed = parse("[CH4]");
     assert_eq!(fixed.add_hydrogens().unwrap().added.len(), 4);
     let mut inferred = parse("C");
-    let before = smiles::write_isomeric(&inferred).unwrap();
+    let before = smiles::write(&inferred, smiles::SmilesWriteOptions::isomeric()).unwrap();
     assert_eq!(
         inferred.add_hydrogens(),
         Err(HydrogenTransformError::MissingValencePerception)
     );
-    assert_eq!(smiles::write_isomeric(&inferred).unwrap(), before);
+    assert_eq!(
+        smiles::write(&inferred, smiles::SmilesWriteOptions::isomeric()).unwrap(),
+        before
+    );
 }
 
 #[test]
@@ -217,8 +219,11 @@ fn stereo_and_smiles_round_trips_use_complete_implicit_counts() {
                 .assigned,
             cip
         );
-        for write in [smiles::write_isomeric, smiles::write_canonical] {
-            let text = write(&molecule).unwrap();
+        for options in [
+            smiles::SmilesWriteOptions::isomeric(),
+            smiles::SmilesWriteOptions::canonical(),
+        ] {
+            let text = smiles::write(&molecule, options).unwrap();
             let mut restored = parse(&text);
             restored.perceive().unwrap();
             assert_eq!(

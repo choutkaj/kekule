@@ -216,7 +216,8 @@ impl ForceField {
         mut charges_for: impl FnMut(&Molecule) -> Result<ChargeAssignment>,
     ) -> Result<ParameterizedTopology> {
         let mut definitions = BTreeMap::new();
-        for (id, definition) in topology.definitions() {
+        for definition in topology.definitions() {
+            let id = definition.id();
             let assigned = self.assign(definition.molecule())?;
             let charges = charges_for(&assigned.molecule)?;
             definitions.insert(id, (assigned, charges));
@@ -353,7 +354,7 @@ impl ForceField {
         model: &NaglModel,
     ) -> Result<ParameterizedTopology> {
         self.parameterize(
-            Arc::new(Topology::from_molecule(molecule).map_err(error)?),
+            Arc::new(Topology::from_molecule(molecule.clone()).map_err(error)?),
             model,
         )
     }
@@ -441,7 +442,7 @@ mod tests {
             .filter(|(_, a)| a.element.atomic_number() == 6)
             .map(|(a, _)| a)
             .collect::<Vec<_>>();
-        let topology = Arc::new(Topology::from_molecule(&molecule).unwrap());
+        let topology = Arc::new(Topology::from_molecule(molecule.clone()).unwrap());
         let ff = ForceField::rosemary().unwrap();
         let p = ff
             .parameterize_with(topology, |m| {
@@ -466,7 +467,7 @@ mod tests {
     fn reused_definitions_snapshot_trefoils_constraints_and_exceptions() {
         let molecule = smiles::to_molecules("[H]C([H])=O").unwrap().remove(0);
         let mut builder = TopologyBuilder::new();
-        let definition = builder.add_molecule_definition(&molecule).unwrap();
+        let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
         builder.add_instance(definition).unwrap();
         builder.add_instance(definition).unwrap();
         let topology = Arc::new(builder.build().unwrap());

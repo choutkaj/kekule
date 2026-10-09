@@ -71,7 +71,7 @@ fn topology_publication_validates_hierarchy_references() {
     let atom = editor.add_atom(carbon()).unwrap();
     let molecule = editor.finish().unwrap();
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&molecule).unwrap();
+    let instance = builder.add_molecule(molecule.clone()).unwrap();
     let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue = builder
         .hierarchy_mut()
@@ -91,7 +91,7 @@ fn topology_publication_validates_hierarchy_references() {
     ));
 
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&molecule).unwrap();
+    let instance = builder.add_molecule(molecule.clone()).unwrap();
     let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue = builder
         .hierarchy_mut()

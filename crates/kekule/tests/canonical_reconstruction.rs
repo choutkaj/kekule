@@ -69,7 +69,7 @@ fn hierarchy_is_owned_by_topology() {
         .finish()
         .expect("molecule publishes without hierarchy");
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&molecule).unwrap();
+    let instance = builder.add_molecule(molecule.clone()).unwrap();
     let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue = builder
         .hierarchy_mut()
@@ -93,7 +93,7 @@ fn hierarchy_is_owned_by_topology() {
 fn topology_definitions_consume_the_universal_molecule_directly() {
     let molecule = one_smiles("CCO");
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     builder.add_instance(definition).unwrap();
     let topology = builder.build().unwrap();
     let stored = topology.definition(definition).unwrap().molecule();

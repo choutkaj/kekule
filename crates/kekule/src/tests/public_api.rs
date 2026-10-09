@@ -10,12 +10,14 @@ fn happy_path_universal_molecule_api_matches_architecture() {
     assert_eq!(molecule.atom_count(), molecule.atom_count());
     assert_eq!(molecule.bond_count(), molecule.bond_count());
 
-    let canonical = smiles_api::write_canonical(&molecule).expect("canonical SMILES writes");
+    let canonical = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::canonical())
+        .expect("canonical SMILES writes");
     assert!(!canonical.is_empty());
 
     let chiral = read_smiles("F[C@H](Cl)Br").expect("chiral molecule parses");
     assert_eq!(
-        smiles_api::write_isomeric(&chiral).expect("isomeric SMILES writes"),
+        smiles_api::write(&chiral, smiles_api::SmilesWriteOptions::isomeric())
+            .expect("isomeric SMILES writes"),
         "F[C@H](Cl)Br"
     );
 }
@@ -28,12 +30,14 @@ fn namespaced_molecule_api_keeps_pipeline_stages_separate() {
     perceive(&mut molecule).expect("acetic acid perceives");
     assert!(molecule.perception().has_valence());
 
-    let canonical = smiles_api::write_canonical(&molecule).expect("canonical SMILES writes");
+    let canonical = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::canonical())
+        .expect("canonical SMILES writes");
     assert!(!canonical.is_empty());
 
     let chiral = read_smiles("F[C@H](Cl)Br").expect("chiral molecule parses");
     assert_eq!(
-        smiles_api::write_isomeric(&chiral).expect("isomeric SMILES writes"),
+        smiles_api::write(&chiral, smiles_api::SmilesWriteOptions::isomeric())
+            .expect("isomeric SMILES writes"),
         "F[C@H](Cl)Br"
     );
 }

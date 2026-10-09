@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use kekule::geometry::Point3;
+use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::units::{Quantity, ANGSTROM};
 use kekule_traj::{
-    FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryError, TrajectoryFrameView,
-    TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryError, TrajectoryReader,
+    TrajectoryWriter,
 };
 
 mod support;

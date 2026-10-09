@@ -75,7 +75,7 @@ impl std::error::Error for BondDihedralError {
 ///     .map(|&bond| BondDihedral::new(&topology, bond))
 ///     .collect::<Result<Vec<_>, _>>()?;
 /// for definition in &definitions {
-///     let angle = definition.measure(model.view())?;
+///     let angle = definition.measure(model.as_model_view())?;
 ///     // `angle` is None when this bond has no defined dihedral in this frame.
 /// }
 /// # Ok(())
@@ -100,12 +100,10 @@ impl BondDihedral {
         bond: InstanceBondId,
         options: CipAssignmentOptions,
     ) -> Result<Self, BondDihedralError> {
-        topology
-            .bond(bond)
-            .map_err(|_| BondDihedralError::InvalidBondId(bond))?;
         let instance = topology
-            .molecule(bond.molecule())
-            .map_err(|_| BondDihedralError::InvalidBondId(bond))?;
+            .bond(bond)
+            .ok_or(BondDihedralError::InvalidBondId(bond))?
+            .molecule();
         let atoms = bond_reference_atoms(instance.molecule(), bond.bond(), options)
             .map_err(|error| BondDihedralError::Ranking { bond, error })?
             .map(|atoms| atoms.map(|atom| InstanceAtomId::new(bond.molecule(), atom)));

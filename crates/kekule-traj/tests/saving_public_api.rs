@@ -6,15 +6,14 @@ use std::{
 
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::Positions;
+use kekule::structure::{Forces, Trajectory, TrajectoryFrame, TrajectoryFrameView, Velocities};
 use kekule_traj::io::dcd::DcdWriteOptions;
 use kekule_traj::io::trr::{TrrScalarPrecision, TrrWriteOptions};
 use kekule_traj::io::{
     read_trajectory, read_trajectory_with_options, write_trajectory, write_trajectory_with_options,
     OverwritePolicy, TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
-use kekule_traj::{
-    Trajectory, TrajectoryError, TrajectoryFormat, TrajectoryFrame, TrajectoryFrameView,
-};
+use kekule_traj::{TrajectoryError, TrajectoryFormat};
 
 mod support;
 use support::{linear_carbon_topology, topology};
@@ -81,8 +80,14 @@ fn same_frame(actual: TrajectoryFrameView<'_>, expected: TrajectoryFrameView<'_>
         }
     }
     for (actual, expected) in [
-        (actual.velocities(), expected.velocities()),
-        (actual.forces(), expected.forces()),
+        (
+            actual.velocities().map(Velocities::values),
+            expected.velocities().map(Velocities::values),
+        ),
+        (
+            actual.forces().map(Forces::values),
+            expected.forces().map(Forces::values),
+        ),
     ] {
         assert_eq!(actual.is_some(), expected.is_some());
         if let (Some(a), Some(b)) = (actual, expected) {
@@ -144,7 +149,7 @@ fn saving_round_trips_all_codecs_using_defaults_or_explicit_native_options() {
         }
         let read = read_trajectory(&path, topology).unwrap();
         assert_eq!(read.len(), trajectory.len());
-        for (actual, expected) in read.frames().zip(trajectory.frames()) {
+        for (actual, expected) in read.iter().zip(trajectory.iter()) {
             same_frame(actual, expected, 1.0e-6);
         }
     }
@@ -172,7 +177,7 @@ fn explicit_format_overrides_extension_and_precision_is_preserved() {
             .with_format_hint(TrajectoryFormatHint::Explicit(TrajectoryFormat::Trr)),
     )
     .unwrap();
-    for (actual, expected) in read.frames().zip(trajectory.frames()) {
+    for (actual, expected) in read.iter().zip(trajectory.iter()) {
         same_frame(actual, expected, 1.0e-12);
     }
 }
@@ -215,16 +220,17 @@ fn failed_saves_leave_no_output_or_temporary_files_and_preserve_existing_destina
     trajectory.push(late).unwrap();
     assert!(write_trajectory(&path, &trajectory).is_err());
     assert_eq!(directory.count(), 0);
-    trajectory.frame_mut(1).unwrap().set_step(None);
+    trajectory.get_mut(1).unwrap().set_step(None);
     trajectory
-        .insert_property(PropertyKey::new("run").unwrap(), PropertyValue::Int(2))
+        .properties_mut()
+        .insert(PropertyKey::new("run").unwrap(), PropertyValue::Int(2))
         .unwrap();
     assert_eq!(
         write_trajectory(&path, &trajectory),
         Err(TrajectoryError::UnsupportedField("collection properties"))
     );
     assert_eq!(directory.count(), 0);
-    trajectory.clear_properties();
+    trajectory.properties_mut().clear();
     write_trajectory(&path, &trajectory).unwrap();
     let before = fs::read(&path).unwrap();
     assert!(write_trajectory(&path, &trajectory).is_err());
@@ -242,18 +248,69 @@ fn failed_saves_leave_no_output_or_temporary_files_and_preserve_existing_destina
 }
 
 #[test]
+fn every_codec_rejects_occupancies_and_b_factors_without_publishing() {
+    use kekule::topology::TopologyAtomIndex;
+    use kekule::units::{Quantity, SQUARE_ANGSTROM};
+    use kekule_traj::TrajectoryCodecErrorKind;
+
+    type Annotate = fn(&mut TrajectoryFrame);
+    let directory = Directory::new();
+    let topology = linear_carbon_topology(3);
+    let annotations: [(&str, Annotate); 2] = [
+        ("occupancies", |frame| {
+            frame
+                .conformation_mut()
+                .set_occupancy(TopologyAtomIndex::new(1), Some(0.5))
+                .unwrap();
+        }),
+        ("B-factors", |frame| {
+            frame
+                .conformation_mut()
+                .set_b_factor(
+                    TopologyAtomIndex::new(1),
+                    Some(Quantity::new(20.0, SQUARE_ANGSTROM)),
+                )
+                .unwrap();
+        }),
+    ];
+    for (format, name) in [
+        (TrajectoryFormat::Xyz, "out.xyz"),
+        (TrajectoryFormat::Dcd, "out.dcd"),
+        (TrajectoryFormat::Trr, "out.trr"),
+        (TrajectoryFormat::Xtc, "out.xtc"),
+    ] {
+        for (field, annotate) in annotations {
+            let mut frame = TrajectoryFrame::new(Positions::zeros(3));
+            annotate(&mut frame);
+            let trajectory = Trajectory::from_items(topology.clone(), [frame]).unwrap();
+            let error = write_trajectory_with_options(
+                directory.file(name),
+                &trajectory,
+                TrajectoryWriteOptions::new(format),
+            )
+            .unwrap_err();
+            assert_eq!(
+                support::codec_kind(&error),
+                Some(TrajectoryCodecErrorKind::UnsupportedField),
+                "{format:?} {field}"
+            );
+            assert!(error.to_string().contains(field), "{error}");
+            assert_eq!(directory.count(), 0);
+        }
+    }
+}
+
+#[test]
 fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     use kekule::{
         geometry::{PeriodicCell, Vector3},
         topology::AtomSelection,
         units::{Quantity, DIMENSIONLESS, NANOMETER, PICOSECOND},
     };
-    use kekule_traj::{
-        analysis::FrameSuperposer,
-        io::{create_trajectory_writer, open_trajectory, trr::TRR_LAMBDA_PROPERTY},
-        periodic::{MoleculeImager, TrajectoryUnwrapper},
-        Forces, TrajectoryReader, TrajectoryWriter, Velocities,
-    };
+    use kekule_traj::analysis::FrameSuperposer;
+    use kekule_traj::io::{create_trajectory_writer, open_trajectory, trr::TRR_LAMBDA_PROPERTY};
+    use kekule_traj::periodic::{self, MoleculeImager, TrajectoryUnwrapper};
+    use kekule_traj::{TrajectoryReader, TrajectoryWriter};
     let directory = Directory::new();
     let topology = topology(&["O", "H", "H"], &[(0, 1), (0, 2)]);
     let mut source = read_trajectory(fixture("ase-3.26.0-water.xyz"), topology.clone()).unwrap();
@@ -263,8 +320,8 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     )
     .unwrap();
     for index in 0..source.len() {
-        let mut frame = source.frame_mut(index).unwrap();
-        frame.set_cell(Some(cell));
+        let mut frame = source.get_mut(index).unwrap();
+        frame.conformation_mut().set_cell(Some(cell));
         frame
             .set_time(Some(Quantity::new(index as f64, PICOSECOND)))
             .unwrap();
@@ -273,8 +330,8 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
         frame.set_forces(Some(Forces::zeros(3))).unwrap();
     }
     // Atom slicing produces a new topology, while frame selection retains it.
-    let sliced = source.slice(&AtomSelection::all(&topology)).unwrap();
-    let mut selected = sliced.select_frames([0, 1, 1]).unwrap();
+    let sliced = source.subset(&AtomSelection::all(&topology)).unwrap();
+    let mut selected = sliced.select([0, 1, 1]).unwrap();
     assert!(std::sync::Arc::ptr_eq(
         &sliced.shared_topology(),
         &selected.shared_topology()
@@ -282,9 +339,12 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     let topology = selected.shared_topology();
     for index in 0..selected.len() {
         selected
-            .frame_mut(index)
+            .get_mut(index)
             .unwrap()
-            .insert_property(
+            .conformation_mut()
+            .properties_mut()
+            .owner_mut()
+            .insert(
                 PropertyKey::new(TRR_LAMBDA_PROPERTY).unwrap(),
                 PropertyValue::Real {
                     value: 0.0,
@@ -300,9 +360,10 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     write_trajectory_with_options(&input, &selected, options.clone()).unwrap();
     let loaded = read_trajectory(&input, topology.clone()).unwrap();
     let atoms = AtomSelection::all(&topology);
-    let whole = loaded.make_molecules_whole().unwrap();
-    let continuous = whole.unwrap().unwrap();
-    let expected = continuous.superpose_to_frame(0, &atoms).unwrap();
+    let mut expected = loaded;
+    periodic::make_molecules_whole(&mut expected).unwrap();
+    periodic::unwrap(&mut expected).unwrap();
+    expected.superpose(0, &atoms).unwrap();
     let loaded_output = directory.file("loaded.trr");
     write_trajectory_with_options(&loaded_output, &expected, options.clone()).unwrap();
 
@@ -311,36 +372,33 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     let imager = MoleculeImager::new(topology.clone());
     let mut unwrapper = TrajectoryUnwrapper::new(topology.clone());
     assert!(reader.read_next(&mut frame).unwrap());
-    imager.make_whole_in_place(0, &mut frame).unwrap();
-    unwrapper.unwrap_in_place(0, &mut frame).unwrap();
-    let reference = frame.frame_view().to_frame();
-    let fitter = FrameSuperposer::new(reference.view(&topology).unwrap(), &atoms);
+    imager.make_whole(0, &mut frame).unwrap();
+    unwrapper.unwrap(0, &mut frame).unwrap();
+    let reference = frame.frame_view().to_model();
+    let fitter = FrameSuperposer::new(&reference, &atoms);
     let streamed_output = directory.file("streamed.trr");
     let mut writer = create_trajectory_writer(&streamed_output, topology.clone(), options).unwrap();
     let mut index = 0;
     loop {
-        fitter.superpose_in_place(index, &mut frame).unwrap();
+        fitter.superpose(index, &mut frame).unwrap();
         writer.write_frame(frame.frame_view()).unwrap();
         index += 1;
         if !reader.read_next(&mut frame).unwrap() {
             break;
         }
-        imager.make_whole_in_place(index, &mut frame).unwrap();
-        unwrapper.unwrap_in_place(index, &mut frame).unwrap();
+        imager.make_whole(index, &mut frame).unwrap();
+        unwrapper.unwrap(index, &mut frame).unwrap();
     }
     writer.finish().unwrap();
     assert_eq!(index, selected.len());
     for path in [loaded_output, streamed_output] {
         let reread = read_trajectory(path, topology.clone()).unwrap();
         assert_eq!(reread.len(), expected.len());
-        for (actual, expected) in reread.frames().zip(expected.frames()) {
+        for (actual, expected) in reread.iter().zip(expected.iter()) {
             same_frame(actual, expected, 1.0e-12);
         }
         assert_eq!(
-            reread
-                .frames()
-                .map(|frame| frame.step())
-                .collect::<Vec<_>>(),
+            reread.iter().map(|frame| frame.step()).collect::<Vec<_>>(),
             [Some(0), Some(5), Some(5)]
         );
     }

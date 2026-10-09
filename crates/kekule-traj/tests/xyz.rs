@@ -88,7 +88,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
     support::assert_rejects_unrelated_buffer(&mut reader);
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     let pointer = buffer.positions().values().value().as_ptr();
-    buffer.set_cell(Some(
+    buffer.frame_mut().conformation_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
             [true; 3],
@@ -102,11 +102,16 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
         )))
         .unwrap();
     buffer
+        .frame_mut()
         .set_time(Some(Quantity::new(1.0, PICOSECOND)))
         .unwrap();
-    buffer.set_step(Some(7));
+    buffer.frame_mut().set_step(Some(7));
     buffer
-        .insert_property(
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("stale").unwrap(),
             PropertyValue::Bool(true),
         )
@@ -271,7 +276,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     assert!(reader.read_next(&mut decoded).unwrap());
     assert!(!reader.read_next(&mut decoded).unwrap());
 
-    buffer.set_step(Some(1));
+    buffer.frame_mut().set_step(Some(1));
     let mut strict = XyzWriter::new(
         Vec::new(),
         topology,
@@ -283,9 +288,13 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
         codec_kind(&strict.write_frame(buffer.frame_view()).unwrap_err()),
         Some(TrajectoryCodecErrorKind::UnsupportedField)
     );
-    buffer.set_step(None);
+    buffer.frame_mut().set_step(None);
     buffer
-        .insert_bond_property_column(
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .bonds_mut()
+        .insert(
             PropertyKey::new("conformational_entropy").unwrap(),
             PropertyColumn::Real {
                 unit: ANGSTROM,
@@ -447,6 +456,8 @@ fn path_writer_failure_poisoning_prevents_partial_publication() {
     let output = temporary_path(Some("xyz"));
     let mut frame = FrameBuffer::new(Arc::clone(&topology));
     frame
+        .frame_mut()
+        .conformation_mut()
         .set_positions(Quantity::new(
             [Point3::new(1.0, 2.0, 3.0), Point3::new(4.0, 5.0, 6.0)],
             ANGSTROM,
@@ -459,7 +470,7 @@ fn path_writer_failure_poisoning_prevents_partial_publication() {
     )
     .unwrap();
     writer.write_frame(frame.frame_view()).unwrap();
-    frame.set_step(Some(1));
+    frame.frame_mut().set_step(Some(1));
     assert_eq!(
         codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
         Some(TrajectoryCodecErrorKind::UnsupportedField)

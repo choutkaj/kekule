@@ -38,4 +38,3 @@ pub use structure_documents::{
     MolfileParseError, MolfileParseOptions, MolfileVersion,
 };
 pub use v2000::*;
-pub use v3000::*;

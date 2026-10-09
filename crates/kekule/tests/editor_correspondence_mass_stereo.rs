@@ -32,11 +32,11 @@ fn publication_correspondence_tracks_reordering_deletion_and_bonds() {
     assert!(map.atom(removed).is_none());
     for (handle, x) in [(a, 1.), (b, 2.), (c, 3.)] {
         let (id, index) = map.atom(handle).unwrap();
-        assert_eq!(model.atom_ids()[index.index()], id);
+        assert_eq!(model.topology().atom_ids()[index.index()], id);
         assert!((model.position(id).unwrap().value_in(BOHR).unwrap().x - x).abs() < 1e-12);
     }
     let (id, index) = map.bond(bond).unwrap();
-    assert_eq!(model.bond_ids()[index.index()], id);
+    assert_eq!(model.topology().bond_ids()[index.index()], id);
     let mut next = model.edit();
     let handle = next.bond_handle(id).unwrap();
     next.delete_bond(handle).unwrap();
@@ -52,10 +52,10 @@ fn no_op_publication_retains_snapshot_and_foreign_handles_do_not_map() {
     let model = e.finish().unwrap();
     let source = model.shared_topology();
     let edit = TopologyEditor::from_topology(source.clone());
-    let handle = edit.atom_handle(model.atom_ids()[0]).unwrap();
+    let handle = edit.atom_handle(model.topology().atom_ids()[0]).unwrap();
     let (topology, map) = edit.finish_with_correspondence().unwrap();
     assert!(Arc::ptr_eq(&source, &topology));
-    assert_eq!(map.atom(handle).unwrap().0, model.atom_ids()[0]);
+    assert_eq!(map.atom(handle).unwrap().0, model.topology().atom_ids()[0]);
     let mut foreign = TopologyEditor::new();
     let other = foreign.add_atom(atom(2)).unwrap();
     assert!(map.atom(other).is_none());
@@ -90,10 +90,10 @@ fn stereo_replacement_is_occurrence_local_and_rejects_changed_source() {
     assert_eq!(molecule.stereo_elements().count(), 1);
     let mut builder = Model::builder();
     builder
-        .add_molecule(&molecule, &Positions::zeros(5))
+        .add_molecule(molecule.clone(), &Positions::zeros(5))
         .unwrap();
     builder
-        .add_molecule(&molecule, &Positions::zeros(5))
+        .add_molecule(molecule.clone(), &Positions::zeros(5))
         .unwrap();
     let original = builder.build().unwrap();
     let instances = original
@@ -117,7 +117,9 @@ fn stereo_replacement_is_occurrence_local_and_rejects_changed_source() {
         .molecules()
         .all(|m| m.molecule().stereo_elements().count() == 1));
     let mut changed = original.edit();
-    let id = changed.atom_handle(original.atom_ids()[0]).unwrap();
+    let id = changed
+        .atom_handle(original.topology().atom_ids()[0])
+        .unwrap();
     let mut a = changed.atom(id).unwrap().clone();
     a.isotope = Some(19);
     changed.replace_atom(id, a).unwrap();

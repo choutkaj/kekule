@@ -1,10 +1,10 @@
 #![no_main]
 
-use libfuzzer_sys::fuzz_target;
 use kekule::mmcif::{
     interpret, interpret_ensemble, parse_str_with_options, MmcifEnsembleInterpretOptions,
     MmcifEntry, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions,
 };
+use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(input) = std::str::from_utf8(data) else {
@@ -55,8 +55,8 @@ fuzz_target!(|data: &[u8]| {
         {
             for view in interpreted
                 .ensemble()
-                .members()
-                .map(|member| member.as_model())
+                .iter()
+                .map(|member| member.as_model_view())
             {
                 for atom in view.topology().atom_ids() {
                     let _ = view.topology().atom(*atom);

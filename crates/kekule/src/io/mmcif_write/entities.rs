@@ -203,8 +203,9 @@ pub(super) fn generic_entity_plan(
     for (id, molecule) in model.topology().instances() {
         let definition = model
             .topology()
-            .definition_for_instance(id)
-            .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
+            .molecule(id)
+            .expect("listed instances are topology molecules")
+            .definition();
         let qualified_atoms = definition
             .molecule()
             .atoms()
@@ -270,7 +271,7 @@ fn report_entity_plan(
     let mut provenance = BTreeMap::new();
     let mut reserved_entity_ids = BTreeSet::new();
     for instance in report.instances() {
-        if model.topology().instance(instance.molecule()).is_err() {
+        if model.topology().molecule(instance.molecule()).is_none() {
             return Err(MmcifWriteError::UnknownClassifiedMolecule(
                 instance.molecule(),
             ));
@@ -282,7 +283,7 @@ fn report_entity_plan(
         }
         for atom in instance.atoms() {
             if atom.atom().molecule() != instance.molecule()
-                || model.topology().atom(atom.atom()).is_err()
+                || model.topology().atom(atom.atom()).is_none()
             {
                 return Err(MmcifWriteError::UnknownAtomProvenance(atom.atom()));
             }
@@ -465,7 +466,7 @@ pub(super) fn normalize_entity_classifications(
 ) -> Result<BTreeMap<MoleculeInstanceId, EntityKind>, MmcifWriteError> {
     let mut explicit = BTreeMap::new();
     for (molecule, source_kinds) in entries {
-        if model.topology().instance(molecule).is_err() {
+        if model.topology().molecule(molecule).is_none() {
             return Err(MmcifWriteError::UnknownClassifiedMolecule(molecule));
         }
         if explicit.contains_key(&molecule) {
@@ -507,8 +508,9 @@ fn canonical_entity_kind(
     molecule: MoleculeInstanceId,
 ) -> Result<EntityKind, MmcifWriteError> {
     let class = topology
-        .molecule_class(molecule)
-        .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
+        .molecule(molecule)
+        .ok_or_else(|| invalid_molecule(molecule))?
+        .class();
     match class {
         MoleculeClass::Protein | MoleculeClass::Dna | MoleculeClass::Rna => Ok(EntityKind::Polymer),
         MoleculeClass::Water => Ok(EntityKind::Water),
@@ -527,7 +529,7 @@ fn carbohydrate_entity_kind(
 ) -> Result<EntityKind, MmcifWriteError> {
     let view = topology
         .molecule(molecule)
-        .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
+        .ok_or_else(|| invalid_molecule(molecule))?;
     let mut residues = view.residues();
     if residues
         .next()
@@ -540,4 +542,8 @@ fn carbohydrate_entity_kind(
         molecule,
         classification: MoleculeClass::Carbohydrate,
     })
+}
+
+fn invalid_molecule(molecule: MoleculeInstanceId) -> MmcifWriteError {
+    MmcifWriteError::InvalidModel(format!("invalid molecule instance: {molecule}"))
 }

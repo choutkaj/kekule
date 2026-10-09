@@ -1,6 +1,5 @@
 use kekule::{
-    core::*, hydrogens, perception::aromaticity, query::*, smiles, substructure::*,
-    topology::Topology,
+    core::*, perception::aromaticity, query::*, smiles, substructure::*, topology::Topology,
 };
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -11,7 +10,7 @@ fn connected_query_extensions_scale_with_local_adjacency() {
     // extension. This bounded test used to exhaust its search-state budget.
     let m = smiles::to_molecules(&"C".repeat(1500)).unwrap().remove(0);
     let q = parse_smarts("[#6:1]~[#6:2]~[#6:3]").unwrap();
-    let matches = find_substructure_matches_complete(
+    let matches = find_matches_with_options(
         &m,
         &q,
         SubstructureMatchOptions {
@@ -48,7 +47,7 @@ fn options() -> SubstructureMatchOptions {
     }
 }
 fn count(source: &str, pattern: &str) -> usize {
-    find_substructure_matches_complete(
+    find_matches_with_options(
         &molecule(source),
         &parse_smarts(pattern).unwrap(),
         options(),
@@ -105,11 +104,11 @@ fn hydrogen_valence_and_ring_primitives_are_distinct() {
         assert_eq!(count(s, q), n, "{s} {q}");
     }
     let mut m = molecule("C");
-    hydrogens::add_hydrogens(&mut m).unwrap();
+    m.add_hydrogens().unwrap();
     m.perceive().unwrap();
     for (q, n) in [("[h0]", 5), ("[H4]", 1), ("[H:1]", 4), ("[v4]", 1)] {
         assert_eq!(
-            find_substructure_matches_complete(&m, &parse_smarts(q).unwrap(), options())
+            find_matches_with_options(&m, &parse_smarts(q).unwrap(), options())
                 .unwrap()
                 .len(),
             n,
@@ -169,23 +168,31 @@ fn complete_enumeration_never_silently_truncates() {
     let m = molecule(&"C".repeat(34));
     let q = parse_smarts("[#6].[#6]").unwrap();
     assert_eq!(
-        find_substructure_matches_complete(&m, &q, options())
-            .unwrap()
-            .len(),
+        find_matches_with_options(&m, &q, options()).unwrap().len(),
         34 * 33
     );
     let capped = SubstructureMatchOptions {
         max_matches: 1000,
         ..options()
     };
+    // A match limit is a resource bound, never a silent truncation; callers
+    // that want a prefix stop the visitor explicitly.
+    let mut prefix = 0;
     assert_eq!(
-        find_substructure_matches_with_options(&m, &q, capped)
-            .unwrap()
-            .len(),
-        1000
+        visit_matches_with_options(&m, &q, options(), |_| {
+            prefix += 1;
+            if prefix == 1000 {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .unwrap(),
+        MatchCompletion::Stopped
     );
+    assert_eq!(prefix, 1000);
     assert!(matches!(
-        find_substructure_matches_complete(&m, &q, capped),
+        find_matches_with_options(&m, &q, capped),
         Err(SubstructureMatchError::ResourceLimit {
             resource: "matches",
             ..
@@ -193,7 +200,7 @@ fn complete_enumeration_never_silently_truncates() {
     ));
     let mut visits = 0;
     assert_eq!(
-        visit_substructure_matches(&m, &q, capped, |_| {
+        visit_matches_with_options(&m, &q, capped, |_| {
             visits += 1;
             ControlFlow::Break(())
         })
@@ -203,7 +210,7 @@ fn complete_enumeration_never_silently_truncates() {
     assert_eq!(visits, 1);
     let small = molecule("CC");
     assert_eq!(
-        find_substructure_matches_complete(
+        find_matches_with_options(
             &small,
             &q,
             SubstructureMatchOptions {
@@ -222,13 +229,13 @@ fn recursive_limits_errors_and_prerequisites_survive_negation() {
     let q = parse_smarts("[!$([H3])]").unwrap();
     let unperceived = smiles::to_molecules("CC").unwrap().pop().unwrap();
     assert!(matches!(
-        find_substructure_match(&unperceived, &q),
+        find_match(&unperceived, &q),
         Err(SubstructureMatchError::MissingPerception(
             QueryPerception::Valence
         ))
     ));
     assert!(matches!(
-        find_substructure_matches_complete(
+        find_matches_with_options(
             &molecule("CCCC"),
             &q,
             SubstructureMatchOptions {
@@ -287,10 +294,10 @@ fn recursive_limits_errors_and_prerequisites_survive_negation() {
 #[test]
 fn topology_disconnected_queries_keep_occurrences_and_snapshot() {
     let molecules = vec![molecule("CC"), molecule("C")];
-    let topology = Arc::new(Topology::from_molecules(&molecules).unwrap());
+    let topology = Arc::new(Topology::from_molecules(molecules.clone()).unwrap());
     let prepared = PreparedTopologyTarget::new(&topology);
     let q = parse_smarts("[#6:1].[#6:2]").unwrap();
-    let matches = prepared.find_matches_complete(&q, options()).unwrap();
+    let matches = prepared.find_matches_with_options(&q, options()).unwrap();
     assert_eq!(matches.len(), 6);
     assert!(matches.iter().all(|m| Arc::ptr_eq(m.topology(), &topology)));
     assert_eq!(
@@ -302,7 +309,10 @@ fn topology_disconnected_queries_keep_occurrences_and_snapshot() {
     );
     let q = parse_smarts("[#6]-[#6]").unwrap();
     assert_eq!(
-        prepared.find_matches_complete(&q, options()).unwrap().len(),
+        prepared
+            .find_matches_with_options(&q, options())
+            .unwrap()
+            .len(),
         2
     );
 }
@@ -337,7 +347,7 @@ fn mdl_aromaticity_is_explicit_and_does_not_rewrite_chemistry() {
             Some(AromaticityModel::Mdl)
         );
         assert_eq!(
-            find_substructure_matches_complete(&m, &parse_smarts("[a]").unwrap(), options())
+            find_matches_with_options(&m, &parse_smarts("[a]").unwrap(), options())
                 .unwrap()
                 .len(),
             expected,
@@ -359,7 +369,7 @@ fn incompatible_ring_models_fail_and_mdl_failure_is_transactional() {
         m.install_perception(state).unwrap();
         let before = m.perception().clone();
         assert!(matches!(
-            find_substructure_match(&m, &parse_smarts("[R1]").unwrap()),
+            find_match(&m, &parse_smarts("[R1]").unwrap()),
             Err(SubstructureMatchError::IncompatiblePerception(
                 QueryPerception::RingBasis
             ))
@@ -367,7 +377,7 @@ fn incompatible_ring_models_fail_and_mdl_failure_is_transactional() {
         assert!(aromaticity::perceive_aromaticity(&mut m, AromaticityModel::Mdl).is_err());
         assert_eq!(m.perception(), &before);
         assert_eq!(
-            find_substructure_matches_complete(&m, &parse_smarts("[R]").unwrap(), options())
+            find_matches_with_options(&m, &parse_smarts("[R]").unwrap(), options())
                 .unwrap()
                 .len(),
             3
@@ -378,7 +388,9 @@ fn incompatible_ring_models_fail_and_mdl_failure_is_transactional() {
 #[test]
 fn topology_reuses_connected_matches_and_shares_budgets() {
     let mut builder = kekule::topology::TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule("CC")).unwrap();
+    let definition = builder
+        .add_molecule_definition((molecule("CC")).clone())
+        .unwrap();
     for _ in 0..100 {
         builder.add_instance(definition).unwrap();
     }
@@ -390,13 +402,13 @@ fn topology_reuses_connected_matches_and_shares_budgets() {
         ..options()
     };
     assert_eq!(
-        find_topology_substructure_matches_complete(&topology, &query, small_budget)
+        find_topology_matches_with_options(&topology, &query, small_budget)
             .unwrap()
             .len(),
         200
     );
     assert!(matches!(
-        find_topology_substructure_matches_complete(
+        find_topology_matches_with_options(
             &topology,
             &query,
             SubstructureMatchOptions {
@@ -413,10 +425,11 @@ fn topology_reuses_connected_matches_and_shares_budgets() {
 
 #[test]
 fn recursive_disconnected_environment_can_span_topology_instances() {
-    let topology = Arc::new(Topology::from_molecules(&[molecule("C"), molecule("C")]).unwrap());
+    let topology =
+        Arc::new(Topology::from_molecules([molecule("C"), molecule("C")].clone()).unwrap());
     let query = parse_smarts("[$(C.C)]").unwrap();
     assert_eq!(
-        find_topology_substructure_matches_complete(&topology, &query, options())
+        find_topology_matches_with_options(&topology, &query, options())
             .unwrap()
             .len(),
         2

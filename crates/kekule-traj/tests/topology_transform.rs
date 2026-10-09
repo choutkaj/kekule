@@ -11,7 +11,7 @@ fn repeated_topology() -> Arc<Topology> {
         .unwrap();
     let molecule = editor.finish().unwrap();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
@@ -21,7 +21,10 @@ fn repeated_topology() -> Arc<Topology> {
 #[test]
 fn retain_and_remove_return_topology_directly_in_source_order() {
     let source = repeated_topology();
-    let ids = source.instances().map(|(id, _)| id).collect::<Vec<_>>();
+    let ids = source
+        .molecules()
+        .map(|molecule| molecule.id())
+        .collect::<Vec<_>>();
 
     let retained = retain_instances(&source, [ids[2], ids[0]]).unwrap();
     assert_eq!(retained.instance_count(), 2);
@@ -37,7 +40,10 @@ fn retain_and_remove_return_topology_directly_in_source_order() {
 #[test]
 fn no_op_subset_operations_preserve_the_original_arc() {
     let source = repeated_topology();
-    let ids = source.instances().map(|(id, _)| id).collect::<Vec<_>>();
+    let ids = source
+        .molecules()
+        .map(|molecule| molecule.id())
+        .collect::<Vec<_>>();
     let retained = retain_instances(&source, ids).unwrap();
     let removed = remove_instances(&source, std::iter::empty()).unwrap();
     assert!(Arc::ptr_eq(&retained, &source));
@@ -52,7 +58,7 @@ fn subset_operations_reject_invalid_or_empty_targets() {
         TopologyTransformError::EmptyTargetTopology
     );
     assert_eq!(
-        remove_instances(&source, source.instances().map(|(id, _)| id)).unwrap_err(),
+        remove_instances(&source, source.molecules().map(|molecule| molecule.id())).unwrap_err(),
         TopologyTransformError::EmptyTargetTopology
     );
     assert_eq!(

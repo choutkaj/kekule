@@ -32,7 +32,7 @@ fn model(text: &str) -> Model {
         let start = builder.atom_count();
         builder
             .add_molecule(
-                &molecule,
+                molecule.clone(),
                 &positions(
                     &(start..start + molecule.atom_count())
                         .map(|i| i as f64)
@@ -45,14 +45,11 @@ fn model(text: &str) -> Model {
 }
 
 fn has_bond(model: &Model, a: usize, b: usize) -> bool {
-    let a = model.atom_ids()[a];
-    let b = model.atom_ids()[b];
-    model.bonds().any(|(id, bond)| {
-        let endpoints = (
-            InstanceAtomId::new(id.molecule(), bond.a()),
-            InstanceAtomId::new(id.molecule(), bond.b()),
-        );
-        endpoints == (a, b) || endpoints == (b, a)
+    let a = model.topology().atom_ids()[a];
+    let b = model.topology().atom_ids()[b];
+    model.topology().bonds().any(|bond| {
+        let [left, right] = bond.atoms().map(|atom| atom.id());
+        (left, right) == (a, b) || (left, right) == (b, a)
     })
 }
 
@@ -60,7 +57,7 @@ fn has_bond(model: &Model, a: usize, b: usize) -> bool {
 fn split_then_merge_preserves_handles_geometry_and_hierarchy() {
     let molecule = molecule("CCC");
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&molecule).unwrap();
+    let instance = builder.add_molecule(molecule.clone()).unwrap();
     let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue = builder
         .hierarchy_mut()
@@ -89,12 +86,12 @@ fn split_then_merge_preserves_handles_geometry_and_hierarchy() {
     editor.validate().unwrap();
     let split = editor.clone().finish().unwrap();
     assert_eq!(split.topology().instance_count(), 2);
-    assert_eq!(split.hierarchy().chains().count(), 1);
-    assert_eq!(split.hierarchy().residues().count(), 1);
-    assert_eq!(split.hierarchy().atom_sites().count(), 3);
+    assert_eq!(split.topology().hierarchy().chains().count(), 1);
+    assert_eq!(split.topology().hierarchy().residues().count(), 1);
+    assert_eq!(split.topology().hierarchy().atom_sites().count(), 3);
     assert_eq!(split.positions(), source.positions());
-    for (site, before) in source.hierarchy().atom_sites() {
-        let after = split.hierarchy().atom_site(site).unwrap();
+    for (site, before) in source.topology().hierarchy().atom_sites() {
+        let after = split.topology().hierarchy().atom_site(site).unwrap();
         assert_eq!(
             source.position(before.atom()).unwrap(),
             split.position(after.atom()).unwrap()
@@ -116,7 +113,7 @@ fn cross_instance_bond_merges_but_preserves_distinct_chains() {
     let molecule = molecule("C");
     let mut builder = TopologyBuilder::new();
     for label in ["A", "B"] {
-        let instance = builder.add_molecule(&molecule).unwrap();
+        let instance = builder.add_molecule(molecule.clone()).unwrap();
         let chain = builder.hierarchy_mut().add_chain(label, None).unwrap();
         let residue = builder
             .hierarchy_mut()
@@ -132,7 +129,8 @@ fn cross_instance_bond_merges_but_preserves_distinct_chains() {
             .unwrap();
     }
     builder
-        .molecule_instance_properties_mut()
+        .properties_mut()
+        .molecule_instances_mut()
         .insert(key("instance"), PropertyColumn::Int(vec![Some(1), Some(2)]))
         .unwrap();
     let source = Model::new(builder.build().unwrap(), positions(&[2.0, 6.0])).unwrap();
@@ -144,18 +142,25 @@ fn cross_instance_bond_merges_but_preserves_distinct_chains() {
     let result = editor.finish().unwrap();
     assert_eq!(result.topology().instance_count(), 1);
     assert_eq!(result.topology().bond_count(), 1);
-    assert_eq!(result.hierarchy().chains().count(), 2);
-    assert_eq!(result.hierarchy().residues().count(), 2);
-    assert!(!result.topology().molecule_instance_properties().has_data());
+    assert_eq!(result.topology().hierarchy().chains().count(), 2);
+    assert_eq!(result.topology().hierarchy().residues().count(), 2);
+    assert!(!result
+        .topology()
+        .properties()
+        .molecule_instances()
+        .has_data());
     assert_eq!(result.positions(), source.positions());
     assert!(has_bond(&result, 0, 1));
-    for (site, before) in source.hierarchy().atom_sites() {
-        let after = result.hierarchy().atom_site(site).unwrap();
+    for (site, before) in source.topology().hierarchy().atom_sites() {
+        let after = result.topology().hierarchy().atom_site(site).unwrap();
         assert_eq!(
             source.position(before.atom()).unwrap(),
             result.position(after.atom()).unwrap()
         );
-        assert_eq!(after.atom().molecule(), result.atom_ids()[0].molecule());
+        assert_eq!(
+            after.atom().molecule(),
+            result.topology().atom_ids()[0].molecule()
+        );
     }
 }
 
@@ -164,7 +169,7 @@ fn editing_one_reused_occurrence_preserves_others_and_their_perception() {
     let mut water = molecule("O");
     water.perceive().unwrap();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&water).unwrap();
+    let definition = builder.add_molecule_definition(water.clone()).unwrap();
     for _ in 0..3 {
         builder.add_instance(definition).unwrap();
     }
@@ -178,19 +183,19 @@ fn editing_one_reused_occurrence_preserves_others_and_their_perception() {
     let untouched = [result.atom_ids()[0], result.atom_ids()[2]];
     assert_eq!(
         result
-            .instance(untouched[0].molecule())
+            .molecule(untouched[0].molecule())
             .unwrap()
-            .definition(),
+            .definition_id(),
         result
-            .instance(untouched[1].molecule())
+            .molecule(untouched[1].molecule())
             .unwrap()
-            .definition()
+            .definition_id()
     );
     for atom in untouched {
         assert_eq!(result.atom(atom).unwrap().element.symbol(), "O");
         assert_eq!(
             result
-                .definition_for_instance(atom.molecule())
+                .molecule(atom.molecule())
                 .unwrap()
                 .molecule()
                 .perception(),
@@ -200,10 +205,7 @@ fn editing_one_reused_occurrence_preserves_others_and_their_perception() {
     let changed = result.atom_ids()[1];
     assert_eq!(result.atom(changed).unwrap().element.symbol(), "N");
     assert_ne!(
-        result
-            .definition_for_instance(changed.molecule())
-            .unwrap()
-            .class(),
+        result.molecule(changed.molecule()).unwrap().class(),
         MoleculeClass::Water
     );
     assert_eq!(topology.definition_count(), 1);
@@ -218,7 +220,10 @@ fn no_op_and_geometry_only_keep_exact_source_topology() {
     let mut source = model("CO");
     source.perceive().unwrap();
     source
-        .insert_property(key("label"), PropertyValue::Int(9))
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(key("label"), PropertyValue::Int(9))
         .unwrap();
     let topology = source.shared_topology();
     let no_op = source.edit().finish().unwrap();
@@ -235,11 +240,15 @@ fn no_op_and_geometry_only_keep_exact_source_topology() {
     let result = editor.finish().unwrap();
     assert!(Arc::ptr_eq(&result.shared_topology(), &topology));
     assert_eq!(
-        result.properties().get(&key("label")),
-        source.properties().get(&key("label"))
+        result.properties().owner().get(&key("label")),
+        source.properties().owner().get(&key("label"))
     );
     assert_eq!(
-        result.position(source.atom_ids()[0]).unwrap().value().x,
+        result
+            .position(source.topology().atom_ids()[0])
+            .unwrap()
+            .value()
+            .x,
         3.0
     );
     assert_ne!(result.positions(), source.positions());
@@ -250,7 +259,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
     let mut builder = TopologyBuilder::new();
     let molecule = molecule("C");
     for label in ["A", "B"] {
-        let instance = builder.add_molecule(&molecule).unwrap();
+        let instance = builder.add_molecule(molecule.clone()).unwrap();
         let chain = builder.hierarchy_mut().add_chain(label, None).unwrap();
         let residue = builder
             .hierarchy_mut()
@@ -266,14 +275,22 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
             .unwrap();
     }
     builder
-        .atom_properties_mut()
+        .properties_mut()
+        .atoms_mut()
         .insert(key("static"), PropertyColumn::Int(vec![Some(1), Some(2)]))
         .unwrap();
     let mut source = Model::new(builder.build().unwrap(), positions(&[4.0, 9.0])).unwrap();
     let source_atoms = source.topology().atom_ids().to_vec();
-    source.set_occupancy(source_atoms[1], Some(0.7)).unwrap();
+    let row = source.topology().atom_index(source_atoms[1]).unwrap();
     source
-        .insert_property(key("energy"), PropertyValue::Int(10))
+        .conformation_mut()
+        .set_occupancy(row, Some(0.7))
+        .unwrap();
+    source
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(key("energy"), PropertyValue::Int(10))
         .unwrap();
     let mut editor = source.edit();
     let removed = editor.atom_handle(source_atoms[0]).unwrap();
@@ -288,42 +305,54 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
     editor
         .insert_atom_property_column(key("live"), PropertyColumn::Int(vec![Some(7), Some(8)]))
         .unwrap();
-    let column = editor.atom_property_column(&key("live")).unwrap().unwrap();
+    let column = editor.atom_property_column(&key("live")).unwrap();
     editor
         .insert_atom_property_column(key("live"), column)
         .unwrap();
     let result = editor.finish().unwrap();
-    assert_eq!(result.hierarchy().chains().count(), 1);
-    assert_eq!(result.hierarchy().residues().count(), 1);
-    assert_eq!(result.hierarchy().atom_sites().count(), 1);
-    assert!(result.properties().owner_is_empty());
-    let retained = result.atom_ids()[0];
+    assert_eq!(result.topology().hierarchy().chains().count(), 1);
+    assert_eq!(result.topology().hierarchy().residues().count(), 1);
+    assert_eq!(result.topology().hierarchy().atom_sites().count(), 1);
+    assert!(result.properties().owner().is_empty());
+    let retained = result.topology().atom_ids()[0];
     assert_eq!(
         result.position(retained).unwrap(),
         source.position(source_atoms[1]).unwrap()
     );
-    assert_eq!(result.occupancy(retained).unwrap(), Some(0.7));
+    assert_eq!(
+        result
+            .occupancy(result.topology().atom_index(retained).unwrap())
+            .unwrap(),
+        Some(0.7)
+    );
     assert_eq!(
         result
             .topology()
-            .atom_property(retained, &key("static"))
-            .unwrap(),
+            .atom(retained)
+            .unwrap()
+            .property(&key("static")),
         Some(PropertyValue::Int(2))
     );
-    let new = result.atom_ids()[1];
-    assert_eq!(result.occupancy(new).unwrap(), None);
+    let new = result.topology().atom_ids()[1];
     assert_eq!(
-        result.atom_property(new, &key("live")).unwrap(),
+        result
+            .occupancy(result.topology().atom_index(new).unwrap())
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        result.atom(new).unwrap().realization_property(&key("live")),
         Some(PropertyValue::Int(8))
     );
     assert_eq!(result.atom_count(), 2);
-    assert_eq!(result.atom(new).unwrap().element.symbol(), "O");
+    assert_eq!(result.topology().atom(new).unwrap().element.symbol(), "O");
     assert_eq!(result.positions(), &positions(&[9.0, 5.0]));
     assert_eq!(
         result
             .topology()
-            .atom_property(new, &key("static"))
-            .unwrap(),
+            .atom(new)
+            .unwrap()
+            .property(&key("static")),
         None
     );
 }
@@ -340,7 +369,7 @@ fn finish_and_try_finish_publish_the_same_split_model_and_topology() {
         .set_topology_bond_property(bonds[1], key("static"), Some(PropertyValue::Int(23)))
         .unwrap();
     editor.delete_bond(bonds[0]).unwrap();
-    let structural = editor.topology_editor().clone();
+    let structural = editor.topology().clone();
     let finished_topology: Arc<Topology> = structural.clone().finish().unwrap();
     let recovered_topology: Arc<Topology> = structural.try_finish().unwrap();
     assert!(finished_topology.same_layout(&recovered_topology));
@@ -368,16 +397,24 @@ fn finish_and_try_finish_publish_the_same_split_model_and_topology() {
         finished_topology.properties()
     );
     assert_eq!(finished.positions(), source.positions());
-    let bond = finished.bond_ids()[0];
+    let bond = finished.topology().bond_ids()[0];
     assert_eq!(
-        finished.bond_property(bond, &key("dynamic")).unwrap(),
+        finished
+            .properties()
+            .bonds()
+            .value(
+                &key("dynamic"),
+                finished.topology().bond_index(bond).unwrap()
+            )
+            .unwrap(),
         Some(PropertyValue::Int(17))
     );
     assert_eq!(
         finished
             .topology()
-            .bond_property(bond, &key("static"))
-            .unwrap(),
+            .bond(bond)
+            .unwrap()
+            .property(&key("static")),
         Some(PropertyValue::Int(23))
     );
 }
@@ -426,10 +463,10 @@ fn append_preserves_sparse_local_ids_dense_order_and_definition_order() {
     let removed = molecule.atom_ids().next().unwrap();
     molecule.delete_atom(removed).unwrap();
     let source =
-        Model::from_molecule(&molecule.finish().unwrap(), &positions(&[3.0, 7.0])).unwrap();
+        Model::from_molecule(molecule.finish().unwrap().clone(), &positions(&[3.0, 7.0])).unwrap();
     let mut editor = source.edit();
     editor
-        .add_molecule(&self::molecule("O"), &positions(&[8.0]))
+        .add_molecule((self::molecule("O")).clone(), &positions(&[8.0]))
         .unwrap();
     let result = editor.finish().unwrap();
     assert_eq!(
@@ -445,7 +482,12 @@ fn append_preserves_sparse_local_ids_dense_order_and_definition_order() {
     }
     assert_eq!(result.atom_count(), 3);
     assert_eq!(
-        result.atom(result.atom_ids()[2]).unwrap().element.symbol(),
+        result
+            .topology()
+            .atom(result.topology().atom_ids()[2])
+            .unwrap()
+            .element
+            .symbol(),
         "O"
     );
     assert_eq!(result.positions(), &positions(&[3.0, 7.0, 8.0]));
@@ -455,23 +497,27 @@ fn append_preserves_sparse_local_ids_dense_order_and_definition_order() {
 fn merge_property_conflicts_roll_back_and_stereo_survives_unrelated_append() {
     let mut left = molecule("C");
     let id = left.atom_ids().next().unwrap();
-    left.set_atom_property(id, key("tag"), Some(PropertyValue::Int(3)))
+    left.properties_mut()
+        .atoms_mut()
+        .set_value(key("tag"), id, Some(PropertyValue::Int(3)))
         .unwrap();
     let mut right = molecule("C");
     let id = right.atom_ids().next().unwrap();
     right
-        .set_atom_property(id, key("tag"), Some(PropertyValue::String("x".into())))
+        .properties_mut()
+        .atoms_mut()
+        .set_value(key("tag"), id, Some(PropertyValue::String("x".into())))
         .unwrap();
     let mut editor = TopologyEditor::new();
     let left = *editor
-        .add_molecule(&left)
+        .add_molecule(left.clone())
         .unwrap()
         .atoms()
         .values()
         .next()
         .unwrap();
     let right = *editor
-        .add_molecule(&right)
+        .add_molecule(right.clone())
         .unwrap()
         .atoms()
         .values()
@@ -481,11 +527,13 @@ fn merge_property_conflicts_roll_back_and_stereo_survives_unrelated_append() {
     assert!(editor.add_bond(left, right, BondOrder::Single).is_err());
     assert_eq!(format!("{editor:?}"), before);
     let stereo = molecule("F[C@](Cl)(Br)I");
-    let mut editor = Topology::from_molecule(&stereo).unwrap().into_editor();
-    editor.add_molecule(&molecule("O")).unwrap();
+    let mut editor = Topology::from_molecule(stereo.clone())
+        .unwrap()
+        .into_editor();
+    editor.add_molecule((molecule("O")).clone()).unwrap();
     let topology = editor.finish().unwrap();
     assert_eq!(
-        topology.definitions().next().unwrap().1.molecule().graph(),
+        topology.definitions().next().unwrap().molecule().graph(),
         stereo.graph()
     );
 }
@@ -501,19 +549,41 @@ fn unchanged_molecule_publication_keeps_perception_and_columns_round_trip() {
     let mut editor = source.into_editor();
     let deleted = editor.atom_ids().next().unwrap();
     editor.delete_atom(deleted).unwrap();
+    // Draft rows are atom IDs; the deleted atom keeps an allocated, missing row.
+    assert_eq!(
+        editor.properties_mut().atoms_mut().insert(
+            key("tag"),
+            PropertyColumn::Int(vec![Some(0), Some(1), Some(2)])
+        ),
+        Err(kekule::properties::PropertyError::RemovedRow {
+            index: deleted.index()
+        })
+    );
     editor
-        .insert_atom_property_column(key("tag"), PropertyColumn::Int(vec![Some(1), Some(2)]))
+        .properties_mut()
+        .atoms_mut()
+        .insert(
+            key("tag"),
+            PropertyColumn::Int(vec![None, Some(1), Some(2)]),
+        )
         .unwrap();
-    let column = editor.atom_property_column(&key("tag")).unwrap().unwrap();
-    assert_eq!(column.len(), 2);
+    let column = editor
+        .properties()
+        .atoms()
+        .get(&key("tag"))
+        .unwrap()
+        .clone();
+    assert_eq!(column.len(), 3);
     assert_eq!(
         editor
-            .insert_atom_property_column(key("tag"), column.clone())
+            .properties_mut()
+            .atoms_mut()
+            .insert(key("tag"), column.clone())
             .unwrap(),
         Some(column.clone())
     );
     assert_eq!(
-        editor.remove_atom_property_column(&key("tag")),
+        editor.properties_mut().atoms_mut().remove(&key("tag")),
         Some(column)
     );
     assert!(MoleculeEditor::new().finish().is_err());
@@ -523,7 +593,7 @@ fn unchanged_molecule_publication_keeps_perception_and_columns_round_trip() {
 fn classification_overrides_are_occurrence_and_component_local() {
     let carbon = molecule("CC");
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&carbon).unwrap();
+    let definition = builder.add_molecule_definition(carbon.clone()).unwrap();
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     let source = Arc::new(builder.build().unwrap());
@@ -535,7 +605,7 @@ fn classification_overrides_are_occurrence_and_component_local() {
     let classified = editor.clone().finish().unwrap();
     let class = |result: &Topology, row: usize| {
         result
-            .definition_for_instance(result.atom_ids()[row].molecule())
+            .molecule(result.atom_ids()[row].molecule())
             .unwrap()
             .class()
     };
@@ -563,9 +633,13 @@ fn classification_overrides_are_occurrence_and_component_local() {
 #[test]
 fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
     let mut source = model("CC.O");
-    let source_bond = source.bond_ids()[0];
+    let source_bond = source.topology().bond_ids()[0];
+    let row = source.topology().bond_index(source_bond).unwrap();
     source
-        .set_bond_property(source_bond, key("dynamic"), Some(PropertyValue::Int(10)))
+        .conformation_mut()
+        .properties_mut()
+        .bonds_mut()
+        .set_value(key("dynamic"), row, Some(PropertyValue::Int(10)))
         .unwrap();
     let mut editor = source.edit();
     let atoms = editor.atom_ids().collect::<Vec<_>>();
@@ -581,43 +655,54 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
     assert_eq!(editor.bond(bond).unwrap(), before);
     editor.set_bond_endpoints(bond, atoms[0], atoms[2]).unwrap();
     let result = editor.finish().unwrap();
-    let target = result.bond_ids()[0];
+    let target = result.topology().bond_ids()[0];
     assert_eq!(result.topology().instance_count(), 2);
-    let actual = result.bond(target).unwrap();
+    let actual = result.topology().bond(target).unwrap();
     // Survivors keep source dense order: C0, the now-isolated C1, then O.
-    let [a, isolated, b] = [0, 1, 2].map(|index| result.atom_ids()[index]);
+    let [a, isolated, b] = [0, 1, 2].map(|index| result.topology().atom_ids()[index]);
     assert_eq!(a.molecule(), b.molecule());
     assert_ne!(a.molecule(), isolated.molecule());
     assert_eq!(actual.endpoints(), (a.atom(), b.atom()));
     assert_eq!(
-        result.bond_property(target, &key("dynamic")).unwrap(),
+        result
+            .properties()
+            .bonds()
+            .value(
+                &key("dynamic"),
+                result.topology().bond_index(target).unwrap()
+            )
+            .unwrap(),
         Some(PropertyValue::Int(10))
     );
     assert_eq!(
         result
             .topology()
-            .bond_property(target, &key("static"))
-            .unwrap(),
+            .bond(target)
+            .unwrap()
+            .property(&key("static")),
         Some(PropertyValue::Int(20))
     );
     assert_eq!(
         result
             .topology()
-            .definition_for_instance(target.molecule())
+            .molecule(target.molecule())
             .unwrap()
             .molecule()
-            .bond_property(target.bond(), &key("definition"))
+            .properties()
+            .bonds()
+            .value(&key("definition"), target.bond())
             .unwrap(),
         Some(PropertyValue::Int(30))
     );
-    assert_eq!(result.bond_ids().len(), 1);
+    assert_eq!(result.topology().bond_ids().len(), 1);
     assert_eq!(actual.order, BondOrder::Single);
     // Rewiring CC.O to C-O + C repartitions instances without reordering atoms.
     assert_eq!(result.positions(), &positions(&[0.0, 1.0, 2.0]));
     assert_eq!(
         result
+            .topology()
             .atoms()
-            .map(|(_, a)| a.element.symbol())
+            .map(|a| a.element.symbol())
             .collect::<Vec<_>>(),
         ["C", "C", "O"]
     );
@@ -652,7 +737,7 @@ fn bond_replacement_rolls_back_failed_group_merges_and_preserves_the_handle() {
     let result = editor.finish().unwrap();
     assert_eq!(result.instance_count(), 2);
     assert_eq!(result.bond_count(), 1);
-    assert_eq!(result.bonds().next().unwrap().1.order, BondOrder::Double);
+    assert_eq!(result.bonds().next().unwrap().order, BondOrder::Double);
 }
 
 #[test]
@@ -699,30 +784,20 @@ fn model_property_batch_recreation_preserves_unit_symbols_and_signed_zero() {
 }
 
 #[test]
-fn editor_property_batches_preserve_unrelated_allocations_and_ordered_update_semantics() {
-    fn int_column_ptr(table: &kekule::properties::PropertyTable) -> *const Option<i64> {
-        match table.get(&key("untouched")).unwrap() {
-            PropertyColumn::Int(values) => values.as_ptr(),
-            _ => panic!("expected integer column"),
-        }
-    }
-
+fn editor_property_batches_are_transactional_and_follow_ordered_update_semantics() {
     macro_rules! check_batches {
         ($editor:expr) => {{
             let editor = &mut $editor;
             let atoms = editor.atom_ids().collect::<Vec<_>>();
             let bonds = editor.bond_ids().collect::<Vec<_>>();
             editor
-                .insert_property(key("owner"), PropertyValue::String("retained".into()))
-                .unwrap();
-            editor
                 .set_atom_property(atoms[0], key("untouched"), Some(PropertyValue::Int(1)))
                 .unwrap();
             editor
                 .set_bond_property(bonds[0], key("untouched"), Some(PropertyValue::Int(2)))
                 .unwrap();
-            let atom_ptr = int_column_ptr(editor.atom_properties());
-            let bond_ptr = int_column_ptr(editor.bond_properties());
+            let untouched_atoms = editor.atom_property_column(&key("untouched"));
+            let untouched_bonds = editor.bond_property_column(&key("untouched"));
             editor
                 .set_atom_property(atoms[0], key("edited"), Some(PropertyValue::Int(3)))
                 .unwrap();
@@ -759,7 +834,7 @@ fn editor_property_batches_preserve_unrelated_allocations_and_ordered_update_sem
                     unit: ANGSTROM
                 })
             );
-            let snapshot = editor.atom_properties().clone();
+            let snapshot = editor.atom_property_column(&key("edited"));
             assert!(editor
                 .set_atom_properties(
                     key("edited"),
@@ -775,7 +850,7 @@ fn editor_property_batches_preserve_unrelated_allocations_and_ordered_update_sem
                     ]
                 )
                 .is_err());
-            assert_eq!(editor.atom_properties(), &snapshot);
+            assert_eq!(editor.atom_property_column(&key("edited")), snapshot);
             editor
                 .set_bond_properties(
                     key("edited"),
@@ -790,7 +865,7 @@ fn editor_property_batches_preserve_unrelated_allocations_and_ordered_update_sem
                 editor.bond_property(bonds[1], &key("edited")).unwrap(),
                 Some(PropertyValue::String("new type".into()))
             );
-            let snapshot = editor.bond_properties().clone();
+            let snapshot = editor.bond_property_column(&key("edited"));
             assert!(editor
                 .set_bond_properties(
                     key("edited"),
@@ -800,32 +875,50 @@ fn editor_property_batches_preserve_unrelated_allocations_and_ordered_update_sem
                     ]
                 )
                 .is_err());
-            assert_eq!(editor.bond_properties(), &snapshot);
+            assert_eq!(editor.bond_property_column(&key("edited")), snapshot);
             editor
                 .set_bond_properties(key("edited"), [(bonds[1], None)])
                 .unwrap();
-            assert!(editor.bond_properties().get(&key("edited")).is_none());
+            assert!(editor.bond_property_column(&key("edited")).is_none());
             assert_eq!(
-                editor.properties().get(&key("owner")),
-                Some(&PropertyValue::String("retained".into()))
+                editor.atom_property_column(&key("untouched")),
+                untouched_atoms
             );
-            assert_eq!(int_column_ptr(editor.atom_properties()), atom_ptr);
-            assert_eq!(int_column_ptr(editor.bond_properties()), bond_ptr);
+            assert_eq!(
+                editor.bond_property_column(&key("untouched")),
+                untouched_bonds
+            );
         }};
     }
 
     let source = model("CCC");
     let mut topology_editor = TopologyEditor::from_topology(source.shared_topology());
+    topology_editor
+        .insert_property(key("owner"), PropertyValue::String("retained".into()))
+        .unwrap();
     check_batches!(topology_editor);
+    assert_eq!(
+        topology_editor.owner_properties().get(&key("owner")),
+        Some(&PropertyValue::String("retained".into()))
+    );
     topology_editor.finish().unwrap();
     let mut editor = source.into_editor();
+    editor
+        .owner_properties_mut()
+        .insert(key("owner"), PropertyValue::String("retained".into()))
+        .unwrap();
     check_batches!(editor);
+    assert_eq!(
+        editor.owner_properties().get(&key("owner")),
+        Some(&PropertyValue::String("retained".into()))
+    );
+    // Generic realization keys are unreserved: "occupancy" is independent of
+    // the typed occupancy state.
     let atom = editor.atom_ids().next().unwrap();
-    let snapshot = editor.atom_properties().clone();
-    assert!(editor
+    editor
         .set_atom_properties(key("occupancy"), [(atom, Some(PropertyValue::Int(1)))])
-        .is_err());
-    assert_eq!(editor.atom_properties(), &snapshot);
+        .unwrap();
+    assert_eq!(editor.occupancy(atom).unwrap(), None);
     editor.finish().unwrap();
 }
 
@@ -834,9 +927,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
     use std::error::Error;
     let carbon = molecule("C");
     let mut builder = Model::builder();
-    let definition = builder
-        .add_molecule_definition_owned(carbon.clone())
-        .unwrap();
+    let definition = builder.add_molecule_definition(carbon.clone()).unwrap();
     let failed = builder.try_build().unwrap_err();
     assert!(failed.source().is_some());
     assert_eq!(failed.builder().topology_builder().definition_count(), 1);
@@ -845,7 +936,11 @@ fn recovery_keeps_builder_state_and_editor_handles() {
         .add_instance(definition, &positions(&[3.0]))
         .unwrap();
     let id = InstanceAtomId::new(instance, carbon.atom_ids().next().unwrap());
-    builder.set_occupancy(id, Some(0.5)).unwrap();
+    let row = builder.atom_index(id).unwrap();
+    builder
+        .conformation_mut()
+        .set_occupancy(row, Some(0.5))
+        .unwrap();
     builder
         .set_atom_positions([(id, Quantity::new(Point3::new(0.4, 0.0, 0.0), NANOMETER))])
         .unwrap();
@@ -859,12 +954,27 @@ fn recovery_keeps_builder_state_and_editor_handles() {
             .x,
         4.0
     );
-    assert_eq!(builder.occupancy(id).unwrap(), Some(0.5));
+    assert_eq!(
+        builder
+            .conformation()
+            .occupancy(builder.atom_index(id).unwrap())
+            .unwrap(),
+        Some(0.5)
+    );
+    let row = builder.atom_index(id).unwrap();
     builder
-        .set_atom_properties(key("tag"), [(id, Some(PropertyValue::Int(7)))])
+        .conformation_mut()
+        .properties_mut()
+        .atoms_mut()
+        .set_values(key("tag"), [(row, Some(PropertyValue::Int(7)))])
         .unwrap();
     assert_eq!(
-        builder.atom_property(id, &key("tag")).unwrap(),
+        builder
+            .conformation()
+            .properties()
+            .atoms()
+            .value(&key("tag"), builder.atom_index(id).unwrap())
+            .unwrap(),
         Some(PropertyValue::Int(7))
     );
     assert_eq!(builder.atom_ids(), &[id]);
@@ -885,20 +995,36 @@ fn recovery_keeps_builder_state_and_editor_handles() {
     assert_eq!(result.atom_count(), 1);
     assert_eq!(result.topology().instance_count(), 1);
     assert_eq!(
-        result.atom(result.atom_ids()[0]).unwrap().element.symbol(),
+        result
+            .topology()
+            .atom(result.topology().atom_ids()[0])
+            .unwrap()
+            .element
+            .symbol(),
         "N"
     );
     assert_eq!(result.positions(), &positions(&[0.0]));
-    assert_eq!(result.occupancy(result.atom_ids()[0]).unwrap(), None);
     assert_eq!(
         result
-            .atom_property(result.atom_ids()[0], &key("tag"))
+            .occupancy(
+                result
+                    .topology()
+                    .atom_index(result.topology().atom_ids()[0])
+                    .unwrap()
+            )
             .unwrap(),
+        None
+    );
+    assert_eq!(
+        result
+            .atom(result.topology().atom_ids()[0])
+            .unwrap()
+            .realization_property(&key("tag")),
         None
     );
 
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&carbon).unwrap();
+    let definition = builder.add_molecule_definition(carbon.clone()).unwrap();
     let failed = builder.try_build().unwrap_err();
     assert_eq!(failed.builder().definition_count(), 1);
     let mut builder = failed.into_builder();
@@ -915,7 +1041,7 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
     let mut carbon = draft.finish().unwrap();
     carbon.perceive().unwrap();
     let mut builder = Model::builder();
-    let definition = builder.add_molecule_definition(&carbon).unwrap();
+    let definition = builder.add_molecule_definition(carbon.clone()).unwrap();
     let first = builder
         .add_instance(definition, &positions(&[2.0, 3.0]))
         .unwrap();
@@ -932,20 +1058,34 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
         .hierarchy_mut()
         .add_atom_site(residue, a, AtomSiteMetadata::default())
         .unwrap();
+    let row = builder.atom_index(a).unwrap();
     builder
-        .set_atom_property(a, key("dynamic"), Some(PropertyValue::Int(4)))
+        .conformation_mut()
+        .properties_mut()
+        .atoms_mut()
+        .set_value(key("dynamic"), row, Some(PropertyValue::Int(4)))
         .unwrap();
     builder
         .topology_builder_mut()
-        .atom_properties_mut()
-        .set_value(key("static"), 0, Some(PropertyValue::Int(8)))
+        .properties_mut()
+        .atoms_mut()
+        .set_value(
+            key("static"),
+            kekule::topology::TopologyAtomIndex::new(0),
+            Some(PropertyValue::Int(8)),
+        )
         .unwrap();
     builder
-        .insert_property(key("old_owner"), PropertyValue::Int(1))
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(key("old_owner"), PropertyValue::Int(1))
         .unwrap();
     builder
         .topology_builder_mut()
-        .insert_property(key("old_owner"), PropertyValue::Int(2))
+        .properties_mut()
+        .owner_mut()
+        .insert(key("old_owner"), PropertyValue::Int(2))
         .unwrap();
     let source = builder.build().unwrap();
     let unchanged = source.to_builder().build().unwrap();
@@ -959,14 +1099,20 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
         .add_instance(definition, &positions(&[8.0, 9.0]))
         .unwrap();
     let result = extended.build().unwrap();
-    assert_eq!(&result.atom_ids()[..4], source.atom_ids());
-    assert_eq!(&result.bond_ids()[..2], source.bond_ids());
+    assert_eq!(
+        &result.topology().atom_ids()[..4],
+        source.topology().atom_ids()
+    );
+    assert_eq!(
+        &result.topology().bond_ids()[..2],
+        source.topology().bond_ids()
+    );
     assert_eq!(
         result.positions().values().value()[..4],
         source.positions().values().value()[..]
     );
     assert_eq!(result.topology().definition_count(), 1);
-    assert_eq!(result.hierarchy(), source.hierarchy());
+    assert_eq!(result.topology().hierarchy(), source.topology().hierarchy());
     assert_eq!(
         result
             .topology()
@@ -977,32 +1123,36 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
         carbon.perception()
     );
     assert_eq!(
-        result.atom_property(a, &key("dynamic")).unwrap(),
+        result
+            .atom(a)
+            .unwrap()
+            .realization_property(&key("dynamic")),
         Some(PropertyValue::Int(4))
     );
     assert_eq!(
-        result.topology().atom_property(a, &key("static")).unwrap(),
+        result.topology().atom(a).unwrap().property(&key("static")),
         Some(PropertyValue::Int(8))
     );
     assert_eq!(
         result
-            .atom_property(result.atom_ids()[4], &key("dynamic"))
-            .unwrap(),
+            .atom(result.topology().atom_ids()[4])
+            .unwrap()
+            .realization_property(&key("dynamic")),
         None
     );
-    assert!(result.properties().get(&key("old_owner")).is_none());
+    assert!(result.properties().owner().get(&key("old_owner")).is_none());
     assert!(result
         .topology()
         .properties()
+        .owner()
         .get(&key("old_owner"))
         .is_none());
 }
 
 #[test]
 fn sparse_batches_are_atomic_and_deleted_rows_do_not_poison_new_values() {
-    use std::error::Error;
     let mut source = model("CCC");
-    let ids = source.atom_ids().to_vec();
+    let ids = source.topology().atom_ids().to_vec();
     let before = source.positions().clone();
     assert!(source
         .set_atom_positions([
@@ -1014,17 +1164,27 @@ fn sparse_batches_are_atomic_and_deleted_rows_do_not_poison_new_values() {
         ])
         .is_err());
     assert_eq!(source.positions(), &before);
+    let rows = ids
+        .iter()
+        .map(|id| source.topology().atom_index(*id).unwrap())
+        .collect::<Vec<_>>();
     let error = source
-        .set_atom_properties(
+        .conformation_mut()
+        .properties_mut()
+        .atoms_mut()
+        .set_values(
             key("tag"),
             [
-                (ids[0], Some(PropertyValue::Int(1))),
-                (ids[1], Some(PropertyValue::String("bad".into()))),
+                (rows[0], Some(PropertyValue::Int(1))),
+                (rows[1], Some(PropertyValue::String("bad".into()))),
             ],
         )
         .unwrap_err();
-    assert!(error.source().is_some());
-    assert!(source.atom_property_column(&key("tag")).is_none());
+    assert_eq!(
+        error,
+        kekule::properties::PropertyError::TypeMismatch { key: key("tag") }
+    );
+    assert!(source.properties().atoms().get(&key("tag")).is_none());
     let mut editor = source.into_editor();
     let handles = editor.atom_ids().collect::<Vec<_>>();
     editor
@@ -1049,8 +1209,9 @@ fn sparse_batches_are_atomic_and_deleted_rows_do_not_poison_new_values() {
     let result = editor.finish().unwrap();
     assert_eq!(
         result
-            .atom_property(result.atom_ids()[0], &key("tag"))
-            .unwrap(),
+            .atom(result.topology().atom_ids()[0])
+            .unwrap()
+            .realization_property(&key("tag")),
         Some(PropertyValue::String("valid".into()))
     );
 }
@@ -1068,7 +1229,7 @@ fn unchanged_setters_keep_topology_snapshot_and_perception() {
         molecule_editor.finish().unwrap().perception(),
         carbon.perception()
     );
-    let source = Arc::new(Topology::from_molecule(&carbon).unwrap());
+    let source = Arc::new(Topology::from_molecule(carbon.clone()).unwrap());
     let mut editor = source.edit();
     let a = editor.atom_ids().next().unwrap();
     let b = editor.bond_ids().next().unwrap();
@@ -1102,7 +1263,7 @@ fn split_publication_preserves_surviving_stereo_and_prunes_changed_centers() {
         result
             .topology()
             .definitions()
-            .map(|(_, d)| d.molecule().stereo_elements().count())
+            .map(|d| d.molecule().stereo_elements().count())
             .sum::<usize>(),
         1
     );
@@ -1117,7 +1278,7 @@ fn split_publication_preserves_surviving_stereo_and_prunes_changed_centers() {
         result
             .topology()
             .definitions()
-            .map(|(_, d)| d.molecule().stereo_elements().count())
+            .map(|d| d.molecule().stereo_elements().count())
             .sum::<usize>(),
         0
     );

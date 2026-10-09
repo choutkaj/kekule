@@ -59,7 +59,7 @@ pub(super) fn perceive(
 }
 
 pub(super) fn canonical_smiles_round_trip(molecule: &Molecule) -> (String, Molecule) {
-    let written = smiles_api::write_canonical(molecule)
+    let written = smiles_api::write(molecule, smiles_api::SmilesWriteOptions::canonical())
         .unwrap_or_else(|error| panic!("canonical SMILES should write: {error}"));
     let mut reparsed = read_smiles(&written)
         .unwrap_or_else(|error| panic!("canonical output should parse: {written}: {error}"));
@@ -225,7 +225,7 @@ impl SdfRecordTestExt for SdfRecordInterpretation {
 
 pub(super) fn test_model(molecule: &Molecule) -> Model {
     let positions = test_positions(vec![Point3::default(); molecule.atom_count()]);
-    Model::from_molecule(molecule, &positions).expect("test model builds")
+    Model::from_molecule(molecule.clone(), &positions).expect("test model builds")
 }
 
 pub(super) fn element_atom(symbol: &str) -> Atom {

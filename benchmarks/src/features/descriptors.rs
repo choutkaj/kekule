@@ -1,7 +1,6 @@
 use kekule::{
     canon,
     core::{AromaticityModel, BondOrder, Molecule},
-    hydrogens,
     perception::{
         rings,
         valence::{self, ValenceModel, ValenceOptions},
@@ -136,7 +135,7 @@ pub(crate) fn hydrogen_transform_record_json(
     record: &mut IndexedSmallRecord,
 ) -> Result<Value, Box<dyn Error>> {
     record.molecule.perceive()?;
-    let added = hydrogens::add_hydrogens(&mut record.molecule)?;
+    let added = record.molecule.add_hydrogens()?;
     let atom_count_after_add = record.molecule.atom_count();
     let mut added_by_parent = BTreeMap::<usize, usize>::new();
     for entry in added.added {
@@ -146,7 +145,7 @@ pub(crate) fn hydrogen_transform_record_json(
     valence::perceive_valence(&mut record.molecule, ValenceModel::RdkitLike)?;
     record.molecule.perceive()?;
     let added_graph = super::strict::graph(&record.molecule, None)?;
-    hydrogens::remove_hydrogens(&mut record.molecule)?;
+    record.molecule.remove_hydrogens()?;
 
     record.molecule.perceive()?;
     Ok(json!({

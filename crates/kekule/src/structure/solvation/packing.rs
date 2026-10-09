@@ -66,19 +66,21 @@ pub(super) fn solvate(
             radii.radii.clone()
         }
         None => model
+            .topology()
             .atoms()
-            .map(|(id, atom)| {
+            .map(|atom| {
                 atom.element
                     .van_der_waals_radius_angstrom(VanDerWaalsRadiusSource::Reference)
                     .map(|r| r * 0.1)
-                    .ok_or(SolvationError::MissingElementRadius(id))
+                    .ok_or(SolvationError::MissingElementRadius(atom.id()))
             })
             .collect::<Result<Vec<_>, _>>()?,
     };
     let charge = options.net_charge.unwrap_or_else(|| {
         model
+            .topology()
             .atoms()
-            .map(|(_, atom)| i64::from(atom.formal_charge))
+            .map(|atom| i64::from(atom.formal_charge))
             .sum()
     });
     let origin = center(model.positions().values().value())?;
@@ -144,12 +146,11 @@ pub(super) fn solvate(
     }
     let mut ion_sites = Neighbors::new(&geometry, ion_separation)?;
     // Existing monatomic ions participate in separation checks, but are never replaced.
-    for (i, (_, atom)) in model.atoms().enumerate() {
-        let id = model.topology().atom_ids()[i];
-        if model.topology().molecule(id.molecule()).is_ok_and(|m| {
-            m.molecule().atom_count() == 1
-                && (atom.formal_charge != 0 || m.class() == MoleculeClass::Ion)
-        }) {
+    for (i, atom) in model.topology().atoms().enumerate() {
+        let m = atom.molecule();
+        if m.molecule().atom_count() == 1
+            && (atom.formal_charge != 0 || m.class() == MoleculeClass::Ion)
+        {
             ion_sites.insert(solute[i])?;
         }
     }
@@ -193,16 +194,17 @@ pub(super) fn solvate(
         cleared_topology_properties: model
             .topology()
             .properties()
+            .owner()
             .iter()
             .map(|(k, _)| k.clone())
             .collect(),
-        cleared_model_properties: model.properties().iter().map(|(k, _)| k.clone()).collect(),
+        cleared_model_properties: model.properties().owner().keys().cloned().collect(),
     };
     let mut builder = model.to_builder();
     if report.waters_added > 0 {
         let water = definition("O", 0, true);
         let atom_ids: Vec<_> = water.atom_ids().collect();
-        let def = builder.add_molecule_definition_owned(water)?;
+        let def = builder.add_molecule_definition(water)?;
         builder.set_molecule_class(def, MoleculeClass::Water)?;
         let chain = new_chain(&mut builder, "SOL")?;
         for (index, water) in waters.iter().enumerate().filter(|(i, _)| !is_ion[*i]) {
@@ -233,7 +235,7 @@ pub(super) fn solvate(
         }
         let ion = definition(symbol, charge, false);
         let atom_ids: Vec<_> = ion.atom_ids().collect();
-        let def = builder.add_molecule_definition_owned(ion)?;
+        let def = builder.add_molecule_definition(ion)?;
         builder.set_molecule_class(def, MoleculeClass::Ion)?;
         let chain = new_chain(&mut builder, "ION")?;
         for (index, &site) in indices.iter().enumerate() {

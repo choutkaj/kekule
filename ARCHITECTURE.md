@@ -11,11 +11,19 @@ Rustdoc beside their implementations. The links below point to those sources;
 
 | Owner | Authoritative responsibility | Must not own |
 | --- | --- | --- |
-| `Molecule` | One nonempty connected `Graph`, derived `Perception`, definition-scoped `Properties` | Coordinates, hierarchy, system classification |
-| `Topology` | Complete molecule instances, reusable definitions, qualified identities, dense layout, one `Hierarchy`, classification, static properties | Geometry or bonds between separate instances |
-| `Model` | One shared `Topology`, positions, optional cell, realization properties | A second chemical or hierarchy model |
-| `Ensemble` | One shared topology and non-temporal member payloads | An owned `Model` or topology in each member |
-| `Trajectory` (`kekule-traj`) | One shared topology and ordered frame payloads, including optional time, step, velocities, and forces | Implicit topology changes between frames |
+| `Molecule` | One nonempty connected `Graph`, derived `Perception`, `MoleculeProperties` | Coordinates, hierarchy, system classification |
+| `Topology` | Complete molecule instances, reusable definitions, qualified identities, dense layout, one `Hierarchy`, classification, `TopologyProperties` | Geometry or bonds between separate instances |
+| `Conformation` | One realization's dense positions, optional cell, occupancies, B factors, and `RealizationProperties`, addressed by dense topology index | Topology, semantic IDs, or temporal state |
+| `Model` | One shared `Topology` and one bound `Conformation` | A second chemical or hierarchy model |
+| `Ensemble` | One shared topology, collection owner properties, and non-temporal `EnsembleMember` payloads (conformation and optional weight) | An owned `Model` or topology in each member |
+| `Trajectory` | One shared topology, collection owner properties, and ordered `TrajectoryFrame` payloads (conformation plus optional velocities, forces, time, and step) | Implicit topology changes between frames |
+
+`Ensemble` and `Trajectory` are the two aliases of one generic collection,
+`Realizations<P>`, in `kekule::structure`; they share construction, item access,
+selection, subsetting, perception, superposition, and RMSD, and differ only in
+their payload. `kekule-traj` owns file codecs, streaming reader and writer
+contracts, the reusable `FrameBuffer`, periodic preprocessing, and streaming
+reductions; it owns no second in-memory trajectory type.
 
 A salt, solvent box, or protein-ligand complex is a topology containing connected
 molecules. Covalent connectedness determines molecule boundaries; hierarchy and
@@ -29,8 +37,9 @@ indices and validates every associated array and property column.
 See the [crate overview](crates/kekule/src/lib.rs),
 [molecular owner](crates/kekule/src/core/molecule.rs),
 [topology types](crates/kekule/src/topology/mod.rs),
-[structure types](crates/kekule/src/structure/mod.rs), and
-[trajectory types](crates/kekule-traj/src/trajectory/mod.rs).
+[structure types](crates/kekule/src/structure/mod.rs),
+[realization collections](crates/kekule/src/structure/realizations.rs), and
+[streaming contracts](crates/kekule-traj/src/trajectory/mod.rs).
 
 ## Represented and derived chemistry
 
@@ -200,30 +209,36 @@ See [molecular editing](crates/kekule/src/core/molecule_edit.rs),
 ## Properties and units
 
 Properties are annotations owned at the narrowest scope whose lifetime matches
-their validity. One shared `Properties` / `PropertyTable` substrate stores owner
-scalars and typed per-entity columns; do not introduce parallel atom/bond data
-containers or maps inside every repeated entity.
+their validity. Each scope has one typed owner built from `OwnerProperties`
+scalars and `PropertyTable<R>` columns, where the row type `R` names the entity
+domain; do not introduce parallel atom/bond data containers or maps inside every
+repeated entity.
 
-| Scope | Permitted entity domains |
-| --- | --- |
-| Molecule definition | Local atoms and bonds |
-| Topology | Instances, qualified atoms and bonds, chains, residues, atom sites |
-| Model, ensemble member, trajectory frame | Realization atoms and bonds |
-| Ensemble or trajectory collection | Owner values |
+| Scope | Owner | Row domains |
+| --- | --- | --- |
+| Molecule definition | `MoleculeProperties` | `AtomId`, `BondId` |
+| Topology | `TopologyProperties` | Instances, dense atoms and bonds, chains, residues, atom sites |
+| Conformation (model, ensemble member, trajectory frame) | `RealizationProperties` | Dense atoms and bonds |
+| Ensemble or trajectory collection | `OwnerProperties` | Owner values only |
 
-Keys are validated. A column has one type and, for real values, one physical unit;
-missing entries are explicit. Column length matches its owner's domain. Compatible
-units convert to the stored unit; incompatible types or dimensions fail. Borrowed
-property reads avoid unnecessary string copies. Realization installation rejects
-populated properties in unsupported domains even when dimensions happen to match.
+Unsupported domains are unrepresentable rather than rejected at runtime. Reads
+take the table's row type. Writes go through length-preserving
+`*Mut` guards: whole-column replacement or removal, single-cell writes, and
+transactional batches with ordered update semantics. A draft editor addresses
+allocated slots, and writing a value to a deleted slot fails with `RemovedRow`.
+
+Keys are validated and never reserved. A column has one type and, for real
+values, one physical unit; missing entries are explicit. Column length matches
+its owner's domain. Compatible units convert to the stored unit; incompatible
+types or dimensions fail. Borrowed property reads avoid unnecessary string copies.
 
 Generic properties do not define chemical identity, topology layout, or perception.
 Transformations transfer entity values explicitly and do not infer annotation
 validity or recompute arbitrary properties. Arbitrary source fields stay in
 format sidecars unless canonical semantics, scope, and domain justify promotion.
-Occupancy and B factors use reserved realization atom columns with checked
-semantics. Positions, cells, weights, time, steps, velocities, and forces retain
-their dedicated APIs.
+Occupancy and B factors are typed conformation fields with checked semantics,
+independent of any generic property with the same name. Positions, cells,
+weights, time, steps, velocities, and forces retain their dedicated APIs.
 
 Kekule uses one runtime unit system across all crates. Public boundaries accept
 compatible `Quantity` units; internal numerical state uses the library-wide
@@ -237,11 +252,20 @@ values. Exact units, tolerances, and conversion policies belong with
 ## Geometry and realization ownership
 
 A model, ensemble, or trajectory owns its shared topology once. Members and frames
-store payloads, not nested models. Borrowed `ModelView` access lets coordinate
-algorithms and writers share kernels across models, members, frames, and buffers.
-Owned projections explicitly materialize a model while sharing the topology.
-There is no implicit collection-of-models constructor or special single-member
-ownership model.
+store payloads around a `Conformation`, not nested models; a detached payload has
+atom rows only and acquires bond rows when its collection binds it. Borrowed
+`ModelView` access, obtained through `AsModelView`, lets coordinate algorithms
+and writers share kernels across models, members, frames, and buffers. Owned
+projections (`to_model`) explicitly materialize a model while sharing the
+topology. Collections built from models (`from_models`) consume them and require
+one shared layout; there is no special single-member ownership model.
+
+Read access is through views: `Topology` lookups return `Option` views
+(`AtomView`, `BondView`, molecule, chain, residue, and atom-site views), and
+`Model::atom` joins an `AtomView` with that atom's realization state. Mutation
+goes through explicit, dimension-preserving guards: `conformation_mut()` on
+models, payloads, and collection items, and `get_mut()` on collections. Guards
+have no `DerefMut`; whole payloads are replaced through the owner.
 
 Dense positions, velocities, and forces validate values and units without carrying
 semantic IDs. Consuming vector constructors and projections transfer storage;
@@ -259,6 +283,7 @@ priority and atom-ID ties choose the references without coordinates; undefined
 geometry yields an absent value rather than substituting references. Numerical
 policies and supported geometries live with
 [positions](crates/kekule/src/structure/positions.rs),
+[conformations](crates/kekule/src/structure/conformation.rs),
 [models](crates/kekule/src/structure/model.rs),
 [ensembles](crates/kekule/src/structure/ensemble.rs),
 [measurements](crates/kekule/src/structure/measure.rs), and
@@ -291,9 +316,13 @@ transactionally. Eager reads use the same decoder path through clean EOF.
 Path writers stage output and publish only a completed nonempty trajectory;
 unsupported fields and collection properties are rejected rather than discarded.
 
-Loaded and streaming transformations share kernels. Copy-returning operations
-leave sources intact; explicit in-place operations stage all affected state before
-publication. Superposition rotates cells, velocities, and forces consistently.
+Loaded and streaming transformations share kernels. Collection operations,
+including superposition and periodic preprocessing, change the collection in
+place and stage all affected state before publication; clone first to keep the
+source. Superposition and RMSD belong to every realization collection, against
+one of its items or an independent view; streaming superposition applies the
+same kernel to a buffer. Streaming tools take the caller's frame index for
+diagnostics. Superposition rotates cells, velocities, and forces consistently.
 Periodic reconstruction uses asserted bonds and checks ring closure. Imaging
 acts on whole molecules. Unwrapping retains temporal state and requires ordered,
 sufficiently close samples; it precedes downsampling. Failed streaming operations
@@ -308,7 +337,8 @@ not new topology state or a generic reduction framework.
 
 For format profiles, limits, periodic conventions, statistical definitions, and
 streaming sequence/reset contracts, see
-[trajectory storage](crates/kekule-traj/src/trajectory/collection.rs),
+[trajectory payloads](crates/kekule/src/structure/trajectory.rs),
+[collection alignment](crates/kekule/src/alignment/collection.rs),
 [frame buffers](crates/kekule-traj/src/trajectory/buffer.rs),
 [file I/O](crates/kekule-traj/src/io/mod.rs),
 [periodic operations](crates/kekule-traj/src/periodic.rs),
@@ -362,10 +392,13 @@ owners. See the [public format namespaces](crates/kekule/src/lib.rs),
 [SDF records](crates/kekule/src/io/sdf_document.rs), and
 [mmCIF interpretation](crates/kekule/src/io/mmcif_interpret/mod.rs).
 
-Writers live in format namespaces and accept the richest supported source.
-Models share a borrowed realization path; string-returning conveniences wrap sink
-writers. Coordinate-bearing writers emit atoms in dense order. Unsupported
-representational content must fail explicitly. There is no
+Writers live in format namespaces as one `write(source, options)` returning a
+string and one `write_to(writer, source, options)` sink writer per format. Each
+source type converts from the inputs that format can represent: molecules,
+models, collection items, interpreted records, or mmCIF block sources carrying
+classifications or reports. Models and collection items share a borrowed
+realization path. Coordinate-bearing writers emit atoms in dense order.
+Unsupported representational content must fail explicitly. There is no
 universal save trait or implicit trajectory-to-structure export.
 
 - SMILES exports represented chemistry and supported stereo. Canonical output
@@ -411,8 +444,8 @@ read perception, such as prepared substructure targets, bind the exact snapshot.
 Geometric correspondence may explicitly pair selected atoms from two exact
 snapshots, with each side validated and pairs one-to-one. It need not cover equal
 system sizes and does not claim chemical equivalence or rebind either owner.
-See [alignment correspondence](crates/kekule/src/alignment.rs) and
-[trajectory correspondence](crates/kekule-traj/src/analysis/correspondence.rs).
+See [alignment correspondence](crates/kekule/src/alignment/correspondence.rs) and
+[collection alignment](crates/kekule/src/alignment/collection.rs).
 
 Reconstruction validates represented graph connectedness first, then property
 references/dimensions, then installs checked perception. Topology reconstruction
@@ -426,8 +459,12 @@ native persistence and must not weaken these boundaries. See
 
 Use `as_*` for cheap borrowed views, `to_*` for owned conversion while retaining
 the source, and `into_*` for consuming conversion. Consuming does not promise zero
-allocation, but should transfer compatible storage. Keep mutation on appropriate
-editors and semantic owner APIs. Use full `properties` names and avoid redundant
+allocation, but should transfer compatible storage. Constructors that take
+ownership of chemistry accept values (`Molecule`, `Model`), and callers clone
+explicitly. Lookups by identity return `Option`; fallible operations return a
+typed error. Keep mutation on appropriate editors, `*_mut` guards, and semantic
+owner APIs. Each read lives once on its owner and is reached through `Deref`
+or a view rather than forwarded. Use full `properties` names and avoid redundant
 owner wrappers, compatibility aliases, and generic target/remapping abstractions.
 
 When adding state, choose its owner from the ownership map. Substantial derived

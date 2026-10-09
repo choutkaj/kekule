@@ -4,6 +4,7 @@
 //! externally supplied data using benchmarks/reference/trajectory/export_periodic.py.
 //! This is a scientific development check, not a routine CI or release gate.
 
+use kekule::structure::Trajectory;
 use kekule::{
     core::{Atom, BondOrder, Element, MoleculeEditor},
     topology::{AtomSelection, Topology},
@@ -11,8 +12,8 @@ use kekule::{
 };
 use kekule_traj::{
     io::read_trajectory,
-    periodic::{MoleculeImager, TrajectoryUnwrapper},
-    FrameBuffer, Trajectory,
+    periodic::{self, MoleculeImager, TrajectoryUnwrapper},
+    FrameBuffer,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -91,7 +92,9 @@ fn topology(path: &Path) -> Result<Arc<Topology>, Box<dyn Error>> {
     if words.next().is_some() {
         return Err("unexpected topology data".into());
     }
-    Ok(Arc::new(Topology::from_molecule(&molecule.finish()?)?))
+    Ok(Arc::new(Topology::from_molecule(
+        (molecule.finish()?).clone(),
+    )?))
 }
 
 fn compare(actual: &Trajectory, path: &Path) -> Result<f64, Box<dyn Error>> {
@@ -103,7 +106,7 @@ fn compare(actual: &Trajectory, path: &Path) -> Result<f64, Box<dyn Error>> {
         return Err("reference coordinate dimensions differ".into());
     }
     let coordinates = actual
-        .frames()
+        .iter()
         .flat_map(|frame| frame.positions().values().value().to_vec())
         .flat_map(|point| [point.x, point.y, point.z]);
     let mut maximum = 0.0_f64;
@@ -147,30 +150,31 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("reference dimensions differ or are empty".into());
     }
     let anchors = AtomSelection::all(&topology);
-    let whole = source.make_molecules_whole()?;
-    let imaged = source.image_molecules(&anchors)?;
-    let unwrapped = source.unwrap()?;
+    let mut whole = source.clone();
+    periodic::make_molecules_whole(&mut whole)?;
+    let mut imaged = source.clone();
+    periodic::image_molecules(&mut imaged, &anchors)?;
+    let mut unwrapped = source.clone();
+    periodic::unwrap(&mut unwrapped)?;
     let imager = MoleculeImager::new(topology.clone());
     let mut unwrapper = TrajectoryUnwrapper::new(topology.clone());
     let mut buffer = FrameBuffer::new(topology.clone());
-    for (index, frame) in source.frames().enumerate() {
-        let expected = whole.frame(index).unwrap();
-        assert_eq!(imager.make_whole(index, frame)?, expected.to_frame());
-        assert_eq!(
-            imager.image(index, frame, &anchors)?,
-            imaged.frame(index).unwrap().to_frame()
-        );
+    for (index, frame) in source.iter().enumerate() {
+        let expected = whole.get(index).unwrap();
         buffer.copy_from(frame)?;
-        unwrapper.unwrap_in_place(index, &mut buffer)?;
-        assert_eq!(
-            buffer.frame_view().to_frame(),
-            unwrapped.frame(index).unwrap().to_frame()
-        );
+        imager.make_whole(index, &mut buffer)?;
+        assert_eq!(*buffer, *expected.payload());
+        buffer.copy_from(frame)?;
+        imager.image(index, &mut buffer, &anchors)?;
+        assert_eq!(*buffer, *imaged.get(index).unwrap().payload());
+        buffer.copy_from(frame)?;
+        unwrapper.unwrap(index, &mut buffer)?;
+        assert_eq!(*buffer, *unwrapped.get(index).unwrap().payload());
         // Every non-position field survives each operation unchanged.
         for output in [
             expected,
-            imaged.frame(index).unwrap(),
-            unwrapped.frame(index).unwrap(),
+            imaged.get(index).unwrap(),
+            unwrapped.get(index).unwrap(),
         ] {
             assert_eq!(output.properties(), frame.properties());
             assert_eq!(output.cell(), frame.cell());

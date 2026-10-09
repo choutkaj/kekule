@@ -22,7 +22,7 @@ fn crambin_model() -> kekule::structure::Model {
 #[test]
 fn dssp_matches_biopython_mkdssp_4_6_1_for_crambin() {
     let model = crambin_model();
-    let result = dssp::assign(model.view(), DsspOptions::default())
+    let result = dssp::assign(model.as_model_view(), DsspOptions::default())
         .expect("crambin has an analyzable protein backbone");
     let residues = result.residues().collect::<Vec<_>>();
     let codes = residues
@@ -69,7 +69,8 @@ fn dssp_matches_biopython_mkdssp_4_6_1_for_crambin() {
 fn dssp_is_a_coordinate_snapshot_and_does_not_mutate_the_model() {
     let mut model = crambin_model();
     let before = model.clone();
-    let assigned = dssp::assign(model.view(), DsspOptions::default()).expect("initial assignment");
+    let assigned =
+        dssp::assign(model.as_model_view(), DsspOptions::default()).expect("initial assignment");
     assert_eq!(model, before);
 
     let first_atom = model.topology().atom_ids()[0];
@@ -91,7 +92,7 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
         ..DsspOptions::default()
     };
     assert_eq!(
-        dssp::assign(model.view(), options),
+        dssp::assign(model.as_model_view(), options),
         Err(DsspError::InvalidPolyprolineStretch { value: 4 })
     );
 
@@ -103,7 +104,7 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
         ..DsspOptions::default()
     };
     assert_eq!(
-        dssp::assign(model.view(), options),
+        dssp::assign(model.as_model_view(), options),
         Err(DsspError::ResourceLimitExceeded {
             resource: DsspResource::Residues,
             limit: 2,
@@ -118,7 +119,7 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
         ..DsspOptions::default()
     };
     assert_eq!(
-        dssp::assign(model.view(), options),
+        dssp::assign(model.as_model_view(), options),
         Err(DsspError::ResourceLimitExceeded {
             resource: DsspResource::CandidatePairs,
             limit: 0,
@@ -133,7 +134,7 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
         ..DsspOptions::default()
     };
     assert_eq!(
-        dssp::assign(model.view(), options),
+        dssp::assign(model.as_model_view(), options),
         Err(DsspError::ResourceLimitExceeded {
             resource: DsspResource::Ladders,
             limit: 0,
@@ -152,7 +153,7 @@ fn dssp_rejects_coordinates_outside_its_spatial_index_range_without_panicking() 
         .expect("coordinate remains finite in the model");
 
     assert!(matches!(
-        dssp::assign(model.view(), DsspOptions::default()),
+        dssp::assign(model.as_model_view(), DsspOptions::default()),
         Err(DsspError::CoordinateOutOfRange {
             quantity: "backbone coordinate",
             ..
@@ -179,7 +180,7 @@ fn dssp_codes_cover_the_complete_dssp4_alphabet() {
 
 #[test]
 fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
-    let reference = dssp::assign(crambin_model().view(), DsspOptions::default()).unwrap();
+    let reference = dssp::assign(crambin_model().as_model_view(), DsspOptions::default()).unwrap();
     let source = CRAMBIN_MMCIF.replace("_atom_site.label_seq_id", "_atom_site.audit_sequence");
     let document = mmcif::parse_str(&source).unwrap();
     let model = mmcif::interpret(
@@ -196,7 +197,7 @@ fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
         .hierarchy()
         .residues()
         .all(|(_, residue)| residue.label_seq_id().is_none()));
-    let assigned = dssp::assign(model.view(), DsspOptions::default()).unwrap();
+    let assigned = dssp::assign(model.as_model_view(), DsspOptions::default()).unwrap();
     assert_eq!(assigned.statistics(), reference.statistics());
     for (actual, expected) in assigned.residues().zip(reference.residues()) {
         assert_eq!(
@@ -220,7 +221,7 @@ fn dssp_instance_membership_handles_many_reused_solvent_instances() {
 
     let mut model = crambin_model().into_builder();
     let water = kekule::smiles::to_molecules("O").unwrap().pop().unwrap();
-    let definition = model.add_molecule_definition(&water).unwrap();
+    let definition = model.add_molecule_definition(water.clone()).unwrap();
     let water_position =
         Positions::new(Quantity::new(vec![Point3::new(100., 100., 100.)], ANGSTROM)).unwrap();
     let chain = model.hierarchy_mut().add_chain("water", None).unwrap();
@@ -246,7 +247,7 @@ fn dssp_instance_membership_handles_many_reused_solvent_instances() {
         }
     }
     let model = model.build().unwrap();
-    let result = dssp::assign(model.view(), DsspOptions::default()).unwrap();
+    let result = dssp::assign(model.as_model_view(), DsspOptions::default()).unwrap();
     assert_eq!(result.report().ignored_instances(), ignored);
     assert_eq!(result.statistics().analyzed_residues(), 46);
     assert_eq!(
@@ -269,7 +270,7 @@ fn dssp_numbering_fallback_is_independent_of_unlabeled_solvent_in_the_chain() {
             .unwrap()
             .pop()
             .unwrap();
-        let definition = builder.add_molecule_definition(&molecule).unwrap();
+        let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
         let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
         let mut points = Vec::new();
         let mut keys = Vec::new();
@@ -306,7 +307,7 @@ fn dssp_numbering_fallback_is_independent_of_unlabeled_solvent_in_the_chain() {
             );
         }
         let water = kekule::smiles::to_molecules("O").unwrap().pop().unwrap();
-        let instance = builder.add_molecule(&water).unwrap();
+        let instance = builder.add_molecule(water.clone()).unwrap();
         let residue = builder
             .hierarchy_mut()
             .add_residue(chain, "HOH", None, None, None)
@@ -325,7 +326,7 @@ fn dssp_numbering_fallback_is_independent_of_unlabeled_solvent_in_the_chain() {
             Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
         )
         .unwrap();
-        let result = dssp::assign(model.view(), DsspOptions::default()).unwrap();
+        let result = dssp::assign(model.as_model_view(), DsspOptions::default()).unwrap();
         if labels || authors {
             keys.reverse();
         }

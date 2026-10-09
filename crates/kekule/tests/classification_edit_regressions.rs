@@ -25,7 +25,7 @@ fn classes(topology: &Topology) -> Vec<MoleculeClass> {
 }
 
 fn split_editor() -> (TopologyEditor, Vec<EditAtomId>) {
-    let mut editor = Topology::from_molecule(&molecule("CCCC"))
+    let mut editor = Topology::from_molecule((molecule("CCCC")).clone())
         .unwrap()
         .into_editor();
     let atoms = editor.atom_ids().collect::<Vec<_>>();
@@ -94,7 +94,7 @@ fn merging_and_rewiring_invalidate_only_touched_components_in_historical_groups(
             .all(|class| *class == MoleculeClass::SmallMolecule));
     }
 
-    let mut editor = Topology::from_molecule(&molecule("CCCCCC"))
+    let mut editor = Topology::from_molecule((molecule("CCCCCC")).clone())
         .unwrap()
         .into_editor();
     let atoms = editor.atom_ids().collect::<Vec<_>>();
@@ -146,7 +146,7 @@ fn failed_and_noop_edits_retain_component_override_assignments() {
 fn published_hierarchy_removal_discards_orphaned_explicit_residue_assignments() {
     let carbon = single_atom("C");
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&carbon).unwrap();
+    let instance = builder.add_molecule(carbon.clone()).unwrap();
     let atom = InstanceAtomId::new(instance, carbon.atom_ids().next().unwrap());
     let chain = builder.hierarchy_mut().add_chain("OLD", None).unwrap();
     let residue = builder
@@ -197,7 +197,7 @@ fn published_hierarchy_removal_discards_orphaned_explicit_residue_assignments() 
 fn builder_assignments_still_apply_to_surviving_residues_after_hierarchy_replacement() {
     let oxygen = single_atom("O");
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&oxygen).unwrap();
+    let instance = builder.add_molecule(oxygen.clone()).unwrap();
     let chain = builder.hierarchy_mut().add_chain("OLD", None).unwrap();
     let residue = builder
         .hierarchy_mut()
@@ -248,7 +248,7 @@ fn instance_filters_reclassify_partial_residues_and_preserve_complete_assignment
         let mut atoms = Vec::new();
         for symbol in ["O", "H", "H"] {
             let molecule = single_atom(symbol);
-            let instance = builder.add_molecule(&molecule).unwrap();
+            let instance = builder.add_molecule(molecule.clone()).unwrap();
             let atom = InstanceAtomId::new(instance, molecule.atom_ids().next().unwrap());
             builder
                 .hierarchy_mut()
@@ -266,7 +266,7 @@ fn instance_filters_reclassify_partial_residues_and_preserve_complete_assignment
             .add_residue(chain, "UNL", None, None, None)
             .unwrap();
         let nitrogen = single_atom("N");
-        let instance = builder.add_molecule(&nitrogen).unwrap();
+        let instance = builder.add_molecule(nitrogen.clone()).unwrap();
         let nitrogen_atom = InstanceAtomId::new(instance, nitrogen.atom_ids().next().unwrap());
         builder
             .hierarchy_mut()
@@ -313,7 +313,7 @@ fn oxygen_builder() -> (TopologyBuilder, MoleculeDefinitionId) {
         .unwrap();
     let mut builder = TopologyBuilder::new();
     let definition = builder
-        .add_molecule_definition_owned(editor.finish().unwrap())
+        .add_molecule_definition(editor.finish().unwrap())
         .unwrap();
     (builder, definition)
 }
@@ -427,7 +427,9 @@ fn uninformative_and_unrelated_appends_preserve_complete_entity_cached_classes()
         );
         let mut builder = Arc::try_unwrap(retained).unwrap().into_builder();
         add_instance(&mut builder, definition, component, None);
-        let independent = builder.add_molecule_definition(&molecule("CC")).unwrap();
+        let independent = builder
+            .add_molecule_definition((molecule("CC")).clone())
+            .unwrap();
         builder.add_instance(independent).unwrap();
         let result = builder.build().unwrap();
         assert_eq!(

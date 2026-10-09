@@ -4,11 +4,12 @@ use std::error::Error;
 use kekule::geometry::Point3;
 use kekule::geometry::{PeriodicCell, Vector3};
 use kekule::properties::{
-    PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue, PropertyValueRef,
+    PropertyColumn, PropertyError, PropertyKey, PropertyValue, PropertyValueRef,
 };
 use kekule::structure::{
-    EnsembleError, EnsembleSliceError, Model, ModelError, ModelSliceError, PositionError, Positions,
+    Conformation, ConformationError, Model, ModelError, PositionError, Positions, RealizationError,
 };
+use kekule::topology::TopologyAtomIndex;
 use kekule::units::{Quantity, UnitError, ANGSTROM, CANONICAL_LENGTH_UNIT, DIMENSIONLESS};
 
 struct Alternating<'a> {
@@ -40,6 +41,7 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
     )
     .unwrap();
     model
+        .conformation_mut()
         .set_positions(Quantity::new(
             Alternating {
                 calls: &calls,
@@ -55,7 +57,7 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
     calls.set(0);
     let before = model.positions().clone();
     assert!(matches!(
-        model.set_positions(Quantity::new(
+        model.conformation_mut().set_positions(Quantity::new(
             Alternating {
                 calls: &calls,
                 first: &invalid,
@@ -63,7 +65,9 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
             },
             CANONICAL_LENGTH_UNIT
         )),
-        Err(PositionError::NonFinitePosition { index: 0 })
+        Err(ConformationError::Position(
+            PositionError::NonFinitePosition { index: 0 }
+        ))
     ));
     assert_eq!(calls.get(), 1);
     assert_eq!(model.positions(), &before);
@@ -116,29 +120,36 @@ fn borrowed_property_reads_retain_string_storage_and_missing_cells() {
     let key = PropertyKey::new("label").unwrap();
     let text = String::from("a property that should be borrowed");
     let pointer = text.as_ptr();
-    let mut table = PropertyTable::new(2);
-    table
+    let row = TopologyAtomIndex::new;
+    let mut conformation = Conformation::new(Positions::zeros(2));
+    conformation
+        .properties_mut()
+        .atoms_mut()
         .insert(key.clone(), PropertyColumn::String(vec![Some(text), None]))
         .unwrap();
-    let value = table.value_ref(&key, 0).unwrap().unwrap();
+    let table = conformation.properties().atoms();
+    let value = table.value_ref(&key, row(0)).unwrap().unwrap();
     let PropertyValueRef::String(text) = value else {
         panic!("expected string")
     };
     assert_eq!(text.as_ptr(), pointer);
-    assert_eq!(value.to_value(), table.value(&key, 0).unwrap().unwrap());
-    assert_eq!(table.value_ref(&key, 1).unwrap(), None);
+    assert_eq!(
+        value.to_value(),
+        table.value(&key, row(0)).unwrap().unwrap()
+    );
+    assert_eq!(table.value_ref(&key, row(1)).unwrap(), None);
     assert_eq!(
         table
-            .value_ref(&PropertyKey::new("missing").unwrap(), 0)
+            .value_ref(&PropertyKey::new("missing").unwrap(), row(0))
             .unwrap(),
         None
     );
     assert!(matches!(
-        table.value_ref(&key, 2),
+        table.value_ref(&key, row(2)),
         Err(PropertyError::InvalidIndex { len: 2, index: 2 })
     ));
     assert!(matches!(
-        table.value_ref(&PropertyKey::new("missing").unwrap(), 2),
+        table.value_ref(&PropertyKey::new("missing").unwrap(), row(2)),
         Err(PropertyError::InvalidIndex { len: 2, index: 2 })
     ));
 }
@@ -182,14 +193,14 @@ fn structural_error_chains_retain_the_underlying_unit_failure() {
     let position_error =
         Positions::new(Quantity::new([Point3::origin()], DIMENSIONLESS)).unwrap_err();
     assert!(position_error.source().unwrap().is::<UnitError>());
-    let error = EnsembleSliceError::from(EnsembleError::from(position_error.clone()));
-    let member = error.source().unwrap();
-    assert!(member.is::<EnsembleError>());
-    let position = member.source().unwrap();
+    let error = RealizationError::from(ConformationError::from(position_error.clone()));
+    let conformation = error.source().unwrap();
+    assert!(conformation.is::<ConformationError>());
+    let position = conformation.source().unwrap();
     assert!(position.is::<PositionError>());
     assert!(position.source().unwrap().is::<UnitError>());
-    let error = ModelSliceError::from(ModelError::from(position_error));
-    assert!(error.source().unwrap().is::<ModelError>());
+    let error = ModelError::from(position_error);
+    assert!(error.source().unwrap().is::<ConformationError>());
     assert!(error
         .source()
         .unwrap()

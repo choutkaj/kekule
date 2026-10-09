@@ -7,9 +7,9 @@ use std::sync::Arc;
 use kekule::geometry::Point3;
 use kekule::mmcif;
 use kekule::structure::Positions;
+use kekule::structure::{Trajectory, TrajectoryFrame};
 use kekule::units::{Quantity, ANGSTROM};
 use kekule_traj::io::{read_trajectory, write_trajectory};
-use kekule_traj::{Trajectory, TrajectoryFrame};
 
 // A covalent link joins the first and third atom-site rows into one molecule,
 // so instance-major numbering would move the water between the carbons.
@@ -86,7 +86,7 @@ fn mmcif_topology_reads_external_coordinates_in_atom_site_order() {
     assert_eq!(
         topology
             .atoms()
-            .map(|(_, atom)| atom.element.symbol())
+            .map(|atom| atom.element.symbol())
             .collect::<Vec<_>>(),
         ROW_ELEMENTS
     );
@@ -97,23 +97,22 @@ fn mmcif_topology_reads_external_coordinates_in_atom_site_order() {
 
     // An engine writes coordinates in the structure file's row order. DCD
     // carries no atom identity, so write it through an unrelated topology.
-    let external = Arc::new(kekule::smiles::to_topology("C.O.C").unwrap());
+    let external = kekule::smiles::to_topology("C.O.C").unwrap();
     let rows = ROW_X.map(|x| Point3::new(x, 0.0, 0.0)).to_vec();
     let mut frame = TrajectoryFrame::new(Positions::new(Quantity::new(rows, ANGSTROM)).unwrap());
     frame.set_step(Some(0));
     let path = TemporaryPath(
         std::env::temp_dir().join(format!("kekule-atom-order-{}.dcd", std::process::id())),
     );
-    write_trajectory(
-        &path.0,
-        &Trajectory::from_frames(external, [frame]).unwrap(),
-    )
-    .unwrap();
+    write_trajectory(&path.0, &Trajectory::from_items(external, [frame]).unwrap()).unwrap();
 
     let loaded = read_trajectory(&path.0, Arc::clone(&topology)).unwrap();
-    let frame = loaded.frame(0).unwrap().as_model();
+    let frame = loaded.get(0).unwrap().as_model_view();
     assert_eq!(row_x(frame.positions().values().value()), ROW_X);
     for (atom, element) in topology.atom_ids().iter().zip(ROW_ELEMENTS) {
-        assert_eq!(frame.atom(*atom).unwrap().element.symbol(), element);
+        assert_eq!(
+            frame.topology().atom(*atom).unwrap().element.symbol(),
+            element
+        );
     }
 }

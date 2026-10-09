@@ -7,11 +7,12 @@ use std::sync::Arc;
 use kekule::geometry::Point3;
 use kekule::smiles;
 use kekule::structure::Positions;
+use kekule::structure::{Trajectory, TrajectoryFrame};
 use kekule::topology::AtomSelection;
 use kekule::units::{Quantity, ANGSTROM};
 use kekule_traj::analysis::RmsfAccumulator;
 use kekule_traj::io::{open_trajectory, write_trajectory};
-use kekule_traj::{FrameBuffer, FrameError, Trajectory, TrajectoryFrame, TrajectoryReader};
+use kekule_traj::{FrameBuffer, TrajectoryError, TrajectoryReader};
 
 struct TemporaryPath(PathBuf);
 
@@ -33,9 +34,9 @@ fn ring_frame(offset: f64) -> TrajectoryFrame {
 
 #[test]
 fn selections_buffers_and_accumulators_survive_trajectory_perception() {
-    let topology = Arc::new(smiles::to_topology("c1ccccc1").unwrap());
+    let topology = smiles::to_topology("c1ccccc1").unwrap();
     let mut trajectory =
-        Trajectory::from_frames(Arc::clone(&topology), [ring_frame(0.0), ring_frame(0.5)]).unwrap();
+        Trajectory::from_items(Arc::clone(&topology), [ring_frame(0.0), ring_frame(0.5)]).unwrap();
     let selection = AtomSelection::all(&topology);
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     let mut rmsf = RmsfAccumulator::new(&selection).unwrap();
@@ -45,13 +46,11 @@ fn selections_buffers_and_accumulators_survive_trajectory_perception() {
     assert!(trajectory.topology().shares_layout(&topology));
 
     // In-memory analysis accepts the selection made before perception.
-    let aligned = trajectory.superpose_to_frame(0, &selection).unwrap();
-    assert!(Arc::ptr_eq(
-        &aligned.shared_topology(),
-        &trajectory.shared_topology()
-    ));
-    for (index, frame) in trajectory.frames().enumerate() {
-        rmsf.observe(index, frame).unwrap();
+    let perceived = trajectory.shared_topology();
+    trajectory.superpose(0, &selection).unwrap();
+    assert!(Arc::ptr_eq(&perceived, &trajectory.shared_topology()));
+    for (index, frame) in trajectory.iter().enumerate() {
+        rmsf.observe(index, &frame).unwrap();
     }
     assert_eq!(rmsf.finish().unwrap().frame_count(), 2);
 
@@ -71,10 +70,10 @@ fn selections_buffers_and_accumulators_survive_trajectory_perception() {
     assert!(Arc::ptr_eq(&buffer.shared_topology(), &topology));
 
     // An independently published equal topology is still a different layout.
-    let independent = Arc::new(smiles::to_topology("c1ccccc1").unwrap());
+    let independent = smiles::to_topology("c1ccccc1").unwrap();
     assert!(independent.same_layout(&topology));
     assert_eq!(
-        FrameBuffer::new(independent).copy_from(trajectory.frame(0).unwrap()),
-        Err(FrameError::TopologyMismatch)
+        FrameBuffer::new(independent).copy_from(trajectory.get(0).unwrap()),
+        Err(TrajectoryError::TopologyMismatch)
     );
 }

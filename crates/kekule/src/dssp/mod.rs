@@ -28,7 +28,7 @@ pub fn assign(model: ModelView<'_>, options: DsspOptions) -> Result<DsspResult, 
 
 /// Convenience wrapper for assigning one owned model.
 pub fn assign_model(model: &Model, options: DsspOptions) -> Result<DsspResult, DsspError> {
-    assign(model.view(), options)
+    assign(model.as_model_view(), options)
 }
 
 /// DSSP 4 summary assignment.

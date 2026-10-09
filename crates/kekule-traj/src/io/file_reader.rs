@@ -6,9 +6,10 @@ use std::sync::Arc;
 use kekule::topology::Topology;
 
 use crate::{
-    FrameBuffer, MemoryTrajectoryWriter, SeekableTrajectoryReader, Trajectory, TrajectoryError,
+    FrameBuffer, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryError,
     TrajectoryFormat, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
+use kekule::structure::Trajectory;
 
 use super::{
     dcd, detect, io_context, trr, xtc, xyz, FileTrajectoryMetadata, TrajectoryOpenOptions,
@@ -220,11 +221,11 @@ pub fn read_trajectory_with_options(
 /// use kekule_traj::{io::open_trajectory, TrajectoryReader};
 ///
 /// let molecule = smiles::to_molecules("CC")?.pop().unwrap();
-/// let topology = Topology::from_molecule(&molecule)?;
+/// let topology = Topology::from_molecule(molecule)?;
 /// let mut reader = open_trajectory("ethane.xyz", topology)?;
 /// let mut frame = reader.frame_buffer();
 /// while reader.read_next(&mut frame)? {
-///     let model = frame.frame_view().as_model();
+///     let model = frame.as_model_view();
 ///     assert_eq!(model.atom_count(), 2);
 /// }
 /// println!("{:?}", reader.open_report().selected_format());

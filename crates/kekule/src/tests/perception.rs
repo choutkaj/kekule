@@ -261,22 +261,28 @@ fn discrete_chemical_perception_changes_only_perception_state() {
     let annotated_atom = atom_ids[0];
     let annotated_bond = molecule.bond_ids().next().expect("fixture bond");
     molecule
-        .insert_property(
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("perception_purity_fixture").unwrap(),
             PropertyValue::String("molecule property".to_owned()),
         )
         .unwrap();
     molecule
-        .set_atom_property(
-            annotated_atom,
+        .properties_mut()
+        .atoms_mut()
+        .set_value(
             PropertyKey::new("atom_note").unwrap(),
+            annotated_atom,
             Some(PropertyValue::Bool(true)),
         )
         .unwrap();
     molecule
-        .set_bond_property(
-            annotated_bond,
+        .properties_mut()
+        .bonds_mut()
+        .set_value(
             PropertyKey::new("bond_note").unwrap(),
+            annotated_bond,
             Some(PropertyValue::Int(7)),
         )
         .unwrap();
@@ -295,7 +301,7 @@ fn discrete_chemical_perception_changes_only_perception_state() {
     assert_eq!(molecule.perception(), &Perception::default());
     let represented_before = represented_molecule_snapshot(&molecule);
 
-    perception_api::perceive(&mut molecule).expect("default perception");
+    molecule.perceive().expect("default perception");
 
     assert_eq!(represented_molecule_snapshot(&molecule), represented_before);
     assert!(molecule.perception().has_valence());
@@ -341,7 +347,8 @@ fn molecule_perception_queries_read_the_installed_state_directly() {
 fn default_perception_accepts_aromatic_source_localized_by_interpretation() {
     let mut molecule = read_smiles("c1ccccc1").expect("benzene should parse");
 
-    perception_api::perceive(&mut molecule)
+    molecule
+        .perceive()
         .expect("localized aromatic source should perceive directly");
 
     assert!(molecule.perception().has_valence());
@@ -373,7 +380,9 @@ fn default_perception_rolls_back_when_ring_perception_fails_after_valence() {
     rings_api::perceive_ring_membership(molecule.working_mut());
     let original = molecule.clone();
 
-    let error = perception_api::perceive(molecule.working_mut())
+    let error = molecule
+        .working_mut()
+        .perceive()
         .expect_err("default ring cycle-size limit must fail");
 
     assert!(matches!(
@@ -1523,8 +1532,20 @@ fn canonical_tetrahedral_stereo_is_identical_across_smiles_molfile_and_manual_so
 
     let model = tetrahedral_drawing(&smiles);
     for written in [
-        molfile::write_model_v2000(&model).expect("canonical stereo should project to V2000"),
-        molfile::write_model_v3000(&model).expect("canonical stereo should project to V3000"),
+        molfile::write(
+            &model,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V2000,
+            },
+        )
+        .expect("canonical stereo should project to V2000"),
+        molfile::write(
+            &model,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V3000,
+            },
+        )
+        .expect("canonical stereo should project to V3000"),
     ] {
         let interpreted = read_molfile(&written).expect("projected Molfile should interpret");
         let actual = interpreted
@@ -2157,7 +2178,7 @@ fn terminal_ligand_equivalence_is_hydrogen_representation_invariant() {
             "{input}"
         );
         assert_eq!(molecule, before, "candidate detection must be read-only");
-        crate::hydrogens::add_hydrogens(&mut molecule).unwrap();
+        molecule.add_hydrogens().unwrap();
         perceive(&mut molecule).unwrap();
         assert_eq!(
             stereo_api::detect_stereo_candidates(&molecule)
@@ -2633,8 +2654,20 @@ fn molfile_writers_project_tetrahedral_stereo_independent_of_bond_endpoint_stora
         let before = molecule.clone();
         let model = tetrahedral_drawing(molecule);
         for written in [
-            molfile::write_model_v2000(&model).expect("V2000 projects tetrahedral stereo"),
-            molfile::write_model_v3000(&model).expect("V3000 projects tetrahedral stereo"),
+            molfile::write(
+                &model,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V2000,
+                },
+            )
+            .expect("V2000 projects tetrahedral stereo"),
+            molfile::write(
+                &model,
+                molfile::MolfileWriteOptions {
+                    version: molfile::MolfileWriteVersion::V3000,
+                },
+            )
+            .expect("V3000 projects tetrahedral stereo"),
         ] {
             let (reparsed, report) =
                 read_molfile_with_report(&written).expect("projected tetrahedral stereo reparses");
@@ -2663,8 +2696,20 @@ fn geometry_free_molfile_writers_reject_axis_stereo_without_mutating_the_molecul
 
     for molecule in [&molecule, &reversed] {
         let before = molecule.clone();
-        assert!(molfile::write_v2000(molecule).is_err());
-        assert!(molfile::write_v3000(molecule).is_err());
+        assert!(molfile::write(
+            molecule,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V2000
+            }
+        )
+        .is_err());
+        assert!(molfile::write(
+            molecule,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V3000
+            }
+        )
+        .is_err());
         assert_eq!(*molecule, before);
     }
 }
@@ -2787,7 +2832,7 @@ fn tetrahedral_drawing(molecule: &Molecule) -> Model {
             _ => unreachable!("tetrahalomethane regression"),
         })
         .collect();
-    Model::from_molecule(molecule, &test_positions(points)).unwrap()
+    Model::from_molecule(molecule.clone(), &test_positions(points)).unwrap()
 }
 
 fn canonical_tetrahedral_molecule() -> Molecule {

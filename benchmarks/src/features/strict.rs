@@ -245,18 +245,15 @@ pub(super) fn write(feature: &str, input: &Input) -> Result<Value, Box<dyn Error
             for molecule in &mut components {
                 molecule.perceive()?;
             }
-            let topology = kekule::topology::Topology::from_molecules(&components)?;
-            let text = smiles::write_topology(&topology, smiles::SmilesWriteOptions { mode })?;
+            let topology = kekule::topology::Topology::from_molecules(components.clone())?;
+            let text = smiles::write(&topology, smiles::SmilesWriteOptions { mode })?;
             if mode == smiles::SmilesWriteMode::Canonical {
                 // Canonical text must be invariant to atom numbering and a fixed
                 // point of reading/writing. These checks supplement RDKit identity.
                 for molecule in &components {
-                    let original =
-                        smiles::write_molecule(molecule, smiles::SmilesWriteOptions { mode })?;
+                    let original = smiles::write(molecule, smiles::SmilesWriteOptions { mode })?;
                     let permuted = reverse_numbering(molecule)?;
-                    if smiles::write_molecule(&permuted, smiles::SmilesWriteOptions { mode })?
-                        != original
-                    {
+                    if smiles::write(&permuted, smiles::SmilesWriteOptions { mode })? != original {
                         return Err(boxed_error(
                             "canonical writer depends on atom or bond numbering",
                         ));
@@ -267,9 +264,7 @@ pub(super) fn write(feature: &str, input: &Input) -> Result<Value, Box<dyn Error
                     }
                     let mut reparsed = reparsed.into_iter().next().unwrap();
                     reparsed.perceive()?;
-                    if smiles::write_molecule(&reparsed, smiles::SmilesWriteOptions { mode })?
-                        != original
-                    {
+                    if smiles::write(&reparsed, smiles::SmilesWriteOptions { mode })? != original {
                         return Err(boxed_error("canonical writer has no fixed point"));
                     }
                 }
@@ -294,7 +289,7 @@ pub(super) fn write(feature: &str, input: &Input) -> Result<Value, Box<dyn Error
             )]
         };
         if feature.starts_with("io.sdf.") {
-            written.push(json!({"path":"output.sdf","text":sdf::write_v2000(&records)?}));
+            written.push(json!({"path":"output.sdf","text":sdf::write(&records, sdf::SdfWriteOptions { version: sdf::MolfileWriteVersion::V2000 })?}));
         } else {
             let version = if feature.contains("v3000") {
                 molfile::MolfileWriteVersion::V3000
@@ -302,7 +297,7 @@ pub(super) fn write(feature: &str, input: &Input) -> Result<Value, Box<dyn Error
                 molfile::MolfileWriteVersion::V2000
             };
             for record in records {
-                written.push(json!({"path":"output.mol","text":molfile::write_model(record.model(), molfile::MolfileWriteOptions { version })?}));
+                written.push(json!({"path":"output.mol","text":molfile::write(record.model(), molfile::MolfileWriteOptions { version })?}));
             }
         }
     }

@@ -112,16 +112,16 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         provenance.atoms()[0].atom().molecule(),
         provenance.molecule()
     );
-    let written = mmcif::write_model_with_report(
-        interpreted.model(),
-        interpreted.report(),
+    let written = mmcif::write(
+        [mmcif::MmcifBlockSource::model(interpreted.model())
+            .with_reports(std::slice::from_ref(interpreted.report()))],
         MmcifWriteOptions::default(),
     )?;
     assert!(written.starts_with("data_model\n"));
     assert!(mmcif::parse_str(&written).is_ok());
-    let custom_written = mmcif::write_model_with_report(
-        interpreted.model(),
-        interpreted.report(),
+    let custom_written = mmcif::write(
+        [mmcif::MmcifBlockSource::model(interpreted.model())
+            .with_reports(std::slice::from_ref(interpreted.report()))],
         MmcifWriteOptions {
             block_name: "custom".to_owned(),
             ..MmcifWriteOptions::default()
@@ -129,23 +129,19 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     )?;
     assert!(custom_written.starts_with("data_custom\n"));
     assert!(matches!(
-        mmcif::write_model_with_report(
-            interpreted.model(),
-            interpreted.report(),
-            MmcifWriteOptions {
+        mmcif::write([mmcif::MmcifBlockSource::model(interpreted.model()).with_reports(std::slice::from_ref(interpreted.report()))], MmcifWriteOptions {
                 block_name: String::new(),
                 ..MmcifWriteOptions::default()
-            }
-        ),
+            }),
         Err(MmcifWriteError::InvalidBlockName(name)) if name.is_empty()
     ));
-    let automatic = mmcif::write_model(interpreted.model(), MmcifWriteOptions::default())?;
+    let automatic = mmcif::write([interpreted.model()], MmcifWriteOptions::default())?;
     assert!(automatic.contains("1 non-polymer"));
     let mut classifications = MmcifEntityClassifications::new();
     classifications.insert(provenance.molecule(), MmcifEntityKind::Polymer)?;
-    let written = mmcif::write_model_with_classifications(
-        interpreted.model(),
-        &classifications,
+    let written = mmcif::write(
+        [mmcif::MmcifBlockSource::model(interpreted.model())
+            .with_classifications(&classifications)],
         MmcifWriteOptions::default(),
     )?;
     assert!(written.contains("1 polymer"));
@@ -170,7 +166,6 @@ fn duplicate_agreeing_authoritative_bond_evidence_is_idempotent() {
         .definitions()
         .next()
         .expect("one molecule definition")
-        .1
         .molecule();
 
     assert_eq!(graph.bond_count(), 1);

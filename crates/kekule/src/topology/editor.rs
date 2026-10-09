@@ -17,7 +17,8 @@ use crate::core::{
     MoleculePublicationError,
 };
 use crate::properties::{
-    Properties, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue,
+    OwnerProperties, PropertyColumn, PropertyError, PropertyKey, PropertyValue, RawPropertyTable,
+    TopologyProperties,
 };
 pub(crate) use append::AppendMapping;
 pub use error::*;
@@ -146,7 +147,7 @@ impl GroupIdentity {
 /// ```
 /// use kekule::{smiles, topology::{Topology, TopologyEditor}};
 /// let molecule = smiles::to_molecules("CC")?.pop().unwrap();
-/// let topology = Topology::from_molecule(&molecule)?;
+/// let topology = Topology::from_molecule(molecule)?;
 /// let source_bond = topology.bond_ids()[0];
 /// let mut editor = TopologyEditor::from_topology(topology);
 /// editor.delete_bond(editor.bond_handle(source_bond)?)?;
@@ -164,7 +165,7 @@ pub struct TopologyEditor {
     source_bonds: BTreeMap<InstanceBondId, EditBondId>,
     molecule_classes: BTreeMap<EditAtomId, MoleculeClass>,
     hierarchy: EditHierarchy,
-    properties: Properties,
+    properties: TopologyProperties,
     revision: u64,
     pub(crate) structural_revision: u64,
 }
@@ -204,7 +205,7 @@ impl TopologyEditor {
         self.hierarchy.sites.clear();
         self.hierarchy.atom_sites.clear();
         self.hierarchy.residue_atoms.clear();
-        self.properties = Properties::new();
+        self.properties = TopologyProperties::default();
         self.changed();
     }
 
@@ -378,8 +379,8 @@ impl TopologyEditor {
     }
 
     /// Adds a complete occurrence, retaining represented stereo and definition properties.
-    pub fn add_molecule(&mut self, molecule: &Molecule) -> Result<EditMolecule, TopologyEditError> {
-        let owned = Arc::new(molecule.clone());
+    pub fn add_molecule(&mut self, molecule: Molecule) -> Result<EditMolecule, TopologyEditError> {
+        let owned = Arc::new(molecule);
         let identity = GroupIdentity::appended(
             &owned,
             self.properties.atoms().len(),
@@ -493,7 +494,7 @@ impl TopologyEditor {
         if self
             .source
             .as_ref()
-            .is_none_or(|t| t.instance(source).is_err())
+            .is_none_or(|t| t.instance(source).is_none())
         {
             return Err(TopologyEditError::InvalidSourceInstance(source));
         }
@@ -732,8 +733,8 @@ impl TopologyEditor {
             .ok_or(TopologyEditError::InvalidSourceInstance(instance))?;
         let molecule = source
             .molecule(instance)
-            .map_err(|_| TopologyEditError::InvalidSourceInstance(instance))?;
-        let atom = molecule.atoms().next().unwrap().0;
+            .ok_or(TopologyEditError::InvalidSourceInstance(instance))?;
+        let atom = molecule.atoms().next().unwrap().id();
         let handle = self.atom_handle(atom)?;
         let group = self.atom_location(handle)?.group;
         let stored = self.groups[group].as_ref().unwrap();
@@ -855,7 +856,7 @@ impl TopologyEditor {
     fn changed(&mut self) {
         self.revision += 1;
         self.structural_revision += 1;
-        self.properties.clear_owner();
+        self.properties.owner_mut().clear();
     }
     fn register_group(
         &mut self,

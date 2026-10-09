@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::structure::{Ensemble, Model, ModelView, Positions};
+use kekule::structure::{Trajectory, TrajectoryFrame};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::units::{Quantity, ELEMENTARY_CHARGE, NANOMETER};
 use kekule_openff::{ForceField, ParameterizedTopology};
@@ -12,7 +13,7 @@ use kekule_potentials::{
     minimize, ComponentKind, EvaluationError, MinimizationStatus, MinimizeOptions, Potential,
     SingularGeometry,
 };
-use kekule_traj::{FrameBuffer, Trajectory, TrajectoryFrame};
+use kekule_traj::FrameBuffer;
 
 // Deliberately simple, distinct numbers make every handler visible in the
 // energy; the reference below recomputes it independently of the kernels.
@@ -49,7 +50,7 @@ fn topology(instances: usize) -> Arc<Topology> {
         .remove(0);
     molecule.perceive().unwrap();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     for _ in 0..instances {
         builder.add_instance(definition).unwrap();
     }
@@ -124,7 +125,7 @@ fn reference_energy(p: &ParameterizedTopology, model: &Model) -> [f64; 6] {
             }
         }
     }
-    let ids = model.atom_ids();
+    let ids = model.topology().atom_ids();
     let charges = p.charges().value();
     for i in 0..ids.len() {
         for j in i + 1..ids.len() {
@@ -151,7 +152,7 @@ fn energy_components_match_an_independent_smirnoff_reference() {
     assert!(!p.improper_torsions().is_empty() && !p.pair_exceptions().is_empty());
     let model = model(&topology);
     let potential = OpenFfPotential::new(&p).unwrap();
-    let energy = potential.energy(model.view()).unwrap();
+    let energy = potential.energy(model.as_model_view()).unwrap();
     let expected = reference_energy(&p, &model);
     let kinds = [
         ComponentKind::Bonds,
@@ -180,7 +181,7 @@ fn energy_components_match_an_independent_smirnoff_reference() {
     let sum: f64 = expected.iter().sum();
     assert!((energy.total().into_value() - sum).abs() <= 1e-10 * (1.0 + sum.abs()));
 
-    let evaluation = potential.evaluate(model.view()).unwrap();
+    let evaluation = potential.evaluate(model.as_model_view()).unwrap();
     assert_eq!(evaluation.energy(), &energy);
     assert!(Arc::ptr_eq(evaluation.topology(), &topology));
 }
@@ -190,15 +191,20 @@ fn gradient_differentiates_energy_and_components_add_up() {
     let topology = topology(2);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
     let model = model(&topology);
-    let evaluation = potential.evaluate(model.view()).unwrap();
+    let evaluation = potential.evaluate(model.as_model_view()).unwrap();
     let gradient = evaluation.gradient().into_value();
     let points = model.positions().values().into_value().to_vec();
     let energy_at = |points: &[Point3]| {
         let mut moved = model.clone();
         moved
+            .conformation_mut()
             .set_positions(Quantity::new(points, NANOMETER))
             .unwrap();
-        potential.energy(moved.view()).unwrap().total().into_value()
+        potential
+            .energy(moved.as_model_view())
+            .unwrap()
+            .total()
+            .into_value()
     };
     for atom in 0..points.len() {
         for axis in 0..3 {
@@ -221,7 +227,9 @@ fn gradient_differentiates_energy_and_components_add_up() {
         }
     }
 
-    let components = potential.evaluate_components(model.view()).unwrap();
+    let components = potential
+        .evaluate_components(model.as_model_view())
+        .unwrap();
     for (atom, total) in gradient.iter().enumerate() {
         let mut sum = Vector3::zero();
         for c in &components {
@@ -246,7 +254,7 @@ fn energy_is_rigid_motion_invariant_and_gradient_has_no_net_force() {
     let topology = topology(2);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
     let model = model(&topology);
-    let reference = potential.evaluate(model.view()).unwrap();
+    let reference = potential.evaluate(model.as_model_view()).unwrap();
     let net = reference
         .gradient()
         .into_value()
@@ -264,9 +272,16 @@ fn energy_is_rigid_motion_invariant_and_gradient_has_no_net_force() {
         .collect::<Vec<_>>();
     let mut transformed = model.clone();
     transformed
+        .conformation_mut()
         .set_positions(Quantity::new(moved, NANOMETER))
         .unwrap();
-    let total = |m: &Model| potential.energy(m.view()).unwrap().total().into_value();
+    let total = |m: &Model| {
+        potential
+            .energy(m.as_model_view())
+            .unwrap()
+            .total()
+            .into_value()
+    };
     assert!((total(&transformed) - total(&model)).abs() < 1e-10 * total(&model).abs().max(1.0));
 }
 
@@ -279,21 +294,21 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
     // An independently published equal topology is a different layout.
     let other = self::model(&self::topology(1));
     assert_eq!(
-        potential.energy(other.view()),
+        potential.energy(other.as_model_view()),
         Err(EvaluationError::IncompatibleTopology)
     );
     // Reperception publishes a new snapshot of the same layout, so the
     // prepared potential evaluates both identically.
     let mut perceived = model.clone();
     perceived.perceive().unwrap();
-    let evaluation = potential.evaluate(perceived.view()).unwrap();
+    let evaluation = potential.evaluate(perceived.as_model_view()).unwrap();
     assert!(Arc::ptr_eq(
         evaluation.topology(),
         &perceived.shared_topology()
     ));
     assert_eq!(
         evaluation.energy().total(),
-        potential.energy(model.view()).unwrap().total()
+        potential.energy(model.as_model_view()).unwrap().total()
     );
 
     let cell = PeriodicCell::orthorhombic(
@@ -302,14 +317,14 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
     )
     .unwrap();
     let mut periodic = model.clone();
-    periodic.set_cell(Some(cell));
+    periodic.conformation_mut().set_cell(Some(cell));
     assert_eq!(
-        potential.energy(periodic.view()),
+        potential.energy(periodic.as_model_view()),
         Err(EvaluationError::UnsupportedPeriodicCell)
     );
-    let ensemble = Ensemble::from_models(&[periodic]).unwrap();
+    let ensemble = Ensemble::from_models([periodic]).unwrap();
     assert_eq!(
-        potential.evaluate(ensemble.member(0).unwrap().as_model()),
+        potential.evaluate(ensemble.get(0).unwrap().as_model_view()),
         Err(EvaluationError::UnsupportedPeriodicCell)
     );
 }
@@ -319,26 +334,33 @@ fn ensemble_members_and_trajectory_frames_evaluate_like_models() {
     let topology = topology(1);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
     let model = model(&topology);
-    let expected = potential.evaluate(model.view()).unwrap();
+    let expected = potential.evaluate(model.as_model_view()).unwrap();
 
-    let ensemble = Ensemble::from_models(std::slice::from_ref(&model)).unwrap();
+    let ensemble = Ensemble::from_models([model.clone()]).unwrap();
     assert_eq!(
         potential
-            .evaluate(ensemble.member(0).unwrap().as_model())
+            .evaluate(ensemble.get(0).unwrap().as_model_view())
             .unwrap(),
         expected
     );
     let frame = TrajectoryFrame::new(model.positions().clone());
-    let trajectory = Trajectory::from_frames(Arc::clone(&topology), [frame]).unwrap();
+    let trajectory = Trajectory::from_items(Arc::clone(&topology), [frame]).unwrap();
     assert_eq!(
         potential
-            .evaluate(trajectory.frame(0).unwrap().as_model())
+            .evaluate(trajectory.get(0).unwrap().as_model_view())
             .unwrap(),
         expected
     );
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
-    buffer.set_positions(model.positions().values()).unwrap();
-    assert_eq!(potential.evaluate(buffer.model_view()).unwrap(), expected);
+    buffer
+        .frame_mut()
+        .conformation_mut()
+        .set_positions(model.positions().values())
+        .unwrap();
+    assert_eq!(
+        potential.evaluate(buffer.as_model_view()).unwrap(),
+        expected
+    );
 }
 
 #[test]
@@ -346,7 +368,7 @@ fn singular_coordinates_name_the_qualified_atoms() {
     let topology = topology(2);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
     let mut model = model(&topology);
-    let ids = model.atom_ids().to_vec();
+    let ids = model.topology().atom_ids().to_vec();
     // Place one instance's oxygen onto the other instance's methyl carbon.
     let carbon = model.position(ids[1]).unwrap();
     model.set_position(ids[13], carbon).unwrap();
@@ -355,8 +377,11 @@ fn singular_coordinates_name_the_qualified_atoms() {
         atoms: vec![ids[1], ids[13]],
         kind: SingularGeometry::CoincidentAtoms,
     };
-    assert_eq!(potential.energy(model.view()), Err(expected.clone()));
-    assert_eq!(potential.evaluate(model.view()), Err(expected));
+    assert_eq!(
+        potential.energy(model.as_model_view()),
+        Err(expected.clone())
+    );
+    assert_eq!(potential.evaluate(model.as_model_view()), Err(expected));
 }
 
 #[test]
@@ -371,8 +396,8 @@ fn replacement_charges_change_only_electrostatics() {
         .unwrap();
     assert_eq!(neutral.charges().value(), &[0.0; 7]);
     let (a, n) = (
-        assigned.energy(model.view()).unwrap(),
-        neutral.energy(model.view()).unwrap(),
+        assigned.energy(model.as_model_view()).unwrap(),
+        neutral.energy(model.as_model_view()).unwrap(),
     );
     for c in a.components() {
         let other = n.component(c.kind).unwrap();
@@ -430,7 +455,7 @@ fn minimization_reaches_a_stationary_point_without_changing_its_input() {
         max_iterations: 5_000,
         ..MinimizeOptions::default()
     };
-    let result = minimize(&potential, model.view(), &options).unwrap();
+    let result = minimize(&potential, model.as_model_view(), &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
     assert_eq!(model, original);
     let initial = result.initial_energy().total().into_value();
@@ -438,11 +463,11 @@ fn minimization_reaches_a_stationary_point_without_changing_its_input() {
     assert!(last.energy().total().into_value() < initial);
     assert!(last.max_gradient_norm().into_value() <= 1e-3);
 
-    let minimized = result.to_model(model.view()).unwrap();
+    let minimized = result.to_model(model.as_model_view()).unwrap();
     assert!(Arc::ptr_eq(&minimized.shared_topology(), &topology));
     assert_eq!(minimized.positions(), result.positions());
     assert_eq!(
-        &potential.evaluate(minimized.view()).unwrap(),
+        &potential.evaluate(minimized.as_model_view()).unwrap(),
         result.final_evaluation()
     );
     // Bonds relax to their 0.11 nm equilibrium within a small strain.
@@ -454,7 +479,7 @@ fn minimization_reaches_a_stationary_point_without_changing_its_input() {
         assert!((r - 0.11).abs() < 0.01, "bond length {r}");
     }
     let unrelated = self::model(&self::topology(2));
-    assert!(result.to_model(unrelated.view()).is_err());
+    assert!(result.to_model(unrelated.as_model_view()).is_err());
 }
 
 #[test]
@@ -465,7 +490,7 @@ fn potentials_are_shareable_trait_objects() {
     let potential: Box<dyn Potential> =
         Box::new(OpenFfPotential::new(&parameterize(&topology)).unwrap());
     let model = model(&topology);
-    let view: ModelView<'_> = model.view();
+    let view: ModelView<'_> = model.as_model_view();
     let result = minimize(potential.as_ref(), view, &MinimizeOptions::default()).unwrap();
     assert!(result.iterations() > 0);
 }
@@ -512,13 +537,13 @@ fn atom_parameters_follow_an_interleaved_dense_order() {
     }
     let expected = OpenFfPotential::new(&source)
         .unwrap()
-        .energy(reference.view())
+        .energy(reference.as_model_view())
         .unwrap()
         .total()
         .into_value();
     let actual = OpenFfPotential::new(&target)
         .unwrap()
-        .energy(moved.view())
+        .energy(moved.as_model_view())
         .unwrap()
         .total()
         .into_value();

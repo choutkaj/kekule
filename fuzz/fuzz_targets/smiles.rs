@@ -1,7 +1,7 @@
 #![no_main]
 
+use kekule::smiles::{interpret, parse_str, write, SmilesWriteOptions};
 use libfuzzer_sys::fuzz_target;
-use kekule::smiles::{interpret, parse_str, write};
 
 #[path = "../../crates/kekule/tests/support/smiles_contract.rs"]
 mod contract;
@@ -15,7 +15,7 @@ fuzz_target!(|data: &[u8]| {
             return;
         };
         for molecule in interpreted.molecules() {
-            if let Ok(output) = write(molecule) {
+            if let Ok(output) = write(molecule, SmilesWriteOptions::ordinary()) {
                 let document = parse_str(&output).expect("writer output must parse");
                 interpret(&document).expect("writer output must interpret");
             }

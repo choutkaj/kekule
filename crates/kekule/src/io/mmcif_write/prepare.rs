@@ -64,8 +64,9 @@ pub(super) fn prepare_model(
     for (id, molecule) in model.topology().instances() {
         let definition = model
             .topology()
-            .definition_for_instance(id)
-            .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
+            .molecule(id)
+            .expect("listed instances are topology molecules")
+            .definition();
         validate_graph_chemistry(molecule, definition)?;
         if definition.molecule().atom_ids().any(|atom| {
             hierarchy
@@ -101,14 +102,9 @@ pub(super) fn prepare_model(
         .collect::<BTreeMap<_, _>>();
     validate_atom_identities(&atoms)?;
     let mut connections = Vec::new();
-    for (bond_id, bond) in model.topology().bonds() {
-        let order = supported_bond_order(bond_id, bond.order)?;
-        let molecule = model
-            .topology()
-            .instance(bond_id.molecule())
-            .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
-        let left = molecule.qualify_atom(bond.a());
-        let right = molecule.qualify_atom(bond.b());
+    for bond in model.topology().bonds() {
+        let order = supported_bond_order(bond.id(), bond.order)?;
+        let [left, right] = bond.atoms().map(|atom| atom.id());
         validate_connection_selector(left, &atoms, &atom_indexes)?;
         validate_connection_selector(right, &atoms, &atom_indexes)?;
         connections.push(ConnectionRow { left, right, order });
@@ -247,10 +243,10 @@ fn collect_macro_rows(
                 .value_in(ANGSTROM)
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
             occupancy: model
-                .occupancy(qualified)
+                .occupancy(dense_index(model, qualified)?)
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
             b_factor: model
-                .b_factor(qualified)
+                .b_factor(dense_index(model, qualified)?)
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
@@ -309,10 +305,10 @@ fn collect_small_rows(
                 .value_in(ANGSTROM)
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
             occupancy: model
-                .occupancy(qualified)
+                .occupancy(dense_index(model, qualified)?)
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
             b_factor: model
-                .b_factor(qualified)
+                .b_factor(dense_index(model, qualified)?)
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
@@ -473,6 +469,16 @@ fn same_static_atom_row(left: &AtomRow, right: &AtomRow) -> bool {
         && left.auth_comp_id == right.auth_comp_id
         && left.auth_asym_id == right.auth_asym_id
         && left.auth_atom_id == right.auth_atom_id
+}
+
+fn dense_index(
+    model: ModelView<'_>,
+    atom: InstanceAtomId,
+) -> Result<crate::topology::TopologyAtomIndex, MmcifWriteError> {
+    model
+        .topology()
+        .atom_index(atom)
+        .ok_or_else(|| MmcifWriteError::InvalidModel(format!("invalid topology atom: {atom}")))
 }
 
 #[cfg(test)]

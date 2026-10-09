@@ -243,12 +243,13 @@ impl BuiltMolecule {
                 .map(|(id, _)| id.index())
                 .collect::<Vec<_>>();
             let mut properties =
-                crate::properties::Properties::molecule(component.len(), bond_sources.len());
+                crate::properties::MoleculeProperties::new(component.len(), bond_sources.len());
             *properties.atoms_mut() = self
                 .editor
                 .working()
                 .properties()
                 .atoms()
+                .raw()
                 .select_indices(&component.iter().map(|id| id.index()).collect::<Vec<_>>())
                 .map_err(graph_error)?;
             *properties.bonds_mut() = self
@@ -256,9 +257,10 @@ impl BuiltMolecule {
                 .working()
                 .properties()
                 .bonds()
+                .raw()
                 .select_indices(&bond_sources)
                 .map_err(graph_error)?;
-            *editor.working_mut().properties_mut() = properties;
+            editor.working_mut().properties = properties;
             let mut coordinates =
                 StagedCoordinates::with_atom_capacity(component.len(), self.coordinates.unit())
                     .map_err(graph_error)?;

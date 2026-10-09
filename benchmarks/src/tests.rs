@@ -328,7 +328,13 @@ fn radical_observations_assert_electron_count_and_source_spin_separately() {
             output(
                 "io.mol.parse",
                 "input.mol",
-                &molfile::write_v3000(&molecule).unwrap(),
+                &molfile::write(
+                    &molecule,
+                    molfile::MolfileWriteOptions {
+                        version: molfile::MolfileWriteVersion::V3000,
+                    },
+                )
+                .unwrap(),
             )
         };
         let atom = &value["records"][0]["components"][0]["atoms"][0];
@@ -381,7 +387,14 @@ fn dative_direction_is_significant() {
 #[test]
 fn mol_parse_observes_bond_order_and_coordinates() {
     let molecule = smiles::to_molecules("CCO").unwrap().remove(0);
-    let original = molfile::write_v2000(&molecule).unwrap() + "$$$$\n";
+    let original = molfile::write(
+        &molecule,
+        molfile::MolfileWriteOptions {
+            version: molfile::MolfileWriteVersion::V2000,
+        },
+    )
+    .unwrap()
+        + "$$$$\n";
     let bond_changed = original.replacen("  1  2  1", "  1  2  2", 1);
     let coord_changed = original.replacen("    0.0000", "   10.0000", 1);
     assert_ne!(original, bond_changed);

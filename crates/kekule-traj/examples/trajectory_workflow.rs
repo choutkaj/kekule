@@ -15,6 +15,7 @@ use kekule::{
     units::{ANGSTROM, PICOSECOND},
 };
 use kekule_traj::io::{read_trajectory, write_trajectory};
+use kekule_traj::periodic;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -57,20 +58,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!(
         "Frames with a periodic cell: {}",
         trajectory
-            .frames()
+            .iter()
             .filter(|frame| frame.cell().is_some())
             .count()
     );
     trajectory.validate_monotonic_time(false)?;
 
     if make_whole {
-        trajectory.make_molecules_whole_in_place()?;
+        periodic::make_molecules_whole(&mut trajectory)?;
     }
     if unwrap {
-        trajectory.unwrap_in_place()?;
+        periodic::unwrap(&mut trajectory)?;
     }
     if stride != 1 {
-        trajectory = trajectory.select_frames((0..trajectory.len()).step_by(stride))?;
+        trajectory = trajectory.select((0..trajectory.len()).step_by(stride))?;
         println!(
             "Retained {} frames with original times and steps",
             trajectory.len()
@@ -79,10 +80,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Fit all atoms; substitute a protein/backbone selection for a solvated system.
     let fit = AtomSelection::all(&topology);
-    let aligned = trajectory.superpose_to_frame(0, &fit)?;
-    let rmsd = aligned.rmsd_to_frame(0, &fit)?.value_in(ANGSTROM)?;
+    trajectory.superpose(0, &fit)?;
+    let rmsd = trajectory.rmsd(0, &fit)?.value_in(ANGSTROM)?;
 
-    for (index, (frame, rmsd)) in aligned.frames().zip(rmsd).enumerate() {
+    for (index, (frame, rmsd)) in trajectory.iter().zip(rmsd).enumerate() {
         let time_ps = frame
             .time()
             .map(|time| time.value_in(PICOSECOND))
@@ -94,7 +95,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
     if let Some(path) = output {
-        write_trajectory(path, &aligned)?;
+        write_trajectory(path, &trajectory)?;
     }
     Ok(())
 }

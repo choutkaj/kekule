@@ -38,15 +38,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Retain one complete reference before the reusable input buffer advances.
-    let reference = buffer.frame_view().to_frame();
+    let reference = buffer.frame_view().to_model();
     let atoms = AtomSelection::all(&topology);
-    let superposer = FrameSuperposer::new(reference.view(&topology)?, &atoms);
+    let superposer = FrameSuperposer::new(&reference, &atoms);
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr)
         .with_trr_options(TrrWriteOptions::default().with_precision(TrrScalarPrecision::Float64));
     let mut writer = create_trajectory_writer(output, topology.clone(), options)?;
     let mut index = 0;
     loop {
-        superposer.superpose_in_place(index, &mut buffer)?;
+        superposer.superpose(index, &mut buffer)?;
         writer.write_frame(buffer.frame_view())?;
         index += 1;
         if !reader.read_next(&mut buffer)? {

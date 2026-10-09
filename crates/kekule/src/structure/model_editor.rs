@@ -2,18 +2,16 @@
 mod append;
 pub use append::*;
 
-use super::{Model, ModelError, PositionError, Positions};
+use super::{Conformation, ConformationError, Model, ModelError, PositionError, Positions};
 use crate::core::{Atom, BondOrder, Molecule};
 use crate::geometry::{PeriodicCell, Point3};
 use crate::properties::{
-    reject_reserved_realization_atom_key, Properties, PropertyColumn, PropertyError, PropertyKey,
-    PropertyTable, PropertyValue,
+    OwnerProperties, PropertyColumn, PropertyError, PropertyKey, PropertyValue, RawPropertyTable,
 };
 use crate::topology::{
-    AtomSiteId, AtomSiteMetadata, ChainId, EditAtomId, EditAtomSite, EditAtomSiteId, EditBond,
-    EditBondId, EditChain, EditChainId, EditMolecule, EditResidue, EditResidueId, InstanceAtomId,
-    InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass, ResidueId, TopologyEditError,
-    TopologyEditor,
+    AtomSiteMetadata, EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId, EditChain,
+    EditChainId, EditMolecule, EditResidue, EditResidueId, MoleculeClass, MoleculeInstanceId,
+    ResidueClass, TopologyAtomIndex, TopologyBondIndex, TopologyEditError, TopologyEditor,
 };
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 use std::fmt;
@@ -21,11 +19,13 @@ use std::fmt;
 /// Detached structural editing for one geometry-bearing molecular system.
 ///
 /// Positions accompany atom insertion and follow stable editing handles through
-/// deletion, splitting and merging. The coordinate-free editor is exposed only
-/// for inspection. Use the coordinated methods here for structural changes.
-/// Property methods refer to this realization; explicitly named `topology_*`
-/// methods edit static annotations. Generic coordinate changes preserve stored
-/// annotations without asserting that arbitrary derived values remain valid.
+/// deletion, splitting and merging. The coordinate-free [`TopologyEditor`] is
+/// readable through `Deref` (`editor.atoms()`, `editor.neighbors(id)`, ...);
+/// structural changes go through the coordinated methods here so geometry stays
+/// in step. Realization annotations are addressed by editing handle; explicitly
+/// named `topology_*` methods edit static annotations. Generic coordinate
+/// changes preserve stored annotations without asserting that arbitrary derived
+/// values remain valid.
 ///
 /// ```
 /// use kekule::{core::{Atom, Element, BondOrder}, geometry::Point3,
@@ -41,24 +41,40 @@ use std::fmt;
 /// assert_eq!(model.atom_count(), 2);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ModelEditor {
     topology: TopologyEditor,
-    positions: Vec<Point3>,
-    cell: Option<PeriodicCell>,
-    properties: Properties,
+    /// Realization state in private editor slot order.
+    slots: Conformation,
 }
+
+impl Default for ModelEditor {
+    fn default() -> Self {
+        Self {
+            topology: TopologyEditor::default(),
+            slots: Conformation::new(Positions::default()),
+        }
+    }
+}
+
+impl std::ops::Deref for ModelEditor {
+    type Target = TopologyEditor;
+
+    fn deref(&self) -> &Self::Target {
+        &self.topology
+    }
+}
+
 impl Model {
     pub fn edit(&self) -> ModelEditor {
-        ModelEditor::from_model(self)
+        self.clone().into_editor()
     }
-    /// Moves realization arrays into a draft while retaining the shared topology.
+    /// Moves the conformation into a draft while retaining the shared topology.
+    /// Source slots are source dense indices.
     pub fn into_editor(self) -> ModelEditor {
         ModelEditor {
             topology: TopologyEditor::from_topology(self.topology),
-            positions: self.positions.into_canonical_values(),
-            cell: self.cell,
-            properties: self.properties,
+            slots: self.conformation,
         }
     }
 }
@@ -70,14 +86,10 @@ impl ModelEditor {
     /// Clears structure, geometry, hierarchy, cell and annotations in the draft.
     pub fn clear(&mut self) {
         self.topology.clear();
-        self.positions.clear();
-        self.cell = None;
-        self.properties = Properties::new();
+        self.slots = Conformation::new(Positions::default());
     }
-    pub fn from_model(model: &Model) -> Self {
-        model.clone().into_editor()
-    }
-    pub fn topology_editor(&self) -> &TopologyEditor {
+    /// The coordinate-free structural draft, also reachable through `Deref`.
+    pub fn topology(&self) -> &TopologyEditor {
         &self.topology
     }
     /// Replaces represented stereo for an intact source occurrence; see
@@ -90,79 +102,22 @@ impl ModelEditor {
         self.structural(|topology| topology.replace_source_instance_stereo(instance, elements))
     }
 
-    pub fn atom_count(&self) -> usize {
-        self.topology.atom_count()
-    }
-    pub fn bond_count(&self) -> usize {
-        self.topology.bond_count()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.topology.is_empty()
-    }
-    pub fn atom_ids(&self) -> impl ExactSizeIterator<Item = EditAtomId> + '_ {
-        self.topology.atom_ids()
-    }
-    pub fn bond_ids(&self) -> impl ExactSizeIterator<Item = EditBondId> + '_ {
-        self.topology.bond_ids()
-    }
-    pub fn atoms(&self) -> impl ExactSizeIterator<Item = (EditAtomId, &Atom)> {
-        self.topology.atoms()
-    }
-    pub fn bonds(&self) -> impl ExactSizeIterator<Item = (EditBondId, EditBond)> + '_ {
-        self.topology.bonds()
-    }
-    pub fn atom(&self, id: EditAtomId) -> Result<&Atom, ModelEditError> {
-        Ok(self.topology.atom(id)?)
-    }
-    pub fn bond(&self, id: EditBondId) -> Result<EditBond, ModelEditError> {
-        Ok(self.topology.bond(id)?)
-    }
-    pub fn atom_handle(&self, source: InstanceAtomId) -> Result<EditAtomId, ModelEditError> {
-        Ok(self.topology.atom_handle(source)?)
-    }
-    pub fn bond_handle(&self, source: InstanceBondId) -> Result<EditBondId, ModelEditError> {
-        Ok(self.topology.bond_handle(source)?)
-    }
-    pub fn neighbors(
-        &self,
-        id: EditAtomId,
-    ) -> Result<impl Iterator<Item = EditAtomId> + '_, ModelEditError> {
-        Ok(self.topology.neighbors(id)?)
-    }
-    pub fn incident_bonds(
-        &self,
-        id: EditAtomId,
-    ) -> Result<impl Iterator<Item = EditBondId> + '_, ModelEditError> {
-        Ok(self.topology.incident_bonds(id)?)
-    }
-    pub fn bond_between(
-        &self,
-        a: EditAtomId,
-        b: EditAtomId,
-    ) -> Result<Option<EditBondId>, ModelEditError> {
-        Ok(self.topology.bond_between(a, b)?)
-    }
-    pub fn connected_components(&self) -> Vec<Vec<EditAtomId>> {
-        self.topology.connected_components()
-    }
-
     pub fn add_atom(
         &mut self,
         atom: Atom,
         position: Quantity<Point3>,
     ) -> Result<EditAtomId, ModelEditError> {
         let point = checked_point(position)?;
-        self.positions
-            .try_reserve(1)
-            .map_err(|_| ModelEditError::CapacityOverflow)?;
+        self.slots.try_reserve_atoms(1)?;
         let id = self.structural(|topology| topology.add_atom(atom))?;
-        debug_assert_eq!(self.topology.atom_slot(id)?, self.positions.len());
-        self.positions.push(point);
+        let slot = self.topology.atom_slot(id)?;
+        self.slots
+            .set_position(atom_row(slot), Quantity::new(point, CANONICAL_LENGTH_UNIT))?;
         Ok(id)
     }
     pub fn add_molecule(
         &mut self,
-        molecule: &Molecule,
+        molecule: Molecule,
         positions: &Positions,
     ) -> Result<EditMolecule, ModelEditError> {
         if positions.len() != molecule.atom_count() {
@@ -172,11 +127,15 @@ impl ModelEditor {
             }
             .into());
         }
-        self.positions
-            .try_reserve(positions.len())
-            .map_err(|_| ModelEditError::CapacityOverflow)?;
+        self.slots.try_reserve_atoms(positions.len())?;
+        let first = self.topology.atom_slot_count();
         let added = self.structural(|topology| topology.add_molecule(molecule))?;
-        self.positions.extend_from_slice(positions.values().value());
+        for (offset, point) in positions.values().value().iter().enumerate() {
+            self.slots.set_position(
+                atom_row(first + offset),
+                Quantity::new(*point, CANONICAL_LENGTH_UNIT),
+            )?;
+        }
         Ok(added)
     }
     pub fn replace_atom(&mut self, id: EditAtomId, atom: Atom) -> Result<Atom, ModelEditError> {
@@ -255,17 +214,16 @@ impl ModelEditor {
     /// Copies positions in live atom-handle order, which is the dense atom order
     /// of the model this draft publishes.
     pub fn positions(&self) -> Positions {
-        Positions::from_canonical_values(
-            self.atom_ids()
-                .map(|id| self.positions[self.topology.atom_slot(id).unwrap()])
-                .collect(),
-        )
+        self.slots
+            .positions()
+            .select_indices(&self.atom_slots())
+            .expect("live atoms have position slots")
     }
     pub fn position(&self, id: EditAtomId) -> Result<Quantity<Point3>, ModelEditError> {
-        Ok(Quantity::new(
-            self.positions[self.topology.atom_slot(id)?],
-            CANONICAL_LENGTH_UNIT,
-        ))
+        Ok(self
+            .slots
+            .positions()
+            .position_at(self.topology.atom_slot(id)?)?)
     }
     pub fn set_position(
         &mut self,
@@ -273,11 +231,9 @@ impl ModelEditor {
         position: Quantity<Point3>,
     ) -> Result<(), ModelEditError> {
         let slot = self.topology.atom_slot(id)?;
-        let point = checked_point(position)?;
-        self.positions[slot] = point;
-        Ok(())
+        Ok(self.slots.set_position(atom_row(slot), position)?)
     }
-    /// Replaces all live positions transactionally in [`Self::atom_ids`] order.
+    /// Replaces all live positions transactionally in [`TopologyEditor::atom_ids`] order.
     pub fn set_positions<T: AsRef<[Point3]>>(
         &mut self,
         positions: Quantity<T>,
@@ -290,77 +246,52 @@ impl ModelEditor {
             }
             .into());
         }
-        let slots = self
-            .atom_ids()
-            .map(|id| self.topology.atom_slot(id).unwrap())
+        let staged = self
+            .atom_slots()
+            .into_iter()
+            .zip(positions.values().value().iter().copied())
             .collect::<Vec<_>>();
-        for (slot, &point) in slots.into_iter().zip(positions.values().value().iter()) {
-            self.positions[slot] = point;
-        }
-        Ok(())
+        Ok(self.slots.positions_mut().set_canonical_batch(&staged)?)
     }
     /// Checked sparse coordinate batch; repeated handles are applied in input order.
     pub fn set_atom_positions(
         &mut self,
         values: impl IntoIterator<Item = (EditAtomId, Quantity<Point3>)>,
     ) -> Result<(), ModelEditError> {
-        let updates = values
+        let staged = values
             .into_iter()
             .map(|(id, value)| Ok((self.topology.atom_slot(id)?, checked_point(value)?)))
             .collect::<Result<Vec<_>, ModelEditError>>()?;
-        for (slot, point) in updates {
-            self.positions[slot] = point;
-        }
-        Ok(())
+        Ok(self.slots.positions_mut().set_canonical_batch(&staged)?)
     }
     pub fn cell(&self) -> Option<&PeriodicCell> {
-        self.cell.as_ref()
+        self.slots.cell()
     }
     pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
-        self.cell = cell;
+        self.slots.set_cell(cell);
     }
-    /// Realization properties in private stable-slot order. Column helpers use live order.
-    pub fn properties(&self) -> &Properties {
-        &self.properties
+    /// Realization-level owner annotations. Structural edits clear them.
+    pub fn owner_properties(&self) -> &OwnerProperties {
+        self.slots.properties().owner()
     }
-    pub fn atom_properties(&self) -> &PropertyTable {
-        self.properties.atoms()
-    }
-    pub fn bond_properties(&self) -> &PropertyTable {
-        self.properties.bonds()
-    }
-    pub fn insert_property(
-        &mut self,
-        key: PropertyKey,
-        value: PropertyValue,
-    ) -> Result<Option<PropertyValue>, ModelEditError> {
-        Ok(self.properties.insert(key, value)?)
-    }
-    pub fn remove_property(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
-        self.properties.remove(key)
-    }
-    pub fn clear_properties(&mut self) {
-        self.properties.clear_owner();
+    pub fn owner_properties_mut(&mut self) -> &mut OwnerProperties {
+        self.slots.properties_storage_mut().owner_mut()
     }
     pub fn atom_property(
         &self,
         id: EditAtomId,
         key: &PropertyKey,
     ) -> Result<Option<PropertyValue>, ModelEditError> {
-        Ok(self
-            .properties
-            .atoms()
-            .value(key, self.topology.atom_slot(id)?)?)
+        let slot = self.topology.atom_slot(id)?;
+        Ok(self.slots.properties().atoms().value(key, atom_row(slot))?)
     }
     pub fn bond_property(
         &self,
         id: EditBondId,
         key: &PropertyKey,
     ) -> Result<Option<PropertyValue>, ModelEditError> {
-        Ok(self
-            .properties
-            .bonds()
-            .value(key, self.topology.bond_slot(id)?)?)
+        let slot = self.topology.bond_slot(id)?;
+        Ok(self.slots.properties().bonds().value(key, bond_row(slot))?)
     }
     pub fn set_atom_property(
         &mut self,
@@ -370,8 +301,10 @@ impl ModelEditor {
     ) -> Result<(), ModelEditError> {
         let slot = self.topology.atom_slot(id)?;
         Ok(self
-            .properties
-            .set_realization_atom_value(key, slot, value)?)
+            .slots
+            .properties_mut()
+            .atoms_mut()
+            .set_value(key, atom_row(slot), value)?)
     }
     pub fn set_bond_property(
         &mut self,
@@ -381,92 +314,102 @@ impl ModelEditor {
     ) -> Result<(), ModelEditError> {
         let slot = self.topology.bond_slot(id)?;
         Ok(self
-            .properties
-            .set_realization_bond_value(key, slot, value)?)
+            .slots
+            .properties_mut()
+            .bonds_mut()
+            .set_value(key, bond_row(slot), value)?)
     }
+    /// Applies one atom-column batch transactionally; repeated handles use the last value.
     pub fn set_atom_properties(
         &mut self,
         key: PropertyKey,
         values: impl IntoIterator<Item = (EditAtomId, Option<PropertyValue>)>,
     ) -> Result<(), ModelEditError> {
-        let mut staged = self.properties.atoms().stage_column(&key);
-        for (id, value) in values {
-            let slot = self.topology.atom_slot(id)?;
-            reject_reserved_realization_atom_key(&key)?;
-            staged.set_value(key.clone(), slot, value)?;
-        }
-        self.properties.atoms_mut().commit_column(key, staged);
-        Ok(())
+        let values = values
+            .into_iter()
+            .map(|(id, value)| Ok((atom_row(self.topology.atom_slot(id)?), value)))
+            .collect::<Result<Vec<_>, ModelEditError>>()?;
+        Ok(self
+            .slots
+            .properties_mut()
+            .atoms_mut()
+            .set_values(key, values)?)
     }
+    /// Applies one bond-column batch transactionally; repeated handles use the last value.
     pub fn set_bond_properties(
         &mut self,
         key: PropertyKey,
         values: impl IntoIterator<Item = (EditBondId, Option<PropertyValue>)>,
     ) -> Result<(), ModelEditError> {
-        let mut staged = self.properties.bonds().stage_column(&key);
-        for (id, value) in values {
-            staged.set_value(key.clone(), self.topology.bond_slot(id)?, value)?;
-        }
-        self.properties.bonds_mut().commit_column(key, staged);
-        Ok(())
-    }
-    pub fn atom_property_column(
-        &self,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyColumn>, ModelEditError> {
+        let values = values
+            .into_iter()
+            .map(|(id, value)| Ok((bond_row(self.topology.bond_slot(id)?), value)))
+            .collect::<Result<Vec<_>, ModelEditError>>()?;
         Ok(self
-            .atom_properties()
-            .select_indices(&self.atom_slots())?
-            .remove(key))
+            .slots
+            .properties_mut()
+            .bonds_mut()
+            .set_values(key, values)?)
     }
-    pub fn bond_property_column(
-        &self,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyColumn>, ModelEditError> {
-        Ok(self
-            .bond_properties()
-            .select_indices(&self.bond_slots())?
-            .remove(key))
+    /// One realization atom column in live atom-handle order.
+    pub fn atom_property_column(&self, key: &PropertyKey) -> Option<PropertyColumn> {
+        live_column(
+            self.slots.properties().atoms().raw(),
+            &self.atom_slots(),
+            key,
+        )
     }
+    /// One realization bond column in live bond-handle order.
+    pub fn bond_property_column(&self, key: &PropertyKey) -> Option<PropertyColumn> {
+        live_column(
+            self.slots.properties().bonds().raw(),
+            &self.bond_slots(),
+            key,
+        )
+    }
+    /// Inserts a realization atom column given in live atom-handle order.
     pub fn insert_atom_property_column(
         &mut self,
         key: PropertyKey,
         column: PropertyColumn,
     ) -> Result<Option<PropertyColumn>, ModelEditError> {
-        let previous = self.atom_property_column(&key)?;
+        let previous = self.atom_property_column(&key);
         let column =
             column.into_editor_slots(&self.atom_slots(), self.topology.atom_slot_count())?;
-        self.properties
-            .insert_realization_atom_column(key, column)?;
+        self.slots
+            .properties_mut()
+            .atoms_mut()
+            .insert(key, column)?;
         Ok(previous)
     }
+    /// Inserts a realization bond column given in live bond-handle order.
     pub fn insert_bond_property_column(
         &mut self,
         key: PropertyKey,
         column: PropertyColumn,
     ) -> Result<Option<PropertyColumn>, ModelEditError> {
-        let previous = self.bond_property_column(&key)?;
+        let previous = self.bond_property_column(&key);
         let column =
             column.into_editor_slots(&self.bond_slots(), self.topology.bond_slot_count())?;
-        self.properties
-            .insert_realization_bond_column(key, column)?;
+        self.slots
+            .properties_mut()
+            .bonds_mut()
+            .insert(key, column)?;
         Ok(previous)
     }
-    pub fn remove_atom_property_column(
-        &mut self,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyColumn>, ModelEditError> {
-        let previous = self.atom_property_column(key)?;
-        self.properties.remove_realization_atom_column(key)?;
-        Ok(previous)
+    pub fn remove_atom_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
+        let previous = self.atom_property_column(key);
+        self.slots.properties_mut().atoms_mut().remove(key);
+        previous
     }
     pub fn remove_bond_property_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
-        let previous = self.bond_property_column(key).expect("live property slots");
-        self.properties.remove_realization_bond_column(key);
+        let previous = self.bond_property_column(key);
+        self.slots.properties_mut().bonds_mut().remove(key);
         previous
     }
     pub fn occupancy(&self, id: EditAtomId) -> Result<Option<f64>, ModelEditError> {
-        Ok(self.properties.occupancy_at(self.topology.atom_slot(id)?)?)
+        let slot = self.topology.atom_slot(id)?;
+        Ok(self.slots.occupancy(atom_row(slot))?)
     }
     pub fn set_occupancy(
         &mut self,
@@ -474,10 +417,11 @@ impl ModelEditor {
         value: Option<f64>,
     ) -> Result<(), ModelEditError> {
         let slot = self.topology.atom_slot(id)?;
-        Ok(self.properties.set_occupancy_at(slot, value)?)
+        Ok(self.slots.set_occupancy(atom_row(slot), value)?)
     }
     pub fn b_factor(&self, id: EditAtomId) -> Result<Option<Quantity<f64>>, ModelEditError> {
-        Ok(self.properties.b_factor_at(self.topology.atom_slot(id)?)?)
+        let slot = self.topology.atom_slot(id)?;
+        Ok(self.slots.b_factor(atom_row(slot))?)
     }
     pub fn set_b_factor(
         &mut self,
@@ -485,42 +429,9 @@ impl ModelEditor {
         value: Option<Quantity<f64>>,
     ) -> Result<(), ModelEditError> {
         let slot = self.topology.atom_slot(id)?;
-        Ok(self.properties.set_b_factor_at(slot, value)?)
+        Ok(self.slots.set_b_factor(atom_row(slot), value)?)
     }
 
-    pub fn chains(&self) -> impl ExactSizeIterator<Item = (EditChainId, &EditChain)> {
-        self.topology.chains()
-    }
-    pub fn residues(&self) -> impl ExactSizeIterator<Item = (EditResidueId, &EditResidue)> {
-        self.topology.residues()
-    }
-    pub fn atom_sites(&self) -> impl ExactSizeIterator<Item = (EditAtomSiteId, &EditAtomSite)> {
-        self.topology.atom_sites()
-    }
-    pub fn chain(&self, id: EditChainId) -> Result<&EditChain, ModelEditError> {
-        Ok(self.topology.chain(id)?)
-    }
-    pub fn residue(&self, id: EditResidueId) -> Result<&EditResidue, ModelEditError> {
-        Ok(self.topology.residue(id)?)
-    }
-    pub fn atom_site(&self, id: EditAtomSiteId) -> Result<&EditAtomSite, ModelEditError> {
-        Ok(self.topology.atom_site(id)?)
-    }
-    pub fn atom_site_for_atom(
-        &self,
-        atom: EditAtomId,
-    ) -> Result<Option<EditAtomSiteId>, ModelEditError> {
-        Ok(self.topology.atom_site_for_atom(atom)?)
-    }
-    pub fn chain_handle(&self, id: ChainId) -> Result<EditChainId, ModelEditError> {
-        Ok(self.topology.chain_handle(id)?)
-    }
-    pub fn residue_handle(&self, id: ResidueId) -> Result<EditResidueId, ModelEditError> {
-        Ok(self.topology.residue_handle(id)?)
-    }
-    pub fn atom_site_handle(&self, id: AtomSiteId) -> Result<EditAtomSiteId, ModelEditError> {
-        Ok(self.topology.atom_site_handle(id)?)
-    }
     pub fn add_chain(
         &mut self,
         label: impl Into<String>,
@@ -675,21 +586,13 @@ impl ModelEditor {
         self,
     ) -> Result<(Model, crate::topology::EditCorrespondence), ModelEditError> {
         let (published, correspondence) = self.topology.into_mapped_publication()?;
-        let positions = Positions::from_canonical_values(
-            published
-                .atom_slots
-                .iter()
-                .map(|&slot| self.positions[slot])
-                .collect(),
-        );
-        let mut properties = self
-            .properties
-            .project_realization(&published.atom_slots, &published.bond_slots)?;
-        for (key, value) in self.properties.iter() {
-            properties.insert(key.clone(), value.clone())?;
-        }
+        let mut conformation = self
+            .slots
+            .project(&published.atom_slots, &published.bond_slots)?;
+        *conformation.properties_storage_mut().owner_mut() =
+            self.slots.properties().owner().clone();
         Ok((
-            Model::with_properties(published.topology, positions, self.cell, properties)?,
+            Model::new(published.topology, conformation)?,
             correspondence,
         ))
     }
@@ -702,6 +605,9 @@ impl ModelEditor {
         })
     }
 
+    /// Runs one topology edit and keeps slot rows in step: new slots get rows,
+    /// dead slots lose their annotations, and a structural change clears
+    /// realization owner properties.
     fn structural<T>(
         &mut self,
         edit: impl FnOnce(&mut TopologyEditor) -> Result<T, TopologyEditError>,
@@ -710,34 +616,20 @@ impl ModelEditor {
         let atom_count = self.atom_count();
         let bond_count = self.bond_count();
         let result = edit(&mut self.topology)?;
-        self.properties
-            .resize_atoms(self.topology.atom_slot_count());
-        self.properties
-            .resize_bonds(self.topology.bond_slot_count());
+        self.slots.resize_slots(
+            self.topology.atom_slot_count(),
+            self.topology.bond_slot_count(),
+        );
         if self.topology.structural_revision != revision {
-            self.properties.clear_owner();
+            self.slots.properties_storage_mut().owner_mut().clear();
         }
-        if self.atom_count() < atom_count && self.properties.atoms().has_data() {
-            let live = self
-                .atom_slots()
-                .into_iter()
-                .collect::<std::collections::BTreeSet<_>>();
-            for slot in 0..self.properties.atoms().len() {
-                if !live.contains(&slot) {
-                    self.properties.atoms_mut().clear_index(slot);
-                }
-            }
+        if self.atom_count() < atom_count {
+            let live = self.atom_slots();
+            self.slots.clear_dead_atom_rows(&live);
         }
-        if self.bond_count() < bond_count && self.properties.bonds().has_data() {
-            let live = self
-                .bond_slots()
-                .into_iter()
-                .collect::<std::collections::BTreeSet<_>>();
-            for slot in 0..self.properties.bonds().len() {
-                if !live.contains(&slot) {
-                    self.properties.bonds_mut().clear_index(slot);
-                }
-            }
+        if self.bond_count() < bond_count {
+            let live = self.bond_slots();
+            self.slots.clear_dead_bond_rows(&live);
         }
         Ok(result)
     }
@@ -751,6 +643,26 @@ impl ModelEditor {
             .map(|id| self.topology.bond_slot(id).unwrap())
             .collect()
     }
+}
+
+fn atom_row(slot: usize) -> TopologyAtomIndex {
+    TopologyAtomIndex::new(u32::try_from(slot).expect("editor slots fit topology indices"))
+}
+
+fn bond_row(slot: usize) -> TopologyBondIndex {
+    TopologyBondIndex::new(u32::try_from(slot).expect("editor slots fit topology indices"))
+}
+
+fn live_column(
+    table: &RawPropertyTable,
+    live: &[usize],
+    key: &PropertyKey,
+) -> Option<PropertyColumn> {
+    table.get(key)?;
+    table
+        .select_indices(live)
+        .expect("live slots are allocated rows")
+        .remove(key)
 }
 
 fn checked_point(position: Quantity<Point3>) -> Result<Point3, PositionError> {
@@ -767,6 +679,7 @@ pub enum ModelEditError {
     Topology(TopologyEditError),
     Position(PositionError),
     Property(PropertyError),
+    Conformation(ConformationError),
     Model(Box<ModelError>),
     CapacityOverflow,
     /// A periodic source cannot be imported under the destination's cell.
@@ -783,6 +696,7 @@ impl fmt::Display for ModelEditError {
             Self::Topology(e) => e.fmt(f),
             Self::Position(e) => e.fmt(f),
             Self::Property(e) => e.fmt(f),
+            Self::Conformation(e) => e.fmt(f),
             Self::Model(e) => e.fmt(f),
             Self::CapacityOverflow => f.write_str("model editing exceeds coordinate capacity"),
             Self::IncompatibleAppendCell => f.write_str(
@@ -798,6 +712,7 @@ impl std::error::Error for ModelEditError {
             Self::Topology(e) => Some(e),
             Self::Position(e) => Some(e),
             Self::Property(e) => Some(e),
+            Self::Conformation(e) => Some(e),
             Self::Model(e) => Some(e.as_ref()),
             Self::AppendProperty { error, .. } => Some(error.as_ref()),
             Self::CapacityOverflow | Self::IncompatibleAppendCell => None,
@@ -816,6 +731,7 @@ macro_rules! convert {
 convert!(TopologyEditError, Topology);
 convert!(PositionError, Position);
 convert!(PropertyError, Property);
+convert!(ConformationError, Conformation);
 impl From<ModelError> for ModelEditError {
     fn from(error: ModelError) -> Self {
         Self::Model(Box::new(error))
@@ -845,5 +761,71 @@ impl fmt::Display for ModelFinishError {
 impl std::error::Error for ModelFinishError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(self.error.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod allocation_tests {
+    use super::*;
+
+    fn key(name: &str) -> PropertyKey {
+        PropertyKey::new(name).unwrap()
+    }
+
+    fn int_column(table: &RawPropertyTable, key: &PropertyKey) -> *const Option<i64> {
+        match table.get(key).unwrap() {
+            PropertyColumn::Int(values) => values.as_ptr(),
+            _ => panic!("expected an integer column"),
+        }
+    }
+
+    // Realization batches stage only their own column, as topology batches do.
+    #[test]
+    fn realization_batches_keep_unrelated_column_allocations() {
+        let topology = crate::smiles::to_topology("CCC").unwrap();
+        let atoms = topology.atom_count();
+        let mut editor = Model::new(topology, Positions::zeros(atoms))
+            .unwrap()
+            .into_editor();
+        let atoms = editor.atom_ids().collect::<Vec<_>>();
+        let bonds = editor.bond_ids().collect::<Vec<_>>();
+        let untouched = key("untouched");
+        editor
+            .set_atom_property(atoms[0], untouched.clone(), Some(PropertyValue::Int(1)))
+            .unwrap();
+        editor
+            .set_bond_property(bonds[0], untouched.clone(), Some(PropertyValue::Int(2)))
+            .unwrap();
+        let atom_column = int_column(editor.slots.properties().atoms().raw(), &untouched);
+        let bond_column = int_column(editor.slots.properties().bonds().raw(), &untouched);
+        editor
+            .set_atom_properties(
+                key("edited"),
+                [
+                    (atoms[0], Some(PropertyValue::Int(3))),
+                    (atoms[1], Some(PropertyValue::Int(4))),
+                ],
+            )
+            .unwrap();
+        assert!(editor
+            .set_atom_properties(
+                key("edited"),
+                [(atoms[1], Some(PropertyValue::String("bad type".into())))],
+            )
+            .is_err());
+        editor
+            .set_bond_properties(key("edited"), [(bonds[1], Some(PropertyValue::Int(5)))])
+            .unwrap();
+        editor
+            .set_bond_properties(key("edited"), [(bonds[1], None)])
+            .unwrap();
+        assert_eq!(
+            int_column(editor.slots.properties().atoms().raw(), &untouched),
+            atom_column
+        );
+        assert_eq!(
+            int_column(editor.slots.properties().bonds().raw(), &untouched),
+            bond_column
+        );
     }
 }

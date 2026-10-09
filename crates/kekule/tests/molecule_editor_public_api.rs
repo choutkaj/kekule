@@ -1,5 +1,5 @@
 use kekule::core::*;
-use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
+use kekule::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
 use kekule::units::{ANGSTROM, KELVIN, NANOMETER};
 
 fn atom(symbol: &str) -> Atom {
@@ -38,14 +38,16 @@ fn public_editor_builds_inspects_and_edits_without_a_molecule_view() {
     editor.bond_mut(bond).unwrap().set_order(BondOrder::Double);
     assert_eq!(editor.bond(bond).unwrap().order, BondOrder::Double);
     editor
-        .insert_property(key("label"), PropertyValue::String("draft".into()))
+        .properties_mut()
+        .owner_mut()
+        .insert(key("label"), PropertyValue::String("draft".into()))
         .unwrap();
     editor.validate().unwrap();
     let published = editor.finish().unwrap();
     let mut edited = published.edit();
     edited.atom_mut(a).unwrap().formal_charge = 1;
     assert_eq!(published.atom(a).unwrap().formal_charge, 0);
-    assert!(edited.properties().get(&key("label")).is_none());
+    assert!(edited.properties().owner().get(&key("label")).is_none());
     let atom_pointer = published.atom(a).unwrap() as *const Atom;
     let moved = published.into_editor();
     assert_eq!(moved.atom(a).unwrap() as *const Atom, atom_pointer);
@@ -57,10 +59,14 @@ fn rewiring_retains_ids_properties_and_checks_every_endpoint_before_mutation() {
     let ids = editor.atom_ids().collect::<Vec<_>>();
     let bonds = editor.bond_ids().collect::<Vec<_>>();
     editor
-        .set_bond_property(bonds[0], key("score"), Some(PropertyValue::Int(3)))
+        .properties_mut()
+        .bonds_mut()
+        .set_value(key("score"), bonds[0], Some(PropertyValue::Int(3)))
         .unwrap();
     editor
-        .insert_property(key("label"), PropertyValue::Int(8))
+        .properties_mut()
+        .owner_mut()
+        .insert(key("label"), PropertyValue::Int(8))
         .unwrap();
     let before = snapshot(&editor);
     for replacement in [
@@ -83,10 +89,14 @@ fn rewiring_retains_ids_properties_and_checks_every_endpoint_before_mutation() {
         vec![ids[2]]
     );
     assert_eq!(
-        editor.bond_property(bonds[0], &key("score")).unwrap(),
+        editor
+            .properties()
+            .bonds()
+            .value(&key("score"), bonds[0])
+            .unwrap(),
         Some(PropertyValue::Int(3))
     );
-    assert!(editor.properties().owner_is_empty());
+    assert!(editor.properties().owner().is_empty());
     editor.validate().unwrap();
     editor.finish().unwrap();
 }
@@ -114,41 +124,85 @@ fn batch_deletion_is_atomic_and_retains_surviving_identity() {
 }
 
 #[test]
-fn property_columns_use_live_order_and_batches_preserve_state_on_error() {
+fn property_tables_use_atom_id_rows_and_batches_preserve_state_on_error() {
     let mut editor = molecule("CCC").into_editor();
     let ids = editor.atom_ids().collect::<Vec<_>>();
     let bond = editor.bond_ids().last().unwrap();
     editor.delete_atom(ids[0]).unwrap();
-    editor
-        .set_atom_property_column(
+    // Draft rows are allocated atom IDs: a deleted atom keeps its row, which
+    // must stay missing.
+    assert_eq!(
+        editor.properties_mut().atoms_mut().insert(
             key("length"),
             PropertyColumn::Real {
                 unit: ANGSTROM,
-                values: vec![Some(1.0), Some(2.0)],
+                values: vec![Some(0.0), Some(1.0), Some(2.0)],
+            },
+        ),
+        Err(PropertyError::RemovedRow {
+            index: ids[0].index()
+        })
+    );
+    editor
+        .properties_mut()
+        .atoms_mut()
+        .insert(
+            key("length"),
+            PropertyColumn::Real {
+                unit: ANGSTROM,
+                values: vec![None, Some(1.0), Some(2.0)],
             },
         )
         .unwrap();
     assert_eq!(
-        editor.atom_properties().value(&key("length"), 0).unwrap(),
+        editor
+            .properties()
+            .atoms()
+            .value(&key("length"), ids[0])
+            .unwrap(),
         None
     );
     assert_eq!(
-        editor.atom_property(ids[1], &key("length")).unwrap(),
+        editor
+            .properties()
+            .atoms()
+            .value(&key("length"), ids[1])
+            .unwrap(),
         Some(PropertyValue::real(1.0, ANGSTROM).unwrap())
     );
+    assert_eq!(
+        editor.properties_mut().atoms_mut().set_value(
+            key("length"),
+            ids[0],
+            Some(PropertyValue::real(1.0, ANGSTROM).unwrap())
+        ),
+        Err(PropertyError::RemovedRow {
+            index: ids[0].index()
+        })
+    );
     editor
-        .set_bond_property_column(key("score"), PropertyColumn::Int(vec![Some(4)]))
+        .properties_mut()
+        .bonds_mut()
+        .insert(key("score"), PropertyColumn::Int(vec![None, Some(4)]))
         .unwrap();
     assert_eq!(
-        editor.bond_property(bond, &key("score")).unwrap(),
+        editor
+            .properties()
+            .bonds()
+            .value(&key("score"), bond)
+            .unwrap(),
         Some(PropertyValue::Int(4))
     );
     let before = snapshot(&editor);
     assert!(editor
-        .set_atom_property_column(key("length"), PropertyColumn::Int(vec![Some(1)]))
+        .properties_mut()
+        .atoms_mut()
+        .insert(key("length"), PropertyColumn::Int(vec![Some(1)]))
         .is_err());
     assert!(editor
-        .set_atom_properties(
+        .properties_mut()
+        .atoms_mut()
+        .set_values(
             key("length"),
             [
                 (ids[1], Some(PropertyValue::real(2.0, ANGSTROM).unwrap())),
@@ -157,7 +211,9 @@ fn property_columns_use_live_order_and_batches_preserve_state_on_error() {
         )
         .is_err());
     assert!(editor
-        .set_atom_properties(
+        .properties_mut()
+        .atoms_mut()
+        .set_values(
             key("x"),
             [
                 (ids[1], Some(PropertyValue::Int(2))),
@@ -166,7 +222,9 @@ fn property_columns_use_live_order_and_batches_preserve_state_on_error() {
         )
         .is_err());
     assert!(editor
-        .set_bond_properties(
+        .properties_mut()
+        .bonds_mut()
+        .set_values(
             key("x"),
             [
                 (bond, Some(PropertyValue::Int(2))),
@@ -176,27 +234,41 @@ fn property_columns_use_live_order_and_batches_preserve_state_on_error() {
         .is_err());
     assert_eq!(snapshot(&editor), before);
     editor
-        .set_atom_properties(
+        .properties_mut()
+        .atoms_mut()
+        .set_values(
             key("length"),
             [(ids[1], Some(PropertyValue::real(0.5, NANOMETER).unwrap()))],
         )
         .unwrap();
     assert_eq!(
-        editor.atom_property(ids[1], &key("length")).unwrap(),
+        editor
+            .properties()
+            .atoms()
+            .value(&key("length"), ids[1])
+            .unwrap(),
         Some(PropertyValue::real(5.0, ANGSTROM).unwrap())
     );
     editor
-        .set_bond_properties(key("score"), [(bond, Some(PropertyValue::Int(7)))])
+        .properties_mut()
+        .bonds_mut()
+        .set_values(key("score"), [(bond, Some(PropertyValue::Int(7)))])
         .unwrap();
     assert_eq!(
         editor
-            .remove_bond_property_column(&key("score"))
+            .properties_mut()
+            .bonds_mut()
+            .remove(&key("score"))
             .unwrap()
-            .value(0)
+            .value(bond.index())
             .unwrap(),
         Some(PropertyValue::Int(7))
     );
-    assert!(editor.remove_atom_property_column(&key("length")).is_some());
+    assert!(editor
+        .properties_mut()
+        .atoms_mut()
+        .remove(&key("length"))
+        .is_some());
     editor.finish().unwrap();
 }
 
@@ -212,13 +284,19 @@ fn grouped_fragment() -> Molecule {
     let atom = editor.atom_ids().next().unwrap();
     let bond = editor.bond_ids().next().unwrap();
     editor
-        .set_atom_property(atom, key("tag"), Some(PropertyValue::Int(5)))
+        .properties_mut()
+        .atoms_mut()
+        .set_value(key("tag"), atom, Some(PropertyValue::Int(5)))
         .unwrap();
     editor
-        .set_bond_property(bond, key("tag"), Some(PropertyValue::Int(6)))
+        .properties_mut()
+        .bonds_mut()
+        .set_value(key("tag"), bond, Some(PropertyValue::Int(6)))
         .unwrap();
     editor
-        .insert_property(key("source"), PropertyValue::Int(9))
+        .properties_mut()
+        .owner_mut()
+        .insert(key("source"), PropertyValue::Int(9))
         .unwrap();
     editor.finish().unwrap()
 }
@@ -235,14 +313,18 @@ fn append_preserves_fragment_stereo_groups_and_entity_properties() {
     let old_atom = source.atom_ids().next().unwrap();
     assert_eq!(
         editor
-            .atom_property(map.atoms()[&old_atom], &key("tag"))
+            .properties()
+            .atoms()
+            .value(&key("tag"), map.atoms()[&old_atom])
             .unwrap(),
         Some(PropertyValue::Int(5))
     );
     let old_bond = source.bond_ids().next().unwrap();
     assert_eq!(
         editor
-            .bond_property(map.bonds()[&old_bond], &key("tag"))
+            .properties()
+            .bonds()
+            .value(&key("tag"), map.bonds()[&old_bond])
             .unwrap(),
         Some(PropertyValue::Int(6))
     );
@@ -275,7 +357,7 @@ fn append_preserves_fragment_stereo_groups_and_entity_properties() {
             })
             .collect::<Vec<_>>()
     );
-    assert!(editor.properties().get(&key("source")).is_none());
+    assert!(editor.properties().owner().get(&key("source")).is_none());
     editor
         .add_bond(existing, map.atoms()[&old_atom], BondOrder::Single)
         .unwrap();
@@ -287,10 +369,14 @@ fn append_conflicts_roll_back_graph_properties_and_id_allocation() {
     let mut editor = molecule("C").into_editor();
     let id = editor.atom_ids().next().unwrap();
     editor
-        .set_atom_property(id, key("tag"), Some(PropertyValue::String("text".into())))
+        .properties_mut()
+        .atoms_mut()
+        .set_value(key("tag"), id, Some(PropertyValue::String("text".into())))
         .unwrap();
     editor
-        .insert_property(key("label"), PropertyValue::Int(4))
+        .properties_mut()
+        .owner_mut()
+        .insert(key("label"), PropertyValue::Int(4))
         .unwrap();
     let before = snapshot(&editor);
     assert!(editor.append_molecule(&grouped_fragment()).is_err());
@@ -370,10 +456,14 @@ fn property_and_no_op_edits_preserve_perception_but_chemistry_changes_clear_it()
     let id = editor.atom_ids().next().unwrap();
     let bond = editor.bond_ids().next().unwrap();
     editor
-        .insert_property(key("label"), PropertyValue::Int(7))
+        .properties_mut()
+        .owner_mut()
+        .insert(key("label"), PropertyValue::Int(7))
         .unwrap();
     editor
-        .set_atom_property(id, key("tag"), Some(PropertyValue::Int(2)))
+        .properties_mut()
+        .atoms_mut()
+        .set_value(key("tag"), id, Some(PropertyValue::Int(2)))
         .unwrap();
     editor
         .replace_atom(id, editor.atom(id).unwrap().clone())
@@ -381,14 +471,14 @@ fn property_and_no_op_edits_preserve_perception_but_chemistry_changes_clear_it()
     editor.set_bond_order(bond, BondOrder::Single).unwrap();
     assert_eq!(editor.perception(), &cached);
     assert_eq!(
-        editor.properties().get(&key("label")),
+        editor.properties().owner().get(&key("label")),
         Some(&PropertyValue::Int(7))
     );
     editor.set_bond_order(bond, BondOrder::Double).unwrap();
     assert_eq!(editor.perception(), &Perception::default());
-    assert!(editor.properties().owner_is_empty());
+    assert!(editor.properties().owner().is_empty());
     assert_eq!(
-        editor.atom_property(id, &key("tag")).unwrap(),
+        editor.properties().atoms().value(&key("tag"), id).unwrap(),
         Some(PropertyValue::Int(2))
     );
 }
@@ -400,7 +490,9 @@ fn forgetting_mutation_guards_cannot_preserve_stale_annotations() {
         let mut source = molecule("CC");
         source.perceive().unwrap();
         source
-            .insert_property(key("identity"), PropertyValue::Int(7))
+            .properties_mut()
+            .owner_mut()
+            .insert(key("identity"), PropertyValue::Int(7))
             .unwrap();
         let mut editor = source.into_editor();
         if change_atom {
@@ -415,8 +507,8 @@ fn forgetting_mutation_guards_cannot_preserve_stale_annotations() {
             std::mem::forget(guard);
         }
         assert_eq!(editor.perception(), &Perception::default());
-        assert!(editor.properties().owner_is_empty());
-        assert!(editor.finish().unwrap().properties().owner_is_empty());
+        assert!(editor.properties().owner().is_empty());
+        assert!(editor.finish().unwrap().properties().owner().is_empty());
     }
 }
 
@@ -520,7 +612,9 @@ fn failed_finish_returns_exact_draft_for_repair() {
     let a = editor.add_atom(atom("C")).unwrap();
     let b = editor.add_atom(atom("O")).unwrap();
     editor
-        .insert_property(key("note"), PropertyValue::Int(3))
+        .properties_mut()
+        .owner_mut()
+        .insert(key("note"), PropertyValue::Int(3))
         .unwrap();
     let before = snapshot(&editor);
     assert!(editor.validate().is_err());
@@ -543,7 +637,9 @@ fn publication_compacts_every_id_space_and_carries_annotations() {
     let tag = key("source_atom");
     for id in source.atom_ids().collect::<Vec<_>>() {
         source
-            .set_atom_property(id, tag.clone(), Some(PropertyValue::Int(id.raw().into())))
+            .properties_mut()
+            .atoms_mut()
+            .set_value(tag.clone(), id, Some(PropertyValue::Int(id.raw().into())))
             .unwrap();
     }
     let element = source.stereo_element_ids().next().unwrap();
@@ -577,11 +673,11 @@ fn publication_compacts_every_id_space_and_carries_annotations() {
         published.bond_ids().collect::<Vec<_>>(),
         (0..3).map(BondId::new).collect::<Vec<_>>()
     );
-    assert_eq!(published.atom_properties().len(), published.atom_count());
-    assert_eq!(published.bond_properties().len(), published.bond_count());
+    assert_eq!(published.properties().atoms().len(), published.atom_count());
+    assert_eq!(published.properties().bonds().len(), published.bond_count());
     for (source_id, target) in ids.atoms() {
         assert_eq!(
-            published.atom_property(*target, &tag).unwrap(),
+            published.properties().atoms().value(&tag, *target).unwrap(),
             Some(PropertyValue::Int(source_id.raw().into()))
         );
     }

@@ -46,7 +46,7 @@
 //!     ],
 //!     ANGSTROM,
 //! ))?;
-//! let model = Model::from_molecule(&ethanol, &positions)?;
+//! let model = Model::from_molecule(ethanol, &positions)?;
 //!
 //! assert_eq!(model.topology().instance_count(), 1);
 //! assert_eq!(model.atom_count(), 3);
@@ -138,12 +138,11 @@ pub mod units;
 /// it never invokes parsing, interpretation, or perception implicitly.
 pub mod substructure {
     pub use crate::algorithms::{
-        find_substructure_match, find_substructure_matches, find_substructure_matches_complete,
-        find_substructure_matches_with_options, find_topology_substructure_matches_complete,
-        visit_substructure_matches, MatchCompletion, PreparedTarget, PreparedTopologyTarget,
-        QueryMatch, QueryPerception, SubstructureMatchError, SubstructureMatchOptions,
-        SubstructureMatchWork, TaggedMatchError, TaggedQuery, TopologyQueryMatch,
-        MAX_SUBSTRUCTURE_QUERY_ATOMS,
+        find_match, find_matches, find_matches_with_options, find_topology_matches,
+        find_topology_matches_with_options, visit_matches, visit_matches_with_options,
+        MatchCompletion, PreparedTarget, PreparedTopologyTarget, QueryMatch, QueryPerception,
+        SubstructureMatchError, SubstructureMatchOptions, SubstructureMatchWork, TaggedMatchError,
+        TaggedQuery, TopologyQueryMatch, MAX_SUBSTRUCTURE_QUERY_ATOMS,
     };
 }
 
@@ -156,6 +155,7 @@ pub mod substructure {
 /// and perception is never run implicitly.
 pub mod smiles {
     use std::fmt;
+    use std::sync::Arc;
 
     use crate::core::Molecule;
     pub use crate::io::{
@@ -166,18 +166,72 @@ pub mod smiles {
     };
     use crate::topology::{Topology, TopologyBuildError};
 
+    /// SMILES output policy of [`write()`].
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
     #[non_exhaustive]
     pub enum SmilesWriteMode {
+        /// Ordinary non-canonical SMILES without stereo. Declared and inferred
+        /// hydrogen counts may be combined in a bracket atom; the original
+        /// inference policy is not serialized.
         #[default]
         Ordinary,
+        /// Non-canonical SMILES preserving represented stereo.
+        ///
+        /// Tetrahedral absolute, AND, OR and relative groups are emitted as
+        /// CXSMILES (`a`, `&`, `o`, `r`). Unsupported member geometries,
+        /// quantitative racemic groups and multiple independent relative groups
+        /// return an error rather than losing relationships. The global `r`
+        /// flag shields other specified centers with explicit absolute
+        /// membership. Directional encoding is bounded by 4,096 carrier
+        /// combinations and 50,000,000 graph visits; exceeding either returns a
+        /// resource-limit error.
         Isomeric,
+        /// Deterministic canonical isomeric SMILES.
+        ///
+        /// Atom priorities, stereo refinement, branch traversal, ring closures
+        /// and AND/OR representative selection follow RDKit-style conventions;
+        /// byte-for-byte RDKit compatibility is not guaranteed, and canonical
+        /// spelling can change when these ordering rules are improved. Output is
+        /// invariant under atom numbering and preserves supported stereo,
+        /// isotopes, formal charges, and atom maps. Neutral unmapped
+        /// nonisotopic terminal hydrogen vertices may collapse into hydrogen
+        /// counts. Supplied local stereo assertions are retained even when CIP
+        /// perception finds no stereogenic unit. Group numbering and member
+        /// order are canonical, and inverting every member of a non-absolute
+        /// group produces the same output.
+        ///
+        /// Complete canonical labeling is bounded by 100,000 search states,
+        /// 50,000,000 atom/edge/twin visits, and 2,000,000 pending atom labels.
+        /// Serialization additionally bounds the input to 2,000,000 combined
+        /// atom/bond slots and a complexity score `2*n*(n+2*m)` of at most
+        /// 50,000,000 for `n` live atoms and `m` live bonds. Exceeding a bound
+        /// returns [`MolWriteErrorKind::ResourceLimit`] without a partial result.
         Canonical,
     }
 
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
     pub struct SmilesWriteOptions {
         pub mode: SmilesWriteMode,
+    }
+
+    impl SmilesWriteOptions {
+        pub const fn ordinary() -> Self {
+            Self {
+                mode: SmilesWriteMode::Ordinary,
+            }
+        }
+
+        pub const fn isomeric() -> Self {
+            Self {
+                mode: SmilesWriteMode::Isomeric,
+            }
+        }
+
+        pub const fn canonical() -> Self {
+            Self {
+                mode: SmilesWriteMode::Canonical,
+            }
+        }
     }
 
     /// Error produced by the concise SMILES parse-and-interpret convenience.
@@ -275,102 +329,79 @@ pub mod smiles {
         Ok(document.interpret()?.into_molecules())
     }
 
-    /// Parses and interprets one SMILES record as a coordinate-free topology.
+    /// Parses and interprets one SMILES record as a shared coordinate-free
+    /// topology.
     ///
     /// Every connected component becomes one explicit molecule
     /// occurrence in source order. No hierarchy or perception is fabricated.
-    pub fn to_topology(input: &str) -> Result<Topology, SmilesReadError> {
+    pub fn to_topology(input: &str) -> Result<Arc<Topology>, SmilesReadError> {
         let document = parse_str(input)?;
-        Ok(document.interpret()?.into_topology()?)
+        Ok(Arc::new(document.interpret()?.into_topology()?))
     }
 
-    /// Writes one connected molecule using ordinary non-canonical SMILES.
-    ///
-    /// Preserves isotope labels and total hydrogen counts. Declared and inferred
-    /// counts may be combined in a bracket atom without changing the source
-    /// molecule; the original inference policy is not serialized. An atom that
-    /// permits inferred hydrogens and requires bracket syntax must have hydrogen
-    /// perception installed; otherwise writing returns an error. Call
-    /// [`Molecule::perceive`] explicitly before exporting such atoms.
-    /// Radical electrons are encoded by bracket valence, with redundant CX
-    /// annotations for one, two or three electrons (`^1`, `^2`, `^5`). These
-    /// codes retain unspecified spin; explicit spin multiplicities remain
-    /// unsupported. Writing fails if the bracket would imply a different state.
-    pub fn write(molecule: &Molecule) -> Result<String, MolWriteError> {
-        crate::io::write_smiles(molecule)
+    /// What one SMILES record describes: one connected molecule, or every
+    /// molecule occurrence of a topology joined with `.`.
+    #[derive(Debug, Clone, Copy)]
+    pub enum SmilesSource<'a> {
+        Molecule(&'a Molecule),
+        Topology(&'a Topology),
     }
 
-    /// Writes one connected molecule using an explicit SMILES policy.
-    pub fn write_molecule(
-        molecule: &Molecule,
-        options: SmilesWriteOptions,
-    ) -> Result<String, MolWriteError> {
-        match options.mode {
-            SmilesWriteMode::Ordinary => crate::io::write_smiles(molecule),
-            SmilesWriteMode::Isomeric => crate::io::write_isomeric_smiles(molecule),
-            SmilesWriteMode::Canonical => crate::io::write_canonical_smiles(molecule),
+    impl<'a> From<&'a Molecule> for SmilesSource<'a> {
+        fn from(molecule: &'a Molecule) -> Self {
+            Self::Molecule(molecule)
         }
     }
 
-    /// Writes every explicit topology molecule instance.
+    impl<'a> From<&'a Topology> for SmilesSource<'a> {
+        fn from(topology: &'a Topology) -> Self {
+            Self::Topology(topology)
+        }
+    }
+
+    impl<'a> From<&'a Arc<Topology>> for SmilesSource<'a> {
+        fn from(topology: &'a Arc<Topology>) -> Self {
+            Self::Topology(topology)
+        }
+    }
+
+    /// Writes one SMILES record.
     ///
-    /// Reused definitions are emitted once per occurrence and joined with `.`.
-    /// Canonical mode sorts components; other modes preserve instance order.
-    /// Enhanced groups share one CX extension with record-global atom indices
-    /// and independent group numbers for every occurrence.
-    pub fn write_topology(
-        topology: &Topology,
+    /// [`SmilesWriteMode`] selects ordinary, isomeric, or canonical output.
+    /// Every mode preserves isotope labels and total hydrogen counts. An atom
+    /// that permits inferred hydrogens and requires bracket syntax must have
+    /// hydrogen perception installed; otherwise writing returns an error. Call
+    /// [`Molecule::perceive`] explicitly before exporting such atoms. Radical
+    /// electrons are encoded by bracket valence, with redundant CX annotations
+    /// for one, two or three electrons (`^1`, `^2`, `^5`); explicit spin
+    /// multiplicities remain unsupported.
+    ///
+    /// A topology emits each occurrence of a reused definition once, joined
+    /// with `.`; canonical mode sorts components, other modes keep instance
+    /// order. Enhanced groups share one CX extension with record-global atom
+    /// indices.
+    ///
+    /// ```
+    /// use kekule::smiles::{self, SmilesWriteOptions};
+    /// let molecule = smiles::to_molecules("OCC")?.remove(0);
+    /// let canonical = smiles::write(&molecule, SmilesWriteOptions::canonical())?;
+    /// assert_eq!(canonical, smiles::write(&smiles::to_molecules("CCO")?[0], SmilesWriteOptions::canonical())?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn write<'a>(
+        source: impl Into<SmilesSource<'a>>,
         options: SmilesWriteOptions,
     ) -> Result<String, MolWriteError> {
-        crate::io::smiles::write_topology(topology, options)
-    }
-
-    /// Writes one connected molecule while preserving represented stereo.
-    ///
-    /// Tetrahedral absolute, AND, OR and relative groups are emitted as CXSMILES
-    /// (`a`, `&`, `o`, `r`). Unsupported member geometries, quantitative racemic
-    /// groups and multiple independent relative groups return an error rather
-    /// than losing relationships. The global `r` flag shields other specified
-    /// centers with explicit absolute membership.
-    ///
-    /// Directional encoding is bounded by 4,096 carrier combinations and
-    /// 50,000,000 graph visits. Exceeding either returns a resource-limit error.
-    /// Isotope labels, including those on aromatic atoms, are retained. The
-    /// bracketed-atom hydrogen perception requirement of [`write()`] also applies.
-    pub fn write_isomeric(molecule: &Molecule) -> Result<String, MolWriteError> {
-        crate::io::write_isomeric_smiles(molecule)
-    }
-
-    /// Writes deterministic canonical isomeric SMILES.
-    ///
-    /// Atom priorities, stereo refinement, branch traversal, ring closures and
-    /// AND/OR representative selection follow RDKit-style conventions.
-    /// Complete tie labeling and legacy relative-group handling remain
-    /// native; byte-for-byte RDKit compatibility is not guaranteed. Canonical
-    /// spelling can change when these ordering rules are improved.
-    ///
-    /// Successful output is invariant under atom numbering and preserves supported
-    /// stereo, isotopes, formal charges, and atom maps. Neutral unmapped
-    /// nonisotopic terminal hydrogen vertices may collapse into hydrogen counts.
-    /// Supplied local stereo assertions are retained even when CIP perception
-    /// finds no stereogenic unit. Canonicalization does not clean source tags.
-    /// Ranking uses the emitted projection so parse/perceive/write is stable.
-    /// Enhanced groups use the CX encoding described by [`write_isomeric`].
-    /// Group numbering and member order are canonical, and simultaneous inversion
-    /// of all members of a non-absolute group produces the same output. Independent
-    /// groups remain independent; flipping only part of a group is not normalized.
-    /// Inferred hydrogen counts must be installed when the projection requires
-    /// brackets or collapses a hydrogen vertex into an atom that permits
-    /// inference; writing otherwise returns an error rather than assuming zero.
-    /// Complete canonical labeling is bounded by 100,000 search states,
-    /// 50,000,000 atom/edge/twin visits, and 2,000,000 pending atom labels.
-    /// Serialization additionally bounds the input to 2,000,000 combined
-    /// atom/bond slots and an input complexity score `2*n*(n+2*m)` of at most
-    /// 50,000,000, where `n` and `m` are the live atom and bond counts. This
-    /// preflight guard is separate from the metered labeling work. Exceeding a bound returns
-    /// [`MolWriteErrorKind::ResourceLimit`] without a partial canonical result.
-    pub fn write_canonical(molecule: &Molecule) -> Result<String, MolWriteError> {
-        crate::io::write_canonical_smiles(molecule)
+        match source.into() {
+            SmilesSource::Molecule(molecule) => match options.mode {
+                SmilesWriteMode::Ordinary => crate::io::write_smiles(molecule),
+                SmilesWriteMode::Isomeric => crate::io::write_isomeric_smiles(molecule),
+                SmilesWriteMode::Canonical => crate::io::write_canonical_smiles(molecule),
+            },
+            SmilesSource::Topology(topology) => {
+                crate::io::smiles::write_topology(topology, options)
+            }
+        }
     }
 }
 
@@ -385,11 +416,8 @@ pub mod molfile {
         MolWriteError, MolWriteErrorKind, MolfileAtomMapping, MolfileBondMapping, MolfileDocument,
         MolfileHeader, MolfileInterpretError, MolfileInterpretation, MolfileInterpretationReport,
         MolfileInterpretationWarning, MolfileLine, MolfileParseError, MolfileParseOptions,
-        MolfileVersion, MolfileWriteOptions, MolfileWriteVersion,
+        MolfileSource, MolfileVersion, MolfileWriteOptions, MolfileWriteVersion,
     };
-
-    use crate::core::Molecule;
-    use crate::structure::Model;
 
     /// Parses one V2000 or V3000 Molfile without assigning canonical meaning.
     pub fn parse_str(input: &str) -> Result<MolfileDocument, MolfileParseError> {
@@ -416,54 +444,26 @@ pub mod molfile {
         document.interpret()
     }
 
-    /// Writes a coordinate-free molecule as a V2000 CTAB with zero coordinates.
-    /// Specified stereo requires a geometry-bearing model; zero coordinates
-    /// cannot encode a wedge, double-bond configuration, or stereogenic axis.
-    pub fn write_v2000(molecule: &Molecule) -> Result<String, MolWriteError> {
-        crate::io::write_mol_v2000(molecule)
-    }
-
-    /// Writes a coordinate-free molecule as a V3000 CTAB with zero coordinates.
-    /// Specified stereo requires a geometry-bearing model, as in [`write_v2000`].
-    pub fn write_v3000(molecule: &Molecule) -> Result<String, MolWriteError> {
-        crate::io::write_mol_v3000(molecule)
-    }
-
-    /// Writes a coordinate-free molecule using zero coordinates.
-    /// Specified stereo requires [`write_model`] with suitable coordinates.
-    pub fn write_molecule(
-        molecule: &Molecule,
-        options: MolfileWriteOptions,
-    ) -> Result<String, MolWriteError> {
-        crate::io::write_molfile_molecule(molecule, options)
-    }
-
-    /// Writes one geometry-bearing model as one possibly disconnected CTAB.
+    /// Writes one CTAB from a molecule (zero coordinates) or a model.
     ///
-    /// V2000 rounds coordinates to four decimal places in angstroms. V3000
-    /// preserves the converted `f64` coordinates with round-trip decimal text.
-    /// Stereo is projected against the coordinates emitted by the chosen version.
-    pub fn write_model(
-        model: &Model,
+    /// [`MolfileWriteVersion::Auto`] uses V2000 when it can represent the
+    /// chemistry and V3000 otherwise. V2000 rounds coordinates to four decimal
+    /// places in angstroms; V3000 preserves round-trip decimal text. Stereo is
+    /// projected against the coordinates emitted by the chosen version, so
+    /// specified stereo requires a geometry-bearing model.
+    pub fn write<'a>(
+        source: impl Into<MolfileSource<'a>>,
         options: MolfileWriteOptions,
     ) -> Result<String, MolWriteError> {
-        crate::io::write_molfile_model(model.view(), options)
+        crate::io::write_molfile(source, options)
     }
 
-    pub fn write_model_to(
+    pub fn write_to<'a>(
         writer: &mut impl std::io::Write,
-        model: &Model,
+        source: impl Into<MolfileSource<'a>>,
         options: MolfileWriteOptions,
     ) -> Result<(), MolWriteError> {
-        crate::io::write_molfile_model_to(writer, model.view(), options)
-    }
-
-    pub fn write_model_v2000(model: &Model) -> Result<String, MolWriteError> {
-        crate::io::write_model_v2000(model.view())
-    }
-
-    pub fn write_model_v3000(model: &Model) -> Result<String, MolWriteError> {
-        crate::io::write_model_v3000(model.view())
+        crate::io::write_molfile_to(writer, source, options)
     }
 }
 
@@ -476,10 +476,9 @@ pub mod sdf {
     pub use crate::io::{
         MolWriteError, MolfileWriteVersion, SdfDataField, SdfDocument, SdfInterpretError,
         SdfInterpretErrorKind, SdfInterpretation, SdfParseError, SdfParseOptions, SdfRecord,
-        SdfRecordInterpretation, SdfRecordInterpretationReport, SdfWriteError, SdfWriteOptions,
+        SdfRecordInterpretation, SdfRecordInterpretationReport, SdfRecordSource, SdfWriteError,
+        SdfWriteOptions,
     };
-
-    use crate::structure::{Ensemble, Model};
 
     /// Parses an SDF document while preserving independent record boundaries.
     pub fn parse_str(input: &str) -> Result<SdfDocument, SdfParseError> {
@@ -499,69 +498,24 @@ pub mod sdf {
         document.interpret()
     }
 
-    pub fn write_v2000(records: &[SdfRecordInterpretation]) -> Result<String, MolWriteError> {
-        crate::io::write_sdf_v2000(records)
-    }
-
-    /// Writes one geometry-bearing model as one SDF record.
-    pub fn write_model(model: &Model, options: SdfWriteOptions) -> Result<String, SdfWriteError> {
-        crate::io::write_sdf_model(model, options)
-    }
-
-    /// Writes independent models as independent SDF records in input order.
-    pub fn write_models(
-        models: &[Model],
+    /// Writes independent records in input order.
+    ///
+    /// Records convert from models, ensemble members and trajectory frames
+    /// (`sdf::write(&ensemble, options)` writes one record per member), or
+    /// interpreted records, which keep their titles and data fields.
+    pub fn write<'a, R: Into<SdfRecordSource<'a>>>(
+        records: impl IntoIterator<Item = R>,
         options: SdfWriteOptions,
     ) -> Result<String, SdfWriteError> {
-        crate::io::write_sdf_models(models, options)
+        crate::io::write_sdf(records, options)
     }
 
-    /// Writes each member of one shared-topology ensemble as an SDF record.
-    pub fn write_ensemble(
-        ensemble: &Ensemble,
-        options: SdfWriteOptions,
-    ) -> Result<String, SdfWriteError> {
-        crate::io::write_sdf_ensemble(ensemble, options)
-    }
-
-    pub fn write_model_to(
+    pub fn write_to<'a, R: Into<SdfRecordSource<'a>>>(
         writer: &mut impl std::io::Write,
-        model: &Model,
+        records: impl IntoIterator<Item = R>,
         options: SdfWriteOptions,
     ) -> Result<(), SdfWriteError> {
-        crate::io::write_sdf_model_to(writer, model, options)
-    }
-
-    pub fn write_models_to(
-        writer: &mut impl std::io::Write,
-        models: &[Model],
-        options: SdfWriteOptions,
-    ) -> Result<(), SdfWriteError> {
-        crate::io::write_sdf_models_to(writer, models, options)
-    }
-
-    pub fn write_ensemble_to(
-        writer: &mut impl std::io::Write,
-        ensemble: &Ensemble,
-        options: SdfWriteOptions,
-    ) -> Result<(), SdfWriteError> {
-        crate::io::write_sdf_ensemble_to(writer, ensemble, options)
-    }
-
-    /// Expert/round-trip path preserving explicit SDF titles and data fields.
-    pub fn write_records(
-        records: &[SdfRecordInterpretation],
-        options: SdfWriteOptions,
-    ) -> Result<String, SdfWriteError> {
-        crate::io::write_sdf_records(records, options)
-    }
-
-    pub fn write_records_to(
-        writer: &mut impl std::io::Write,
-        records: &[SdfRecordInterpretation],
-        options: SdfWriteOptions,
-    ) -> Result<(), SdfWriteError> {
-        crate::io::write_sdf_records_to(writer, records, options)
+        crate::io::write_sdf_to(writer, records, options)
     }
 }
 
@@ -582,12 +536,13 @@ pub mod mmcif {
     pub use crate::io::{
         MmcifAltLocDecision, MmcifAltLocPolicy, MmcifAltLocPreference, MmcifAltLocResidue,
         MmcifAltLocSelection, MmcifAltLocSelectionReason, MmcifAtomProvenance, MmcifBlock,
-        MmcifConnectionResolutionReason, MmcifDocument, MmcifEnsembleInterpretError,
-        MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation, MmcifEntityClassifications,
-        MmcifEntityKind, MmcifEntry, MmcifInstanceProvenance, MmcifInterpretError,
-        MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport,
-        MmcifItem, MmcifLoopTable, MmcifModelSelection, MmcifParseError, MmcifParseOptions,
-        MmcifResidueId, MmcifResiduePosition, MmcifValue, MmcifWriteError, MmcifWriteOptions,
+        MmcifBlockSource, MmcifConnectionResolutionReason, MmcifDocument,
+        MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
+        MmcifEntityClassifications, MmcifEntityKind, MmcifEntry, MmcifInstanceProvenance,
+        MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation,
+        MmcifInterpretationReport, MmcifItem, MmcifLoopTable, MmcifModelSelection, MmcifParseError,
+        MmcifParseOptions, MmcifResidueId, MmcifResiduePosition, MmcifValue, MmcifWriteError,
+        MmcifWriteOptions,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular meaning.
@@ -662,219 +617,43 @@ pub mod mmcif {
         block.interpret_conformations(selections)
     }
 
-    /// Writes a model using entity semantics derived from canonical topology classification.
+    /// Writes one data block per source.
     ///
-    /// Use [`write_model_with_classifications`] for expert format-specific overrides
-    /// or [`write_model_with_report`] to preserve interpreted mmCIF source semantics.
-    pub fn write_model(
-        model: &crate::structure::Model,
-        options: MmcifWriteOptions,
-    ) -> Result<String, MmcifWriteError> {
-        crate::io::write_mmcif_model(model, options)
-    }
-
-    /// Writes independent models as one deterministic block per model.
+    /// Sources convert from models (one block), ensembles (one multi-model
+    /// block), and interpretations (keeping their source reports). Entity kinds
+    /// derive from canonical topology classification unless a source carries
+    /// explicit classifications or reports ([`MmcifBlockSource`]).
     ///
-    /// Entity kinds are derived from each model's canonical topology
-    /// classification. Use [`write_models_with_reports`] when exact source
-    /// format semantics must be retained.
-    pub fn write_models(
-        models: &[crate::structure::Model],
+    /// ```no_run
+    /// use kekule::mmcif::{self, MmcifBlockSource, MmcifWriteOptions};
+    /// # fn example(model: &kekule::structure::Model, other: &kekule::structure::Model,
+    /// #     interpretation: &mmcif::MmcifInterpretation) -> Result<(), mmcif::MmcifWriteError> {
+    /// let one = mmcif::write([model], MmcifWriteOptions::default())?;
+    /// let two = mmcif::write([model, other], MmcifWriteOptions::default())?;
+    /// let faithful = mmcif::write([interpretation], MmcifWriteOptions::default())?;
+    /// # let _ = (one, two, faithful);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn write<'a, B: Into<MmcifBlockSource<'a>>>(
+        blocks: impl IntoIterator<Item = B>,
         options: MmcifWriteOptions,
     ) -> Result<String, MmcifWriteError> {
-        crate::io::write_mmcif_models(models, options)
+        crate::io::write_mmcif(blocks, options)
     }
 
-    pub fn write_models_with_classifications(
-        models: &[crate::structure::Model],
-        classifications: &[MmcifEntityClassifications],
-        options: MmcifWriteOptions,
-    ) -> Result<String, MmcifWriteError> {
-        crate::io::write_mmcif_models_with_classifications(models, classifications, options)
-    }
-
-    pub fn write_models_with_reports(
-        models: &[crate::structure::Model],
-        reports: &[MmcifInterpretationReport],
-        options: MmcifWriteOptions,
-    ) -> Result<String, MmcifWriteError> {
-        crate::io::write_mmcif_models_with_reports(models, reports, options)
-    }
-
-    /// Writes one shared-topology ensemble as one multi-model block.
-    ///
-    /// Entity kinds are derived from canonical topology classification. For
-    /// mmCIF-derived state, use [`write_ensemble_with_reports`] or
-    /// [`write_ensemble_interpretation`] to preserve source format semantics.
-    pub fn write_ensemble(
-        ensemble: &crate::structure::Ensemble,
-        options: MmcifWriteOptions,
-    ) -> Result<String, MmcifWriteError> {
-        crate::io::write_mmcif_ensemble(ensemble, options)
-    }
-
-    pub fn write_ensemble_with_classifications(
-        ensemble: &crate::structure::Ensemble,
-        classifications: &MmcifEntityClassifications,
-        options: MmcifWriteOptions,
-    ) -> Result<String, MmcifWriteError> {
-        crate::io::write_mmcif_ensemble_with_classifications(ensemble, classifications, options)
-    }
-
-    pub fn write_ensemble_with_reports(
-        ensemble: &crate::structure::Ensemble,
-        reports: &[MmcifInterpretationReport],
-        options: MmcifWriteOptions,
-    ) -> Result<String, MmcifWriteError> {
-        crate::io::write_mmcif_ensemble_with_reports(ensemble, reports, options)
-    }
-
-    pub fn write_ensemble_interpretation(
-        interpretation: &MmcifEnsembleInterpretation,
-        options: MmcifWriteOptions,
-    ) -> Result<String, MmcifWriteError> {
-        crate::io::write_mmcif_ensemble_interpretation(interpretation, options)
-    }
-
-    pub fn write_models_to(
+    pub fn write_to<'a, B: Into<MmcifBlockSource<'a>>>(
         writer: &mut impl std::io::Write,
-        models: &[crate::structure::Model],
+        blocks: impl IntoIterator<Item = B>,
         options: MmcifWriteOptions,
     ) -> Result<(), MmcifWriteError> {
-        crate::io::write_mmcif_models_to(writer, models, options)
-    }
-
-    pub fn write_ensemble_to(
-        writer: &mut impl std::io::Write,
-        ensemble: &crate::structure::Ensemble,
-        options: MmcifWriteOptions,
-    ) -> Result<(), MmcifWriteError> {
-        crate::io::write_mmcif_ensemble_to(writer, ensemble, options)
-    }
-
-    /// Writes a generic model with explicit format-specific entity semantics.
-    ///
-    /// Entries override automatically derived kinds; omitted instances continue
-    /// to use canonical topology classification.
-    /// Generic writing deterministically assigns one mmCIF entity to each
-    /// populated topology hierarchy chain (and one to each hierarchy-free
-    /// instance). Instances touched by the same chain must therefore have the
-    /// same explicit classification.
-    pub fn write_model_with_classifications(
-        model: &crate::structure::Model,
-        classifications: &MmcifEntityClassifications,
-        options: MmcifWriteOptions,
-    ) -> Result<String, MmcifWriteError> {
-        crate::io::write_mmcif_model_with_classifications(model, classifications, options)
-    }
-
-    /// Writes a canonical model while preserving source mmCIF entity/asymmetry semantics.
-    ///
-    /// Atom-level report provenance keeps one source entity and structural
-    /// asymmetry consistent even when it spans multiple connected-component
-    /// molecule instances. Conflicting source identity is rejected. Because the
-    /// emitted foundational atom-site loop requires label identifiers, an
-    /// auth-only source is deterministically normalized by copying its author
-    /// atom, component, and asymmetry identifiers into the corresponding label
-    /// output fields; the original report still records that those label fields
-    /// were absent.
-    pub fn write_model_with_report(
-        model: &crate::structure::Model,
-        report: &MmcifInterpretationReport,
-        options: MmcifWriteOptions,
-    ) -> Result<String, MmcifWriteError> {
-        crate::io::write_mmcif_model_with_report(model, report, options)
-    }
-
-    pub fn write_model_to(
-        writer: &mut impl std::io::Write,
-        model: &crate::structure::Model,
-        options: MmcifWriteOptions,
-    ) -> Result<(), MmcifWriteError> {
-        crate::io::write_mmcif_model_to(writer, model, options)
-    }
-
-    pub fn write_model_with_classifications_to(
-        writer: &mut impl std::io::Write,
-        model: &crate::structure::Model,
-        classifications: &MmcifEntityClassifications,
-        options: MmcifWriteOptions,
-    ) -> Result<(), MmcifWriteError> {
-        crate::io::write_mmcif_model_with_classifications_to(
-            writer,
-            model,
-            classifications,
-            options,
-        )
-    }
-
-    pub fn write_model_with_report_to(
-        writer: &mut impl std::io::Write,
-        model: &crate::structure::Model,
-        report: &MmcifInterpretationReport,
-        options: MmcifWriteOptions,
-    ) -> Result<(), MmcifWriteError> {
-        crate::io::write_mmcif_model_with_report_to(writer, model, report, options)
-    }
-
-    pub fn write_models_with_classifications_to(
-        writer: &mut impl std::io::Write,
-        models: &[crate::structure::Model],
-        classifications: &[MmcifEntityClassifications],
-        options: MmcifWriteOptions,
-    ) -> Result<(), MmcifWriteError> {
-        crate::io::write_mmcif_models_with_classifications_to(
-            writer,
-            models,
-            classifications,
-            options,
-        )
-    }
-
-    pub fn write_models_with_reports_to(
-        writer: &mut impl std::io::Write,
-        models: &[crate::structure::Model],
-        reports: &[MmcifInterpretationReport],
-        options: MmcifWriteOptions,
-    ) -> Result<(), MmcifWriteError> {
-        crate::io::write_mmcif_models_with_reports_to(writer, models, reports, options)
-    }
-
-    pub fn write_ensemble_with_classifications_to(
-        writer: &mut impl std::io::Write,
-        ensemble: &crate::structure::Ensemble,
-        classifications: &MmcifEntityClassifications,
-        options: MmcifWriteOptions,
-    ) -> Result<(), MmcifWriteError> {
-        crate::io::write_mmcif_ensemble_with_classifications_to(
-            writer,
-            ensemble,
-            classifications,
-            options,
-        )
-    }
-
-    pub fn write_ensemble_with_reports_to(
-        writer: &mut impl std::io::Write,
-        ensemble: &crate::structure::Ensemble,
-        reports: &[MmcifInterpretationReport],
-        options: MmcifWriteOptions,
-    ) -> Result<(), MmcifWriteError> {
-        crate::io::write_mmcif_ensemble_with_reports_to(writer, ensemble, reports, options)
-    }
-
-    pub fn write_ensemble_interpretation_to(
-        writer: &mut impl std::io::Write,
-        interpretation: &MmcifEnsembleInterpretation,
-        options: MmcifWriteOptions,
-    ) -> Result<(), MmcifWriteError> {
-        crate::io::write_mmcif_ensemble_interpretation_to(writer, interpretation, options)
+        crate::io::write_mmcif_to(writer, blocks, options)
     }
 }
 
 /// Derived valence, rings, aromaticity, conjugation and explicit resonance work.
 ///
-/// [`perception::perceive`] installs Kekule's default transactional perception
+/// [`crate::core::Molecule::perceive`] installs Kekule's default transactional perception
 /// profile. The nested modules expose the individual expert algorithms.
 /// Perception does not alter represented graph chemistry and is invalidated by
 /// relevant graph edits.
@@ -893,8 +672,6 @@ pub mod perception {
         pub use crate::core::{ConjugationModel, ConjugationPerception};
     }
     pub use crate::chemistry::PerceptionError;
-
-    use crate::core::Molecule;
 
     /// Expert valence perception for canonical represented chemistry.
     ///
@@ -933,14 +710,6 @@ pub mod perception {
             perceive_aromaticity_with_ring_options, AromaticityError, AromaticityOptions,
         };
         pub use crate::core::AromaticityModel;
-    }
-
-    /// Install default valence, rings, aromaticity and conjugation transactionally.
-    ///
-    /// The represented molecule must already be canonical. This operation
-    /// never rewrites represented chemistry or performs stereo or CIP work.
-    pub fn perceive(molecule: &mut Molecule) -> Result<(), PerceptionError> {
-        crate::chemistry::perceive_molecule(molecule)
     }
 }
 
@@ -1028,37 +797,6 @@ pub mod hydrogens {
         HydrogenCountAdjustment, HydrogenTransformError, RemoveHydrogensReport, RemovedHydrogen,
         RetainedHydrogen, RetainedHydrogenReason,
     };
-
-    use crate::algorithms::{add_hydrogens_to_molecule, remove_hydrogens_from_molecule};
-    use crate::core::Molecule;
-
-    /// Convert all resolved implicit hydrogens into explicit atoms and bonds.
-    pub fn add_hydrogens(
-        molecule: &mut Molecule,
-    ) -> Result<AddHydrogensReport, HydrogenTransformError> {
-        add_hydrogens_with_options(molecule, AddHydrogensOptions::default())
-    }
-
-    /// Materialize hydrogens with an explicit growth bound and count policy.
-    pub fn add_hydrogens_with_options(
-        molecule: &mut Molecule,
-        options: AddHydrogensOptions,
-    ) -> Result<AddHydrogensReport, HydrogenTransformError> {
-        add_hydrogens_to_molecule(molecule, options)
-    }
-
-    /// Collapse ordinary degree-one hydrogens without discarding protected state.
-    ///
-    /// Isotopic, mapped, charged, radical, property-bearing, and otherwise
-    /// non-losslessly representable hydrogens remain in the graph and are
-    /// described by the returned report. Report IDs refer to the input; the
-    /// published result renumbers survivors densely, and
-    /// [`RemoveHydrogensReport::correspondence`] translates them.
-    pub fn remove_hydrogens(
-        molecule: &mut Molecule,
-    ) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
-        remove_hydrogens_from_molecule(molecule)
-    }
 }
 
 /// Common foundational types for small examples and interactive use.

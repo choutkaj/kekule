@@ -285,7 +285,8 @@ fn add_and_remove_hydrogens_round_trip_methane_semantics() {
         .all(|entry| molecule.atom(entry.hydrogen).is_err()));
     perceive(&mut molecule).expect("re-perceive collapsed methane");
     assert_eq!(
-        smiles_api::write_canonical(&molecule).expect("canonical"),
+        smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::canonical())
+            .expect("canonical"),
         "C"
     );
 }
@@ -456,9 +457,11 @@ fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
         .add_atom(element_atom("H"))
         .expect("atom identifier capacity");
     graph
-        .set_atom_property(
-            property_hydrogen,
+        .properties_mut()
+        .atoms_mut()
+        .set_value(
             PropertyKey::new("source").unwrap(),
+            property_hydrogen,
             Some(PropertyValue::String("kept".into())),
         )
         .unwrap();

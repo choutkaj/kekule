@@ -119,7 +119,7 @@ fn mmcif_altloc_ties_and_unknown_occupancies_are_reported() {
     assert_eq!(
         result
             .model()
-            .occupancy(result.model().topology().atom_ids()[0])
+            .occupancy(crate::topology::TopologyAtomIndex::new(0))
             .unwrap(),
         None
     );
@@ -451,7 +451,7 @@ fn mmcif_altloc_explicit_conformer_ensemble_is_unweighted_and_preserves_order() 
     assert_eq!(result.ensemble().len(), 3);
     assert!(result
         .ensemble()
-        .members()
+        .iter()
         .all(|member| member.weight().is_none()));
     assert_eq!(
         result

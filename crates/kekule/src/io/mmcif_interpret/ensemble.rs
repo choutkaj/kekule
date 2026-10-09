@@ -126,7 +126,7 @@ fn assemble(
     let mut ensemble = Ensemble::new(Arc::clone(&shared_topology));
     let (first_model, first_report) = first.into_parts();
     ensemble
-        .push(EnsembleMember::from_model(first_model))
+        .push(EnsembleMember::new(first_model.into_parts().1))
         .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
     let mut reports = vec![first_report];
     for interpreted in remaining {
@@ -153,7 +153,7 @@ fn assemble(
             return Err(MmcifEnsembleInterpretError::InconsistentDenseAtomOrder { model_id });
         }
         ensemble
-            .push(EnsembleMember::from_model(model))
+            .push(EnsembleMember::new(model.into_parts().1))
             .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
         reports.push(report);
     }

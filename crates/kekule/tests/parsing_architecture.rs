@@ -245,7 +245,7 @@ fn molfile_model_keeps_interleaved_source_atom_order() {
         model
             .topology()
             .atoms()
-            .map(|(_, atom)| atom.element.symbol())
+            .map(|atom| atom.element.symbol())
             .collect::<Vec<_>>(),
         ["C", "Na", "O", "Cl"]
     );
@@ -363,8 +363,13 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
     assert_eq!(document_interpretation.records()[0].report().record(), 1);
     assert_eq!(document_interpretation.records()[1].report().record(), 2);
 
-    let written = sdf::write_v2000(&[document_interpretation.records()[1].clone()])
-        .expect("single-component rich record writes");
+    let written = sdf::write(
+        &[document_interpretation.records()[1].clone()],
+        sdf::SdfWriteOptions {
+            version: sdf::MolfileWriteVersion::V2000,
+        },
+    )
+    .expect("single-component rich record writes");
     let round_trip_document = sdf::parse_str(&written).expect("written record parses");
     let round_trip = round_trip_document.records()[0]
         .interpret()

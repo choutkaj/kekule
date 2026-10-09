@@ -65,7 +65,8 @@ pub fn assert_output(source: &Molecule, written: &str, canonical: Option<&str>) 
     );
     if let Some(expected) = canonical {
         assert_eq!(
-            smiles::write_canonical(&restored).expect("canonical round trip must write"),
+            smiles::write(&restored, smiles::SmilesWriteOptions::canonical())
+                .expect("canonical round trip must write"),
             expected,
             "connectivity/stereo or canonical fixed point changed: {written}"
         );
@@ -73,13 +74,13 @@ pub fn assert_output(source: &Molecule, written: &str, canonical: Option<&str>) 
 }
 
 pub fn check_molecule(source: &Molecule) -> usize {
-    let canonical = smiles::write_canonical(source);
+    let canonical = smiles::write(source, smiles::SmilesWriteOptions::canonical());
     let mut checked = 0;
     // Unsupported content and resource exhaustion are valid writer outcomes.
     // Once a writer succeeds, every subsequent round-trip check is mandatory.
     for written in [
-        smiles::write(source),
-        smiles::write_isomeric(source),
+        smiles::write(source, smiles::SmilesWriteOptions::default()),
+        smiles::write(source, smiles::SmilesWriteOptions::isomeric()),
         canonical.clone(),
     ]
     .into_iter()

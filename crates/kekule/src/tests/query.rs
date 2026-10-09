@@ -53,9 +53,7 @@ fn tetrahedral_smarts_matches_local_carrier_order_and_partial_environments() {
         let target = perceived(target);
         let query_graph = parse_smarts(query).unwrap();
         assert_eq!(
-            find_substructure_match(&target, &query_graph)
-                .unwrap()
-                .is_some(),
+            find_match(&target, &query_graph).unwrap().is_some(),
             expected,
             "{query}"
         );
@@ -90,9 +88,7 @@ fn directional_smarts_matches_selected_carriers_in_either_endpoint_order() {
         let target = perceived(target);
         let query_graph = parse_smarts(query).unwrap();
         assert_eq!(
-            find_substructure_match(&target, &query_graph)
-                .unwrap()
-                .is_some(),
+            find_match(&target, &query_graph).unwrap().is_some(),
             expected,
             "{query}"
         );
@@ -104,7 +100,7 @@ fn stereo_mapping_filter_precedes_uniqueness_and_match_limit() {
     let query = parse_smarts("[*@](*)(*)(*)*").unwrap();
     for input in ["[C@](N)(F)(Cl)Br", "[C@@](N)(F)(Cl)Br"] {
         let target = perceived(input);
-        let all = find_substructure_matches_with_options(
+        let all = find_matches_with_options(
             &target,
             &query,
             SubstructureMatchOptions {
@@ -118,11 +114,8 @@ fn stereo_mapping_filter_precedes_uniqueness_and_match_limit() {
             12,
             "half of the 24 carrier permutations satisfy parity"
         );
-        assert_eq!(find_substructure_matches(&target, &query).unwrap().len(), 1);
-        assert_eq!(
-            find_substructure_match(&target, &query).unwrap().unwrap(),
-            all[0]
-        );
+        assert_eq!(find_matches(&target, &query).unwrap().len(), 1);
+        assert_eq!(find_match(&target, &query).unwrap().unwrap(), all[0]);
     }
 }
 
@@ -181,7 +174,7 @@ fn query_stereo_builder_checks_ownership_and_revalidates_later_topology() {
     // Matching represented stereo needs no perception when other predicates do not.
     let query = builder.clone().build().unwrap();
     let target = read_smiles("N[C@H](F)Cl").unwrap();
-    assert!(find_substructure_match(&target, &query).unwrap().is_some());
+    assert!(find_match(&target, &query).unwrap().is_some());
     let extra = builder.add_atom(AtomExpression::always()).unwrap();
     builder
         .add_bond(center, extra, BondExpression::always())
@@ -232,16 +225,12 @@ fn double_bond_query_builder_requires_live_adjacent_carriers() {
         })
         .unwrap();
     let query = builder.build().unwrap();
-    assert!(
-        find_substructure_match(&read_smiles("F/C=C/Cl").unwrap(), &query)
-            .unwrap()
-            .is_some()
-    );
-    assert!(
-        find_substructure_match(&read_smiles("F/C=C\\Cl").unwrap(), &query)
-            .unwrap()
-            .is_none()
-    );
+    assert!(find_match(&read_smiles("F/C=C/Cl").unwrap(), &query)
+        .unwrap()
+        .is_some());
+    assert!(find_match(&read_smiles("F/C=C\\Cl").unwrap(), &query)
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -334,7 +323,7 @@ fn smarts_logical_precedence_matches_daylight_operator_order() {
     // High-precedence &: C OR (N AND H2). Both atoms match in methylamine.
     let high_and = parse_smarts("[C,N&H2]").unwrap();
     assert_eq!(
-        substructure::find_substructure_matches(&target, &high_and)
+        substructure::find_matches(&target, &high_and)
             .unwrap()
             .len(),
         2
@@ -342,7 +331,7 @@ fn smarts_logical_precedence_matches_daylight_operator_order() {
 
     // Low-precedence ;: (C OR N) AND H2. Only nitrogen matches.
     let low_and = parse_smarts("[C,N;H2]").unwrap();
-    let matches = substructure::find_substructure_matches(&target, &low_and).unwrap();
+    let matches = substructure::find_matches(&target, &low_and).unwrap();
     assert_eq!(matches.len(), 1);
     assert_eq!(
         target.atom(matches[0].atoms()[0]).unwrap().element.symbol(),
@@ -362,9 +351,7 @@ fn unbracketed_smarts_elements_do_not_consume_a_following_aromatic_atom() {
         let query = parse_smarts(input).unwrap();
         assert_eq!(query.atom_count(), atoms, "{input}");
         assert!(
-            find_substructure_match(&perceived(input), &query)
-                .unwrap()
-                .is_some(),
+            find_match(&perceived(input), &query).unwrap().is_some(),
             "{input}"
         );
     }
@@ -382,20 +369,18 @@ fn smarts_hydrogen_primitive_disambiguation_matches_rdkit() {
     for (smarts, expected) in [("[H,D]", 2), ("[C,H]", 3), ("[!H]", 2)] {
         let query = parse_smarts(smarts).unwrap();
         assert_eq!(
-            substructure::find_substructure_matches(&ethanol, &query)
-                .unwrap()
-                .len(),
+            substructure::find_matches(&ethanol, &query).unwrap().len(),
             expected,
             "{smarts}"
         );
     }
 
     let mut methane = perceived("C");
-    crate::hydrogens::add_hydrogens(&mut methane).unwrap();
+    methane.add_hydrogens().unwrap();
     perceive(&mut methane).unwrap();
     let elemental_hydrogen = parse_smarts("[H]").unwrap();
     assert_eq!(
-        substructure::find_substructure_matches(&methane, &elemental_hydrogen)
+        substructure::find_matches(&methane, &elemental_hydrogen)
             .unwrap()
             .len(),
         4
@@ -526,7 +511,7 @@ fn matcher_handles_elements_bonds_hydrogens_degree_and_negation() {
         ("[#6]-[#8]", 1),
     ] {
         let query = parse_smarts(smarts).unwrap();
-        let matches = substructure::find_substructure_matches(&ethanol, &query).unwrap();
+        let matches = substructure::find_matches(&ethanol, &query).unwrap();
         assert_eq!(matches.len(), expected, "{smarts}: {matches:?}");
     }
 }
@@ -552,7 +537,7 @@ fn total_connectivity_counts_graph_declared_and_inferred_hydrogens() {
     ] {
         let molecule = perceived(target);
         let query = parse_smarts(smarts).unwrap();
-        let matches = find_substructure_matches(&molecule, &query).unwrap();
+        let matches = find_matches(&molecule, &query).unwrap();
         assert_eq!(matches.len(), expected, "{target} / {smarts}");
     }
 }
@@ -571,13 +556,12 @@ fn connectivity_includes_zero_and_dative_graph_neighbors() {
         let mut molecule = editor.try_finish().unwrap();
         perceive(&mut molecule).unwrap();
         for (smarts, expected) in [("[X4]", nitrogen), ("[X]", copper)] {
-            let matches =
-                find_substructure_matches(&molecule, &parse_smarts(smarts).unwrap()).unwrap();
+            let matches = find_matches(&molecule, &parse_smarts(smarts).unwrap()).unwrap();
             assert_eq!(matches.len(), 1, "{order:?} / {smarts}");
             assert_eq!(matches[0].atoms(), &[expected]);
         }
         assert_eq!(
-            find_substructure_matches(&molecule, &parse_smarts("[x0]").unwrap())
+            find_matches(&molecule, &parse_smarts("[x0]").unwrap())
                 .unwrap()
                 .len(),
             2
@@ -600,15 +584,12 @@ fn connectivity_and_hydrogen_queries_survive_hydrogen_materialization() {
         let queries = ["[!#1;X3]", "[!#1;X4]", "[!#1;X2]", "[!#1;H3]", "[!#1;H1]"];
         let before: Vec<_> = queries
             .iter()
-            .map(|smarts| {
-                find_substructure_matches(&molecule, &parse_smarts(smarts).unwrap()).unwrap()
-            })
+            .map(|smarts| find_matches(&molecule, &parse_smarts(smarts).unwrap()).unwrap())
             .collect();
-        crate::hydrogens::add_hydrogens(&mut molecule).unwrap();
+        molecule.add_hydrogens().unwrap();
         perceive(&mut molecule).unwrap();
         for (smarts, expected) in queries.into_iter().zip(before) {
-            let actual =
-                find_substructure_matches(&molecule, &parse_smarts(smarts).unwrap()).unwrap();
+            let actual = find_matches(&molecule, &parse_smarts(smarts).unwrap()).unwrap();
             assert_eq!(actual, expected, "{target} / {smarts}");
         }
     }
@@ -631,16 +612,14 @@ fn ring_bond_count_uses_cycle_membership_without_a_selected_ring_basis() {
         assert!(molecule.ring_set().is_none());
         for (count, expected) in counts.into_iter().enumerate() {
             let smarts = format!("[x{count}]");
-            let actual =
-                find_substructure_matches(&molecule, &parse_smarts(&smarts).unwrap()).unwrap();
+            let actual = find_matches(&molecule, &parse_smarts(&smarts).unwrap()).unwrap();
             assert_eq!(actual.len(), expected, "{target} / {smarts}");
         }
         for (smarts, expected) in [
             ("[x]", molecule.atom_count() - counts[0]),
             ("[!x]", counts[0]),
         ] {
-            let actual =
-                find_substructure_matches(&molecule, &parse_smarts(smarts).unwrap()).unwrap();
+            let actual = find_matches(&molecule, &parse_smarts(smarts).unwrap()).unwrap();
             assert_eq!(actual.len(), expected, "{target} / {smarts}");
         }
     }
@@ -666,12 +645,10 @@ fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
     let benzene = perceived("c1ccccc1");
     let query = parse_smarts("c1ccccc1").unwrap();
     assert_eq!(
-        substructure::find_substructure_matches(&benzene, &query)
-            .unwrap()
-            .len(),
+        substructure::find_matches(&benzene, &query).unwrap().len(),
         1
     );
-    let embeddings = substructure::find_substructure_matches_with_options(
+    let embeddings = substructure::find_matches_with_options(
         &benzene,
         &query,
         SubstructureMatchOptions {
@@ -685,14 +662,14 @@ fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
     let cyclohexane = perceived("C1CCCCC1");
     let ring_atoms = parse_smarts("[#6;R]").unwrap();
     assert_eq!(
-        substructure::find_substructure_matches(&cyclohexane, &ring_atoms)
+        substructure::find_matches(&cyclohexane, &ring_atoms)
             .unwrap()
             .len(),
         6
     );
     let ring_bond = parse_smarts("C@C").unwrap();
     assert_eq!(
-        substructure::find_substructure_matches(&cyclohexane, &ring_bond)
+        substructure::find_matches(&cyclohexane, &ring_bond)
             .unwrap()
             .len(),
         6
@@ -703,14 +680,14 @@ fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
 fn matcher_supports_disconnected_queries_and_non_induced_subgraphs() {
     let connected_target = perceived("OCO");
     let query = parse_smarts("[#8].[#8]").unwrap();
-    let matches = substructure::find_substructure_matches(&connected_target, &query).unwrap();
+    let matches = substructure::find_matches(&connected_target, &query).unwrap();
     assert_eq!(matches.len(), 1);
     assert_ne!(matches[0].atoms()[0], matches[0].atoms()[1]);
 
     let cyclopropane = perceived("C1CC1");
     let edge = parse_smarts("C-C").unwrap();
     assert_eq!(
-        substructure::find_substructure_matches(&cyclopropane, &edge)
+        substructure::find_matches(&cyclopropane, &edge)
             .unwrap()
             .len(),
         3
@@ -731,7 +708,7 @@ fn smarts_bonds_distinguish_aromatic_types_from_localized_orders() {
         let target = perceived(source);
         for (smarts, count) in queries.into_iter().zip(expected) {
             let query = parse_smarts(smarts).unwrap();
-            let matches = find_substructure_matches_with_options(
+            let matches = find_matches_with_options(
                 &target,
                 &query,
                 SubstructureMatchOptions {
@@ -744,18 +721,14 @@ fn smarts_bonds_distinguish_aromatic_types_from_localized_orders() {
         }
     }
     let aryne = perceived("C1=CC=CC#C1");
-    assert!(
-        find_substructure_matches(&aryne, &parse_smarts("c1ccccc1").unwrap())
-            .unwrap()
-            .is_empty()
-    );
+    assert!(find_matches(&aryne, &parse_smarts("c1ccccc1").unwrap())
+        .unwrap()
+        .is_empty());
     let benzene = perceived("c1ccccc1");
     for smarts in ["c1ccccc-1", "c-1ccccc1"] {
-        assert!(
-            find_substructure_matches(&benzene, &parse_smarts(smarts).unwrap())
-                .unwrap()
-                .is_empty()
-        );
+        assert!(find_matches(&benzene, &parse_smarts(smarts).unwrap())
+            .unwrap()
+            .is_empty());
     }
     assert!(parse_smarts("C=1CCCCC-1").is_err());
 }
@@ -773,16 +746,16 @@ fn programmatic_bond_predicates_keep_their_represented_meaning() {
     };
     let mut raw = read_smiles("CC").unwrap();
     let order = make_query(BondPredicate::Order(BondOrder::Single));
-    assert_eq!(find_substructure_matches(&raw, &order).unwrap().len(), 1);
+    assert_eq!(find_matches(&raw, &order).unwrap().len(), 1);
     assert_eq!(
-        find_substructure_matches(&raw, &parse_smarts("*-*").unwrap()),
+        find_matches(&raw, &parse_smarts("*-*").unwrap()),
         Err(SubstructureMatchError::MissingPerception(
             QueryPerception::Aromaticity
         ))
     );
     perceive(&mut raw).unwrap();
     assert_eq!(
-        find_substructure_matches(&raw, &parse_smarts("*-*").unwrap())
+        find_matches(&raw, &parse_smarts("*-*").unwrap())
             .unwrap()
             .len(),
         1
@@ -790,23 +763,15 @@ fn programmatic_bond_predicates_keep_their_represented_meaning() {
 
     let aryne = perceived("C1=CC=CC#C1");
     let membership = make_query(BondPredicate::Aromatic(true));
+    assert_eq!(find_matches(&aryne, &membership).unwrap().len(), 6);
     assert_eq!(
-        find_substructure_matches(&aryne, &membership)
-            .unwrap()
-            .len(),
-        6
-    );
-    assert_eq!(
-        find_substructure_matches(&aryne, &parse_smarts("*:*").unwrap())
+        find_matches(&aryne, &parse_smarts("*:*").unwrap())
             .unwrap()
             .len(),
         5
     );
     let benzene = perceived("c1ccccc1");
-    assert_eq!(
-        find_substructure_matches(&benzene, &order).unwrap().len(),
-        3
-    );
+    assert_eq!(find_matches(&benzene, &order).unwrap().len(), 3);
 }
 
 #[test]
@@ -817,7 +782,7 @@ fn matcher_requires_only_the_perception_used_by_the_ir() {
     raw.add_bond(first, second, BondOrder::Single).unwrap();
     let elemental = manual_element_query("C");
     assert_eq!(
-        substructure::find_substructure_matches(raw.working(), &elemental)
+        substructure::find_matches(raw.working(), &elemental)
             .unwrap()
             .len(),
         2
@@ -834,7 +799,7 @@ fn matcher_requires_only_the_perception_used_by_the_ir() {
     ] {
         let query = parse_smarts(smarts).unwrap();
         assert_eq!(
-            substructure::find_substructure_matches(raw.working(), &query),
+            substructure::find_matches(raw.working(), &query),
             Err(SubstructureMatchError::MissingPerception(perception)),
             "{smarts}"
         );
@@ -845,7 +810,7 @@ fn matcher_requires_only_the_perception_used_by_the_ir() {
 fn matcher_search_and_candidate_limits_are_hard_failures() {
     let target = perceived("CCCC");
     let query = parse_smarts("[#6]").unwrap();
-    let candidate_error = substructure::find_substructure_matches_with_options(
+    let candidate_error = substructure::find_matches_with_options(
         &target,
         &query,
         SubstructureMatchOptions {
@@ -862,7 +827,7 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
         }
     ));
 
-    let state_error = substructure::find_substructure_matches_with_options(
+    let state_error = substructure::find_matches_with_options(
         &target,
         &query,
         SubstructureMatchOptions {
@@ -881,7 +846,7 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
     ));
 
     assert!(matches!(
-        substructure::find_substructure_matches_with_options(
+        substructure::find_matches_with_options(
             &target,
             &query,
             SubstructureMatchOptions {

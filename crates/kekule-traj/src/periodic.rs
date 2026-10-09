@@ -1,9 +1,9 @@
 //! Periodic coordinate reconstruction, imaging, and temporal unwrapping.
 //!
-//! These operations change positions only. The exact shared topology, cells,
-//! velocities, forces, time, step, and all properties are retained. Copy-returning
-//! methods leave their source unchanged; `_in_place` methods publish only after
-//! every frame succeeds. Every processed frame must have a periodic cell.
+//! These operations change positions only, in place. The shared topology, cells,
+//! velocities, forces, time, step, and all properties are retained. Collection
+//! functions publish only after every item succeeds; clone the collection first
+//! to keep the original. Every processed item must have a periodic cell.
 //!
 //! Molecules and bonds come from the authoritative topology. No bonds are guessed
 //! from distances or hierarchy. Orthorhombic, triclinic, rotated, and partially
@@ -15,20 +15,21 @@
 //!
 //! ```no_run
 //! use kekule::{mmcif, topology::AtomSelection};
-//! use kekule_traj::io::read_trajectory;
+//! use kekule_traj::{io::read_trajectory, periodic};
 //!
 //! let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
 //! let topology = document.interpret()?.into_topology();
 //! let mut trajectory = read_trajectory("trajectory.xtc", topology.clone())?;
-//! trajectory.make_molecules_whole_in_place()?;
+//! periodic::make_molecules_whole(&mut trajectory)?;
 //!
 //! // A continuous path through time, retaining the initial molecular images.
-//! let continuous = trajectory.unwrap()?;
+//! let mut continuous = trajectory.clone();
+//! periodic::unwrap(&mut continuous)?;
 //!
 //! // A separate per-frame view with molecules centered around selected anchors.
 //! let anchors = AtomSelection::all(&topology); // Or select the solute's atoms.
-//! let imaged = trajectory.image_molecules(&anchors)?;
-//! let aligned = imaged.superpose_to_frame(0, &anchors)?;
+//! periodic::image_molecules(&mut trajectory, &anchors)?;
+//! trajectory.superpose(0, &anchors)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -48,8 +49,8 @@
 //! let mut unwrapper = TrajectoryUnwrapper::new(topology);
 //! let mut index = 0;
 //! while reader.read_next(&mut frame)? {
-//!     imager.make_whole_in_place(index, &mut frame)?;
-//!     unwrapper.unwrap_in_place(index, &mut frame)?;
+//!     imager.make_whole(index, &mut frame)?;
+//!     unwrapper.unwrap(index, &mut frame)?;
 //!     // Analyze or write this frame here. Downsample only after unwrapping.
 //!     index += 1;
 //! }
@@ -60,13 +61,11 @@ use std::collections::VecDeque;
 use std::fmt;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::structure::{PositionError, Positions};
-use kekule::topology::{
-    AtomSelection, InstanceAtomId, InstanceBondId, Topology, TopologyAtomIndex,
+use kekule::structure::{
+    PositionError, Positions, Realization, RealizationError, Realizations, Trajectory,
 };
+use kekule::topology::{AtomSelection, InstanceBondId, Topology, TopologyAtomIndex};
 use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT};
-
-use crate::{Trajectory, TrajectoryError};
 
 mod stream;
 pub use stream::{MoleculeImager, TrajectoryUnwrapper};
@@ -117,7 +116,8 @@ pub enum PeriodicError {
         frame: usize,
         source: Box<PositionError>,
     },
-    Publication(Box<TrajectoryError>),
+    /// Valid positions could not be published into the destination.
+    Publication(Box<RealizationError>),
 }
 
 impl fmt::Display for PeriodicError {
@@ -150,102 +150,89 @@ impl std::error::Error for PeriodicError {
     }
 }
 
-impl Trajectory {
-    /// Returns a copy with each bonded molecule made whole independently in each frame.
-    ///
-    /// The first atom of each molecule stays at its original position; other atoms
-    /// are placed using shortest Cartesian bond images. All bonds, including ring
-    /// closures, must agree with the reconstruction. Molecules are neither centered
-    /// nor joined to other molecules. This does not establish continuity across time.
-    pub fn make_molecules_whole(&self) -> Result<Self, PeriodicError> {
-        let positions = self.whole_positions(None)?;
-        self.with_positions(positions)
-            .map_err(|e| PeriodicError::Publication(Box::new(e)))
-    }
+/// Makes each bonded molecule whole independently in every item.
+///
+/// The first atom of each molecule stays at its original position; other atoms
+/// are placed using shortest Cartesian bond images. All bonds, including ring
+/// closures, must agree with the reconstruction. Molecules are neither centered
+/// nor joined to other molecules. This does not establish continuity across time.
+pub fn make_molecules_whole<P: Realization>(
+    realizations: &mut Realizations<P>,
+) -> Result<(), PeriodicError> {
+    let positions = whole_positions(realizations, None)?;
+    publish(realizations, positions)
+}
 
-    /// Makes molecules whole transactionally, retaining all non-position state in place.
-    pub fn make_molecules_whole_in_place(&mut self) -> Result<(), PeriodicError> {
-        let positions = self.whole_positions(None)?;
-        self.replace_positions(positions)
-            .map_err(|e| PeriodicError::Publication(Box::new(e)))
-    }
+/// Images whole molecules around explicitly selected anchors in every item.
+///
+/// Every molecule containing a selected atom becomes an anchor. Other anchors
+/// are placed at their nearest centroid image to the first anchor in topology
+/// order. The combined geometric center of all atoms in the anchor molecules
+/// is moved to the cell center along periodic axes. Other whole molecules are
+/// placed at their nearest centroid image to that combined center. No anchor
+/// heuristics are used.
+///
+/// This includes making molecules whole. It is a per-frame centering operation,
+/// not temporal unwrapping. Coordinates along nonperiodic fractional axes remain
+/// unchanged; a molecule may extend outside the primary cell.
+pub fn image_molecules<P: Realization>(
+    realizations: &mut Realizations<P>,
+    anchors: &AtomSelection,
+) -> Result<(), PeriodicError> {
+    let positions = whole_positions(realizations, Some(anchors))?;
+    publish(realizations, positions)
+}
 
-    /// Returns a copy with whole molecules imaged around explicitly selected anchors.
-    ///
-    /// Every molecule containing a selected atom becomes an anchor. Other anchors
-    /// are placed at their nearest centroid image to the first anchor in topology
-    /// order. The combined geometric center of all atoms in the anchor molecules
-    /// is moved to the cell center along periodic axes. Other whole molecules are placed at their
-    /// nearest centroid image to that combined center. No anchor heuristics are used.
-    ///
-    /// This includes making molecules whole. It is a per-frame centering operation,
-    /// not temporal unwrapping. Coordinates along nonperiodic fractional axes remain
-    /// unchanged; a molecule may extend outside the primary cell.
-    pub fn image_molecules(&self, anchors: &AtomSelection) -> Result<Self, PeriodicError> {
-        let positions = self.whole_positions(Some(anchors))?;
-        self.with_positions(positions)
-            .map_err(|e| PeriodicError::Publication(Box::new(e)))
-    }
+/// Unwraps a trajectory through time using fractional-coordinate continuity.
+///
+/// Frame zero is unchanged. For each subsequent frame, integer periodic images
+/// are chosen so each atom moves less than half a cell in each periodic
+/// fractional coordinate relative to the previous unwrapped frame. For changing
+/// cells, previous fractional coordinates are retained and the current cell maps
+/// the new fractional coordinates back to Cartesian space. This is the lattice
+/// convention in Kulke & Vermaas (2022), equation B6, DOI: 10.1021/acs.jctc.2c00327.
+///
+/// Available times must not decrease. Requires fixed periodic-axis flags and
+/// sequential, sufficiently closely sampled frames. Multiple crossings between
+/// saved frames cannot be inferred; exact half-cell displacements are rejected
+/// as ambiguous. Initial split molecules are not repaired: call
+/// [`make_molecules_whole`] first when necessary. Apply before frame-dependent
+/// alignment. This convention is not a universal prescription for diffusion
+/// analysis under a fluctuating simulation cell.
+pub fn unwrap(trajectory: &mut Trajectory) -> Result<(), PeriodicError> {
+    let mut unwrapper = TrajectoryUnwrapper::new(trajectory.shared_topology());
+    let positions = trajectory
+        .iter()
+        .enumerate()
+        .map(|(index, frame)| unwrapper.next_positions(index, frame))
+        .collect::<Result<Vec<_>, _>>()?;
+    publish(trajectory, positions)
+}
 
-    /// Images whole molecules transactionally around the selected anchors.
-    pub fn image_molecules_in_place(
-        &mut self,
-        anchors: &AtomSelection,
-    ) -> Result<(), PeriodicError> {
-        let positions = self.whole_positions(Some(anchors))?;
-        self.replace_positions(positions)
-            .map_err(|e| PeriodicError::Publication(Box::new(e)))
-    }
+fn whole_positions<P: Realization>(
+    realizations: &Realizations<P>,
+    anchors: Option<&AtomSelection>,
+) -> Result<Vec<Positions>, PeriodicError> {
+    let imager = MoleculeImager::new(realizations.shared_topology());
+    let anchors = anchors
+        .map(|selection| imager.anchor_groups(selection))
+        .transpose()?;
+    realizations
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            imager.frame_positions(index, item.as_model_view(), anchors.as_deref())
+        })
+        .collect()
+}
 
-    /// Returns a temporally unwrapped copy using fractional-coordinate continuity.
-    ///
-    /// Frame zero is unchanged. For each subsequent frame, integer periodic images
-    /// are chosen so each atom moves less than half a cell in each periodic
-    /// fractional coordinate relative to the previous unwrapped frame. For changing
-    /// cells, previous fractional coordinates are retained and the current cell maps
-    /// the new fractional coordinates back to Cartesian space. This is the lattice
-    /// convention in Kulke & Vermaas (2022), equation B6, DOI: 10.1021/acs.jctc.2c00327.
-    ///
-    /// Available times must not decrease. Requires fixed periodic-axis flags and sequential, sufficiently closely
-    /// sampled frames. Multiple crossings between saved frames cannot be inferred;
-    /// exact half-cell displacements are rejected as ambiguous. Initial split
-    /// molecules are not repaired: use `make_molecules_whole` first when necessary.
-    /// Apply before frame-dependent alignment. This convention is not a universal
-    /// prescription for diffusion analysis under a fluctuating simulation cell.
-    pub fn unwrap(&self) -> Result<Self, PeriodicError> {
-        let positions = self.unwrapped_positions()?;
-        self.with_positions(positions)
-            .map_err(|e| PeriodicError::Publication(Box::new(e)))
-    }
-
-    /// Applies fractional-coordinate temporal unwrapping transactionally in place.
-    pub fn unwrap_in_place(&mut self) -> Result<(), PeriodicError> {
-        let positions = self.unwrapped_positions()?;
-        self.replace_positions(positions)
-            .map_err(|e| PeriodicError::Publication(Box::new(e)))
-    }
-
-    fn whole_positions(
-        &self,
-        anchors: Option<&AtomSelection>,
-    ) -> Result<Vec<Positions>, PeriodicError> {
-        let imager = MoleculeImager::new(self.shared_topology());
-        let anchors = anchors
-            .map(|selection| imager.anchor_groups(selection))
-            .transpose()?;
-        self.frames()
-            .enumerate()
-            .map(|(index, frame)| imager.frame_positions(index, frame, anchors.as_deref()))
-            .collect()
-    }
-
-    fn unwrapped_positions(&self) -> Result<Vec<Positions>, PeriodicError> {
-        let mut unwrapper = TrajectoryUnwrapper::new(self.shared_topology());
-        self.frames()
-            .enumerate()
-            .map(|(index, frame)| unwrapper.next_positions(index, frame))
-            .collect()
-    }
+fn publish<P: Realization>(
+    realizations: &mut Realizations<P>,
+    positions: Vec<Positions>,
+) -> Result<(), PeriodicError> {
+    realizations
+        .replace_positions(positions)
+        .map_err(|error| PeriodicError::Publication(Box::new(error)))
 }
 
 fn positions(points: Vec<Point3>, frame: usize) -> Result<Positions, PeriodicError> {
@@ -268,16 +255,9 @@ impl MoleculePlan {
     fn new(topology: &Topology) -> Self {
         let mut adjacency = vec![Vec::new(); topology.atom_count()];
         let mut bonds = Vec::with_capacity(topology.bond_count());
-        for (id, bond) in topology.bonds() {
-            let (a, b) = bond.endpoints();
-            let a = topology
-                .atom_index(InstanceAtomId::new(id.molecule(), a))
-                .expect("validated bond atom")
-                .index();
-            let b = topology
-                .atom_index(InstanceAtomId::new(id.molecule(), b))
-                .expect("validated bond atom")
-                .index();
+        for bond in topology.bonds() {
+            let id = bond.id();
+            let [a, b] = bond.atoms().map(|atom| atom.index().index());
             adjacency[a].push((b, bonds.len()));
             adjacency[b].push((a, bonds.len()));
             bonds.push((id, a, b));
@@ -287,10 +267,7 @@ impl MoleculePlan {
         let mut tree = Vec::new();
         let mut visited = vec![false; topology.atom_count()];
         for molecule in topology.molecules() {
-            let atoms: Vec<_> = molecule
-                .atoms()
-                .map(|(id, _)| topology.atom_index(id).expect("validated atom").index())
-                .collect();
+            let atoms: Vec<_> = molecule.atoms().map(|atom| atom.index().index()).collect();
             for &atom in &atoms {
                 atom_group[atom] = groups.len();
             }

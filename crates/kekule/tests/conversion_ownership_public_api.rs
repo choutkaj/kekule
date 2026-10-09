@@ -61,7 +61,7 @@ fn borrowed_document_conversion_keeps_source_and_consuming_interpretation_moves_
 fn copy_view_materialization_retains_owner_and_creates_independent_geometry() {
     let molecule = smiles::to_molecules("CC").unwrap().pop().unwrap();
     let source = Model::from_molecule(
-        &molecule,
+        molecule.clone(),
         &Positions::new(Quantity::new(
             vec![Point3::origin(), Point3::new(1.5, 0.0, 0.0)],
             ANGSTROM,
@@ -69,7 +69,7 @@ fn copy_view_materialization_retains_owner_and_creates_independent_geometry() {
         .unwrap(),
     )
     .unwrap();
-    let view = source.view();
+    let view = source.as_model_view();
     let mut owned = view.to_model();
     assert_eq!(view.atom_count(), source.atom_count());
     assert!(std::sync::Arc::ptr_eq(
@@ -80,7 +80,7 @@ fn copy_view_materialization_retains_owner_and_creates_independent_geometry() {
         owned.positions().values().value().as_ptr(),
         source.positions().values().value().as_ptr()
     );
-    let atom = source.atom_ids()[0];
+    let atom = source.topology().atom_ids()[0];
     owned
         .set_position(atom, Quantity::new(Point3::new(9.0, 0.0, 0.0), ANGSTROM))
         .unwrap();

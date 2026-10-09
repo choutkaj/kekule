@@ -4,7 +4,7 @@ use kekule::{
     core::BondOrder,
     query::parse_smarts,
     smiles,
-    substructure::{find_topology_substructure_matches_complete, SubstructureMatchOptions},
+    substructure::{find_topology_matches_with_options, SubstructureMatchOptions},
     topology::{
         AtomSelection, BondSelection, BondSelectionMode, InstanceAtomId, InstanceBondId,
         MoleculeDefinitionId, MoleculeInstanceId, SelectionError, Topology, TopologyAtomIndex,
@@ -15,11 +15,11 @@ use kekule::{
 fn topology() -> Arc<Topology> {
     let molecule = smiles::to_molecules("CC=O").unwrap().pop().unwrap();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     builder
-        .add_molecule(&smiles::to_molecules("[Na+]").unwrap()[0])
+        .add_molecule((smiles::to_molecules("[Na+]").unwrap()[0]).clone())
         .unwrap();
     Arc::new(builder.build().unwrap())
 }
@@ -283,7 +283,7 @@ fn bond_endpoint_rules_keep_occurrences_distinct_and_cover_boundary_edges() {
         BondSelection::for_instances(&top, [instance, instance]).unwrap(),
         bonds(&top, 0b1100)
     );
-    let definition = top.instance(instance).unwrap().definition();
+    let definition = top.molecule(instance).unwrap().definition_id();
     assert_eq!(
         BondSelection::for_definitions(&top, [definition]).unwrap(),
         BondSelection::all(&top)
@@ -304,7 +304,7 @@ fn bond_endpoint_rules_keep_occurrences_distinct_and_cover_boundary_edges() {
 
 #[test]
 fn bond_to_atom_round_trip_may_add_unselected_ring_bonds() {
-    let top = Arc::new(smiles::to_topology("C1CC1").unwrap());
+    let top = smiles::to_topology("C1CC1").unwrap();
     let selected = BondSelection::from_bonds(&top, top.bond_ids()[..2].iter().copied()).unwrap();
     assert_eq!(selected.len(), 2);
     assert_eq!(selected.to_atoms().len(), 3);
@@ -315,7 +315,7 @@ fn bond_to_atom_round_trip_may_add_unselected_ring_bonds() {
             .len(),
         3
     );
-    let isolated = Arc::new(smiles::to_topology("[Na+].[Cl-]").unwrap());
+    let isolated = smiles::to_topology("[Na+].[Cl-]").unwrap();
     assert!(BondSelection::all(&isolated).is_empty());
     assert!(BondSelection::all(&isolated).complement().is_empty());
     assert!(AtomSelection::all(&isolated)
@@ -326,16 +326,16 @@ fn bond_to_atom_round_trip_may_add_unselected_ring_bonds() {
 #[test]
 fn predicates_and_graph_expansion_respect_membership_and_instance_boundaries() {
     let top = topology();
-    let oxygen = AtomSelection::from_predicate(&top, |_, atom| atom.element.symbol() == "O");
+    let oxygen = AtomSelection::from_predicate(&top, |atom| atom.element.symbol() == "O");
     assert_eq!(oxygen, atoms(&top, 0b100100));
     assert_eq!(
-        oxygen.filter(|id, _| id.molecule() == top.atom_ids()[0].molecule()),
+        oxygen.filter(|atom| atom.id().molecule() == top.atom_ids()[0].molecule()),
         atoms(&top, 0b100)
     );
-    let doubles = BondSelection::from_predicate(&top, |_, bond| bond.order == BondOrder::Double);
+    let doubles = BondSelection::from_predicate(&top, |bond| bond.order == BondOrder::Double);
     assert_eq!(doubles, bonds(&top, 0b1010));
     assert_eq!(
-        doubles.filter(|id, _| id.molecule() == top.atom_ids()[0].molecule()),
+        doubles.filter(|bond| bond.id().molecule() == top.atom_ids()[0].molecule()),
         bonds(&top, 0b10)
     );
     assert_eq!(atoms(&top, 1).expand_bonded(0), atoms(&top, 1));
@@ -354,11 +354,11 @@ fn predicates_and_graph_expansion_respect_membership_and_instance_boundaries() {
     assert_eq!(empty.expand_bonded(usize::MAX), empty);
     assert_eq!(empty.expand_to_instances(), empty);
     assert_eq!(
-        empty.filter(|_, _| panic!("empty predicate must not run")),
+        empty.filter(|_| panic!("empty predicate must not run")),
         empty
     );
     assert_eq!(
-        BondSelection::empty(&top).filter(|_, _| panic!("empty predicate must not run")),
+        BondSelection::empty(&top).filter(|_| panic!("empty predicate must not run")),
         BondSelection::empty(&top)
     );
 }
@@ -367,12 +367,9 @@ fn predicates_and_graph_expansion_respect_membership_and_instance_boundaries() {
 fn topology_query_match_conversion_checks_provenance_before_selecting() {
     let top = Arc::new(topology().perceived().unwrap());
     let query = parse_smarts("[#6]=[#8]").unwrap();
-    let matches = find_topology_substructure_matches_complete(
-        &top,
-        &query,
-        SubstructureMatchOptions::default(),
-    )
-    .unwrap();
+    let matches =
+        find_topology_matches_with_options(&top, &query, SubstructureMatchOptions::default())
+            .unwrap();
     assert_eq!(
         AtomSelection::from_topology_query_matches(&top, &matches).unwrap(),
         atoms(&top, 0b110110)

@@ -18,7 +18,7 @@
 //! let mut target = smiles::to_molecules("CCO")?.pop().unwrap();
 //! target.perceive()?;
 //! let query = parse_smarts("[#6]-[#8]")?;
-//! let matched = substructure::find_substructure_match(&target, &query)?;
+//! let matched = substructure::find_match(&target, &query)?;
 //! assert!(matched.is_some());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

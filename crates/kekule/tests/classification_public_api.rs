@@ -30,7 +30,7 @@ fn linear_residue_topology(
     }
     let molecule = editor.finish().unwrap();
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&molecule).unwrap();
+    let instance = builder.add_molecule(molecule.clone()).unwrap();
     let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     for (index, (&name, atoms)) in residue_names.iter().zip(&residue_atoms).enumerate() {
         let residue = builder
@@ -59,7 +59,7 @@ fn one_residue_topology(
     component: &str,
 ) -> (Topology, kekule::topology::ResidueId) {
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(molecule).unwrap();
+    let instance = builder.add_molecule(molecule.clone()).unwrap();
     let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue = builder
         .hierarchy_mut()
@@ -88,7 +88,7 @@ fn ordinary_connected_molecule_defaults_to_small_molecule() {
     let instance = topology.molecules().next().unwrap();
     assert_eq!(instance.class(), MoleculeClass::SmallMolecule);
     assert_eq!(
-        topology.molecule_class(instance.id()).unwrap(),
+        topology.molecule(instance.id()).unwrap().class(),
         MoleculeClass::SmallMolecule
     );
     assert_eq!(
@@ -103,7 +103,7 @@ fn water_and_monoatomic_ions_use_strong_local_evidence() {
     let mut oxygen = atom("O");
     oxygen.hydrogens = HydrogenDeclaration::Fixed(2);
     water_editor.add_atom(oxygen).unwrap();
-    let explicit_water = Topology::from_molecule(&water_editor.finish().unwrap()).unwrap();
+    let explicit_water = Topology::from_molecule(water_editor.finish().unwrap().clone()).unwrap();
     assert_eq!(
         explicit_water.molecules().next().unwrap().class(),
         MoleculeClass::Water
@@ -125,7 +125,7 @@ fn water_and_monoatomic_ions_use_strong_local_evidence() {
     let mut sodium = atom("Na");
     sodium.formal_charge = 1;
     ion_editor.add_atom(sodium).unwrap();
-    let ion = Topology::from_molecule(&ion_editor.finish().unwrap()).unwrap();
+    let ion = Topology::from_molecule(ion_editor.finish().unwrap().clone()).unwrap();
     assert_eq!(ion.molecules().next().unwrap().class(), MoleculeClass::Ion);
 }
 
@@ -195,7 +195,7 @@ fn recognized_carbohydrate_component_classifies_its_molecule() {
 fn explicit_definition_and_residue_overrides_win() {
     let molecule = kekule::smiles::to_molecules("CC").unwrap().pop().unwrap();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     let instance = builder.add_instance(definition).unwrap();
     let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue = builder
@@ -235,7 +235,7 @@ fn reused_definition_shares_class_and_conflicting_strong_instances_become_other(
     let molecule = template.molecules().next().unwrap().molecule().clone();
     let atoms = molecule.atom_ids().collect::<Vec<_>>();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     let peptide = builder.add_instance(definition).unwrap();
     let dna = builder.add_instance(definition).unwrap();
     for (chain_name, instance, residues, names) in [
@@ -305,7 +305,7 @@ fn append_preserves_class_and_structural_subset_reinfers() {
         .collect::<Vec<_>>();
     let mut builder = Arc::try_unwrap(source).unwrap().into_builder();
     let ligand = kekule::smiles::to_molecules("CCO").unwrap().pop().unwrap();
-    builder.add_molecule(&ligand).unwrap();
+    builder.add_molecule(ligand.clone()).unwrap();
     let appended = builder.build().unwrap();
     assert_eq!(appended.molecules().next().unwrap().class(), existing_class);
     assert_eq!(
@@ -334,7 +334,7 @@ fn subsets_reuse_compact_definitions_and_preserve_only_complete_entity_classes()
         ids.bond(bond).unwrap(),
     );
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
     builder
         .set_molecule_class(definition, MoleculeClass::Other)
         .unwrap();
@@ -456,20 +456,21 @@ fn typed_class_selections_select_instances_and_residues() {
 #[test]
 fn generic_mmcif_writing_maps_canonical_protein_water_and_small_molecule_classes() {
     let molecule = kekule::smiles::to_molecules("CC").unwrap().pop().unwrap();
-    let model = Model::from_molecule(&molecule, &Positions::zeros(molecule.atom_count())).unwrap();
-    let written = kekule::mmcif::write_model(&model, Default::default()).unwrap();
+    let model =
+        Model::from_molecule(molecule.clone(), &Positions::zeros(molecule.atom_count())).unwrap();
+    let written = kekule::mmcif::write([&model], Default::default()).unwrap();
     assert!(written.contains("1 non-polymer"));
 
     let (protein, _) = linear_residue_topology(&["ALA", "GLY"], ("N", "C"));
     let protein = Model::new(protein, Positions::zeros(4)).unwrap();
-    let written = kekule::mmcif::write_model(&protein, Default::default()).unwrap();
+    let written = kekule::mmcif::write([&protein], Default::default()).unwrap();
     assert!(written.contains("1 polymer"));
 
     let mut water_editor = MoleculeEditor::new();
     water_editor.add_atom(atom("O")).unwrap();
     let (water, _) = one_residue_topology(&water_editor.finish().unwrap(), "HOH");
     let water = Model::new(water, Positions::zeros(1)).unwrap();
-    let written = kekule::mmcif::write_model(&water, Default::default()).unwrap();
+    let written = kekule::mmcif::write([&water], Default::default()).unwrap();
     assert!(written.contains("1 water"));
 }
 
@@ -479,22 +480,22 @@ fn readme_combined_model_workflow_needs_no_mmcif_classification_sidecar() {
     let second = kekule::smiles::to_molecules("CO").unwrap().pop().unwrap();
     let mut builder = Model::builder();
     let first_id = builder
-        .add_molecule(&first, &Positions::zeros(first.atom_count()))
+        .add_molecule(first.clone(), &Positions::zeros(first.atom_count()))
         .unwrap();
     let second_id = builder
-        .add_molecule(&second, &Positions::zeros(second.atom_count()))
+        .add_molecule(second.clone(), &Positions::zeros(second.atom_count()))
         .unwrap();
     let combined = builder.build().unwrap();
     assert_eq!(
-        combined.topology().molecule_class(first_id).unwrap(),
+        combined.topology().molecule(first_id).unwrap().class(),
         MoleculeClass::SmallMolecule
     );
     assert_eq!(
-        combined.topology().molecule_class(second_id).unwrap(),
+        combined.topology().molecule(second_id).unwrap().class(),
         MoleculeClass::SmallMolecule
     );
     let mut output = Vec::new();
-    kekule::mmcif::write_model_to(&mut output, &combined, Default::default()).unwrap();
+    kekule::mmcif::write_to(&mut output, [&combined], Default::default()).unwrap();
     assert_eq!(
         String::from_utf8(output)
             .unwrap()

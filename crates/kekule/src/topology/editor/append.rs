@@ -28,7 +28,7 @@ impl TopologyEditor {
         };
         let definitions = source
             .definitions()
-            .map(|(id, definition)| (id, Arc::new(definition.molecule().clone())))
+            .map(|definition| (definition.id(), Arc::new(definition.molecule().clone())))
             .collect::<BTreeMap<_, _>>();
         let instance_start = self.properties.molecule_instances().len();
         self.properties
@@ -151,7 +151,7 @@ impl TopologyEditor {
         self.properties
             .molecule_instances_mut()
             .copy_rows_from(
-                source.molecule_instance_properties(),
+                source.properties().molecule_instances().raw(),
                 &(instance_start..instance_start + source.instance_count()).collect::<Vec<_>>(),
             )
             .map_err(|error| TopologyEditError::AppendProperty {
@@ -160,35 +160,35 @@ impl TopologyEditor {
             })?;
         self.properties
             .atoms_mut()
-            .copy_rows_from(source.atom_properties(), &atom_rows)
+            .copy_rows_from(source.properties().atoms().raw(), &atom_rows)
             .map_err(|error| TopologyEditError::AppendProperty {
                 domain: "topology atom",
                 error: Box::new(error),
             })?;
         self.properties
             .bonds_mut()
-            .copy_rows_from(source.bond_properties(), &bond_rows)
+            .copy_rows_from(source.properties().bonds().raw(), &bond_rows)
             .map_err(|error| TopologyEditError::AppendProperty {
                 domain: "topology bond",
                 error: Box::new(error),
             })?;
         self.properties
             .chains_mut()
-            .copy_rows_from(source.chain_properties(), &chain_rows)
+            .copy_rows_from(source.properties().chains().raw(), &chain_rows)
             .map_err(|error| TopologyEditError::AppendProperty {
                 domain: "chain",
                 error: Box::new(error),
             })?;
         self.properties
             .residues_mut()
-            .copy_rows_from(source.residue_properties(), &residue_rows)
+            .copy_rows_from(source.properties().residues().raw(), &residue_rows)
             .map_err(|error| TopologyEditError::AppendProperty {
                 domain: "residue",
                 error: Box::new(error),
             })?;
         self.properties
             .atom_sites_mut()
-            .copy_rows_from(source.atom_site_properties(), &site_rows)
+            .copy_rows_from(source.properties().atom_sites().raw(), &site_rows)
             .map_err(|error| TopologyEditError::AppendProperty {
                 domain: "atom site",
                 error: Box::new(error),

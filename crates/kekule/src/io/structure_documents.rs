@@ -493,7 +493,8 @@ fn publish_molfile_components(
         .hierarchy_mut()
         .add_chain("A", None)?;
     for (index, (molecule, positions, report)) in components.into_iter().enumerate() {
-        let instance = builder.add_molecule(&molecule, &positions)?;
+        let atom_ids = molecule.atom_ids().collect::<Vec<_>>();
+        let instance = builder.add_molecule(molecule, &positions)?;
         let sequence = i32::try_from(index + 1).map_err(|_| ModelBuildError::CapacityOverflow)?;
         let hierarchy = builder.topology_builder_mut().hierarchy_mut();
         let residue = hierarchy.add_residue(
@@ -503,7 +504,7 @@ fn publish_molfile_components(
             Some(sequence.to_string()),
             None,
         )?;
-        for atom in molecule.atom_ids() {
+        for atom in atom_ids {
             hierarchy.add_atom_site(
                 residue,
                 crate::topology::InstanceAtomId::new(instance, atom),
@@ -1220,10 +1221,11 @@ fn partition_molfile_staging(
             bond_map.insert(old, new);
         }
         let mut properties =
-            crate::properties::Properties::molecule(atom_map.len(), bond_map.len());
+            crate::properties::MoleculeProperties::new(atom_map.len(), bond_map.len());
         *properties.atoms_mut() = graph
             .properties()
             .atoms()
+            .raw()
             .select_indices(&old_atoms.iter().map(|id| id.index()).collect::<Vec<_>>())
             .map_err(|error| MolfileInterpretError {
                 line: 1,
@@ -1232,12 +1234,13 @@ fn partition_molfile_staging(
         *properties.bonds_mut() = graph
             .properties()
             .bonds()
+            .raw()
             .select_indices(&bond_map.keys().map(|id| id.index()).collect::<Vec<_>>())
             .map_err(|error| MolfileInterpretError {
                 line: 1,
                 message: error.to_string(),
             })?;
-        *editor.working_mut().properties_mut() = properties;
+        editor.working_mut().properties = properties;
         let remapped_stereo = source_stereo
             .iter()
             .filter_map(|mark| {

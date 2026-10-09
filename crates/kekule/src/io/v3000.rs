@@ -7,7 +7,6 @@ use crate::chemistry::{
 use crate::core::*;
 use crate::geometry::Point3;
 use crate::io::{MolWriteError, MolfileParseOptions, MolfileVersion, SdfParseError};
-use crate::structure::ModelView;
 use crate::units::{Quantity, ANGSTROM};
 
 use super::molfile_write::MolfileRecord;
@@ -62,18 +61,6 @@ pub(super) struct V3000BondSyntax {
     pub(super) stereo_code: Option<u8>,
     pub(super) unsupported_options: Vec<String>,
     pub(super) line: usize,
-}
-
-pub fn write_mol_v3000(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
-    let record = MolfileRecord::molecule(molecule)?;
-    render_mol_v3000(&record, "")
-}
-
-pub(crate) fn write_model_v3000(
-    model: ModelView<'_>,
-) -> std::result::Result<String, MolWriteError> {
-    let record = MolfileRecord::model(model, MolfileVersion::V3000)?;
-    render_mol_v3000(&record, "")
 }
 
 pub(super) fn render_mol_v3000(

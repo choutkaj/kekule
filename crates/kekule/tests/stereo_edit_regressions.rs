@@ -34,10 +34,15 @@ fn changed_bond_orders_prune_stereo_through_all_molecular_mutators() {
         let result = editor.try_finish().unwrap();
         assert_eq!(result.bond(bond).unwrap().order, BondOrder::Single);
         assert_eq!(result.stereo_elements().count(), 0);
-        let text = kekule::smiles::write_isomeric(&result).unwrap();
+        let text =
+            kekule::smiles::write(&result, kekule::smiles::SmilesWriteOptions::isomeric()).unwrap();
         let reparsed = molecule(&text);
         assert_eq!(reparsed.stereo_elements().count(), 0);
-        assert_eq!(kekule::smiles::write_canonical(&result).unwrap(), "FCCF");
+        assert_eq!(
+            kekule::smiles::write(&result, kekule::smiles::SmilesWriteOptions::canonical())
+                .unwrap(),
+            "FCCF"
+        );
     }
     assert_eq!(source.stereo_elements().count(), 1);
 }
@@ -98,7 +103,7 @@ fn checked_stereo_insertion_and_replacement_reject_single_bond_focus() {
 #[test]
 fn topology_order_changes_publish_without_stale_double_bond_stereo() {
     for replacement in [false, true] {
-        let source = Arc::new(Topology::from_molecule(&molecule("F/C=C/F")).unwrap());
+        let source = Arc::new(Topology::from_molecule((molecule("F/C=C/F")).clone()).unwrap());
         let mut editor = source.edit();
         let (id, bond) = editor
             .bonds()
@@ -186,11 +191,15 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
         // asserting a radical. Explicitly cap that site for the export check.
         ungrouped.atom_mut(stereo.center).unwrap().hydrogens =
             kekule::core::HydrogenDeclaration::Fixed(1);
-        let text = kekule::smiles::write_isomeric(&ungrouped.finish().unwrap()).unwrap();
+        let text = kekule::smiles::write(
+            &ungrouped.finish().unwrap(),
+            kekule::smiles::SmilesWriteOptions::isomeric(),
+        )
+        .unwrap();
         assert_eq!(molecule(&text).stereo_elements().count(), 1);
     }
-    let topology = Arc::new(Topology::from_molecule(&source).unwrap());
-    let instance = topology.instances().next().unwrap().0;
+    let topology = Arc::new(Topology::from_molecule(source.clone()).unwrap());
+    let instance = topology.molecules().next().unwrap().id();
     let mut editor = topology.edit();
     let bond = editor
         .bond_handle(InstanceBondId::new(instance, removed))
@@ -205,7 +214,11 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
     }
     ungrouped.atom_mut(stereo.center).unwrap().hydrogens =
         kekule::core::HydrogenDeclaration::Fixed(1);
-    kekule::smiles::write_isomeric(&ungrouped.finish().unwrap()).unwrap();
+    kekule::smiles::write(
+        &ungrouped.finish().unwrap(),
+        kekule::smiles::SmilesWriteOptions::isomeric(),
+    )
+    .unwrap();
     assert_eq!(source.stereo_elements().count(), 2);
 }
 

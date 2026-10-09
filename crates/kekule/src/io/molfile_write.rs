@@ -97,10 +97,10 @@ impl<'a> MolfileRecord<'a> {
         let mut atoms = Vec::with_capacity(topology.atom_count());
         let mut indexes = BTreeMap::new();
         let mut positions = BTreeMap::new();
-        for (serial, (qualified, atom)) in (1u64..).zip(topology.atoms()) {
-            let occurrence = topology
-                .molecule(qualified.molecule())
-                .map_err(|error| MolWriteError::invalid_model(error.to_string()))?;
+        for (serial, view) in (1u64..).zip(topology.atoms()) {
+            let qualified = view.id();
+            let atom = view.atom();
+            let occurrence = view.molecule();
             let position = model
                 .position(qualified)
                 .map_err(|error| MolWriteError::invalid_model(error.to_string()))?
@@ -148,7 +148,9 @@ impl<'a> MolfileRecord<'a> {
             );
         }
         let mut bonds = Vec::with_capacity(topology.bond_count());
-        for (qualified, bond) in topology.bonds() {
+        for view in topology.bonds() {
+            let qualified = view.id();
+            let bond = view.bond();
             let projected = projections
                 .get(&qualified.molecule())
                 .expect("every topology instance has a stereo projection");

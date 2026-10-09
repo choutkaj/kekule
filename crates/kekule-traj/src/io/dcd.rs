@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
-    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryFrameView,
-    TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryIoOperation,
+    TrajectoryReader, TrajectoryWriter,
 };
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_TIME_UNIT};
 
@@ -1255,26 +1256,38 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 "forces",
             ));
         }
-        if frame.properties().realization_atom_properties().has_data() {
+        if frame.properties().atoms().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
                 "atom properties",
             ));
         }
-        if frame.properties().realization_bond_properties().has_data() {
+        if frame.properties().bonds().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
                 "bond properties",
             ));
         }
-        if !frame.properties().owner_is_empty() {
+        if !frame.properties().owner().is_empty() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
                 "properties",
             ));
+        }
+        for (present, field) in [
+            (frame.occupancies().is_some(), "occupancies"),
+            (frame.b_factors().is_some(), "B-factors"),
+        ] {
+            if present {
+                return Err(writer_field_error(
+                    &self.source_label,
+                    self.frame_count,
+                    field,
+                ));
+            }
         }
         if self.frame_count >= i32::MAX as u64 {
             return Err(writer_overflow(

@@ -51,7 +51,7 @@ impl Topology {
     /// use kekule::{smiles, topology::Topology};
     ///
     /// let molecules = smiles::to_molecules("c1ccccc1.[Na+]")?;
-    /// let source = Topology::from_molecules(&molecules)?;
+    /// let source = Topology::from_molecules(molecules)?;
     /// let perceived = source.perceived()?;
     /// assert!(perceived.shares_layout(&source));
     /// assert!(perceived.molecules().all(|m| m.molecule().perception().has_aromaticity()));

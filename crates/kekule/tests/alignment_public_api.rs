@@ -1,7 +1,7 @@
 use kekule::{
     alignment::{
-        kabsch, kabsch_with_options, AlignmentError, AlignmentWeighting, KabschOptions,
-        PeriodicAlignmentPolicy, RigidAlignment,
+        kabsch, kabsch_with_options, AlignmentError, AlignmentOptions, PeriodicPolicy,
+        RigidAlignment, Weighting,
     },
     core::{Atom, BondOrder, Element, MoleculeEditor},
     geometry::Point3,
@@ -24,7 +24,7 @@ fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::er
     }
     let molecule = graph.finish()?;
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule)?;
+    let definition = builder.add_molecule_definition(molecule.clone())?;
     builder.add_instance(definition)?;
     let topology = Arc::new(builder.build()?);
     let moving_points = [
@@ -45,7 +45,11 @@ fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::er
     )?;
     let selection = AtomSelection::from_atoms(&topology, topology.atom_ids().iter().copied())?;
 
-    let result: RigidAlignment = kabsch(moving.view(), reference.view(), &selection)?;
+    let result: RigidAlignment = kabsch(
+        moving.as_model_view(),
+        reference.as_model_view(),
+        &selection,
+    )?;
     assert_eq!(result.selected_atom_count(), 4);
     assert_eq!(result.rmsd().unit(), CANONICAL_LENGTH_UNIT);
     for (moving, reference) in moving
@@ -63,23 +67,23 @@ fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::er
 
     let weights = [1.0; 4];
     let weighted = kabsch_with_options(
-        moving.view(),
-        reference.view(),
+        moving.as_model_view(),
+        reference.as_model_view(),
         &selection,
-        KabschOptions {
-            weighting: AlignmentWeighting::Explicit(&weights),
-            periodic_policy: PeriodicAlignmentPolicy::RejectPeriodic,
+        AlignmentOptions {
+            weighting: Weighting::Explicit(&weights),
+            periodic_policy: PeriodicPolicy::RejectPeriodic,
         },
     )?;
     assert!(weighted.rmsd().into_value() < 1.0e-12);
 
     let error = kabsch_with_options(
-        moving.view(),
-        reference.view(),
+        moving.as_model_view(),
+        reference.as_model_view(),
         &selection,
-        KabschOptions {
-            weighting: AlignmentWeighting::Explicit(&weights[..3]),
-            ..KabschOptions::default()
+        AlignmentOptions {
+            weighting: Weighting::Explicit(&weights[..3]),
+            ..AlignmentOptions::default()
         },
     )
     .unwrap_err();

@@ -35,21 +35,17 @@ impl Positions {
         Ok(())
     }
 
-    pub(crate) fn into_canonical_values(self) -> Vec<Point3> {
-        self.values
-    }
     pub(crate) fn try_reserve(
         &mut self,
         additional: usize,
     ) -> Result<(), std::collections::TryReserveError> {
         self.values.try_reserve(additional)
     }
+    pub(super) fn resize_canonical(&mut self, len: usize) {
+        self.values.resize(len, Point3::origin());
+    }
     pub(crate) fn extend_canonical(&mut self, positions: &Positions) {
         self.values.extend_from_slice(&positions.values);
-    }
-    pub(super) fn from_canonical_values(values: Vec<Point3>) -> Self {
-        debug_assert!(values.iter().all(|point| point.is_finite()));
-        Self { values }
     }
 
     /// Copies numerical coordinates into canonical storage.

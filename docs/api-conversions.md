@@ -11,13 +11,15 @@ view. Ordinary getters and operations use semantic names. Copyable views may tak
 | Interpretation `into_molecule()`, `into_molecules()`, `into_model()`, `into_parts()` | Consume the interpretation and extract canonical results. |
 | Document/record/block `to_*` methods | Retain source syntax, interpret it, and produce a canonical result. |
 | `smiles::to_molecules(&str)`, `smiles::to_topology(&str)` | Interpret borrowed input. |
-| View `to_model()` and `TrajectoryFrameView::to_frame()` | Materialize owned geometry or frame data while retaining the owner. |
+| Collection item view `to_model()`, `payload().clone()` | Materialize an owned model or payload while retaining the collection. |
 | `Model::to_builder()` | Clone into staging. |
 | `Model::into_builder()`, `Topology::into_builder()` | Consume the owner to resume assembly. |
 | `Quantity::to_unit(unit)` | Convert a borrowed, cloneable payload. |
 | `Quantity::into_unit(unit)`, `Quantity::into_value()` | Consume the quantity; the payload need not be cloneable. |
+| `Model::into_parts()`, payload `into_conformation()` | Consume the owner and return its topology handle and conformation. |
+| `Realizations::into_parts()`, `into_items()`, `Trajectory::into_ensemble()` | Consume a collection; payloads and conformations move without copying. |
 | Reader `into_indexed()`, writer `into_trajectory()` | Transfer reader/writer ownership. |
-| `as_model()`, `Quantity::as_ref()`, `PropertyKey::as_str()` | Return borrowed projections. |
+| `as_model_view()` (`AsModelView`), `Quantity::as_ref()`, `PropertyKey::as_str()` | Return borrowed projections. |
 
 Ownership does not imply cost: indexing a reader scans input, and extracting
 molecules from shared topology may clone definitions. Likewise,

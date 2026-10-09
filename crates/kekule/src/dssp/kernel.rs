@@ -271,7 +271,7 @@ fn extract_backbones(
         .atom_sites()
         .map(|(_, site)| site.atom().molecule())
         .collect::<BTreeSet<_>>();
-    for (molecule_id, _) in model.topology().instances() {
+    for molecule_id in model.topology().molecules().map(|molecule| molecule.id()) {
         if !represented_instances.contains(&molecule_id) {
             report.ignored_instances.push(molecule_id);
         }

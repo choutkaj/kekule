@@ -20,6 +20,7 @@ mod builder;
 mod classification;
 mod components;
 mod editor;
+mod entity_views;
 mod hierarchy;
 mod layout;
 mod lookup;
@@ -34,13 +35,14 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::{Atom, AtomId, Bond, BondId, Molecule};
-use crate::properties::{Properties, PropertyError, PropertyKey, PropertyTable, PropertyValue};
+use crate::core::{AtomId, BondId, Molecule};
+use crate::properties::{PropertyKey, PropertyValue, PropertyValueRef, TopologyProperties};
 pub use builder::{
     TopologyBuildError, TopologyBuilder, TopologyBuilderError, TopologyHierarchyError,
     TopologyIdKind,
 };
 pub use editor::*;
+pub use entity_views::{AtomView, BondView};
 pub use hierarchy::{
     AtomSite, AtomSiteId, AtomSiteMetadata, Chain, ChainId, Hierarchy, HierarchyError,
     HierarchyIdKind, Residue, ResidueId,
@@ -185,12 +187,19 @@ impl<'a> ChainView<'a> {
             .map(move |residue| ResidueView::new(topology, residue))
     }
 
-    pub fn property(self, key: &PropertyKey) -> Result<Option<PropertyValue>, PropertyError> {
+    /// One static topology annotation of this node.
+    pub fn property(self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.property_ref(key).map(PropertyValueRef::to_value)
+    }
+
+    /// Borrows one static annotation without copying string storage.
+    pub fn property_ref(self, key: &PropertyKey) -> Option<PropertyValueRef<'a>> {
         self.topology
             .layout
             .properties
             .chains()
-            .value(key, self.id.index())
+            .value_ref(key, self.id)
+            .expect("dense hierarchy rows cover every node")
     }
 
     pub(crate) fn local(self) -> &'a Chain {
@@ -269,12 +278,19 @@ impl<'a> ResidueView<'a> {
             .map(move |site| AtomSiteView::new(topology, site))
     }
 
-    pub fn property(self, key: &PropertyKey) -> Result<Option<PropertyValue>, PropertyError> {
+    /// One static topology annotation of this node.
+    pub fn property(self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.property_ref(key).map(PropertyValueRef::to_value)
+    }
+
+    /// Borrows one static annotation without copying string storage.
+    pub fn property_ref(self, key: &PropertyKey) -> Option<PropertyValueRef<'a>> {
         self.topology
             .layout
             .properties
             .residues()
-            .value(key, self.id.index())
+            .value_ref(key, self.id)
+            .expect("dense hierarchy rows cover every node")
     }
 
     pub(crate) fn local(self) -> &'a Residue {
@@ -311,8 +327,11 @@ impl<'a> AtomSiteView<'a> {
         self.id
     }
 
-    pub fn atom(self) -> InstanceAtomId {
-        self.local().atom()
+    /// The topology atom this site describes.
+    pub fn atom(self) -> AtomView<'a> {
+        self.topology
+            .atom(self.local().atom())
+            .expect("atom sites name topology atoms")
     }
 
     pub fn residue(self) -> ResidueView<'a> {
@@ -323,12 +342,19 @@ impl<'a> AtomSiteView<'a> {
         self.local().metadata()
     }
 
-    pub fn property(self, key: &PropertyKey) -> Result<Option<PropertyValue>, PropertyError> {
+    /// One static topology annotation of this node.
+    pub fn property(self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.property_ref(key).map(PropertyValueRef::to_value)
+    }
+
+    /// Borrows one static annotation without copying string storage.
+    pub fn property_ref(self, key: &PropertyKey) -> Option<PropertyValueRef<'a>> {
         self.topology
             .layout
             .properties
             .atom_sites()
-            .value(key, self.id.index())
+            .value_ref(key, self.id)
+            .expect("dense hierarchy rows cover every node")
     }
 
     pub(crate) fn local(self) -> &'a AtomSite {
@@ -445,61 +471,100 @@ impl<'a> MoleculeInstanceView<'a> {
         self.definition().class()
     }
 
-    pub fn property(self, key: &PropertyKey) -> Result<Option<PropertyValue>, PropertyError> {
+    /// One static topology annotation of this occurrence.
+    pub fn property(self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.property_ref(key).map(PropertyValueRef::to_value)
+    }
+
+    /// Borrows one static annotation without copying string storage.
+    pub fn property_ref(self, key: &PropertyKey) -> Option<PropertyValueRef<'a>> {
         self.topology
             .layout
             .properties
             .molecule_instances()
-            .value(key, self.id.index())
+            .value_ref(key, self.id)
+            .expect("dense instance rows cover every occurrence")
     }
 
-    /// Iterates atoms with topology-wide, instance-qualified identities.
-    pub fn atoms(self) -> impl Iterator<Item = (InstanceAtomId, &'a Atom)> + 'a {
+    /// This occurrence's atoms in local atom-ID order.
+    pub fn atoms(self) -> impl Iterator<Item = AtomView<'a>> + 'a {
+        let topology = self.topology;
         let instance = self.id;
-        self.molecule()
-            .atoms()
-            .map(move |(atom, payload)| (InstanceAtomId::new(instance, atom), payload))
+        self.molecule().atom_ids().map(move |atom| {
+            topology
+                .atom(InstanceAtomId::new(instance, atom))
+                .expect("instance atoms are topology atoms")
+        })
     }
 
-    /// Iterates bonds with topology-wide, instance-qualified identities.
-    pub fn bonds(self) -> impl Iterator<Item = (InstanceBondId, &'a Bond)> + 'a {
+    /// This occurrence's bonds in local bond-ID order.
+    pub fn bonds(self) -> impl Iterator<Item = BondView<'a>> + 'a {
+        let topology = self.topology;
         let instance = self.id;
-        self.molecule()
-            .bonds()
-            .map(move |(bond, payload)| (InstanceBondId::new(instance, bond), payload))
+        self.molecule().bond_ids().map(move |bond| {
+            topology
+                .bond(InstanceBondId::new(instance, bond))
+                .expect("instance bonds are topology bonds")
+        })
     }
 
-    /// Iterates complete chains that contain at least one atom in this molecule.
-    /// A returned chain is not clipped and may also contain atoms from other
-    /// molecule instances.
+    /// Complete chains that contain at least one atom of this occurrence, in
+    /// hierarchy order. A chain is not clipped and may contain other atoms.
     pub fn chains(self) -> impl Iterator<Item = ChainView<'a>> + 'a {
-        let molecule = self.id;
-        self.topology.chains().filter(move |chain| {
-            chain
-                .residues()
-                .flat_map(ResidueView::atom_sites)
-                .any(|site| site.atom().molecule() == molecule)
-        })
+        let topology = self.topology;
+        let chains = self
+            .residue_ids()
+            .into_iter()
+            .map(|residue| {
+                topology
+                    .layout
+                    .hierarchy
+                    .residue(residue)
+                    .expect("site residue")
+                    .chain()
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        chains
+            .into_iter()
+            .map(move |chain| ChainView::new(topology, chain))
     }
 
-    /// Iterates complete residues that contain at least one atom in this molecule.
-    /// A returned residue is not clipped and may contain sites from other
-    /// molecule instances.
+    /// Complete residues that contain at least one atom of this occurrence, in
+    /// hierarchy order. A residue is not clipped and may contain other atoms.
     pub fn residues(self) -> impl Iterator<Item = ResidueView<'a>> + 'a {
-        let molecule = self.id;
-        self.topology.residues().filter(move |residue| {
-            residue
-                .atom_sites()
-                .any(|site| site.atom().molecule() == molecule)
-        })
+        let topology = self.topology;
+        self.residue_ids()
+            .into_iter()
+            .map(move |residue| ResidueView::new(topology, residue))
     }
 
-    /// Iterates atom sites whose atoms belong to this molecule instance.
+    /// Atom sites of this occurrence's atoms, in hierarchy order.
+    ///
+    /// Costs one indexed lookup per atom of this occurrence, independent of
+    /// the size of the rest of the hierarchy.
     pub fn atom_sites(self) -> impl Iterator<Item = AtomSiteView<'a>> + 'a {
-        let molecule = self.id;
-        self.topology
-            .atom_sites()
-            .filter(move |site| site.atom().molecule() == molecule)
+        let topology = self.topology;
+        self.site_ids()
+            .into_iter()
+            .map(move |site| AtomSiteView::new(topology, site))
+    }
+
+    fn site_ids(self) -> std::collections::BTreeSet<AtomSiteId> {
+        let hierarchy = &self.topology.layout.hierarchy;
+        let instance = self.id;
+        self.molecule()
+            .atom_ids()
+            .filter_map(|atom| hierarchy.atom_site_for_atom(InstanceAtomId::new(instance, atom)))
+            .map(|site| site.id())
+            .collect()
+    }
+
+    fn residue_ids(self) -> std::collections::BTreeSet<ResidueId> {
+        let hierarchy = &self.topology.layout.hierarchy;
+        self.site_ids()
+            .into_iter()
+            .map(|site| hierarchy.atom_site(site).expect("indexed site").residue())
+            .collect()
     }
 
     pub const fn qualify_atom(self, atom: AtomId) -> InstanceAtomId {
@@ -559,7 +624,7 @@ struct TopologyLayout {
     atoms: DenseLayout<InstanceAtomId>,
     bonds: DenseLayout<InstanceBondId>,
     hierarchy: Hierarchy,
-    properties: Properties,
+    properties: TopologyProperties,
     // Retain explicit assignment intent separately from inferred class values.
     // It affects future editing policy, not current topology layout equality.
     molecule_class_overrides: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
@@ -589,8 +654,8 @@ impl Topology {
     ///
     /// The molecule is installed as its own definition and instance. No
     /// hierarchy is fabricated and no chemical perception is run.
-    pub fn from_molecule(molecule: &Molecule) -> Result<Self, TopologyBuildError> {
-        Self::from_molecules(std::slice::from_ref(molecule))
+    pub fn from_molecule(molecule: Molecule) -> Result<Self, TopologyBuildError> {
+        Self::from_molecules([molecule])
     }
 
     /// Builds a topology containing one explicit occurrence per input molecule.
@@ -600,10 +665,13 @@ impl Topology {
     /// explicit [`TopologyBuilder`] policies. Empty input fails with
     /// [`TopologyBuildError::NoMoleculeInstances`]. No hierarchy is fabricated
     /// and no chemical perception is run.
-    pub fn from_molecules(molecules: &[Molecule]) -> Result<Self, TopologyBuildError> {
+    pub fn from_molecules(
+        molecules: impl IntoIterator<Item = Molecule>,
+    ) -> Result<Self, TopologyBuildError> {
+        let molecules = molecules.into_iter();
         let mut builder = TopologyBuilder::new();
-        builder.reserve_definitions(molecules.len())?;
-        builder.reserve_instances(molecules.len())?;
+        builder.reserve_definitions(molecules.size_hint().0)?;
+        builder.reserve_instances(molecules.size_hint().0)?;
         for molecule in molecules {
             builder.add_molecule(molecule)?;
         }
@@ -642,7 +710,7 @@ impl Topology {
     /// use std::sync::Arc;
     /// use kekule::{smiles, topology::{AtomSelection, Topology}};
     ///
-    /// let source = Arc::new(smiles::to_topology("c1ccccc1")?);
+    /// let source = smiles::to_topology("c1ccccc1")?;
     /// let selection = AtomSelection::all(&source);
     /// let perceived = Arc::new(source.perceived()?);
     /// assert!(perceived.shares_layout(&source));
@@ -658,63 +726,35 @@ impl Topology {
     }
 
     /// Replaces the static properties of a freshly built, unshared topology.
-    fn install_properties(&mut self, properties: Properties) {
+    fn install_properties(&mut self, properties: TopologyProperties) {
         Arc::get_mut(&mut self.layout)
             .expect("a freshly built topology does not share its layout")
             .properties = properties;
     }
 
-    pub fn definition(
-        &self,
-        id: MoleculeDefinitionId,
-    ) -> Result<&MoleculeDefinition, TopologyError> {
-        self.definitions
-            .get(id.index())
-            .ok_or(TopologyError::InvalidMoleculeDefinitionId(id))
+    pub fn definition(&self, id: MoleculeDefinitionId) -> Option<&MoleculeDefinition> {
+        self.definitions.get(id.index())
     }
 
-    pub fn definitions(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (MoleculeDefinitionId, &MoleculeDefinition)> {
-        self.definitions
-            .iter()
-            .map(|definition| (definition.id, definition))
+    /// Reusable definitions in definition-ID order.
+    pub fn definitions(&self) -> impl ExactSizeIterator<Item = &MoleculeDefinition> {
+        self.definitions.iter()
     }
 
     pub fn definition_count(&self) -> usize {
         self.definitions.len()
     }
 
-    pub fn instance(&self, id: MoleculeInstanceId) -> Result<&MoleculeInstance, TopologyError> {
-        self.layout
-            .instances
-            .get(id.index())
-            .ok_or(TopologyError::InvalidMoleculeInstanceId(id))
-    }
-
-    pub fn instances(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &MoleculeInstance)> {
-        self.layout
-            .instances
-            .iter()
-            .map(|instance| (instance.id, instance))
-    }
-
     pub fn instance_count(&self) -> usize {
         self.layout.instances.len()
     }
 
-    /// Returns one instance-qualified molecular view.
-    pub fn molecule(
-        &self,
-        id: MoleculeInstanceId,
-    ) -> Result<MoleculeInstanceView<'_>, TopologyError> {
-        self.instance(id)?;
-        Ok(MoleculeInstanceView::new(self, id))
+    /// One instance-qualified molecule occurrence.
+    pub fn molecule(&self, id: MoleculeInstanceId) -> Option<MoleculeInstanceView<'_>> {
+        (id.index() < self.layout.instances.len()).then(|| MoleculeInstanceView::new(self, id))
     }
 
-    /// Iterates explicit molecules in authoritative instance order.
+    /// Molecule occurrences in authoritative instance order.
     pub fn molecules(
         &self,
     ) -> impl ExactSizeIterator<Item = MoleculeInstanceView<'_>> + DoubleEndedIterator {
@@ -724,32 +764,13 @@ impl Topology {
             .map(|instance| MoleculeInstanceView::new(self, instance.id))
     }
 
-    pub fn definition_for_instance(
-        &self,
-        instance: MoleculeInstanceId,
-    ) -> Result<&MoleculeDefinition, TopologyError> {
-        let instance = self.instance(instance)?;
-        self.definition(instance.definition)
-    }
-
-    /// Returns the canonical class shared by the instance's definition.
-    pub fn molecule_class(
-        &self,
-        instance: MoleculeInstanceId,
-    ) -> Result<MoleculeClass, TopologyError> {
-        Ok(self.definition_for_instance(instance)?.class())
-    }
-
-    pub fn instances_for_definition(
+    /// Occurrences of one definition in instance order.
+    pub fn instances_of(
         &self,
         definition: MoleculeDefinitionId,
-    ) -> Result<impl Iterator<Item = &MoleculeInstance>, TopologyError> {
-        self.definition(definition)?;
-        Ok(self
-            .layout
-            .instances
-            .iter()
-            .filter(move |instance| instance.definition == definition))
+    ) -> impl Iterator<Item = MoleculeInstanceView<'_>> {
+        self.molecules()
+            .filter(move |molecule| molecule.definition_id() == definition)
     }
 
     /// Returns the one authoritative system-level hierarchy.
@@ -757,78 +778,13 @@ impl Topology {
         &self.layout.hierarchy
     }
 
-    pub fn properties(&self) -> &Properties {
+    /// Static annotations: owner values plus dense rows for molecule
+    /// instances, atoms, bonds, chains, residues, and atom sites.
+    pub fn properties(&self) -> &TopologyProperties {
         &self.layout.properties
     }
 
-    pub fn molecule_instance_properties(&self) -> &PropertyTable {
-        self.layout.properties.molecule_instances()
-    }
-
-    pub fn atom_properties(&self) -> &PropertyTable {
-        self.layout.properties.atoms()
-    }
-
-    pub fn bond_properties(&self) -> &PropertyTable {
-        self.layout.properties.bonds()
-    }
-
-    pub fn chain_properties(&self) -> &PropertyTable {
-        self.layout.properties.chains()
-    }
-
-    pub fn residue_properties(&self) -> &PropertyTable {
-        self.layout.properties.residues()
-    }
-
-    pub fn atom_site_properties(&self) -> &PropertyTable {
-        self.layout.properties.atom_sites()
-    }
-
-    pub fn molecule_instance_property(
-        &self,
-        instance: MoleculeInstanceId,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyValue>, TopologyError> {
-        self.instance(instance)?;
-        self.layout
-            .properties
-            .molecule_instances()
-            .value(key, instance.index())
-            .map_err(|error| TopologyError::Property(Box::new(error)))
-    }
-
-    pub fn atom_property(
-        &self,
-        atom: InstanceAtomId,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyValue>, TopologyError> {
-        let index = self
-            .atom_index(atom)
-            .ok_or(TopologyError::InvalidAtomId(atom))?;
-        self.layout
-            .properties
-            .atoms()
-            .value(key, index.index())
-            .map_err(|error| TopologyError::Property(Box::new(error)))
-    }
-
-    pub fn bond_property(
-        &self,
-        bond: InstanceBondId,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyValue>, TopologyError> {
-        let index = self
-            .bond_index(bond)
-            .ok_or(TopologyError::InvalidBondId(bond))?;
-        self.layout
-            .properties
-            .bonds()
-            .value(key, index.index())
-            .map_err(|error| TopologyError::Property(Box::new(error)))
-    }
-
-    /// Iterates every topology-global hierarchy chain in hierarchy order.
+    /// Every hierarchy chain in hierarchy order.
     pub fn chains(&self) -> impl Iterator<Item = ChainView<'_>> {
         self.layout
             .hierarchy
@@ -836,7 +792,7 @@ impl Topology {
             .map(move |(id, _)| ChainView::new(self, id))
     }
 
-    /// Iterates every topology-global hierarchy residue in hierarchy order.
+    /// Every hierarchy residue in hierarchy order.
     pub fn residues(&self) -> impl Iterator<Item = ResidueView<'_>> {
         self.layout
             .hierarchy
@@ -844,7 +800,7 @@ impl Topology {
             .map(move |(id, _)| ResidueView::new(self, id))
     }
 
-    /// Iterates every topology-global hierarchy atom site in hierarchy order.
+    /// Every hierarchy atom site in hierarchy order.
     pub fn atom_sites(&self) -> impl Iterator<Item = AtomSiteView<'_>> {
         self.layout
             .hierarchy
@@ -852,110 +808,60 @@ impl Topology {
             .map(move |(id, _)| AtomSiteView::new(self, id))
     }
 
-    pub fn chain(&self, id: ChainId) -> Result<ChainView<'_>, TopologyError> {
+    pub fn chain(&self, id: ChainId) -> Option<ChainView<'_>> {
         self.layout
             .hierarchy
             .chain(id)
-            .map_err(|_| TopologyError::InvalidChainId(id))?;
-        Ok(ChainView::new(self, id))
+            .ok()
+            .map(|_| ChainView::new(self, id))
     }
 
-    pub fn residue(&self, id: ResidueId) -> Result<ResidueView<'_>, TopologyError> {
+    pub fn residue(&self, id: ResidueId) -> Option<ResidueView<'_>> {
         self.layout
             .hierarchy
             .residue(id)
-            .map_err(|_| TopologyError::InvalidResidueId(id))?;
-        Ok(ResidueView::new(self, id))
+            .ok()
+            .map(|_| ResidueView::new(self, id))
     }
 
-    pub fn atom_site(&self, id: AtomSiteId) -> Result<AtomSiteView<'_>, TopologyError> {
+    pub fn atom_site(&self, id: AtomSiteId) -> Option<AtomSiteView<'_>> {
         self.layout
             .hierarchy
             .atom_site(id)
-            .map_err(|_| TopologyError::InvalidAtomSiteId(id))?;
-        Ok(AtomSiteView::new(self, id))
+            .ok()
+            .map(|_| AtomSiteView::new(self, id))
     }
 
-    pub fn atom_for_site(&self, site: AtomSiteId) -> Result<InstanceAtomId, TopologyError> {
-        let atom = self.atom_site(site)?.atom();
-        self.atom(atom)?;
-        Ok(atom)
+    /// One atom by qualified ID.
+    pub fn atom(&self, id: InstanceAtomId) -> Option<AtomView<'_>> {
+        self.atom_index(id).map(|index| AtomView::new(self, index))
     }
 
-    pub fn atom_site_for_atom(
-        &self,
-        atom: InstanceAtomId,
-    ) -> Result<Option<AtomSiteView<'_>>, TopologyError> {
-        self.atom(atom)?;
-        Ok(self
-            .layout
-            .hierarchy
-            .atom_site_for_atom(atom)
-            .map(|site| AtomSiteView::new(self, site.id())))
+    /// One atom by dense index.
+    pub fn atom_at(&self, index: TopologyAtomIndex) -> Option<AtomView<'_>> {
+        (index.index() < self.atom_count()).then(|| AtomView::new(self, index))
     }
 
-    pub fn residue_for_atom(
-        &self,
-        atom: InstanceAtomId,
-    ) -> Result<Option<ResidueView<'_>>, TopologyError> {
-        let Some(site) = self.atom_site_for_atom(atom)? else {
-            return Ok(None);
-        };
-        Ok(Some(site.residue()))
+    /// One bond by qualified ID.
+    pub fn bond(&self, id: InstanceBondId) -> Option<BondView<'_>> {
+        self.bond_index(id).map(|index| BondView::new(self, index))
     }
 
-    pub fn chain_for_atom(
-        &self,
-        atom: InstanceAtomId,
-    ) -> Result<Option<ChainView<'_>>, TopologyError> {
-        let Some(residue) = self.residue_for_atom(atom)? else {
-            return Ok(None);
-        };
-        Ok(Some(residue.chain()))
+    /// One bond by dense index.
+    pub fn bond_at(&self, index: TopologyBondIndex) -> Option<BondView<'_>> {
+        (index.index() < self.bond_count()).then(|| BondView::new(self, index))
     }
 
-    pub fn residue_for_site(&self, site: AtomSiteId) -> Result<ResidueView<'_>, TopologyError> {
-        Ok(self.atom_site(site)?.residue())
+    /// Atoms in authoritative dense order.
+    pub fn atoms(&self) -> impl ExactSizeIterator<Item = AtomView<'_>> + DoubleEndedIterator {
+        (0..self.atom_count())
+            .map(|index| AtomView::new(self, TopologyAtomIndex::new(index as u32)))
     }
 
-    pub fn chain_for_residue(&self, residue: ResidueId) -> Result<ChainView<'_>, TopologyError> {
-        Ok(self.residue(residue)?.chain())
-    }
-
-    pub fn atom(&self, id: InstanceAtomId) -> Result<&Atom, TopologyError> {
-        self.molecule(id.molecule)?
-            .molecule()
-            .atom(id.atom)
-            .map_err(|_| TopologyError::InvalidAtomId(id))
-    }
-
-    pub fn bond(&self, id: InstanceBondId) -> Result<&Bond, TopologyError> {
-        self.molecule(id.molecule)?
-            .molecule()
-            .bond(id.bond)
-            .map_err(|_| TopologyError::InvalidBondId(id))
-    }
-
-    /// Iterates atoms in authoritative dense order.
-    pub fn atoms(&self) -> impl ExactSizeIterator<Item = (InstanceAtomId, &Atom)> {
-        self.layout.atoms.order().iter().copied().map(|id| {
-            (
-                id,
-                self.atom(id)
-                    .expect("built topology instance atoms contain only live atoms"),
-            )
-        })
-    }
-
-    /// Iterates bonds in authoritative dense order.
-    pub fn bonds(&self) -> impl ExactSizeIterator<Item = (InstanceBondId, &Bond)> {
-        self.layout.bonds.order().iter().copied().map(|id| {
-            (
-                id,
-                self.bond(id)
-                    .expect("built topology instance bonds contain only live bonds"),
-            )
-        })
+    /// Bonds in authoritative dense order.
+    pub fn bonds(&self) -> impl ExactSizeIterator<Item = BondView<'_>> + DoubleEndedIterator {
+        (0..self.bond_count())
+            .map(|index| BondView::new(self, TopologyBondIndex::new(index as u32)))
     }
 
     pub fn atom_count(&self) -> usize {
@@ -998,130 +904,23 @@ impl Topology {
         self.layout.bonds.id(index.index())
     }
 
-    pub fn neighbors(
+    /// Stored instance records in instance order.
+    pub(crate) fn instances(
         &self,
-        atom: InstanceAtomId,
-    ) -> Result<impl Iterator<Item = InstanceAtomId> + '_, TopologyError> {
-        let molecule = self.molecule(atom.molecule)?.molecule();
-        molecule
-            .atom(atom.atom)
-            .map_err(|_| TopologyError::InvalidAtomId(atom))?;
-        Ok(molecule
-            .neighbors(atom.atom)
-            .expect("validated atom has valid local adjacency")
-            .map(move |neighbor| InstanceAtomId::new(atom.molecule, neighbor)))
+    ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &MoleculeInstance)> {
+        self.layout
+            .instances
+            .iter()
+            .map(|instance| (instance.id, instance))
     }
 
-    pub fn incident_bonds(
-        &self,
-        atom: InstanceAtomId,
-    ) -> Result<impl Iterator<Item = (InstanceBondId, &Bond)> + '_, TopologyError> {
-        let molecule = self.molecule(atom.molecule)?.molecule();
-        molecule
-            .atom(atom.atom)
-            .map_err(|_| TopologyError::InvalidAtomId(atom))?;
-        Ok(molecule
-            .incident_bonds(atom.atom)
-            .expect("validated atom has valid local adjacency")
-            .map(move |(bond, payload)| (InstanceBondId::new(atom.molecule, bond), payload)))
+    pub(crate) fn instance(&self, id: MoleculeInstanceId) -> Option<&MoleculeInstance> {
+        self.layout.instances.get(id.index())
     }
 
-    /// Counts explicit graph hydrogen neighbors in this atom's molecule instance.
-    pub fn explicit_hydrogens(&self, atom: InstanceAtomId) -> Result<usize, TopologyError> {
-        self.atom(atom)?;
-        self.molecule(atom.molecule)?
-            .molecule()
-            .explicit_hydrogens(atom.atom)
-            .map_err(|_| TopologyError::InvalidAtomId(atom))
-    }
-
-    /// Counts all implicit hydrogens; see [`Molecule::implicit_hydrogens`].
-    pub fn implicit_hydrogens(&self, atom: InstanceAtomId) -> Result<Option<usize>, TopologyError> {
-        self.atom(atom)?;
-        self.molecule(atom.molecule)?
-            .molecule()
-            .implicit_hydrogens(atom.atom)
-            .map_err(|_| TopologyError::InvalidAtomId(atom))
-    }
-
-    /// Counts explicit and implicit hydrogens; see [`Molecule::total_hydrogens`].
-    pub fn total_hydrogens(&self, atom: InstanceAtomId) -> Result<Option<usize>, TopologyError> {
-        self.atom(atom)?;
-        self.molecule(atom.molecule)?
-            .molecule()
-            .total_hydrogens(atom.atom)
-            .map_err(|_| TopologyError::InvalidAtomId(atom))
-    }
-
-    /// Reads only the inferred contribution, for valence-model diagnostics.
-    pub fn inferred_hydrogens(&self, atom: InstanceAtomId) -> Result<Option<u8>, TopologyError> {
-        self.atom(atom)?;
-        self.molecule(atom.molecule)?
-            .molecule()
-            .inferred_hydrogens(atom.atom)
-            .map_err(|_| TopologyError::InvalidAtomId(atom))
-    }
-
-    pub fn atom_is_aromatic(&self, atom: InstanceAtomId) -> Result<Option<bool>, TopologyError> {
-        self.atom(atom)?;
-        self.molecule(atom.molecule)?
-            .molecule()
-            .atom_is_aromatic(atom.atom)
-            .map_err(|_| TopologyError::InvalidAtomId(atom))
-    }
-
-    pub fn bond_is_aromatic(&self, bond: InstanceBondId) -> Result<Option<bool>, TopologyError> {
-        self.bond(bond)?;
-        self.molecule(bond.molecule)?
-            .molecule()
-            .bond_is_aromatic(bond.bond)
-            .map_err(|_| TopologyError::InvalidBondId(bond))
+    /// The definition molecule of one valid occurrence.
+    pub(crate) fn definition_molecule(&self, instance: MoleculeInstanceId) -> &Molecule {
+        let definition = self.layout.instances[instance.index()].definition;
+        self.definitions[definition.index()].molecule()
     }
 }
-
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum TopologyError {
-    InvalidMoleculeDefinitionId(MoleculeDefinitionId),
-    InvalidMoleculeInstanceId(MoleculeInstanceId),
-    InvalidAtomId(InstanceAtomId),
-    InvalidBondId(InstanceBondId),
-    InvalidChainId(ChainId),
-    InvalidResidueId(ResidueId),
-    InvalidAtomSiteId(AtomSiteId),
-    InvalidAtomIndex(TopologyAtomIndex),
-    InvalidBondIndex(TopologyBondIndex),
-    Property(Box<PropertyError>),
-}
-
-impl fmt::Display for TopologyError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidMoleculeDefinitionId(id) => {
-                write!(formatter, "invalid molecule definition: {id}")
-            }
-            Self::InvalidMoleculeInstanceId(id) => {
-                write!(formatter, "invalid molecule instance: {id}")
-            }
-            Self::InvalidAtomId(id) => write!(formatter, "invalid topology atom: {id}"),
-            Self::InvalidBondId(id) => write!(formatter, "invalid topology bond: {id}"),
-            Self::InvalidChainId(id) => write!(formatter, "invalid topology chain: {id}"),
-            Self::InvalidResidueId(id) => write!(formatter, "invalid topology residue: {id}"),
-            Self::InvalidAtomSiteId(id) => write!(formatter, "invalid topology atom site: {id}"),
-            Self::InvalidAtomIndex(index) => write!(formatter, "invalid {index}"),
-            Self::InvalidBondIndex(index) => write!(formatter, "invalid {index}"),
-            Self::Property(error) => write!(formatter, "invalid topology property: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for TopologyError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Property(error) => Some(error),
-            _ => None,
-        }
-    }
-}
-
-impl Eq for TopologyError {}

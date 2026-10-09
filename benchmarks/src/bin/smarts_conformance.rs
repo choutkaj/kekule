@@ -1,6 +1,6 @@
 //! JSONL protocol for optional external SMARTS conformance comparisons.
 use kekule::{
-    core::AromaticityModel, hydrogens, perception::aromaticity, query, smiles, substructure::*,
+    core::AromaticityModel, perception::aromaticity, query, smiles, substructure::*,
     topology::Topology,
 };
 use serde_json::{json, Value};
@@ -26,14 +26,14 @@ fn evaluate(row: &Value) -> Value {
         for m in &mut molecules {
             m.perceive()?;
             if row["explicit_hydrogens"] == true {
-                hydrogens::add_hydrogens(m)?;
+                m.add_hydrogens()?;
                 m.perceive()?;
             }
             if row["mdl"] == true {
                 aromaticity::perceive_aromaticity(m, AromaticityModel::Mdl)?;
             }
         }
-        Ok(Arc::new(Topology::from_molecules(&molecules)?))
+        Ok(Arc::new(Topology::from_molecules(molecules)?))
     };
     let topology = match build() {
         Ok(t) => t,
@@ -41,7 +41,7 @@ fn evaluate(row: &Value) -> Value {
     };
     let indices = topology
         .molecules()
-        .flat_map(|m| m.atoms().map(|(id, _)| id))
+        .flat_map(|m| m.atoms().map(|atom| atom.id()))
         .enumerate()
         .map(|(i, id)| (id, i))
         .collect::<std::collections::BTreeMap<_, _>>();
@@ -52,7 +52,7 @@ fn evaluate(row: &Value) -> Value {
         uniquify: false,
         ..Default::default()
     };
-    let matches = match find_topology_substructure_matches_complete(&topology, &query, options) {
+    let matches = match find_topology_matches_with_options(&topology, &query, options) {
         Ok(m) => m,
         Err(e) => {
             return json!({"status":"match_error","kind":format!("{e:?}"),"message":e.to_string()})

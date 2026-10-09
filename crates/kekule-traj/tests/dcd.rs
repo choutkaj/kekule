@@ -41,16 +41,19 @@ fn set_frame(
     cell: Option<PeriodicCell>,
 ) {
     buffer
+        .frame_mut()
+        .conformation_mut()
         .set_positions(Quantity::new(
             coordinates.map(|[x, y, z]| Point3::new(x, y, z)),
             ANGSTROM,
         ))
         .unwrap();
-    buffer.set_step(Some(step));
+    buffer.frame_mut().set_step(Some(step));
     buffer
+        .frame_mut()
         .set_time(time.map(|value| Quantity::new(value, PICOSECOND)))
         .unwrap();
-    buffer.set_cell(cell);
+    buffer.frame_mut().conformation_mut().set_cell(cell);
 }
 
 #[test]
@@ -104,8 +107,11 @@ fn dcd_acute_cell_angles_round_trip_without_degree_cosine_ambiguity() {
             [true; 3],
         )
         .unwrap();
-        frame.set_step(Some(4));
-        frame.set_cell(Some(unrepresentable));
+        frame.frame_mut().set_step(Some(4));
+        frame
+            .frame_mut()
+            .conformation_mut()
+            .set_cell(Some(unrepresentable));
         assert_eq!(
             codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
             Some(TrajectoryCodecErrorKind::InvalidFrame)
@@ -188,14 +194,14 @@ fn dcd_scratch_limit_includes_records_fixed_atoms_and_indexed_reuse() {
         let mut destination = sequential.frame_buffer();
         let mut expected = Vec::new();
         while sequential.read_next(&mut destination).unwrap() {
-            expected.push(destination.frame_view().to_frame());
+            expected.push(destination.frame_view().payload().clone());
         }
         let mut indexed = open(required).unwrap().into_indexed().unwrap();
         for (random, next) in [(1, 0), (0, 1)] {
             indexed.read_frame(random as u64, &mut destination).unwrap();
-            assert_eq!(destination.frame_view().to_frame(), expected[random]);
+            assert_eq!(destination.frame_view().payload().clone(), expected[random]);
             assert!(indexed.read_next(&mut destination).unwrap());
-            assert_eq!(destination.frame_view().to_frame(), expected[next]);
+            assert_eq!(destination.frame_view().payload().clone(), expected[next]);
         }
         indexed.read_frame(0, &mut destination).unwrap();
         assert!(!indexed.read_next(&mut destination).unwrap());
@@ -213,7 +219,7 @@ fn dcd_record_growth_is_bounded_before_reading_or_publishing_coordinates() {
     )
     .unwrap();
     let mut frame = FrameBuffer::new(Arc::clone(&topology));
-    frame.set_step(Some(0));
+    frame.frame_mut().set_step(Some(0));
     writer.write_frame(frame.frame_view()).unwrap();
     let bytes = writer.finish().unwrap().into_inner();
     let dense_bytes = topology.atom_count() * std::mem::size_of::<Point3>();
@@ -229,7 +235,7 @@ fn dcd_record_growth_is_bounded_before_reading_or_publishing_coordinates() {
     )
     .unwrap();
     let mut destination = reader.frame_buffer();
-    destination.set_step(Some(99));
+    destination.frame_mut().set_step(Some(99));
     let before = buffer_snapshot(&destination);
     assert_eq!(
         codec_kind(&reader.read_next(&mut destination).unwrap_err()),
@@ -316,7 +322,7 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
         Some(canonical),
     );
     writer.write_frame(frame.frame_view()).unwrap();
-    frame.set_step(Some(1));
+    frame.frame_mut().set_step(Some(1));
     let before = writer.writer().clone();
     for vectors in [
         // Rotated noncubic cell from the corruption regression.
@@ -342,7 +348,7 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
             Vector3::new(0.0, 0.0, -30.0),
         ],
     ] {
-        frame.set_cell(Some(
+        frame.frame_mut().conformation_mut().set_cell(Some(
             PeriodicCell::new(Quantity::new(vectors, ANGSTROM), [true; 3]).unwrap(),
         ));
         assert_eq!(
@@ -351,7 +357,10 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
         );
         assert_eq!(writer.writer(), &before);
     }
-    frame.set_cell(Some(canonical));
+    frame
+        .frame_mut()
+        .conformation_mut()
+        .set_cell(Some(canonical));
     writer.write_frame(frame.frame_view()).unwrap();
     let bytes = writer.finish().unwrap().into_inner();
     let mut reader = DcdReader::new(
@@ -592,7 +601,11 @@ fn indexed_dcd_restoration_failure_does_not_publish_or_change_destination() {
         None,
     );
     destination
-        .insert_property(
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .owner_mut()
+        .insert(
             PropertyKey::new("sentinel").unwrap(),
             PropertyValue::Bool(true),
         )
@@ -869,7 +882,11 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
         Some(cell),
     );
     bond_annotated
-        .insert_bond_property_column(
+        .frame_mut()
+        .conformation_mut()
+        .properties_mut()
+        .bonds_mut()
+        .insert(
             PropertyKey::new("conformational_entropy").unwrap(),
             kekule::properties::PropertyColumn::Real {
                 unit: ANGSTROM,

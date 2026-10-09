@@ -34,7 +34,7 @@ use crate::properties::PropertyError;
 /// let water = water_builder.finish()?;
 ///
 /// let mut builder = TopologyBuilder::new();
-/// let definition = builder.add_molecule_definition(&water)?;
+/// let definition = builder.add_molecule_definition(water)?;
 /// let first = builder.add_instance(definition)?;
 /// builder.add_instance(definition)?;
 /// let source = Arc::new(builder.build()?);
@@ -93,7 +93,7 @@ fn validate_instances(
         len: 0,
     };
     for instance in instances {
-        if topology.instance(instance).is_err() {
+        if topology.instance(instance).is_none() {
             return Err(TopologyTransformError::InvalidSourceInstance(instance));
         }
         if !normalized.members[instance.index()] {
@@ -131,11 +131,12 @@ fn retain_normalized(
     builder.reserve_instances(retained.len)?;
 
     let mut definition_targets = vec![None; topology.definition_count()];
-    for (source_id, definition) in topology
+    for definition in topology
         .definitions()
-        .filter(|(id, _)| referenced_definitions[id.index()])
+        .filter(|definition| referenced_definitions[definition.id().index()])
     {
-        let target_id = builder.add_molecule_definition(definition.molecule())?;
+        let source_id = definition.id();
+        let target_id = builder.add_molecule_definition(definition.molecule().clone())?;
         builder.preserve_molecule_class(
             target_id,
             definition.class(),
@@ -158,10 +159,7 @@ fn retain_normalized(
             .expect("retained instance has a retained definition");
         let target_instance = builder.add_instance(target_definition)?;
         instance_sources.push(Some(source_instance.index()));
-        let source_definition = topology
-            .definition_for_instance(source_instance)
-            .expect("retained instance references a live definition")
-            .molecule();
+        let source_definition = topology.definition_molecule(source_instance);
         for atom in source_definition.atom_ids() {
             atom_targets.insert(
                 InstanceAtomId::new(source_instance, atom),
@@ -597,7 +595,7 @@ fn project_topology_properties(
     atom_targets: &BTreeMap<InstanceAtomId, InstanceAtomId>,
     bond_targets: &BTreeMap<InstanceBondId, InstanceBondId>,
     hierarchy: &HierarchyProjection,
-) -> Result<crate::properties::Properties, PropertyError> {
+) -> Result<crate::properties::TopologyProperties, PropertyError> {
     let atom_sources = atom_targets
         .iter()
         .map(|(source, target)| (*target, *source))
@@ -626,7 +624,7 @@ fn project_topology_properties(
                 .index()
         })
         .collect::<Vec<_>>();
-    source.properties().project_topology(
+    source.properties().project(
         instance_sources,
         &atom_indices,
         &bond_indices,

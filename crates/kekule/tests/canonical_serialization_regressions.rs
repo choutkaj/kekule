@@ -27,8 +27,8 @@ fn canonical_smiles_matches_rdkit_charge_closures_stereo_and_cx_radicals() {
             for molecule in &mut molecules {
                 molecule.perceive().unwrap();
             }
-            let topology = kekule::topology::Topology::from_molecules(&molecules).unwrap();
-            smiles::write_topology(
+            let topology = kekule::topology::Topology::from_molecules(molecules.clone()).unwrap();
+            smiles::write(
                 &topology,
                 smiles::SmilesWriteOptions {
                     mode: smiles::SmilesWriteMode::Canonical,
@@ -48,9 +48,9 @@ fn cx_radical_emission_preserves_occupancy_and_rejects_explicit_spin() {
         let mut original = smiles::to_molecules(source).unwrap().pop().unwrap();
         original.perceive().unwrap();
         for text in [
-            smiles::write(&original).unwrap(),
-            smiles::write_isomeric(&original).unwrap(),
-            smiles::write_canonical(&original).unwrap(),
+            smiles::write(&original, smiles::SmilesWriteOptions::default()).unwrap(),
+            smiles::write(&original, smiles::SmilesWriteOptions::isomeric()).unwrap(),
+            smiles::write(&original, smiles::SmilesWriteOptions::canonical()).unwrap(),
         ] {
             let restored = smiles::to_molecules(&text).unwrap().pop().unwrap();
             let radicals = |m: &Molecule| {
@@ -76,10 +76,12 @@ fn cx_radical_emission_preserves_occupancy_and_rejects_explicit_spin() {
     }
     for source in ["[CH2] |^3:0|", "[CH2] |^4:0|", "[CH] |^6:0|", "[CH] |^7:0|"] {
         let molecule = smiles::to_molecules(source).unwrap().pop().unwrap();
-        assert!(smiles::write_canonical(&molecule)
-            .unwrap_err()
-            .message()
-            .contains("spin"));
+        assert!(
+            smiles::write(&molecule, smiles::SmilesWriteOptions::canonical())
+                .unwrap_err()
+                .message()
+                .contains("spin")
+        );
     }
 }
 
@@ -101,11 +103,15 @@ fn canonical_smiles_uses_rdkit_style_roots_and_branch_continuations() {
         for source in sources {
             let mut molecule = smiles::to_molecules(source).unwrap().pop().unwrap();
             molecule.perceive().unwrap();
-            let written = smiles::write_canonical(&molecule).unwrap();
+            let written =
+                smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap();
             assert_eq!(written, expected, "{source}");
             let mut restored = smiles::to_molecules(&written).unwrap().pop().unwrap();
             restored.perceive().unwrap();
-            assert_eq!(smiles::write_canonical(&restored).unwrap(), written);
+            assert_eq!(
+                smiles::write(&restored, smiles::SmilesWriteOptions::canonical()).unwrap(),
+                written
+            );
         }
     }
 }
@@ -114,7 +120,7 @@ fn canonical_smiles_uses_rdkit_style_roots_and_branch_continuations() {
 fn canonical_smiles_retains_charged_and_mapped_hydrogen_atoms() {
     for source in ["[H-][Na+]", "[H+]C", "[H:7]C", "[H-:7][Na+]"] {
         let original = smiles::to_molecules(source).unwrap().pop().unwrap();
-        let written = smiles::write_canonical(&original).unwrap();
+        let written = smiles::write(&original, smiles::SmilesWriteOptions::canonical()).unwrap();
         let restored = smiles::to_molecules(&written).unwrap().pop().unwrap();
         assert_eq!(
             restored.formal_charge(),
@@ -247,10 +253,16 @@ fn canonical_smiles_is_invariant_under_atom_bond_and_endpoint_permutations() {
     ];
     for &(count, edges) in graphs {
         let mut permutation = (0..count).collect::<Vec<_>>();
-        let expected =
-            smiles::write_canonical(&carbon_graph(count, edges, &permutation, false)).unwrap();
+        let expected = smiles::write(
+            &carbon_graph(count, edges, &permutation, false),
+            smiles::SmilesWriteOptions::canonical(),
+        )
+        .unwrap();
         let restored = smiles::to_molecules(&expected).unwrap().pop().unwrap();
-        assert_eq!(smiles::write_canonical(&restored).unwrap(), expected);
+        assert_eq!(
+            smiles::write(&restored, smiles::SmilesWriteOptions::canonical()).unwrap(),
+            expected
+        );
         let mut seed = 17u64;
         for iteration in 0..24 {
             for index in 0..count {
@@ -259,7 +271,7 @@ fn canonical_smiles_is_invariant_under_atom_bond_and_endpoint_permutations() {
             }
             let molecule = carbon_graph(count, edges, &permutation, iteration % 2 == 0);
             assert_eq!(
-                smiles::write_canonical(&molecule).unwrap(),
+                smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap(),
                 expected,
                 "permutation {permutation:?}"
             );
@@ -272,7 +284,7 @@ fn canonical_smiles_ranks_the_emitted_hydrogen_and_isotope_projection() {
     let canonical = |source: &str| {
         let mut molecule = smiles::to_molecules(source).unwrap().pop().unwrap();
         molecule.perceive().unwrap();
-        smiles::write_canonical(&molecule).unwrap()
+        smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap()
     };
     for equivalents in [
         ["CC(C)CC", "CC(C)[CH2]C", "CC(C)[13CH2]C"],
@@ -310,12 +322,15 @@ fn canonical_hydrogen_normalization_preserves_isotope_vertices() {
         .pop()
         .unwrap();
     original.perceive().unwrap();
-    let written = smiles::write_canonical(&original).unwrap();
+    let written = smiles::write(&original, smiles::SmilesWriteOptions::canonical()).unwrap();
     let mut restored = smiles::to_molecules(&written).unwrap().pop().unwrap();
     restored.perceive().unwrap();
     assert_eq!(restored.atom_count(), 4);
     assert!(restored.atoms().any(|(_, atom)| atom.isotope == Some(3)));
-    assert_eq!(smiles::write_canonical(&restored).unwrap(), written);
+    assert_eq!(
+        smiles::write(&restored, smiles::SmilesWriteOptions::canonical()).unwrap(),
+        written
+    );
     let hydrogen_count = |molecule: &Molecule| {
         molecule
             .atoms()
@@ -344,7 +359,7 @@ fn canonical_input_complexity_is_bounded_before_export() {
         previous = Some(atom);
     }
     let molecule = editor.finish().unwrap();
-    let error = smiles::write_canonical(&molecule).unwrap_err();
+    let error = smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap_err();
     assert_eq!(error.kind(), MolWriteErrorKind::ResourceLimit);
     assert!(error.to_string().contains("input complexity"));
 }
@@ -391,10 +406,13 @@ fn canonical_stereo_is_invariant_under_atom_and_bond_permutations() {
     ] {
         let mut original = smiles::to_molecules(source).unwrap().pop().unwrap();
         original.perceive().unwrap();
-        let expected = smiles::write_canonical(&original).unwrap();
+        let expected = smiles::write(&original, smiles::SmilesWriteOptions::canonical()).unwrap();
         let mut restored = smiles::to_molecules(&expected).unwrap().pop().unwrap();
         restored.perceive().unwrap();
-        assert_eq!(smiles::write_canonical(&restored).unwrap(), expected);
+        assert_eq!(
+            smiles::write(&restored, smiles::SmilesWriteOptions::canonical()).unwrap(),
+            expected
+        );
         for iteration in 0..24 {
             let mut order = original.atom_ids().collect::<Vec<_>>();
             for index in (1..order.len()).rev() {
@@ -476,7 +494,7 @@ fn canonical_stereo_is_invariant_under_atom_and_bond_permutations() {
             let mut molecule = editor.finish().unwrap();
             molecule.perceive().unwrap();
             assert_eq!(
-                smiles::write_canonical(&molecule).unwrap(),
+                smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap(),
                 expected,
                 "{source}: {atoms:?}"
             );
@@ -495,8 +513,8 @@ fn canonical_topology_sorts_components_without_collapsing_instances() {
         for molecule in &mut molecules {
             molecule.perceive().unwrap();
         }
-        let topology = kekule::topology::Topology::from_molecules(&molecules).unwrap();
-        smiles::write_topology(&topology, options).unwrap()
+        let topology = kekule::topology::Topology::from_molecules(molecules.clone()).unwrap();
+        smiles::write(&topology, options).unwrap()
     };
     assert_eq!(canonical("O.CC.O.[13CH4]"), canonical("[13CH4].O.O.CC"));
     assert_eq!(canonical("O.CC.O.[13CH4]").split('.').count(), 4);
@@ -507,7 +525,7 @@ fn canonical_aromatic_output_does_not_depend_on_localized_double_bonds() {
     let canonical = |source: &str| {
         let mut molecule = smiles::to_molecules(source).unwrap().pop().unwrap();
         molecule.perceive().unwrap();
-        smiles::write_canonical(&molecule).unwrap()
+        smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap()
     };
     for equivalents in [
         ["CC1=CC=CC=C1O", "Cc1ccccc1O", "CC1=C(O)C=CC=C1"],
@@ -529,10 +547,13 @@ fn canonical_aromatic_output_does_not_depend_on_localized_double_bonds() {
 fn canonical_retains_isolated_and_molecular_hydrogen_without_perception() {
     for source in ["[H]", "[H][H]", "[2H][H]"] {
         let molecule = smiles::to_molecules(source).unwrap().pop().unwrap();
-        let written = smiles::write_canonical(&molecule).unwrap();
+        let written = smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap();
         let restored = smiles::to_molecules(&written).unwrap().pop().unwrap();
         assert_eq!(restored.atom_count(), molecule.atom_count());
-        assert_eq!(smiles::write_canonical(&restored).unwrap(), written);
+        assert_eq!(
+            smiles::write(&restored, smiles::SmilesWriteOptions::canonical()).unwrap(),
+            written
+        );
     }
 }
 
@@ -548,11 +569,15 @@ fn smiles_uses_all_one_hundred_ring_labels_and_bounds_live_labels() {
         .collect::<Vec<_>>();
     let order = (0..21).collect::<Vec<_>>();
     let molecule = carbon_graph(21, &bounded, &order, false);
-    let written = smiles::write(&molecule).unwrap();
+    let written = smiles::write(&molecule, smiles::SmilesWriteOptions::default()).unwrap();
     assert!(written.contains('0'), "{written}");
     let restored = smiles::to_molecules(&written).unwrap().pop().unwrap();
     assert_eq!(restored.bond_count(), molecule.bond_count());
-    let error = smiles::write(&carbon_graph(21, &complete, &order, false)).unwrap_err();
+    let error = smiles::write(
+        &carbon_graph(21, &complete, &order, false),
+        smiles::SmilesWriteOptions::default(),
+    )
+    .unwrap_err();
     assert_eq!(error.kind(), MolWriteErrorKind::ResourceLimit);
 }
 
@@ -561,12 +586,15 @@ fn canonical_labeling_prunes_equivalent_phenyl_branches() {
     let source = "COC1C(C(C(C(O1)CBr)OC(C2=CC=CC=C2)(C3=CC=CC=C3)C4=CC=CC=C4)OC(C5=CC=CC=C5)(C6=CC=CC=C6)C7=CC=CC=C7)OC(C8=CC=CC=C8)(C9=CC=CC=C9)C1=CC=CC=C1";
     let mut molecule = smiles::to_molecules(source).unwrap().pop().unwrap();
     molecule.perceive().unwrap();
-    let written = smiles::write_canonical(&molecule).unwrap();
+    let written = smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap();
     let mut restored = smiles::to_molecules(&written).unwrap().pop().unwrap();
     restored.perceive().unwrap();
     assert_eq!(restored.atom_count(), molecule.atom_count());
     assert_eq!(restored.bond_count(), molecule.bond_count());
-    assert_eq!(smiles::write_canonical(&restored).unwrap(), written);
+    assert_eq!(
+        smiles::write(&restored, smiles::SmilesWriteOptions::canonical()).unwrap(),
+        written
+    );
 }
 
 #[test]
@@ -583,12 +611,12 @@ fn source_order_spiro_groups_preserve_native_stereo_on_rereading() {
     ] {
         let mut molecule = smiles::to_molecules(source).unwrap().pop().unwrap();
         molecule.perceive().unwrap();
-        let expected = smiles::write_canonical(&molecule).unwrap();
-        let written = smiles::write_isomeric(&molecule).unwrap();
+        let expected = smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap();
+        let written = smiles::write(&molecule, smiles::SmilesWriteOptions::isomeric()).unwrap();
         let mut restored = smiles::to_molecules(&written).unwrap().pop().unwrap();
         restored.perceive().unwrap();
         assert_eq!(
-            smiles::write_canonical(&restored).unwrap(),
+            smiles::write(&restored, smiles::SmilesWriteOptions::canonical()).unwrap(),
             expected,
             "{source} -> {written}"
         );

@@ -112,7 +112,7 @@ fn tight(tolerance: f64) -> MinimizeOptions {
 fn lbfgs_converges_on_an_ill_conditioned_bowl() {
     let model = start();
     let bowl = Bowl::new(&model, centers());
-    let result = minimize(&bowl, model.view(), &tight(1e-6)).unwrap();
+    let result = minimize(&bowl, model.as_model_view(), &tight(1e-6)).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
     // Steepest descent needs on the order of the condition number (1e4) steps.
     assert!(
@@ -138,7 +138,7 @@ fn every_accepted_step_is_observed_and_observers_can_stop() {
     let model = start();
     let bowl = Bowl::new(&model, centers());
     let mut energies = Vec::new();
-    let result = minimize_with_observer(&bowl, model.view(), &tight(1e-6), |step| {
+    let result = minimize_with_observer(&bowl, model.as_model_view(), &tight(1e-6), |step| {
         energies.push(step.energy.total().into_value());
         assert_eq!(step.iteration, energies.len());
         assert_eq!(step.positions.len(), 3);
@@ -166,12 +166,12 @@ fn iteration_limit_is_reported() {
         max_iterations: 2,
         ..tight(1e-9)
     };
-    let result = minimize(&bowl, model.view(), &options).unwrap();
+    let result = minimize(&bowl, model.as_model_view(), &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::MaxIterations);
     assert_eq!(result.iterations(), 2);
     let converged = minimize(
         &bowl,
-        model.view(),
+        model.as_model_view(),
         &MinimizeOptions {
             max_iterations: 0,
             ..tight(1e9)
@@ -192,18 +192,23 @@ fn singular_trials_are_backtracked_but_other_failures_abort() {
         max_step: Quantity::new(1.0, NANOMETER),
         ..tight(1e-6)
     };
-    let result = minimize(&bowl, model.view(), &options).unwrap();
+    let result = minimize(&bowl, model.as_model_view(), &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
 
     bowl.wall = 0.2;
-    let error = minimize(&bowl, model.view(), &options).unwrap_err();
+    let error = minimize(&bowl, model.as_model_view(), &options).unwrap_err();
     assert!(matches!(
         error,
         MinimizationError::Evaluation(EvaluationError::InvalidGeometry { .. })
     ));
 
     let unrelated = start();
-    let error = minimize(&Bowl::new(&unrelated, centers()), model.view(), &options).unwrap_err();
+    let error = minimize(
+        &Bowl::new(&unrelated, centers()),
+        model.as_model_view(),
+        &options,
+    )
+    .unwrap_err();
     assert_eq!(
         error,
         MinimizationError::Evaluation(EvaluationError::IncompatibleTopology)
@@ -215,7 +220,7 @@ fn gradients_inconsistent_with_the_energy_stop_the_line_search() {
     let model = start();
     let mut bowl = Bowl::new(&model, centers());
     bowl.flat_energy = true;
-    let result = minimize(&bowl, model.view(), &MinimizeOptions::default()).unwrap();
+    let result = minimize(&bowl, model.as_model_view(), &MinimizeOptions::default()).unwrap();
     assert_eq!(result.status(), MinimizationStatus::LineSearchFailed);
     assert_eq!(result.iterations(), 0);
     assert_eq!(result.positions(), model.positions());
@@ -231,7 +236,7 @@ fn displacements_that_round_away_stop_the_line_search() {
         max_step: Quantity::new(1e-6, NANOMETER),
         ..MinimizeOptions::default()
     };
-    let result = minimize(&bowl, model.view(), &options).unwrap();
+    let result = minimize(&bowl, model.as_model_view(), &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::LineSearchFailed);
     assert_eq!(result.positions(), model.positions());
 }
@@ -246,7 +251,7 @@ fn progress_is_independent_of_the_gradient_scale() {
             max_iterations: 3,
             ..tight(1e-300)
         };
-        let result = minimize(&bowl, model.view(), &options).unwrap();
+        let result = minimize(&bowl, model.as_model_view(), &options).unwrap();
         assert_eq!(result.iterations(), 3, "scale {scale}");
         let initial = result.initial_energy().total().into_value();
         result.final_evaluation().energy().total().into_value() / initial
@@ -283,7 +288,7 @@ fn invalid_options_are_rejected_before_evaluation() {
         },
     ] {
         assert!(matches!(
-            minimize(&bowl, model.view(), &options),
+            minimize(&bowl, model.as_model_view(), &options),
             Err(MinimizationError::InvalidOptions(_))
         ));
     }
@@ -292,7 +297,7 @@ fn invalid_options_are_rejected_before_evaluation() {
         ..MinimizeOptions::default()
     };
     assert!(matches!(
-        minimize(&bowl, model.view(), &wrong_unit),
+        minimize(&bowl, model.as_model_view(), &wrong_unit),
         Err(MinimizationError::Unit(_))
     ));
 }

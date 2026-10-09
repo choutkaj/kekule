@@ -14,7 +14,7 @@ fn canonical_topology_hierarchy_types_and_views_are_public() {
     let molecule = editor.finish().unwrap();
 
     let mut builder = TopologyBuilder::new();
-    let instance = builder.add_molecule(&molecule).unwrap();
+    let instance = builder.add_molecule(molecule.clone()).unwrap();
     let chain: ChainId = builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue: ResidueId = builder
         .hierarchy_mut()
@@ -41,7 +41,7 @@ fn canonical_topology_hierarchy_types_and_views_are_public() {
     let chain_view: ChainView<'_> = topology.chain(chain).unwrap();
     let residue_view: ResidueView<'_> = chain_view.residues().next().unwrap();
     let site_view: AtomSiteView<'_> = residue_view.atom_sites().next().unwrap();
-    assert_eq!(site_view.atom(), InstanceAtomId::new(instance, atom));
+    assert_eq!(site_view.atom().id(), InstanceAtomId::new(instance, atom));
 
     assert_eq!(
         hierarchy.chain(ChainId::new(99)).unwrap_err(),

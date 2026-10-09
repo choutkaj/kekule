@@ -58,7 +58,10 @@ pub(super) fn dssp_record_json(fixture_path: &Input) -> Result<Value, Box<dyn Er
             ..MmcifInterpretOptions::default()
         },
     )?;
-    let result = match dssp::assign(interpretation.model().view(), dssp::DsspOptions::default()) {
+    let result = match dssp::assign(
+        interpretation.model().as_model_view(),
+        dssp::DsspOptions::default(),
+    ) {
         Ok(result) => result,
         Err(dssp::DsspError::NoAnalyzableProteinResidues) => {
             return Ok(json!({

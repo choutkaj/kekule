@@ -45,10 +45,10 @@ fn atom(instance: MoleculeInstanceId, raw: u32) -> InstanceAtomId {
 fn interleaved() -> (Model, [InstanceAtomId; 3]) {
     let mut builder = ModelBuilder::new();
     let methanol = builder
-        .add_molecule(&molecule("CO"), &positions(&[0.0, 2.0]))
+        .add_molecule((molecule("CO")).clone(), &positions(&[0.0, 2.0]))
         .unwrap();
     let water = builder
-        .add_molecule(&molecule("O"), &positions(&[1.0]))
+        .add_molecule((molecule("O")).clone(), &positions(&[1.0]))
         .unwrap();
     let order = [atom(methanol, 0), atom(water, 0), atom(methanol, 1)];
     builder.set_atom_order(order).unwrap();
@@ -58,13 +58,14 @@ fn interleaved() -> (Model, [InstanceAtomId; 3]) {
 #[test]
 fn builder_order_is_a_validated_permutation_carrying_atom_rows() {
     let mut builder = TopologyBuilder::new();
-    let methanol = builder.add_molecule(&molecule("CO")).unwrap();
-    let water = builder.add_molecule(&molecule("O")).unwrap();
+    let methanol = builder.add_molecule((molecule("CO")).clone()).unwrap();
+    let water = builder.add_molecule((molecule("O")).clone()).unwrap();
     let [carbon, oxygen, water_oxygen] = [atom(methanol, 0), atom(methanol, 1), atom(water, 0)];
     assert_eq!(builder.atom_ids(), &[carbon, oxygen, water_oxygen]);
     let tag = PropertyKey::new("row").unwrap();
     builder
-        .atom_properties_mut()
+        .properties_mut()
+        .atoms_mut()
         .insert(
             tag.clone(),
             PropertyColumn::Int(vec![Some(0), Some(1), Some(2)]),
@@ -101,7 +102,7 @@ fn builder_order_is_a_validated_permutation_carrying_atom_rows() {
         .set_atom_order([carbon, water_oxygen, oxygen])
         .unwrap();
     // A later instance appends after the explicit order.
-    let ion = builder.add_molecule(&molecule("[Na+]")).unwrap();
+    let ion = builder.add_molecule((molecule("[Na+]")).clone()).unwrap();
     let topology = builder.build().unwrap();
     assert_eq!(
         topology.atom_ids(),
@@ -114,7 +115,7 @@ fn builder_order_is_a_validated_permutation_carrying_atom_rows() {
         );
     }
     assert_eq!(
-        topology.atom_properties().get(&tag),
+        topology.properties().atoms().get(&tag),
         Some(&PropertyColumn::Int(vec![Some(0), Some(2), Some(1), None]))
     );
     // Bonds stay in instance order regardless of atom order.
@@ -123,11 +124,12 @@ fn builder_order_is_a_validated_permutation_carrying_atom_rows() {
 
     // Append-oriented rebuilding keeps the explicit order.
     let default_order =
-        Topology::from_molecules(&[molecule("CO"), molecule("O"), molecule("[Na+]")]).unwrap();
+        Topology::from_molecules([molecule("CO"), molecule("O"), molecule("[Na+]")].clone())
+            .unwrap();
     assert!(!topology.same_layout(&default_order));
     let ammonia = molecule("N");
     let mut extended = topology.into_builder();
-    let appended = extended.add_molecule(&ammonia).unwrap();
+    let appended = extended.add_molecule(ammonia.clone()).unwrap();
     let extended = extended.build().unwrap();
     assert_eq!(
         extended.atom_ids(),
@@ -144,7 +146,7 @@ fn builder_order_is_a_validated_permutation_carrying_atom_rows() {
 #[test]
 fn model_builder_order_moves_positions_with_atoms() {
     let (model, order) = interleaved();
-    assert_eq!(model.atom_ids(), order);
+    assert_eq!(model.topology().atom_ids(), order);
     assert_eq!(xs(&model), [0.0, 1.0, 2.0]);
     for (atom, x) in order.into_iter().zip([0.0, 1.0, 2.0]) {
         assert_eq!((model.position(atom).unwrap().x * 10.0).round(), x);
@@ -200,7 +202,7 @@ fn editors_keep_surviving_atoms_in_source_order_and_append_new_atoms() {
     }
 
     let mut editor = model.edit();
-    let water_oxygen = editor.atom_handle(model.atom_ids()[1]).unwrap();
+    let water_oxygen = editor.atom_handle(model.topology().atom_ids()[1]).unwrap();
     editor.delete_atom(water_oxygen).unwrap();
     let removed = editor.finish().unwrap();
     assert_eq!(xs(&removed), [0.0, 2.0]);
@@ -208,7 +210,7 @@ fn editors_keep_surviving_atoms_in_source_order_and_append_new_atoms() {
         removed
             .topology()
             .atoms()
-            .map(|(_, atom)| atom.element.symbol())
+            .map(|atom| atom.element.symbol())
             .collect::<Vec<_>>(),
         ["C", "O"]
     );
@@ -219,7 +221,7 @@ fn appending_a_model_keeps_its_dense_order_and_positions() {
     let (source, _) = interleaved();
     let mut editor = kekule::structure::ModelEditor::new();
     let appended = editor.append_model(&source).unwrap();
-    for (dense, &atom) in source.atom_ids().iter().enumerate() {
+    for (dense, &atom) in source.topology().atom_ids().iter().enumerate() {
         assert_eq!(
             editor.position(appended.atom(atom).unwrap()).unwrap(),
             source.position(atom).unwrap(),
@@ -232,7 +234,7 @@ fn appending_a_model_keeps_its_dense_order_and_positions() {
         model
             .topology()
             .atoms()
-            .map(|(_, atom)| atom.element.symbol())
+            .map(|atom| atom.element.symbol())
             .collect::<Vec<_>>(),
         ["C", "O", "O"]
     );
@@ -249,14 +251,14 @@ fn subsets_and_instance_filters_keep_relative_source_order() {
         subset.correspondence().source_atom_indices(),
         &[TopologyAtomIndex::new(1), TopologyAtomIndex::new(2)]
     );
-    let sliced = model.slice(&selection).unwrap();
+    let sliced = model.subset(&selection).unwrap();
     assert_eq!(xs(&sliced), [1.0, 2.0]);
 
     let methanol = transform::retain_instances(&topology, [carbon.molecule()]).unwrap();
     assert_eq!(
         methanol
             .atoms()
-            .map(|(_, atom)| atom.element.symbol())
+            .map(|atom| atom.element.symbol())
             .collect::<Vec<_>>(),
         ["C", "O"]
     );

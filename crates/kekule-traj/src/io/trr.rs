@@ -5,11 +5,12 @@ use std::sync::Arc;
 
 use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
-    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryFrameView,
-    TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryIoOperation,
+    TrajectoryReader, TrajectoryWriter,
 };
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::properties::{Properties, PropertyKey, PropertyValue};
+use kekule::properties::{OwnerProperties, PropertyKey, PropertyValue, RealizationProperties};
+use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::units::{
     Quantity, CANONICAL_LENGTH_UNIT, DIMENSIONLESS, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND,
@@ -172,7 +173,7 @@ pub struct TrrReader<R> {
     velocities: Vec<Vector3>,
     forces: Vec<Vector3>,
     raw: Vec<u8>,
-    properties: Properties,
+    properties: OwnerProperties,
     frame_cursor: u64,
     precision_mixed: bool,
 }
@@ -238,7 +239,7 @@ impl<R: Read + Seek> TrrReader<R> {
         positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
         velocities.resize(atom_count, Vector3::zero());
         forces.resize(atom_count, Vector3::zero());
-        let mut properties = Properties::realization(atom_count, topology.bond_count());
+        let mut properties = OwnerProperties::new();
         if options.lambda_policy == TrrLambdaPolicy::FrameProperty {
             properties
                 .insert(
@@ -507,14 +508,14 @@ impl<R: Read + Seek> TrrReader<R> {
         positions: &[Point3],
         velocities: &[Vector3],
         forces: &[Vector3],
-        properties: &Properties,
+        properties: &OwnerProperties,
         decoded: &TrrDecodedFrame,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
         let mut data = FrameBufferData::new(Quantity::new(positions, NANOMETER))
             .with_time(Quantity::new(decoded.header.time, PICOSECOND))
             .with_step(decoded.header.step)
-            .with_properties(properties);
+            .with_owner_properties(properties);
         if let Some(cell) = decoded.cell {
             data = data.with_cell(cell);
         }
@@ -849,19 +850,31 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         if !frame.topology().shares_layout(self.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
-        if frame.properties().realization_atom_properties().has_data() {
+        if frame.properties().atoms().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
                 "atom properties",
             ));
         }
-        if frame.properties().realization_bond_properties().has_data() {
+        if frame.properties().bonds().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
                 "bond properties",
             ));
+        }
+        for (present, field) in [
+            (frame.occupancies().is_some(), "occupancies"),
+            (frame.b_factors().is_some(), "B-factors"),
+        ] {
+            if present {
+                return Err(writer_field_error(
+                    &self.source_label,
+                    self.frame_count,
+                    field,
+                ));
+            }
         }
         if self.frame_count == u64::MAX {
             return Err(writer_limit(
@@ -962,6 +975,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             .velocities()
             .map(|velocities| {
                 velocities
+                    .values()
                     .unit()
                     .conversion_factor_to(NANOMETER / PICOSECOND)
                     .map_err(|error| writer_unit(&self.source_label, "velocities", error))
@@ -971,6 +985,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             .forces()
             .map(|forces| {
                 forces
+                    .values()
                     .unit()
                     .conversion_factor_to(KILOJOULE_PER_MOLE / NANOMETER)
                     .map_err(|error| writer_unit(&self.source_label, "forces", error))
@@ -1009,7 +1024,10 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             self.options.precision,
             &self.source_label,
         )?;
-        if let (Some(velocities), Some(factor)) = (frame.velocities(), velocity_factor) {
+        if let (Some(velocities), Some(factor)) = (
+            frame.velocities().map(|values| values.values()),
+            velocity_factor,
+        ) {
             encode_vectors_to_raw(
                 &mut self.raw,
                 velocities.value(),
@@ -1019,7 +1037,9 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 "velocity",
             )?;
         }
-        if let (Some(forces), Some(factor)) = (frame.forces(), force_factor) {
+        if let (Some(forces), Some(factor)) =
+            (frame.forces().map(|values| values.values()), force_factor)
+        {
             encode_vectors_to_raw(
                 &mut self.raw,
                 forces.value(),
@@ -1083,7 +1103,10 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             &self.source_label,
         )?;
         write_bytes(&mut self.writer, &self.raw, &self.source_label)?;
-        if let (Some(velocities), Some(factor)) = (frame.velocities(), velocity_factor) {
+        if let (Some(velocities), Some(factor)) = (
+            frame.velocities().map(|values| values.values()),
+            velocity_factor,
+        ) {
             encode_vectors_to_raw(
                 &mut self.raw,
                 velocities.value(),
@@ -1094,7 +1117,9 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             )?;
             write_bytes(&mut self.writer, &self.raw, &self.source_label)?;
         }
-        if let (Some(forces), Some(factor)) = (frame.forces(), force_factor) {
+        if let (Some(forces), Some(factor)) =
+            (frame.forces().map(|values| values.values()), force_factor)
+        {
             encode_vectors_to_raw(
                 &mut self.raw,
                 forces.value(),
@@ -1555,16 +1580,16 @@ fn trr_lambda_key() -> PropertyKey {
 }
 
 fn writer_lambda(
-    properties: &Properties,
+    properties: &RealizationProperties,
     policy: TrrLambdaPolicy,
     source_label: &str,
     frame: u64,
 ) -> Result<f64, TrajectoryError> {
     match policy {
         TrrLambdaPolicy::FrameProperty => {
-            if properties.iter().len() != 1
-                || properties.realization_atom_properties().has_data()
-                || properties.realization_bond_properties().has_data()
+            if properties.owner().len() != 1
+                || properties.atoms().has_data()
+                || properties.bonds().has_data()
             {
                 return Err(codec_context(
                     TrajectoryCodecErrorKind::InconsistentMetadata,
@@ -1574,7 +1599,7 @@ fn writer_lambda(
                     "TRR FrameProperty policy requires exactly gromacs.trr.lambda",
                 ));
             }
-            match properties.get(&trr_lambda_key()) {
+            match properties.owner().get(&trr_lambda_key()) {
                 Some(PropertyValue::Real { value, unit })
                     if value.is_finite() && *unit == DIMENSIONLESS =>
                 {

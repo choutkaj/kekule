@@ -1,11 +1,16 @@
 //! Unified scalar and columnar annotations for canonical Kekule objects.
 //!
-//! [`Properties`] separates owner-level values from typed tables targeting
-//! atoms, bonds, molecule instances, and hierarchy nodes. Property scope follows
-//! the object that owns it: definition-invariant annotations belong to a
-//! [`crate::core::Molecule`], system annotations to a
-//! [`crate::topology::Topology`], and coordinate-dependent annotations to a
-//! realization such as [`crate::structure::Model`].
+//! Property scope follows the object that owns it, and each scope has its own
+//! type: definition-invariant annotations are [`MoleculeProperties`] of a
+//! [`crate::core::Molecule`], system annotations are [`TopologyProperties`] of a
+//! [`crate::topology::Topology`], and coordinate-dependent annotations are
+//! [`RealizationProperties`] of a [`crate::structure::Conformation`]. Each scope
+//! holds [`OwnerProperties`] plus one [`PropertyTable`] per entity domain,
+//! addressed by that domain's identifier ([`PropertyRow`]).
+//!
+//! Owners hand out read access through `properties()` and length-preserving
+//! mutable access through `properties_mut()`. Row counts are fixed by the
+//! owner and can never be changed through a property guard.
 //!
 //! Properties are annotations, not represented graph chemistry. Changing a
 //! generic property does not change molecular identity or trigger chemical
@@ -13,9 +18,14 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::marker::PhantomData;
 use std::str::FromStr;
 
-use crate::units::{Quantity, Unit, UnitError, DIMENSIONLESS, SQUARE_NANOMETER};
+use crate::core::{AtomId, BondId};
+use crate::topology::{
+    AtomSiteId, ChainId, MoleculeInstanceId, ResidueId, TopologyAtomIndex, TopologyBondIndex,
+};
+use crate::units::{Unit, UnitError};
 
 pub const MAX_PROPERTY_KEY_LEN: usize = 128;
 
@@ -318,7 +328,7 @@ impl PropertyColumn {
         }
     }
 
-    fn is_populated_at(&self, index: usize) -> bool {
+    pub(crate) fn is_populated_at(&self, index: usize) -> bool {
         match self {
             Self::Bool(values) => values[index].is_some(),
             Self::Int(values) => values[index].is_some(),
@@ -346,70 +356,294 @@ impl PropertyColumn {
     }
 }
 
-/// Columnar properties for one detached homogeneous entity domain.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PropertyTable {
-    len: usize,
-    columns: BTreeMap<PropertyKey, PropertyColumn>,
-    populated: BTreeMap<PropertyKey, usize>,
+mod sealed {
+    pub trait Sealed {}
 }
 
-/// Mutable columns in an owner-sized table. The table itself cannot be replaced.
+/// Typed row address of one property table.
 ///
-/// Read operations are available through `Deref`; mutations preserve the row
-/// count established by the owner. No validation depends on dropping this view.
+/// Each table is indexed by the identifier of the domain it annotates, so a
+/// molecule atom table cannot be read with a topology index by accident.
+pub trait PropertyRow: Copy + sealed::Sealed {
+    /// Zero-based row in the owning table.
+    fn row(self) -> usize;
+}
+
+macro_rules! property_rows {
+    ($($row:ty),* $(,)?) => {$(
+        impl sealed::Sealed for $row {}
+        impl PropertyRow for $row {
+            fn row(self) -> usize {
+                self.index()
+            }
+        }
+    )*};
+}
+
+property_rows!(
+    crate::core::AtomId,
+    crate::core::BondId,
+    crate::topology::MoleculeInstanceId,
+    crate::topology::TopologyAtomIndex,
+    crate::topology::TopologyBondIndex,
+    crate::topology::ChainId,
+    crate::topology::ResidueId,
+    crate::topology::AtomSiteId,
+);
+
+/// Columnar properties for one homogeneous entity domain, addressed by `R`.
+///
+/// The row count is fixed by the owning object. Read through this table and
+/// mutate through the owner's [`PropertyTableMut`] guard.
+pub struct PropertyTable<R> {
+    raw: RawPropertyTable,
+    row: PhantomData<fn() -> R>,
+}
+
+impl<R> fmt::Debug for PropertyTable<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.raw.fmt(formatter)
+    }
+}
+
+impl<R> Clone for PropertyTable<R> {
+    fn clone(&self) -> Self {
+        Self::from_raw(self.raw.clone())
+    }
+}
+
+impl<R> PartialEq for PropertyTable<R> {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw == other.raw
+    }
+}
+
+impl<R> Default for PropertyTable<R> {
+    fn default() -> Self {
+        Self::from_raw(RawPropertyTable::default())
+    }
+}
+
+impl<R> PropertyTable<R> {
+    pub(crate) fn new(len: usize) -> Self {
+        Self::from_raw(RawPropertyTable::new(len))
+    }
+
+    pub(crate) const fn from_raw(raw: RawPropertyTable) -> Self {
+        Self {
+            raw,
+            row: PhantomData,
+        }
+    }
+
+    pub(crate) const fn raw(&self) -> &RawPropertyTable {
+        &self.raw
+    }
+
+    /// Number of rows fixed by the owner.
+    pub fn len(&self) -> usize {
+        self.raw.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.raw.is_empty()
+    }
+
+    /// Whether any column is present. All-missing columns are never stored.
+    pub fn has_data(&self) -> bool {
+        self.raw.has_data()
+    }
+
+    pub fn get(&self, key: &PropertyKey) -> Option<&PropertyColumn> {
+        self.raw.get(key)
+    }
+
+    /// Columns in deterministic key order.
+    pub fn iter(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (&PropertyKey, &PropertyColumn)> + DoubleEndedIterator {
+        self.raw.iter()
+    }
+
+    pub fn keys(&self) -> impl ExactSizeIterator<Item = &PropertyKey> + DoubleEndedIterator {
+        self.raw.columns.keys()
+    }
+}
+
+impl<R: PropertyRow> PropertyTable<R> {
+    pub fn row_has_data(&self, row: R) -> Result<bool, PropertyError> {
+        self.raw.row_has_data(row.row())
+    }
+
+    /// Reads a cell, copying string storage. See [`Self::value_ref`] to borrow.
+    pub fn value(&self, key: &PropertyKey, row: R) -> Result<Option<PropertyValue>, PropertyError> {
+        self.raw.value(key, row.row())
+    }
+
+    /// Borrows one cell without allocating.
+    ///
+    /// Missing keys and missing cells return `None`; a row outside the table
+    /// is an error even when the key is absent.
+    pub fn value_ref(
+        &self,
+        key: &PropertyKey,
+        row: R,
+    ) -> Result<Option<PropertyValueRef<'_>>, PropertyError> {
+        self.raw.value_ref(key, row.row())
+    }
+}
+
+/// Mutable columns of an owner-sized table. The row count cannot change.
+///
+/// Reads are available through `Deref`. Every mutation is transactional.
 ///
 /// ```compile_fail
 /// use kekule::{properties::PropertyTable, topology::TopologyBuilder};
 /// let mut builder = TopologyBuilder::new();
-/// *builder.atom_properties_mut() = PropertyTable::new(100);
+/// let mut properties = builder.properties_mut();
+/// *properties.atoms_mut() = PropertyTable::default();
 /// ```
-#[derive(Debug)]
-pub struct PropertyTableMut<'a> {
-    table: &'a mut PropertyTable,
+pub struct PropertyTableMut<'a, R> {
+    table: &'a mut PropertyTable<R>,
+    live: LiveRows<'a>,
 }
 
-impl std::ops::Deref for PropertyTableMut<'_> {
-    type Target = PropertyTable;
+/// Which rows of a table may receive values; editor drafts keep the rows of
+/// removed atoms and bonds allocated but writable only as missing.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum LiveRows<'a> {
+    All,
+    Atoms(&'a [Option<crate::core::Atom>]),
+    Bonds(&'a [Option<crate::core::Bond>]),
+}
+
+impl LiveRows<'_> {
+    fn check(self, row: usize) -> Result<(), PropertyError> {
+        let live = match self {
+            Self::All => true,
+            Self::Atoms(slots) => slots.get(row).is_none_or(Option::is_some),
+            Self::Bonds(slots) => slots.get(row).is_none_or(Option::is_some),
+        };
+        if live {
+            Ok(())
+        } else {
+            Err(PropertyError::RemovedRow { index: row })
+        }
+    }
+
+    fn check_column(self, column: &PropertyColumn) -> Result<(), PropertyError> {
+        if matches!(self, Self::All) {
+            return Ok(());
+        }
+        (0..column.len())
+            .filter(|row| column.is_populated_at(*row))
+            .try_for_each(|row| self.check(row))
+    }
+}
+
+impl<R> fmt::Debug for PropertyTableMut<'_, R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.table.fmt(formatter)
+    }
+}
+
+impl<R> std::ops::Deref for PropertyTableMut<'_, R> {
+    type Target = PropertyTable<R>;
 
     fn deref(&self) -> &Self::Target {
         self.table
     }
 }
 
-impl<'a> PropertyTableMut<'a> {
-    pub(crate) fn new(table: &'a mut PropertyTable) -> Self {
-        Self { table }
+impl<'a, R> PropertyTableMut<'a, R> {
+    pub(crate) fn new(table: &'a mut PropertyTable<R>) -> Self {
+        Self {
+            table,
+            live: LiveRows::All,
+        }
     }
 
+    pub(crate) fn with_live_rows(table: &'a mut PropertyTable<R>, live: LiveRows<'a>) -> Self {
+        Self { table, live }
+    }
+
+    /// Inserts or replaces a complete column in row order.
+    ///
+    /// Replacing a real column preserves its storage unit and converts
+    /// compatible input values. An all-missing input removes the key.
     pub fn insert(
         &mut self,
         key: PropertyKey,
         column: PropertyColumn,
     ) -> Result<Option<PropertyColumn>, PropertyError> {
-        self.table.insert(key, column)
+        if column.len() == self.table.len() {
+            self.live.check_column(&column)?;
+        }
+        self.table.raw.insert(key, column)
     }
 
     pub fn remove(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
-        self.table.remove(key)
+        self.table.raw.remove(key)
     }
 
-    pub fn set_value(
-        &mut self,
-        key: PropertyKey,
-        index: usize,
-        value: Option<PropertyValue>,
-    ) -> Result<(), PropertyError> {
-        self.table.set_value(key, index, value)
-    }
-
-    pub fn clear_value(&mut self, key: PropertyKey, index: usize) -> Result<(), PropertyError> {
-        self.table.clear_value(key, index)
+    /// Removes every column, keeping the row count.
+    pub fn clear(&mut self) {
+        self.table.raw.clear_columns();
     }
 }
 
-impl PropertyTable {
-    pub fn new(len: usize) -> Self {
+impl<R: PropertyRow> PropertyTableMut<'_, R> {
+    /// Sets or clears one cell, removing a column that becomes all-missing.
+    pub fn set_value(
+        &mut self,
+        key: PropertyKey,
+        row: R,
+        value: Option<PropertyValue>,
+    ) -> Result<(), PropertyError> {
+        self.check_row(row.row())?;
+        self.table.raw.set_value(key, row.row(), value)
+    }
+
+    pub fn clear_value(&mut self, key: PropertyKey, row: R) -> Result<(), PropertyError> {
+        self.check_row(row.row())?;
+        self.table.raw.set_value(key, row.row(), None)
+    }
+
+    fn check_row(&self, row: usize) -> Result<(), PropertyError> {
+        if row < self.table.len() {
+            self.live.check(row)?;
+        }
+        Ok(())
+    }
+
+    /// Applies several cell updates to one column transactionally: either
+    /// every update succeeds or the column is unchanged. Other columns are
+    /// never copied.
+    pub fn set_values(
+        &mut self,
+        key: PropertyKey,
+        values: impl IntoIterator<Item = (R, Option<PropertyValue>)>,
+    ) -> Result<(), PropertyError> {
+        let mut staged = self.table.raw.stage_column(&key);
+        for (row, value) in values {
+            self.check_row(row.row())?;
+            staged.set_value(key.clone(), row.row(), value)?;
+        }
+        self.table.raw.commit_column(key, staged);
+        Ok(())
+    }
+}
+
+/// Untyped row storage shared by every typed [`PropertyTable`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct RawPropertyTable {
+    len: usize,
+    columns: BTreeMap<PropertyKey, PropertyColumn>,
+    populated: BTreeMap<PropertyKey, usize>,
+}
+
+impl RawPropertyTable {
+    pub(crate) fn new(len: usize) -> Self {
         Self {
             len,
             columns: BTreeMap::new(),
@@ -417,19 +651,19 @@ impl PropertyTable {
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.len
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    pub fn has_data(&self) -> bool {
+    pub(crate) fn has_data(&self) -> bool {
         !self.columns.is_empty()
     }
 
-    pub fn row_has_data(&self, index: usize) -> Result<bool, PropertyError> {
+    pub(crate) fn row_has_data(&self, index: usize) -> Result<bool, PropertyError> {
         self.validate_index(index)?;
         Ok(self
             .columns
@@ -437,11 +671,11 @@ impl PropertyTable {
             .any(|column| column.is_populated_at(index)))
     }
 
-    pub fn get(&self, key: &PropertyKey) -> Option<&PropertyColumn> {
+    pub(crate) fn get(&self, key: &PropertyKey) -> Option<&PropertyColumn> {
         self.columns.get(key)
     }
 
-    pub fn iter(
+    pub(crate) fn iter(
         &self,
     ) -> impl ExactSizeIterator<Item = (&PropertyKey, &PropertyColumn)> + DoubleEndedIterator {
         self.columns.iter()
@@ -451,7 +685,7 @@ impl PropertyTable {
     ///
     /// Replacing a real column preserves its existing storage unit and converts
     /// compatible input values into it. An all-missing input removes the key.
-    pub fn insert(
+    pub(crate) fn insert(
         &mut self,
         key: PropertyKey,
         column: PropertyColumn,
@@ -490,7 +724,7 @@ impl PropertyTable {
         Ok(self.columns.insert(key, column))
     }
 
-    pub fn remove(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
+    pub(crate) fn remove(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
         self.populated.remove(key);
         self.columns.remove(key)
     }
@@ -518,7 +752,7 @@ impl PropertyTable {
         }
     }
 
-    pub fn value(
+    pub(crate) fn value(
         &self,
         key: &PropertyKey,
         index: usize,
@@ -531,7 +765,7 @@ impl PropertyTable {
     ///
     /// Missing keys and missing cells return `None`; an invalid row is an error
     /// even when the key is absent.
-    pub fn value_ref(
+    pub(crate) fn value_ref(
         &self,
         key: &PropertyKey,
         index: usize,
@@ -545,7 +779,7 @@ impl PropertyTable {
     }
 
     /// Sets or clears one cell transactionally, removing an all-missing column.
-    pub fn set_value(
+    pub(crate) fn set_value(
         &mut self,
         key: PropertyKey,
         index: usize,
@@ -608,11 +842,7 @@ impl PropertyTable {
         Ok(())
     }
 
-    pub fn clear_value(&mut self, key: PropertyKey, index: usize) -> Result<(), PropertyError> {
-        self.set_value(key, index, None)
-    }
-
-    pub fn select_indices(&self, indices: &[usize]) -> Result<Self, PropertyError> {
+    pub(crate) fn select_indices(&self, indices: &[usize]) -> Result<Self, PropertyError> {
         for index in indices {
             self.validate_index(*index)?;
         }
@@ -659,6 +889,11 @@ impl PropertyTable {
             columns,
             populated,
         })
+    }
+
+    pub(crate) fn clear_columns(&mut self) {
+        self.columns.clear();
+        self.populated.clear();
     }
 
     pub(crate) fn resize_missing(&mut self, len: usize) {
@@ -744,8 +979,481 @@ impl PropertyTable {
     }
 }
 
-fn is_reserved_realization_atom_key(key: &PropertyKey) -> bool {
-    matches!(key.as_str(), "occupancy" | "b_factor")
+/// Owner-level scalar annotations, keyed deterministically.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OwnerProperties {
+    values: BTreeMap<PropertyKey, PropertyValue>,
+}
+
+impl OwnerProperties {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    pub fn get(&self, key: &PropertyKey) -> Option<&PropertyValue> {
+        self.values.get(key)
+    }
+
+    pub fn iter(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (&PropertyKey, &PropertyValue)> + DoubleEndedIterator {
+        self.values.iter()
+    }
+
+    pub fn keys(&self) -> impl ExactSizeIterator<Item = &PropertyKey> + DoubleEndedIterator {
+        self.values.keys()
+    }
+
+    /// Inserts a validated value, returning the one it replaces.
+    pub fn insert(
+        &mut self,
+        key: PropertyKey,
+        value: PropertyValue,
+    ) -> Result<Option<PropertyValue>, PropertyError> {
+        value.validate()?;
+        Ok(self.values.insert(key, value))
+    }
+
+    pub fn remove(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
+        self.values.remove(key)
+    }
+
+    pub fn clear(&mut self) {
+        self.values.clear();
+    }
+}
+
+/// Annotations scoped to one molecule definition: owner values plus one row
+/// per atom and bond slot, addressed by [`AtomId`] and [`BondId`].
+///
+/// Published molecules have dense IDs, so every row is live. In a
+/// [`crate::core::MoleculeEditor`] draft, rows of removed atoms and bonds stay
+/// allocated and missing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MoleculeProperties {
+    owner: OwnerProperties,
+    atoms: PropertyTable<AtomId>,
+    bonds: PropertyTable<BondId>,
+}
+
+impl MoleculeProperties {
+    pub(crate) fn new(atoms: usize, bonds: usize) -> Self {
+        Self {
+            owner: OwnerProperties::new(),
+            atoms: PropertyTable::new(atoms),
+            bonds: PropertyTable::new(bonds),
+        }
+    }
+
+    pub fn owner(&self) -> &OwnerProperties {
+        &self.owner
+    }
+
+    pub fn atoms(&self) -> &PropertyTable<AtomId> {
+        &self.atoms
+    }
+
+    pub fn bonds(&self) -> &PropertyTable<BondId> {
+        &self.bonds
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.owner.is_empty() && !self.atoms.has_data() && !self.bonds.has_data()
+    }
+
+    pub(crate) fn owner_mut(&mut self) -> &mut OwnerProperties {
+        &mut self.owner
+    }
+
+    pub(crate) fn atoms_mut(&mut self) -> &mut RawPropertyTable {
+        &mut self.atoms.raw
+    }
+
+    pub(crate) fn bonds_mut(&mut self) -> &mut RawPropertyTable {
+        &mut self.bonds.raw
+    }
+}
+
+/// Length-preserving mutable access to [`MoleculeProperties`].
+#[derive(Debug)]
+pub struct MoleculePropertiesMut<'a> {
+    properties: &'a mut MoleculeProperties,
+    atoms_live: LiveRows<'a>,
+    bonds_live: LiveRows<'a>,
+}
+
+impl std::ops::Deref for MoleculePropertiesMut<'_> {
+    type Target = MoleculeProperties;
+
+    fn deref(&self) -> &Self::Target {
+        self.properties
+    }
+}
+
+impl<'a> MoleculePropertiesMut<'a> {
+    /// Rows of removed draft atoms and bonds reject values.
+    pub(crate) fn new(
+        properties: &'a mut MoleculeProperties,
+        atoms: &'a [Option<crate::core::Atom>],
+        bonds: &'a [Option<crate::core::Bond>],
+    ) -> Self {
+        Self {
+            properties,
+            atoms_live: LiveRows::Atoms(atoms),
+            bonds_live: LiveRows::Bonds(bonds),
+        }
+    }
+
+    pub fn owner_mut(&mut self) -> &mut OwnerProperties {
+        &mut self.properties.owner
+    }
+
+    pub fn atoms_mut(&mut self) -> PropertyTableMut<'_, AtomId> {
+        PropertyTableMut::with_live_rows(&mut self.properties.atoms, self.atoms_live)
+    }
+
+    pub fn bonds_mut(&mut self) -> PropertyTableMut<'_, BondId> {
+        PropertyTableMut::with_live_rows(&mut self.properties.bonds, self.bonds_live)
+    }
+
+    /// Removes every owner value and column, keeping row counts.
+    pub fn clear(&mut self) {
+        self.properties.owner.clear();
+        self.properties.atoms.raw.clear_columns();
+        self.properties.bonds.raw.clear_columns();
+    }
+}
+
+/// Annotations scoped to one topology: owner values plus dense rows for
+/// molecule instances, atoms, bonds, chains, residues, and atom sites.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TopologyProperties {
+    owner: OwnerProperties,
+    molecule_instances: PropertyTable<MoleculeInstanceId>,
+    atoms: PropertyTable<TopologyAtomIndex>,
+    bonds: PropertyTable<TopologyBondIndex>,
+    chains: PropertyTable<ChainId>,
+    residues: PropertyTable<ResidueId>,
+    atom_sites: PropertyTable<AtomSiteId>,
+}
+
+impl TopologyProperties {
+    pub fn owner(&self) -> &OwnerProperties {
+        &self.owner
+    }
+    pub fn molecule_instances(&self) -> &PropertyTable<MoleculeInstanceId> {
+        &self.molecule_instances
+    }
+    pub fn atoms(&self) -> &PropertyTable<TopologyAtomIndex> {
+        &self.atoms
+    }
+    pub fn bonds(&self) -> &PropertyTable<TopologyBondIndex> {
+        &self.bonds
+    }
+    pub fn chains(&self) -> &PropertyTable<ChainId> {
+        &self.chains
+    }
+    pub fn residues(&self) -> &PropertyTable<ResidueId> {
+        &self.residues
+    }
+    pub fn atom_sites(&self) -> &PropertyTable<AtomSiteId> {
+        &self.atom_sites
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.owner.is_empty() && self.tables().iter().all(|table| !table.has_data())
+    }
+
+    pub(crate) fn owner_mut(&mut self) -> &mut OwnerProperties {
+        &mut self.owner
+    }
+    pub(crate) fn molecule_instances_mut(&mut self) -> &mut RawPropertyTable {
+        &mut self.molecule_instances.raw
+    }
+    pub(crate) fn atoms_mut(&mut self) -> &mut RawPropertyTable {
+        &mut self.atoms.raw
+    }
+    pub(crate) fn bonds_mut(&mut self) -> &mut RawPropertyTable {
+        &mut self.bonds.raw
+    }
+    pub(crate) fn chains_mut(&mut self) -> &mut RawPropertyTable {
+        &mut self.chains.raw
+    }
+    pub(crate) fn residues_mut(&mut self) -> &mut RawPropertyTable {
+        &mut self.residues.raw
+    }
+    pub(crate) fn atom_sites_mut(&mut self) -> &mut RawPropertyTable {
+        &mut self.atom_sites.raw
+    }
+
+    pub(crate) fn resize_atoms(&mut self, len: usize) {
+        self.atoms.raw.resize_missing(len);
+    }
+
+    pub(crate) fn resize_bonds(&mut self, len: usize) {
+        self.bonds.raw.resize_missing(len);
+    }
+
+    pub(crate) fn resize_domains(&mut self, dimensions: [usize; 6]) {
+        for (table, len) in self.tables_mut().into_iter().zip(dimensions) {
+            // Extension appends missing values. A shorter hierarchy replacement
+            // must not truncate populated annotations before publication checks.
+            if !table.has_data() || len >= table.len() {
+                table.resize_missing(len);
+            }
+        }
+    }
+
+    pub(crate) fn validate_dimensions(&self, dimensions: [usize; 6]) -> Result<(), PropertyError> {
+        for (table, expected) in self.tables().into_iter().zip(dimensions) {
+            if table.len() != expected {
+                return Err(PropertyError::LengthMismatch {
+                    expected,
+                    actual: table.len(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Projects entity rows through one operation's correspondence; owner
+    /// values are dropped because the projected system is a new owner.
+    pub(crate) fn project(
+        &self,
+        molecule_instances: &[Option<usize>],
+        atoms: &[usize],
+        bonds: &[usize],
+        chains: &[usize],
+        residues: &[usize],
+        atom_sites: &[usize],
+    ) -> Result<Self, PropertyError> {
+        Ok(Self {
+            owner: OwnerProperties::new(),
+            molecule_instances: PropertyTable::from_raw(
+                self.molecule_instances
+                    .raw
+                    .select_optional_indices(molecule_instances)?,
+            ),
+            atoms: PropertyTable::from_raw(self.atoms.raw.select_indices(atoms)?),
+            bonds: PropertyTable::from_raw(self.bonds.raw.select_indices(bonds)?),
+            chains: PropertyTable::from_raw(self.chains.raw.select_indices(chains)?),
+            residues: PropertyTable::from_raw(self.residues.raw.select_indices(residues)?),
+            atom_sites: PropertyTable::from_raw(self.atom_sites.raw.select_indices(atom_sites)?),
+        })
+    }
+
+    fn tables(&self) -> [&RawPropertyTable; 6] {
+        [
+            &self.molecule_instances.raw,
+            &self.atoms.raw,
+            &self.bonds.raw,
+            &self.chains.raw,
+            &self.residues.raw,
+            &self.atom_sites.raw,
+        ]
+    }
+
+    fn tables_mut(&mut self) -> [&mut RawPropertyTable; 6] {
+        [
+            &mut self.molecule_instances.raw,
+            &mut self.atoms.raw,
+            &mut self.bonds.raw,
+            &mut self.chains.raw,
+            &mut self.residues.raw,
+            &mut self.atom_sites.raw,
+        ]
+    }
+}
+
+/// Length-preserving mutable access to staged [`TopologyProperties`].
+#[derive(Debug)]
+pub struct TopologyPropertiesMut<'a> {
+    properties: &'a mut TopologyProperties,
+}
+
+impl std::ops::Deref for TopologyPropertiesMut<'_> {
+    type Target = TopologyProperties;
+
+    fn deref(&self) -> &Self::Target {
+        self.properties
+    }
+}
+
+impl<'a> TopologyPropertiesMut<'a> {
+    pub(crate) fn new(properties: &'a mut TopologyProperties) -> Self {
+        Self { properties }
+    }
+    pub fn owner_mut(&mut self) -> &mut OwnerProperties {
+        &mut self.properties.owner
+    }
+    pub fn molecule_instances_mut(&mut self) -> PropertyTableMut<'_, MoleculeInstanceId> {
+        PropertyTableMut::new(&mut self.properties.molecule_instances)
+    }
+    pub fn atoms_mut(&mut self) -> PropertyTableMut<'_, TopologyAtomIndex> {
+        PropertyTableMut::new(&mut self.properties.atoms)
+    }
+    pub fn bonds_mut(&mut self) -> PropertyTableMut<'_, TopologyBondIndex> {
+        PropertyTableMut::new(&mut self.properties.bonds)
+    }
+    pub fn chains_mut(&mut self) -> PropertyTableMut<'_, ChainId> {
+        PropertyTableMut::new(&mut self.properties.chains)
+    }
+    pub fn residues_mut(&mut self) -> PropertyTableMut<'_, ResidueId> {
+        PropertyTableMut::new(&mut self.properties.residues)
+    }
+    pub fn atom_sites_mut(&mut self) -> PropertyTableMut<'_, AtomSiteId> {
+        PropertyTableMut::new(&mut self.properties.atom_sites)
+    }
+
+    /// Removes every owner value and column, keeping row counts.
+    pub fn clear(&mut self) {
+        self.properties.owner.clear();
+        for table in self.properties.tables_mut() {
+            table.clear_columns();
+        }
+    }
+}
+
+/// Coordinate-dependent annotations of one realization: owner values plus one
+/// row per topology atom and bond, in dense topology order.
+///
+/// A detached realization payload has atom rows only; bond rows are allocated
+/// when the payload is bound to a topology.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RealizationProperties {
+    owner: OwnerProperties,
+    atoms: PropertyTable<TopologyAtomIndex>,
+    bonds: PropertyTable<TopologyBondIndex>,
+}
+
+impl RealizationProperties {
+    pub(crate) fn new(atoms: usize) -> Self {
+        Self {
+            owner: OwnerProperties::new(),
+            atoms: PropertyTable::new(atoms),
+            bonds: PropertyTable::new(0),
+        }
+    }
+
+    pub fn owner(&self) -> &OwnerProperties {
+        &self.owner
+    }
+
+    pub fn atoms(&self) -> &PropertyTable<TopologyAtomIndex> {
+        &self.atoms
+    }
+
+    pub fn bonds(&self) -> &PropertyTable<TopologyBondIndex> {
+        &self.bonds
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.owner.is_empty() && !self.atoms.has_data() && !self.bonds.has_data()
+    }
+
+    pub(crate) fn owner_mut(&mut self) -> &mut OwnerProperties {
+        &mut self.owner
+    }
+
+    /// Whether bond rows can be bound to a topology with `bond_count` bonds:
+    /// either they already match or none were allocated yet.
+    pub(crate) fn validate_bond_rows(&self, bond_count: usize) -> Result<(), PropertyError> {
+        if self.bonds.len() == bond_count || self.bonds.is_empty() {
+            return Ok(());
+        }
+        Err(PropertyError::LengthMismatch {
+            expected: bond_count,
+            actual: self.bonds.len(),
+        })
+    }
+
+    /// Allocates bond rows after [`Self::validate_bond_rows`] succeeded.
+    pub(crate) fn bind_bond_rows(&mut self, bond_count: usize) {
+        debug_assert!(self.validate_bond_rows(bond_count).is_ok());
+        self.bonds.raw.resize_missing(bond_count);
+    }
+
+    pub(crate) fn atoms_raw_mut(&mut self) -> &mut RawPropertyTable {
+        &mut self.atoms.raw
+    }
+
+    pub(crate) fn bonds_raw_mut(&mut self) -> &mut RawPropertyTable {
+        &mut self.bonds.raw
+    }
+
+    /// Grows staged rows with missing values.
+    pub(crate) fn resize(&mut self, atoms: usize, bonds: usize) {
+        self.atoms.raw.resize_missing(atoms);
+        self.bonds.raw.resize_missing(bonds);
+    }
+
+    /// Reorders atom rows; `previous[new]` is the old row.
+    pub(crate) fn reorder_atoms(&mut self, previous: &[usize]) -> Result<(), PropertyError> {
+        self.atoms.raw = self.atoms.raw.select_indices(previous)?;
+        Ok(())
+    }
+
+    /// Projects atom and bond rows; owner values are dropped because the
+    /// projected realization is a new owner.
+    pub(crate) fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, PropertyError> {
+        let bonds = if self.bonds.is_empty() {
+            RawPropertyTable::new(0)
+        } else {
+            self.bonds.raw.select_indices(bonds)?
+        };
+        Ok(Self {
+            owner: OwnerProperties::new(),
+            atoms: PropertyTable::from_raw(self.atoms.raw.select_indices(atoms)?),
+            bonds: PropertyTable::from_raw(bonds),
+        })
+    }
+}
+
+/// Length-preserving mutable access to [`RealizationProperties`].
+#[derive(Debug)]
+pub struct RealizationPropertiesMut<'a> {
+    properties: &'a mut RealizationProperties,
+}
+
+impl std::ops::Deref for RealizationPropertiesMut<'_> {
+    type Target = RealizationProperties;
+
+    fn deref(&self) -> &Self::Target {
+        self.properties
+    }
+}
+
+impl<'a> RealizationPropertiesMut<'a> {
+    pub(crate) fn new(properties: &'a mut RealizationProperties) -> Self {
+        Self { properties }
+    }
+
+    pub fn owner_mut(&mut self) -> &mut OwnerProperties {
+        &mut self.properties.owner
+    }
+
+    pub fn atoms_mut(&mut self) -> PropertyTableMut<'_, TopologyAtomIndex> {
+        PropertyTableMut::new(&mut self.properties.atoms)
+    }
+
+    pub fn bonds_mut(&mut self) -> PropertyTableMut<'_, TopologyBondIndex> {
+        PropertyTableMut::new(&mut self.properties.bonds)
+    }
+
+    /// Removes every owner value and column, keeping row counts.
+    pub fn clear(&mut self) {
+        self.properties.owner.clear();
+        self.properties.atoms.raw.clear_columns();
+        self.properties.bonds.raw.clear_columns();
+    }
 }
 
 fn validate_value_for_column(
@@ -800,458 +1508,28 @@ fn assign_value(column: &mut PropertyColumn, index: usize, value: Option<Propert
     }
 }
 
-/// Complete generic property namespace for an owning domain object.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Properties {
-    owner: BTreeMap<PropertyKey, PropertyValue>,
-    molecule_instances: PropertyTable,
-    atoms: PropertyTable,
-    bonds: PropertyTable,
-    chains: PropertyTable,
-    residues: PropertyTable,
-    atom_sites: PropertyTable,
-}
-
-impl Default for Properties {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Properties {
-    pub fn new() -> Self {
-        Self::with_dimensions(0, 0, 0, 0, 0, 0)
-    }
-
-    pub(crate) fn molecule(atom_slots: usize, bond_slots: usize) -> Self {
-        Self::with_dimensions(0, atom_slots, bond_slots, 0, 0, 0)
-    }
-
-    pub fn realization(atom_count: usize, bond_count: usize) -> Self {
-        Self::molecule(atom_count, bond_count)
-    }
-
-    /// Establishes realization domains without resizing supplied columns.
-    ///
-    /// Tables without retained columns adopt the requested dimensions. Populated
-    /// tables must already match. All checks precede mutation; owner properties
-    /// and column values are preserved. All-missing columns are absent under the
-    /// normal [`PropertyTable::insert`] contract.
-    pub fn normalize_realization_dimensions(
-        &mut self,
-        atom_count: usize,
-        bond_count: usize,
-    ) -> Result<(), PropertyError> {
-        for (table, expected) in [(&self.atoms, atom_count), (&self.bonds, bond_count)] {
-            if table.has_data() && table.len() != expected {
-                return Err(PropertyError::LengthMismatch {
-                    expected,
-                    actual: table.len(),
-                });
-            }
-        }
-        self.validate_realization_properties()?;
-        self.atoms.len = atom_count;
-        self.bonds.len = bond_count;
-        Ok(())
-    }
-
-    fn with_dimensions(
-        instance_count: usize,
-        atom_count: usize,
-        bond_count: usize,
-        chain_count: usize,
-        residue_count: usize,
-        atom_site_count: usize,
-    ) -> Self {
-        Self {
-            owner: BTreeMap::new(),
-            molecule_instances: PropertyTable::new(instance_count),
-            atoms: PropertyTable::new(atom_count),
-            bonds: PropertyTable::new(bond_count),
-            chains: PropertyTable::new(chain_count),
-            residues: PropertyTable::new(residue_count),
-            atom_sites: PropertyTable::new(atom_site_count),
-        }
-    }
-
-    pub fn get(&self, key: &PropertyKey) -> Option<&PropertyValue> {
-        self.owner.get(key)
-    }
-
-    pub fn iter(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (&PropertyKey, &PropertyValue)> + DoubleEndedIterator {
-        self.owner.iter()
-    }
-
-    pub fn insert(
-        &mut self,
-        key: PropertyKey,
-        value: PropertyValue,
-    ) -> Result<Option<PropertyValue>, PropertyError> {
-        value.validate()?;
-        Ok(self.owner.insert(key, value))
-    }
-
-    pub fn remove(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
-        self.owner.remove(key)
-    }
-
-    pub fn clear_owner(&mut self) {
-        self.owner.clear();
-    }
-
-    pub fn owner_is_empty(&self) -> bool {
-        self.owner.is_empty()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.owner.is_empty()
-            && !self.molecule_instances.has_data()
-            && !self.atoms.has_data()
-            && !self.bonds.has_data()
-            && !self.chains.has_data()
-            && !self.residues.has_data()
-            && !self.atom_sites.has_data()
-    }
-
-    pub(crate) const fn molecule_instances(&self) -> &PropertyTable {
-        &self.molecule_instances
-    }
-
-    pub(crate) fn molecule_instances_mut(&mut self) -> &mut PropertyTable {
-        &mut self.molecule_instances
-    }
-
-    pub(crate) const fn atoms(&self) -> &PropertyTable {
-        &self.atoms
-    }
-
-    pub(crate) fn atoms_mut(&mut self) -> &mut PropertyTable {
-        &mut self.atoms
-    }
-
-    pub(crate) const fn bonds(&self) -> &PropertyTable {
-        &self.bonds
-    }
-
-    pub(crate) fn bonds_mut(&mut self) -> &mut PropertyTable {
-        &mut self.bonds
-    }
-
-    pub(crate) const fn chains(&self) -> &PropertyTable {
-        &self.chains
-    }
-
-    pub(crate) fn chains_mut(&mut self) -> &mut PropertyTable {
-        &mut self.chains
-    }
-
-    pub(crate) const fn residues(&self) -> &PropertyTable {
-        &self.residues
-    }
-
-    pub(crate) fn residues_mut(&mut self) -> &mut PropertyTable {
-        &mut self.residues
-    }
-
-    pub(crate) const fn atom_sites(&self) -> &PropertyTable {
-        &self.atom_sites
-    }
-
-    pub(crate) fn atom_sites_mut(&mut self) -> &mut PropertyTable {
-        &mut self.atom_sites
-    }
-
-    /// Reads the dense atom table of a realization owner.
-    pub const fn realization_atom_properties(&self) -> &PropertyTable {
-        &self.atoms
-    }
-
-    /// Reads the dense bond table of a realization owner.
-    pub const fn realization_bond_properties(&self) -> &PropertyTable {
-        &self.bonds
-    }
-
-    /// Sets a non-canonical realization atom property.
-    pub fn set_realization_atom_value(
-        &mut self,
-        key: PropertyKey,
-        index: usize,
-        value: Option<PropertyValue>,
-    ) -> Result<(), PropertyError> {
-        reject_reserved_realization_atom_key(&key)?;
-        self.atoms.set_value(key, index, value)
-    }
-
-    /// Inserts or replaces a non-canonical realization atom column.
-    pub fn insert_realization_atom_column(
-        &mut self,
-        key: PropertyKey,
-        column: PropertyColumn,
-    ) -> Result<Option<PropertyColumn>, PropertyError> {
-        reject_reserved_realization_atom_key(&key)?;
-        self.atoms.insert(key, column)
-    }
-
-    /// Removes a non-canonical realization atom column.
-    pub fn remove_realization_atom_column(
-        &mut self,
-        key: &PropertyKey,
-    ) -> Result<Option<PropertyColumn>, PropertyError> {
-        reject_reserved_realization_atom_key(key)?;
-        Ok(self.atoms.remove(key))
-    }
-
-    pub fn set_realization_bond_value(
-        &mut self,
-        key: PropertyKey,
-        index: usize,
-        value: Option<PropertyValue>,
-    ) -> Result<(), PropertyError> {
-        self.bonds.set_value(key, index, value)
-    }
-
-    pub fn insert_realization_bond_column(
-        &mut self,
-        key: PropertyKey,
-        column: PropertyColumn,
-    ) -> Result<Option<PropertyColumn>, PropertyError> {
-        self.bonds.insert(key, column)
-    }
-
-    pub fn remove_realization_bond_column(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
-        self.bonds.remove(key)
-    }
-
-    pub fn occupancy_at(&self, index: usize) -> Result<Option<f64>, PropertyError> {
-        match self.atoms.value(&occupancy_key(), index)? {
-            None => Ok(None),
-            Some(PropertyValue::Real { value, unit }) if unit == DIMENSIONLESS => Ok(Some(value)),
-            _ => Err(PropertyError::InvalidCanonicalProperty(occupancy_key())),
-        }
-    }
-
-    pub fn set_occupancy_at(
-        &mut self,
-        index: usize,
-        value: Option<f64>,
-    ) -> Result<(), PropertyError> {
-        let value = value
-            .map(|value| PropertyValue::real(value, DIMENSIONLESS))
-            .transpose()?;
-        self.atoms.set_value(occupancy_key(), index, value)
-    }
-
-    pub fn b_factor_at(&self, index: usize) -> Result<Option<Quantity<f64>>, PropertyError> {
-        match self.atoms.value(&b_factor_key(), index)? {
-            None => Ok(None),
-            Some(PropertyValue::Real { value, unit }) if unit == SQUARE_NANOMETER => {
-                Ok(Some(Quantity::new(value, unit)))
-            }
-            _ => Err(PropertyError::InvalidCanonicalProperty(b_factor_key())),
-        }
-    }
-
-    pub fn set_b_factor_at(
-        &mut self,
-        index: usize,
-        value: Option<Quantity<f64>>,
-    ) -> Result<(), PropertyError> {
-        let value = value
-            .map(|value| {
-                let value = value.into_unit(SQUARE_NANOMETER)?.into_value();
-                PropertyValue::real(value, SQUARE_NANOMETER)
-            })
-            .transpose()?;
-        self.atoms.set_value(b_factor_key(), index, value)
-    }
-
-    /// Installs complete canonical realization atom columns after validating
-    /// their dense shape and canonical units.
-    pub(crate) fn install_canonical_realization_atom_columns(
-        &mut self,
-        occupancies: Vec<Option<f64>>,
-        b_factors: Vec<Option<f64>>,
-    ) -> Result<(), PropertyError> {
-        self.validate_realization_properties()?;
-        let occupancy = PropertyColumn::Real {
-            unit: DIMENSIONLESS,
-            values: occupancies,
-        };
-        let b_factor = PropertyColumn::Real {
-            unit: SQUARE_NANOMETER,
-            values: b_factors,
-        };
-
-        for column in [&occupancy, &b_factor] {
-            if column.len() != self.atoms.len() {
-                return Err(PropertyError::LengthMismatch {
-                    expected: self.atoms.len(),
-                    actual: column.len(),
-                });
-            }
-            column.validate()?;
-        }
-
-        self.atoms.insert(occupancy_key(), occupancy)?;
-        self.atoms.insert(b_factor_key(), b_factor)?;
-        self.validate_realization_properties()
-    }
-
-    /// Validates realization scope and the canonical atom columns, if present.
-    /// Populated instance and hierarchy domains cannot be attached to a realization.
-    pub fn validate_realization_properties(&self) -> Result<(), PropertyError> {
-        for (domain, table) in [
-            ("molecule_instances", &self.molecule_instances),
-            ("chains", &self.chains),
-            ("residues", &self.residues),
-            ("atom_sites", &self.atom_sites),
-        ] {
-            if table.has_data() {
-                return Err(PropertyError::InvalidRealizationDomain(domain));
-            }
-        }
-        if let Some(column) = self.atoms.get(&occupancy_key()) {
-            if !matches!(column, PropertyColumn::Real { unit, .. } if *unit == DIMENSIONLESS) {
-                return Err(PropertyError::InvalidCanonicalProperty(occupancy_key()));
-            }
-        }
-        if let Some(column) = self.atoms.get(&b_factor_key()) {
-            if !matches!(column, PropertyColumn::Real { unit, .. } if *unit == SQUARE_NANOMETER) {
-                return Err(PropertyError::InvalidCanonicalProperty(b_factor_key()));
-            }
-        }
-        Ok(())
-    }
-
-    /// Projects dense realization entity columns and drops owner-level values.
-    pub fn project_realization(
-        &self,
-        atom_indices: &[usize],
-        bond_indices: &[usize],
-    ) -> Result<Self, PropertyError> {
-        let properties = Self {
-            owner: BTreeMap::new(),
-            molecule_instances: PropertyTable::new(0),
-            atoms: self.atoms.select_indices(atom_indices)?,
-            bonds: self.bonds.select_indices(bond_indices)?,
-            chains: PropertyTable::new(0),
-            residues: PropertyTable::new(0),
-            atom_sites: PropertyTable::new(0),
-        };
-        properties.validate_realization_properties()?;
-        Ok(properties)
-    }
-
-    pub(crate) fn resize_atoms(&mut self, len: usize) {
-        self.atoms.resize_missing(len);
-    }
-
-    pub(crate) fn resize_bonds(&mut self, len: usize) {
-        self.bonds.resize_missing(len);
-    }
-
-    pub(crate) fn resize_domains(
-        &mut self,
-        instance_count: usize,
-        atom_count: usize,
-        bond_count: usize,
-        chain_count: usize,
-        residue_count: usize,
-        atom_site_count: usize,
-    ) {
-        for (table, len) in [
-            (&mut self.molecule_instances, instance_count),
-            (&mut self.atoms, atom_count),
-            (&mut self.bonds, bond_count),
-            (&mut self.chains, chain_count),
-            (&mut self.residues, residue_count),
-            (&mut self.atom_sites, atom_site_count),
-        ] {
-            // Extension appends missing values. A shorter hierarchy replacement
-            // must not truncate populated annotations before publication checks.
-            if !table.has_data() || len >= table.len() {
-                table.resize_missing(len);
-            }
-        }
-    }
-
-    pub(crate) fn validate_topology_dimensions(
-        &self,
-        dimensions: [usize; 6],
-    ) -> Result<(), PropertyError> {
-        for (table, expected) in [
-            &self.molecule_instances,
-            &self.atoms,
-            &self.bonds,
-            &self.chains,
-            &self.residues,
-            &self.atom_sites,
-        ]
-        .into_iter()
-        .zip(dimensions)
-        {
-            if table.len() != expected {
-                return Err(PropertyError::LengthMismatch {
-                    expected,
-                    actual: table.len(),
-                });
-            }
-        }
-        Ok(())
-    }
-
-    pub(crate) fn project_topology(
-        &self,
-        molecule_instances: &[Option<usize>],
-        atoms: &[usize],
-        bonds: &[usize],
-        chains: &[usize],
-        residues: &[usize],
-        atom_sites: &[usize],
-    ) -> Result<Self, PropertyError> {
-        Ok(Self {
-            owner: BTreeMap::new(),
-            molecule_instances: self
-                .molecule_instances
-                .select_optional_indices(molecule_instances)?,
-            atoms: self.atoms.select_indices(atoms)?,
-            bonds: self.bonds.select_indices(bonds)?,
-            chains: self.chains.select_indices(chains)?,
-            residues: self.residues.select_indices(residues)?,
-            atom_sites: self.atom_sites.select_indices(atom_sites)?,
-        })
-    }
-}
-
-fn occupancy_key() -> PropertyKey {
-    PropertyKey::new("occupancy").expect("canonical property key is valid")
-}
-
-fn b_factor_key() -> PropertyKey {
-    PropertyKey::new("b_factor").expect("canonical property key is valid")
-}
-
-pub(crate) fn reject_reserved_realization_atom_key(key: &PropertyKey) -> Result<(), PropertyError> {
-    if is_reserved_realization_atom_key(key) {
-        return Err(PropertyError::ReservedKey(key.clone()));
-    }
-    Ok(())
-}
-
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PropertyError {
     InvalidKey(String),
-    LengthMismatch { expected: usize, actual: usize },
-    InvalidIndex { len: usize, index: usize },
-    TypeMismatch { key: PropertyKey },
-    ReservedKey(PropertyKey),
-    InvalidCanonicalProperty(PropertyKey),
-    InvalidRealizationDomain(&'static str),
-    NonFiniteValue { index: Option<usize> },
+    LengthMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidIndex {
+        len: usize,
+        index: usize,
+    },
+    /// The row belongs to an atom or bond removed from an editing draft.
+    RemovedRow {
+        index: usize,
+    },
+    TypeMismatch {
+        key: PropertyKey,
+    },
+    NonFiniteValue {
+        index: Option<usize>,
+    },
     Unit(UnitError),
 }
 
@@ -1268,13 +1546,10 @@ impl fmt::Display for PropertyError {
             Self::InvalidIndex { len, index } => {
                 write!(formatter, "property index {index} is outside table length {len}")
             }
+            Self::RemovedRow { index } => {
+                write!(formatter, "property row {index} belongs to a removed draft entity")
+            }
             Self::TypeMismatch { key } => write!(formatter, "property {key:?} has a different type"),
-            Self::ReservedKey(key) => write!(formatter, "property key {key:?} is reserved for a canonical semantic API"),
-            Self::InvalidCanonicalProperty(key) => write!(
-                formatter,
-                "property {key:?} does not have its canonical realization atom type and unit"
-            ),
-            Self::InvalidRealizationDomain(domain) => write!(formatter, "populated {domain} properties do not belong to a realization"),
             Self::NonFiniteValue { index: Some(index) } => {
                 write!(formatter, "real property value at index {index} must be finite")
             }
@@ -1304,40 +1579,85 @@ impl From<UnitError> for PropertyError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::units::{
-        Quantity, ANGSTROM, DIMENSIONLESS, KELVIN, NANOMETER, SQUARE_ANGSTROM, SQUARE_NANOMETER,
-    };
+    use crate::core::AtomId;
+    use crate::units::{ANGSTROM, DIMENSIONLESS, KELVIN, NANOMETER};
 
     fn key(value: &str) -> PropertyKey {
         PropertyKey::new(value).unwrap()
     }
 
     #[test]
-    fn realization_domain_normalization_preserves_columns_and_is_transactional() {
-        let key = PropertyKey::new("score").unwrap();
-        let mut properties = Properties::realization(usize::MAX, 2);
+    fn detached_realization_bond_rows_bind_once_and_then_must_match() {
+        let score = key("score");
+        let mut properties = RealizationProperties::new(3);
         properties
-            .insert_realization_bond_column(key.clone(), PropertyColumn::Int(vec![Some(3), None]))
+            .owner_mut()
+            .insert(score.clone(), PropertyValue::Int(9))
             .unwrap();
-        properties
-            .insert(key.clone(), PropertyValue::Int(9))
+        assert_eq!(properties.atoms().len(), 3);
+        assert!(properties.bonds().is_empty());
+        assert!(properties.validate_bond_rows(2).is_ok());
+        properties.bind_bond_rows(2);
+        RealizationPropertiesMut::new(&mut properties)
+            .bonds_mut()
+            .set_value(
+                score.clone(),
+                TopologyBondIndex::new(1),
+                Some(PropertyValue::Int(3)),
+            )
             .unwrap();
-        let before = properties.clone();
         assert_eq!(
-            properties.normalize_realization_dimensions(3, 1),
+            properties.validate_bond_rows(1),
             Err(PropertyError::LengthMismatch {
                 expected: 1,
                 actual: 2
             })
         );
-        assert_eq!(properties, before);
-        properties.normalize_realization_dimensions(3, 2).unwrap();
-        assert_eq!(properties.realization_atom_properties().len(), 3);
+        let projected = properties.project(&[2, 0], &[1]).unwrap();
+        assert!(projected.owner().is_empty());
         assert_eq!(
-            properties.realization_bond_properties(),
-            before.realization_bond_properties()
+            projected
+                .bonds()
+                .value(&score, TopologyBondIndex::new(0))
+                .unwrap(),
+            Some(PropertyValue::Int(3))
         );
-        assert_eq!(properties.get(&key), Some(&PropertyValue::Int(9)));
+        assert_eq!(properties.owner().get(&score), Some(&PropertyValue::Int(9)));
+    }
+
+    #[test]
+    fn typed_tables_address_rows_and_batch_updates_are_transactional() {
+        let tag = key("tag");
+        let mut properties = MoleculeProperties::new(3, 0);
+        let mut guard = MoleculePropertiesMut::new(&mut properties, &[], &[]);
+        guard
+            .atoms_mut()
+            .set_values(
+                tag.clone(),
+                [
+                    (AtomId::new(0), Some(PropertyValue::Int(1))),
+                    (AtomId::new(2), Some(PropertyValue::Int(3))),
+                ],
+            )
+            .unwrap();
+        let before = guard.atoms().clone();
+        assert!(matches!(
+            guard.atoms_mut().set_values(
+                tag.clone(),
+                [
+                    (AtomId::new(1), Some(PropertyValue::Int(2))),
+                    (AtomId::new(3), Some(PropertyValue::Int(4))),
+                ],
+            ),
+            Err(PropertyError::InvalidIndex { len: 3, index: 3 })
+        ));
+        assert_eq!(guard.atoms(), &before);
+        assert_eq!(
+            properties.atoms().value(&tag, AtomId::new(2)).unwrap(),
+            Some(PropertyValue::Int(3))
+        );
+        assert!(!properties.atoms().row_has_data(AtomId::new(1)).unwrap());
+        assert_eq!(properties.atoms().keys().collect::<Vec<_>>(), [&tag]);
     }
 
     #[test]
@@ -1354,7 +1674,7 @@ mod tests {
 
     #[test]
     fn scalar_values_cover_the_complete_domain_and_reject_non_finite_reals() {
-        let mut properties = Properties::new();
+        let mut properties = OwnerProperties::new();
         properties
             .insert(key("bool"), PropertyValue::Bool(true))
             .unwrap();
@@ -1395,7 +1715,7 @@ mod tests {
 
     #[test]
     fn every_column_type_supports_missing_values_and_deterministic_iteration() {
-        let mut table = PropertyTable::new(3);
+        let mut table = RawPropertyTable::new(3);
         table
             .insert(
                 key("z_string"),
@@ -1436,7 +1756,7 @@ mod tests {
 
     #[test]
     fn table_updates_are_transactional_unit_aware_and_normalize_all_missing() {
-        let mut table = PropertyTable::new(2);
+        let mut table = RawPropertyTable::new(2);
         let length_error = table.insert(key("bad_len"), PropertyColumn::Bool(vec![Some(true)]));
         assert!(matches!(
             length_error,
@@ -1492,8 +1812,8 @@ mod tests {
             Err(PropertyError::NonFiniteValue { index: Some(0) })
         ));
 
-        table.clear_value(key("distance"), 0).unwrap();
-        table.clear_value(key("distance"), 1).unwrap();
+        table.set_value(key("distance"), 0, None).unwrap();
+        table.set_value(key("distance"), 1, None).unwrap();
         assert!(table.get(&key("distance")).is_none());
         table
             .insert(key("missing"), PropertyColumn::Int(vec![None, None]))
@@ -1503,7 +1823,7 @@ mod tests {
 
     #[test]
     fn failed_single_cell_updates_leave_the_existing_column_unchanged() {
-        let mut table = PropertyTable::new(3);
+        let mut table = RawPropertyTable::new(3);
         table
             .insert(
                 key("distance"),
@@ -1533,7 +1853,7 @@ mod tests {
 
     #[test]
     fn compatible_single_cell_updates_convert_without_changing_column_unit() {
-        let mut table = PropertyTable::new(2);
+        let mut table = RawPropertyTable::new(2);
         table
             .insert(
                 key("distance"),
@@ -1564,7 +1884,7 @@ mod tests {
 
     #[test]
     fn successful_single_cell_update_keeps_the_column_allocation() {
-        let mut table = PropertyTable::new(4);
+        let mut table = RawPropertyTable::new(4);
         table
             .insert(
                 key("labels"),
@@ -1589,18 +1909,18 @@ mod tests {
 
     #[test]
     fn clearing_the_final_populated_cell_removes_the_column() {
-        let mut table = PropertyTable::new(4);
+        let mut table = RawPropertyTable::new(4);
         table
             .set_value(key("flag"), 2, Some(PropertyValue::Bool(true)))
             .unwrap();
-        table.clear_value(key("flag"), 2).unwrap();
+        table.set_value(key("flag"), 2, None).unwrap();
         assert_eq!(table.get(&key("flag")), None);
         assert!(!table.has_data());
     }
 
     #[test]
     fn checked_projection_preserves_columns_and_missing_cells() {
-        let mut table = PropertyTable::new(3);
+        let mut table = RawPropertyTable::new(3);
         table
             .insert(
                 key("flag"),
@@ -1622,7 +1942,7 @@ mod tests {
 
     #[test]
     fn optional_projection_is_column_wise_and_preserves_real_units() {
-        let mut table = PropertyTable::new(3);
+        let mut table = RawPropertyTable::new(3);
         table
             .insert(
                 key("distance"),
@@ -1666,7 +1986,7 @@ mod tests {
 
     #[test]
     fn generic_tables_do_not_reserve_realization_semantic_names() {
-        let mut table = PropertyTable::new(1);
+        let mut table = RawPropertyTable::new(1);
         table
             .set_value(key("occupancy"), 0, Some(PropertyValue::Int(7)))
             .unwrap();
@@ -1684,83 +2004,5 @@ mod tests {
             table.value(&key("b_factor"), 0).unwrap(),
             Some(PropertyValue::String("generic".into()))
         );
-    }
-
-    #[test]
-    fn realization_facade_reserves_and_validates_canonical_atom_properties() {
-        let mut properties = Properties::realization(2, 1);
-        for reserved in ["occupancy", "b_factor"] {
-            let key = key(reserved);
-            assert!(matches!(
-                properties.set_realization_atom_value(key.clone(), 0, Some(PropertyValue::Int(1))),
-                Err(PropertyError::ReservedKey(_))
-            ));
-            assert!(matches!(
-                properties.insert_realization_atom_column(
-                    key.clone(),
-                    PropertyColumn::Int(vec![Some(1), None])
-                ),
-                Err(PropertyError::ReservedKey(_))
-            ));
-            assert!(matches!(
-                properties.remove_realization_atom_column(&key),
-                Err(PropertyError::ReservedKey(_))
-            ));
-        }
-
-        properties.set_occupancy_at(0, Some(0.75)).unwrap();
-        properties
-            .set_b_factor_at(1, Some(Quantity::new(12.5, SQUARE_ANGSTROM)))
-            .unwrap();
-        assert_eq!(properties.occupancy_at(0).unwrap(), Some(0.75));
-        let b_factor = properties.b_factor_at(1).unwrap().unwrap();
-        assert_eq!(b_factor.unit(), SQUARE_NANOMETER);
-        assert!((*b_factor.value() - 0.125).abs() < 1.0e-12);
-        assert!(matches!(
-            properties.set_occupancy_at(0, Some(f64::NAN)),
-            Err(PropertyError::NonFiniteValue { .. })
-        ));
-        assert!(matches!(
-            properties.set_b_factor_at(0, Some(Quantity::new(1.0, KELVIN))),
-            Err(PropertyError::Unit(_))
-        ));
-
-        let mut malformed = Properties::realization(2, 1);
-        malformed
-            .atoms_mut()
-            .insert(
-                key("occupancy"),
-                PropertyColumn::Real {
-                    unit: KELVIN,
-                    values: vec![Some(1.0), None],
-                },
-            )
-            .unwrap();
-        assert!(matches!(
-            malformed.validate_realization_properties(),
-            Err(PropertyError::InvalidCanonicalProperty(_))
-        ));
-    }
-
-    #[test]
-    fn canonical_realization_columns_install_in_bulk_and_normalize_missing_columns() {
-        let mut properties = Properties::realization(3, 0);
-        properties
-            .install_canonical_realization_atom_columns(
-                vec![Some(1.0), None, Some(0.5)],
-                vec![Some(0.125), None, Some(0.25)],
-            )
-            .unwrap();
-        assert_eq!(properties.occupancy_at(2).unwrap(), Some(0.5));
-        assert_eq!(
-            properties.b_factor_at(0).unwrap(),
-            Some(Quantity::new(0.125, SQUARE_NANOMETER))
-        );
-
-        properties
-            .install_canonical_realization_atom_columns(vec![None; 3], vec![None; 3])
-            .unwrap();
-        assert_eq!(properties.atoms().get(&occupancy_key()), None);
-        assert_eq!(properties.atoms().get(&b_factor_key()), None);
     }
 }

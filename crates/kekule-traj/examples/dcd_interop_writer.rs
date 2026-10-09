@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     molecule.add_bond(atoms[0], atoms[2], BondOrder::Single)?;
     let molecule = molecule.finish()?;
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(&molecule)?;
+    let definition = builder.add_molecule_definition(molecule.clone())?;
     builder.add_instance(definition)?;
     let topology = Arc::new(builder.build()?);
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Dcd)
@@ -52,16 +52,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let mut frame = FrameBuffer::new(topology);
     for (step, shift) in [(0, 0.0), (1, 1.0)] {
-        frame.set_positions(Quantity::new(
-            [
-                Point3::new(0.0 + shift, 1.0, 2.0),
-                Point3::new(3.0 + shift, 4.0, 5.0),
-                Point3::new(6.0 + shift, 7.0, 8.0),
-            ],
-            ANGSTROM,
-        ))?;
-        frame.set_cell(Some(cell));
-        frame.set_step(Some(step));
+        frame
+            .frame_mut()
+            .conformation_mut()
+            .set_positions(Quantity::new(
+                [
+                    Point3::new(0.0 + shift, 1.0, 2.0),
+                    Point3::new(3.0 + shift, 4.0, 5.0),
+                    Point3::new(6.0 + shift, 7.0, 8.0),
+                ],
+                ANGSTROM,
+            ))?;
+        frame.frame_mut().conformation_mut().set_cell(Some(cell));
+        frame.frame_mut().set_step(Some(step));
         writer.write_frame(frame.frame_view())?;
     }
     writer.finish()?;
