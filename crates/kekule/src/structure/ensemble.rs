@@ -481,7 +481,7 @@ impl Ensemble {
         let first = models.first().ok_or(EnsembleError::EmptySource)?;
         let mut ensemble = Self::new(Arc::clone(&first.topology));
         for model in models {
-            if !Arc::ptr_eq(&first.topology, &model.topology) {
+            if !first.topology.shares_layout(&model.topology) {
                 return Err(EnsembleError::TopologyMismatch);
             }
             let member = EnsembleMember {
@@ -524,8 +524,9 @@ impl Ensemble {
     /// Delegates to [`Topology::perceived`] once for the collection, independent
     /// of member count. All member positions, cells, weights, and properties,
     /// and collection properties are retained without copying members. Failure
-    /// leaves the entire ensemble unchanged. Other owners and existing bound
-    /// selections or prepared calculations retain their original snapshot.
+    /// leaves the entire ensemble unchanged. Other owners keep their snapshot;
+    /// the new one shares its layout, so existing selections and prepared
+    /// potentials remain usable.
     pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
         self.topology = Arc::new(self.topology.perceived()?);
         Ok(())

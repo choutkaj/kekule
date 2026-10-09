@@ -79,10 +79,12 @@
 //!
 //! Coordinate-dependent algorithms consume [`structure::ModelView`]. A model,
 //! ensemble member, trajectory frame, or reusable trajectory buffer can
-//! therefore share kernels without copying coordinates. APIs that require an
-//! exact topology context compare the shared `Arc<Topology>` allocation; use
+//! therefore share kernels without copying coordinates. APIs that address atoms
+//! by index accept any topology snapshot sharing their layout
+//! ([`topology::Topology::shares_layout`]), so perception never detaches
+//! selections, buffers, or prepared potentials. Use
 //! [`topology::Topology::same_layout`] only when complete static layout equality
-//! rather than shared identity is intended.
+//! between independent publications is intended.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 

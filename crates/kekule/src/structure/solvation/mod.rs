@@ -2,8 +2,8 @@
 //!
 //! These operations create starting structures, not parameterized or equilibrated
 //! simulation systems. Existing coordinates, chemistry, and entity annotations are
-//! preserved. Solvation publishes one new topology; old selections and parameter
-//! assignments remain bound to the original snapshot. Existing owner properties
+//! preserved. Solvation publishes one new topology layout; old selections and
+//! parameter assignments remain bound to the original one. Existing owner properties
 //! are cleared under the ordinary append contract and listed in the optional report.
 //!
 mod boxes;
@@ -67,7 +67,7 @@ impl NegativeIon {
     }
 }
 
-/// Complete exclusion radii bound to one exact topology, in its dense atom order.
+/// Complete exclusion radii bound to one topology layout, in its dense atom order.
 /// Zero radii are allowed, for example for atoms without a Lennard-Jones term.
 #[derive(Debug, Clone)]
 pub struct SolvationRadii {

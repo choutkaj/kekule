@@ -27,9 +27,9 @@ pub enum BondSelectionMode {
 /// selects their endpoints; [`AtomSelection::to_bonds`] explicitly selects bonds
 /// by an endpoint rule. Neither operation edits chemistry.
 ///
-/// Like [`AtomSelection`], equality and set operations require the exact shared
-/// topology snapshot, including for empty sets. Bare IDs and dense indices are
-/// interpreted in that snapshot and do not carry provenance of their own.
+/// Like [`AtomSelection`], equality and set operations require one shared
+/// topology layout, including for empty sets. Bare IDs and dense indices are
+/// interpreted in that layout and do not carry provenance of their own.
 ///
 /// # Editing selected bonds
 ///
@@ -65,7 +65,7 @@ pub struct BondSelection {
 
 impl PartialEq for BondSelection {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.topology, &other.topology) && self.indices == other.indices
+        self.topology.shares_layout(&other.topology) && self.indices == other.indices
     }
 }
 
@@ -331,7 +331,7 @@ impl BondSelection {
 
     /// Rejects even layout-equal snapshots unless the shared owner is identical.
     pub fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), SelectionError> {
-        if !Arc::ptr_eq(&self.topology, topology) {
+        if !self.topology.shares_layout(topology) {
             return Err(SelectionError::TopologyMismatch);
         }
         Ok(())

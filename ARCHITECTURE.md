@@ -79,9 +79,11 @@ unsupported or exhausted ranking rather than treating unfinished work as a tie.
 
 Owning perception runs once per reusable definition and publishes atomically.
 A successful model, ensemble, or trajectory perception operation installs a new
-shared topology snapshot without copying coordinate payloads. Existing
-selections, prepared objects, and streaming bindings remain attached to their
-original snapshot. Failure leaves all definitions and realization state intact.
+shared topology snapshot without copying coordinate payloads or the layout.
+The snapshot keeps the source's layout identity, so existing selections,
+prepared potentials, and streaming bindings stay attached to their original
+snapshot and remain usable with the new one. Failure leaves all definitions and
+realization state intact.
 
 See [graph storage](crates/kekule/src/core/graph.rs),
 [represented stereo](crates/kekule/src/core/stereo.rs),
@@ -178,7 +180,7 @@ reported. Import mappings are scoped to that append and its draft identities.
 See the [append contract](crates/kekule/src/structure/model_editor/append.rs) for
 cell comparison tolerances, property transfer, and examples.
 
-Selections bind to one exact shared topology, including empty selections and set
+Selections bind to one topology layout, including empty selections and set
 operations. Atom and bond selections independently contain unique entities in
 authoritative dense order. Atom-to-bond conversion explicitly chooses both,
 either, or exactly one selected endpoint; bond-to-atom conversion selects both
@@ -252,7 +254,7 @@ invariants immediately, including when a guard is forgotten.
 Measurements and spatial selections operate on borrowed realizations. Cartesian
 measurements do not silently apply periodic imaging. A spatial selection is one
 realization's result; reevaluating it across frames is explicit. Prepared bond
-dihedrals bind topology-selected references to the exact shared snapshot. CIP
+dihedrals bind topology-selected references to one topology layout. CIP
 priority and atom-ID ties choose the references without coordinates; undefined
 geometry yields an absent value rather than substituting references. Numerical
 policies and supported geometries live with
@@ -264,7 +266,7 @@ policies and supported geometries live with
 
 Cartesian geometry edits mutate `Model` coordinates atomically while retaining
 the exact topology, cell, and properties. Prepared distance, angle, and dihedral
-edits bind references and moving selections to that snapshot, never to cached
+edits bind references and moving selections to that layout, never to cached
 coordinates. Automatic fragments must separate from fixed references; explicit
 selections may deliberately deform boundary bonds. Neither path performs ring
 closure, relaxation, or periodic imaging. See the
@@ -284,7 +286,7 @@ prove atom identity. Callers may independently validate semantic atom order.
 Because interpretation keeps source atom-row order and structure writers emit
 dense order, a coordinate file written in a structure file's row order addresses
 the same atoms through that file's topology.
-Streaming buffers bind to the exact topology and publish complete frames
+Streaming buffers bind to one topology layout and publish complete frames
 transactionally. Eager reads use the same decoder path through clean EOF.
 Path writers stage output and publish only a completed nonempty trajectory;
 unsupported fields and collection properties are rejected rather than discarded.
@@ -297,8 +299,8 @@ acts on whole molecules. Unwrapping retains temporal state and requires ordered,
 sufficiently close samples; it precedes downsampling. Failed streaming operations
 change neither the frame buffer nor temporal state. Diagnostics are opt-in.
 
-RMSF and contact-occupancy reductions consume borrowed frames from the exact source
-topology with memory bounded by selected atoms or pairs, not frame count. Failed
+RMSF and contact-occupancy reductions consume borrowed frames sharing the source
+topology's layout with memory bounded by selected atoms or pairs, not frame count. Failed
 observations leave accumulators unchanged. Results retain atom/pair associations;
 frame indices are diagnostic labels, not statistical weights. Preprocessing,
 including alignment or imaging, is explicit. These are separate analysis results,
@@ -400,8 +402,11 @@ Molecular equality compares authoritative represented chemistry, excluding
 perception, annotations, hierarchy, and topology classification. Topology layout
 equality is separate: it includes definitions, instances, classifications,
 hierarchy, semantic IDs, and dense order, but excludes perception and properties.
-Exact shared snapshot identity is stricter than equal layout. Operations requiring
-one `Arc<Topology>` must not silently substitute an independently equal topology.
+Layout identity is stricter than equal layout. Every publication creates a new
+layout identity; perception creates new snapshots that keep it. Operations that
+address atoms and bonds by index accept any snapshot sharing their layout, and
+must not silently substitute an independently equal topology. Operations that
+read perception, such as prepared substructure targets, bind the exact snapshot.
 
 Geometric correspondence may explicitly pair selected atoms from two exact
 snapshots, with each side validated and pairs one-to-one. It need not cover equal
@@ -437,7 +442,7 @@ reference-tool adapters and benchmark reports stay outside the runtime crates.
 See the [benchmark guide](benchmarks/GUIDE.md) for the optional execution workflow.
 
 `kekule-openff` owns compiled SMIRNOFF rules, configured NAGL inference, and typed
-`ParameterizedTopology` results bound to the caller's exact `Arc<Topology>`.
+`ParameterizedTopology` results retaining the caller's `Arc<Topology>`.
 It prepares temporary per-definition chemistry and expands assignments to
 instance-qualified atoms without mutating the topology or adding hydrogens.
 All numeric parameters carry canonical units. Complete force-field state stays
@@ -450,9 +455,10 @@ checks it against the supplied model before assigning any molecule. Chemistry
 preparation is a versioned model profile, separate from SMIRNOFF MDL perception.
 
 `kekule-potentials` owns energy evaluation and geometry optimization; the
-foundational crate owns no potential. A prepared `Potential` binds one exact
-`Arc<Topology>`, does not change during evaluation, and accepts any `ModelView`
-of that snapshot; an independently equal topology is incompatible. Energies and
+foundational crate owns no potential. A prepared `Potential` binds one topology
+layout, does not change during evaluation, and accepts any `ModelView` sharing
+that layout, including perceived snapshots; an independently equal topology is
+incompatible. Energies and
 gradients are separate result objects in canonical units, not model properties.
 Backends lower explicit parameters, currently an OpenFF `ParameterizedTopology`,
 into private functional-form kernels. Parameter assignment stays in its own

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::topology::{InstanceAtomId, Topology, TopologyAtomIndex};
 
-/// Ordered, one-to-one atom pairs for comparing two exact topology snapshots.
+/// Ordered, one-to-one atom pairs for comparing two topology layouts.
 ///
 /// Pairs associate moving atoms with reference atoms. They may cover a subset
 /// of either system and preserve caller order, including the order of weights.
@@ -152,7 +152,7 @@ impl AtomCorrespondence {
                 reference,
             ),
         ] {
-            if !std::ptr::eq(expected, actual) {
+            if !expected.shares_layout(actual) {
                 return Err(AtomCorrespondenceError::TopologyMismatch { side });
             }
         }

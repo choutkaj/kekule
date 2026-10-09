@@ -271,24 +271,30 @@ fn energy_is_rigid_motion_invariant_and_gradient_has_no_net_force() {
 }
 
 #[test]
-fn potential_binds_the_exact_snapshot_and_rejects_periodic_cells() {
+fn potential_binds_its_layout_and_rejects_periodic_cells() {
     let topology = topology(1);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
     assert!(Arc::ptr_eq(potential.topology(), &topology));
     let model = model(&topology);
+    // An independently published equal topology is a different layout.
     let other = self::model(&self::topology(1));
     assert_eq!(
         potential.energy(other.view()),
         Err(EvaluationError::IncompatibleTopology)
     );
-    // Reperception publishes a new snapshot; the original stays evaluable.
+    // Reperception publishes a new snapshot of the same layout, so the
+    // prepared potential evaluates both identically.
     let mut perceived = model.clone();
     perceived.perceive().unwrap();
+    let evaluation = potential.evaluate(perceived.view()).unwrap();
+    assert!(Arc::ptr_eq(
+        evaluation.topology(),
+        &perceived.shared_topology()
+    ));
     assert_eq!(
-        potential.evaluate(perceived.view()),
-        Err(EvaluationError::IncompatibleTopology)
+        evaluation.energy().total(),
+        potential.energy(model.view()).unwrap().total()
     );
-    potential.evaluate(model.view()).unwrap();
 
     let cell = PeriodicCell::orthorhombic(
         Quantity::new(Vector3::new(3.0, 3.0, 3.0), NANOMETER),

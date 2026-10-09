@@ -9,7 +9,7 @@ use crate::{FrameBuffer, TrajectoryFrame, TrajectoryFrameView};
 
 /// A reusable bond traversal for making molecules whole and imaging them.
 ///
-/// The plan binds one exact topology. Operations are independent between frames;
+/// The plan binds one topology layout. Operations are independent between frames;
 /// `frame_index` is the caller's zero-based source index for error reporting.
 /// All non-position state is retained. These are the same operations used by
 /// [`crate::Trajectory::make_molecules_whole`] and [`crate::Trajectory::image_molecules`].
@@ -75,7 +75,7 @@ impl MoleculeImager {
         &self,
         anchors: &AtomSelection,
     ) -> Result<Vec<bool>, PeriodicError> {
-        if !std::ptr::eq(self.topology(), anchors.topology()) {
+        if !self.topology().shares_layout(anchors.topology()) {
             return Err(PeriodicError::SelectionTopologyMismatch);
         }
         if anchors.indices().is_empty() {
@@ -94,7 +94,7 @@ impl MoleculeImager {
         source: TrajectoryFrameView<'_>,
         anchors: Option<&[bool]>,
     ) -> Result<Positions, PeriodicError> {
-        if !std::ptr::eq(self.topology(), source.topology()) {
+        if !self.topology().shares_layout(source.topology()) {
             return Err(PeriodicError::TopologyMismatch { frame: frame_index });
         }
         let lattice = Lattice::new(source.cell().copied(), frame_index)?;
@@ -194,7 +194,7 @@ impl TrajectoryUnwrapper {
         frame_index: usize,
         source: TrajectoryFrameView<'_>,
     ) -> Result<UnwrapStep, PeriodicError> {
-        if !std::ptr::eq(self.topology(), source.topology()) {
+        if !self.topology().shares_layout(source.topology()) {
             return Err(PeriodicError::TopologyMismatch { frame: frame_index });
         }
         if let Some(previous) = &self.previous {

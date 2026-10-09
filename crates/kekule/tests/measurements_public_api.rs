@@ -568,7 +568,19 @@ fn spatial_selection_is_inclusive_unit_aware_and_specific_to_each_view() {
         ),
         Err(MeasurementError::Unit(_))
     ));
-    let foreign = AtomSelection::all(&std::sync::Arc::new(top.perceived().unwrap()));
+    // A perceived snapshot shares the layout, so its selections stay usable.
+    let perceived = AtomSelection::all(&std::sync::Arc::new(top.perceived().unwrap()));
+    assert_eq!(
+        measure::within(
+            model.view(),
+            &perceived,
+            &reference,
+            Quantity::new(1.0, NANOMETER)
+        ),
+        Ok(selected.clone())
+    );
+    // An independently published equal topology does not.
+    let foreign = AtomSelection::all(&std::sync::Arc::new(smiles::to_topology("CCCC").unwrap()));
     assert_eq!(
         measure::within(
             model.view(),

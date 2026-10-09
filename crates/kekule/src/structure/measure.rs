@@ -293,7 +293,7 @@ pub fn dihedral_with_connectivity(
 }
 
 /// Selects candidate atoms at Cartesian distance **<= cutoff** from any
-/// reference atom. Both selections must belong to the view's exact topology.
+/// reference atom. Both selections must share the view's topology layout.
 /// Overlapping candidate/reference atoms match even at zero cutoff. Empty
 /// references produce an empty selection. The result is a static atom set for
 /// this view; call again for each frame when membership should change.

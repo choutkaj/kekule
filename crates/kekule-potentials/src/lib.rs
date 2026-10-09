@@ -7,8 +7,9 @@
 //! The crate separates three layers:
 //!
 //! - [`Potential`] is the evaluation contract. It promises an energy and a
-//!   Cartesian gradient for any [`kekule::structure::ModelView`] of one exact
-//!   topology snapshot and assumes nothing about how the energy is built.
+//!   Cartesian gradient for any [`kekule::structure::ModelView`] sharing one
+//!   topology layout, including snapshots perceived after preparation, and
+//!   assumes nothing about how the energy is built.
 //! - Backends prepare a potential from explicit parameters. The default
 //!   `openff` feature provides `openff::OpenFfPotential`, which evaluates a
 //!   `kekule_openff::ParameterizedTopology`. Classical backends share private

@@ -69,8 +69,8 @@ impl Trajectory {
     /// of frame count. All frame positions, cells, velocities, forces, time,
     /// step, and properties, and collection properties are retained without
     /// copying frames. Failure leaves the entire trajectory unchanged. Other
-    /// owners, readers, buffers, selections, and prepared calculations retain
-    /// their original topology bindings.
+    /// owners keep their snapshot; the new one shares its layout, so readers,
+    /// buffers, selections, and prepared potentials remain usable.
     pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
         self.topology = Arc::new(self.topology.perceived()?);
         Ok(())

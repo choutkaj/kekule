@@ -130,7 +130,7 @@ impl Minimization {
     /// `source` must share the minimized topology snapshot. Its cell and
     /// realization properties are retained unchanged.
     pub fn to_model(&self, source: ModelView<'_>) -> Result<Model, MinimizationError> {
-        if !std::ptr::eq(self.evaluation.topology().as_ref(), source.topology()) {
+        if !self.evaluation.topology().shares_layout(source.topology()) {
             return Err(MinimizationError::IncompatibleTopology);
         }
         let mut model = source.to_model();
@@ -577,7 +577,7 @@ impl fmt::Display for MinimizationError {
             }
             Self::Evaluation(error) => write!(f, "potential evaluation failed: {error}"),
             Self::IncompatibleTopology => f.write_str(
-                "model view belongs to a different exact topology than the minimization",
+                "model view belongs to a different topology layout than the minimization",
             ),
             Self::Model(error) => write!(f, "cannot build the minimized realization: {error}"),
             Self::Position(error) => write!(f, "cannot update positions: {error}"),

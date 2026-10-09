@@ -6,6 +6,15 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** perception keeps a topology's layout identity. `Topology::perceived`
+  and model, ensemble, and trajectory `perceive` share the published layout
+  instead of copying it. Selections, frame buffers, readers and writers,
+  alignment, measurements, geometry edits, reductions, periodic tools, subsets,
+  and potentials accept any snapshot sharing their layout, checked with the new
+  `Topology::shares_layout`, so perception no longer detaches them. Independently
+  published equal topologies stay incompatible, and prepared substructure
+  targets still bind their exact snapshot. Selection equality uses layout
+  identity. `Topology` hierarchy and property accessors are no longer `const fn`.
 - **Breaking:** `Topology` stores its dense atom order instead of deriving it
   from instance order, and instances need not be contiguous. Format
   interpretation keeps source atom-row order (mmCIF `_atom_site` rows,

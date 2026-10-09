@@ -307,7 +307,7 @@ impl ContactOccupancyAccumulator {
         frame_index: usize,
         frame: TrajectoryFrameView<'_>,
     ) -> Result<(), ReductionError> {
-        if !Arc::ptr_eq(&self.topology, &frame.shared_topology()) {
+        if !self.topology.shares_layout(frame.topology()) {
             return Err(ReductionError::TopologyMismatch { frame: frame_index });
         }
         let next = next_count(self.frames)?;

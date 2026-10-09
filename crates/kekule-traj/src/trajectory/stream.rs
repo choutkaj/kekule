@@ -144,7 +144,7 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
-        if !Arc::ptr_eq(&self.trajectory.topology, frame.topology) {
+        if !self.trajectory.topology.shares_layout(frame.topology) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         self.trajectory.push(frame.to_frame())
@@ -208,7 +208,7 @@ impl TrajectoryReader for CoordinateFrameReader {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        if !Arc::ptr_eq(&self.topology, &destination.topology) {
+        if !self.topology.shares_layout(&destination.topology) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let Some(frame) = self.frames.get(self.cursor) else {
