@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
 use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
+use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::topology::{
     transform, AtomSelection, AtomSiteMetadata, EditAtomId, Hierarchy, InstanceAtomId,
-    MoleculeClass, MoleculeDefinitionId, ResidueClass, Topology, TopologyBuilder, TopologyEditor,
+    MoleculeClass, MoleculeDefinitionId, ResidueClass, ResidueId, Topology, TopologyBuilder,
+    TopologyEditor,
 };
 
 fn atom(symbol: &str) -> Atom {
@@ -441,4 +443,256 @@ fn uninformative_and_unrelated_appends_preserve_complete_entity_cached_classes()
             MoleculeClass::SmallMolecule
         );
     }
+}
+
+fn oxygen() -> Molecule {
+    let mut editor = MoleculeEditor::new();
+    editor.add_atom(atom("O")).unwrap();
+    editor.finish().unwrap()
+}
+
+fn water_builder(label: &str) -> (TopologyBuilder, ResidueId) {
+    let molecule = oxygen();
+    let mut builder = TopologyBuilder::new();
+    let instance = builder.add_molecule(molecule.clone()).unwrap();
+    let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
+    let residue = builder
+        .hierarchy_mut()
+        .add_residue(chain, "HOH", None, None, None)
+        .unwrap();
+    builder
+        .hierarchy_mut()
+        .add_atom_site(
+            residue,
+            InstanceAtomId::new(instance, molecule.atom_ids().next().unwrap()),
+            AtomSiteMetadata::default(),
+        )
+        .unwrap();
+    builder
+        .hierarchy_mut()
+        .set_residue_component_ids(residue, Some(label.into()), None)
+        .unwrap();
+    (builder, residue)
+}
+
+fn water_classes(topology: &Topology) -> (MoleculeClass, ResidueClass) {
+    (
+        topology.molecules().next().unwrap().class(),
+        topology.residues().next().unwrap().class(),
+    )
+}
+
+#[test]
+fn resumed_builder_reinfers_changed_component_identity_like_fresh_construction() {
+    let (builder, residue) = water_builder("HOH");
+    let source = builder.build().unwrap();
+    assert_eq!(
+        water_classes(&source),
+        (MoleculeClass::Water, ResidueClass::Water)
+    );
+    let mut builder = source.into_builder();
+    builder
+        .hierarchy_mut()
+        .set_residue_component_ids(residue, Some("UNK".into()), None)
+        .unwrap();
+    let rebuilt = builder.build().unwrap();
+    let fresh = water_builder("UNK").0.build().unwrap();
+    assert_eq!(
+        water_classes(&rebuilt),
+        (MoleculeClass::SmallMolecule, ResidueClass::Other)
+    );
+    assert!(rebuilt.same_layout(&fresh));
+}
+
+#[test]
+fn explicit_classes_survive_changed_component_evidence_and_rebuilding() {
+    let (mut builder, residue) = water_builder("HOH");
+    let definition = builder.definitions().next().unwrap().0;
+    // An explicit assignment equal to the inferred value still expresses intent.
+    builder
+        .set_molecule_class(definition, MoleculeClass::Water)
+        .unwrap();
+    builder
+        .set_residue_class(residue, ResidueClass::Water)
+        .unwrap();
+    let source = Arc::new(builder.build().unwrap());
+    let inferred = water_builder("HOH").0.build().unwrap();
+    assert!(source.same_layout(&inferred));
+    let mut editor = source.edit();
+    let residue_handle = editor.residue_handle(residue).unwrap();
+    editor
+        .set_residue_component_ids(residue_handle, Some("UNK".into()), None)
+        .unwrap();
+    assert_eq!(
+        water_classes(&editor.finish().unwrap()),
+        (MoleculeClass::Water, ResidueClass::Water)
+    );
+    let mut builder = Arc::try_unwrap(source).unwrap().into_builder();
+    builder
+        .hierarchy_mut()
+        .set_residue_component_ids(residue, Some("UNK".into()), None)
+        .unwrap();
+    let rebuilt = builder.build().unwrap();
+    assert_eq!(
+        water_classes(&rebuilt),
+        (MoleculeClass::Water, ResidueClass::Water)
+    );
+    assert_eq!(
+        water_classes(&rebuilt.into_builder().build().unwrap()),
+        (MoleculeClass::Water, ResidueClass::Water)
+    );
+}
+
+#[test]
+fn no_op_and_append_preserve_untouched_classes_and_explicit_intent() {
+    let source = Arc::new(water_builder("HOH").0.build().unwrap());
+    assert!(Arc::ptr_eq(&source, &source.edit().finish().unwrap()));
+    let mut editor = source.edit();
+    editor.add_molecule(oxygen().clone()).unwrap();
+    let appended = editor.finish().unwrap();
+    assert_eq!(water_classes(&appended), water_classes(&source));
+    assert_eq!(
+        appended.molecules().nth(1).unwrap().class(),
+        MoleculeClass::SmallMolecule
+    );
+    let mut builder = Arc::try_unwrap(source).unwrap().into_builder();
+    builder.add_molecule(oxygen().clone()).unwrap();
+    let appended_builder = builder.build().unwrap();
+    assert!(appended.same_layout(&appended_builder));
+}
+
+#[test]
+fn hierarchy_edits_reinfer_source_molecule_classes_and_preserve_shared_snapshot() {
+    let source = Arc::new(Topology::from_molecule(oxygen().clone()).unwrap());
+    let mut editor = source.edit();
+    let atom = editor.atom_ids().next().unwrap();
+    let chain = editor.add_chain("A", None).unwrap();
+    let residue = editor.add_residue(chain, "HOH", None, None, None).unwrap();
+    editor
+        .add_atom_site(residue, atom, AtomSiteMetadata::default())
+        .unwrap();
+    let result = editor.finish().unwrap();
+    assert_eq!(
+        water_classes(&result),
+        (MoleculeClass::Water, ResidueClass::Water)
+    );
+    assert_eq!(
+        source.molecules().next().unwrap().class(),
+        MoleculeClass::SmallMolecule
+    );
+    assert!(source.hierarchy().is_empty());
+    let mut editor = result.edit();
+    let residue = editor.residues().next().unwrap().0;
+    editor
+        .set_residue_component_ids(residue, Some("UNK".into()), None)
+        .unwrap();
+    assert!(editor
+        .finish()
+        .unwrap()
+        .same_layout(&water_builder("UNK").0.build().unwrap()));
+}
+
+#[test]
+fn transformations_do_not_promote_inferred_classes_to_explicit_overrides() {
+    let source = Arc::new(water_builder("HOH").0.build().unwrap());
+    let subset = source.subset(&AtomSelection::all(&source)).unwrap();
+    let (target, _) = subset.into_parts();
+    let mut editor = target.edit();
+    let residue = editor.residues().next().unwrap().0;
+    editor
+        .set_residue_component_ids(residue, Some("UNK".into()), None)
+        .unwrap();
+    assert_eq!(
+        water_classes(&editor.finish().unwrap()),
+        (MoleculeClass::SmallMolecule, ResidueClass::Other)
+    );
+}
+
+#[test]
+fn preserved_inferred_class_survives_no_op_rebuilding_until_its_evidence_changes() {
+    let (mut builder, residue) = water_builder("HOH");
+    let definition = builder.definitions().next().unwrap().0;
+    let first = builder.instances().next().unwrap().0;
+    let second = builder.add_instance(definition).unwrap();
+    let chain = builder.hierarchy_mut().add_chain("B", None).unwrap();
+    let ion = builder
+        .hierarchy_mut()
+        .add_residue(chain, "UNK", None, None, None)
+        .unwrap();
+    let local = builder
+        .definition(definition)
+        .unwrap()
+        .molecule()
+        .atom_ids()
+        .next()
+        .unwrap();
+    builder
+        .hierarchy_mut()
+        .add_atom_site(
+            ion,
+            InstanceAtomId::new(second, local),
+            AtomSiteMetadata::default(),
+        )
+        .unwrap();
+    builder.set_residue_class(ion, ResidueClass::Ion).unwrap();
+    let source = Arc::new(builder.build().unwrap());
+    assert_eq!(
+        source.molecules().next().unwrap().class(),
+        MoleculeClass::Other
+    );
+    let retained = kekule::topology::transform::retain_instances(&source, [first]).unwrap();
+    assert_eq!(
+        water_classes(&retained),
+        (MoleculeClass::Other, ResidueClass::Water)
+    );
+    let mut editor = retained.edit();
+    editor
+        .insert_property(PropertyKey::new("label").unwrap(), PropertyValue::Int(1))
+        .unwrap();
+    assert_eq!(
+        water_classes(&editor.finish().unwrap()),
+        water_classes(&retained)
+    );
+    let mut editor = retained.edit();
+    let site = editor.atom_sites().next().unwrap().0;
+    let mut metadata = editor.atom_site(site).unwrap().metadata().clone();
+    metadata.type_symbol = Some("O".into());
+    editor.set_atom_site_metadata(site, metadata).unwrap();
+    let residue_handle = editor.residues().next().unwrap().0;
+    editor
+        .set_residue_class(residue_handle, ResidueClass::Water)
+        .unwrap();
+    assert_eq!(
+        editor.residue(residue_handle).unwrap().class_override(),
+        Some(ResidueClass::Water)
+    );
+    assert_eq!(
+        water_classes(&editor.finish().unwrap()),
+        water_classes(&retained)
+    );
+    let rebuilt = Arc::try_unwrap(retained)
+        .unwrap()
+        .into_builder()
+        .build()
+        .unwrap();
+    assert_eq!(
+        water_classes(&rebuilt),
+        (MoleculeClass::Other, ResidueClass::Water)
+    );
+    let mut builder = rebuilt.into_builder();
+    builder.add_molecule(oxygen().clone()).unwrap();
+    let appended = builder.build().unwrap();
+    assert_eq!(
+        water_classes(&appended),
+        (MoleculeClass::Other, ResidueClass::Water)
+    );
+    let mut builder = appended.into_builder();
+    builder
+        .hierarchy_mut()
+        .set_residue_component_ids(residue, Some("UNK".into()), None)
+        .unwrap();
+    assert_eq!(
+        water_classes(&builder.build().unwrap()),
+        (MoleculeClass::SmallMolecule, ResidueClass::Other)
+    );
 }

@@ -3,8 +3,6 @@
 mod atom_order;
 mod classification;
 mod classification_edits;
-mod conversion_ownership;
-mod correspondence;
 mod dense_storage;
 mod editors;
 mod hierarchy;
@@ -14,6 +12,5 @@ mod perception;
 mod properties;
 mod scientific_selection;
 mod selection;
-mod selection_all;
 mod topology;
 mod trajectories;

@@ -706,3 +706,60 @@ fn publication_compacts_every_id_space_and_carries_annotations() {
     assert!(identity.atoms().iter().all(|(from, to)| from == to));
     assert_eq!(again, published);
 }
+
+#[test]
+fn editor_enforces_molecule_publication_invariants() {
+    assert!(matches!(
+        MoleculeEditor::new().finish(),
+        Err(kekule::core::MoleculePublicationError::EmptyGraph)
+    ));
+
+    let mut single_atom = MoleculeEditor::new();
+    single_atom
+        .add_atom(Atom::new(Element::from_symbol("He").unwrap()))
+        .unwrap();
+    assert_eq!(single_atom.finish().unwrap().atom_count(), 1);
+
+    let mut disconnected = MoleculeEditor::new();
+    disconnected
+        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+        .unwrap();
+    disconnected
+        .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
+        .unwrap();
+    assert!(matches!(
+        disconnected.finish(),
+        Err(kekule::core::MoleculePublicationError::DisconnectedGraph(_))
+    ));
+}
+
+#[test]
+fn editor_ids_are_stable_while_drafting_and_compact_on_publication() {
+    let mut editor = MoleculeEditor::new();
+    let first = editor.add_atom(atom("C")).unwrap();
+    let tombstone = editor.add_atom(atom("C")).unwrap();
+    let last = editor.add_atom(atom("C")).unwrap();
+    editor
+        .add_bond(first, tombstone, BondOrder::Single)
+        .unwrap();
+    editor.add_bond(tombstone, last, BondOrder::Single).unwrap();
+    editor.delete_atom(tombstone).unwrap();
+    assert!(matches!(
+        editor.clone().finish(),
+        Err(MoleculePublicationError::DisconnectedGraph(_))
+    ));
+    // Draft IDs remain stable across deletion while the graph is edited.
+    editor.add_bond(first, last, BondOrder::Single).unwrap();
+    assert_eq!(last, AtomId::new(2));
+    let (molecule, ids) = editor
+        .finish_with_correspondence()
+        .expect("connected graph publishes");
+    // Publication drops the deleted slot and renumbers survivors densely.
+    assert_eq!(
+        molecule.atom_ids().collect::<Vec<_>>(),
+        [AtomId::new(0), AtomId::new(1)]
+    );
+    assert_eq!(ids.atom(first), Some(AtomId::new(0)));
+    assert_eq!(ids.atom(tombstone), None);
+    assert_eq!(ids.atom(last), Some(AtomId::new(1)));
+}

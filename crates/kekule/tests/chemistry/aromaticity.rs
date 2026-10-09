@@ -1,7 +1,17 @@
 use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor, Perception};
-use kekule::perception::aromaticity::{perceive_aromaticity, AromaticityModel};
+use kekule::perception::aromaticity::{
+    perceive_aromaticity, perceive_aromaticity_with_options, AromaticityError, AromaticityModel,
+    AromaticityOptions,
+};
+use kekule::perception::rings::RingPerceptionOptions;
+use kekule::smiles;
+use kekule::stereo::assign_cip_descriptors;
 
 use crate::support::aromaticity_cases;
+
+fn molecule(source: &str) -> Molecule {
+    smiles::to_molecules(source).unwrap().pop().unwrap()
+}
 
 #[test]
 fn default_perception_matches_reference_aromaticity_regressions() {
@@ -123,4 +133,86 @@ fn standalone_aromaticity_preserves_partial_installed_hydrogen_assignments() {
     assert!(molecule
         .bonds()
         .all(|(bond, _)| molecule.bond_is_aromatic(bond).unwrap() == Some(false)));
+}
+
+#[test]
+fn aromaticity_work_failures_restore_both_missing_and_installed_perception() {
+    let mut perceived = molecule("F[C@H](Cl)c1ccccc1-c1ccccc1");
+    perceived.perceive().unwrap();
+    assign_cip_descriptors(&mut perceived).unwrap();
+    for original in [molecule("F[C@H](Cl)c1ccccc1-c1ccccc1"), perceived] {
+        let mut failures = 0;
+        let mut successes = 0;
+        // Exercise failures at successive stages, including after rings have
+        // been installed and after aromaticity has replaced the old section.
+        for max_total_work in (0..1_000).step_by(7) {
+            let mut actual = original.clone();
+            let options = AromaticityOptions {
+                max_total_work,
+                ..Default::default()
+            };
+            match perceive_aromaticity_with_options(
+                &mut actual,
+                AromaticityModel::RdkitLike,
+                options,
+            ) {
+                Err(error) => {
+                    assert_eq!(
+                        error,
+                        AromaticityError::ResourceLimit {
+                            limit: max_total_work
+                        }
+                    );
+                    assert_eq!(actual.perception(), original.perception());
+                    failures += 1;
+                }
+                Ok(()) => {
+                    assert_eq!(
+                        actual
+                            .atoms()
+                            .filter(|(id, _)| actual.atom_is_aromatic(*id).unwrap() == Some(true))
+                            .count(),
+                        12
+                    );
+                    assert_eq!(
+                        actual
+                            .bonds()
+                            .filter(|(id, _)| actual.bond_is_aromatic(*id).unwrap() == Some(true))
+                            .count(),
+                        12
+                    );
+                    successes += 1;
+                }
+            }
+            assert_eq!(actual, original, "represented chemistry changed");
+        }
+        assert!(failures > 0 && successes > 0);
+    }
+}
+
+#[test]
+fn installed_rings_skip_enumeration_limits_but_not_aromaticity_limits() {
+    let mut actual = molecule("c1ccccc1");
+    actual.perceive().unwrap();
+    let options = AromaticityOptions {
+        ring_options: RingPerceptionOptions {
+            max_atoms: 0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    perceive_aromaticity_with_options(&mut actual, AromaticityModel::RdkitLike, options).unwrap();
+    let before = actual.perception().clone();
+    assert!(matches!(
+        perceive_aromaticity_with_options(
+            &mut actual,
+            AromaticityModel::RdkitLike,
+            AromaticityOptions {
+                max_total_work: 0,
+                ..options
+            }
+        ),
+        Err(AromaticityError::ResourceLimit { limit: 0 })
+    ));
+    assert_eq!(actual.perception(), &before);
 }

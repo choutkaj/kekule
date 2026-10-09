@@ -380,3 +380,149 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
         &[Point3::new(0.9, 0.8, 0.7)],
     );
 }
+
+#[test]
+fn smiles_convenience_preserves_cardinality_and_matches_explicit_pipeline() {
+    let ethanol = smiles::to_molecules("CCO").expect("ethanol interprets");
+    assert_eq!(ethanol.len(), 1);
+
+    let salt = smiles::to_molecules("[Na+].[Cl-]").expect("salt interprets");
+    assert_eq!(salt.len(), 2);
+
+    let document = smiles::parse_str("[Na+].[Cl-]").expect("salt parses");
+    let explicit = smiles::interpret(&document)
+        .expect("salt interprets explicitly")
+        .into_molecules();
+    assert_eq!(salt, explicit);
+}
+
+#[test]
+fn component_interpretation_types_are_nameable_through_format_facades() {
+    let smiles_document = smiles::parse_str("CC.O").expect("SMILES parses");
+    let smiles_interpretation = smiles_document.interpret().expect("SMILES interprets");
+    let smiles_components: &[smiles::SmilesComponentInterpretation] =
+        smiles_interpretation.components();
+    assert_eq!(smiles_components.len(), 2);
+    let count_error: smiles::SmilesComponentCountError = smiles_interpretation
+        .molecule()
+        .expect_err("singular access rejects multiple components");
+    assert_eq!(count_error.actual(), 2);
+
+    let molfile_source = "two components\nkekule\n\n  2  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.0000    0.0000    0.0000 O   0  0  0  0  0  0\nM  END\n";
+    let molfile_document = kekule::molfile::parse_str(molfile_source).expect("Molfile parses");
+    let molfile_interpretation = molfile_document.interpret().expect("Molfile interprets");
+    let reports: &[kekule::molfile::MolfileInterpretationReport] = molfile_interpretation.reports();
+    assert_eq!(reports.len(), 2);
+    assert_eq!(molfile_interpretation.model().atom_count(), 2);
+    assert_eq!(molfile_interpretation.topology().instance_count(), 2);
+}
+
+#[test]
+fn sdf_interpretation_error_kind_is_public_and_structured() {
+    let source = "unknown element\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 Xx  0  0  0  0  0  0\nM  END\n$$$$\n";
+    let document = sdf::parse_str(source).expect("SDF syntax parses");
+    let error = document.records()[0]
+        .interpret()
+        .expect_err("unsupported element fails Molfile interpretation");
+    let kind: &sdf::SdfInterpretErrorKind = error.kind();
+
+    match kind {
+        sdf::SdfInterpretErrorKind::Molfile(source) => {
+            assert!(source.message().contains("unsupported element"));
+        }
+        _ => panic!("unexpected future SDF interpretation error kind"),
+    }
+    assert_eq!(error.record(), 1);
+    assert!(error.line() >= 1);
+    assert!(error.message().contains("unsupported element"));
+    assert!(std::error::Error::source(&error).is_some());
+}
+
+#[test]
+fn smiles_default_options_and_topology_projection_are_consistent() {
+    let default_document = smiles::parse_str("CCO.[Na+]").expect("default parse");
+    let explicit_document =
+        smiles::parse_str_with_options("CCO.[Na+]", smiles::SmilesParseOptions::default())
+            .expect("explicit default parse");
+    assert_eq!(default_document, explicit_document);
+
+    let interpretation = default_document.interpret().expect("document interprets");
+    assert_eq!(interpretation.molecules().count(), 2);
+    assert!(interpretation
+        .molecules()
+        .all(|molecule| molecule.perception() == &kekule::core::Perception::default()));
+
+    let topology = interpretation.into_topology().expect("topology builds");
+    assert_eq!(topology.instance_count(), 2);
+    assert_eq!(topology.atom_count(), 4);
+    assert_eq!(
+        topology
+            .molecules()
+            .map(|occurrence| occurrence.molecule().atom_count())
+            .collect::<Vec<_>>(),
+        vec![3, 1]
+    );
+    assert!(topology.hierarchy().is_empty());
+
+    let concise = smiles::to_topology("CCO.[Na+]").expect("concise topology builds");
+    assert!(concise.same_layout(&topology));
+    assert_eq!(
+        smiles::to_topology("CCO")
+            .expect("connected topology")
+            .instance_count(),
+        1
+    );
+}
+
+#[test]
+fn many_smiles_components_preserve_source_mappings_and_stereo() {
+    // Branches interleave disconnected atoms and ring closures reconnect
+    // source fragments. Components cannot be obtained by merely splitting '.'.
+    let block = "C1(O.F)CC1.N[C@@H](C)C(=O)O.F/C=C/Cl.c1ccncc1";
+    let expected = smiles::parse_str(block).unwrap().interpret().unwrap();
+    let source = vec![block; 256].join(".");
+    let actual = smiles::parse_str(&source).unwrap().interpret().unwrap();
+    assert_eq!(actual.components().len(), 256 * expected.components().len());
+    for (index, component) in actual.components().iter().enumerate() {
+        let baseline = &expected.components()[index % expected.components().len()];
+        let offset = index / expected.components().len() * (block.len() + 1);
+        assert_eq!(component.molecule(), baseline.molecule());
+        assert_eq!(
+            component.source_span(),
+            baseline.source_span().start + offset..baseline.source_span().end + offset
+        );
+        let report = component.report();
+        let expected_report = baseline.report();
+        assert_eq!(
+            report.atom_mappings().len(),
+            expected_report.atom_mappings().len()
+        );
+        assert_eq!(
+            report.bond_mappings().len(),
+            expected_report.bond_mappings().len()
+        );
+        for (mapping, expected) in report
+            .atom_mappings()
+            .iter()
+            .zip(expected_report.atom_mappings())
+        {
+            assert_eq!(mapping.atom(), expected.atom());
+            assert_eq!(
+                mapping.source_span(),
+                expected.source_span().start + offset..expected.source_span().end + offset
+            );
+        }
+        for (mapping, expected) in report
+            .bond_mappings()
+            .iter()
+            .zip(expected_report.bond_mappings())
+        {
+            assert_eq!(mapping.bond(), expected.bond());
+            assert_eq!(mapping.source_offset(), expected.source_offset() + offset);
+        }
+        assert_eq!(
+            report.created_stereo_elements(),
+            expected_report.created_stereo_elements()
+        );
+    }
+}

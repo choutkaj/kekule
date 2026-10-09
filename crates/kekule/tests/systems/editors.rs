@@ -5,7 +5,7 @@ use kekule::structure::{Model, ModelEditor, Positions};
 use kekule::topology::{
     AtomSiteMetadata, InstanceAtomId, MoleculeClass, Topology, TopologyBuilder, TopologyEditor,
 };
-use kekule::units::{Quantity, ANGSTROM, NANOMETER};
+use kekule::units::{Quantity, ANGSTROM, BOHR, NANOMETER};
 use std::sync::Arc;
 
 fn molecule(text: &str) -> Molecule {
@@ -13,6 +13,13 @@ fn molecule(text: &str) -> Molecule {
 }
 fn atom(symbol: &str) -> Atom {
     Atom::new(Element::from_symbol(symbol).unwrap())
+}
+/// An atom whose hydrogen count is fixed at zero, so publication needs no
+/// perception.
+fn bare_atom(atomic_number: u8) -> Atom {
+    let mut atom = Atom::new(Element::from_atomic_number(atomic_number).unwrap());
+    atom.hydrogens = kekule::core::HydrogenDeclaration::Fixed(0);
+    atom
 }
 fn key(name: &str) -> PropertyKey {
     PropertyKey::new(name).unwrap()
@@ -1309,4 +1316,102 @@ fn independently_created_or_cleared_drafts_never_accept_foreign_handles() {
         .unwrap();
     assert_ne!(a, e);
     assert!(first.atom(a).is_err());
+}
+
+#[test]
+fn publication_correspondence_tracks_reordering_deletion_and_bonds() {
+    let mut editor = ModelEditor::new();
+    let a = editor
+        .add_atom(bare_atom(6), Quantity::new(Point3::new(1., 0., 0.), BOHR))
+        .unwrap();
+    let b = editor
+        .add_atom(bare_atom(8), Quantity::new(Point3::new(2., 0., 0.), BOHR))
+        .unwrap();
+    let c = editor
+        .add_atom(bare_atom(7), Quantity::new(Point3::new(3., 0., 0.), BOHR))
+        .unwrap();
+    let removed = editor
+        .add_atom(bare_atom(1), Quantity::new(Point3::new(4., 0., 0.), BOHR))
+        .unwrap();
+    editor.delete_atom(removed).unwrap();
+    let bond = editor.add_bond(a, c, BondOrder::Single).unwrap();
+    let (model, map) = editor.finish_with_correspondence().unwrap();
+    assert!(map.atom(removed).is_none());
+    for (handle, x) in [(a, 1.), (b, 2.), (c, 3.)] {
+        let (id, index) = map.atom(handle).unwrap();
+        assert_eq!(model.topology().atom_ids()[index.index()], id);
+        assert!((model.position(id).unwrap().value_in(BOHR).unwrap().x - x).abs() < 1e-12);
+    }
+    let (id, index) = map.bond(bond).unwrap();
+    assert_eq!(model.topology().bond_ids()[index.index()], id);
+    let mut next = model.edit();
+    let handle = next.bond_handle(id).unwrap();
+    next.delete_bond(handle).unwrap();
+    let (split, second) = next.finish_with_correspondence().unwrap();
+    assert!(second.bond(handle).is_none());
+    assert_eq!(split.topology().instance_count(), 3);
+}
+
+#[test]
+fn no_op_publication_retains_snapshot_and_foreign_handles_do_not_map() {
+    let mut e = ModelEditor::new();
+    e.add_atom(bare_atom(2), Quantity::new(Point3::origin(), BOHR))
+        .unwrap();
+    let model = e.finish().unwrap();
+    let source = model.shared_topology();
+    let edit = TopologyEditor::from_topology(source.clone());
+    let handle = edit.atom_handle(model.topology().atom_ids()[0]).unwrap();
+    let (topology, map) = edit.finish_with_correspondence().unwrap();
+    assert!(Arc::ptr_eq(&source, &topology));
+    assert_eq!(map.atom(handle).unwrap().0, model.topology().atom_ids()[0]);
+    let mut foreign = TopologyEditor::new();
+    let other = foreign.add_atom(bare_atom(2)).unwrap();
+    assert!(map.atom(other).is_none());
+}
+
+#[test]
+fn stereo_replacement_is_occurrence_local_and_rejects_changed_source() {
+    let molecule = kekule::smiles::to_molecules("F[C@](Cl)(Br)I")
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(molecule.stereo_elements().count(), 1);
+    let mut builder = Model::builder();
+    builder
+        .add_molecule(molecule.clone(), &Positions::zeros(5))
+        .unwrap();
+    builder
+        .add_molecule(molecule.clone(), &Positions::zeros(5))
+        .unwrap();
+    let original = builder.build().unwrap();
+    let instances = original
+        .topology()
+        .molecules()
+        .map(|m| m.id())
+        .collect::<Vec<_>>();
+    let mut editor = original.edit();
+    editor
+        .replace_source_instance_stereo(instances[0], &[])
+        .unwrap();
+    let result = editor.finish().unwrap();
+    let counts = result
+        .topology()
+        .molecules()
+        .map(|m| m.molecule().stereo_elements().count())
+        .collect::<Vec<_>>();
+    assert_eq!(counts, vec![0, 1]);
+    assert!(original
+        .topology()
+        .molecules()
+        .all(|m| m.molecule().stereo_elements().count() == 1));
+    let mut changed = original.edit();
+    let id = changed
+        .atom_handle(original.topology().atom_ids()[0])
+        .unwrap();
+    let mut a = changed.atom(id).unwrap().clone();
+    a.isotope = Some(19);
+    changed.replace_atom(id, a).unwrap();
+    assert!(changed
+        .replace_source_instance_stereo(instances[0], &[])
+        .is_err());
 }

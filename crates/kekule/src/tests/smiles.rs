@@ -886,6 +886,10 @@ fn malformed_smiles_grammar_is_rejected_by_the_document_parser() {
         let error = parsed.expect_err("malformed SMILES must fail document parsing");
         assert_eq!(error.offset(), offset, "{input}: {error}");
     }
+    assert_eq!(
+        smiles_api::parse_str("C(").unwrap_err().to_string(),
+        "SMILES parse error at 2: unclosed branch"
+    );
 }
 
 #[test]
