@@ -174,6 +174,8 @@ fn conversion_preserves_composition_and_reports_explicit_and_implicit_counts() {
         assert_eq!(report.retained.len(), retained);
         assert_eq!(report.adjustments[0].explicit_hydrogens, retained);
         assert_eq!(report.adjustments[0].implicit_hydrogens, 4 - retained);
+        // Removal renumbers atoms that followed a removed hydrogen.
+        let c = report.correspondence.atom(c).unwrap();
         molecule.perceive().unwrap();
         assert_eq!(molecule.total_hydrogens(c).unwrap(), Some(4));
         assert_eq!(

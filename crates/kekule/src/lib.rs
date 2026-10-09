@@ -1045,7 +1045,9 @@ pub mod hydrogens {
     ///
     /// Isotopic, mapped, charged, radical, property-bearing, and otherwise
     /// non-losslessly representable hydrogens remain in the graph and are
-    /// described by the returned report.
+    /// described by the returned report. Report IDs refer to the input; the
+    /// published result renumbers survivors densely, and
+    /// [`RemoveHydrogensReport::correspondence`] translates them.
     pub fn remove_hydrogens(
         molecule: &mut Molecule,
     ) -> Result<RemoveHydrogensReport, HydrogenTransformError> {

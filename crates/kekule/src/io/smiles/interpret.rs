@@ -537,18 +537,37 @@ fn interpret_smiles_program_component(
     })?;
     debug_assert!(publication_report.warnings.is_empty());
     super::cx::install_stereo_groups(&mut editor, &source_to_atom, &component.groups)?;
-    let molecule = editor.finish().map_err(|error| SmilesInterpretError {
-        offset: atom_mappings
-            .first()
-            .map_or(end_offset, |mapping| mapping.source_span.start),
-        message: error.to_string(),
-    })?;
+    let (molecule, ids) =
+        editor
+            .finish_with_correspondence()
+            .map_err(|error| SmilesInterpretError {
+                offset: atom_mappings
+                    .first()
+                    .map_or(end_offset, |mapping| mapping.source_span.start),
+                message: error.to_string(),
+            })?;
+    // Publication renumbers IDs densely and may prune canonicalized stereo.
+    for mapping in &mut atom_mappings {
+        mapping.atom = ids
+            .atom(mapping.atom)
+            .expect("interpreted atoms survive publication");
+    }
+    for mapping in &mut bond_mappings {
+        mapping.bond = ids
+            .bond(mapping.bond)
+            .expect("interpreted bonds survive publication");
+    }
+    let created_stereo_elements = publication_report
+        .created_stereo_elements
+        .into_iter()
+        .filter_map(|element| ids.stereo_element(element))
+        .collect();
     Ok((
         molecule,
         SmilesInterpretationReport {
             atom_mappings,
             bond_mappings,
-            created_stereo_elements: publication_report.created_stereo_elements,
+            created_stereo_elements,
         },
     ))
 }

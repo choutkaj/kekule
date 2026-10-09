@@ -756,7 +756,7 @@ pub fn interpret_molfile_document(
         .map(|record| record.number)
         .collect();
     let mut components = Vec::new();
-    for raw in partition_molfile_staging(staging, &geometry, &source_stereo)? {
+    for mut raw in partition_molfile_staging(staging, &geometry, &source_stereo)? {
         let mut editor = raw.editor;
         let mut publication_report = canonicalize_molecule_for_publication(
             editor.working_mut(),
@@ -798,15 +798,34 @@ pub fn interpret_molfile_document(
             );
         }
         install_molfile_stereo_groups(editor.working_mut(), &raw.atom_map, stereo_groups)?;
-        let molecule = editor.finish().map_err(|error| MolfileInterpretError {
-            line: raw
-                .old_atoms
-                .first()
-                .and_then(|atom| atom_lines.get(atom.index()))
-                .copied()
-                .unwrap_or(1),
-            message: error.to_string(),
-        })?;
+        let (molecule, ids) =
+            editor
+                .finish_with_correspondence()
+                .map_err(|error| MolfileInterpretError {
+                    line: raw
+                        .old_atoms
+                        .first()
+                        .and_then(|atom| atom_lines.get(atom.index()))
+                        .copied()
+                        .unwrap_or(1),
+                    message: error.to_string(),
+                })?;
+        // Publication renumbers IDs densely and may prune canonicalized stereo.
+        for target in raw.atom_map.values_mut() {
+            *target = ids
+                .atom(*target)
+                .expect("interpreted atoms survive publication");
+        }
+        for target in raw.bond_map.values_mut() {
+            *target = ids
+                .bond(*target)
+                .expect("interpreted bonds survive publication");
+        }
+        publication_report.created_stereo_elements = publication_report
+            .created_stereo_elements
+            .into_iter()
+            .filter_map(|element| ids.stereo_element(element))
+            .collect();
         let positions =
             raw.geometry
                 .to_positions(&molecule)
@@ -824,6 +843,7 @@ pub fn interpret_molfile_document(
             .into_iter()
             .map(|warning| match warning {
                 NormalizationWarning::ConflictingAtropisomericWedgeMarks { axis, mark_count } => {
+                    let axis = ids.bond(axis).expect("warned bonds survive publication");
                     let source_line = raw
                         .bond_map
                         .iter()
@@ -836,6 +856,7 @@ pub fn interpret_molfile_document(
                     }
                 }
                 NormalizationWarning::AmbiguousTetrahedralWedgeMarks { center, mark_count } => {
+                    let center = ids.atom(center).expect("warned atoms survive publication");
                     let source_line = raw
                         .atom_map
                         .iter()

@@ -26,26 +26,39 @@ fn hierarchy_errors_have_diagnostic_display_messages() {
     assert!(message.contains("do not reference each other"));
 }
 
-fn tombstoned_molecule() -> (Molecule, AtomId, AtomId, BondId) {
+/// Publishes a draft whose deleted atom and bond slots precede live entities,
+/// returning the published (dense) IDs of the surviving atoms and bond.
+fn edited_molecule() -> (Molecule, AtomId, AtomId, BondId) {
     let mut graph = crate::core::MoleculeEditor::new();
     let carbon = graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .expect("atom identifier capacity");
-    let tombstone = graph
+    let deleted = graph
         .add_atom(Atom::new(Element::from_symbol("H").unwrap()))
         .expect("atom identifier capacity");
     let oxygen = graph
         .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
         .expect("atom identifier capacity");
-    graph.delete_atom(tombstone).unwrap();
+    graph.delete_atom(deleted).unwrap();
     let deleted_bond = graph.add_bond(carbon, oxygen, BondOrder::Single).unwrap();
     graph.delete_bond(deleted_bond).unwrap();
     let bond = graph.add_bond(carbon, oxygen, BondOrder::Double).unwrap();
-    (graph.finish().unwrap(), carbon, oxygen, bond)
+    let (molecule, ids) = graph.finish_with_correspondence().unwrap();
+    assert_eq!((ids.atom(deleted), ids.bond(deleted_bond)), (None, None));
+    let (carbon, oxygen, bond) = (
+        ids.atom(carbon).unwrap(),
+        ids.atom(oxygen).unwrap(),
+        ids.bond(bond).unwrap(),
+    );
+    assert_eq!(
+        (carbon, oxygen, bond),
+        (AtomId::new(0), AtomId::new(1), BondId::new(0))
+    );
+    (molecule, carbon, oxygen, bond)
 }
 
 fn topology_with_reused_definition() -> (Arc<Topology>, AtomId, AtomId, BondId) {
-    let (molecule, carbon, oxygen, bond) = tombstoned_molecule();
+    let (molecule, carbon, oxygen, bond) = edited_molecule();
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(&molecule).unwrap();
     builder.add_instance(definition).unwrap();
@@ -211,7 +224,7 @@ fn builder_add_molecule_is_the_concise_single_instance_path() {
 }
 
 fn annotated_topology() -> Topology {
-    let (molecule, carbon, oxygen, bond) = tombstoned_molecule();
+    let (molecule, carbon, oxygen, bond) = edited_molecule();
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(&molecule).unwrap();
     let first = builder.add_instance(definition).unwrap();
@@ -277,8 +290,9 @@ fn annotated_topology() -> Topology {
         builder.bond_properties_mut().value(&value_key, 0).unwrap(),
         Some(PropertyValue::Int(5))
     );
-    assert_eq!(oxygen.raw(), 2);
-    assert_eq!(bond.raw(), 1);
+    // Edited definitions publish compact local IDs.
+    assert_eq!(oxygen.raw(), 1);
+    assert_eq!(bond.raw(), 0);
     builder.build().unwrap()
 }
 
@@ -455,7 +469,7 @@ fn layout_equality_does_not_reorder_definitions_instances_or_dense_state() {
 
 #[test]
 fn topology_properties_cover_every_domain_and_do_not_change_layout_identity() {
-    let (molecule, carbon, oxygen, bond) = tombstoned_molecule();
+    let (molecule, carbon, oxygen, bond) = edited_molecule();
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(&molecule).unwrap();
     let instance = builder.add_instance(definition).unwrap();
@@ -556,7 +570,7 @@ fn topology_properties_cover_every_domain_and_do_not_change_layout_identity() {
 
 #[test]
 fn builder_is_transactional_and_does_not_intern_equal_definitions() {
-    let (molecule, ..) = tombstoned_molecule();
+    let (molecule, ..) = edited_molecule();
     let mut builder = TopologyBuilder::new();
     let first = builder.add_molecule_definition(&molecule).unwrap();
     assert_eq!(
@@ -869,12 +883,12 @@ fn sparse_subset_retains_only_selected_component_storage() {
 }
 
 #[test]
-fn compact_subset_projects_tombstoned_properties_bonds_and_model_positions() {
+fn compact_subset_projects_properties_bonds_and_model_positions() {
     use crate::geometry::Point3;
     use crate::structure::{Model, Positions};
     use crate::units::{Quantity, NANOMETER};
 
-    let (molecule, carbon, oxygen, bond) = tombstoned_molecule();
+    let (molecule, carbon, oxygen, bond) = edited_molecule();
     let mut editor = molecule.edit();
     let tail = editor
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
@@ -1034,7 +1048,6 @@ fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_ca
         .add_stereo_element(StereoElement::new(tetra.clone()))
         .unwrap();
     editor.remove_stereo_element(removed).unwrap();
-    editor.append_stereo_group_tombstone().unwrap();
     let elements = [
         tetra,
         StereoElementKind::DoubleBond(DoubleBondStereo {
@@ -1111,7 +1124,7 @@ fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_ca
                 group: Some(StereoGroupId::new(0))
             }
         );
-        assert_eq!(molecule.stereo_group_slot_count(), 1);
+        assert_eq!(molecule.stereo_groups().count(), 1);
         assert_eq!(
             molecule.stereo_group(StereoGroupId::new(0)).unwrap(),
             &StereoGroup {
@@ -1154,8 +1167,11 @@ fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
         .unwrap();
     editor.add_bond(first, middle, BondOrder::Single).unwrap();
     editor.add_bond(middle, last, BondOrder::Double).unwrap();
-    let molecule = editor.finish().unwrap();
     assert_eq!(last.raw(), 3);
+    let (molecule, ids) = editor.finish_with_correspondence().unwrap();
+    // Publication drops the deleted draft slot before the last atom.
+    let [first, middle, last] = [first, middle, last].map(|atom| ids.atom(atom).unwrap());
+    assert_eq!(last.raw(), 2);
 
     let mut builder = TopologyBuilder::new();
     let instance = builder.add_molecule(&molecule).unwrap();
@@ -1273,7 +1289,7 @@ fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
     let target_last = subset
         .correspondence()
         .target_atom(InstanceAtomId::new(instance, last))
-        .expect("selected tombstone-separated atom is mapped");
+        .expect("selected atom is mapped");
     assert_eq!(subset.topology().atom_index(target_last).unwrap().raw(), 1);
     let projected = subset.topology();
     assert!(projected.properties().get(&owner_key).is_none());

@@ -242,15 +242,17 @@ fn stereo_cleanup_is_explicit_transactional_and_preserves_surviving_groups() {
     }
     let report = stereo_api::cleanup_stereo(&mut editor, Default::default()).unwrap();
     assert_eq!(report.removed_elements, vec![elements[0].0]);
-    let cleaned = editor.finish().unwrap();
+    let (cleaned, ids) = editor.finish_with_correspondence().unwrap();
     assert_eq!(cleaned.stereo_elements().count(), 1);
-    assert_eq!(
-        cleaned.stereo_element(elements[1].0).unwrap(),
-        &elements[1].1
-    );
+    // The removed element's slot is dropped; the survivor is renumbered.
+    let survivor = ids.stereo_element(elements[1].0).unwrap();
+    assert_eq!(survivor, elements[0].0);
+    let mut expected = elements[1].1.clone();
+    expected.group = expected.group.and_then(|group| ids.stereo_group(group));
+    assert_eq!(cleaned.stereo_element(survivor).unwrap(), &expected);
     let group = cleaned.stereo_groups().next().unwrap().1;
     assert_eq!(group.kind, StereoGroupKind::And);
-    assert_eq!(group.members, vec![elements[1].0]);
+    assert_eq!(group.members, vec![survivor]);
     assert!(cleaned.perception().has_valence());
     for id in before.atom_ids() {
         assert_eq!(

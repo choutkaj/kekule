@@ -810,12 +810,16 @@ fn editing_one_imported_occurrence_preserves_others_and_their_instance_annotatio
 }
 
 #[test]
-fn sparse_source_ids_and_reordered_definition_occurrences_keep_dense_state_associated() {
+fn edited_source_ids_and_reordered_definition_occurrences_keep_dense_state_associated() {
     let molecule = kekule::smiles::to_molecules("CCO").unwrap().pop().unwrap();
     let mut edit = molecule.edit();
     edit.delete_atom(AtomId::new(0)).unwrap();
     let sparse = edit.finish().unwrap();
-    assert_eq!(sparse.atom_ids().next(), Some(AtomId::new(1)));
+    // Publication renumbers the surviving atoms densely.
+    assert_eq!(
+        sparse.atom_ids().collect::<Vec<_>>(),
+        [AtomId::new(0), AtomId::new(1)]
+    );
     let sodium = kekule::smiles::to_molecules("[Na+]")
         .unwrap()
         .pop()

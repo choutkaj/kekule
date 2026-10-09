@@ -455,7 +455,7 @@ fn saturated_and_unsupported_parts_do_not_hide_supported_groups() {
 }
 
 #[test]
-fn tombstone_ids_survive_reconstruction_and_enumeration() {
+fn edited_ids_compact_before_reconstruction_and_enumeration() {
     let mut editor = MoleculeEditor::new();
     let carbon = Atom::new(Element::from_symbol("C").unwrap());
     let dead = editor.add_atom(carbon.clone()).unwrap();
@@ -469,7 +469,11 @@ fn tombstone_ids_survive_reconstruction_and_enumeration() {
     editor.add_bond(a, b, BondOrder::Double).unwrap();
     editor.add_bond(b, c, BondOrder::Single).unwrap();
     editor.add_bond(c, d, BondOrder::Double).unwrap();
-    let mut m = editor.finish().unwrap();
+    let (mut m, ids) = editor.finish_with_correspondence().unwrap();
+    // Deleted draft slots do not survive publication.
+    assert_eq!((ids.atom(dead), ids.bond(removed)), (None, None));
+    let [a, b, c, d] = [a, b, c, d].map(|atom| ids.atom(atom).unwrap());
+    assert_eq!([a, b, c, d], [0, 1, 2, 3].map(kekule::core::AtomId::new));
     m.perceive().unwrap();
     perceive_resonance(&mut m).unwrap();
     let state = m.perception().clone();
@@ -487,7 +491,11 @@ fn tombstone_ids_survive_reconstruction_and_enumeration() {
     let invalid = Perception::builder()
         .with_aromaticity(AromaticityModel::RdkitLike, vec![], vec![])
         .unwrap()
-        .with_conjugation(ConjugationModel::RdkitLike, vec![a, dead], vec![removed])
+        .with_conjugation(
+            ConjugationModel::RdkitLike,
+            vec![a, kekule::core::AtomId::new(4)],
+            vec![kekule::core::BondId::new(3)],
+        )
         .unwrap()
         .build();
     assert!(m.install_perception(invalid).is_err());

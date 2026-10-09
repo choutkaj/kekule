@@ -210,3 +210,21 @@ fn contradictory_double_bond_assertions_are_rejected_before_export() {
     let restored_id = restored.stereo_element_ids().next().unwrap();
     assert_eq!(restored.cip_descriptor(restored_id).unwrap(), expected);
 }
+
+#[test]
+fn canonical_smiles_keeps_aromaticity_when_explicit_hydrogens_precede_ring_atoms() {
+    // Hydrogen suppression renumbers the ring atoms that follow the hydrogen.
+    for (explicit, implicit) in [
+        ("[H]c1ccccc1", "c1ccccc1"),
+        ("[H]c1ccc([H])nc1", "c1cccnc1"),
+    ] {
+        let mut explicit = molecule(explicit);
+        explicit.perceive().unwrap();
+        let mut implicit = molecule(implicit);
+        implicit.perceive().unwrap();
+        assert_eq!(
+            smiles::write_canonical(&explicit).unwrap(),
+            smiles::write_canonical(&implicit).unwrap()
+        );
+    }
+}

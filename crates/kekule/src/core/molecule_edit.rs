@@ -3,8 +3,9 @@ use std::fmt;
 use crate::properties::{Properties, PropertyKey, PropertyTable, PropertyValue};
 
 use super::{
-    Atom, AtomId, Bond, BondId, BondOrder, Graph, Molecule, Perception, Result, RingMembership,
-    RingSet, StereoDescriptor, StereoElement, StereoElementId, StereoGroup, StereoGroupId,
+    Atom, AtomId, Bond, BondId, BondOrder, Graph, Molecule, MoleculeCorrespondence, Perception,
+    Result, RingMembership, RingSet, StereoDescriptor, StereoElement, StereoElementId, StereoGroup,
+    StereoGroupId,
 };
 
 /// A connectedness violation at a public [`Molecule`] boundary.
@@ -252,8 +253,10 @@ impl Molecule {
 ///
 /// Structural changes invalidate perception and clear owner properties while
 /// retaining annotations on surviving atom/bond identities. Generic property
-/// edits leave perception intact. Atom and bond IDs remain stable until
-/// [`Self::clear`]; iteration skips deleted slots.
+/// edits leave perception intact. Draft atom and bond IDs remain stable until
+/// [`Self::clear`]; iteration skips deleted slots. Publication renumbers every
+/// ID space densely, so a published [`Molecule`] never contains deleted slots;
+/// [`Self::finish_with_correspondence`] maps draft IDs to published IDs.
 ///
 /// An unfinished editor cannot be passed to algorithms requiring a published molecule:
 /// ```compile_fail
@@ -464,17 +467,6 @@ impl MoleculeEditor {
         self.working.stereo_groups()
     }
 
-    pub fn stereo_group_slot_count(&self) -> usize {
-        self.working.stereo_group_slot_count()
-    }
-
-    pub fn stereo_group_slots(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (StereoGroupId, Option<&StereoGroup>)> + DoubleEndedIterator + '_
-    {
-        self.working.stereo_group_slots()
-    }
-
     pub fn perception(&self) -> &Perception {
         self.working.perception()
     }
@@ -601,13 +593,14 @@ impl MoleculeEditor {
         self.working.remove_stereo_group(id)
     }
 
-    pub fn append_stereo_group_tombstone(&mut self) -> Result<StereoGroupId> {
-        self.working.append_stereo_group_tombstone()
-    }
-
-    /// Publishes represented chemistry. Unchanged chemistry retains its installed
-    /// perception; graph edits invalidate affected perception when they occur.
-    /// Install reconstructed perception on the resulting [`Molecule::install_perception`].
+    /// Publishes represented chemistry with dense IDs.
+    ///
+    /// Live atoms, bonds, stereo elements, and stereo groups are renumbered
+    /// `0..n` in their draft order, so deleted draft slots never survive
+    /// publication. Use [`Self::finish_with_correspondence`] to translate draft
+    /// IDs. Unchanged chemistry retains its installed perception; graph edits
+    /// invalidate affected perception when they occur. Install reconstructed
+    /// perception on the resulting [`Molecule::install_perception`].
     ///
     /// ```compile_fail
     /// use kekule::core::{MoleculeEditor, Perception};
@@ -615,7 +608,36 @@ impl MoleculeEditor {
     /// editor.install_perception(Perception::default()).unwrap();
     /// ```
     pub fn finish(self) -> std::result::Result<Molecule, MoleculePublicationError> {
-        publish_molecule(self.working)
+        publish_molecule(self.working).map(|(molecule, _)| molecule)
+    }
+
+    /// Publishes like [`Self::finish`] and maps every surviving draft ID to its
+    /// published ID. Without deletions the correspondence is the identity.
+    ///
+    /// ```
+    /// use kekule::core::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
+    ///
+    /// let carbon = || Atom::new(Element::from_symbol("C").unwrap());
+    /// let mut editor = MoleculeEditor::new();
+    /// let first = editor.add_atom(carbon())?;
+    /// let removed = editor.add_atom(carbon())?;
+    /// let last = editor.add_atom(carbon())?;
+    /// editor.add_bond(first, last, BondOrder::Single)?;
+    /// editor.delete_atom(removed)?;
+    /// let (molecule, ids) = editor.finish_with_correspondence()?;
+    ///
+    /// assert_eq!(ids.atom(last), Some(AtomId::new(1)));
+    /// assert_eq!(ids.atom(removed), None);
+    /// assert_eq!(molecule.atom_ids().collect::<Vec<_>>(), [AtomId::new(0), AtomId::new(1)]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn finish_with_correspondence(
+        self,
+    ) -> std::result::Result<(Molecule, MoleculeCorrespondence), MoleculePublicationError> {
+        publish_molecule(self.working).map(|(molecule, compaction)| {
+            let correspondence = MoleculeCorrespondence::from_compaction(&compaction);
+            (molecule, correspondence)
+        })
     }
 
     /// Checks whether a snapshot would publish successfully, leaving this editor
@@ -629,16 +651,18 @@ impl MoleculeEditor {
     /// use [`Self::finish`] when recovery is unnecessary.
     pub fn try_finish(self) -> std::result::Result<Molecule, MoleculeFinishError> {
         let snapshot = self.clone();
-        publish_molecule(self.working).map_err(|error| MoleculeFinishError {
-            error,
-            editor: Box::new(snapshot),
-        })
+        publish_molecule(self.working)
+            .map(|(molecule, _)| molecule)
+            .map_err(|error| MoleculeFinishError {
+                error,
+                editor: Box::new(snapshot),
+            })
     }
 }
 
 fn publish_molecule(
     mut molecule: Molecule,
-) -> std::result::Result<Molecule, MoleculePublicationError> {
+) -> std::result::Result<(Molecule, super::SlotCompaction), MoleculePublicationError> {
     if molecule.atom_count() == 0 {
         return Err(MoleculePublicationError::EmptyGraph);
     }
@@ -653,7 +677,8 @@ fn publish_molecule(
     if perceived_graph.is_some_and(|graph| graph != molecule.graph) {
         molecule.clear_perception();
     }
-    Ok(molecule)
+    let compaction = molecule.compact_ids();
+    Ok((molecule, compaction))
 }
 
 fn validate_graph(molecule: &Molecule) -> std::result::Result<(), GraphValidationError> {

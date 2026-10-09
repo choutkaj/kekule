@@ -300,6 +300,11 @@ fn remove_and_add_hydrogens_round_trip_graph_methane() {
 
     let removed = molecule.remove_hydrogens().expect("collapse graph methane");
     assert_eq!(removed.removed.len(), 4);
+    let carbon = removed
+        .correspondence
+        .atom(carbon)
+        .expect("carbon survives");
+    assert_eq!(carbon, AtomId::new(0));
     assert_eq!(
         molecule.atom(carbon).expect("carbon").hydrogens,
         HydrogenDeclaration::Infer { specified: 0 }
@@ -575,14 +580,24 @@ fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
     assert_eq!(report.removed[0].hydrogen, hydrogen);
     assert_eq!(report.adjustments[0].specified_hydrogens, 0);
     assert_eq!(report.adjustments[0].inferred_hydrogens, 1);
+    // Atoms after the removed hydrogen are renumbered densely.
+    let ids = &report.correspondence;
+    assert_eq!(ids.atom(hydrogen), None);
+    assert_eq!(ids.atom(fluorine), Some(hydrogen));
     match &molecule
-        .stereo_element(stereo)
+        .stereo_element(ids.stereo_element(stereo).unwrap())
         .expect("stereo survives")
         .kind
     {
         StereoElementKind::DoubleBond(stereo) => {
-            assert_eq!(stereo.left_carrier, StereoCarrier::Atom(fluorine));
-            assert_eq!(stereo.right_carrier, StereoCarrier::Atom(chlorine));
+            assert_eq!(
+                stereo.left_carrier,
+                StereoCarrier::Atom(ids.atom(fluorine).unwrap())
+            );
+            assert_eq!(
+                stereo.right_carrier,
+                StereoCarrier::Atom(ids.atom(chlorine).unwrap())
+            );
             assert_eq!(stereo.orientation, Some(DoubleBondOrientation::Together));
         }
         _ => panic!("expected double-bond stereo"),
@@ -595,8 +610,12 @@ fn hydrogen_collapse_requires_only_the_affected_parent_counts() {
     assert!(!fixed.perception().has_valence());
     let report = fixed.remove_hydrogens().unwrap();
     assert_eq!(report.removed.len(), 1);
+    let parent = report
+        .correspondence
+        .atom(report.removed[0].parent)
+        .unwrap();
     assert_eq!(
-        fixed.atom(report.removed[0].parent).unwrap().hydrogens,
+        fixed.atom(parent).unwrap().hydrogens,
         HydrogenDeclaration::Fixed(3)
     );
     let mut unknown = crate::tests::read_smiles("[H]C").unwrap();

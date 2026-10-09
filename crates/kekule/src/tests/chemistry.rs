@@ -354,7 +354,7 @@ fn failed_strict_valence_perception_preserves_complete_previous_perception_state
         )
         .expect("previous valence")
         .with_rings(
-            RingMembership::from_slot_flags(
+            RingMembership::from_flags(
                 vec![false; mol.atom_count()],
                 vec![false; mol.bond_count()],
             ),

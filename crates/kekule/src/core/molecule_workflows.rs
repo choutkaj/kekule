@@ -36,6 +36,8 @@ impl Molecule {
     /// Collapse ordinary graph hydrogens and report retained protected atoms.
     /// Parents that permit inference require an installed hydrogen count; fixed
     /// declarations need no perception. A graph with nothing removable is unchanged.
+    /// The result has dense IDs, so atoms after a removed hydrogen are renumbered;
+    /// [`RemoveHydrogensReport::correspondence`] translates the input IDs.
     pub fn remove_hydrogens(&mut self) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
         remove_hydrogens_from_molecule(self)
     }

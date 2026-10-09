@@ -858,7 +858,7 @@ impl TopologyEditor {
         target: usize,
         other: usize,
         draft: MoleculeEditor,
-        map: &crate::core::MoleculeAppendMapping,
+        map: &crate::core::MoleculeCorrespondence,
     ) {
         let removed = self.groups[other].take().unwrap();
         let group = self.groups[target].as_mut().unwrap();

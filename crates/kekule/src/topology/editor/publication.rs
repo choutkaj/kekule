@@ -224,7 +224,8 @@ impl TopologyEditor {
                     );
                 }
                 GroupChemistry::Draft(draft) if draft.is_connected() => {
-                    let published = (*draft).finish()?;
+                    // Publication renumbers deleted draft slots densely.
+                    let (published, ids) = (*draft).finish_with_correspondence()?;
                     let definition = builder.add_molecule_definition_owned(published)?;
                     let handles = group.atoms.values().copied().collect();
                     if let Some(class) = self.component_class(&handles, group.class) {
@@ -233,13 +234,12 @@ impl TopologyEditor {
                         builder.preserve_molecule_class(definition, class, explicit)?;
                     }
                     let instance = builder.add_instance(definition)?;
-                    let molecule = builder.definition(definition)?.molecule();
                     instance_sources
                         .push((!group.changed).then_some(group.instance_slot).flatten());
                     self.record_component(
                         (&group.atoms, &group.bonds),
-                        molecule.atom_ids().map(|a| (a, a)),
-                        molecule.bond_ids(),
+                        ids.atoms().iter().map(|(&draft, &local)| (draft, local)),
+                        ids.bonds().keys().copied(),
                         instance,
                         &mut targets,
                     );

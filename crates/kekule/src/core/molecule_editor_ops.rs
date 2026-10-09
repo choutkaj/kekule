@@ -4,17 +4,62 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::*;
 use crate::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyValue};
 
-/// Correspondence from source fragment IDs to newly allocated editor IDs.
-/// Deleted source slots have no entry. Existing target IDs remain unchanged.
+/// Identifier correspondence from one molecular graph to another.
+///
+/// Every source atom, bond, stereo element, and stereo group with a
+/// counterpart has one entry; deleted sources have none. It is returned by
+/// [`MoleculeEditor::append_molecule`] (fragment IDs to draft IDs),
+/// [`MoleculeEditor::finish_with_correspondence`] (draft IDs to published IDs),
+/// and hydrogen removal (input IDs to transformed IDs).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct MoleculeAppendMapping {
+pub struct MoleculeCorrespondence {
     atoms: BTreeMap<AtomId, AtomId>,
     bonds: BTreeMap<BondId, BondId>,
     stereo_elements: BTreeMap<StereoElementId, StereoElementId>,
     stereo_groups: BTreeMap<StereoGroupId, StereoGroupId>,
 }
 
-impl MoleculeAppendMapping {
+impl MoleculeCorrespondence {
+    pub(crate) fn from_compaction(compaction: &SlotCompaction) -> Self {
+        fn entries<Id: Copy + Ord>(
+            slots: &[Option<Id>],
+            source: impl Fn(u32) -> Id,
+        ) -> BTreeMap<Id, Id> {
+            (0..=u32::MAX)
+                .zip(slots)
+                .filter_map(|(raw, target)| target.map(|target| (source(raw), target)))
+                .collect()
+        }
+        Self {
+            atoms: entries(&compaction.atoms, AtomId::new),
+            bonds: entries(&compaction.bonds, BondId::new),
+            stereo_elements: entries(&compaction.stereo_elements, StereoElementId::new),
+            stereo_groups: entries(&compaction.stereo_groups, StereoGroupId::new),
+        }
+    }
+
+    /// Maps every live entity of `molecule` to itself.
+    pub(crate) fn identity(molecule: &Molecule) -> Self {
+        Self {
+            atoms: molecule.atom_ids().map(|id| (id, id)).collect(),
+            bonds: molecule.bond_ids().map(|id| (id, id)).collect(),
+            stereo_elements: molecule.stereo_element_ids().map(|id| (id, id)).collect(),
+            stereo_groups: molecule.stereo_groups().map(|(id, _)| (id, id)).collect(),
+        }
+    }
+
+    pub fn atom(&self, source: AtomId) -> Option<AtomId> {
+        self.atoms.get(&source).copied()
+    }
+    pub fn bond(&self, source: BondId) -> Option<BondId> {
+        self.bonds.get(&source).copied()
+    }
+    pub fn stereo_element(&self, source: StereoElementId) -> Option<StereoElementId> {
+        self.stereo_elements.get(&source).copied()
+    }
+    pub fn stereo_group(&self, source: StereoGroupId) -> Option<StereoGroupId> {
+        self.stereo_groups.get(&source).copied()
+    }
     pub fn atoms(&self) -> &BTreeMap<AtomId, AtomId> {
         &self.atoms
     }
@@ -330,14 +375,14 @@ impl MoleculeEditor {
     /// append clears target owner properties and perception as a structural edit.
     /// A temporary disconnected result is allowed; connect it before finishing.
     /// This compound operation stages a clone of the target for rollback on error.
-    pub fn append_molecule(&mut self, source: &Molecule) -> Result<MoleculeAppendMapping> {
+    pub fn append_molecule(&mut self, source: &Molecule) -> Result<MoleculeCorrespondence> {
         self.append_working(source)
     }
 
     // System edits may combine disconnected private drafts before partitioning.
-    pub(crate) fn append_working(&mut self, source: &Molecule) -> Result<MoleculeAppendMapping> {
+    pub(crate) fn append_working(&mut self, source: &Molecule) -> Result<MoleculeCorrespondence> {
         let mut staged = self.clone();
-        let mut map = MoleculeAppendMapping::default();
+        let mut map = MoleculeCorrespondence::default();
         for (id, atom) in source.atoms() {
             map.atoms.insert(id, staged.add_atom(atom.clone())?);
         }
