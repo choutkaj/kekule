@@ -35,7 +35,7 @@ pub enum ErrorKind {
     /// conserve the formal charge, no charge method applies, or a model
     /// produced invalid values.
     Charges,
-    /// The fixed-H InChI lookup identifier cannot be computed.
+    /// A lookup hit cannot be mapped onto its entry.
     Identity,
     /// A bounded combinatorial search exceeded its limit.
     ResourceLimit,

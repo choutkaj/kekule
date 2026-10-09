@@ -497,9 +497,10 @@ See the [benchmark guide](benchmarks/GUIDE.md) for the optional execution workfl
 It prepares temporary per-definition chemistry and expands assignments to
 instance-qualified atoms without mutating the topology or adding hydrogens.
 All numeric parameters carry canonical units. Complete force-field state stays
-in this result rather than unstructured molecule properties. The official C
-InChI dependency is confined to this companion crate's lookup boundary; Python
-reference tools and checkpoint conversion remain in `benchmarks/openff`.
+in this result rather than unstructured molecule properties. The crate is pure
+Rust: charge lookup selects an entry only for that entry's exact molecule, so no
+InChI implementation is linked. Python reference tools and checkpoint
+conversion remain in `benchmarks/openff`.
 Model bundles own feature ordering, supported network configuration, domain and
 lookup data. OFFXML retains the required checkpoint identity; parameterization
 checks it against the supplied model before assigning any molecule. Chemistry

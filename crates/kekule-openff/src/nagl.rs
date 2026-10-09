@@ -9,10 +9,7 @@ use kekule::{
     substructure::find_match,
     units::{Quantity, ELEMENTARY_CHARGE},
 };
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-};
+use std::{collections::BTreeSet, path::Path};
 
 /// Checkpoint identity declared by an OFFXML handler or exported model bundle.
 /// The checksum identifies the original checkpoint, not the converted weights file.
@@ -42,8 +39,8 @@ impl ModelIdentity {
 }
 
 // OpenFF Toolkit's Molecule representation does not retain isotopic masses.
-// NAGL lookup keys and graph correspondence must use that same representation,
-// while the caller's Kekule graph (and the general InChI adapter) retains them.
+// NAGL lookup selection and graph correspondence must use that same
+// representation, while the caller's Kekule graph retains them.
 pub(crate) fn lookup_molecule(input: &Molecule) -> Result<Molecule> {
     if !input.atoms().any(|(_, a)| a.isotope.is_some()) {
         return explicit(input);
@@ -83,7 +80,8 @@ pub struct NaglModel {
     identity: ModelIdentity,
     features: Vec<config::Feature>,
     network: network::Network,
-    lookup: BTreeMap<String, bundle::Entry>,
+    lookup: Vec<bundle::Entry>,
+    index: identity::LookupIndex,
     max_lookup_atoms: usize,
     elements: Vec<u8>,
     forbidden: Vec<QueryGraph>,
@@ -147,17 +145,24 @@ impl NaglModel {
             .iter()
             .map(|p| parse_smarts(p).map_err(|e| Error::wrap(ErrorKind::Model, e)))
             .collect::<Result<Vec<_>>>()?;
-        let max_lookup_atoms = bundle
-            .lookup
-            .values()
-            .map(|e| e.charges.len())
-            .max()
-            .unwrap_or(0);
+        let lookup: Vec<_> = bundle.lookup.into_values().collect();
+        let max_lookup_atoms = lookup.iter().map(|e| e.charges.len()).max().unwrap_or(0);
+        // Entries input preparation rejects can never be selected. Ash's ten
+        // pairs of entries sharing one molecule carry identical charges.
+        let graphs = lookup.iter().enumerate().filter_map(|(position, entry)| {
+            let mut components = kekule::smiles::to_molecules(&entry.mapped_smiles).ok()?;
+            (components.len() == 1)
+                .then(|| explicit(&components.remove(0)).ok())
+                .flatten()
+                .map(|graph| (graph, position))
+        });
+        let index = identity::LookupIndex::new(graphs)?;
         Ok(Self {
             identity: bundle.identity,
             features: bundle.config.atom_features,
             network: bundle.network,
-            lookup: bundle.lookup,
+            lookup,
+            index,
             max_lookup_atoms,
             elements: bundle.domain.allowed_elements,
             forbidden,
@@ -168,6 +173,16 @@ impl NaglModel {
     }
     pub(crate) fn lookup_entry_count(&self) -> usize {
         self.lookup.len()
+    }
+    pub(crate) fn lookup_key(&self, molecule: &Molecule) -> Result<Option<&str>> {
+        let molecule = lookup_molecule(molecule)?;
+        if molecule.atom_count() > self.max_lookup_atoms {
+            return Ok(None);
+        }
+        Ok(self
+            .index
+            .select(&molecule)?
+            .map(|position| self.lookup[position].inchi.as_str()))
     }
     pub(crate) fn atom_features(&self, molecule: &Molecule) -> Result<Vec<Vec<f32>>> {
         let m = explicit(molecule)?;
@@ -186,14 +201,11 @@ impl NaglModel {
     pub fn assign_charges(&self, molecule: &Molecule) -> Result<ChargeAssignment> {
         let molecule = lookup_molecule(molecule)?;
         // A full-graph lookup hit must have one charge for every input atom.
-        // The model table bounds the size of any possible full-graph hit, and
-        // loading keeps every entry within the identifier library's limit, so
-        // that limit never blocks inference.
         if molecule.atom_count() > self.max_lookup_atoms {
             return self.infer_prepared(&molecule);
         }
-        let inchi = identity::fixed_h_inchi(&molecule)?;
-        if let Some(entry) = self.lookup.get(&inchi) {
+        if let Some(position) = self.index.select(&molecule)? {
+            let entry = &self.lookup[position];
             let mut components = kekule::smiles::to_molecules(&entry.mapped_smiles)
                 .map_err(|e| Error::wrap(ErrorKind::Model, e))?;
             if components.len() != 1 {
@@ -233,7 +245,7 @@ impl NaglModel {
                 values,
                 molecule.formal_charge(),
                 ChargeSource::Lookup {
-                    inchi,
+                    inchi: entry.inchi.clone(),
                     model: self.identity.clone(),
                 },
             );
@@ -307,9 +319,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn isotope_charge_key_matches_openff_without_mutating_input() {
-        // PubChem CID 143783 from the locked pubchem-100k corpus. OpenFF
-        // Toolkit 0.19.0 reports the isotope-free fixed-H identifier below.
+    fn lookup_preparation_drops_isotopes_without_mutating_input() {
+        // PubChem CID 143783 from the locked pubchem-100k corpus. The OpenFF
+        // Toolkit's charge representation retains no isotopic masses.
         let mut input = kekule::smiles::to_molecules("[2H]C([2H])([2H])C([2H])([2H])SCC")
             .unwrap()
             .remove(0);
@@ -317,16 +329,29 @@ mod tests {
         input.add_hydrogens().unwrap();
         let before = input.clone();
         let prepared = lookup_molecule(&input).unwrap();
-        let expected = "InChI=1/C4H10S/c1-3-5-4-2/h3-4H2,1-2H3";
-        assert_eq!(identity::fixed_h_inchi(&prepared).unwrap(), expected);
+        assert!(prepared.atoms().all(|(_, a)| a.isotope.is_none()));
         assert_eq!(input, before);
         assert_eq!(
             prepared.atom_ids().collect::<Vec<_>>(),
             input.atom_ids().collect::<Vec<_>>()
         );
-        assert!(identity::fixed_h_inchi(&explicit(&input).unwrap())
-            .unwrap()
-            .contains("/i1D3,3D2"));
+    }
+
+    #[cfg(feature = "ash")]
+    #[test]
+    fn lookup_selects_exact_entry_molecules_ignoring_isotopes() {
+        // Heavy water selects the same Ash entry as water, as upstream does.
+        let model = NaglModel::ash().unwrap();
+        let select = |smiles: &str| {
+            let m = kekule::smiles::to_molecules(smiles).unwrap().remove(0);
+            model.lookup_key(&m).unwrap().map(str::to_owned)
+        };
+        assert_eq!(select("[H]O[H]").as_deref(), Some("InChI=1/H2O/h1H2"));
+        assert_eq!(select("[2H]O[2H]"), select("[H]O[H]"));
+        assert_eq!(
+            select("[H]C([H])([H])[H]").as_deref(),
+            Some("InChI=1/CH4/h1H4")
+        );
     }
 
     #[test]

@@ -26,5 +26,5 @@ subset and other exported NAGL bundles are supported; see
 kinds, and validation record. Energies and gradients live in `kekule-potentials`.
 
 The Rosemary force field and the Ash model are licensed under CC BY 4.0; see
-[THIRD_PARTY.md](THIRD_PARTY.md). Building requires a C toolchain for the
-official InChI library. The Rust code is MIT OR Apache-2.0.
+[THIRD_PARTY.md](THIRD_PARTY.md). The crate is pure Rust; the Rust code is
+MIT OR Apache-2.0.

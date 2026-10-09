@@ -457,7 +457,10 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
     let methane = smiles::to_molecules(case["smiles"].as_str().unwrap())
         .unwrap()
         .remove(0);
-    let key = kekule_openff::diagnostics::lookup_identifier(&methane).unwrap();
+    let ash_model = NaglModel::load(bundles().join("openff-gnn-am1bcc-1.0.0")).unwrap();
+    let key = kekule_openff::diagnostics::lookup_key(&ash_model, &methane)
+        .unwrap()
+        .unwrap();
     let mut entry = ash["lookup_tables"]["am1bcc_charges"]
         .as_array()
         .unwrap()

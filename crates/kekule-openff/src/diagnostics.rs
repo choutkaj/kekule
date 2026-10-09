@@ -2,18 +2,14 @@
 //! implementation. Parameterization does not need them.
 use kekule::core::Molecule;
 
-use crate::{identity, nagl::lookup_molecule, ChargeAssignment, NaglModel, Result};
+use crate::{ChargeAssignment, NaglModel, Result};
 
-/// The full fixed-H InChI that keys a model's charge lookup table, for an
-/// explicit-hydrogen molecule. Isotopes are ignored, as in the OpenFF
-/// Toolkit's charge representation.
-///
-/// The InChI library accepts at most 1,023 atoms. Charge assignment is not
-/// limited by this: it computes an identifier only for molecules no larger
-/// than the model's largest lookup entry, and model loading rejects lookup
-/// entries above 1,023 atoms.
-pub fn lookup_identifier(molecule: &Molecule) -> Result<String> {
-    identity::fixed_h_inchi(&lookup_molecule(molecule)?)
+/// The stored identifier of the lookup entry selected for an explicit-hydrogen
+/// molecule, or `None` for a lookup miss. This is the entry upstream's fixed-H
+/// InChI lookup selects; no InChI is computed. Isotopes are ignored, as in the
+/// OpenFF Toolkit's charge representation.
+pub fn lookup_key<'a>(model: &'a NaglModel, molecule: &Molecule) -> Result<Option<&'a str>> {
+    model.lookup_key(molecule)
 }
 
 /// The model's input features, one row per atom in molecule atom order and
