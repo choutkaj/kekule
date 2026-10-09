@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::algorithms::{allowed_valences, rdkit_default_valence};
+use crate::algorithms::{allowed_valences, rdkit_default_valence, RemoveHydrogensReport};
 use crate::core::Molecule;
 use crate::core::*;
 use crate::io::MolWriteError;
@@ -95,6 +95,7 @@ fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, Mol
             "canonical SMILES hydrogen normalization requires known hydrogen perception: {error}"
         ))
     })?;
+    restore_collapsed_hydrogens(&mut normalized, mol, &removal)?;
     // Removal publishes dense IDs; translate the original aromatic system.
     let ids = &removal.correspondence;
     restore_projection_aromaticity(
@@ -104,6 +105,52 @@ fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, Mol
         |bond| ids.bond(bond),
     );
     Ok(normalized)
+}
+
+fn restore_collapsed_hydrogens(
+    normalized: &mut Molecule,
+    original: &Molecule,
+    removal: &RemoveHydrogensReport,
+) -> std::result::Result<(), MolWriteError> {
+    // Collapsing any graph hydrogen is a chemical edit that clears perception.
+    // Unknown counts would rank and project every inference-enabled atom as
+    // bare, so one explicit hydrogen anywhere could reorder unrelated ties.
+    // Removal preserves composition: atoms keep their original implicit count
+    // and each parent takes its verified count after collapse.
+    if removal.removed.is_empty() {
+        return Ok(());
+    }
+    let collapsed = removal
+        .adjustments
+        .iter()
+        .map(|adjustment| (adjustment.parent, adjustment.implicit_hydrogens))
+        .collect::<BTreeMap<_, _>>();
+    for atom in original.atom_ids() {
+        let Some(target) = removal.correspondence.atom(atom) else {
+            continue;
+        };
+        let implicit = match collapsed.get(&atom) {
+            Some(count) => Some(*count),
+            None => original
+                .implicit_hydrogens(atom)
+                .expect("original atom is live"),
+        };
+        let declaration = normalized
+            .atom(target)
+            .expect("collapsed atom is live")
+            .hydrogens;
+        let Some(implicit) = implicit.filter(|_| declaration.allows_inference()) else {
+            continue;
+        };
+        let inferred = implicit
+            .checked_sub(usize::from(declaration.specified_count()))
+            .and_then(|count| u8::try_from(count).ok())
+            .ok_or_else(|| {
+                MolWriteError::new("hydrogen count exceeds the SMILES representation limit")
+            })?;
+        normalized.set_inferred_hydrogens(target, inferred);
+    }
+    Ok(())
 }
 
 fn canonical_projection_graph(

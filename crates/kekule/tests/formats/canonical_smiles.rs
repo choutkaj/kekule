@@ -293,6 +293,10 @@ fn canonical_smiles_ranks_the_emitted_hydrogen_and_isotope_projection() {
         ["CC(=O)OC(C)CN", "CC(=[18O])OC(C)CN", "CC(=O)O[CH](C)CN"],
         ["C1CC2CCC1C2", "[13CH2]1CC2CCC1C2", "[CH2]1CC2CCC1C2"],
         ["c1ccccc1", "[H]c1ccccc1", "[2H]c1ccccc1"],
+        // Any collapsed graph hydrogen, even one remote from the tie, must
+        // leave the carbonyl/hydroxyl branch order of the projection intact.
+        ["CC(=O)O", "[H]OC(=O)C", "OC(=O)C[H]"],
+        ["OC(=O)c1ccccc1", "[H]OC(=O)c1ccccc1", "OC(=O)c1ccccc1[H]"],
         ["N1C=CC=C1", "[NH]1C=CC=C1", "[15NH]1C=CC=C1"],
         [
             "CC1=CC(C)=CC=C1O",
