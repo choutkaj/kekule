@@ -612,6 +612,11 @@ fn hydrogen_collapse_retains_a_double_bond_reference_beside_another_hydrogen() {
     // On a terminal =CH2 the reference is one of two equivalent hydrogens.
     // An implicit reference there names neither: CIP could not rank it and
     // materialization rejected it, so the reference stays a graph atom.
+    // A toy molecule belongs here, not in a fixture; the external JDQ443 and
+    // Sotorasib 3D records cover this through the hydrogen round-trip
+    // invariant. Reference: RDKit 2026.03.3 FindPotentialStereo and
+    // rdCIPLabeler find no stereo on this C=C before or after collapse
+    // (F/C([H])=C(/[H])[H], F/C([H])=C/[H] and F/C=C/[H]).
     for sibling_is_explicit in [true, false] {
         let mut editor = MoleculeEditor::new();
         let fluorine = editor.add_atom(element_atom("F")).unwrap();
