@@ -2,7 +2,7 @@
 //!
 //! [`OpenFfPotential::new`] lowers an assignment produced by `kekule-openff`
 //! into dense harmonic, Fourier, Lennard-Jones, and Coulomb terms once. The
-//! potential then evaluates any [`ModelView`] of the same exact topology
+//! potential then evaluates any [`ModelView`] sharing that topology layout
 //! snapshot through [`Potential`].
 //!
 //! # Hamiltonian and capabilities
@@ -53,7 +53,7 @@ const KINDS: [ComponentKind; mm::COMPONENTS] = [
     ComponentKind::Electrostatics,
 ];
 
-/// Prepared OpenFF potential bound to one exact topology snapshot.
+/// Prepared OpenFF potential bound to one topology layout.
 #[derive(Debug, Clone)]
 pub struct OpenFfPotential {
     topology: Arc<Topology>,
@@ -255,7 +255,7 @@ impl OpenFfPotential {
         model: ModelView<'_>,
         mut gradients: Gradients,
     ) -> Result<([f64; mm::COMPONENTS], Gradients), EvaluationError> {
-        if !std::ptr::eq(self.topology.as_ref(), model.topology()) {
+        if !self.topology.shares_layout(model.topology()) {
             return Err(EvaluationError::IncompatibleTopology);
         }
         if model.cell().is_some() {

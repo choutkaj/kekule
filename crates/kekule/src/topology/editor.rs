@@ -232,6 +232,7 @@ impl TopologyEditor {
                 Some(instance),
                 Some(source.definition(value.definition()).unwrap().class()),
                 source
+                    .layout
                     .molecule_class_overrides
                     .contains_key(&value.definition()),
                 identity,

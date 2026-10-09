@@ -289,7 +289,7 @@ macro_rules! prepared_edit {
     ($name:ident, $n:literal, $docs:literal) => {
         #[doc = $docs]
         ///
-        /// References and moving atoms bind to one exact shared topology. Each
+        /// References and moving atoms bind to one topology layout. Each
         /// application uses current Cartesian coordinates and an absolute target.
         /// Failure is atomic. Properties, represented chemistry, and the cell are
         /// preserved. No periodic imaging or relaxation is performed.

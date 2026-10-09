@@ -16,10 +16,12 @@ pub use bonds::{BondSelection, BondSelectionMode};
 
 /// A topology-bound, sorted, unique dense atom selection.
 ///
-/// Empty selections retain their topology. Equality and set operations use exact
-/// shared snapshot identity, not chemical or layout equality. IDs supplied to
-/// constructors and membership methods are interpreted in this snapshot: bare
-/// IDs do not carry provenance. Selections are static sets, not stored queries.
+/// Empty selections retain their topology. Equality and set operations use
+/// layout identity ([`Topology::shares_layout`]), not chemical or layout equality,
+/// so selections made before and after perception combine and compare equal. IDs
+/// supplied to constructors and membership methods are interpreted in the bound
+/// layout: bare IDs do not carry provenance. Selections are static sets, not
+/// stored queries.
 /// See [`BondSelection`] for independently selected bonds.
 ///
 /// # Selection sources
@@ -67,9 +69,9 @@ pub use bonds::{BondSelection, BondSelectionMode};
 /// Membership search is logarithmic in selection size; single-member mutations
 /// may shift a linear number of indices. Set algebra merges sorted sets linearly.
 ///
-/// Structural edits and owning perception publish a different snapshot: keep
-/// selections with their source snapshot and rebuild explicitly for a new one.
-/// Geometry-only changes retain the binding. [`Topology::subset`] and model,
+/// Structural edits publish a different layout: keep selections with their
+/// source and rebuild explicitly for a new one. Owning perception and
+/// geometry-only changes keep the layout, so selections remain usable. [`Topology::subset`] and model,
 /// ensemble, or trajectory slicing consume atom selections as induced subsets;
 /// bond selection does not change their structural-subset semantics.
 #[derive(Debug, Clone)]
@@ -80,7 +82,7 @@ pub struct AtomSelection {
 
 impl PartialEq for AtomSelection {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.topology, &other.topology) && self.indices == other.indices
+        self.topology.shares_layout(&other.topology) && self.indices == other.indices
     }
 }
 
@@ -185,7 +187,7 @@ impl AtomSelection {
     }
 
     /// Keeps atoms present in exactly one selection. Useful for toggling a
-    /// picked group; even empty operands must share the exact snapshot.
+    /// picked group; even empty operands must share one layout.
     pub fn symmetric_difference(&self, other: &Self) -> Result<Self, SelectionError> {
         self.combine(other, true, false, true)
     }
@@ -611,7 +613,7 @@ impl AtomSelection {
         matches: &[TopologyQueryMatch],
     ) -> Result<Self, SelectionError> {
         for matched in matches {
-            if !Arc::ptr_eq(topology, matched.topology()) {
+            if !topology.shares_layout(matched.topology()) {
                 return Err(SelectionError::TopologyMismatch);
             }
         }
@@ -624,7 +626,7 @@ impl AtomSelection {
     }
 
     pub fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), SelectionError> {
-        if !Arc::ptr_eq(&self.topology, topology) {
+        if !self.topology.shares_layout(topology) {
             return Err(SelectionError::TopologyMismatch);
         }
         Ok(())

@@ -12,7 +12,7 @@ use super::{dihedral, MeasurementError};
 #[non_exhaustive]
 pub enum BondDihedralError {
     InvalidBondId(InstanceBondId),
-    /// A prepared definition can only measure its exact shared topology.
+    /// A prepared definition can only measure views sharing its topology layout.
     TopologyMismatch,
     Ranking {
         bond: InstanceBondId,
@@ -44,7 +44,7 @@ impl std::error::Error for BondDihedralError {
     }
 }
 
-/// A deterministic reference quartet for a bond, bound to one exact topology.
+/// A deterministic reference quartet for a bond, bound to one topology layout.
 ///
 /// For B-C, choose A among B's explicit neighbors other than C, and D among
 /// C's explicit neighbors other than B. Highest CIP priority wins; complete
@@ -131,7 +131,7 @@ impl BondDihedral {
     /// overflow remain errors. Periodic cells are ignored; signed angles retain
     /// the ordinary -pi/pi branch cut. No angular unwrapping is applied.
     pub fn measure(&self, view: ModelView<'_>) -> Result<Option<Quantity<f64>>, BondDihedralError> {
-        if !Arc::ptr_eq(&self.topology, &view.shared_topology()) {
+        if !self.topology.shares_layout(view.topology()) {
             return Err(BondDihedralError::TopologyMismatch);
         }
         let Some([a, b, c, d]) = self.atoms else {

@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 use crate::core::Molecule;
 use crate::properties::{Properties, PropertyError, PropertyKey, PropertyTableMut, PropertyValue};
@@ -8,7 +9,7 @@ use super::layout::{DenseLayout, OrderError};
 use super::{
     AtomSiteId, ChainId, Hierarchy, InstanceAtomId, InstanceBondId, MoleculeClass,
     MoleculeDefinition, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, ResidueClass,
-    ResidueId, Topology, TopologyAtomIndex, TopologyBondIndex,
+    ResidueId, Topology, TopologyAtomIndex, TopologyBondIndex, TopologyLayout,
 };
 
 /// Linear, validate-then-commit builder for coordinate-free topology.
@@ -69,32 +70,12 @@ impl TopologyBuilder {
         self.properties = properties;
     }
 
-    pub(crate) fn from_shared(topology: std::sync::Arc<Topology>) -> Self {
-        match std::sync::Arc::try_unwrap(topology) {
-            Ok(topology) => Self::from_topology(topology),
-            Err(topology) => Self {
-                definitions: topology.definitions.clone(),
-                instances: topology.instances.clone(),
-                atoms: topology.atoms.clone(),
-                bonds: topology.bonds.clone(),
-                hierarchy: topology.hierarchy.clone(),
-                properties: topology.properties.clone(),
-                molecule_class_overrides: topology.molecule_class_overrides.clone(),
-                residue_class_overrides: topology.residue_class_overrides.clone(),
-                preserved_molecule_classes: topology
-                    .definitions()
-                    .map(|(id, d)| (id, d.class()))
-                    .collect(),
-                preserved_residue_classes: topology
-                    .hierarchy
-                    .residues()
-                    .map(|(id, r)| (id, r.class()))
-                    .collect(),
-                source_hierarchy: Some(topology.hierarchy.clone()),
-                source_instance_count: topology.instance_count(),
-                extending_topology: true,
-            },
-        }
+    pub(crate) fn from_shared(topology: Arc<Topology>) -> Self {
+        let topology = Arc::try_unwrap(topology).unwrap_or_else(|shared| Topology {
+            definitions: shared.definitions.clone(),
+            layout: Arc::clone(&shared.layout),
+        });
+        Self::from_topology(topology)
     }
 
     pub fn definition_count(&self) -> usize {
@@ -206,6 +187,10 @@ impl TopologyBuilder {
     pub(super) fn from_topology(topology: Topology) -> Self {
         let Topology {
             definitions,
+            layout,
+        } = topology;
+        // Perceived snapshots may still share the layout.
+        let TopologyLayout {
             instances,
             atoms,
             bonds,
@@ -213,7 +198,7 @@ impl TopologyBuilder {
             properties,
             molecule_class_overrides,
             residue_class_overrides,
-        } = topology;
+        } = Arc::try_unwrap(layout).unwrap_or_else(|shared| (*shared).clone());
         let preserved_molecule_classes = definitions.iter().map(|d| (d.id(), d.class())).collect();
         let preserved_residue_classes = hierarchy
             .residues()
@@ -508,13 +493,15 @@ impl TopologyBuilder {
 
         Ok(Topology {
             definitions: self.definitions,
-            instances: self.instances,
-            atoms: self.atoms,
-            bonds: self.bonds,
-            hierarchy: self.hierarchy,
-            properties: self.properties,
-            molecule_class_overrides: self.molecule_class_overrides,
-            residue_class_overrides: self.residue_class_overrides,
+            layout: Arc::new(TopologyLayout {
+                instances: self.instances,
+                atoms: self.atoms,
+                bonds: self.bonds,
+                hierarchy: self.hierarchy,
+                properties: self.properties,
+                molecule_class_overrides: self.molecule_class_overrides,
+                residue_class_overrides: self.residue_class_overrides,
+            }),
         })
     }
 

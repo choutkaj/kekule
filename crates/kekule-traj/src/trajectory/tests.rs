@@ -131,11 +131,18 @@ fn trajectory_perception_preserves_all_frame_state_and_original_bindings() {
     assert!(topology
         .molecules()
         .all(|m| m.molecule().perception() == &kekule::core::Perception::default()));
+    // Perception keeps the layout, so buffers bound before it stay usable and
+    // keep their own snapshot.
+    assert!(trajectory.topology().shares_layout(&topology));
+    old_buffer.copy_from(trajectory.frame(0).unwrap()).unwrap();
+    assert!(Arc::ptr_eq(&old_buffer.shared_topology(), &topology));
+    old_buffer.copy_from(original.frame(0).unwrap()).unwrap();
+    let independent =
+        Arc::new(Topology::from_molecule(topology.molecules().next().unwrap().molecule()).unwrap());
     assert_eq!(
-        old_buffer.copy_from(trajectory.frame(0).unwrap()),
+        FrameBuffer::new(independent).copy_from(trajectory.frame(0).unwrap()),
         Err(FrameError::TopologyMismatch)
     );
-    old_buffer.copy_from(original.frame(0).unwrap()).unwrap();
     let mut new_buffer = FrameBuffer::new(trajectory.shared_topology());
     new_buffer.copy_from(trajectory.frame(0).unwrap()).unwrap();
 

@@ -917,7 +917,7 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        if !std::ptr::eq(self.topology(), destination.topology()) {
+        if !self.topology().shares_layout(destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = self.reader.stream_position().map_err(|error| {
@@ -982,7 +982,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        if !std::ptr::eq(self.topology(), destination.topology()) {
+        if !self.topology().shares_layout(destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = self
@@ -1238,7 +1238,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 "cannot write a DCD frame after finalization",
             ));
         }
-        if !std::ptr::eq(frame.topology(), self.topology()) {
+        if !frame.topology().shares_layout(self.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         if frame.velocities().is_some() {

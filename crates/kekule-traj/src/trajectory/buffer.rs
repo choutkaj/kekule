@@ -87,7 +87,9 @@ impl<'a> FrameBufferData<'a> {
     }
 }
 
-/// Reusable caller-owned frame storage owning one exact topology context.
+/// Reusable caller-owned frame storage owning one topology snapshot.
+///
+/// It accepts frames and readers of any snapshot sharing that layout.
 #[derive(Debug, Clone)]
 pub struct FrameBuffer {
     pub(super) topology: Arc<Topology>,
@@ -369,7 +371,7 @@ impl FrameBuffer {
     }
 
     pub fn copy_from(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), FrameError> {
-        if !Arc::ptr_eq(&self.topology, frame.topology) {
+        if !self.topology.shares_layout(frame.topology) {
             return Err(FrameError::TopologyMismatch);
         }
         self.replace_from_data(FrameBufferData::from_frame_view(frame))

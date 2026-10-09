@@ -413,7 +413,7 @@ impl<R: BufRead> TrajectoryReader for XyzReader<R> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        if !std::ptr::eq(self.topology(), destination.topology()) {
+        if !self.topology().shares_layout(destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         if !self.parse_next(true)? {
@@ -585,7 +585,7 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        if !std::ptr::eq(self.topology(), destination.topology()) {
+        if !self.topology().shares_layout(destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let index_usize =
@@ -752,7 +752,7 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
-        if !std::ptr::eq(self.topology(), frame.topology()) {
+        if !self.topology().shares_layout(frame.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let unsupported = [

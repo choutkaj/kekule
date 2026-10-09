@@ -620,7 +620,7 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        if !std::ptr::eq(self.topology(), destination.topology()) {
+        if !self.topology().shares_layout(destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = if self.pending_header.is_some() {
@@ -700,7 +700,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        if !std::ptr::eq(self.topology(), destination.topology()) {
+        if !self.topology().shares_layout(destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = self
@@ -846,7 +846,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
-        if !std::ptr::eq(frame.topology(), self.topology()) {
+        if !frame.topology().shares_layout(self.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         if frame.properties().realization_atom_properties().has_data() {

@@ -483,7 +483,10 @@ impl TopologyEditor {
                     author_seq: residue.author_seq_id().map(str::to_owned),
                     insertion: residue.insertion_code().map(str::to_owned),
                     class: Some(residue.class()),
-                    class_explicit: source.residue_class_overrides.contains_key(&source_id),
+                    class_explicit: source
+                        .layout
+                        .residue_class_overrides
+                        .contains_key(&source_id),
                     slot: source_id.index(),
                 },
             );

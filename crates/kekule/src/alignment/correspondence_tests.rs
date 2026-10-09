@@ -205,7 +205,7 @@ fn correspondence_rejects_invalid_and_duplicate_atoms_on_each_side() {
 }
 
 #[test]
-fn correspondence_rejects_new_snapshots_even_when_layouts_still_match() {
+fn correspondence_accepts_perceived_snapshots_but_rejects_independent_layouts() {
     let mut moving = model(&points());
     let mut reference = model(&points());
     let correspondence = AtomCorrespondence::from_same_layout(
@@ -213,25 +213,29 @@ fn correspondence_rejects_new_snapshots_even_when_layouts_still_match() {
         &reference.shared_topology(),
     )
     .unwrap();
-    let original_moving = moving.clone();
+    // Perception installs new snapshots that keep each layout.
     moving.perceive().unwrap();
+    reference.perceive().unwrap();
     assert!(moving
+        .topology()
+        .shares_layout(correspondence.moving_topology()));
+    assert!(kabsch_with_correspondence(moving.view(), reference.view(), &correspondence).is_ok());
+
+    // An independently published equal topology is a different layout.
+    let rebuilt = model(&points());
+    assert!(rebuilt
         .topology()
         .same_layout(correspondence.moving_topology()));
     assert!(matches!(
-        kabsch_with_correspondence(moving.view(), reference.view(), &correspondence),
+        kabsch_with_correspondence(rebuilt.view(), reference.view(), &correspondence),
         Err(AlignmentError::Correspondence(
             AtomCorrespondenceError::TopologyMismatch {
                 side: CorrespondenceSide::Moving
             }
         ))
     ));
-    reference.perceive().unwrap();
-    assert!(reference
-        .topology()
-        .same_layout(correspondence.reference_topology()));
     assert!(matches!(
-        kabsch_with_correspondence(original_moving.view(), reference.view(), &correspondence),
+        kabsch_with_correspondence(moving.view(), rebuilt.view(), &correspondence),
         Err(AlignmentError::Correspondence(
             AtomCorrespondenceError::TopologyMismatch {
                 side: CorrespondenceSide::Reference

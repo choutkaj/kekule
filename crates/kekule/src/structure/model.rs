@@ -125,11 +125,9 @@ impl Model {
     /// Delegates to [`Topology::perceived`], perceiving each definition once.
     /// Positions, the periodic cell, and all properties are retained without
     /// copying realization state. Failure leaves the entire model unchanged.
-    /// Other owners keep their original topology. Existing selections and
-    /// prepared calculations remain bound to that original snapshot.
-    /// Perform perception before creating selections or preparing potentials;
-    /// bind those values to the topology returned by [`Self::shared_topology`]
-    /// after this operation.
+    /// Other owners keep their original topology. The new snapshot shares the
+    /// original layout, so selections, buffers, and prepared potentials bound
+    /// before perception remain usable with this model.
     ///
     /// ```
     /// use kekule::{smiles, structure::{Model, Positions}};

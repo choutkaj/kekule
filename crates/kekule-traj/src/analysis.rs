@@ -495,7 +495,7 @@ fn validate_measurement_selection(
     trajectory: &Trajectory,
     selection: &AtomSelection,
 ) -> Result<(), RmsdError> {
-    if !std::ptr::eq(selection.topology(), trajectory.topology()) {
+    if !selection.topology().shares_layout(trajectory.topology()) {
         return Err(RmsdError::SelectionTopologyMismatch);
     }
     if selection.indices().is_empty() {
@@ -748,7 +748,7 @@ pub enum RmsdError {
     Correspondence(AtomCorrespondenceError),
     /// The requested reference frame does not exist.
     ReferenceFrameOutOfRange { index: usize, frame_count: usize },
-    /// The measurement selection belongs to another exact topology.
+    /// The measurement selection belongs to another topology layout.
     SelectionTopologyMismatch,
     /// Direct RMSD requires at least one selected atom.
     EmptySelection,

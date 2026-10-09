@@ -2,9 +2,9 @@
 //!
 //! [`Potential`] makes no assumption about how an energy is built, so pairwise
 //! force fields, machine-learned models, and quantum-chemical backends can all
-//! implement it. A prepared potential binds one exact shared `Arc<Topology>` and
-//! evaluates any [`ModelView`] of that snapshot: a [`kekule::structure::Model`],
-//! an ensemble member, or a trajectory frame. Results are validated at this
+//! implement it. A prepared potential binds one topology layout and evaluates any
+//! [`ModelView`] sharing it, including perceived snapshots: a
+//! [`kekule::structure::Model`], an ensemble member, or a trajectory frame. Results are validated at this
 //! boundary and stored in Kekule's canonical units (kJ/mol and kJ/mol/nm).
 
 use std::fmt;
@@ -15,7 +15,7 @@ use kekule::structure::ModelView;
 use kekule::topology::{InstanceAtomId, Topology};
 use kekule::units::{Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_GRADIENT_UNIT};
 
-/// Energy-and-gradient evaluator bound to one exact topology snapshot.
+/// Energy-and-gradient evaluator bound to one topology layout.
 ///
 /// A prepared potential is immutable: evaluation never changes it, and it can
 /// be shared between threads, for example to evaluate trajectory frames in
@@ -28,7 +28,8 @@ use kekule::units::{Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_GRADIE
 /// evaluation of a view from a different topology snapshot, including an
 /// independently equal one, returns [`EvaluationError::IncompatibleTopology`].
 pub trait Potential: Send + Sync {
-    /// The exact topology snapshot this potential was prepared for.
+    /// The topology snapshot this potential was prepared for. Evaluation
+    /// accepts any snapshot sharing its layout.
     fn topology(&self) -> &Arc<Topology>;
 
     /// Evaluates the energy and its Cartesian gradient.
@@ -218,7 +219,7 @@ impl Evaluation {
         model: ModelView<'_>,
         atom: InstanceAtomId,
     ) -> Option<Quantity<Vector3>> {
-        if !std::ptr::eq(self.topology.as_ref(), model.topology()) {
+        if !self.topology.shares_layout(model.topology()) {
             return None;
         }
         let index = model.topology().atom_index(atom)?;
@@ -265,7 +266,7 @@ impl fmt::Display for SingularGeometry {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum EvaluationError {
-    /// The evaluated view does not share the potential's exact topology.
+    /// The evaluated view does not share the potential's topology layout.
     IncompatibleTopology,
     /// The potential has no evaluation policy for periodic cells.
     UnsupportedPeriodicCell,
@@ -304,7 +305,7 @@ impl fmt::Display for EvaluationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::IncompatibleTopology => {
-                f.write_str("model view belongs to a different exact topology than the potential")
+                f.write_str("model view belongs to a different topology layout than the potential")
             }
             Self::UnsupportedPeriodicCell => {
                 f.write_str("potential does not support periodic-cell configurations")

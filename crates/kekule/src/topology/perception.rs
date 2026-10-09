@@ -40,10 +40,12 @@ impl Topology {
     /// Failure identifies the first failing definition and leaves `self` intact.
     ///
     /// Represented graphs, definition reuse, all semantic IDs, dense ordering,
-    /// hierarchy, classifications, and properties are preserved exactly. Thus
-    /// [`Self::same_layout`] remains true, but the result is a distinct snapshot.
-    /// Selections and prepared calculations bound to the source allocation stay
-    /// bound to that source; this operation does not transfer their bindings.
+    /// hierarchy, classifications, and properties are preserved exactly, so the
+    /// result shares this topology's layout without copying it
+    /// ([`Self::shares_layout`]). Selections, realizations, buffers, and prepared
+    /// potentials bound to this topology remain usable with the result. Values
+    /// that read perception, such as prepared substructure targets, stay bound to
+    /// the snapshot they were prepared from.
     ///
     /// ```
     /// use kekule::{smiles, topology::Topology};
@@ -51,7 +53,7 @@ impl Topology {
     /// let molecules = smiles::to_molecules("c1ccccc1.[Na+]")?;
     /// let source = Topology::from_molecules(&molecules)?;
     /// let perceived = source.perceived()?;
-    /// assert!(source.same_layout(&perceived));
+    /// assert!(perceived.shares_layout(&source));
     /// assert!(perceived.molecules().all(|m| m.molecule().perception().has_aromaticity()));
     /// assert!(source.molecules().all(|m| !m.molecule().perception().has_aromaticity()));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -73,17 +75,11 @@ impl Topology {
             })
             .collect::<Result<_, TopologyPerceptionError>>()?;
 
-        // Copy the published layout directly: perception never requires
-        // reclassification, reindexing, or rebuilding hierarchy correspondence.
+        // Perception never requires reclassification, reindexing, or rebuilding
+        // hierarchy correspondence, so the snapshot shares the published layout.
         Ok(Self {
             definitions,
-            instances: self.instances.clone(),
-            atoms: self.atoms.clone(),
-            bonds: self.bonds.clone(),
-            hierarchy: self.hierarchy.clone(),
-            properties: self.properties.clone(),
-            molecule_class_overrides: self.molecule_class_overrides.clone(),
-            residue_class_overrides: self.residue_class_overrides.clone(),
+            layout: std::sync::Arc::clone(&self.layout),
         })
     }
 }

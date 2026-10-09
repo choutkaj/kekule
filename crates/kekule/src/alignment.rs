@@ -71,7 +71,6 @@
 //! ```
 
 use std::fmt;
-use std::sync::Arc;
 
 use crate::geometry::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
 use crate::structure::ModelView;
@@ -110,7 +109,8 @@ pub fn kabsch(
 /// Fits `moving` onto `reference` with explicit weighting and periodic policy.
 ///
 /// Correspondence follows the selection's sorted dense-index order. The two
-/// views and selection must share one `Arc<Topology>` allocation. Explicit weights
+/// views and selection must share one topology layout
+/// ([`crate::topology::Topology::shares_layout`]). Explicit weights
 /// use selection order, not complete-topology order.
 ///
 /// The fit minimizes `sum(w_i * |R x_i + t - y_i|^2)` subject to a proper
@@ -122,7 +122,7 @@ pub fn kabsch_with_options(
     selection: &AtomSelection,
     options: KabschOptions<'_>,
 ) -> Result<RigidAlignment, AlignmentError> {
-    if !Arc::ptr_eq(moving.topology_arc(), reference.topology_arc()) {
+    if !moving.topology().shares_layout(reference.topology()) {
         return Err(AlignmentError::TopologyMismatch);
     }
     selection
@@ -901,6 +901,7 @@ mod tests {
     use crate::structure::{Model, Positions};
     use crate::topology::{AtomSelection, Topology, TopologyBuilder};
     use crate::units::{Quantity, NANOMETER};
+    use std::sync::Arc;
 
     fn topology(atom_count: usize) -> Arc<Topology> {
         let mut graph = crate::core::MoleculeEditor::new();

@@ -152,7 +152,10 @@ impl TopologyEditor {
             .collect::<BTreeSet<_>>();
         if let Some(source) = self.source.take() {
             let (definitions, overrides) = match Arc::try_unwrap(source) {
-                Ok(source) => (source.definitions, source.molecule_class_overrides),
+                Ok(source) => {
+                    let overrides = source.layout.molecule_class_overrides.clone();
+                    (source.definitions, overrides)
+                }
                 Err(source) => (
                     source
                         .definitions
@@ -160,7 +163,7 @@ impl TopologyEditor {
                         .filter(|d| retained.contains(&d.id()))
                         .cloned()
                         .collect(),
-                    source.molecule_class_overrides.clone(),
+                    source.layout.molecule_class_overrides.clone(),
                 ),
             };
             for definition in definitions {

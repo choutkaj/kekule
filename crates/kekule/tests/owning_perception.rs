@@ -197,13 +197,22 @@ fn model_perception_changes_snapshot_preserving_realization_and_existing_binding
     assert_eq!(positions_ptr, model.positions().values().value().as_ptr());
     assert_eq!(model.cell(), original.cell());
     assert_eq!(model.properties(), original.properties());
-    assert_eq!(
-        selection.ensure_compatible(&model.shared_topology()),
-        Err(SelectionError::TopologyMismatch)
-    );
+    // The new snapshot keeps the layout, so bindings made before perception
+    // remain usable with the perceived model.
+    assert!(model.topology().shares_layout(&topology));
+    selection
+        .ensure_compatible(&model.shared_topology())
+        .unwrap();
     selection
         .ensure_compatible(&original.shared_topology())
         .unwrap();
+    let sliced = model.slice(&selection).unwrap();
+    assert_eq!(sliced.atom_count(), 1);
+    let independent = Arc::new(smiles::to_topology("c1ccccc1").unwrap());
+    assert_eq!(
+        selection.ensure_compatible(&independent),
+        Err(SelectionError::TopologyMismatch)
+    );
     assert!(installed(&topology)
         .iter()
         .all(|p| p == &Perception::default()));
@@ -333,4 +342,81 @@ fn topology_model_and_ensemble_failure_preserve_complete_previous_state() {
         before.member(0).unwrap().to_model()
     );
     assert_eq!(installed(ensemble.topology()), previous);
+}
+
+#[test]
+fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
+    use kekule::substructure::{
+        find_topology_substructure_matches_complete, SubstructureMatchOptions,
+    };
+    use kekule::topology::TopologyEditor;
+
+    let source = Arc::new(smiles::to_topology("c1ccccc1.[Na+]").unwrap());
+    let perceived = Arc::new(source.perceived().unwrap());
+    let again = Arc::new(perceived.perceived().unwrap());
+    assert!(perceived.shares_layout(&source) && again.shares_layout(&source));
+    // Perception shares the layout storage instead of copying it.
+    assert!(std::ptr::eq(source.hierarchy(), perceived.hierarchy()));
+    assert!(std::ptr::eq(
+        source.atom_ids().as_ptr(),
+        perceived.atom_ids().as_ptr()
+    ));
+    assert!(std::ptr::eq(source.properties(), perceived.properties()));
+
+    // Publication always creates a new layout, even with equal contents.
+    let rebuilt = Arc::new(smiles::to_topology("c1ccccc1.[Na+]").unwrap());
+    assert!(rebuilt.same_layout(&source) && !rebuilt.shares_layout(&source));
+    let republished = Topology::from_molecules(
+        &source
+            .molecules()
+            .map(|m| m.molecule().clone())
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    assert!(!republished.shares_layout(&source));
+    let unchanged = perceived.edit().finish().unwrap();
+    assert!(Arc::ptr_eq(&unchanged, &perceived));
+    let mut editor = TopologyEditor::from_topology(Arc::clone(&perceived));
+    let sodium = editor.atom_handle(perceived.atom_ids()[6]).unwrap();
+    editor.delete_atom(sodium).unwrap();
+    assert!(!editor.finish().unwrap().shares_layout(&source));
+
+    // Selections from either snapshot combine, compare equal, and subset both.
+    let ring = AtomSelection::from_atoms(&source, source.atom_ids()[..6].iter().copied()).unwrap();
+    let ion = AtomSelection::from_atoms(&perceived, [perceived.atom_ids()[6]]).unwrap();
+    assert_eq!(ring.union(&ion).unwrap(), AtomSelection::all(&perceived));
+    assert_eq!(AtomSelection::all(&source), AtomSelection::all(&perceived));
+    let subset = perceived.subset(&ring).unwrap();
+    assert_eq!(subset.topology().atom_count(), 6);
+    // The correspondence keeps the receiver snapshot, not the selection's.
+    assert!(std::ptr::eq(
+        subset.correspondence().source_topology(),
+        perceived.as_ref()
+    ));
+    assert_eq!(
+        ring.union(&AtomSelection::all(&rebuilt)),
+        Err(SelectionError::TopologyMismatch)
+    );
+
+    // Perception-dependent matches keep their exact snapshot but select atoms
+    // by layout.
+    let query = kekule::query::parse_smarts("c").unwrap();
+    let matches = find_topology_substructure_matches_complete(
+        &perceived,
+        &query,
+        SubstructureMatchOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(matches.len(), 6);
+    assert!(matches
+        .iter()
+        .all(|m| Arc::ptr_eq(m.topology(), &perceived)));
+    assert_eq!(
+        AtomSelection::from_topology_query_matches(&source, &matches).unwrap(),
+        ring
+    );
+    assert_eq!(
+        AtomSelection::from_topology_query_matches(&rebuilt, &matches),
+        Err(SelectionError::TopologyMismatch)
+    );
 }
