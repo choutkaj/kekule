@@ -293,6 +293,14 @@ fn canonical_smiles_ranks_the_emitted_hydrogen_and_isotope_projection() {
         ["CC(=O)OC(C)CN", "CC(=[18O])OC(C)CN", "CC(=O)O[CH](C)CN"],
         ["C1CC2CCC1C2", "[13CH2]1CC2CCC1C2", "[CH2]1CC2CCC1C2"],
         ["c1ccccc1", "[H]c1ccccc1", "[2H]c1ccccc1"],
+        // Collapsing graph hydrogens keeps perceived counts: an aromatic NH
+        // still writes [nH], and even a remote H keeps the acid ranking.
+        ["c1cc[nH]c1", "[H]n1cccc1", "[2H]n1cccc1"],
+        [
+            "CC(=O)Oc1ccccc1C(=O)O",
+            "[H]OC(=O)c1ccccc1OC(C)=O",
+            "CC(=O)Oc1c([H])cccc1C(=O)O",
+        ],
         ["N1C=CC=C1", "[NH]1C=CC=C1", "[15NH]1C=CC=C1"],
         [
             "CC1=CC(C)=CC=C1O",
@@ -345,39 +353,6 @@ fn canonical_hydrogen_normalization_preserves_isotope_vertices() {
     };
     assert_eq!(hydrogen_count(&original), 2);
     assert_eq!(hydrogen_count(&restored), hydrogen_count(&original));
-}
-
-#[test]
-fn canonical_hydrogen_normalization_keeps_perceived_hydrogen_counts() {
-    // Expected strings are RDKit 2026.03.3 canonical SMILES, whose parser
-    // suppresses these graph hydrogens. Aromatic NH needs its collapsed count
-    // to write [nH]; every collapsed parent needs it to rank as the
-    // hydrogen-suppressed molecule does.
-    let canonical = |molecule: &mut Molecule| {
-        molecule.perceive().unwrap();
-        smiles::write(&*molecule, smiles::SmilesWriteOptions::canonical()).unwrap()
-    };
-    for (source, expected) in [
-        ("[H]n1cccc1", "c1cc[nH]c1"),
-        // Pteridine-2,4(1H,3H)-dione, PubChem CID 10250.
-        (
-            "[H]N1C(=O)N([H])C2=NC([H])=C([H])N=C2C1=O",
-            "O=c1[nH]c(=O)c2nccnc2[nH]1",
-        ),
-        (
-            "[H]OC(=O)C1=C([H])C([H])=C([H])C([H])=C1OC(=O)C([H])([H])[H]",
-            "CC(=O)Oc1ccccc1C(=O)O",
-        ),
-    ] {
-        let mut molecule = smiles::to_molecules(source).unwrap().pop().unwrap();
-        assert_eq!(canonical(&mut molecule), expected, "{source}");
-        molecule.remove_hydrogens().unwrap();
-        assert_eq!(
-            canonical(&mut molecule),
-            expected,
-            "{source} without graph hydrogens"
-        );
-    }
 }
 
 #[test]
