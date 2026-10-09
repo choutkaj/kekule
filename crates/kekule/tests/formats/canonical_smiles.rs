@@ -1,6 +1,8 @@
 use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::smiles::{self, MolWriteErrorKind};
 
+use crate::support::renumbered;
+
 #[test]
 fn canonical_smiles_matches_rdkit_charge_closures_stereo_and_cx_radicals() {
     for (source, expected) in [
@@ -366,9 +368,6 @@ fn canonical_input_complexity_is_bounded_before_export() {
 
 #[test]
 fn canonical_stereo_is_invariant_under_atom_and_bond_permutations() {
-    use kekule::core::{StereoCarrier, StereoElement, StereoElementKind};
-    use std::collections::BTreeMap;
-    let mut seed = 41u64;
     for source in [
         "CC(=O)Oc1ccccc1C(=O)O",
         "c1ccoc1",
@@ -413,92 +412,16 @@ fn canonical_stereo_is_invariant_under_atom_and_bond_permutations() {
             smiles::write(&restored, smiles::SmilesWriteOptions::canonical()).unwrap(),
             expected
         );
-        for iteration in 0..24 {
-            let mut order = original.atom_ids().collect::<Vec<_>>();
-            for index in (1..order.len()).rev() {
-                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-                order.swap(index, seed as usize % (index + 1));
-            }
-            let mut editor = MoleculeEditor::new();
-            if iteration % 2 != 0 {
-                // Deleted atom/bond slots must not enter the canonical order
-                // or CX atom indices. Exercise sparse storage as well as a
-                // permutation of densely allocated live atoms.
-                let carbon = Atom::new(Element::from_symbol("C").unwrap());
-                let left = editor.add_atom(carbon.clone()).unwrap();
-                let right = editor.add_atom(carbon).unwrap();
-                editor.add_bond(left, right, BondOrder::Single).unwrap();
-                editor.delete_atom(left).unwrap();
-                editor.delete_atom(right).unwrap();
-            }
-            let atoms = order
-                .into_iter()
-                .map(|old| {
-                    (
-                        old,
-                        editor
-                            .add_atom(original.atom(old).unwrap().clone())
-                            .unwrap(),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
-            let bonds = original
-                .bonds()
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .map(|(old, bond)| {
-                    (
-                        old,
-                        editor
-                            .add_bond(atoms[&bond.b()], atoms[&bond.a()], bond.order)
-                            .unwrap(),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
-            let remap = |carrier: &mut StereoCarrier| {
-                if let StereoCarrier::Atom(id) = carrier {
-                    *id = atoms[id];
-                }
-            };
-            let mut elements = BTreeMap::new();
-            for (id, element) in original.stereo_elements() {
-                let mut kind = element.kind.clone();
-                match &mut kind {
-                    StereoElementKind::Tetrahedral(value) => {
-                        value.center = atoms[&value.center];
-                        value.carriers.iter_mut().for_each(remap);
-                    }
-                    StereoElementKind::DoubleBond(value) => {
-                        value.bond = bonds[&value.bond];
-                        value.left = atoms[&value.left];
-                        value.right = atoms[&value.right];
-                        remap(&mut value.left_carrier);
-                        remap(&mut value.right_carrier);
-                    }
-                    StereoElementKind::Axis(_) => unreachable!(),
-                }
-                elements.insert(
-                    id,
-                    editor.add_stereo_element(StereoElement::new(kind)).unwrap(),
-                );
-            }
-            for (_, group) in original.stereo_groups() {
-                editor
-                    .add_stereo_group(kekule::core::StereoGroup {
-                        kind: group.kind,
-                        members: group.members.iter().map(|id| elements[id]).collect(),
-                    })
-                    .unwrap();
-            }
-            let mut molecule = editor.finish().unwrap();
+        // Odd seeds also leave deleted draft slots behind; they must not enter
+        // the canonical order or CX atom indices.
+        for seed in 0..24 {
+            let (mut molecule, _) = renumbered(&original, seed);
             molecule.perceive().unwrap();
             assert_eq!(
                 smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap(),
                 expected,
-                "{source}: {atoms:?}"
+                "{source}: seed {seed}"
             );
-            assert_eq!(molecule.atom_count(), original.atom_count());
         }
     }
 }

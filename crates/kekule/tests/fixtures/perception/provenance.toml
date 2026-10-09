@@ -23,3 +23,10 @@ retrieved = "2026-10-09"
 sha256 = "69892b62545237f24a4586c76db5b25b33c2038170eae1fea282e87ae960cdf0"
 preprocessing = "Moved verbatim from an inline unit-test record, including explicit hydrogens"
 purpose = "Aromaticity regression for a fused dione partner sharing an aromatic bond"
+
+[[fixture]]
+path = "regressions.smi"
+source = "PubChem and Enamine records (salts, mixtures, oxohalogens, organometallics, retinoid polyenes and spiro enhanced-stereo records) that exposed perception, hydrogen or SMILES round-trip defects during development"
+retrieved = "2026-10-09"
+preprocessing = "Consolidated verbatim from one-off unit regressions"
+purpose = "Invariant-suite inputs without expected values; not a scientific benchmark"
