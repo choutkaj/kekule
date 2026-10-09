@@ -8,7 +8,7 @@ These rules apply to contributors and AI agents working in this repository.
 2. Keep changes scoped; do not mix unrelated cleanup into a functional change.
 3. Add or update a regression test for every defect fix or behavior/API contract change.
 4. Run the applicable Rust formatting, check, clippy, test, documentation, and package checks before handoff. Report every applicable command not run and why.
-5. Use optional external-reference benchmarks only when they are scientifically useful. They are not routine CI or release gates.
+5. Use optional external-reference benchmarks only when they are scientifically useful.
 6. Do not modify `README.md` without the human's consent.
 
 
