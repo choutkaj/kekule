@@ -1,0 +1,91 @@
+# RDKit-like aromaticity of externally supplied molecules that exposed
+# perception defects during development (PubChem, Enamine and PL-REX records,
+# plus the fused example from an RDKit source comment).
+#
+# Columns (tab-separated):
+#   label        stable case name
+#   input        one connected SMILES component, or sdf:<file> in this directory
+#   aromatic     aromatic atoms as source atom indices (ranges, "-" for none)
+#   nonaromatic  bonds between two aromatic atoms that are not aromatic,
+#                as lo:hi atom index pairs ("-" for none)
+#
+# Every other bond between two aromatic atoms must be aromatic, and no bond with
+# a non-aromatic endpoint may be aromatic. Every row matches RDKit 2026.09.1
+# default aromaticity; see provenance.toml.
+thiocarbonyl_chalcogen_ring	CCN(CC)C1=NC(=S)N(C(=S)S1)C(=S)N(CC)CC	5-7,9-10,12	-
+fused_chalcogen_bridge	CSC1=CC2=C(C=C1)SC3=CC=CC=C3N2	2-7,9-14	-
+bracket_carbon_fluorenyl	C1=CC=C2C(=C1)[CH]C3=CC=CC=C32	0-5,7-12	3:12
+fused_polycycle_fused_edge	C1CCC2=C(C1)C3=C(C=CC4=C3C5=C(C=C4)C=CC(=C25)[N+](=O)[O-])[N+](=O)[O-]	3-4,6-19	-
+rdkit_source_comment_fused_system	O=C3C2=CC1=CC=COC1=CC2=CC=C3	1-14	-
+ring_atom_with_two_pi_bonds	C1=C=NC=N1	-	-
+fused_explicit_single_bond	[H]c1c([H])c([H])c2c3c([H])c([H])n(C([H])([H])[H])c(C([H])([H])[H])c-3nc2c1[H]	1-2,4,6-8,10,12,17,22-25	7:22
+fused_subset_internal_shared_bond	O=C(NC1=CC=CC=C1)N1CCCC(C(=O)N2CCN(C3=C4C=CN=C4NC=N3)CC2)C1	3-8,20-28	21:25
+fused_five_electron_neighbor	sdf:five-electron-fused-neighbor.sdf	4-9,14-20,22-23,25	-
+fused_dione_partner	sdf:pubchem-10250.sdf	2-11	-
+fused_chalcogen_exocyclic_pi_links	CC1=C2OC3=C(C)C=CC(C(=O)NC4C(=O)NC(C(C)C)C(=O)N5CCCC5C(=O)N(C)CC(=O)N(C)C(C(C)C)C(=O)OC4C)=C3N=C2C(C(=O)NC2C(=O)NC(C(C)C)C(=O)N3CCCC3C(=O)N(C)CC(=O)N(C)C(C(C)C)C(=O)OC2C)=C(N)C1=O	1-5,7-9,46-49,86,88	2:48
+fused_simple_rings_share_single_bond	CC(CCC1=CC=CC=C1)NS(=O)(=O)C1=CC2=C(N=C1)N(C)C(=O)NC2=O	4-9,14-20,22,24-25	-
+fused_quinone_cn_core	C1=CC=C2C(=C1)C(=O)C3=C(C2=O)C4=C(C=C3)C(=O)C5=CC=CC=C5N4	0-5,8-9,12-16,18-24	-
+aromatic_carbonyl_tropone	CN(C)CCOC(=O)CCNC1=CC=CC=CC1=O	11-17	-
+cyclopentadienyl_anion	[CH-]1[C-]=[C-][C-]=[C-]1	0-4	-
+indole_quinone	C1=CC=C(C=C1)C2=CC3=C(N2)C(=O)C=CC3=O	0-10	3:6
+fused_imine_pyrimidinedione	CC1=NC2=CC=CC=C2C1=CC3=C(NC(=O)NC3=O)O	3-8,11-14,16-17	-
+exocyclic_iminium_sulfur_ring	CN(C1=NC(=[N+](C)C)SS1)C(=S)SC	2-4,8-9	-
+fused_exocyclic_imine_sulfur_ring	CCCCCCCCCCCCCCCCS(=O)(=O)N(C(=O)OCC)N=C1N(C2=CC=CC=C2S1)C	26-34	-
+fused_sulfoxide_ring	CCCCCN1SC2=CC=CC=C2S1=O	7-12	-
+neutral_exocyclic_alkene_sulfur_ring	C1=CC=C2C(=C1)C=CC3=C2[N+](=C(S3)C=C4N(C5=CC=CC=C5S4)CCCS(=O)(=O)O)CCCS(=O)(=O)O	0-12,16-21	-
+fused_seven_membered_ether_ring	CN1CCC23C4C1CC5=C2C(=C(C=C5)OC)OC3C6(C4)C(=O)C7=C8N6CCC9=C8C(=C(C=C9)OC)OC1=C7C=CC(=C1O)OC	8-13,27-32,36-41	-
+fused_quinone_sulfone	CC(C)(C)NN=C(C1C=CCS1(=O)=O)C(=O)NC2=C(C(=O)C3=CC=CC=C3C2=O)Cl	21-26	-
+singly_carbonylated_fused_ring	CNCCN=C1C=CC2=C3C1=C(C4=C(C=CC(=O)C4=C3NN2CCNCCO)O)O	5-16,18-21	-
+saturated_fused_ring_beside_core	C1CCC2=NC3=CC=CC=C3C(=C2C1)[NH2+]CCSCCCl	3-12	-
+fused_chromanone_lactone_ring	C1C(C(=O)C2=CC=CC=C2O1)C3=CC=CC=C3	4-9,11-16	-
+conjugated_fused_benzopyrone	C1=CC=C(C=C1)C2=C(C(=O)C3=CC=CC=C3O2)OC(=O)C4=CC5=C(C=C4Cl)SC6=NC=CN6S5(=O)=O	0-8,10-16,20-25,28-32	3:6
+fused_fluorenone_carbonyl_bridge	C1=CC=C2C(=C1)C3=C(C2=O)C=C(C=C3)[N+]#N	0-7,10-13	4:6
+fused_saturated_carbonyl_bridge	CC1(CC(C(=O)C2=CC=CC=C21)(C(C3=CC=C(C=C3)[N+](=O)[O-])O)Cl)C	6-11,13-18	-
+tellurophene	C1=C[Te]C=C1	0-4	-
+fused_sulfonamide_tertiary_amine	COC1=CC2=C(C=C1)OC(=C2)S(=O)(=O)N3CC(C4=C3C=C(C=C4)N)CCl	2-10,17-22	-
+cationic_fused_imide	CC1=C(C(=[N+]2N1C(=O)C(C2=O)C3=CC=CC=C3)C)C4=C(N5C(=O)C(C(=O)[N+]5=C4C)C6=CC=CC=C6)C	1-5,11-16,18-20,26-27,29-34	2:18
+thiofuran_pyrimidinedione	CC1=CN(C(=O)NC1=O)[C@H]2C=C(CS2)CO	1-4,6-7	-
+fused_thiadiazolopyrimidinone	C1=CC=C2C(=C1)C=CC(=C2C=CC3=NN=C4N(C3=O)N=C(S4)C5=CC(=CC=C5)[N+](=O)[O-])O	0-9,12-17,19-27	20:22
+fused_naphthalimide	C1=CC(=CN=C1)CN2C(=O)C3=C(C2=O)C=C(C=C3)N(C4=CC=C(C=C4)Cl)C5=CC=C(C=C5)Cl	0-5,10-11,14-17,19-24,26-31	-
+partially_saturated_fused_amide_enone	CC1=CC=C(C=C1)C2=CC3=C(CCC(=C3)C(=O)NC4=CC=C(C=C4)C[N+]5(CCCCC5)C)C=C2	1-10,18-23,32-33	4:7
+spiro_saturated_fused_hydrocarbon	CC1=C2C=CC3=C(C2=CC=C1)CCC4(C3CCCC4)C	1-10	-
+fused_cyclic_imine	C1CN2CC3=CC=CC=C3N=C2[C@@H]1O	4-9	-
+partially_saturated_carbonyl_fused_rings	CC1(CC2=C(C(=O)C1)OC3=C(C2C4=CC=CC=C4[N+](=O)[O-])C(=O)CC(C3)(C)C)C	12-17	-
+fused_lactam_bridge_ring	CCN1C2=C(C=C(C=C2OC3=C(C1=O)C=CC=N3)C)[N+](=O)[O-]	3-8,10-11,14-17	-
+fused_subset_additivity	CN1CCN(CC1)CCC2=CC3=C4N2C=C(C(=O)C4=CC(=C3)CN5CCOCC5)C(=O)NCC6=CC=C(C=C6)Cl	9-16,18-21,33-38	-
+fused_imine_sulfonamide_neighbor	O=C(NC1=CC2=NC=CN=C2C=C1)C1=CC=CN2CCS(=O)(=O)N=C12	3-12	-
+fused_imide_heterocycle	OOC1(CC2=CC=C(O)C=C2)N=C2C(CC3=CC=CC=C3)=NC(C3=CC=C(O)C=C3)=CN2C1=O	4-7,9-10,15-20,23-26,28-29	-
+fused_four_member_diketone	C1CSC2(C3=C(C=CC(=C3)Cl)OC4=C2C(=O)C4=O)SC1	4-9,12-14,16	-
+large_conjugated_macrocycle	C1=CC=C2C(=C1)C3=NC4=C5C=CC=CC5=C([N-]4)N=C6C7=CC=CC=C7C(=N6)N=C8C9=CC=CC=C9C(=N8)N=C2[N-]3	0-39	18:19,24:25,28:29,34:35
+tetrahydroporphyrin	CC=C1C(=C2C=C3C(=CC)C(=C(N3)C=C4C(=C(C(=CC5=C(C(=C(N5)C=C1N2)C)CCC(=O)O)N4)CCC(=O)O)C)C)C	2-4,6-7,10-12,14-17,19-23,25-26,33	-
+macrocycle_lone_pair_five_ring	CC1=C(C2=CC3=NC(=CC4=NC(=CC5=C(C(=C(N5)C=C1N2)C=C)C)C(=C4CCC(=O)O)C)C(=C3C)CCC(=O)O)C=C	1-20	-
+macrocycle_five_electron_support_ring	CC1=C(C2=CC3=NC(=CC4=C(C(=C([N-]4)C=C5C(=C(C(=N5)C=C1[N-]2)C)C=C)C)C=C)C(=C3CCC(=O)O)C)CCC(=O)O	1-15,18-22	-
+neutral_aza_macrocycle	C1=CC=C2C(=C1)C3=NC4=NC(=NC5=NC(=NC6=NC(=NC2=N3)C7=CC=CC=C76)C8=CC=CC=C85)C9=CC=CC=C94	0-5,22-39	-
+fused_azo_indole	CN1C=NN(C)C1N=NC1=C(C2=CC=CC=C2)NC2=CC=CC=C12	9-23	10:11
+fused_tertiary_amine_ring	CC(C)C[C@@H]1CN2CCC3=CC(=C(C=C3C2CC1=O)OC)O[11CH3]	9-14	-
+fused_n_hydroxy_lactam	CCCCCCCC1=CC2=C(C=C1)N(C=CC2=O)O	7-16	-
+n_aryl_fused_pyrrole	CCOC(=O)C1=C(N(C2=C1C=C(C=C2)OCC(C[NH2+]CC3=CC=CC=C3)O)C4=CC=CC=C4)C	5-13,20-25,27-32	7:27
+saturated_fused_benzodiazepinone	CN(C)CCN1C(NC(=O)C2=C1C=C(C=C2)Cl)C3=CC=C(C=C3)Cl	10-15,17-22	-
+pyridinium	CCCCCC(=O)C[n+]1ccccc1	8-13	-
+protonated_aminopyridine	Nc1ccc[nH+]c1	1-6	-
+triazolide	c1[n-]cnn1	0-4	-
+pyranone	CC#CC#Cc1cccc(=O)o1	5-9,11	-
+imidazole_lactone	CC[C@H]1[C@H](COC1=O)CC2=CN=CN2C	9-13	-
+substituted_pyrrole	CCOC(=O)C1=C(C(=C(N1)C)C(=O)OC(C)(C)C)C	5-9	-
+main_group_porphyrinoid	CCC\1=C(/C/2=C/C3=C(C(=C(N3)/C=C\4/C(=C(C(N4)CC5=C(C(=C(N5)/C=C1\N2)C)CCC(=O)O)CCC(=O)O)C)C)CC)C	2-4,6-10,18-22,24-25	-
+dibenzoarsenin	C1=CC=C2C(=C1)NC3=CC=CC=C3[As]2O[As]4C5=CC=CC=C5NC6=CC=CC=C64	0-5,7-12,16-21,23-28	-
+iodonium_dibenzoxepine	C1=CC2=C(C=C1Cl)[I+]C3=C(O2)C=CC(=C3)Cl	0-5,8-9,11-14	-
+cyclopenta_pyran_isovalerate	CC(C)CC(=O)OCC1=COC=C2C1=CC=C2C=O	8-16	12:13
+triphenylpyrylium	C1=CC=C(C=C1)C2=CC(=[O+]C(=C2)C3=CC=CC=C3)C4=CC=CC=C4	0-23	3:6,8:18,10:12
+phosphinine	C1=CC=PC=C1	0-5	-
+cyclopenta_pyran_aldehyde	C1=C(C2=COC=C(C2=C1)CO)C=O	0-8	2:7
+cyclopenta_pyran_acetate	CC(=O)OCC1=COC=C2C1=CC=C2C=O	5-13	9:10
+dimethylpyrylium_thioether	CC1=CC(=CC(=[O+]1)C)SCC=C	1-6	-
+dibenzosilole	C1=CC=C2C(=C1)C3=CC=CC=C3[Si]2(C4=CC(=CC=C4)Br)F	0-11,13-18	4:6
+dithiolium	CSC1=C(C(=[S+]S1)SC)O	2-6	-
+silylthiophene_cyclophane	C[Si](C)(C)C1=CC=C(S1)C2=C3C[Si]4(CC3=C(S2)C5=CC=C(S5)[Si](C)(C)C)CC6=C(SC(=C6C4)C7=CC=C(S7)[Si](C)(C)C)C8=CC=C(S8)[Si](C)(C)C	4-10,14-21,27-31,33-37,42-46	7:9,15:17,28:42,30:33
+dibenzostannocine	C1C2=CC=CC=C2[Sn]3(C4=CC=CC=C4CN1CC5=CC=CC=C53)Br	1-6,8-13,17-22	-
+dibenzoazarsinine	C1=CC=C2C(=C1)NC3=CC=CC=C3[AsH]2(N)Cl	0-5,7-12	-
+spirosiliconate	C[Si-]12(C3=CC=CC=C3C(O1)(C(F)(F)F)C(F)(F)F)C4=CC=CC=C4C(O2)(C(F)(F)F)C(F)(F)F	2-7,18-23	-
+diiodonium_naphthalene	C1=CC2=C3C(=C1)[I+]C4=CC=CC(=C43)[I+]2	0-5,7-12	3:12
+silaindane	C[Si]1(CC2=CC=CC=C2C1)[Si](C)(C)C	3-8	-

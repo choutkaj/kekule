@@ -1,6 +1,48 @@
 use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor, Perception};
 use kekule::perception::aromaticity::{perceive_aromaticity, AromaticityModel};
 
+use crate::support::aromaticity_cases;
+
+#[test]
+fn default_perception_matches_reference_aromaticity_regressions() {
+    let mut failures = Vec::new();
+    for case in aromaticity_cases() {
+        let mut molecule = case.molecule();
+        molecule
+            .perceive()
+            .unwrap_or_else(|error| panic!("{}: {error}", case.label));
+        let aromatic = |atom| molecule.atom_is_aromatic(atom).unwrap() == Some(true);
+        let atoms = molecule
+            .atom_ids()
+            .filter(|&atom| aromatic(atom))
+            .map(|atom| atom.index())
+            .collect::<Vec<_>>();
+        let mut nonaromatic_bonds = Vec::new();
+        for (id, bond) in molecule.bonds() {
+            let endpoints = (bond.a().index(), bond.b().index());
+            let endpoints = (endpoints.0.min(endpoints.1), endpoints.0.max(endpoints.1));
+            let both_aromatic = aromatic(bond.a()) && aromatic(bond.b());
+            match molecule.bond_is_aromatic(id).unwrap() == Some(true) {
+                true if !both_aromatic => failures.push(format!(
+                    "{}: aromatic bond {endpoints:?} has a non-aromatic endpoint",
+                    case.label
+                )),
+                false if both_aromatic => nonaromatic_bonds.push(endpoints),
+                _ => {}
+            }
+        }
+        nonaromatic_bonds.sort_unstable();
+        if atoms != case.aromatic_atoms || nonaromatic_bonds != case.nonaromatic_bonds {
+            failures.push(format!(
+                "{}: aromatic atoms {atoms:?}, non-aromatic bonds {nonaromatic_bonds:?}; \
+                 expected {:?} and {:?}",
+                case.label, case.aromatic_atoms, case.nonaromatic_bonds
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 fn protonated_thiophene_with_inferred_hydrogen() -> Molecule {
     let mut editor = MoleculeEditor::new();
     let atoms = ["S", "C", "C", "C", "C"]

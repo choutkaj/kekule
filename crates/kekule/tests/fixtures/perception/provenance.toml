@@ -1,0 +1,25 @@
+schema_version = 1
+
+[[fixture]]
+path = "aromaticity.tsv"
+source = "PubChem, Enamine and PL-REX records from the benchmark corpora, plus the fused example from an RDKit source comment, that exposed aromaticity or canonical round-trip defects during development"
+retrieved = "2026-10-09"
+preprocessing = "Consolidated from one-off unit regressions; spectator components of salts and mixtures were dropped because components are interpreted independently"
+reference = "Aromatic atoms and non-aromatic bonds between aromatic atoms verified against RDKit 2026.09.1 default aromaticity (explicit hydrogens retained so atom indices follow source order)"
+purpose = "Exact aromaticity regressions and invariant-suite inputs; not a scientific benchmark"
+
+[[fixture]]
+path = "five-electron-fused-neighbor.sdf"
+source = "RDKit-written 2D record of a supplied structure whose fused shared bond was not marked aromatic"
+retrieved = "2026-10-09"
+sha256 = "25c9e0123a9a3ab139dd926a58456e2cb04bb5341084ff76afce4cd1ad3784b8"
+preprocessing = "Moved verbatim from an inline unit-test record, including its empty title line"
+purpose = "Aromaticity regression through the Molfile reader"
+
+[[fixture]]
+path = "pubchem-10250.sdf"
+source = "PubChem OEChem 2D record titled 10250"
+retrieved = "2026-10-09"
+sha256 = "69892b62545237f24a4586c76db5b25b33c2038170eae1fea282e87ae960cdf0"
+preprocessing = "Moved verbatim from an inline unit-test record, including explicit hydrogens"
+purpose = "Aromaticity regression for a fused dione partner sharing an aromatic bond"
