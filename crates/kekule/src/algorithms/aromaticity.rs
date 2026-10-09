@@ -47,6 +47,29 @@ impl Default for AromaticityOptions {
     }
 }
 
+impl AromaticityOptions {
+    /// The bounds the default perception profile uses for a graph with
+    /// `atoms` atom and `bonds` bond storage slots: the [`Default`] bounds,
+    /// raised to grow linearly with the graph, as
+    /// [`RingPerceptionOptions::for_graph`] does for rings. Explicitly supplied
+    /// options are always absolute.
+    pub fn for_graph(atoms: usize, bonds: usize) -> Self {
+        let size = atoms.saturating_add(bonds);
+        let default = Self::default();
+        Self {
+            ring_options: RingPerceptionOptions::for_graph(atoms, bonds),
+            max_total_work: default.max_total_work.max(size.saturating_mul(1_000)),
+        }
+    }
+
+    fn for_molecule(molecule: &Molecule) -> Self {
+        Self::for_graph(
+            molecule.graph.atom_slot_count(),
+            molecule.graph.bond_slot_count(),
+        )
+    }
+}
+
 struct AromaticityWork {
     remaining: usize,
     limit: usize,
@@ -105,13 +128,15 @@ impl std::error::Error for AromaticityError {
 ///
 /// Reuses installed rings and implicit hydrogen counts. Missing rings are
 /// perceived with default limits; missing hydrogen counts use the default
-/// valence calculation without installing valence state. On failure, all
+/// valence calculation without installing valence state. Work bounds grow with
+/// the molecule; see [`AromaticityOptions::for_graph`]. On failure, all
 /// previously installed perception is preserved.
 pub fn perceive_aromaticity(
     mol: &mut Molecule,
     model: AromaticityModel,
 ) -> std::result::Result<(), AromaticityError> {
-    perceive_aromaticity_with_ring_options(mol, model, RingPerceptionOptions::default())
+    let options = AromaticityOptions::for_molecule(mol);
+    perceive_aromaticity_with_options(mol, model, options)
 }
 
 /// Perceives aromaticity, using `ring_options` if a ring basis is not installed.
@@ -124,14 +149,11 @@ pub fn perceive_aromaticity_with_ring_options(
     model: AromaticityModel,
     ring_options: RingPerceptionOptions,
 ) -> std::result::Result<(), AromaticityError> {
-    perceive_aromaticity_with_options(
-        mol,
-        model,
-        AromaticityOptions {
-            ring_options,
-            ..Default::default()
-        },
-    )
+    let options = AromaticityOptions {
+        ring_options,
+        ..AromaticityOptions::for_molecule(mol)
+    };
+    perceive_aromaticity_with_options(mol, model, options)
 }
 
 /// Perceives aromaticity with explicit work limits, including fused-ring search.
@@ -154,7 +176,8 @@ pub(crate) fn perceive_aromaticity_in_place(
     mol: &mut Molecule,
     model: AromaticityModel,
 ) -> std::result::Result<(), AromaticityError> {
-    perceive_aromaticity_with_options_in_place(mol, model, AromaticityOptions::default())
+    let options = AromaticityOptions::for_molecule(mol);
+    perceive_aromaticity_with_options_in_place(mol, model, options)
 }
 
 fn perceive_aromaticity_with_options_in_place(
