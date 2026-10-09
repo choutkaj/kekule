@@ -70,25 +70,9 @@ pub struct KnownDefect {
     pub defect: &'static str,
 }
 
-const COLLAPSED_AXIS: &str =
-    "CIP leaves an atropisomeric axis unresolved after explicit hydrogens are collapsed";
-
 /// Each entry must keep failing exactly as described; when a fix makes it
 /// pass, the invariant reports the entry so it can be deleted.
-pub const KNOWN_DEFECTS: &[KnownDefect] = &[
-    KnownDefect {
-        invariant: "hydrogen_round_trip",
-        sample: "molfile:JDQ443_3d.mol#0",
-        failure: "collapsed: CIP failed: CipAssignmentError { issues: [UnresolvedPriority",
-        defect: COLLAPSED_AXIS,
-    },
-    KnownDefect {
-        invariant: "hydrogen_round_trip",
-        sample: "molfile:Sotorasib_3d.mol#0",
-        failure: "collapsed: CIP failed: CipAssignmentError { issues: [UnresolvedPriority",
-        defect: COLLAPSED_AXIS,
-    },
-];
+pub const KNOWN_DEFECTS: &[KnownDefect] = &[];
 
 /// Fails on every (sample label, message) failure that does not match a known
 /// defect of `invariant`, and on every known defect of `invariant` that no

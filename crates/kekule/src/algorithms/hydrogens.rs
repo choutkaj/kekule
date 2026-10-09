@@ -582,8 +582,18 @@ fn stereo_hydrogen_is_collapsible(
             let right = matches!(stereo.right_carrier, StereoCarrier::Atom(atom) if atom == hydrogen);
             match (left, right) {
                 (false, false) => true,
-                (true, false) => stereo.left == parent,
-                (false, true) => stereo.right == parent,
+                (true, false) => {
+                    stereo.left == parent
+                        && collapses_to_sole_implicit_hydrogen(
+                            molecule, hydrogen, parent, candidates,
+                        )
+                }
+                (false, true) => {
+                    stereo.right == parent
+                        && collapses_to_sole_implicit_hydrogen(
+                            molecule, hydrogen, parent, candidates,
+                        )
+                }
                 (true, true) => false,
             }
         }
@@ -592,6 +602,23 @@ fn stereo_hydrogen_is_collapsible(
             .iter()
             .any(|carrier| matches!(carrier, StereoCarrier::Atom(atom) if *atom == hydrogen)),
     })
+}
+
+/// An implicit double-bond reference names one hydrogen only while it is the
+/// endpoint's sole implicit hydrogen. Collapsing a reference beside another
+/// implicit or collapsible hydrogen, as on a terminal `=CH2`, would lose which
+/// ligand the assertion names, so that reference stays a graph atom. An
+/// unknown count is rejected afterwards as missing valence perception.
+fn collapses_to_sole_implicit_hydrogen(
+    molecule: &Molecule,
+    hydrogen: AtomId,
+    parent: AtomId,
+    candidates: &BTreeSet<AtomId>,
+) -> bool {
+    matches!(molecule.implicit_hydrogens(parent), Ok(None | Some(0)))
+        && molecule.neighbors(parent).is_ok_and(|mut neighbors| {
+            neighbors.all(|neighbor| neighbor == hydrogen || !candidates.contains(&neighbor))
+        })
 }
 
 fn stereo_hydrogen_bindings(
