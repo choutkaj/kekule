@@ -218,7 +218,7 @@ fn duplicate_residue_addresses_and_label_chains_are_not_silently_resolved() {
 
 #[test]
 fn original_1ake_pocket_uses_checked_composition_and_retains_source_associations() {
-    let model = mmcif::parse_str(include_str!("fixtures/mmcif/1AKE.cif"))
+    let model = mmcif::parse_str(include_str!("../fixtures/mmcif/1AKE.cif"))
         .unwrap()
         .interpret()
         .unwrap()

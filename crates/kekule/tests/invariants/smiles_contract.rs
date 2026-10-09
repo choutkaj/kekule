@@ -1,5 +1,4 @@
-#[path = "support/smiles_contract.rs"]
-mod contract;
+use crate::contract;
 
 use kekule::{core::Molecule, smiles};
 

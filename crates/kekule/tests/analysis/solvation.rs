@@ -471,7 +471,7 @@ fn original_entities_properties_and_existing_water_survive() {
 #[test]
 fn externally_supplied_solute_and_increasing_boxes() {
     // Existing externally sourced CIP corpus molecule; no generated benchmark solute.
-    let doc = kekule::sdf::parse_str(include_str!("fixtures/cip/VS132.sdf")).unwrap();
+    let doc = kekule::sdf::parse_str(include_str!("../fixtures/cip/VS132.sdf")).unwrap();
     let solute = doc.records()[0].to_model().unwrap();
     let mut previous = 0;
     for size in [3.0, 4.0, 6.0] {
