@@ -608,6 +608,99 @@ fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
 }
 
 #[test]
+fn hydrogen_collapse_retains_a_double_bond_reference_beside_another_hydrogen() {
+    // On a terminal =CH2 the reference is one of two equivalent hydrogens.
+    // An implicit reference there names neither: CIP could not rank it and
+    // materialization rejected it, so the reference stays a graph atom.
+    // A toy molecule belongs here, not in a fixture; the external JDQ443 and
+    // Sotorasib 3D records cover this through the hydrogen round-trip
+    // invariant. Reference: RDKit 2026.03.3 FindPotentialStereo and
+    // rdCIPLabeler find no stereo on this C=C before or after collapse
+    // (F/C([H])=C(/[H])[H], F/C([H])=C/[H] and F/C=C/[H]).
+    for sibling_is_explicit in [true, false] {
+        let mut editor = MoleculeEditor::new();
+        let fluorine = editor.add_atom(element_atom("F")).unwrap();
+        let left = editor.add_atom(carbon()).unwrap();
+        let right = editor.add_atom(carbon()).unwrap();
+        let left_hydrogen = editor.add_atom(element_atom("H")).unwrap();
+        let reference = editor.add_atom(element_atom("H")).unwrap();
+        editor.add_bond(fluorine, left, BondOrder::Single).unwrap();
+        let bond = editor.add_bond(left, right, BondOrder::Double).unwrap();
+        editor
+            .add_bond(left, left_hydrogen, BondOrder::Single)
+            .unwrap();
+        editor
+            .add_bond(right, reference, BondOrder::Single)
+            .unwrap();
+        if sibling_is_explicit {
+            let sibling = editor.add_atom(element_atom("H")).unwrap();
+            editor.add_bond(right, sibling, BondOrder::Single).unwrap();
+        }
+        editor
+            .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+                DoubleBondStereo {
+                    bond,
+                    left,
+                    right,
+                    left_carrier: StereoCarrier::Atom(fluorine),
+                    right_carrier: StereoCarrier::Atom(reference),
+                    orientation: Some(DoubleBondOrientation::Opposite),
+                },
+            )))
+            .unwrap();
+        let mut molecule = editor.finish().unwrap();
+        perceive(&mut molecule).unwrap();
+        let id = molecule.stereo_element_ids().next().unwrap();
+        let nonstereogenic = Ok(CipAssignmentReport {
+            assigned: Vec::new(),
+            skipped: vec![CipSkipped {
+                element: id,
+                reason: CipSkippedReason::NotStereogenic,
+            }],
+        });
+        assert_eq!(
+            stereo_api::assign_cip_descriptors(&mut molecule),
+            nonstereogenic
+        );
+
+        let report = molecule.remove_hydrogens().unwrap();
+
+        assert_eq!(
+            report
+                .retained
+                .iter()
+                .map(|entry| (entry.hydrogen, entry.reason))
+                .collect::<Vec<_>>(),
+            vec![(reference, RetainedHydrogenReason::UnsupportedStereoRole)],
+            "sibling_is_explicit: {sibling_is_explicit}"
+        );
+        let ids = &report.correspondence;
+        let StereoElementKind::DoubleBond(stereo) = &molecule
+            .stereo_element(ids.stereo_element(id).unwrap())
+            .unwrap()
+            .kind
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            stereo.right_carrier,
+            StereoCarrier::Atom(ids.atom(reference).unwrap())
+        );
+        assert_eq!(stereo.orientation, Some(DoubleBondOrientation::Opposite));
+        perceive(&mut molecule).unwrap();
+        assert_eq!(
+            molecule.implicit_hydrogens(ids.atom(right).unwrap()),
+            Ok(Some(1))
+        );
+        assert_eq!(
+            stereo_api::assign_cip_descriptors(&mut molecule),
+            nonstereogenic
+        );
+        assert_eq!(molecule.add_hydrogens().unwrap().added.len(), 2);
+    }
+}
+
+#[test]
 fn hydrogen_collapse_requires_only_the_affected_parent_counts() {
     let mut fixed = crate::tests::read_smiles("[H][CH2]C").unwrap();
     assert!(!fixed.perception().has_valence());

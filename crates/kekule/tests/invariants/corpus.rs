@@ -73,8 +73,6 @@ pub struct KnownDefect {
 const EXPLICIT_H_CANONICAL: &str = "canonical SMILES depends on explicit hydrogen atoms";
 const EXPLICIT_H_WRITER: &str =
     "canonical writer demands hydrogen perception for a perceived explicit-H aromatic NH";
-const COLLAPSED_AXIS: &str =
-    "CIP leaves an atropisomeric axis unresolved after explicit hydrogens are collapsed";
 
 /// Each entry must keep failing exactly as described; when a fix makes it
 /// pass, the invariant reports the entry so it can be deleted.
@@ -103,18 +101,6 @@ pub const KNOWN_DEFECTS: &[KnownDefect] = &[
         sample: "molfile:pubchem-10250.sdf#0",
         failure: r#"collapsed canonical Some("O=c1[nH]c(=O)c2nccnc2[nH]1") != None"#,
         defect: EXPLICIT_H_WRITER,
-    },
-    KnownDefect {
-        invariant: "hydrogen_round_trip",
-        sample: "molfile:JDQ443_3d.mol#0",
-        failure: "collapsed: CIP failed: CipAssignmentError { issues: [UnresolvedPriority",
-        defect: COLLAPSED_AXIS,
-    },
-    KnownDefect {
-        invariant: "hydrogen_round_trip",
-        sample: "molfile:Sotorasib_3d.mol#0",
-        failure: "collapsed: CIP failed: CipAssignmentError { issues: [UnresolvedPriority",
-        defect: COLLAPSED_AXIS,
     },
 ];
 

@@ -217,6 +217,13 @@ All notable changes to Kekule are documented in this file.
 - Retain underlying frame, property, position, unit, and model errors through
   `std::error::Error::source`; model failures are no longer flattened into topology
   mismatch strings.
+- `Molecule::remove_hydrogens` keeps a double-bond reference hydrogen as a graph
+  atom, reported as `UnsupportedStereoRole`, when its endpoint has another
+  hydrogen, as on a terminal `=CH2`. Collapsing it left an implicit reference
+  that named neither hydrogen: CIP assignment then failed with
+  `UnresolvedPriority` instead of skipping the bond as nonstereogenic, and
+  `add_hydrogens` rejected the molecule. This affected 3D structures such as
+  acrylamide atropisomers read with explicit hydrogens.
 
 ### Changed
 
