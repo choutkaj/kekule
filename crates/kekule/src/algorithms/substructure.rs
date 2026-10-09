@@ -14,7 +14,9 @@ pub const MAX_SUBSTRUCTURE_QUERY_ATOMS: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubstructureMatchOptions {
-    /// Maximum returned matches; reaching this cap stops successfully.
+    /// Maximum matches. Complete enumeration (`find_matches`) reports
+    /// exceeding it as [`SubstructureMatchError::ResourceLimit`]; a visitor
+    /// stops successfully once it is reached.
     pub max_matches: usize,
     /// Maximum candidate assignments visited by backtracking.
     pub max_search_states: usize,

@@ -96,14 +96,18 @@ def small_molecules():
                         descriptors_covered=sorted(map(str, seen)), rejected=rejected)
 
 
-def proteins():
+def proteins(count=10, residue_range=(25, 180), min_atoms=0):
+    """Prepare the first `count` eligible chains in the ranked corpus order.
+
+    The defaults reproduce the frozen robustness panel exactly.
+    """
     root = CORPORA / 'pdb-1000'
     lock = json.loads((root / 'sources.lock.json').read_text())
     registry = ToolkitRegistry([RDKitToolkitWrapper()])
     amber = AmberForceField('amber14-all.xml')
     result, attempts = [], []
     for entry in sorted(lock['entries'], key=lambda e: ranked(e['id'])):
-        if len(result) == 10:
+        if len(result) == count:
             break
         file = next(f for f in entry['files'] if f['path'].endswith('.cif'))
         path = checked(root, file)
@@ -114,7 +118,7 @@ def proteins():
             continue
         for chain in pdb.topology.chains():
             residues = list(chain.residues())
-            if not 25 <= len(residues) <= 180 or any(r.name not in AA for r in residues):
+            if not residue_range[0] <= len(residues) <= residue_range[1] or any(r.name not in AA for r in residues):
                 continue
             attempt = dict(id=entry['id'], chain=chain.id, residues=len(residues))
             attempts.append(attempt)
@@ -133,6 +137,8 @@ def proteins():
                 if off_top.n_molecules != 1:
                     raise ValueError(f'prepared chain has {off_top.n_molecules} disconnected molecules')
                 off = off_top.molecule(0)
+                if off.n_atoms < min_atoms:
+                    raise ValueError(f'prepared chain has {off.n_atoms} atoms, below {min_atoms}')
                 rd = off.to_rdkit(toolkit_registry=registry)
                 for i, atom in enumerate(rd.GetAtoms()):
                     atom.SetAtomMapNum(i+1)
@@ -152,8 +158,8 @@ def proteins():
             except Exception as exc:
                 attempt['error'] = f'{type(exc).__name__}: {exc}'
                 print(json.dumps(attempt), flush=True)
-    if len(result) != 10:
-        raise ValueError('could not prepare ten protein chains')
+    if len(result) != count:
+        raise ValueError(f'could not prepare {count} protein chains')
     return result, attempts
 
 

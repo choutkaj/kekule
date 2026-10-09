@@ -41,14 +41,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let m = molecules.remove(0);
         let features = measure(
             || {
-                black_box(model.atom_features(&m)?);
+                black_box(kekule_openff::diagnostics::atom_features(&model, &m)?);
                 Ok(())
             },
             5,
         )?;
         let infer = measure(
             || {
-                black_box(model.infer_charges(&m)?);
+                black_box(kekule_openff::diagnostics::infer_charges(&model, &m)?);
                 Ok(())
             },
             5,
@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         let full = measure(
             || {
-                black_box(ff.parameterize_molecule(&m, &model)?);
+                black_box(ff.parameterize_molecule(m.clone(), &model)?);
                 Ok(())
             },
             3,

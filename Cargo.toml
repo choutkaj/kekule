@@ -5,6 +5,7 @@ members = [
     "crates/kekule-potentials",
     "crates/kekule-traj",
     "crates/kekule-openff",
+    "crates/kekule-openff-ash",
     "benchmarks",
 ]
 
@@ -28,4 +29,14 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.zmij]
+opt-level = 3
+
+# NAGL inference and the bundled Ash model decode in test builds.
+[profile.dev.package.matrixmultiply]
+opt-level = 3
+
+[profile.dev.package.ndarray]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
 opt-level = 3

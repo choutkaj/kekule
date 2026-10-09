@@ -41,7 +41,7 @@ fn observe(
         .collect::<Result<Vec<_>, _>>()?;
     if mode == "identity" {
         return Ok(
-            json!({"status":"ok","fixed_h_inchi":model.ok_or("model required")?.lookup_identifier(&molecule)?}),
+            json!({"status":"ok","fixed_h_inchi":kekule_openff::diagnostics::lookup_identifier(&molecule)?}),
         );
     }
     let labels_ = ff.label_molecule(&molecule)?;
@@ -50,14 +50,14 @@ fn observe(
         "ProperTorsions":labels(&labels_.proper_torsions,&molecule),"ImproperTorsions":labels(&labels_.improper_torsions,&molecule),
         "Constraints":labels(&labels_.constraints,&molecule),"vdW":labels(&labels_.vdw,&molecule)}});
     if let Some(model) = model {
-        match model.lookup_identifier(&molecule) {
+        match kekule_openff::diagnostics::lookup_identifier(&molecule) {
             Ok(identifier) => result["fixed_h_inchi"] = json!(identifier),
             Err(e) => {
                 result["fixed_h_inchi"] = Value::Null;
                 result["identity_error"] = json!(e.to_string());
             }
         }
-        result["features"] = match model.atom_features(&molecule) {
+        result["features"] = match kekule_openff::diagnostics::atom_features(model, &molecule) {
             Ok(f) => json!({"status":"ok","values":f}),
             Err(e) => json!({"status":"error","message":e.to_string()}),
         };
@@ -68,12 +68,13 @@ fn observe(
                 }
                 Err(e) => json!({"status":"error","message":e.to_string()}),
             };
-            result["inference"] = match model.infer_charges(&molecule) {
+            result["inference"] = match kekule_openff::diagnostics::infer_charges(model, &molecule)
+            {
                 Ok(q) => json!({"status":"ok","values":q.charges.value()}),
                 Err(e) => json!({"status":"error","message":e.to_string()}),
             };
         }
-        let system = ff.parameterize_molecule(&molecule, model)?;
+        let system = ff.parameterize_molecule(molecule.clone(), model)?;
         if !request["coordinates_nm"].is_null() {
             result["energies"] = energy::observe(&system, &maps, request)?;
         }

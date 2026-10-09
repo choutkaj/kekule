@@ -8,9 +8,17 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "SMIRNOFF parameter assignment and native NAGL inference for Kekule."
+readme = "README.md"
+
+[features]
+default = ["ash"]
+# Bundles the Ash charge model required by the Rosemary preset (about 10 MB).
+ash = ["dep:kekule-openff-ash", "dep:flate2"]
 
 [dependencies]
 kekule = { version = "0.2.1", path = "../kekule" }
+kekule-openff-ash = { version = "0.2.1", path = "../kekule-openff-ash", optional = true }
+flate2 = { version = "1", optional = true }
 # Lookup identity is a versioned scientific dependency, including its C backend.
 inchi = { version = "=0.1.4", default-features = false }
 inchi-sys = { version = "=0.1.4", default-features = false }
@@ -22,3 +30,7 @@ ndarray = "0.16"
 
 [dev-dependencies]
 flate2 = "1"
+
+[[example]]
+name = "parameterize"
+required-features = ["ash"]

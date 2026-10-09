@@ -1,9 +1,14 @@
 //! Evaluation-only GraphSAGE and charge readout. Chemistry stays in `features`.
 use super::config::{Activation, Config, Feature};
-use crate::{error, Result};
+use crate::{Error, ErrorKind, Result};
+
 use ndarray::{Array1, Array2};
 use serde::Deserialize;
 use std::collections::BTreeMap;
+
+fn error(detail: impl std::fmt::Display) -> Error {
+    Error::new(ErrorKind::Model, detail)
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -87,7 +92,7 @@ impl Network {
                         (output, input),
                         tensor(format!("{prefix}.weight"), &[output, input])?,
                     )
-                    .map_err(error)?,
+                    .map_err(|e| Error::wrap(ErrorKind::Model, e))?,
                     bias: if bias {
                         Array1::from_vec(tensor(format!("{prefix}.bias"), &[output])?)
                     } else {
@@ -175,20 +180,29 @@ impl Network {
             x = linear.apply(&x);
             x.mapv_inplace(|v| activation.apply(v));
         }
-        let mut priors = 0f32;
-        let mut inverse_sum = 0f32;
-        let mut e_sum = 0f32;
+        // Molecule-wide sums accumulate in f64 so their rounding error does not
+        // grow with the number of atoms; per-atom terms stay in float32 as in
+        // the network.
+        let mut priors = 0f64;
+        let mut inverse_sum = 0f64;
+        let mut e_sum = 0f64;
         for row in x.rows() {
             if row.iter().any(|v| !v.is_finite()) || row[2] == 0.0 {
-                return Err(error("invalid NAGL charge-equilibration output"));
+                return Err(Error::new(
+                    ErrorKind::Charges,
+                    "invalid NAGL charge-equilibration output",
+                ));
             }
-            priors += row[0];
-            inverse_sum += 1.0 / row[2];
-            e_sum += row[1] / row[2];
+            priors += f64::from(row[0]);
+            inverse_sum += f64::from(1.0 / row[2]);
+            e_sum += f64::from(row[1] / row[2]);
         }
-        let fraction = (priors - formal_charge as f32 - e_sum) / inverse_sum;
+        let fraction = ((priors - formal_charge as f64 - e_sum) / inverse_sum) as f32;
         if !fraction.is_finite() {
-            return Err(error("singular NAGL charge equilibration"));
+            return Err(Error::new(
+                ErrorKind::Charges,
+                "singular NAGL charge equilibration",
+            ));
         }
         Ok(x.rows()
             .into_iter()

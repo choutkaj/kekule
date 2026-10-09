@@ -1,8 +1,13 @@
 //! The supported NAGL configuration, shared by bundle validation and execution.
-use crate::{error, Result};
+use crate::{Error, ErrorKind, Result};
+
 use kekule::core::Element;
 use serde::Deserialize;
 use std::collections::BTreeMap;
+
+fn error(detail: impl std::fmt::Display) -> Error {
+    Error::new(ErrorKind::Model, detail)
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "name", deny_unknown_fields)]

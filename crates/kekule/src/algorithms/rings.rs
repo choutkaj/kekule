@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt;
 
 use crate::core::*;
@@ -184,6 +184,39 @@ impl Default for RingPerceptionOptions {
     }
 }
 
+impl RingPerceptionOptions {
+    /// The bounds the default perception profile uses for a graph with
+    /// `atoms` atom and `bonds` bond storage slots.
+    ///
+    /// These are the [`Default`] bounds, raised so that every size and work
+    /// bound grows linearly with the graph: no molecule is too large to
+    /// perceive, and the bounds stop only searches that grow faster than the
+    /// molecule. The maximum cycle size is a chemistry bound and is kept.
+    /// Explicitly supplied options are always absolute.
+    pub fn for_graph(atoms: usize, bonds: usize) -> Self {
+        let size = atoms.saturating_add(bonds);
+        let default = Self::default();
+        Self {
+            max_atoms: default.max_atoms.max(atoms),
+            max_bonds: default.max_bonds.max(bonds),
+            max_candidates: default.max_candidates.max(size.saturating_mul(4)),
+            max_path_expansions: default.max_path_expansions.max(size.saturating_mul(64)),
+            max_equivalent_shortest_paths: default
+                .max_equivalent_shortest_paths
+                .max(size.saturating_mul(4)),
+            max_cycle_size: default.max_cycle_size,
+            max_total_work: default.max_total_work.max(size.saturating_mul(1_000)),
+        }
+    }
+
+    pub(crate) fn for_molecule(molecule: &Molecule) -> Self {
+        Self::for_graph(
+            molecule.graph.atom_slot_count(),
+            molecule.graph.bond_slot_count(),
+        )
+    }
+}
+
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RingPerceptionError {
@@ -235,9 +268,11 @@ impl std::error::Error for RingPerceptionError {}
 /// cycle basis. Zero and dative bonds are excluded throughout.
 ///
 /// Successful perception preserves valence and clears aromaticity and dependent
-/// stereo. Failure preserves the previously installed perception state.
+/// stereo. Failure preserves the previously installed perception state. Bounds
+/// grow with the molecule; see [`RingPerceptionOptions::for_graph`].
 pub fn perceive_ring_set(mol: &mut Molecule) -> std::result::Result<RingSet, RingPerceptionError> {
-    perceive_ring_set_with_options(mol, RingPerceptionOptions::default())
+    let options = RingPerceptionOptions::for_molecule(mol);
+    perceive_ring_set_with_options(mol, options)
 }
 
 /// Like [`perceive_ring_set`], with explicit resource bounds for every search
@@ -284,11 +319,19 @@ struct ActiveRingGraph {
     adjacency: Vec<Vec<(AtomId, BondId)>>,
     active_bonds: Vec<bool>,
     atom_degrees: Vec<usize>,
+    /// Bonds on at least one cycle. Smallest-ring searches traverse only these:
+    /// every cycle through a root lies within the root's biconnected component,
+    /// so bridges never contribute, while degrees keep the full active graph.
+    ring_bonds: Vec<bool>,
     copy_work: usize,
 }
 
 impl ActiveRingGraph {
     fn new(mol: &Molecule) -> Self {
+        Self::with_ring_bonds(mol, &compute_ring_membership(mol))
+    }
+
+    fn with_ring_bonds(mol: &Molecule, membership: &RingMembership) -> Self {
         let mut adjacency = vec![Vec::new(); mol.graph.atom_slot_count()];
         let mut active_bonds = vec![false; mol.graph.bond_slot_count()];
         let mut atom_degrees = vec![0usize; mol.graph.atom_slot_count()];
@@ -306,15 +349,18 @@ impl ActiveRingGraph {
         }
         // Trimming only changes flags/degrees, so this allocation-size estimate
         // remains valid and constant-time to read for every recovery clone.
+        let ring_bonds = membership.bond_flags.clone();
         let copy_work = adjacency
             .len()
             .saturating_mul(2)
             .saturating_add(active_bonds.len())
+            .saturating_add(ring_bonds.len())
             .saturating_add(adjacency_entries);
         Self {
             adjacency,
             active_bonds,
             atom_degrees,
+            ring_bonds,
             copy_work,
         }
     }
@@ -324,6 +370,12 @@ impl ActiveRingGraph {
             .iter()
             .copied()
             .filter(|(_, bond)| self.active_bonds[bond.index()])
+    }
+
+    /// Active neighbors across ring bonds, in adjacency order.
+    fn active_ring_neighbors(&self, atom: AtomId) -> impl Iterator<Item = (AtomId, BondId)> + '_ {
+        self.active_neighbors(atom)
+            .filter(|(_, bond)| self.ring_bonds[bond.index()])
     }
 
     fn trim_atom(&mut self, atom: AtomId, changed: &mut VecDeque<AtomId>) {
@@ -347,7 +399,7 @@ fn figueras_sssr_candidates(
     membership: &RingMembership,
     tracker: &mut RingWorkTracker,
 ) -> std::result::Result<(Vec<Ring>, Vec<Ring>), RingPerceptionError> {
-    let mut graph = ActiveRingGraph::new(mol);
+    let mut graph = ActiveRingGraph::with_ring_bonds(mol, membership);
     let fragments = active_fragments(mol, &graph);
     let mut seen_invariants = BTreeSet::<Vec<AtomId>>::new();
     let mut all_sssr = Vec::new();
@@ -673,53 +725,57 @@ fn smallest_rings_bfs(
     const WHITE: u8 = 0;
     const GRAY: u8 = 1;
     const BLACK: u8 = 2;
-    tracker.add_work(graph.atom_degrees.len().saturating_mul(3))?;
-    let mut colors = vec![WHITE; graph.atom_degrees.len()];
+    // The workspace holds only reached atoms, so a search costs what it
+    // visits rather than the size of the molecule.
+    let mut colors = HashMap::<AtomId, u8>::with_capacity(forbidden.len() + 16);
+    tracker.add_work(forbidden.len())?;
     for atom in forbidden {
-        colors[atom.index()] = BLACK;
+        colors.insert(*atom, BLACK);
     }
-    let mut parents = vec![None; graph.atom_degrees.len()];
-    let mut depths = vec![0usize; graph.atom_degrees.len()];
+    let mut parents = HashMap::<AtomId, AtomId>::new();
+    let mut depths = HashMap::<AtomId, usize>::new();
+    let color = |colors: &HashMap<AtomId, u8>, atom: AtomId| *colors.get(&atom).unwrap_or(&WHITE);
     let mut queue = VecDeque::from([root]);
     let mut rings = Vec::new();
     let mut current_size = usize::MAX;
     while let Some(current) = queue.pop_front() {
-        colors[current.index()] = BLACK;
-        let depth = depths[current.index()].saturating_add(1);
+        colors.insert(current, BLACK);
+        let depth = depths.get(&current).copied().unwrap_or(0).saturating_add(1);
         if depth > current_size {
             break;
         }
-        for (neighbor, _) in graph.active_neighbors(current) {
+        for (neighbor, _) in graph.active_ring_neighbors(current) {
             tracker.record_path_expansion()?;
-            if colors[neighbor.index()] == BLACK || parents[current.index()] == Some(neighbor) {
+            if color(&colors, neighbor) == BLACK || parents.get(&current) == Some(&neighbor) {
                 continue;
             }
-            if colors[neighbor.index()] == WHITE {
-                parents[neighbor.index()] = Some(current);
-                colors[neighbor.index()] = GRAY;
-                depths[neighbor.index()] = depth;
+            if color(&colors, neighbor) == WHITE {
+                tracker.add_work(1)?;
+                parents.insert(neighbor, current);
+                colors.insert(neighbor, GRAY);
+                depths.insert(neighbor, depth);
                 queue.push_back(neighbor);
                 continue;
             }
 
             let mut ring = vec![neighbor];
-            let mut parent = parents[neighbor.index()];
+            let mut parent = parents.get(&neighbor).copied();
             while let Some(atom) = parent {
                 if atom == root {
                     break;
                 }
                 ring.push(atom);
-                parent = parents[atom.index()];
+                parent = parents.get(&atom).copied();
             }
             ring.insert(0, current);
-            parent = parents[current.index()];
+            parent = parents.get(&current).copied();
             while let Some(atom) = parent {
                 if ring.contains(&atom) {
                     ring.clear();
                     break;
                 }
                 ring.insert(0, atom);
-                parent = parents[atom.index()];
+                parent = parents.get(&atom).copied();
             }
             if ring.len() > 1 {
                 if ring.len() <= current_size {

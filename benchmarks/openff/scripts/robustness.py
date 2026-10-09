@@ -143,7 +143,10 @@ def reference(args):
                 context = mm.Context(omm,integrator,mm.Platform.getPlatformByName('Reference'))
                 context.setPositions(frames[0]*ou.nanometer)
                 unsplit = float(context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(ou.kilojoule_per_mole))
-                assert math.isclose(unsplit,row['energies'][0]['Total'],rel_tol=1e-12,abs_tol=1e-8)
+                # OpenMM self-consistency of the split export. Its summation order
+                # differs from the unsplit system, so rounding grows with the number
+                # of pair terms; a check stricter than the comparison is meaningless.
+                assert math.isclose(unsplit,row['energies'][0]['Total'],rel_tol=ENERGY_RTOL,abs_tol=1e-8)
                 row['unsplit_energy'] = unsplit
                 row['openmm_system_xml'] = reference_system_xml
                 del context,integrator
@@ -346,7 +349,7 @@ def summarize(inputs,reference,native):
 
 
 
-if __name__=='__main__':
+def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mode',choices=['reference','compare','freeze'])
     parser.add_argument('--inputs',type=Path,default=HERE/'data/inputs.json.gz')
@@ -358,13 +361,24 @@ if __name__=='__main__':
     args=parser.parse_args()
     if args.mode=='reference':
         reference(args)
-    elif args.mode=='freeze':
-        if args.output.exists():
-            raise FileExistsError(args.output)
+        return 0
+    if args.output.exists():
+        raise FileExistsError(args.output)
+    if args.mode=='freeze':
         records=[json.loads(line) for line in args.reference.read_text().splitlines()]
         assert [r['id'] for r in records]==[r['id'] for r in read(args.inputs)['records']]
         args.output.write_bytes(gzip.compress((json.dumps(dict(schema=1,inputs_sha256=digest(args.inputs),records=records),allow_nan=False)+'\n').encode(),mtime=0))
-    else:
-        if args.output.exists():
-            raise FileExistsError(args.output)
-        raise SystemExit(compare(args))
+        return 0
+    return compare(args)
+
+
+if __name__=='__main__':
+    # Toolkit conversion of large protein chains exceeds the default Windows
+    # thread stack, so run on a thread with a larger one.
+    import sys
+    sys.setrecursionlimit(100_000)
+    threading.stack_size(256*1024*1024-4096)
+    status=[1]
+    worker=threading.Thread(target=lambda: status.__setitem__(0, main()))
+    worker.start();worker.join()
+    raise SystemExit(status[0])

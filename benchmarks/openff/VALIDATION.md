@@ -4,6 +4,8 @@ Experimental Rust implementation of the OpenFF parameterization engine.
 The Rosemary parameterization port reproduces parameter assignments and charges
 for **100 small molecules and 10 protein chains**, with energy agreement checked
 at three geometries per molecule and in two atom orders.
+A separate panel of [four larger protein chains](#large-protein-chains-2026-10-09),
+with 4,615–13,818 atoms, validates parameterization beyond the former size limit.
 
 **Revalidated 2026-09-27** after the configurable NAGL model changes. Fresh OpenFF
 and OpenMM observations reproduce the previous reference parameters, labels,
@@ -283,6 +285,49 @@ every repetition, input-panel hash, build information, executable fingerprint, a
 source hashes. The reusable probe lives in
 [`openff_timing.rs`](../src/bin/openff_timing.rs).
 
+## Large protein chains, 2026-10-09
+
+Removing the former 4,096-atom Ash limit was validated on four additional
+protein chains with **4,615–13,818 atoms** including hydrogens:
+`pdb-8D3R-C`, `pdb-7P9L-A`, `pdb-8ROT-B` and `pdb-3D6N-A`. They come from the
+same locked PDB corpus and preparation as the main panel, selected in the same
+ranked order with 300–1,000 residues and at least 4,097 atoms. The panel was
+frozen before any native observation. Fresh OpenFF/OpenMM references and native
+comparisons use the same script, tolerances and two atom orders as the main
+panel. [Inputs](data/large-inputs.json.gz) ·
+[reference](data/large-reference.json.gz) ·
+[native results](results/large-native.json.gz)
+
+| Validation measure | Result |
+| --- | ---: |
+| Parameterization cases passing all parameter, feature, charge and energy comparisons | **8 / 8** |
+| Geometry comparisons | **24 / 24** |
+| Paired atomic charges and vdW parameters | **63,010** |
+| Maximum partial-charge difference | **1.860 × 10⁻⁷ e** |
+| Maximum feature difference | **9.934 × 10⁻⁹** |
+| Maximum total-energy difference, identical charges | **2.058 × 10⁻⁷ kJ/mol** |
+| Maximum total-energy difference, independently assigned charges | **3.165 × 10⁻³ kJ/mol** |
+| Strict cases, including standalone InChI diagnostics | **0 / 8** |
+
+The identical-charge maximum is on `pdb-8ROT-B`, whose total energies are about
+−4.3 × 10⁴ kJ/mol; it passes the relative tolerance of `1e-10`. Every case
+passes the Coulomb error bound for independently assigned charges. Each
+chain's native charges sum to its formal charge within 4 × 10⁻¹³ e.
+
+All eight strict failures are the standalone fixed-H InChI diagnostic, which
+exceeds the InChI adapter's 1,023-atom limit, as for the three largest
+main-panel proteins. Charge assignment does not compute this identifier for
+molecules larger than Ash's 11-atom largest lookup entry.
+
+The OpenMM reference's split-versus-unsplit self-consistency check now uses
+the comparison tolerance `ENERGY_RTOL` (`1e-10`) rather than `1e-12`. On
+`pdb-8ROT-B` the two OpenMM evaluations differed by 7.05 × 10⁻⁸ kJ/mol, a
+relative 1.65 × 10⁻¹², which is OpenMM summation roundoff at that size.
+
+One single-run native observation took 2.9–10.2 s per chain for full
+parameterization, including JSON transfer, on the machine above. This is not a
+controlled timing measurement.
+
 ## Dataset, reference versions, and coverage
 
 Small molecules were selected deterministically from the Kekule `pubchem-100k`
@@ -321,11 +366,12 @@ switching, constraint enforcement, solvated complexes, and MD
 stability require separate validation. Protein graph compatibility does not
 establish Rosemary's empirical suitability for protein simulations. Scientific
 parity here was measured on Windows; Linux/macOS numerical parity remains to be
-established. Ash inference currently has a 4,096-atom resource limit.
+established. Ash inference has no molecule size limit; see the
+[large protein chains](#large-protein-chains-2026-10-09).
 
 The six strict diagnostic failures are the original and reversed forms of
 `pdb-3ABD-A`, `pdb-9B3P-B` and `pdb-8J90-E`: each exceeds the InChI adapter's
-1,024-atom limit. Ash's largest lookup entry has 11 atoms, so charge assignment
+1,023-atom limit. Ash's largest lookup entry has 11 atoms, so charge assignment
 bypasses lookup for these proteins and their parameterizations pass. The energy
 comparison command deliberately retains a nonzero exit status for these diagnostic
 failures; they are not removed from the report.
@@ -353,6 +399,11 @@ micromamba run -p target/openff-reference python benchmarks/openff/run.py export
 micromamba run -p target/openff-reference python benchmarks/openff/run.py energy reference --output target/openff-reference-new.jsonl
 micromamba run -p target/openff-reference python benchmarks/openff/run.py energy freeze --reference target/openff-reference-new.jsonl --output target/openff-reference-new.json.gz
 micromamba run -p target/openff-reference python benchmarks/openff/run.py energy compare --reference target/openff-reference-new.json.gz --output target/openff-native-new.json.gz
+
+# Large protein chains: the same comparison on the frozen large-protein panel.
+micromamba run -p target/openff-reference python benchmarks/openff/scripts/robustness.py reference --inputs benchmarks/openff/data/large-inputs.json.gz --output target/large-reference-new.jsonl
+micromamba run -p target/openff-reference python benchmarks/openff/scripts/robustness.py freeze --inputs benchmarks/openff/data/large-inputs.json.gz --reference target/large-reference-new.jsonl --output target/large-reference-new.json.gz
+micromamba run -p target/openff-reference python benchmarks/openff/scripts/robustness.py compare --inputs benchmarks/openff/data/large-inputs.json.gz --reference target/large-reference-new.json.gz --output target/large-native-new.json.gz
 
 # Full 110-input performance panel; supply the actual CPU description.
 python benchmarks/openff/run.py timings --cpu "Intel Core i5-11400F" --output target/openff-timings-new.json

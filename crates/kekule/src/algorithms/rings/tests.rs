@@ -618,18 +618,20 @@ fn search_and_recovery_charge_setup_before_visiting_paths() {
         .unwrap()
     };
 
-    let mut tracker = tracker_with_budget(8);
+    // A search charges each expansion and each newly reached atom.
+    let mut tracker = tracker_with_budget(1);
     assert_eq!(
         smallest_rings_bfs(AtomId::new(0), &active, &BTreeSet::new(), &mut tracker),
         Err(RingPerceptionError::ResourceLimit {
             resource: "total work",
-            observed: 9,
-            limit: 8,
+            observed: 2,
+            limit: 1,
         })
     );
-    assert_eq!(tracker.path_expansions, 0);
+    assert_eq!(tracker.path_expansions, 1);
 
-    let mut tracker = tracker_with_budget(14);
+    // Recovery charges a complete graph copy before searching.
+    let mut tracker = tracker_with_budget(17);
     let mut candidates = Vec::new();
     let mut invariants = BTreeSet::new();
     let duplicate_roots = BTreeMap::from([(
@@ -647,8 +649,8 @@ fn search_and_recovery_charge_setup_before_visiting_paths() {
         ),
         Err(RingPerceptionError::ResourceLimit {
             resource: "total work",
-            observed: 15,
-            limit: 14,
+            observed: 18,
+            limit: 17,
         })
     );
     assert_eq!(tracker.path_expansions, 0);
@@ -676,6 +678,29 @@ fn search_and_recovery_charge_setup_before_visiting_paths() {
         })
     );
     assert_eq!(tracker.path_expansions, 0);
+}
+
+// Regression: every smallest-ring search initialized molecule-sized
+// workspace and walked across non-ring bonds, so ring perception grew with
+// rings times molecule size.
+#[test]
+fn smallest_ring_search_cost_follows_visited_ring_atoms() {
+    // A triangle with a 1,000-atom chain attached at atom 2.
+    let mut edges = vec![(0, 1), (1, 2), (2, 0)];
+    edges.extend((2..1002).map(|atom| (atom, atom + 1)));
+    let molecule = graph(1003, &edges);
+    let active = ActiveRingGraph::new(&molecule);
+    let mut tracker = RingWorkTracker::new(RingPerceptionOptions::default(), 0, 0).unwrap();
+    let rings =
+        smallest_rings_bfs(AtomId::new(0), &active, &BTreeSet::new(), &mut tracker).unwrap();
+    assert_eq!(rings.len(), 1);
+    assert!(tracker.total_work < 32, "{}", tracker.total_work);
+    // A root on the chain reaches no ring bond and visits nothing.
+    let work = tracker.total_work;
+    let rings =
+        smallest_rings_bfs(AtomId::new(500), &active, &BTreeSet::new(), &mut tracker).unwrap();
+    assert!(rings.is_empty());
+    assert_eq!(tracker.total_work, work);
 }
 
 #[test]
@@ -726,4 +751,34 @@ fn degree_two_roots_preserve_fragment_order_without_revisiting_groups() {
         pick_degree_two_nodes(&fragment, &active),
         vec![AtomId::new(5), AtomId::new(3), AtomId::new(7)]
     );
+}
+
+// Regression: the default profile used fixed work bounds, so large molecules
+// could not be perceived at all.
+#[test]
+fn default_profile_bounds_grow_linearly_with_the_graph() {
+    let default = RingPerceptionOptions::default();
+    assert_eq!(RingPerceptionOptions::for_graph(10, 10), default);
+    let large = RingPerceptionOptions::for_graph(2_000_000, 2_100_000);
+    assert_eq!(large.max_atoms, 2_000_000);
+    assert_eq!(large.max_bonds, 2_100_000);
+    assert_eq!(large.max_total_work, 4_100_000_000);
+    assert_eq!(large.max_path_expansions, 4_100_000 * 64);
+    assert_eq!(large.max_cycle_size, default.max_cycle_size);
+    let aromaticity = crate::algorithms::AromaticityOptions::for_graph(2_000_000, 2_100_000);
+    assert_eq!(aromaticity.ring_options, large);
+    assert_eq!(aromaticity.max_total_work, 4_100_000_000);
+}
+
+#[test]
+fn ring_rich_polymers_perceive_with_default_bounds() {
+    // Polystyrene with 1,000 phenyl rings exceeded the fixed default bounds
+    // when every ring search scanned the molecule; searches now stay local.
+    let mut molecule = crate::smiles::to_molecules(&format!("C{}", "C(c1ccccc1)".repeat(1000)))
+        .unwrap()
+        .remove(0);
+    let rings =
+        perceive_ring_set_with_options(&mut molecule, RingPerceptionOptions::default()).unwrap();
+    assert_eq!(rings.rings().len(), 1000);
+    molecule.perceive().unwrap();
 }

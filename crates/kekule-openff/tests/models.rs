@@ -218,7 +218,7 @@ fn both_models_reproduce_complete_openff_parameterization() {
         let ff = ForceField::from_file(directory.join("force-field.offxml")).unwrap();
         assert_eq!(ff.charge_model(), Some(model.identity()));
         assert_eq!(
-            model.lookup_entry_count(),
+            kekule_openff::diagnostics::lookup_entry_count(&model),
             reference["lookup_entries"].as_u64().unwrap() as usize
         );
         for r in reference["records"].as_array().unwrap() {
@@ -227,7 +227,7 @@ fn both_models_reproduce_complete_openff_parameterization() {
                 .remove(0);
             let before = molecule.clone();
             let p = ff
-                .parameterize_molecule(&molecule, &model)
+                .parameterize_molecule(molecule.clone(), &model)
                 .unwrap_or_else(|e| panic!("{name} {}: {e}", r["id"]));
             charges(
                 p.charges().value(),
@@ -251,12 +251,15 @@ fn both_models_reproduce_complete_openff_parameterization() {
             }
             if r["inference"]["status"] == "ok" {
                 charges(
-                    model.infer_charges(&molecule).unwrap().charges.value(),
+                    kekule_openff::diagnostics::infer_charges(&model, &molecule)
+                        .unwrap()
+                        .charges
+                        .value(),
                     &r["inference"]["charges"],
                     &molecule,
                     1e-6,
                 );
-                let f = model.atom_features(&molecule).unwrap();
+                let f = kekule_openff::diagnostics::atom_features(&model, &molecule).unwrap();
                 for (i, (_, atom)) in molecule.atoms().enumerate() {
                     let expected = r["inference"]["features"][atom.atom_map.unwrap() as usize - 1]
                         .as_array()
@@ -267,8 +270,8 @@ fn both_models_reproduce_complete_openff_parameterization() {
                     }
                 }
             } else {
-                assert!(model.infer_charges(&molecule).is_err());
-                assert!(model.atom_features(&molecule).is_err());
+                assert!(kekule_openff::diagnostics::infer_charges(&model, &molecule).is_err());
+                assert!(kekule_openff::diagnostics::atom_features(&model, &molecule).is_err());
             }
             if r["assignment"]["status"] == "ok" {
                 charges(
@@ -288,12 +291,14 @@ fn both_models_reproduce_complete_openff_parameterization() {
                 smiles::to_molecules(reference["records"][0]["smiles"].as_str().unwrap())
                     .unwrap()
                     .remove(0);
-            assert!(ForceField::rosemary()
-                .unwrap()
-                .parameterize_molecule(&molecule, &model)
-                .unwrap_err()
-                .to_string()
-                .contains("identity mismatch"));
+            assert!(
+                ForceField::rosemary()
+                    .unwrap()
+                    .parameterize_molecule(molecule.clone(), &model)
+                    .unwrap_err()
+                    .kind()
+                    == kekule_openff::ErrorKind::ModelMismatch
+            );
         }
     }
     assert!(
@@ -379,21 +384,23 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
     )
     .unwrap()
     .remove(0);
-    let expected = ff.parameterize_molecule(&molecule, &model).unwrap();
+    let expected = ff.parameterize_molecule(molecule.clone(), &model).unwrap();
     for changed in [
         xml(&reference()["models"][1]).replace(model.identity().model_file(), "different.pt"),
         xml(&reference()["models"][1])
             .replace(model.identity().checkpoint_sha256(), &"0".repeat(64)),
     ] {
-        assert!(ForceField::from_offxml(&changed)
-            .unwrap()
-            .parameterize_molecule(&molecule, &model)
-            .unwrap_err()
-            .to_string()
-            .contains("identity mismatch"));
+        assert!(
+            ForceField::from_offxml(&changed)
+                .unwrap()
+                .parameterize_molecule(molecule.clone(), &model)
+                .unwrap_err()
+                .kind()
+                == kekule_openff::ErrorKind::ModelMismatch
+        );
     }
     assert_eq!(
-        ff.parameterize_molecule(&molecule, &model)
+        ff.parameterize_molecule(molecule.clone(), &model)
             .unwrap()
             .charges(),
         expected.charges()
@@ -428,7 +435,9 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
     )
     .unwrap();
     let permuted = NaglModel::load(&scratch.0).unwrap();
-    let p = ff.parameterize_molecule(&molecule, &permuted).unwrap();
+    let p = ff
+        .parameterize_molecule(molecule.clone(), &permuted)
+        .unwrap();
     for (&a, &b) in p.charges().value().iter().zip(expected.charges().value()) {
         close(a, b, 1e-6);
     }
@@ -448,7 +457,7 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
     let methane = smiles::to_molecules(case["smiles"].as_str().unwrap())
         .unwrap()
         .remove(0);
-    let key = model.lookup_identifier(&methane).unwrap();
+    let key = kekule_openff::diagnostics::lookup_identifier(&methane).unwrap();
     let mut entry = ash["lookup_tables"]["am1bcc_charges"]
         .as_array()
         .unwrap()
@@ -465,11 +474,12 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
     )
     .unwrap();
     let broken_lookup = NaglModel::load(&scratch.0).unwrap();
-    assert!(ff
-        .parameterize_molecule(&methane, &broken_lookup)
-        .unwrap_err()
-        .to_string()
-        .contains("lookup charge array"));
+    assert!(
+        ff.parameterize_molecule(methane.clone(), &broken_lookup)
+            .unwrap_err()
+            .kind()
+            == kekule_openff::ErrorKind::Model
+    );
     // Match the checksum so truncated float32 storage reaches the decoder.
     let truncated = [0u8; 3];
     changed["weights_sha256"] = json!(format!("{:x}", Sha256::digest(truncated)));
@@ -479,18 +489,30 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
     )
     .unwrap();
     std::fs::write(scratch.0.join("weights.bin"), truncated).unwrap();
-    assert!(NaglModel::load(&scratch.0)
-        .unwrap_err()
+    let error = NaglModel::load(&scratch.0).unwrap_err();
+    assert_eq!(error.kind(), kekule_openff::ErrorKind::Model);
+    assert!(error
         .to_string()
         .contains("weights must be little-endian float32"));
+    assert_eq!(error.path(), Some(scratch.0.as_path()));
     std::fs::remove_file(scratch.0.join("weights.bin")).unwrap();
-    assert!(NaglModel::load(&scratch.0).is_err());
+    let missing = NaglModel::load(&scratch.0).unwrap_err();
+    assert_eq!(missing.kind(), kekule_openff::ErrorKind::Io);
+    assert_eq!(
+        missing.path(),
+        Some(scratch.0.join("weights.bin").as_path())
+    );
+    assert!(std::error::Error::source(&missing).is_none() || missing.get_ref().is_some());
+    assert!(missing
+        .get_ref()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .is_some());
     std::fs::File::create(scratch.0.join("model.json"))
         .unwrap()
         .set_len(64 * 1024 * 1024 + 1)
         .unwrap();
-    assert!(NaglModel::load(&scratch.0)
-        .unwrap_err()
-        .to_string()
-        .contains("file size"));
+    let error = NaglModel::load(&scratch.0).unwrap_err();
+    assert_eq!(error.kind(), kekule_openff::ErrorKind::Model);
+    assert!(error.to_string().contains("size limit"));
 }

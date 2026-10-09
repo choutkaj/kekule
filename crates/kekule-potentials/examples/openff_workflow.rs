@@ -1,11 +1,12 @@
 //! Single-point OpenFF energy and minimization of a 3D SDF ligand.
 //!
 //! ```text
-//! cargo run -p kekule-potentials --example openff_workflow -- ligand.sdf path/to/nagl-model
+//! cargo run -p kekule-potentials --features openff --example openff_workflow -- ligand.sdf
 //! ```
 //!
-//! The first record must contain explicit hydrogens with 3D coordinates. The
-//! model directory is an exported NAGL bundle compatible with OpenFF Rosemary.
+//! The first record must contain explicit hydrogens with 3D coordinates. Charges
+//! use the bundled Ash model; an optional second argument names an exported NAGL
+//! bundle compatible with OpenFF Rosemary instead.
 
 use std::{env, error::Error, fs};
 
@@ -15,8 +16,12 @@ use kekule_potentials::{minimize, openff::OpenFfPotential, MinimizeOptions, Pote
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
-    let (Some(path), Some(nagl)) = (args.next(), args.next()) else {
-        return Err("usage: openff_workflow <ligand.sdf> <nagl-model-directory>".into());
+    let Some(path) = args.next() else {
+        return Err("usage: openff_workflow <ligand.sdf> [nagl-model-directory]".into());
+    };
+    let nagl = match args.next() {
+        Some(directory) => NaglModel::load(directory)?,
+        None => NaglModel::ash()?,
     };
 
     let document = sdf::parse_str(&fs::read_to_string(path)?)?;
@@ -27,7 +32,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let model = record.to_model()?;
 
     // Parameterization binds the model's exact topology snapshot.
-    let nagl = NaglModel::load(nagl)?;
     let parameters = ForceField::rosemary()?.parameterize(model.shared_topology(), &nagl)?;
     let potential = OpenFfPotential::new(&parameters)?;
 

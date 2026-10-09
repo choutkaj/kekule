@@ -41,6 +41,18 @@
     {
       "path": "archive/gradient-before-fix.json.gz",
       "sha256": "212c3938014d32b987824f3f510de130792051f5ca9b3058e23d6afbcd0a9895"
+    },
+    {
+      "path": "data/large-inputs.json.gz",
+      "sha256": "11e665c40eeb2007e7e10297e676e08bc0ca944b059e02bec92d64379590da7c"
+    },
+    {
+      "path": "data/large-reference.json.gz",
+      "sha256": "48fe53182983340166a02d28d9349a0bbb1b296502145217d0d33f5c5e61f4af"
+    },
+    {
+      "path": "results/large-native.json.gz",
+      "sha256": "ef45d7ae18d093c41a6c74429b58c6efa895626f3387fe5ab22797670ef66214"
     }
   ],
   "reference_drift": {
@@ -236,5 +248,23 @@
       "benchmarks/openff/scripts/robustness.py": "ed0f15983b31ef17cba8a8e28ea6c3394947318cd0d5843ae7fc390029c201dc",
       "Cargo.lock": "0ac3b56b8fa171a01e939e4e2bd6dc9904351c91c9b64cbc9fe6ebd0a3634662"
     }
+  },
+  "large_protein_validation": {
+    "recorded": "2026-10-09",
+    "chains": 4,
+    "cases": 8,
+    "geometry_comparisons": 24,
+    "atoms_range": [
+      4615,
+      13818
+    ],
+    "parameterization_passed": 8,
+    "strict_passed": 0,
+    "strict_failure": "standalone fixed-H InChI diagnostic exceeds the InChI adapter's 1,024-atom limit",
+    "max_charge_error_e": 1.8597331419289986e-07,
+    "max_feature_error": 9.934107481068821e-09,
+    "max_energy_error_identical_charges_kj_mol": 2.0576408132910728e-07,
+    "max_energy_error_assigned_charges_kj_mol": 0.0031647280557081103,
+    "binary_sha256": "60dd30422d9567f73bcec8587d2375339f11e142124b3e2b8f5102429591abb2"
   }
 }
