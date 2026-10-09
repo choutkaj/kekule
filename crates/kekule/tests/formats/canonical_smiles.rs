@@ -7,6 +7,12 @@ use crate::support::renumbered;
 fn canonical_smiles_matches_rdkit_charge_closures_stereo_and_cx_radicals() {
     for (source, expected) in [
         ("CC([O-])=O", "CC(=O)[O-]"),
+        // RDKit 2026.03.3 writes these graph-hydrogen forms like their
+        // implicit-hydrogen equivalents.
+        ("[H]OC(=O)C", "CC(=O)O"),
+        ("OC(=O)C[H]", "CC(=O)O"),
+        ("[H]OC(=O)c1ccccc1", "O=C(O)c1ccccc1"),
+        ("[H]n1cccc1", "c1cc[nH]c1"),
         ("[O-][N+](=O)c1ccccc1", "O=[N+]([O-])c1ccccc1"),
         (
             "CC12CCC3C(CCC4CC(O)CCC43C)C2CCC1=O",
