@@ -269,8 +269,8 @@ fn reperception_replaces_even_a_uniquely_owned_snapshot_and_clears_cip() {
 #[test]
 fn ensemble_perception_preserves_members_weights_and_collection_properties() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
-    let mut member = EnsembleMember::new(Positions::zeros(6));
-    member.set_weight(Some(0.25)).unwrap();
+    let mut member = EnsembleMember::new(Positions::zeros(6), 1.0).unwrap();
+    member.set_weight(0.25).unwrap();
     let mut conformation = member.conformation_mut();
     conformation.set_cell(Some(
         PeriodicCell::orthorhombic(
@@ -292,8 +292,8 @@ fn ensemble_perception_preserves_members_weights_and_collection_properties() {
             Some(PropertyValue::Int(11)),
         )
         .unwrap();
-    let mut second = EnsembleMember::new(Positions::zeros(6));
-    second.set_weight(Some(0.75)).unwrap();
+    let mut second = EnsembleMember::new(Positions::zeros(6), 1.0).unwrap();
+    second.set_weight(0.75).unwrap();
     let mut ensemble = Ensemble::from_items(Arc::clone(&topology), [member, second]).unwrap();
     // Bond rows exist once the member is bound to the ensemble topology.
     ensemble
@@ -369,7 +369,7 @@ fn topology_model_and_ensemble_failure_preserve_complete_previous_state() {
 
     let mut ensemble = Ensemble::from_items(
         Arc::clone(&topology),
-        [EnsembleMember::new(Positions::zeros(topology.atom_count()))],
+        [EnsembleMember::new(Positions::zeros(topology.atom_count()), 1.0).unwrap()],
     )
     .unwrap();
     ensemble

@@ -8,7 +8,7 @@ use kekule::topology::{
 };
 use kekule::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 
-use kekule::structure::{AsModelView, Realization, Realizations};
+use kekule::structure::{AsModelView, Trajectory};
 
 /// Invalid reduction inputs or a failed frame observation.
 #[derive(Debug, Clone, PartialEq)]
@@ -389,33 +389,44 @@ impl ContactOccupancyResult {
     }
 }
 
-/// Per-atom population RMSF about mean stored positions over every item of
-/// a trajectory or ensemble. Align and perform periodic preprocessing
-/// beforehand. Uses [`RmsfAccumulator`].
-pub fn rmsf<P: Realization>(
-    realizations: &Realizations<P>,
+/// Per-atom population RMSF about mean stored positions over every frame of
+/// a trajectory, each frame counting once. Align and perform periodic
+/// preprocessing beforehand. Uses [`RmsfAccumulator`].
+///
+/// Ensemble statistics must use member weights, so this does not accept an
+/// [`kekule::structure::Ensemble`]:
+///
+/// ```compile_fail,E0308
+/// # use kekule::{structure::Ensemble, topology::AtomSelection};
+/// fn unweighted(ensemble: &Ensemble, atoms: &AtomSelection) {
+///     let _ = kekule_traj::analysis::rmsf(ensemble, atoms);
+/// }
+/// ```
+pub fn rmsf(
+    trajectory: &Trajectory,
     selection: &AtomSelection,
 ) -> Result<RmsfResult, ReductionError> {
     selection
-        .ensure_compatible(&realizations.shared_topology())
+        .ensure_compatible(&trajectory.shared_topology())
         .map_err(ReductionError::Selection)?;
     let mut accumulator = RmsfAccumulator::new(selection)?;
-    for (index, item) in realizations.iter().enumerate() {
+    for (index, item) in trajectory.iter().enumerate() {
         accumulator.observe(index, &item)?;
     }
     accumulator.finish()
 }
 
-/// Cartesian contact occupancies over every item, using the same
-/// implementation as streaming [`ContactOccupancyAccumulator`].
-pub fn contact_occupancy<P: Realization>(
-    realizations: &Realizations<P>,
+/// Cartesian contact occupancies over every frame of a trajectory, each frame
+/// counting once, using the same implementation as streaming
+/// [`ContactOccupancyAccumulator`].
+pub fn contact_occupancy(
+    trajectory: &Trajectory,
     pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
     cutoff: Quantity<f64>,
 ) -> Result<ContactOccupancyResult, ReductionError> {
     let mut accumulator =
-        ContactOccupancyAccumulator::new(&realizations.shared_topology(), pairs, cutoff)?;
-    for (index, item) in realizations.iter().enumerate() {
+        ContactOccupancyAccumulator::new(&trajectory.shared_topology(), pairs, cutoff)?;
+    for (index, item) in trajectory.iter().enumerate() {
         accumulator.observe(index, &item)?;
     }
     accumulator.finish()

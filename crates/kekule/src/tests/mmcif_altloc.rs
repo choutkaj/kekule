@@ -452,7 +452,7 @@ fn mmcif_altloc_explicit_conformer_ensemble_is_unweighted_and_preserves_order() 
     assert!(result
         .ensemble()
         .iter()
-        .all(|member| member.weight().is_none()));
+        .all(|member| member.weight() == 1.0));
     assert_eq!(
         result
             .reports()

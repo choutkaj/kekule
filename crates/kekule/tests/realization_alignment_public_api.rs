@@ -1,5 +1,5 @@
-//! Superposition and RMSD over realization collections (ensembles and
-//! trajectories), against collection items or independent references.
+//! Superposition and RMSD over ensembles and trajectories, against collection
+//! items or independent references.
 
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::geometry::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    Ensemble, EnsembleMember, Forces, Model, Positions, Realization, Realizations, Trajectory,
+    Ensemble, EnsembleMember, Forces, Model, Positions, Realization, RealizationView, Trajectory,
     TrajectoryFrame, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex};
@@ -85,9 +85,11 @@ fn collinear() -> [Point3; 4] {
     ]
 }
 
-fn payloads<P: Realization + Clone>(collection: &Realizations<P>) -> Vec<P> {
+fn payloads<'a, P: Realization + 'a>(
+    collection: impl IntoIterator<Item = RealizationView<'a, P>>,
+) -> Vec<P> {
     collection
-        .iter()
+        .into_iter()
         .map(|item| item.payload().clone())
         .collect()
 }
@@ -556,14 +558,15 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
 fn ensembles_share_the_collection_contract_and_keep_weights() {
     let topology = chain(4);
     let reference = spread();
-    let mut member = EnsembleMember::new(
+    let member = EnsembleMember::new(
         Positions::new(Quantity::new(
             transformed(&reference, quarter_turn()),
             NANOMETER,
         ))
         .unwrap(),
-    );
-    member.set_weight(Some(0.25)).unwrap();
+        0.25,
+    )
+    .unwrap();
     let mut ensemble = Ensemble::from_items(Arc::clone(&topology), [member]).unwrap();
     let model = Model::new(
         Arc::clone(&topology),
@@ -575,7 +578,7 @@ fn ensembles_share_the_collection_contract_and_keep_weights() {
     let report = ensemble.superpose(&model, &all).unwrap();
     assert_eq!(report.reference_index(), None);
     assert!(ensemble.rmsd(&model, &all).unwrap().value()[0] < 1.0e-12);
-    assert_eq!(ensemble.get(0).unwrap().weight(), Some(0.25));
+    assert_eq!(ensemble.get(0).unwrap().weight(), 0.25);
 
     // The free kernel and collection items share one view contract.
     let item = ensemble.get(0).unwrap();

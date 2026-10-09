@@ -2,17 +2,38 @@ use crate::geometry::RigidTransform;
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
 
 use super::realizations::sealed::Payload;
+use super::realizations::{realization_collection, RealizationStore};
 use super::{
     Conformation, ConformationError, ConformationMut, Ensemble, EnsembleMember, Forces,
-    Realization, RealizationError, RealizationMut, RealizationView, Realizations, Velocities,
+    Realization, RealizationError, RealizationMut, RealizationView, Velocities,
 };
 
-/// An ordered temporal sequence of realizations of one shared topology.
+/// A time-ordered sequence of frames of one shared topology, as produced by
+/// dynamics.
 ///
-/// In-memory storage and transforms live here; streaming readers, writers,
-/// codecs, and periodic preprocessing live in the `kekule-traj` companion
-/// crate.
-pub type Trajectory = Realizations<TrajectoryFrame>;
+/// Frame order is temporal: frame `i + 1` follows frame `i`. Frames may carry
+/// time, step, velocities, and forces, and selection keeps each frame's stored
+/// time and step. Use [`super::Ensemble`] for a weighted, unordered sample;
+/// [`Self::into_ensemble`] is the explicit, lossy projection from one to the
+/// other.
+///
+/// Frames are validated against the shared topology on insertion.
+/// Superposition and RMSD are inherent methods; see [`crate::alignment`].
+/// In-memory storage lives here; file codecs, streaming readers and writers,
+/// periodic preprocessing, and trajectory reductions live in the
+/// `kekule-traj` companion crate.
+#[derive(Debug, Clone)]
+pub struct Trajectory {
+    store: RealizationStore<TrajectoryFrame>,
+}
+
+realization_collection!(
+    Trajectory,
+    TrajectoryFrame,
+    TrajectoryFrameView<'_>,
+    TrajectoryFrameMut<'_>,
+    "frame"
+);
 
 /// One topology-bound [`TrajectoryFrame`] borrowed from a [`Trajectory`].
 pub type TrajectoryFrameView<'a> = RealizationView<'a, TrajectoryFrame>;
@@ -251,9 +272,24 @@ impl Trajectory {
         Ok(())
     }
 
-    /// Reinterprets the frames as an unweighted ensemble, dropping velocities,
-    /// forces, time, and step. Conformations move without copying.
+    /// Reinterprets the frames as an equally weighted ensemble (every member
+    /// has weight `1.0`), dropping temporal order, velocities, forces, time,
+    /// and step. Conformations move without copying.
+    ///
+    /// Equal weights are right for frames sampled from equilibrium at a
+    /// constant interval; reweight explicitly otherwise.
     pub fn into_ensemble(self) -> Ensemble {
-        self.map_items(|frame| EnsembleMember::from(frame.into_conformation()))
+        Ensemble::from_store(
+            self.store
+                .map_items(|frame| EnsembleMember::unit(frame.into_conformation())),
+        )
+    }
+
+    pub(crate) fn store(&self) -> &RealizationStore<TrajectoryFrame> {
+        &self.store
+    }
+
+    pub(crate) fn store_mut(&mut self) -> &mut RealizationStore<TrajectoryFrame> {
+        &mut self.store
     }
 }

@@ -76,8 +76,9 @@ pub use geometry_edit::*;
 pub use model::*;
 pub use model_editor::*;
 pub use positions::*;
+pub(crate) use realizations::RealizationStore;
 pub use realizations::{
-    Realization, RealizationError, RealizationIter, RealizationMut, RealizationView, Realizations,
+    Realization, RealizationError, RealizationIter, RealizationMut, RealizationView,
 };
 pub use trajectory::*;
 

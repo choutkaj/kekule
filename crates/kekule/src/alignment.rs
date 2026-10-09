@@ -8,11 +8,11 @@
 //! - [`kabsch`] fits one view onto another and returns the moving-to-reference
 //!   transform and post-fit RMSD.
 //! - [`rmsd`] measures coordinates exactly as stored, without fitting.
-//! - [`Realizations::superpose`](crate::structure::Realizations::superpose),
-//!   [`Realizations::rmsd`](crate::structure::Realizations::rmsd), and
-//!   [`Realizations::aligned_rmsd`](crate::structure::Realizations::aligned_rmsd)
-//!   apply the same kernels to every ensemble member or trajectory frame
-//!   against a [`Reference`]: an item of the collection or any external view.
+//! - `superpose`, `rmsd`, and `aligned_rmsd` on
+//!   [`Ensemble`](crate::structure::Ensemble::superpose) and
+//!   [`Trajectory`](crate::structure::Trajectory::superpose) apply the same
+//!   kernels to every member or frame against a [`Reference`]: an item of the
+//!   collection or any external view.
 //!
 //! Each has an `_with_options` variant taking [`AlignmentOptions`]. The
 //! returned transform maps moving coordinates into reference coordinates:

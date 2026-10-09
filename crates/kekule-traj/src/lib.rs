@@ -8,8 +8,8 @@
 //! [`kekule::structure::TrajectoryFrame`] payloads sharing one immutable
 //! topology. A frame is a [`kekule::structure::Conformation`] plus optional
 //! velocities, forces, time, and step; it carries no topology of its own.
-//! Trajectories share their collection API, including superposition and RMSD,
-//! with [`kekule::structure::Ensemble`].
+//! Frame order is temporal. [`kekule::structure::Ensemble`] is the distinct
+//! type for weighted, unordered samples; both offer superposition and RMSD.
 //!
 //! This crate adds what needs files or bounded memory: format codecs, the
 //! [`TrajectoryReader`] and [`TrajectoryWriter`] contracts, and the reusable,
@@ -69,7 +69,7 @@
 //! written in a structure file's atom order lines up with that file's topology.
 //!
 //! In-memory superposition, direct RMSD, and fit-then-measure RMSD are methods
-//! of every realization collection (see [`kekule::alignment`]). They mutate in
+//! of trajectories and ensembles (see [`kekule::alignment`]). They mutate in
 //! place and transactionally; clone first to keep the original. Direct RMSD
 //! never performs an implicit fit. An independently loaded reference pairs its
 //! atoms with a [`kekule::alignment::AtomCorrespondence`]; correspondence does

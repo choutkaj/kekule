@@ -582,8 +582,10 @@ pub mod mmcif {
 
     /// Interprets the exactly one atom-site block in a document as an ensemble.
     ///
-    /// Documents with multiple atom-site blocks require explicit selection via
-    /// [`interpret_ensemble_block`].
+    /// mmCIF carries no statistical model weights, so every coordinate model
+    /// becomes an equally weighted member (weight `1.0`); occupancy is not
+    /// converted into a weight. Documents with multiple atom-site blocks
+    /// require explicit selection via [`interpret_ensemble_block`].
     pub fn interpret_ensemble(
         document: &MmcifDocument,
         options: MmcifEnsembleInterpretOptions,
@@ -591,7 +593,8 @@ pub mod mmcif {
         document.interpret_ensemble_with_options(options)
     }
 
-    /// Interprets coordinate models in one block as a shared-topology ensemble.
+    /// Interprets coordinate models in one block as a shared-topology ensemble
+    /// of equally weighted members.
     pub fn interpret_ensemble_block(
         block: &MmcifBlock,
         options: MmcifEnsembleInterpretOptions,

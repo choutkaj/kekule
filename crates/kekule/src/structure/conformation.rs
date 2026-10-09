@@ -569,7 +569,7 @@ pub enum ConformationError {
     },
     /// A frame time is not finite.
     NonFiniteTime,
-    /// An ensemble weight is not finite and non-negative.
+    /// An ensemble weight is not finite and positive.
     InvalidWeight,
     /// The payload exceeds addressable capacity.
     CapacityOverflow,
@@ -602,7 +602,7 @@ impl fmt::Display for ConformationError {
             }
             Self::NonFiniteTime => formatter.write_str("frame time must be finite"),
             Self::InvalidWeight => {
-                formatter.write_str("ensemble weight must be finite and non-negative")
+                formatter.write_str("ensemble weight must be finite and positive")
             }
             Self::CapacityOverflow => {
                 formatter.write_str("realization exceeds addressable capacity")

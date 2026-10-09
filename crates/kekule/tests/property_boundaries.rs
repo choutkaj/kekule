@@ -165,7 +165,7 @@ fn realizations_reject_mismatched_property_rows_transactionally() {
     assert_eq!(model.properties(), &original);
 
     // A detached member has no bond rows yet.
-    let mut member = EnsembleMember::new(Positions::zeros(2));
+    let mut member = EnsembleMember::new(Positions::zeros(2), 1.0).unwrap();
     let detached = member.properties().clone();
     assert_eq!(
         member.conformation_mut().set_properties(bound.clone()),

@@ -15,15 +15,25 @@ Rustdoc beside their implementations. The links below point to those sources;
 | `Topology` | Complete molecule instances, reusable definitions, qualified identities, dense layout, one `Hierarchy`, classification, `TopologyProperties` | Geometry or bonds between separate instances |
 | `Conformation` | One realization's dense positions, optional cell, occupancies, B factors, and `RealizationProperties`, addressed by dense topology index | Topology, semantic IDs, or temporal state |
 | `Model` | One shared `Topology` and one bound `Conformation` | A second chemical or hierarchy model |
-| `Ensemble` | One shared topology, collection owner properties, and non-temporal `EnsembleMember` payloads (conformation and optional weight) | An owned `Model` or topology in each member |
-| `Trajectory` | One shared topology, collection owner properties, and ordered `TrajectoryFrame` payloads (conformation plus optional velocities, forces, time, and step) | Implicit topology changes between frames |
+| `Ensemble` | One shared topology, collection owner properties, and a weighted, unordered sample of `EnsembleMember` payloads (conformation and a finite positive relative weight) | An owned `Model` or topology in each member; temporal meaning |
+| `Trajectory` | One shared topology, collection owner properties, and time-ordered `TrajectoryFrame` payloads (conformation plus optional velocities, forces, time, and step) | Implicit topology changes between frames; statistical weights |
 
-`Ensemble` and `Trajectory` are the two aliases of one generic collection,
-`Realizations<P>`, in `kekule::structure`; they share construction, item access,
-selection, subsetting, perception, superposition, and RMSD, and differ only in
-their payload. `kekule-traj` owns file codecs, streaming reader and writer
-contracts, the reusable `FrameBuffer`, periodic preprocessing, and streaming
-reductions; it owns no second in-memory trajectory type.
+`Ensemble` and `Trajectory` are distinct scientific concepts and distinct
+types. An ensemble is a weighted sample of a distribution: member order carries
+no meaning, every member has a weight, and its statistics must be weighted. A
+trajectory is a path produced by dynamics: frame order and spacing are
+physical. A trajectory samples an ensemble only under ergodicity, so
+`Trajectory::into_ensemble` is an explicit, lossy projection with equal
+weights, and nothing converts the other way. Operations whose meaning is the
+same for both, such as item access, selection, subsetting, perception,
+superposition, and RMSD, are inherent methods of each type over one
+crate-private store. Weight- or time-dependent behavior belongs to one type
+only; do not add a public abstraction that erases the difference.
+
+Both live in `kekule::structure`. `kekule-traj` owns file codecs, streaming
+reader and writer contracts, the reusable `FrameBuffer`, periodic
+preprocessing, and trajectory reductions; it owns no second in-memory
+trajectory type.
 
 A salt, solvent box, or protein-ligand complex is a topology containing connected
 molecules. Covalent connectedness determines molecule boundaries; hierarchy and
@@ -38,7 +48,8 @@ See the [crate overview](crates/kekule/src/lib.rs),
 [molecular owner](crates/kekule/src/core/molecule.rs),
 [topology types](crates/kekule/src/topology/mod.rs),
 [structure types](crates/kekule/src/structure/mod.rs),
-[realization collections](crates/kekule/src/structure/realizations.rs), and
+[ensembles](crates/kekule/src/structure/ensemble.rs),
+[trajectories](crates/kekule/src/structure/trajectory.rs), and
 [streaming contracts](crates/kekule-traj/src/trajectory/mod.rs).
 
 ## Represented and derived chemistry
@@ -319,7 +330,7 @@ unsupported fields and collection properties are rejected rather than discarded.
 Loaded and streaming transformations share kernels. Collection operations,
 including superposition and periodic preprocessing, change the collection in
 place and stage all affected state before publication; clone first to keep the
-source. Superposition and RMSD belong to every realization collection, against
+source. Superposition and RMSD are methods of both trajectories and ensembles, against
 one of its items or an independent view; streaming superposition applies the
 same kernel to a buffer. Streaming tools take the caller's frame index for
 diagnostics. Superposition rotates cells, velocities, and forces consistently.
@@ -328,7 +339,9 @@ acts on whole molecules. Unwrapping retains temporal state and requires ordered,
 sufficiently close samples; it precedes downsampling. Failed streaming operations
 change neither the frame buffer nor temporal state. Diagnostics are opt-in.
 
-RMSF and contact-occupancy reductions consume borrowed frames sharing the source
+RMSF and contact-occupancy reductions are trajectory statistics in which every
+frame counts once; they do not accept ensembles, whose statistics must be
+weighted. They consume borrowed frames sharing the source
 topology's layout with memory bounded by selected atoms or pairs, not frame count. Failed
 observations leave accumulators unchanged. Results retain atom/pair associations;
 frame indices are diagnostic labels, not statistical weights. Preprocessing,
@@ -381,7 +394,8 @@ residue alternatives or explicitly constrained groups and records its choices in
 the format report. Occupancy ranks representatives, not whole-structure
 probabilities. Coordinate-model ensemble conversion never expands alternate
 labels; caller-supplied conformation selections must pass the same identity and
-topology checks and do not acquire inferred statistical weights.
+topology checks. mmCIF carries no model weights, so every coordinate model
+becomes an equally weighted member; occupancy is never converted into a weight.
 
 Interpretations own format reports, metadata, and source correspondence. Borrowed
 projections reuse canonical owners; consuming projections explicitly discard richer

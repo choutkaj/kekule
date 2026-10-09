@@ -61,9 +61,7 @@ use std::collections::VecDeque;
 use std::fmt;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::structure::{
-    PositionError, Positions, Realization, RealizationError, Realizations, Trajectory,
-};
+use kekule::structure::{PositionError, Positions, RealizationError, Trajectory};
 use kekule::topology::{AtomSelection, InstanceBondId, Topology, TopologyAtomIndex};
 use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
@@ -150,20 +148,18 @@ impl std::error::Error for PeriodicError {
     }
 }
 
-/// Makes each bonded molecule whole independently in every item.
+/// Makes each bonded molecule whole independently in every frame.
 ///
 /// The first atom of each molecule stays at its original position; other atoms
 /// are placed using shortest Cartesian bond images. All bonds, including ring
 /// closures, must agree with the reconstruction. Molecules are neither centered
 /// nor joined to other molecules. This does not establish continuity across time.
-pub fn make_molecules_whole<P: Realization>(
-    realizations: &mut Realizations<P>,
-) -> Result<(), PeriodicError> {
-    let positions = whole_positions(realizations, None)?;
-    publish(realizations, positions)
+pub fn make_molecules_whole(trajectory: &mut Trajectory) -> Result<(), PeriodicError> {
+    let positions = whole_positions(trajectory, None)?;
+    publish(trajectory, positions)
 }
 
-/// Images whole molecules around explicitly selected anchors in every item.
+/// Images whole molecules around explicitly selected anchors in every frame.
 ///
 /// Every molecule containing a selected atom becomes an anchor. Other anchors
 /// are placed at their nearest centroid image to the first anchor in topology
@@ -175,12 +171,12 @@ pub fn make_molecules_whole<P: Realization>(
 /// This includes making molecules whole. It is a per-frame centering operation,
 /// not temporal unwrapping. Coordinates along nonperiodic fractional axes remain
 /// unchanged; a molecule may extend outside the primary cell.
-pub fn image_molecules<P: Realization>(
-    realizations: &mut Realizations<P>,
+pub fn image_molecules(
+    trajectory: &mut Trajectory,
     anchors: &AtomSelection,
 ) -> Result<(), PeriodicError> {
-    let positions = whole_positions(realizations, Some(anchors))?;
-    publish(realizations, positions)
+    let positions = whole_positions(trajectory, Some(anchors))?;
+    publish(trajectory, positions)
 }
 
 /// Unwraps a trajectory through time using fractional-coordinate continuity.
@@ -209,15 +205,15 @@ pub fn unwrap(trajectory: &mut Trajectory) -> Result<(), PeriodicError> {
     publish(trajectory, positions)
 }
 
-fn whole_positions<P: Realization>(
-    realizations: &Realizations<P>,
+fn whole_positions(
+    trajectory: &Trajectory,
     anchors: Option<&AtomSelection>,
 ) -> Result<Vec<Positions>, PeriodicError> {
-    let imager = MoleculeImager::new(realizations.shared_topology());
+    let imager = MoleculeImager::new(trajectory.shared_topology());
     let anchors = anchors
         .map(|selection| imager.anchor_groups(selection))
         .transpose()?;
-    realizations
+    trajectory
         .iter()
         .enumerate()
         .map(|(index, item)| {
@@ -226,11 +222,8 @@ fn whole_positions<P: Realization>(
         .collect()
 }
 
-fn publish<P: Realization>(
-    realizations: &mut Realizations<P>,
-    positions: Vec<Positions>,
-) -> Result<(), PeriodicError> {
-    realizations
+fn publish(trajectory: &mut Trajectory, positions: Vec<Positions>) -> Result<(), PeriodicError> {
+    trajectory
         .replace_positions(positions)
         .map_err(|error| PeriodicError::Publication(Box::new(error)))
 }

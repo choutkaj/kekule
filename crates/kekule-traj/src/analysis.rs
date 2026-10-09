@@ -1,11 +1,12 @@
 //! Streaming superposition and trajectory reductions.
 //!
-//! In-memory superposition and RMSD live on every realization collection in
+//! In-memory superposition and RMSD are trajectory and ensemble methods in
 //! [`kekule::alignment`] (`trajectory.superpose(0, &selection)`,
 //! `trajectory.rmsd(&reference, &correspondence)`, ...). This module adds the
-//! streaming counterpart, [`FrameSuperposer`], and per-atom reductions that
-//! run either over a loaded collection ([`rmsf`], [`contact_occupancy`]) or
-//! frame by frame through accumulators.
+//! streaming counterpart, [`FrameSuperposer`], and per-atom trajectory
+//! reductions, in which every frame counts once, that run either over a loaded
+//! trajectory ([`rmsf`], [`contact_occupancy`]) or frame by frame through
+//! accumulators.
 
 use kekule::alignment::{
     kabsch_with_options, AlignmentError, AlignmentOptions, FitAtoms, RigidAlignment,

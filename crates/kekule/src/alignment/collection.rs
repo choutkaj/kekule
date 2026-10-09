@@ -1,6 +1,9 @@
-//! Superposition and RMSD over every item of a realization collection.
+//! Superposition and RMSD over every member of an [`Ensemble`] or frame of a
+//! [`Trajectory`].
 
-use crate::structure::{AsModelView, ModelView, Realization, Realizations};
+use crate::structure::{
+    AsModelView, Ensemble, ModelView, Realization, RealizationStore, Trajectory,
+};
 use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
@@ -77,23 +80,9 @@ impl SuperpositionReport {
 
 type Pairs = Vec<(TopologyAtomIndex, TopologyAtomIndex)>;
 
-impl<P: Realization> Realizations<P> {
-    /// Fits every item onto `reference` and applies each transform in place.
-    ///
-    /// Positions move; cells, and for trajectory frames velocities and forces,
-    /// rotate. All other state is kept. The fit is transactional: on failure
-    /// nothing changes. Coordinates are fitted as stored; no imaging or
-    /// unwrapping is performed.
-    pub fn superpose<'a>(
-        &mut self,
-        reference: impl Into<Reference<'a>>,
-        atoms: impl Into<FitAtoms<'a>>,
-    ) -> Result<SuperpositionReport, AlignmentError> {
-        self.superpose_with_options(reference, atoms, AlignmentOptions::default())
-    }
-
+impl<P: Realization> RealizationStore<P> {
     /// [`Self::superpose`] with explicit fit weights and periodic policy.
-    pub fn superpose_with_options<'a>(
+    pub(crate) fn superpose_with_options<'a>(
         &mut self,
         reference: impl Into<Reference<'a>>,
         atoms: impl Into<FitAtoms<'a>>,
@@ -136,20 +125,8 @@ impl<P: Realization> Realizations<P> {
         })
     }
 
-    /// Direct RMSD from every item to `reference`, measured as stored.
-    ///
-    /// Never fits or changes the collection. Values are in
-    /// [`CANONICAL_LENGTH_UNIT`].
-    pub fn rmsd<'a>(
-        &self,
-        reference: impl Into<Reference<'a>>,
-        atoms: impl Into<FitAtoms<'a>>,
-    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-        self.rmsd_with_options(reference, atoms, AlignmentOptions::default())
-    }
-
     /// [`Self::rmsd`] with explicit weights and periodic policy.
-    pub fn rmsd_with_options<'a>(
+    pub(crate) fn rmsd_with_options<'a>(
         &self,
         reference: impl Into<Reference<'a>>,
         atoms: impl Into<FitAtoms<'a>>,
@@ -177,21 +154,8 @@ impl<P: Realization> Realizations<P> {
         Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
     }
 
-    /// Fits every item on `fit` pairs and measures RMSD over `measurement`
-    /// pairs, without changing the collection or copying coordinates.
-    ///
-    /// For example, fit a protein backbone and measure ligand motion.
-    pub fn aligned_rmsd<'a>(
-        &self,
-        reference: impl Into<Reference<'a>>,
-        fit: impl Into<FitAtoms<'a>>,
-        measurement: impl Into<FitAtoms<'a>>,
-    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-        self.aligned_rmsd_with_options(reference, fit, measurement, AlignedRmsdOptions::default())
-    }
-
     /// [`Self::aligned_rmsd`] with separate fit and measurement weights.
-    pub fn aligned_rmsd_with_options<'a>(
+    pub(crate) fn aligned_rmsd_with_options<'a>(
         &self,
         reference: impl Into<Reference<'a>>,
         fit: impl Into<FitAtoms<'a>>,
@@ -276,6 +240,103 @@ impl<P: Realization> Realizations<P> {
         }
     }
 }
+
+/// Public superposition and RMSD for one collection type, documented with
+/// that type's item name.
+macro_rules! collection_alignment {
+    ($collection:ident, $item:literal) => {
+        impl $collection {
+            #[doc = concat!(
+                "Fits every ", $item, " onto `reference` and applies each transform in place.\n\n",
+                "`reference` is an index into this collection or any borrowed view ",
+                "(`&model`, `&other.get(0).unwrap()`, ...); `atoms` is an ",
+                "[`AtomSelection`](crate::topology::AtomSelection) of this layout or an ",
+                "[`AtomCorrespondence`](super::AtomCorrespondence) to an independent reference. ",
+                "Positions move and cells rotate, as do trajectory velocities and forces; ",
+                "all other state is kept. The fit is transactional: on failure nothing ",
+                "changes. Coordinates are fitted as stored; no imaging or unwrapping is ",
+                "performed. Clone first to keep the original."
+            )]
+            pub fn superpose<'a>(
+                &mut self,
+                reference: impl Into<Reference<'a>>,
+                atoms: impl Into<FitAtoms<'a>>,
+            ) -> Result<SuperpositionReport, AlignmentError> {
+                self.store_mut()
+                    .superpose_with_options(reference, atoms, AlignmentOptions::default())
+            }
+
+            /// [`Self::superpose`] with explicit fit weights and periodic policy.
+            pub fn superpose_with_options<'a>(
+                &mut self,
+                reference: impl Into<Reference<'a>>,
+                atoms: impl Into<FitAtoms<'a>>,
+                options: AlignmentOptions<'_>,
+            ) -> Result<SuperpositionReport, AlignmentError> {
+                self.store_mut()
+                    .superpose_with_options(reference, atoms, options)
+            }
+
+            #[doc = concat!(
+                "Direct RMSD from every ", $item, " to `reference`, measured as stored.\n\n",
+                "Never fits or changes the collection. Values are in ",
+                "[`CANONICAL_LENGTH_UNIT`], one per ", $item, " in order."
+            )]
+            pub fn rmsd<'a>(
+                &self,
+                reference: impl Into<Reference<'a>>,
+                atoms: impl Into<FitAtoms<'a>>,
+            ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+                self.store()
+                    .rmsd_with_options(reference, atoms, AlignmentOptions::default())
+            }
+
+            /// [`Self::rmsd`] with explicit weights and periodic policy.
+            pub fn rmsd_with_options<'a>(
+                &self,
+                reference: impl Into<Reference<'a>>,
+                atoms: impl Into<FitAtoms<'a>>,
+                options: AlignmentOptions<'_>,
+            ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+                self.store().rmsd_with_options(reference, atoms, options)
+            }
+
+            #[doc = concat!(
+                "Fits every ", $item, " on `fit` pairs and measures RMSD over `measurement` ",
+                "pairs, without changing the collection or copying coordinates.\n\n",
+                "For example, fit a protein backbone and measure ligand motion."
+            )]
+            pub fn aligned_rmsd<'a>(
+                &self,
+                reference: impl Into<Reference<'a>>,
+                fit: impl Into<FitAtoms<'a>>,
+                measurement: impl Into<FitAtoms<'a>>,
+            ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+                self.store().aligned_rmsd_with_options(
+                    reference,
+                    fit,
+                    measurement,
+                    AlignedRmsdOptions::default(),
+                )
+            }
+
+            /// [`Self::aligned_rmsd`] with separate fit and measurement weights.
+            pub fn aligned_rmsd_with_options<'a>(
+                &self,
+                reference: impl Into<Reference<'a>>,
+                fit: impl Into<FitAtoms<'a>>,
+                measurement: impl Into<FitAtoms<'a>>,
+                options: AlignedRmsdOptions<'_>,
+            ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+                self.store()
+                    .aligned_rmsd_with_options(reference, fit, measurement, options)
+            }
+        }
+    };
+}
+
+collection_alignment!(Ensemble, "member");
+collection_alignment!(Trajectory, "frame");
 
 fn item_error(index: usize, source: AlignmentError) -> AlignmentError {
     AlignmentError::Item {

@@ -17,7 +17,7 @@ view. Ordinary getters and operations use semantic names. Copyable views may tak
 | `Quantity::to_unit(unit)` | Convert a borrowed, cloneable payload. |
 | `Quantity::into_unit(unit)`, `Quantity::into_value()` | Consume the quantity; the payload need not be cloneable. |
 | `Model::into_parts()`, payload `into_conformation()` | Consume the owner and return its topology handle and conformation. |
-| `Realizations::into_parts()`, `into_items()`, `Trajectory::into_ensemble()` | Consume a collection; payloads and conformations move without copying. |
+| `Ensemble`/`Trajectory` `into_parts()`, `into_items()`; `Trajectory::into_ensemble()` | Consume a collection; payloads and conformations move without copying. `into_ensemble` assigns equal weights. |
 | Reader `into_indexed()`, writer `into_trajectory()` | Transfer reader/writer ownership. |
 | `as_model_view()` (`AsModelView`), `Quantity::as_ref()`, `PropertyKey::as_str()` | Return borrowed projections. |
 

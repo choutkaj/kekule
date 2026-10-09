@@ -174,12 +174,12 @@ fn canonical_ensemble_constructors_accept_owned_and_shared_topology() {
 
     let owned_members = Ensemble::from_items(
         single_atom_topology(),
-        [EnsembleMember::new(single_position(1.0))],
+        [EnsembleMember::new(single_position(1.0), 1.0).unwrap()],
     )
     .unwrap();
     let shared_members = Ensemble::from_items(
         owned_members.shared_topology(),
-        [EnsembleMember::new(single_position(2.0))],
+        [EnsembleMember::new(single_position(2.0), 1.0).unwrap()],
     )
     .unwrap();
     assert!(owned_members
@@ -191,7 +191,7 @@ fn canonical_ensemble_constructors_accept_owned_and_shared_topology() {
 fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
     let topology = Arc::new(single_atom_topology());
     let score = key("score");
-    let mut first = EnsembleMember::new(single_position(1.0));
+    let mut first = EnsembleMember::new(single_position(1.0), 1.0).unwrap();
     let mut conformation = first.conformation_mut();
     conformation.set_cell(Some(cell()));
     let mut properties = conformation.properties_mut();
@@ -203,9 +203,9 @@ fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
         .atoms_mut()
         .set_value(score.clone(), ATOM0, Some(PropertyValue::Int(7)))
         .unwrap();
-    first.set_weight(Some(0.25)).unwrap();
-    let mut second = EnsembleMember::new(single_position(2.0));
-    second.set_weight(Some(0.75)).unwrap();
+    first.set_weight(0.25).unwrap();
+    let mut second = EnsembleMember::new(single_position(2.0), 1.0).unwrap();
+    second.set_weight(0.75).unwrap();
     let mut ensemble = Ensemble::from_items(Arc::clone(&topology), [first, second]).unwrap();
 
     assert_eq!(
@@ -220,7 +220,7 @@ fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
             .iter()
             .map(|member| member.weight())
             .collect::<Vec<_>>(),
-        [Some(0.25), Some(0.75)]
+        [0.25, 0.75]
     );
 
     let member = ensemble.get(0).unwrap();
@@ -253,7 +253,7 @@ fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
 fn detached_members_get_bond_rows_only_when_bound() {
     let (model, _, _) = model_fixture();
     let label = key("label");
-    let mut member = EnsembleMember::new(model.positions().clone());
+    let mut member = EnsembleMember::new(model.positions().clone(), 1.0).unwrap();
     assert_eq!(member.properties().atoms().len(), 2);
     assert!(member.properties().bonds().is_empty());
     // Detached payloads cannot carry bond annotations yet.
@@ -304,8 +304,8 @@ fn detached_members_get_bond_rows_only_when_bound() {
 fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
     let (model, _, _) = model_fixture();
     let topology = model.shared_topology();
-    let mut original = EnsembleMember::new(model.positions().clone());
-    original.set_weight(Some(0.75)).unwrap();
+    let mut original = EnsembleMember::new(model.positions().clone(), 1.0).unwrap();
+    original.set_weight(0.75).unwrap();
     let mut ensemble = Ensemble::from_items(Arc::clone(&topology), [original]).unwrap();
     let original = ensemble.get(0).unwrap().payload().clone();
     // Bound to another one-bond topology; matching bond rows rebind freely.
@@ -319,7 +319,7 @@ fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
             .molecule()
             .clone()])
         .unwrap(),
-        [EnsembleMember::new(Positions::zeros(2))],
+        [EnsembleMember::new(Positions::zeros(2), 1.0).unwrap()],
     )
     .unwrap()
     .into_items()
@@ -331,7 +331,7 @@ fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
         .set_value(key("bond"), BOND0, Some(PropertyValue::Int(1)))
         .unwrap();
 
-    let replacement = EnsembleMember::new(Positions::zeros(1));
+    let replacement = EnsembleMember::new(Positions::zeros(1), 1.0).unwrap();
     let expected = RealizationError::Conformation(ConformationError::AtomCountMismatch {
         expected: 2,
         actual: 1,
@@ -373,7 +373,7 @@ fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
 fn ensemble_replacement_preserves_order_and_publishes_complete_member_state() {
     let (model, _, _) = model_fixture();
     let topology = model.shared_topology();
-    let original = EnsembleMember::new(model.positions().clone());
+    let original = EnsembleMember::new(model.positions().clone(), 1.0).unwrap();
     let mut ensemble =
         Ensemble::from_items(Arc::clone(&topology), [original.clone(), original]).unwrap();
     let original = ensemble.get(0).unwrap().payload().clone();
@@ -383,9 +383,9 @@ fn ensemble_replacement_preserves_order_and_publishes_complete_member_state() {
         .insert(score.clone(), PropertyValue::Int(9))
         .unwrap();
     let collection_properties = ensemble.properties().clone();
-    let mut replacement = EnsembleMember::new(Positions::zeros(2));
+    let mut replacement = EnsembleMember::new(Positions::zeros(2), 1.0).unwrap();
     replacement.conformation_mut().set_cell(Some(cell()));
-    replacement.set_weight(Some(0.5)).unwrap();
+    replacement.set_weight(0.5).unwrap();
     replacement
         .conformation_mut()
         .properties_mut()
@@ -427,13 +427,14 @@ fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
     let mut ensemble = Ensemble::from_models([model]).unwrap();
     {
         let mut member = ensemble.get_mut(0).unwrap();
-        member.set_weight(Some(0.5)).unwrap();
-        for weight in [f64::NAN, f64::INFINITY, -1.0] {
+        member.set_weight(0.5).unwrap();
+        // Weights are finite and strictly positive.
+        for weight in [f64::NAN, f64::INFINITY, -1.0, 0.0] {
             assert_eq!(
-                member.set_weight(Some(weight)),
+                member.set_weight(weight),
                 Err(ConformationError::InvalidWeight)
             );
-            assert_eq!(member.weight(), Some(0.5));
+            assert_eq!(member.weight(), 0.5);
         }
         let properties = member.properties().clone();
         let detached = Conformation::new(Positions::zeros(2)).properties().clone();
@@ -467,7 +468,7 @@ fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
         assert_eq!(member.positions().len(), 2);
     }
     let member = ensemble.get(0).unwrap();
-    assert_eq!(member.weight(), Some(0.5));
+    assert_eq!(member.weight(), 0.5);
     assert_eq!(member.as_model_view().positions().len(), 2);
     assert_eq!(member.to_model().properties().bonds().len(), 1);
 }
@@ -690,7 +691,8 @@ fn trajectories_reinterpret_as_ensembles_without_copying_conformations() {
         .as_ptr();
     let ensemble = trajectory.into_ensemble();
     let member = ensemble.get(0).unwrap();
-    assert_eq!(member.weight(), None);
+    // Frames become equally weighted members.
+    assert_eq!(member.weight(), 1.0);
     assert_eq!(member.positions().values().value().as_ptr(), pointer);
 }
 
@@ -741,4 +743,68 @@ fn model_atom_views_join_topology_identity_with_realization_state() {
     assert!(model.atom(missing).is_none());
     let view = model.as_model_view();
     assert_eq!(view.atom(carbon).unwrap().position(), atom.position());
+}
+
+#[test]
+fn ensemble_members_always_carry_finite_positive_relative_weights() {
+    for weight in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(
+            EnsembleMember::new(single_position(0.0), weight),
+            Err(ConformationError::InvalidWeight)
+        );
+    }
+    let topology = Arc::new(single_atom_topology());
+    let members =
+        [3.0, 1.0].map(|weight| EnsembleMember::new(single_position(0.0), weight).unwrap());
+    let mut ensemble = Ensemble::from_items(Arc::clone(&topology), members).unwrap();
+
+    // Weights are relative, so selection keeps them as stored.
+    let resampled = ensemble.select([0, 0, 1]).unwrap();
+    assert_eq!(
+        resampled
+            .iter()
+            .map(|member| member.weight())
+            .collect::<Vec<_>>(),
+        [3.0, 3.0, 1.0]
+    );
+
+    ensemble.normalize_weights().unwrap();
+    assert_eq!(
+        ensemble
+            .iter()
+            .map(|member| member.weight())
+            .collect::<Vec<_>>(),
+        [0.75, 0.25]
+    );
+    // Scaling by the largest weight first keeps huge weights finite.
+    let huge = [f64::MAX, f64::MAX]
+        .map(|weight| EnsembleMember::new(single_position(0.0), weight).unwrap());
+    let mut huge = Ensemble::from_items(Arc::clone(&topology), huge).unwrap();
+    huge.normalize_weights().unwrap();
+    assert_eq!(
+        huge.iter()
+            .map(|member| member.weight())
+            .collect::<Vec<_>>(),
+        [0.5, 0.5]
+    );
+    // A ratio that underflows is rejected without changing any weight.
+    let extreme = [f64::MAX, f64::MIN_POSITIVE]
+        .map(|weight| EnsembleMember::new(single_position(0.0), weight).unwrap());
+    let mut extreme = Ensemble::from_items(Arc::clone(&topology), extreme).unwrap();
+    assert_eq!(
+        extreme.normalize_weights(),
+        Err(RealizationError::Conformation(
+            ConformationError::InvalidWeight
+        ))
+    );
+    assert_eq!(extreme.get(1).unwrap().weight(), f64::MIN_POSITIVE);
+    assert_eq!(
+        Ensemble::new(topology).normalize_weights(),
+        Err(RealizationError::EmptySource)
+    );
+
+    // Models carry no statistical weight; they become equally weighted members.
+    let (model, _, _) = model_fixture();
+    let ensemble = Ensemble::from_models([model.clone(), model]).unwrap();
+    assert!(ensemble.iter().all(|member| member.weight() == 1.0));
 }

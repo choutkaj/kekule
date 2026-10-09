@@ -6,14 +6,21 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
-- **Breaking:** one generic realization collection. `Ensemble` and `Trajectory`
-  are aliases of `kekule::structure::Realizations<P>`, and `Trajectory`,
-  `TrajectoryFrame`, `Velocities`, and `Forces` move from `kekule-traj` into
-  `kekule::structure`. Both share `new`, `from_items`, `from_models` (by value),
-  `get`/`get_mut`/`iter`, `push`, `replace`, `remove`, `select`, `subset`,
-  `perceive`, `into_parts`, and `into_items`; item views are
-  `RealizationView`/`RealizationMut` (`EnsembleMemberView`, `TrajectoryFrameMut`,
-  ...). `Trajectory::into_ensemble` reinterprets frames without copying.
+- **Breaking:** `Trajectory`, `TrajectoryFrame`, `Velocities`, and `Forces` move
+  from `kekule-traj` into `kekule::structure`, next to `Ensemble`. The two
+  collections stay distinct types over one private store and share `new`,
+  `from_items`, `get`/`get_mut`/`iter`, `push`, `replace`, `remove`,
+  `replace_positions`, `select`, `subset`, `perceive`, `into_parts`, and
+  `into_items`; item views are `EnsembleMemberView`/`EnsembleMemberMut` and
+  `TrajectoryFrameView`/`TrajectoryFrameMut`. `Ensemble::from_models` consumes
+  models. `Trajectory::into_ensemble` projects frames onto equally weighted
+  members without copying conformations.
+- **Breaking:** every `EnsembleMember` carries a finite, strictly positive
+  relative weight: `EnsembleMember::new(conformation, weight)` is fallible,
+  `weight()` returns `f64`, and `set_weight` takes `f64`. Models, mmCIF
+  coordinate models, and trajectory frames become equally weighted members
+  (weight `1.0`). `Ensemble::normalize_weights` keeps weight ratios and cannot
+  overflow; `RealizationError::MissingWeight` and `ZeroTotalWeight` are removed.
 - **Breaking:** realization payloads hold a `Conformation`: dense positions,
   optional cell, typed occupancies and B factors, and `RealizationProperties`,
   addressed by `TopologyAtomIndex`. `Model` is a topology plus one conformation;
@@ -45,7 +52,8 @@ All notable changes to Kekule are documented in this file.
   `MoleculeImager`, `TrajectoryUnwrapper`, and `FrameSuperposer` act on a
   `FrameBuffer`, and `FrameSuperposer::superpose` takes the caller's frame index
   for diagnostics like the other streaming tools. `rmsf` and
-  `contact_occupancy` are free functions over any collection.
+  `contact_occupancy` are free functions over a `Trajectory`, where every frame
+  counts once; they reject ensembles, whose statistics must be weighted.
   `TrajectoryError` wraps core `ConformationError` and `RealizationError`.
 - **Breaking:** topology reads return views. `Topology::atom`, `bond`,
   `molecule`, `chain`, `residue`, and `atom_site` return `Option` views

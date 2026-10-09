@@ -26,173 +26,128 @@ pub(crate) mod sealed {
     }
 }
 
-/// One realization payload stored in [`Realizations`]: a [`Conformation`]
-/// plus payload-specific state.
+/// One realization payload stored in an [`super::Ensemble`] or
+/// [`super::Trajectory`]: a [`Conformation`] plus payload-specific state.
 ///
 /// Implemented by [`super::EnsembleMember`] and [`super::TrajectoryFrame`].
 /// Payload state reads like a conformation through `Deref`.
 pub trait Realization:
-    sealed::Payload
-    + fmt::Debug
-    + PartialEq
-    + From<Conformation>
-    + std::ops::Deref<Target = Conformation>
+    sealed::Payload + fmt::Debug + PartialEq + std::ops::Deref<Target = Conformation>
 {
 }
 
-/// A finite, stable-order collection of realizations of one shared topology.
+/// Crate-private storage shared by the distinct public collection types.
 ///
-/// Use the [`super::Ensemble`] alias for non-temporal sets (conformers,
-/// alternate experimental models) and [`super::Trajectory`] when order is
-/// temporal. Every item is validated against the shared topology on insertion,
-/// so items can be read as [`ModelView`]s without further checks.
+/// It owns one topology, collection owner properties, and validated payloads.
+/// [`super::Ensemble`] and [`super::Trajectory`] expose it through their own
+/// documented APIs; scientific behavior that differs between them, such as
+/// weights or time, lives on those types.
 #[derive(Debug, Clone)]
-pub struct Realizations<P> {
+pub(crate) struct RealizationStore<P> {
     topology: Arc<Topology>,
     properties: OwnerProperties,
     items: Vec<P>,
 }
 
-impl<P: Realization> Realizations<P> {
-    pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
+impl<P: Realization> RealizationStore<P> {
+    pub(crate) fn new(topology: Arc<Topology>) -> Self {
         Self {
-            topology: topology.into(),
+            topology,
             properties: OwnerProperties::new(),
             items: Vec::new(),
         }
     }
 
-    /// Validates and collects items in order. Fails on the first invalid item.
-    pub fn from_items(
-        topology: impl Into<Arc<Topology>>,
+    pub(crate) fn from_items(
+        topology: Arc<Topology>,
         items: impl IntoIterator<Item = P>,
     ) -> Result<Self, RealizationError> {
-        let mut collection = Self::new(topology);
+        let mut store = Self::new(topology);
         for item in items {
-            collection.push(item)?;
+            store.push(item)?;
         }
-        Ok(collection)
+        Ok(store)
     }
 
-    /// Collects models that share one topology layout, keeping the first
-    /// model's snapshot. Model conformations move without copying.
-    pub fn from_models(models: impl IntoIterator<Item = Model>) -> Result<Self, RealizationError> {
+    /// Collects model conformations sharing one layout, keeping the first
+    /// model's snapshot.
+    pub(crate) fn from_models(
+        models: impl IntoIterator<Item = Model>,
+        mut payload: impl FnMut(Conformation) -> P,
+    ) -> Result<Self, RealizationError> {
         let mut models = models.into_iter();
         let first = models.next().ok_or(RealizationError::EmptySource)?;
         let (topology, conformation) = first.into_parts();
-        let mut collection = Self::new(topology);
-        collection.items.push(P::from(conformation));
+        let mut store = Self::new(topology);
+        store.items.push(payload(conformation));
         for model in models {
-            if !model.topology().shares_layout(&collection.topology) {
+            if !model.topology().shares_layout(&store.topology) {
                 return Err(RealizationError::TopologyMismatch);
             }
             let (_, conformation) = model.into_parts();
-            collection.items.push(P::from(conformation));
+            store.items.push(payload(conformation));
         }
-        Ok(collection)
+        Ok(store)
     }
 
-    /// Builds a single-molecule collection from dense positions in molecule
-    /// atom order.
-    pub fn from_molecule_positions(
-        molecule: Molecule,
-        positions: impl IntoIterator<Item = Positions>,
-    ) -> Result<Self, RealizationError> {
-        let mut builder = TopologyBuilder::new();
-        let definition = builder.add_molecule_definition(molecule)?;
-        builder.add_instance(definition)?;
-        Self::from_items(
-            builder.build()?,
-            positions
-                .into_iter()
-                .map(|positions| P::from(Conformation::new(positions))),
-        )
-    }
-
-    pub fn topology(&self) -> &Topology {
+    pub(crate) fn topology(&self) -> &Topology {
         &self.topology
     }
 
-    pub fn shared_topology(&self) -> Arc<Topology> {
+    pub(crate) fn shared_topology(&self) -> Arc<Topology> {
         Arc::clone(&self.topology)
     }
 
-    /// Collection-level annotations.
-    pub fn properties(&self) -> &OwnerProperties {
+    pub(crate) fn properties(&self) -> &OwnerProperties {
         &self.properties
     }
 
-    pub fn properties_mut(&mut self) -> &mut OwnerProperties {
+    pub(crate) fn properties_mut(&mut self) -> &mut OwnerProperties {
         &mut self.properties
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.items.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
-
-    /// One topology-bound item by stable collection index.
-    pub fn get(&self, index: usize) -> Option<RealizationView<'_, P>> {
+    pub(crate) fn get(&self, index: usize) -> Option<RealizationView<'_, P>> {
         self.items.get(index).map(|item| RealizationView {
             topology: &self.topology,
             item,
         })
     }
 
-    /// A dimension-preserving editor for one item.
-    ///
-    /// Bind it with `let mut item = collection.get_mut(index).unwrap()` for
-    /// several edits. Whole-item replacement goes through [`Self::replace`].
-    ///
-    /// ```compile_fail,E0594
-    /// use kekule::structure::{Ensemble, EnsembleMember, Positions};
-    /// fn overwrite(ensemble: &mut Ensemble) {
-    ///     *ensemble.get_mut(0).unwrap() = EnsembleMember::new(Positions::zeros(1));
-    /// }
-    /// ```
-    pub fn get_mut(&mut self, index: usize) -> Option<RealizationMut<'_, P>> {
+    pub(crate) fn get_mut(&mut self, index: usize) -> Option<RealizationMut<'_, P>> {
         self.items
             .get_mut(index)
             .map(|item| RealizationMut { item })
     }
 
-    /// Topology-bound items in stable collection order.
-    pub fn iter(
-        &self,
-    ) -> impl ExactSizeIterator<Item = RealizationView<'_, P>> + DoubleEndedIterator {
-        let topology = &self.topology;
-        self.items
-            .iter()
-            .map(move |item| RealizationView { topology, item })
+    pub(crate) fn iter(&self) -> RealizationIter<'_, P> {
+        RealizationIter {
+            topology: &self.topology,
+            items: self.items.iter(),
+        }
     }
 
-    /// Validates and appends one item, binding its bond property rows.
-    pub fn push(&mut self, mut item: P) -> Result<(), RealizationError> {
+    pub(crate) fn push(&mut self, mut item: P) -> Result<(), RealizationError> {
         self.prepare(&mut item)?;
         self.items.push(item);
         Ok(())
     }
 
-    /// Validates and replaces one item, returning the previous payload. The
-    /// index is checked first; failure leaves the collection unchanged.
-    pub fn replace(&mut self, index: usize, mut item: P) -> Result<P, RealizationError> {
+    pub(crate) fn replace(&mut self, index: usize, mut item: P) -> Result<P, RealizationError> {
         self.check_index(index)?;
         self.prepare(&mut item)?;
         Ok(std::mem::replace(&mut self.items[index], item))
     }
 
-    /// Removes and returns one item, shifting later items down.
-    pub fn remove(&mut self, index: usize) -> Result<P, RealizationError> {
+    pub(crate) fn remove(&mut self, index: usize) -> Result<P, RealizationError> {
         self.check_index(index)?;
         Ok(self.items.remove(index))
     }
 
-    /// Replaces the positions of every item transactionally, in collection
-    /// order. Other item state is kept.
-    pub fn replace_positions(
+    pub(crate) fn replace_positions(
         &mut self,
         positions: impl IntoIterator<Item = Positions>,
     ) -> Result<(), RealizationError> {
@@ -218,10 +173,7 @@ impl<P: Realization> Realizations<P> {
         Ok(())
     }
 
-    /// Copies items in the requested order, sharing the topology. Ranges and
-    /// strides can be written as `(start..end).step_by(stride)`; duplicates and
-    /// reordering are allowed. Collection properties are kept.
-    pub fn select(
+    pub(crate) fn select(
         &self,
         indices: impl IntoIterator<Item = usize>,
     ) -> Result<Self, RealizationError> {
@@ -239,9 +191,7 @@ impl<P: Realization> Realizations<P> {
         })
     }
 
-    /// Publishes one induced topology subset and projects every item onto it.
-    /// Collection and item owner properties are dropped.
-    pub fn subset(&self, selection: &AtomSelection) -> Result<Self, RealizationError> {
+    pub(crate) fn subset(&self, selection: &AtomSelection) -> Result<Self, RealizationError> {
         let subset = self.topology.subset(selection)?;
         let atoms = subset
             .correspondence()
@@ -267,26 +217,17 @@ impl<P: Realization> Realizations<P> {
         })
     }
 
-    /// Installs default perception through one new shared topology snapshot.
-    ///
-    /// Delegates to [`Topology::perceived`] once, independent of item count,
-    /// and keeps every item and the collection properties without copying.
-    /// Failure leaves the collection unchanged. The new snapshot shares the
-    /// original layout, so selections, buffers, and prepared potentials stay
-    /// usable.
-    pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
+    pub(crate) fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
         self.topology = Arc::new(self.topology.perceived()?);
         Ok(())
     }
 
-    /// Consumes the collection, transferring topology, collection properties,
-    /// and items without copying.
-    pub fn into_parts(self) -> (Arc<Topology>, OwnerProperties, Vec<P>) {
+    pub(crate) fn into_parts(self) -> (Arc<Topology>, OwnerProperties, Vec<P>) {
         (self.topology, self.properties, self.items)
     }
 
-    pub fn into_items(self) -> Vec<P> {
-        self.items
+    pub(crate) fn items_mut(&mut self) -> &mut [P] {
+        &mut self.items
     }
 
     /// Applies one transform per item transactionally.
@@ -305,8 +246,8 @@ impl<P: Realization> Realizations<P> {
         Ok(())
     }
 
-    pub(crate) fn map_items<Q: Realization>(self, map: impl FnMut(P) -> Q) -> Realizations<Q> {
-        Realizations {
+    pub(crate) fn map_items<Q: Realization>(self, map: impl FnMut(P) -> Q) -> RealizationStore<Q> {
+        RealizationStore {
             topology: self.topology,
             properties: self.properties,
             items: self.items.into_iter().map(map).collect(),
@@ -330,19 +271,195 @@ impl<P: Realization> Realizations<P> {
     }
 }
 
-impl<'a, P: Realization> IntoIterator for &'a Realizations<P> {
-    type Item = RealizationView<'a, P>;
-    type IntoIter = RealizationIter<'a, P>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        RealizationIter {
-            topology: &self.topology,
-            items: self.items.iter(),
-        }
-    }
+/// Builds a single-molecule topology for collection constructors.
+pub(crate) fn single_molecule_topology(
+    molecule: Molecule,
+) -> Result<Arc<Topology>, RealizationError> {
+    let mut builder = TopologyBuilder::new();
+    let definition = builder.add_molecule_definition(molecule)?;
+    builder.add_instance(definition)?;
+    Ok(Arc::new(builder.build()?))
 }
 
-/// Iterator over topology-bound items of a [`Realizations`] collection.
+/// The collection-independent public API of [`super::Ensemble`] and
+/// [`super::Trajectory`], each documented in its own terms. `$item` names one
+/// payload in prose ("member", "frame").
+macro_rules! realization_collection {
+    ($collection:ident, $payload:ty, $view:ty, $editor:ty, $item:literal) => {
+        impl $collection {
+            /// An empty collection bound to one shared topology.
+            pub fn new(topology: impl Into<std::sync::Arc<$crate::topology::Topology>>) -> Self {
+                Self {
+                    store: $crate::structure::realizations::RealizationStore::new(topology.into()),
+                }
+            }
+
+            #[doc = concat!(
+                "Validates and collects each ", $item, " in order, binding its bond ",
+                "property rows. Fails on the first invalid ", $item, "."
+            )]
+            pub fn from_items(
+                topology: impl Into<std::sync::Arc<$crate::topology::Topology>>,
+                items: impl IntoIterator<Item = $payload>,
+            ) -> Result<Self, $crate::structure::RealizationError> {
+                Ok(Self {
+                    store: $crate::structure::realizations::RealizationStore::from_items(
+                        topology.into(),
+                        items,
+                    )?,
+                })
+            }
+
+            pub fn topology(&self) -> &$crate::topology::Topology {
+                self.store.topology()
+            }
+
+            pub fn shared_topology(&self) -> std::sync::Arc<$crate::topology::Topology> {
+                self.store.shared_topology()
+            }
+
+            /// Collection-level annotations.
+            pub fn properties(&self) -> &$crate::properties::OwnerProperties {
+                self.store.properties()
+            }
+
+            pub fn properties_mut(&mut self) -> &mut $crate::properties::OwnerProperties {
+                self.store.properties_mut()
+            }
+
+            pub fn len(&self) -> usize {
+                self.store.len()
+            }
+
+            pub fn is_empty(&self) -> bool {
+                self.store.len() == 0
+            }
+
+            #[doc = concat!("One topology-bound ", $item, " by stable index.")]
+            pub fn get(&self, index: usize) -> Option<$view> {
+                self.store.get(index)
+            }
+
+            #[doc = concat!(
+                "A dimension-preserving editor for one ", $item, ". Whole-", $item,
+                " replacement goes through [`Self::replace`]."
+            )]
+            pub fn get_mut(&mut self, index: usize) -> Option<$editor> {
+                self.store.get_mut(index)
+            }
+
+            #[doc = concat!("Topology-bound ", $item, "s in stable order.")]
+            pub fn iter(&self) -> $crate::structure::RealizationIter<'_, $payload> {
+                self.store.iter()
+            }
+
+            #[doc = concat!("Validates and appends one ", $item, ", binding its bond property rows.")]
+            pub fn push(&mut self, item: $payload) -> Result<(), $crate::structure::RealizationError> {
+                self.store.push(item)
+            }
+
+            #[doc = concat!(
+                "Validates and replaces one ", $item, ", returning the previous one. ",
+                "The index is checked first; failure leaves the collection unchanged."
+            )]
+            pub fn replace(
+                &mut self,
+                index: usize,
+                item: $payload,
+            ) -> Result<$payload, $crate::structure::RealizationError> {
+                self.store.replace(index, item)
+            }
+
+            #[doc = concat!("Removes and returns one ", $item, ", shifting later ones down.")]
+            pub fn remove(
+                &mut self,
+                index: usize,
+            ) -> Result<$payload, $crate::structure::RealizationError> {
+                self.store.remove(index)
+            }
+
+            #[doc = concat!(
+                "Replaces the positions of every ", $item, " transactionally, in order. ",
+                "Other state is kept."
+            )]
+            pub fn replace_positions(
+                &mut self,
+                positions: impl IntoIterator<Item = $crate::structure::Positions>,
+            ) -> Result<(), $crate::structure::RealizationError> {
+                self.store.replace_positions(positions)
+            }
+
+            #[doc = concat!(
+                "Copies ", $item, "s in the requested order, sharing the topology. ",
+                "Ranges and strides can be written as `(start..end).step_by(stride)`; ",
+                "duplicates and reordering are allowed. Collection properties are kept."
+            )]
+            pub fn select(
+                &self,
+                indices: impl IntoIterator<Item = usize>,
+            ) -> Result<Self, $crate::structure::RealizationError> {
+                Ok(Self {
+                    store: self.store.select(indices)?,
+                })
+            }
+
+            #[doc = concat!(
+                "Publishes one induced topology subset and projects every ", $item,
+                " onto it. Collection and per-", $item, " owner properties are dropped."
+            )]
+            pub fn subset(
+                &self,
+                selection: &$crate::topology::AtomSelection,
+            ) -> Result<Self, $crate::structure::RealizationError> {
+                Ok(Self {
+                    store: self.store.subset(selection)?,
+                })
+            }
+
+            #[doc = concat!(
+                "Installs default perception through one new shared topology snapshot.\n\n",
+                "Delegates to [`Topology::perceived`](crate::topology::Topology::perceived) ",
+                "once and keeps every ", $item, " and the collection properties without ",
+                "copying. Failure leaves the collection unchanged. The new snapshot shares ",
+                "the original layout, so selections, buffers, and prepared potentials stay usable."
+            )]
+            pub fn perceive(&mut self) -> Result<(), $crate::topology::TopologyPerceptionError> {
+                self.store.perceive()
+            }
+
+            #[doc = concat!(
+                "Consumes the collection, transferring topology, collection properties, ",
+                "and every ", $item, " without copying."
+            )]
+            pub fn into_parts(
+                self,
+            ) -> (
+                std::sync::Arc<$crate::topology::Topology>,
+                $crate::properties::OwnerProperties,
+                Vec<$payload>,
+            ) {
+                self.store.into_parts()
+            }
+
+            pub fn into_items(self) -> Vec<$payload> {
+                self.store.into_parts().2
+            }
+        }
+
+        impl<'a> IntoIterator for &'a $collection {
+            type Item = $crate::structure::RealizationView<'a, $payload>;
+            type IntoIter = $crate::structure::RealizationIter<'a, $payload>;
+
+            fn into_iter(self) -> Self::IntoIter {
+                self.store.iter()
+            }
+        }
+    };
+}
+pub(crate) use realization_collection;
+
+/// Iterator over topology-bound items of an [`super::Ensemble`] or
+/// [`super::Trajectory`].
 #[derive(Debug, Clone)]
 pub struct RealizationIter<'a, P> {
     topology: &'a Arc<Topology>,
@@ -437,11 +554,11 @@ impl<P: Realization> AsModelView for RealizationView<'_, P> {
     }
 }
 
-/// Dimension-preserving mutable access to one item of a [`Realizations`]
-/// collection.
+/// Dimension-preserving mutable access to one item of an [`super::Ensemble`]
+/// or [`super::Trajectory`].
 ///
 /// Reads use `Deref`. There is deliberately no `DerefMut`; replace a whole
-/// item through [`Realizations::replace`].
+/// item through the collection's `replace`.
 #[derive(Debug)]
 pub struct RealizationMut<'a, P> {
     pub(super) item: &'a mut P,
@@ -471,7 +588,7 @@ impl<P: Realization> RealizationMut<'_, P> {
     }
 }
 
-/// Failure of a realization collection operation.
+/// Failure of an [`super::Ensemble`] or [`super::Trajectory`] operation.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum RealizationError {
@@ -488,10 +605,6 @@ pub enum RealizationError {
         expected: usize,
         actual: usize,
     },
-    MissingWeight {
-        member: usize,
-    },
-    ZeroTotalWeight,
     MissingTime {
         frame: usize,
     },
@@ -520,10 +633,6 @@ impl fmt::Display for RealizationError {
                 formatter,
                 "collection requires {expected} replacement items, but received {actual}"
             ),
-            Self::MissingWeight { member } => write!(formatter, "member {member} has no weight"),
-            Self::ZeroTotalWeight => {
-                formatter.write_str("weights must have a positive finite total")
-            }
             Self::MissingTime { frame } => write!(formatter, "frame {frame} has no time"),
             Self::NonMonotonicTime { frame } => {
                 write!(formatter, "time decreases at frame {frame}")
