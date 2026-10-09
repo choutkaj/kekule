@@ -173,6 +173,13 @@ fn retain_normalized(
         }
     }
 
+    // Retained atoms keep their relative source dense order.
+    builder.set_atom_order(
+        topology
+            .atom_ids()
+            .iter()
+            .filter_map(|atom| atom_targets.get(atom).copied()),
+    )?;
     let hierarchy_projection =
         copy_filtered_hierarchy(topology, builder.hierarchy_mut(), &atom_targets)?;
     for (target_index, source_index) in hierarchy_projection.residues.iter().copied().enumerate() {
@@ -345,8 +352,10 @@ impl Topology {
     /// Constructs the induced hierarchy-aware topology selected by `selection`.
     ///
     /// Every selected source molecule is partitioned into connected induced
-    /// components. Target molecule and dense ordering follow source instance,
-    /// source atom, and source bond order deterministically.
+    /// components. Target instances follow source instance order, then source
+    /// atom order within each instance. Target dense atom order keeps the
+    /// selected atoms' source dense order, so
+    /// [`TopologySubsetCorrespondence::source_atom_indices`] is ascending.
     /// Components use compact local atom and bond IDs; use the returned
     /// correspondence to translate source identities into target identities.
     /// Instances selecting the same atoms from a shared definition reuse the
@@ -420,6 +429,12 @@ impl Topology {
             }
         }
 
+        // Selected atoms keep their relative source dense order.
+        builder.set_atom_order(selection.indices().iter().map(|&index| {
+            atom_targets[&self
+                .atom_id(index)
+                .expect("validated atom selection references a live dense atom")]
+        }))?;
         let hierarchy_projection =
             copy_filtered_hierarchy(self, builder.hierarchy_mut(), &atom_targets)?;
         for (target_index, &source_index) in hierarchy_projection.residues.iter().enumerate() {

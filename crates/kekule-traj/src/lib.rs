@@ -64,6 +64,8 @@
 //! XTC codecs live in [`io`]. Readers take a topology directly and interpret file
 //! coordinates in its dense atom order. They check counts and available format
 //! metadata automatically; matching counts alone cannot establish atom identity.
+//! Interpreted structure files keep their source atom-row order, so a trajectory
+//! written in a structure file's atom order lines up with that file's topology.
 //! In-memory superposition and direct or
 //! aligned RMSD workflows live in [`analysis`]. Direct RMSD never performs an
 //! implicit fit. Coordinate transformations return a new trajectory by default;

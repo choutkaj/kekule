@@ -6,6 +6,25 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** `Topology` stores its dense atom order instead of deriving it
+  from instance order, and instances need not be contiguous. Format
+  interpretation keeps source atom-row order (mmCIF `_atom_site` rows,
+  Molfile/SDF atom blocks, SMILES atom order). `TopologyBuilder::set_atom_order`
+  and `ModelBuilder::set_atom_order` accept explicit permutations. Editors,
+  subsets, and instance filters keep surviving atoms in source order and append
+  new atoms. Qualified-ID and dense-index lookups are constant time, and
+  `TopologyBuilder`/`ModelBuilder` `atom_ids` and `bond_ids` return slices.
+- **Breaking:** mmCIF writers emit `_atom_site` rows in dense atom order instead
+  of hierarchy order, so written structures stay aligned with trajectories
+  written in the same order.
+- **Breaking:** published molecules have dense IDs. `MoleculeEditor::finish`
+  renumbers atoms, bonds, stereo elements, and stereo groups after deletions;
+  `finish_with_correspondence` returns the draft-to-published
+  `MoleculeCorrespondence` (renamed from `MoleculeAppendMapping`), and
+  `RemoveHydrogensReport::correspondence` maps input IDs to the result. Remove
+  `Molecule::stereo_group_slots`, `stereo_group_slot_count`, and
+  `MoleculeEditor::append_stereo_group_tombstone`; rename `RingMembership`
+  slot-flag accessors to `from_flags`, `atom_flags`, and `bond_flags`.
 - **Breaking:** rebuild `kekule-potentials` around a backend-independent
   `Potential` trait over `ModelView`, with validated `Energy` decompositions and
   `Evaluation` gradients. Potentials evaluate through `&self` and are `Send + Sync`.
@@ -59,6 +78,12 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Trajectories read with an interpreted structure topology assign coordinates
+  to the right atoms when the source interleaves molecules, for example a
+  covalently linked ligand listed after water. Dense order used to follow
+  molecule instances, so such files silently swapped coordinates.
+- `kekule-openff` places per-atom vdW parameters and charges in dense atom
+  order; instance order misassigned them when instances were not contiguous.
 - Fix compressed XTC decoding when a frame reuses a preceding nonzero coordinate
   run length. Valid trajectories from external GROMACS tooling no longer fail
   mixed-radix bounds checks; existing corruption checks remain intact.

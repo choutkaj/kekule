@@ -21,6 +21,7 @@ mod classification;
 mod components;
 mod editor;
 mod hierarchy;
+mod layout;
 mod lookup;
 mod perception;
 mod selection;
@@ -43,6 +44,7 @@ pub use hierarchy::{
     AtomSite, AtomSiteId, AtomSiteMetadata, Chain, ChainId, Hierarchy, HierarchyError,
     HierarchyIdKind, Residue, ResidueId,
 };
+use layout::DenseLayout;
 pub use lookup::HierarchyLookupError;
 pub use perception::TopologyPerceptionError;
 pub use selection::{AtomSelection, BondSelection, BondSelectionMode, SelectionError};
@@ -514,6 +516,14 @@ impl<'a> MoleculeInstanceView<'a> {
 /// [`MoleculeInstanceId`] as [`InstanceAtomId`] and [`InstanceBondId`]. This
 /// distinction matters whenever a definition is reused.
 ///
+/// Dense atom order is stored explicitly and chosen at publication; it need not
+/// keep an instance's atoms contiguous. Format interpretations keep source
+/// atom-row order, so coordinate-file index `i` is dense atom `i`. Builders
+/// default to instance order and accept [`TopologyBuilder::set_atom_order`];
+/// editors and subsets keep surviving atoms in their source order. Dense bond
+/// order is instance order, then local bond ID. Both orders map to and from
+/// qualified IDs in constant time.
+///
 /// Exact shared ownership conventionally uses [`std::sync::Arc<Topology>`].
 /// Some coordinate-dependent APIs require the same allocation, not merely an
 /// independently constructed topology with equal contents. [`Self::same_layout`]
@@ -523,10 +533,8 @@ impl<'a> MoleculeInstanceView<'a> {
 pub struct Topology {
     definitions: Vec<MoleculeDefinition>,
     instances: Vec<MoleculeInstance>,
-    instance_atoms: Vec<InstanceAtomId>,
-    instance_bonds: Vec<InstanceBondId>,
-    atom_indices: BTreeMap<InstanceAtomId, TopologyAtomIndex>,
-    bond_indices: BTreeMap<InstanceBondId, TopologyBondIndex>,
+    atoms: DenseLayout<InstanceAtomId>,
+    bonds: DenseLayout<InstanceBondId>,
     hierarchy: Hierarchy,
     properties: Properties,
     // Retain explicit assignment intent separately from inferred class values.
@@ -582,9 +590,8 @@ impl Topology {
     /// Returns whether two topologies have the same complete static layout.
     ///
     /// Layout equality includes chemical and hierarchy content, definition and
-    /// instance partitioning, semantic identifiers,
-    /// authoritative dense atom and bond order, and the corresponding index
-    /// maps. Whether two values share one `Arc` allocation is deliberately
+    /// instance partitioning, semantic identifiers, and authoritative dense
+    /// atom and bond order. Whether two values share one `Arc` allocation is deliberately
     /// excluded, as are installed perception and generic properties. In
     /// particular, [`Self::perceived`] preserves layout equality without
     /// preserving the source snapshot's shared allocation identity.
@@ -595,10 +602,8 @@ impl Topology {
     pub fn same_layout(&self, other: &Self) -> bool {
         self.definitions == other.definitions
             && self.instances == other.instances
-            && self.instance_atoms == other.instance_atoms
-            && self.instance_bonds == other.instance_bonds
-            && self.atom_indices == other.atom_indices
-            && self.bond_indices == other.bond_indices
+            && self.atoms == other.atoms
+            && self.bonds == other.bonds
             && self.hierarchy == other.hierarchy
     }
 
@@ -860,8 +865,9 @@ impl Topology {
             .map_err(|_| TopologyError::InvalidBondId(id))
     }
 
+    /// Iterates atoms in authoritative dense order.
     pub fn atoms(&self) -> impl ExactSizeIterator<Item = (InstanceAtomId, &Atom)> {
-        self.instance_atoms.iter().copied().map(|id| {
+        self.atoms.order().iter().copied().map(|id| {
             (
                 id,
                 self.atom(id)
@@ -870,8 +876,9 @@ impl Topology {
         })
     }
 
+    /// Iterates bonds in authoritative dense order.
     pub fn bonds(&self) -> impl ExactSizeIterator<Item = (InstanceBondId, &Bond)> {
-        self.instance_bonds.iter().copied().map(|id| {
+        self.bonds.order().iter().copied().map(|id| {
             (
                 id,
                 self.bond(id)
@@ -881,35 +888,41 @@ impl Topology {
     }
 
     pub fn atom_count(&self) -> usize {
-        self.instance_atoms.len()
+        self.atoms.len()
     }
 
     pub fn bond_count(&self) -> usize {
-        self.instance_bonds.len()
+        self.bonds.len()
     }
 
+    /// Qualified atom IDs in authoritative dense order.
     pub fn atom_ids(&self) -> &[InstanceAtomId] {
-        &self.instance_atoms
+        self.atoms.order()
     }
 
+    /// Qualified bond IDs in authoritative dense order.
     pub fn bond_ids(&self) -> &[InstanceBondId] {
-        &self.instance_bonds
+        self.bonds.order()
     }
 
     pub fn atom_index(&self, atom: InstanceAtomId) -> Option<TopologyAtomIndex> {
-        self.atom_indices.get(&atom).copied()
+        self.atoms
+            .index(atom)
+            .map(|index| TopologyAtomIndex::new(index as u32))
     }
 
     pub fn atom_id(&self, index: TopologyAtomIndex) -> Option<InstanceAtomId> {
-        self.instance_atoms.get(index.index()).copied()
+        self.atoms.id(index.index())
     }
 
     pub fn bond_index(&self, bond: InstanceBondId) -> Option<TopologyBondIndex> {
-        self.bond_indices.get(&bond).copied()
+        self.bonds
+            .index(bond)
+            .map(|index| TopologyBondIndex::new(index as u32))
     }
 
     pub fn bond_id(&self, index: TopologyBondIndex) -> Option<InstanceBondId> {
-        self.instance_bonds.get(index.index()).copied()
+        self.bonds.id(index.index())
     }
 
     pub fn neighbors(

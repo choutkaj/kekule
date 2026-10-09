@@ -241,6 +241,9 @@ impl ForceField {
         let vdw: Vec<Arc<VdwParameter>> = shared(&self.vdw);
         let mut propers = BTreeMap::<(usize, usize), Arc<TorsionParameter>>::new();
         let mut constraints = BTreeMap::<(usize, Option<usize>), Arc<ConstraintParameter>>::new();
+        // Atom parameters follow dense order, which need not keep instances contiguous.
+        let mut atom_vdw = vec![None; topology.atom_count()];
+        let mut atom_charges = vec![0.0; topology.atom_count()];
         for instance in topology.molecules() {
             let (a, charges) = &definitions[&instance.definition_id()];
             let qualify = |atom| InstanceAtomId::new(instance.id(), atom);
@@ -300,13 +303,19 @@ impl ForceField {
                     parameter: Arc::clone(parameter),
                 });
             }
-            for atom in a.molecule.atom_ids() {
-                result.vdw.push(Arc::clone(&vdw[a.vdw[&[atom]]]));
+            if charges.charges.value().len() != a.molecule.atom_count() {
+                return Err(error(
+                    "charge assignment does not cover every molecule atom",
+                ));
             }
-            result
-                .charges
-                .value_mut()
-                .extend(charges.charges.value().iter().copied());
+            for (atom, &charge) in a.molecule.atom_ids().zip(charges.charges.value()) {
+                let dense = topology
+                    .atom_index(qualify(atom))
+                    .ok_or_else(|| error("parameterized atom is absent from the topology"))?
+                    .index();
+                atom_vdw[dense] = Some(Arc::clone(&vdw[a.vdw[&[atom]]]));
+                atom_charges[dense] = charge;
+            }
             result.charge_sources.push(charges.source.clone());
             for start in a.molecule.atom_ids() {
                 let mut queue = VecDeque::from([(start, 0)]);
@@ -331,6 +340,11 @@ impl ForceField {
                 }
             }
         }
+        result.vdw = atom_vdw
+            .into_iter()
+            .map(|parameter| parameter.ok_or_else(|| error("topology atom has no vdW parameter")))
+            .collect::<Result<_>>()?;
+        *result.charges.value_mut() = atom_charges;
         Ok(result)
     }
     pub fn parameterize_molecule(

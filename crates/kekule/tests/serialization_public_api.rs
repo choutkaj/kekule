@@ -355,7 +355,7 @@ fn mmcif_model_is_one_block_with_coordinate_model_one_and_automatic_classificati
 }
 
 #[test]
-fn mmcif_export_resolves_reused_atoms_in_hierarchy_order_and_keeps_unassigned_instances() {
+fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() {
     use kekule::core::{Atom, Element, MoleculeEditor};
     use kekule::topology::{AtomSiteMetadata, InstanceAtomId};
 
@@ -407,7 +407,9 @@ fn mmcif_export_resolves_reused_atoms_in_hierarchy_order_and_keeps_unassigned_in
     let document = mmcif::parse_str(&text).unwrap();
     let rows = document.blocks()[0].loop_with_tag("_atom_site.id").unwrap();
     assert_eq!(rows.row_count(), 4);
-    for (row, index) in [2, 0, 1].into_iter().enumerate() {
+    // Rows follow dense atom order, not hierarchy order, so coordinate files
+    // written in this topology's order stay aligned with the block.
+    for (row, index) in [0, 1, 2].into_iter().enumerate() {
         assert_eq!(
             rows.value(row, "_atom_site.label_atom_id").unwrap().text(),
             format!("O{index}")
@@ -444,6 +446,18 @@ fn mmcif_export_resolves_reused_atoms_in_hierarchy_order_and_keeps_unassigned_in
             .parse::<f64>()
             .unwrap(),
         4.0
+    );
+    let reread = mmcif::interpret(&document, Default::default()).unwrap();
+    assert_eq!(
+        reread
+            .model()
+            .positions()
+            .values()
+            .value()
+            .iter()
+            .map(|point| (point.x * 10.0).round())
+            .collect::<Vec<_>>(),
+        [1.0, 2.0, 3.0, 4.0]
     );
 }
 

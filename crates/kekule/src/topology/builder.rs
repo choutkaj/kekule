@@ -4,10 +4,11 @@ use std::fmt;
 use crate::core::Molecule;
 use crate::properties::{Properties, PropertyError, PropertyKey, PropertyTableMut, PropertyValue};
 
+use super::layout::{DenseLayout, OrderError};
 use super::{
-    AtomSiteId, ChainId, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinition,
-    MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, ResidueClass, ResidueId, Topology,
-    TopologyAtomIndex, TopologyBondIndex,
+    AtomSiteId, ChainId, Hierarchy, InstanceAtomId, InstanceBondId, MoleculeClass,
+    MoleculeDefinition, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, ResidueClass,
+    ResidueId, Topology, TopologyAtomIndex, TopologyBondIndex,
 };
 
 /// Linear, validate-then-commit builder for coordinate-free topology.
@@ -20,6 +21,11 @@ use super::{
 /// Use [`Self::add_molecule`] when definition reuse is unimportant. Use
 /// [`Self::add_molecule_definition`] followed by [`Self::add_instance`] when
 /// several occurrences should share one definition.
+///
+/// Each new instance appends its atoms to the dense atom order in local ID
+/// order. [`Self::set_atom_order`] replaces that order with any permutation,
+/// for example a source file's atom-row order; instances need not stay
+/// contiguous. Dense bond order is always instance order, then local bond ID.
 ///
 /// # Example
 ///
@@ -41,6 +47,8 @@ use super::{
 pub struct TopologyBuilder {
     definitions: Vec<MoleculeDefinition>,
     pub(super) instances: Vec<MoleculeInstance>,
+    atoms: DenseLayout<InstanceAtomId>,
+    bonds: DenseLayout<InstanceBondId>,
     hierarchy: Hierarchy,
     properties: Properties,
     molecule_class_overrides: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
@@ -67,6 +75,8 @@ impl TopologyBuilder {
             Err(topology) => Self {
                 definitions: topology.definitions.clone(),
                 instances: topology.instances.clone(),
+                atoms: topology.atoms.clone(),
+                bonds: topology.bonds.clone(),
                 hierarchy: topology.hierarchy.clone(),
                 properties: topology.properties.clone(),
                 molecule_class_overrides: topology.molecule_class_overrides.clone(),
@@ -94,24 +104,10 @@ impl TopologyBuilder {
         self.instances.len()
     }
     pub fn atom_count(&self) -> usize {
-        self.instances
-            .iter()
-            .map(|i| {
-                self.definitions[i.definition.index()]
-                    .molecule()
-                    .atom_count()
-            })
-            .sum()
+        self.atoms.len()
     }
     pub fn bond_count(&self) -> usize {
-        self.instances
-            .iter()
-            .map(|i| {
-                self.definitions[i.definition.index()]
-                    .molecule()
-                    .bond_count()
-            })
-            .sum()
+        self.bonds.len()
     }
     pub fn definitions(
         &self,
@@ -123,21 +119,73 @@ impl TopologyBuilder {
     ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &MoleculeInstance)> {
         self.instances.iter().map(|i| (i.id(), i))
     }
-    pub fn atom_ids(&self) -> impl Iterator<Item = InstanceAtomId> + '_ {
-        self.instances.iter().flat_map(|i| {
-            self.definitions[i.definition.index()]
-                .molecule()
-                .atom_ids()
-                .map(|a| i.qualify_atom(a))
-        })
+    /// Staged qualified atom IDs in current dense order.
+    pub fn atom_ids(&self) -> &[InstanceAtomId] {
+        self.atoms.order()
     }
-    pub fn bond_ids(&self) -> impl Iterator<Item = super::InstanceBondId> + '_ {
-        self.instances.iter().flat_map(|i| {
-            self.definitions[i.definition.index()]
-                .molecule()
-                .bond_ids()
-                .map(|b| i.qualify_bond(b))
-        })
+    /// Staged qualified bond IDs in dense order: instance order, then local ID.
+    pub fn bond_ids(&self) -> &[InstanceBondId] {
+        self.bonds.order()
+    }
+    pub(crate) fn atom_index(&self, atom: InstanceAtomId) -> Option<usize> {
+        self.atoms.index(atom)
+    }
+    pub(crate) fn bond_index(&self, bond: InstanceBondId) -> Option<usize> {
+        self.bonds.index(bond)
+    }
+
+    /// Replaces the dense atom order with a permutation of every staged atom.
+    ///
+    /// Staged atom property rows move with their atoms. Instances added later
+    /// append their atoms after this order. A rejected order leaves the builder
+    /// unchanged.
+    ///
+    /// ```
+    /// use kekule::{smiles, topology::{InstanceAtomId, TopologyBuilder}};
+    ///
+    /// let mut builder = TopologyBuilder::new();
+    /// let water = builder.add_molecule(&smiles::to_molecules("O")?.remove(0))?;
+    /// let methanol = builder.add_molecule(&smiles::to_molecules("CO")?.remove(0))?;
+    /// let [carbon, oxygen] = [0, 1].map(|raw| {
+    ///     InstanceAtomId::new(methanol, kekule::core::AtomId::new(raw))
+    /// });
+    /// let water = InstanceAtomId::new(water, kekule::core::AtomId::new(0));
+    /// // Interleave the instances, as a source file's atom rows may.
+    /// builder.set_atom_order([carbon, water, oxygen])?;
+    /// let topology = builder.build()?;
+    /// assert_eq!(topology.atom_ids(), &[carbon, water, oxygen]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn set_atom_order(
+        &mut self,
+        order: impl IntoIterator<Item = InstanceAtomId>,
+    ) -> Result<(), TopologyBuildError> {
+        self.reorder_atoms(order).map(|_| ())
+    }
+
+    /// Applies [`Self::set_atom_order`] and returns each new dense index's
+    /// former dense index, for callers that permute coupled dense arrays.
+    pub(crate) fn reorder_atoms(
+        &mut self,
+        order: impl IntoIterator<Item = InstanceAtomId>,
+    ) -> Result<Vec<usize>, TopologyBuildError> {
+        let mut atoms = self.atoms.clone();
+        let previous = atoms.reorder(order).map_err(|error| match error {
+            OrderError::Length { expected, actual } => {
+                TopologyBuildError::AtomOrderLengthMismatch { expected, actual }
+            }
+            OrderError::Unknown(atom) => TopologyBuildError::InvalidAtomOrderEntry(atom),
+            OrderError::Duplicate(atom) => TopologyBuildError::DuplicateAtomOrderEntry(atom),
+        })?;
+        self.sync_property_dimensions();
+        let rows = self
+            .properties
+            .atoms()
+            .select_indices(&previous)
+            .map_err(|error| TopologyBuildError::Property(Box::new(error)))?;
+        self.atoms = atoms;
+        *self.properties.atoms_mut() = rows;
+        Ok(previous)
     }
     /// Inspects stored annotations; hierarchy-domain dimensions synchronize at
     /// mutable table access or publication after raw hierarchy staging.
@@ -159,11 +207,12 @@ impl TopologyBuilder {
         let Topology {
             definitions,
             instances,
+            atoms,
+            bonds,
             hierarchy,
             properties,
             molecule_class_overrides,
             residue_class_overrides,
-            ..
         } = topology;
         let preserved_molecule_classes = definitions.iter().map(|d| (d.id(), d.class())).collect();
         let preserved_residue_classes = hierarchy
@@ -175,6 +224,8 @@ impl TopologyBuilder {
         Self {
             definitions,
             instances,
+            atoms,
+            bonds,
             hierarchy,
             properties,
             molecule_class_overrides,
@@ -358,6 +409,8 @@ impl TopologyBuilder {
         self.commit_definition(molecule)
     }
 
+    /// Adds one occurrence of a staged definition, appending its atoms to the
+    /// dense atom order in local ID order.
     pub fn add_instance(
         &mut self,
         definition: MoleculeDefinitionId,
@@ -368,6 +421,7 @@ impl TopologyBuilder {
             self.instances.len(),
             TopologyIdKind::MoleculeInstance,
         )?;
+        self.extend_layouts(id, definition)?;
         self.instances.push(MoleculeInstance { id, definition });
         if self.extending_topology {
             self.properties.clear_owner();
@@ -395,6 +449,7 @@ impl TopologyBuilder {
                 ));
             }
         }
+        debug_assert_eq!(self.atoms.len(), self.staged_atom_count());
         let mut referenced_definitions = vec![false; self.definitions.len()];
         for instance in &self.instances {
             referenced_definitions[instance.definition.index()] = true;
@@ -407,61 +462,9 @@ impl TopologyBuilder {
                 self.definitions[index].id,
             ));
         }
-        let atom_count = self.instances.iter().try_fold(0usize, |count, instance| {
-            count
-                .checked_add(
-                    self.definitions[instance.definition.index()]
-                        .molecule()
-                        .atom_count(),
-                )
-                .ok_or(TopologyBuildError::IdentifierCapacityExceeded(
-                    TopologyIdKind::Atom,
-                ))
-        })?;
-        checked_future_len(0, atom_count, TopologyIdKind::Atom)?;
-        let bond_count = self.instances.iter().try_fold(0usize, |count, instance| {
-            count
-                .checked_add(
-                    self.definitions[instance.definition.index()]
-                        .molecule()
-                        .bond_count(),
-                )
-                .ok_or(TopologyBuildError::IdentifierCapacityExceeded(
-                    TopologyIdKind::Bond,
-                ))
-        })?;
-        checked_future_len(0, bond_count, TopologyIdKind::Bond)?;
-
-        let mut instance_atoms = Vec::new();
-        let mut instance_bonds = Vec::new();
-        let mut atom_indices = BTreeMap::new();
-        let mut bond_indices = BTreeMap::new();
-        instance_atoms
-            .try_reserve_exact(atom_count)
-            .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(TopologyIdKind::Atom))?;
-        instance_bonds
-            .try_reserve_exact(bond_count)
-            .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(TopologyIdKind::Bond))?;
-
-        for instance in &self.instances {
-            let molecule = self.definitions[instance.definition.index()].molecule();
-            for atom in molecule.atom_ids() {
-                let qualified = instance.qualify_atom(atom);
-                let index =
-                    checked_id::<TopologyAtomIndex>(instance_atoms.len(), TopologyIdKind::Atom)?;
-                atom_indices.insert(qualified, index);
-                instance_atoms.push(qualified);
-            }
-            for bond in molecule.bond_ids() {
-                let qualified = instance.qualify_bond(bond);
-                let index =
-                    checked_id::<TopologyBondIndex>(instance_bonds.len(), TopologyIdKind::Bond)?;
-                bond_indices.insert(qualified, index);
-                instance_bonds.push(qualified);
-            }
-        }
-
-        validate_hierarchy(&self.hierarchy, &atom_indices)
+        let atom_count = self.atoms.len();
+        let bond_count = self.bonds.len();
+        validate_hierarchy(&self.hierarchy, &self.atoms)
             .map_err(TopologyBuildError::InvalidHierarchy)?;
 
         self.invalidate_changed_hierarchy_classes();
@@ -506,10 +509,8 @@ impl TopologyBuilder {
         Ok(Topology {
             definitions: self.definitions,
             instances: self.instances,
-            instance_atoms,
-            instance_bonds,
-            atom_indices,
-            bond_indices,
+            atoms: self.atoms,
+            bonds: self.bonds,
             hierarchy: self.hierarchy,
             properties: self.properties,
             molecule_class_overrides: self.molecule_class_overrides,
@@ -517,25 +518,55 @@ impl TopologyBuilder {
         })
     }
 
-    fn sync_property_dimensions(&mut self) {
-        let atom_count = self
-            .instances
+    fn staged_atom_count(&self) -> usize {
+        self.instances
             .iter()
             .map(|instance| {
                 self.definitions[instance.definition.index()]
                     .molecule()
                     .atom_count()
             })
-            .sum();
-        let bond_count = self
-            .instances
-            .iter()
-            .map(|instance| {
-                self.definitions[instance.definition.index()]
-                    .molecule()
-                    .bond_count()
-            })
-            .sum();
+            .sum()
+    }
+
+    // Instances are appended in ID order; both layouts grow by one instance.
+    fn extend_layouts(
+        &mut self,
+        instance: MoleculeInstanceId,
+        definition: MoleculeDefinitionId,
+    ) -> Result<(), TopologyBuildError> {
+        let molecule = self.definitions[definition.index()].molecule();
+        let (atoms, bonds) = (molecule.atom_count(), molecule.bond_count());
+        if !self.atoms.can_extend(atoms) {
+            return Err(TopologyBuildError::IdentifierCapacityExceeded(
+                TopologyIdKind::Atom,
+            ));
+        }
+        if !self.bonds.can_extend(bonds) {
+            return Err(TopologyBuildError::IdentifierCapacityExceeded(
+                TopologyIdKind::Bond,
+            ));
+        }
+        let atom_slots = molecule.graph().atom_slot_count();
+        let bond_slots = molecule.graph().bond_slot_count();
+        self.atoms.push_instance(
+            atom_slots,
+            molecule
+                .atom_ids()
+                .map(|atom| InstanceAtomId::new(instance, atom)),
+        );
+        self.bonds.push_instance(
+            bond_slots,
+            molecule
+                .bond_ids()
+                .map(|bond| InstanceBondId::new(instance, bond)),
+        );
+        Ok(())
+    }
+
+    fn sync_property_dimensions(&mut self) {
+        let atom_count = self.atoms.len();
+        let bond_count = self.bonds.len();
         self.properties.resize_domains(
             self.instances.len(),
             atom_count,
@@ -640,6 +671,10 @@ impl TopologyBuilder {
             molecule,
             class: MoleculeClass::SmallMolecule,
         });
+        if let Err(error) = self.extend_layouts(instance, definition) {
+            self.definitions.pop();
+            return Err(error);
+        }
         self.instances.push(MoleculeInstance {
             id: instance,
             definition,
@@ -830,7 +865,7 @@ impl std::error::Error for TopologyHierarchyError {}
 
 fn validate_hierarchy(
     hierarchy: &Hierarchy,
-    atom_indices: &BTreeMap<InstanceAtomId, TopologyAtomIndex>,
+    atoms: &DenseLayout<InstanceAtomId>,
 ) -> Result<(), TopologyHierarchyError> {
     for (slot, (chain_id, chain)) in hierarchy.chains().enumerate() {
         if chain_id.index() != slot {
@@ -927,7 +962,7 @@ fn validate_hierarchy(
                 site: site_id,
             });
         }
-        if !atom_indices.contains_key(&site.atom()) {
+        if atoms.index(site.atom()).is_none() {
             return Err(TopologyHierarchyError::InvalidAtomSiteAtom {
                 site: site_id,
                 atom: site.atom(),
@@ -995,6 +1030,15 @@ pub enum TopologyBuildError {
     InvalidHierarchy(TopologyHierarchyError),
     /// A topology collection exceeded the fixed-width identifier space for `kind`.
     IdentifierCapacityExceeded(TopologyIdKind),
+    /// A replacement dense atom order does not list every staged atom once.
+    AtomOrderLengthMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    /// A replacement dense atom order names an atom that is not staged.
+    InvalidAtomOrderEntry(InstanceAtomId),
+    /// A replacement dense atom order lists one atom more than once.
+    DuplicateAtomOrderEntry(InstanceAtomId),
 }
 
 impl fmt::Display for TopologyBuildError {
@@ -1019,6 +1063,19 @@ impl fmt::Display for TopologyBuildError {
             }
             Self::IdentifierCapacityExceeded(kind) => {
                 write!(formatter, "{kind} identifier capacity exceeded")
+            }
+            Self::AtomOrderLengthMismatch { expected, actual } => write!(
+                formatter,
+                "dense atom order must list {expected} staged atoms, but lists {actual}"
+            ),
+            Self::InvalidAtomOrderEntry(atom) => {
+                write!(formatter, "dense atom order names unknown atom {atom}")
+            }
+            Self::DuplicateAtomOrderEntry(atom) => {
+                write!(
+                    formatter,
+                    "dense atom order lists atom {atom} more than once"
+                )
             }
         }
     }

@@ -584,8 +584,10 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
     let target = result.bond_ids()[0];
     assert_eq!(result.topology().instance_count(), 2);
     let actual = result.bond(target).unwrap();
-    let a = result.atom_ids()[0];
-    let b = result.atom_ids()[1];
+    // Survivors keep source dense order: C0, the now-isolated C1, then O.
+    let [a, isolated, b] = [0, 1, 2].map(|index| result.atom_ids()[index]);
+    assert_eq!(a.molecule(), b.molecule());
+    assert_ne!(a.molecule(), isolated.molecule());
     assert_eq!(actual.endpoints(), (a.atom(), b.atom()));
     assert_eq!(
         result.bond_property(target, &key("dynamic")).unwrap(),
@@ -610,14 +612,14 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
     );
     assert_eq!(result.bond_ids().len(), 1);
     assert_eq!(actual.order, BondOrder::Single);
-    // Rewiring CC.O to C-O + C publishes the connected pair before the isolated C.
-    assert_eq!(result.positions(), &positions(&[0.0, 2.0, 1.0]));
+    // Rewiring CC.O to C-O + C repartitions instances without reordering atoms.
+    assert_eq!(result.positions(), &positions(&[0.0, 1.0, 2.0]));
     assert_eq!(
         result
             .atoms()
             .map(|(_, a)| a.element.symbol())
             .collect::<Vec<_>>(),
-        ["C", "O", "C"]
+        ["C", "C", "O"]
     );
 }
 
@@ -865,7 +867,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
         builder.atom_property(id, &key("tag")).unwrap(),
         Some(PropertyValue::Int(7))
     );
-    assert_eq!(builder.atom_ids().collect::<Vec<_>>(), vec![id]);
+    assert_eq!(builder.atom_ids(), &[id]);
     builder.validate().unwrap();
     let source = builder.build().unwrap();
     let mut editor = source.into_editor();

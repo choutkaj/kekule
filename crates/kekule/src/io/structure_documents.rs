@@ -434,6 +434,9 @@ pub enum MolfileInterpretationWarning {
 }
 
 /// One final canonical model and source reports in molecule-instance order.
+///
+/// Each connected component is one instance. Dense atom order is the source
+/// atom-block order, so components may interleave in the dense order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MolfileInterpretation {
     model: Model,
@@ -484,6 +487,7 @@ fn publish_molfile_components(
 ) -> Result<MolfileInterpretation, ModelBuildError> {
     let mut builder = ModelBuilder::new();
     let mut reports = Vec::with_capacity(components.len());
+    let mut lines = Vec::new();
     let chain = builder
         .topology_builder_mut()
         .hierarchy_mut()
@@ -506,8 +510,17 @@ fn publish_molfile_components(
                 crate::topology::AtomSiteMetadata::default(),
             )?;
         }
+        lines.extend(report.atom_mappings.iter().map(|mapping| {
+            (
+                mapping.source_line,
+                crate::topology::InstanceAtomId::new(instance, mapping.atom),
+            )
+        }));
         reports.push(report);
     }
+    // Dense atom order follows the atom block, even when components interleave.
+    lines.sort_unstable_by_key(|&(line, _)| line);
+    builder.set_atom_order(lines.into_iter().map(|(_, atom)| atom))?;
     Ok(MolfileInterpretation {
         model: builder.build()?,
         reports,

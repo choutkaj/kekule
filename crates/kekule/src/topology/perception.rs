@@ -78,10 +78,8 @@ impl Topology {
         Ok(Self {
             definitions,
             instances: self.instances.clone(),
-            instance_atoms: self.instance_atoms.clone(),
-            instance_bonds: self.instance_bonds.clone(),
-            atom_indices: self.atom_indices.clone(),
-            bond_indices: self.bond_indices.clone(),
+            atoms: self.atoms.clone(),
+            bonds: self.bonds.clone(),
             hierarchy: self.hierarchy.clone(),
             properties: self.properties.clone(),
             molecule_class_overrides: self.molecule_class_overrides.clone(),

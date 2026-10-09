@@ -301,10 +301,8 @@ fn into_builder_round_trip_preserves_complete_topology_state() {
     let topology = annotated_topology();
     let definitions = topology.definitions.clone();
     let instances = topology.instances.clone();
-    let atoms = topology.instance_atoms.clone();
-    let bonds = topology.instance_bonds.clone();
-    let atom_indices = topology.atom_indices.clone();
-    let bond_indices = topology.bond_indices.clone();
+    let atoms = topology.atoms.clone();
+    let bonds = topology.bonds.clone();
     let hierarchy = topology.hierarchy.clone();
     let properties = topology.properties.clone();
 
@@ -312,10 +310,8 @@ fn into_builder_round_trip_preserves_complete_topology_state() {
 
     assert_eq!(rebuilt.definitions, definitions);
     assert_eq!(rebuilt.instances, instances);
-    assert_eq!(rebuilt.instance_atoms, atoms);
-    assert_eq!(rebuilt.instance_bonds, bonds);
-    assert_eq!(rebuilt.atom_indices, atom_indices);
-    assert_eq!(rebuilt.bond_indices, bond_indices);
+    assert_eq!(rebuilt.atoms, atoms);
+    assert_eq!(rebuilt.bonds, bonds);
     assert_eq!(rebuilt.hierarchy, hierarchy);
     assert_eq!(rebuilt.properties, properties);
 }
@@ -325,8 +321,8 @@ fn into_builder_appends_after_preserved_layout_hierarchy_and_properties() {
     let topology = annotated_topology();
     let old_definitions = topology.definitions.clone();
     let old_instances = topology.instances.clone();
-    let old_atoms = topology.instance_atoms.clone();
-    let old_bonds = topology.instance_bonds.clone();
+    let old_atoms = topology.atom_ids().to_vec();
+    let old_bonds = topology.bond_ids().to_vec();
     let old_hierarchy = topology.hierarchy.clone();
     let old_properties = topology.properties.clone();
     let value_key = PropertyKey::new("tag").unwrap();
@@ -423,26 +419,23 @@ fn topology_directly_owns_its_layout_collections() {
     let (topology, ..) = topology_with_reused_definition();
     assert_eq!(topology.definitions.len(), 1);
     assert_eq!(topology.instances.len(), 2);
-    assert_eq!(topology.instance_atoms.len(), 4);
-    assert_eq!(topology.instance_bonds.len(), 2);
-    assert_eq!(topology.atom_indices.len(), 4);
-    assert_eq!(topology.bond_indices.len(), 2);
-    for &atom in &topology.instance_atoms {
-        assert_eq!(
-            topology.instance_atoms[topology.atom_indices[&atom].index()],
-            atom
-        );
+    assert_eq!(topology.atoms.len(), 4);
+    assert_eq!(topology.bonds.len(), 2);
+    for (dense, &atom) in topology.atoms.order().iter().enumerate() {
+        assert_eq!(topology.atoms.index(atom), Some(dense));
     }
-    for &bond in &topology.instance_bonds {
-        assert_eq!(
-            topology.instance_bonds[topology.bond_indices[&bond].index()],
-            bond
-        );
+    for (dense, &bond) in topology.bonds.order().iter().enumerate() {
+        assert_eq!(topology.bonds.index(bond), Some(dense));
     }
+    // Lookups reject foreign instances and local IDs beyond a definition.
+    let foreign = InstanceAtomId::new(MoleculeInstanceId::new(2), AtomId::new(0));
+    let beyond = InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(2));
+    assert_eq!(topology.atoms.index(foreign), None);
+    assert_eq!(topology.atoms.index(beyond), None);
 
     let debug = format!("{topology:?}");
-    assert!(debug.contains("instance_atoms"));
-    assert!(debug.contains("instance_bonds"));
+    assert!(debug.contains("atoms"));
+    assert!(debug.contains("bonds"));
 }
 
 #[test]

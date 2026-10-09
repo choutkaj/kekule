@@ -85,34 +85,13 @@ pub(super) fn prepare_model(
         }
     }
 
-    let hierarchy_order = model
-        .topology()
-        .hierarchy()
-        .chains()
-        .flat_map(|(_, chain)| chain.residues().iter().copied())
-        .map(|residue| {
-            model
-                .topology()
-                .hierarchy()
-                .residue(residue)
-                .expect("published hierarchy chain references a live residue")
-        })
-        .flat_map(|residue| residue.atom_sites().iter().copied())
-        .map(|site| {
-            model
-                .topology()
-                .hierarchy()
-                .atom_site(site)
-                .expect("published hierarchy residue references a live atom site")
-        })
-        .enumerate()
-        .map(|(index, site)| (site.atom(), index))
-        .collect::<BTreeMap<_, _>>();
+    // Rows follow dense atom order, so the interpreted block keeps this
+    // topology's order and coordinate files written in it stay aligned.
     atoms.sort_by_key(|row| {
-        hierarchy_order
-            .get(&row.atom)
-            .copied()
-            .unwrap_or(usize::MAX)
+        model
+            .topology()
+            .atom_index(row.atom)
+            .expect("prepared atom-site row references a topology atom")
     });
 
     let atom_indexes = atoms

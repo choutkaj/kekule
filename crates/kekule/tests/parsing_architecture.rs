@@ -219,7 +219,7 @@ fn molfile_document_model_retains_published_component_geometry() {
 }
 
 #[test]
-fn molfile_model_remaps_interleaved_source_atoms_to_component_positions() {
+fn molfile_model_keeps_interleaved_source_atom_order() {
     let document = molfile::parse_str(INTERLEAVED_COMPONENT_MOLFILE).expect("Molfile parses");
     let molecules = document.to_molecules().expect("Molfile interprets");
     let model = document.to_model().expect("Molfile model builds");
@@ -239,12 +239,29 @@ fn molfile_model_remaps_interleaved_source_atoms_to_component_positions() {
     );
     assert_eq!(element(&molecules[1]).symbol(), "Na");
     assert_eq!(element(&molecules[2]).symbol(), "Cl");
+    // Dense atom order is the atom-block order even though components interleave,
+    // so a coordinate file in this order addresses the same atoms.
+    assert_eq!(
+        model
+            .topology()
+            .atoms()
+            .map(|(_, atom)| atom.element.symbol())
+            .collect::<Vec<_>>(),
+        ["C", "Na", "O", "Cl"]
+    );
+    let instances = model
+        .topology()
+        .atom_ids()
+        .iter()
+        .map(|atom| atom.molecule().index())
+        .collect::<Vec<_>>();
+    assert_eq!(instances, [0, 1, 0, 2]);
     assert_points_close(
         model.positions().values().value(),
         &[
             Point3::new(1.0, 1.1, 1.2),
-            Point3::new(3.0, 3.1, 3.2),
             Point3::new(2.0, 2.1, 2.2),
+            Point3::new(3.0, 3.1, 3.2),
             Point3::new(4.0, 4.1, 4.2),
         ],
     );
