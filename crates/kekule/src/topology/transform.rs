@@ -366,12 +366,17 @@ impl Topology {
     /// correspondence to translate source identities into target identities.
     /// Instances selecting the same atoms from a shared definition reuse the
     /// reconstructed definitions. Complete molecules and residues retain their
-    /// classifications; changed entities are reclassified.
-    pub fn subset(&self, selection: &AtomSelection) -> Result<TopologySubset, TopologySubsetError> {
+    /// classifications; changed entities are reclassified. The selection may
+    /// come from any snapshot sharing this layout; the subset and its
+    /// correspondence always use this receiver snapshot.
+    pub fn subset(
+        self: &Arc<Self>,
+        selection: &AtomSelection,
+    ) -> Result<TopologySubset, TopologySubsetError> {
         if !self.shares_layout(selection.topology()) {
             return Err(SelectionError::TopologyMismatch.into());
         }
-        let source = selection.shared_topology();
+        let source = Arc::clone(self);
         if selection.indices().is_empty() {
             return Err(TopologySubsetError::EmptySelection);
         }

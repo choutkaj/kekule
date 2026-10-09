@@ -386,7 +386,13 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     let ion = AtomSelection::from_atoms(&perceived, [perceived.atom_ids()[6]]).unwrap();
     assert_eq!(ring.union(&ion).unwrap(), AtomSelection::all(&perceived));
     assert_eq!(AtomSelection::all(&source), AtomSelection::all(&perceived));
-    assert_eq!(perceived.subset(&ring).unwrap().topology().atom_count(), 6);
+    let subset = perceived.subset(&ring).unwrap();
+    assert_eq!(subset.topology().atom_count(), 6);
+    // The correspondence keeps the receiver snapshot, not the selection's.
+    assert!(std::ptr::eq(
+        subset.correspondence().source_topology(),
+        perceived.as_ref()
+    ));
     assert_eq!(
         ring.union(&AtomSelection::all(&rebuilt)),
         Err(SelectionError::TopologyMismatch)
