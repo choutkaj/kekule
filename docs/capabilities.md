@@ -29,13 +29,9 @@ must account for input selection and documented scientific conventions without
 discarding asserted fields or relabeling errors as agreements.
 
 For maintenance validation, see [CI](../.github/workflows/ci.yml) and
-[fuzzing](../FUZZING.md). External scientific comparisons remain optional; their
-execution and provenance rules are in the [benchmark guide](../benchmarks/GUIDE.md).
-The manually dispatched [reference-adapter tests](../.github/workflows/reference-tests.yml)
-exercise pinned RDKit and Biopython integrations separately from ordinary CI.
+[fuzzing](../FUZZING.md). External scientific comparisons are optional and never
+release gates.
 
-The OpenFF [validation report](../benchmarks/openff/VALIDATION.md) presents parity
-plots, numerical differences, CPU timings and reproduction commands for the
-110-molecule panel and two-model NAGL checks. Protein-sized graphs and independent
-OpenMM energies are covered; raw failures, identifier limits and the historical
-prerequisite audit remain available. The crate contract defines current support.
+The retired OpenFF [validation report](https://github.com/choutkaj/kekule/blob/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks/openff/VALIDATION.md) recorded
+parity plots, numerical differences and CPU timings for the 110-molecule panel and
+two-model NAGL checks at its revision. The crate contract defines current support.

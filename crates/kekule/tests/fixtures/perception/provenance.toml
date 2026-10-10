@@ -2,7 +2,7 @@ schema_version = 1
 
 [[fixture]]
 path = "aromaticity.tsv"
-source = "PubChem, Enamine and PL-REX records from the benchmark corpora, plus the fused example from an RDKit source comment, that exposed aromaticity or canonical round-trip defects during development"
+source = "PubChem, Enamine and PL-REX records from the retired benchmark corpora (https://github.com/choutkaj/kekule/tree/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks/corpora), plus the fused example from an RDKit source comment, that exposed aromaticity or canonical round-trip defects during development"
 retrieved = "2026-10-09"
 preprocessing = "Consolidated from one-off unit regressions; spectator components of salts and mixtures were dropped because components are interpreted independently"
 reference = "Aromatic atoms and non-aromatic bonds between aromatic atoms verified against RDKit 2026.09.1 default aromaticity (explicit hydrogens retained so atom indices follow source order)"

@@ -1,9 +1,0 @@
-{
-  "schema": 1,
-  "reference": "RDKit 2026.03.3",
-  "conjugation": "all indexed bond flags after default sanitization; aromatic bonds included",
-  "groups": "complete conjugated atom and bond partitions sorted by indexed membership",
-  "enumeration": "all 32 flag masks, maxStructs=1000; complete indexed formal charges and localized bond orders; contributors sorted without deduplication",
-  "identity": "source atom correspondence and endpoint-indexed bonds; record-level endpoint list with a complete order vector per contributor; no canonical-SMILES reduction",
-  "failure": "errors and exhausted work are not agreement; reaching maxStructs does not claim an exhaustive contributor set"
-}

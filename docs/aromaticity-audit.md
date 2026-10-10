@@ -1,5 +1,8 @@
 # Aromaticity audit — 2026-09-11
 
+Benchmark paths and commands below refer to the benchmark layer retired after
+[ead90ca9](https://github.com/choutkaj/kekule/tree/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks); they are kept as recorded.
+
 The parity target is **RDKit 2026.03.3**, default/RDKIT aromaticity, matching the
 version pinned by `benchmarks/reference/rdkit/environment.yml`. This audit covers
 the complete localized-graph aromaticity path, its valence and ring inputs,

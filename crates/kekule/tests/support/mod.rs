@@ -17,11 +17,10 @@ pub fn fixture(relative: &str) -> PathBuf {
         .join(relative)
 }
 
-/// Absolute path of a file under the repository's `benchmarks/corpora`.
+/// Absolute path of a file under `tests/fixtures/corpus`, the externally
+/// supplied invariant-suite inputs.
 pub fn corpus(relative: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../benchmarks/corpora")
-        .join(relative)
+    fixture("corpus").join(relative)
 }
 
 /// Interprets one connected molecule from SMILES or from the first record of

@@ -1,0 +1,39 @@
+schema_version = 1
+
+# Moved verbatim from benchmarks/corpora when the benchmark layer was rebuilt.
+# Each sources.lock.json is the original lock with per-file URL and SHA-256;
+# smoke's 1CRN.cif entry now lives at ../mmcif/1CRN.cif.
+
+[[fixture]]
+path = "smoke/data/pubchem"
+source = "PubChem PUG REST 3D SDF records for CIDs 241, 702, 931, 2244, 2519 and 8029"
+lock = "smoke/sources.lock.json"
+retrieved = "by 2026-07-25"
+preprocessing = "None; original downloaded bytes with CRLF line endings"
+purpose = "Invariant-suite inputs; not a scientific benchmark"
+
+[[fixture]]
+path = "smoke/data/pubchem_smiles"
+source = "PubChem PUG REST isomeric SMILES for CIDs 241, 702, 931, 2244, 2519, 5950, 8029 and 5462921"
+lock = "smoke/sources.lock.json"
+retrieved = "by 2026-07-25"
+preprocessing = "None; original downloaded bytes"
+purpose = "Invariant-suite inputs and SMILES/resonance fuzz seeds; not a scientific benchmark"
+
+[[fixture]]
+path = "smoke/data/rdkit_atropisomers"
+source = "RDKit Code/GraphMol/FileParsers/test_data/atropisomers (single MOL blocks stored as .mol)"
+lock = "smoke/sources.lock.json"
+license = "BSD-3-Clause; rdkit-structures/upstream/license.txt"
+retrieved = "by 2026-07-25"
+preprocessing = "None; original downloaded bytes from the unpinned RDKit master branch. Nine files equal the same-named rdkit-structures inputs apart from line endings; the two macrocycle files have no release counterpart"
+purpose = "Atropisomer unit regressions and invariant-suite inputs; not a scientific benchmark"
+
+[[fixture]]
+path = "rdkit-structures"
+source = "RDKit Release_2026_03_3 (commit e74e7b0a5a2fc4e7f77c04ec26a61d4b8edbf22f) FileParsers test data; see rdkit-structures/PROVENANCE.md"
+lock = "rdkit-structures/sources.lock.json"
+license = "BSD-3-Clause; rdkit-structures/upstream/license.txt"
+retrieved = "by 2026-09-20"
+preprocessing = "None; original bytes verified against their Git blob hashes"
+purpose = "Axial stereo, drawing, coordinate and V3000 invariant-suite inputs, including expected rejections; not a scientific benchmark"

@@ -1,19 +1,11 @@
 # Provenance-pinned external fixtures must retain byte-exact source checksums.
-benchmarks/corpora/*/data/** binary
-benchmarks/smarts-fixtures/** -text
-benchmarks/openff/fixtures/** -text
-# Preserve the archived source lock's original CRLF bytes.
-benchmarks/openff/fixtures/sources.lock.json whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
-# The validation figure summary pins this timing archive's exact checksum.
-benchmarks/openff/results/timings.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
-benchmarks/openff/data/*.json -text
-# Matplotlib emits insignificant whitespace inside SVG path attributes.
-benchmarks/openff/figures/*.svg -whitespace
 crates/kekule-openff/data/** -text
-benchmarks/corpora/rdkit-queries/upstream/** binary
-# Retain the pinned RDKit source-lock bytes across platforms.
-benchmarks/corpora/rdkit-queries/sources.lock.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
-benchmarks/corpora/rdkit-structures/upstream/** binary
+crates/kekule/tests/fixtures/corpus/*/data/** binary
+crates/kekule/tests/fixtures/corpus/rdkit-structures/upstream/** binary
+# Seed provenance locks retain their original bytes, including CRLF.
+fuzz/provenance/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+tools/openff/upstream/** -text
+tools/openff/models.lock.json -text
 crates/kekule-traj/tests/fixtures/*.xyz binary
 crates/kekule/tests/fixtures/cip/*.sdf binary
 crates/kekule/tests/fixtures/perception/*.sdf binary

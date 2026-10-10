@@ -1,7 +1,7 @@
 # These paths affect trusted scientific inputs or repository policy.
 # Enforcement requires branch protection or a repository ruleset.
 /.github/ @choutkaj
-/benchmarks/reference/ @choutkaj
-/benchmarks/corpora/**/sources.lock.json @choutkaj
-/benchmarks/corpora/**/golden/ @choutkaj
-/benchmarks/corpora/**/references.json @choutkaj
+/crates/*/tests/fixtures/**/sources.lock.json @choutkaj
+/crates/*/tests/fixtures/**/provenance.toml @choutkaj
+/fuzz/provenance/ @choutkaj
+/tools/openff/ @choutkaj

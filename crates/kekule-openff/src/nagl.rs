@@ -72,7 +72,7 @@ pub struct ChargeAssignment {
 }
 /// Native CPU inference for a supported NAGL model configuration.
 ///
-/// Load the data-only bundle produced by `benchmarks/openff/scripts/export_model.py`.
+/// Load the data-only bundle produced by `tools/openff/export_model.py`.
 /// Chemistry preparation, features, network operations and tensor dimensions are
 /// validated before use. No Python, PyTorch or network is used by this loader.
 #[derive(Debug)]

@@ -198,7 +198,7 @@ fn model_declarations_survive_offxml_loading() {
 }
 
 #[test]
-#[ignore = "requires externally exported models; set KEKULE_OPENFF_MODELS (see VALIDATION.md)"]
+#[ignore = "requires externally exported models; set KEKULE_OPENFF_MODELS (see tools/openff/README.md)"]
 fn both_models_reproduce_complete_openff_parameterization() {
     let report = reference();
     let mut counts = [0usize; 3];
@@ -323,7 +323,7 @@ impl Drop for Scratch {
 }
 
 #[test]
-#[ignore = "requires externally exported models; set KEKULE_OPENFF_MODELS (see VALIDATION.md)"]
+#[ignore = "requires externally exported models; set KEKULE_OPENFF_MODELS (see tools/openff/README.md)"]
 fn bundle_validation_and_model_binding_fail_before_parameterization() {
     let directory = bundles().join("openff-gnn-am1bcc-0.1.0-rc.2");
     let scratch = Scratch::new();

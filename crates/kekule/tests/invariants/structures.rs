@@ -6,7 +6,7 @@ use kekule::mmcif::{
 };
 use kekule::structure::Model;
 
-use crate::support::{corpus, fixture};
+use crate::support::fixture;
 
 fn interpret(text: &str) -> (Model, mmcif::MmcifInterpretationReport) {
     mmcif::interpret(
@@ -24,10 +24,7 @@ fn interpret(text: &str) -> (Model, mmcif::MmcifInterpretationReport) {
 /// DSSP secondary structure are unchanged by writing and re-reading an entry.
 #[test]
 fn mmcif_round_trip_preserves_topology_coordinates_and_secondary_structure() {
-    for path in [
-        corpus("smoke/data/rcsb/1CRN.cif"),
-        fixture("mmcif/1AKE.cif"),
-    ] {
+    for path in [fixture("mmcif/1CRN.cif"), fixture("mmcif/1AKE.cif")] {
         let entry = path.file_name().unwrap().to_string_lossy().into_owned();
         let (original, report) = interpret(&std::fs::read_to_string(&path).unwrap());
         let written = mmcif::write(

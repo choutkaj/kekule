@@ -18,6 +18,6 @@ Valence, ring or aromaticity replacement invalidates conjugation and prepared gr
 
 No contributor enumeration runs during ordinary molecule, topology, model, ensemble or trajectory perception. No runtime RDKit dependency, normalization, SMARTS extension, or file-format representation is introduced. Stereo and rotatable-bond algorithms retain their existing rules.
 
-The external benchmark features are `algo.conjugation.rdkit-like`, `algo.resonance.groups`, and `algo.resonance.enumeration`. The independent reference uses pinned RDKit 2026.03.3. Enumeration observations include all 32 option masks, complete indexed charges and localized orders, and contributor multiplicity. Errors do not count as agreement. External fixture provenance remains governed by the existing corpus locks; focused synthetic examples are unit regressions.
+Earlier external comparisons against pinned RDKit 2026.03.3 covered conjugation, group preparation and contributor enumeration under all 32 option masks, with complete indexed charges, localized orders and contributor multiplicity. Focused synthetic examples are unit regressions.
 
-Exact parity is not yet complete at contributor cutoffs: tied choices can differ from the pinned reference's C++ container and sorting behavior. The benchmark retains these as failures. See the [validation report](../benchmarks/RESONANCE-VALIDATION.md) for measured coverage and remaining differences.
+Exact parity is not yet complete at contributor cutoffs: tied choices can differ from the reference's C++ container and sorting behavior. See the [validation report](https://github.com/choutkaj/kekule/blob/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks/RESONANCE-VALIDATION.md) for coverage and differences measured at its revision.

@@ -26,9 +26,10 @@ assertions. The same checks run in deterministic Rust regressions, including
 deliberately corrupted outputs that must be detected. Larger inputs retain the
 parser/plain-writer path; this is a fuzz search bound, not a public API limit.
 Hosted SMILES campaigns also copy the eight externally supplied PubChem SMILES
-from `benchmarks/corpora/smoke/data/pubchem_smiles/` into the seed directory.
-Their source identities and hashes remain in that corpus's `sources.lock.json`;
-no scientific benchmark fixtures or expected outputs are changed.
+from `crates/kekule/tests/fixtures/corpus/smoke/data/pubchem_smiles/` into the
+seed directory. Their source identities and hashes remain in
+`crates/kekule/tests/fixtures/corpus/smoke/sources.lock.json`; no test fixtures
+or expected outputs are changed.
 
 Longer manual campaigns can omit `-runs` and raise `-max_len`. Seed inputs are
 committed under `fuzz/corpus/<target>/`. Crashing inputs are written under

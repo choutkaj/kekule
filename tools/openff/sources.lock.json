@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "note": "Upstream sources of data shipped in kekule-openff. Paths are relative to the repository root.",
+  "sources": [
+    {
+      "path": "crates/kekule-openff/data/rosemary.offxml",
+      "url": "https://raw.githubusercontent.com/openforcefield/openff-forcefields/e2b6c5c778db03c3c6b4436fb597f2e66db43b95/openforcefields/offxml/openff_no_water-3.0.0-alpha2b.offxml",
+      "revision": "e2b6c5c778db03c3c6b4436fb597f2e66db43b95",
+      "sha256": "13040a7d2dd0e993010e2ec9da8ca2ee21cd8b141ce369b4300d74f2b7a31d57"
+    },
+    {
+      "path": "crates/kekule-openff/data/LICENSE-forcefields",
+      "url": "https://raw.githubusercontent.com/openforcefield/openff-forcefields/e2b6c5c778db03c3c6b4436fb597f2e66db43b95/LICENSE",
+      "revision": "e2b6c5c778db03c3c6b4436fb597f2e66db43b95",
+      "sha256": "8e0281df4b7dd386c0b660f7476a74e486036d6d2f2372779e5561961a36e7b7"
+    },
+    {
+      "path": "crates/kekule-openff/data/LICENSE-nagl",
+      "url": "https://raw.githubusercontent.com/openforcefield/openff-nagl/e8af890b8c30d80f93ba148019813d74c1fdeb8b/LICENSE",
+      "revision": "e8af890b8c30d80f93ba148019813d74c1fdeb8b",
+      "sha256": "e7f67af0a363a17b42589e48078fb1a0312c4cdd8102302e66aab7b35077cecb"
+    },
+    {
+      "path": "crates/kekule-openff/data/LICENSE-models",
+      "url": "https://raw.githubusercontent.com/openforcefield/openff-nagl-models/b984f4c5107808a1d43991cbf189deee87e68d69/LICENSE",
+      "revision": "b984f4c5107808a1d43991cbf189deee87e68d69",
+      "sha256": "589daf0e3740af986ad6ce287b0a3c043ce6da536869a1141f1e067d4532893c"
+    },
+    {
+      "path": "tools/openff/upstream/openff.py",
+      "url": "https://raw.githubusercontent.com/openforcefield/openff-nagl/e8af890b8c30d80f93ba148019813d74c1fdeb8b/openff/nagl/toolkits/openff.py",
+      "revision": "e8af890b8c30d80f93ba148019813d74c1fdeb8b",
+      "sha256": "91a1c766343c42fb11c66604ad7974817da0aed4b4ff844fd011246df3c88bce"
+    }
+  ]
+}

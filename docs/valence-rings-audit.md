@@ -1,5 +1,8 @@
 # Valence and rings audit — 2026-09-11
 
+Benchmark paths and commands below refer to the benchmark layer retired after
+[ead90ca9](https://github.com/choutkaj/kekule/tree/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks); they are kept as recorded.
+
 The reference is **RDKit 2026.03.3**, pinned by the existing benchmark
 environment. The audit covers represented bond valence, hydrogen inference,
 strict and permissive validation, cycle membership, ring selection and

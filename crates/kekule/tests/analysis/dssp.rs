@@ -4,7 +4,7 @@ use kekule::dssp::{
 use kekule::mmcif::{self, MmcifInterpretOptions, MmcifModelSelection};
 use kekule::topology::ResidueId;
 
-const CRAMBIN_MMCIF: &str = include_str!("../../../../benchmarks/corpora/smoke/data/rcsb/1CRN.cif");
+const CRAMBIN_MMCIF: &str = include_str!("../fixtures/mmcif/1CRN.cif");
 
 fn crambin_model() -> kekule::structure::Model {
     let document = mmcif::parse_str(CRAMBIN_MMCIF).expect("checked-in RCSB 1CRN fixture parses");

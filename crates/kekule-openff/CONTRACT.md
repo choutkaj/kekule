@@ -86,7 +86,7 @@ Fractional-bond-order indexed parameters remain unsupported; valid but unused
 
 Six independently generated Toolkit fixtures check every loaded parameter and
 nonbonded setting, including legacy headers, defaults, anonymous rules, and
-omitted optional sections. See [OFFXML validation](../../benchmarks/openff/VALIDATION.md).
+omitted optional sections. See the retired [OFFXML validation](https://github.com/choutkaj/kekule/blob/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks/openff/VALIDATION.md).
 
 ## API and ownership
 
@@ -239,8 +239,8 @@ Export a bundle in the reference environment (output must be new); with no
 `package_ash.py` converts such an export into that crate's data:
 
 ```text
-micromamba run -p target/openff-reference python benchmarks/openff/scripts/export_model.py target/ash-bundle
-python benchmarks/openff/scripts/package_ash.py target/ash-bundle crates/kekule-openff-ash/data
+micromamba run -p target/openff-reference python tools/openff/export_model.py target/ash-bundle
+python tools/openff/package_ash.py target/ash-bundle crates/kekule-openff-ash/data
 cargo run -p kekule-openff --release --example parameterize -- CCO --model target/ash-bundle
 ```
 
@@ -249,7 +249,7 @@ For another trusted checkpoint, supply `--checkpoint PATH` and
 exporter verifies the checkpoint before Python deserialization and records its
 configuration. The Rust loader determines whether that configuration is
 supported. The default Ash resolver may download its model; custom checkpoint
-paths are local. See [model validation and reproduction](../../benchmarks/openff/VALIDATION.md).
+paths are local. See [model export and provenance](../../tools/openff/README.md).
 
 Bundle checksums detect corruption; the declared original checkpoint hash is
 provenance from the exporter, not proof that arbitrary edited bundles reproduce
@@ -272,7 +272,7 @@ each model. It checks complete parameterization, every valence/vdW value and
 multiplicity, all feature columns, direct/assigned charges, model provenance,
 input immutability and rejection of mismatched models or malformed bundles.
 Forced-inference tolerance is `1e-6 e`; final-charge tolerance remains `5e-5 e`.
-Measured maxima and commands are recorded in [VALIDATION.md](../../benchmarks/openff/VALIDATION.md).
+Measured maxima and commands are recorded in the retired [validation report](https://github.com/choutkaj/kekule/blob/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks/openff/VALIDATION.md).
 
 This implements the Rosemary functional forms, not every SMIRNOFF extension or
 NAGL architecture. Unsupported handlers, section versions, parameter attributes,
@@ -327,7 +327,7 @@ in the archived reports. These are identity checks, not exhaustive charge
 remapping or whole-domain validation. Broader molecules, all normalizations and
 large-system performance still warrant independent reference coverage.
 
-The [validation report](../../benchmarks/openff/VALIDATION.md) presents parameter
+The retired [validation report](https://github.com/choutkaj/kekule/blob/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks/openff/VALIDATION.md) presents parameter
 and energy parity figures, numerical differences, and measured CPU timings.
 The panel contains
 100 independently selected PubChem molecules and ten prepared PDB protein chains
