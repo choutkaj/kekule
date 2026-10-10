@@ -208,7 +208,7 @@ class StoredReferencesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "references.jsonl.gz"
             self.write(path, observers.fingerprint("small"))
-            stored = run.StoredReferences(path)
+            stored = run.StoredReferences(path, "small", 1)
             self.assertEqual(stored.get("rdkit:parse|a.smi|0"), {"status": "ok", "facts": []})
             self.assertEqual(stored.get("rdkit:rings|a.smi|0")["error"]["kind"], "no-reference")
             self.assertEqual(stored.prepared, {"single-conformer|pdb/x.cif": "data_x\n"})
@@ -218,7 +218,15 @@ class StoredReferencesTest(unittest.TestCase):
             path = Path(directory) / "references.jsonl.gz"
             self.write(path, {"rdkit": "0" * 64})
             with self.assertRaises(DatasetError):
-                run.StoredReferences(path)
+                run.StoredReferences(path, "small", 1)
+
+    def test_references_for_another_dataset_revision_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "references.jsonl.gz"
+            self.write(path, observers.fingerprint("small"))
+            for dataset, version in (("small", 2), ("bio", 1)):
+                with self.subTest(dataset=dataset, version=version), self.assertRaises(DatasetError):
+                    run.StoredReferences(path, dataset, version)
 
     def test_fingerprints_cover_only_the_observers_a_dataset_uses(self):
         self.assertEqual(sorted(observers.fingerprint("small")), ["rdkit"])
