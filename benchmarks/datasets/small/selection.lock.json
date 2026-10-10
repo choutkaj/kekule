@@ -1,0 +1,117 @@
+{
+  "schema": 1,
+  "dataset": "small",
+  "selected": "2026-10-10",
+  "strata": {
+    "rdkit-structures": {
+      "source": "rdkit",
+      "commit": "e74e7b0a5a2fc4e7f77c04ec26a61d4b8edbf22f",
+      "tree": "63f42cde63ef746abf579508dadc4bb71a2e2238",
+      "files": 50
+    },
+    "rdkit-queries": {
+      "source": "rdkit",
+      "commit": "e74e7b0a5a2fc4e7f77c04ec26a61d4b8edbf22f",
+      "queries": 519
+    },
+    "ccd-uncommon-elements": {
+      "source": "ccd",
+      "pool_size": 1121,
+      "pool_sha256": "05c53884aaf22b5e6a4dee267885268e2b4b0c93ef4467fcfe85365519184306",
+      "without_ideal_coordinates": 0
+    },
+    "ccd-components": {
+      "source": "ccd",
+      "pool_size": 50064,
+      "pool_sha256": "a36aec4fc3228fc0eb13ebae8988edd2eb20dc59c69002a96808f511ce738337",
+      "without_ideal_coordinates": 0
+    },
+    "chembl-clinical": {
+      "source": "chembl",
+      "release": "ChEMBL_37",
+      "query": "molecule_structures__canonical_smiles__isnull=false&max_phase__gte=1",
+      "pool_size": 12785,
+      "drawn": 600,
+      "unavailable": 0
+    },
+    "chembl-natural-products": {
+      "source": "chembl",
+      "release": "ChEMBL_37",
+      "query": "molecule_structures__canonical_smiles__isnull=false&natural_product=1",
+      "pool_size": 98900,
+      "drawn": 601,
+      "unavailable": 0
+    },
+    "chembl-large": {
+      "source": "chembl",
+      "release": "ChEMBL_37",
+      "query": "molecule_structures__canonical_smiles__isnull=false&molecule_properties__heavy_atoms__gte=60",
+      "pool_size": 29995,
+      "drawn": 300,
+      "unavailable": 0
+    },
+    "chembl-isotopes": {
+      "source": "chembl",
+      "release": "ChEMBL_37",
+      "query": "molecule_structures__canonical_smiles__isnull=false&molecule_structures__canonical_smiles__regex=%5C%5B%5B0-9%5D%2B%5BA-Z%5D",
+      "pool_size": 3219,
+      "drawn": 151,
+      "unavailable": 0
+    },
+    "chembl-uncommon-elements": {
+      "source": "chembl",
+      "release": "ChEMBL_37",
+      "query": "molecule_structures__canonical_smiles__isnull=false&molecule_properties__full_molformula__regex=%28He%7CLi%7CBe%7CNe%7CNa%7CMg%7CAl%7CAr%7CCa%7CSc%7CTi%7CCr%7CMn%7CFe%7CCo%7CNi%7CCu%7CZn%7CGa%7CGe%7CAs%7CSe%7CKr%7CRb%7CSr%7CZr%7CNb%7CMo%7CTc%7CRu%7CRh%7CPd%7CAg%7CCd%7CIn%7CSn%7CSb%7CTe%7CXe%7CCs%7CBa%7CLa%7CCe%7CPr%7CNd%7CPm%7CSm%7CEu%7CGd%7CTb%7CDy%7CHo%7CEr%7CTm%7CYb%7CLu%7CHf%7CTa%7CRe%7COs%7CIr%7CPt%7CAu%7CHg%7CTl%7CPb%7CBi%7CPo%7CAt%7CRn%7CFr%7CRa%7CAc%7CTh%7CPa%7CNp%7CPu%7CAm%7CCm%7CBk%7CCf%7CEs%7CFm%7CMd%7CNo%7CLr%29%7C%5BKVYWU%5D%28%5BA-Z0-9%5D%7C%24%29",
+      "pool_size": 16281,
+      "drawn": 200,
+      "unavailable": 0
+    },
+    "chembl-charged": {
+      "source": "chembl",
+      "release": "ChEMBL_37",
+      "query": "molecule_structures__canonical_smiles__isnull=false&molecule_structures__canonical_smiles__contains=%2B",
+      "pool_size": 174233,
+      "drawn": 250,
+      "unavailable": 0
+    },
+    "chembl-multicomponent": {
+      "source": "chembl",
+      "release": "ChEMBL_37",
+      "query": "molecule_structures__canonical_smiles__isnull=false&molecule_structures__canonical_smiles__contains=.",
+      "pool_size": 120725,
+      "drawn": 150,
+      "unavailable": 0
+    },
+    "chembl-stereo-rich": {
+      "source": "chembl",
+      "release": "ChEMBL_37",
+      "query": "molecule_structures__canonical_smiles__isnull=false&molecule_structures__canonical_smiles__regex=%28%40%5B%5E%40%5D.%2A%29%7B4%7D",
+      "pool_size": 257545,
+      "drawn": 401,
+      "unavailable": 0
+    },
+    "chembl-uniform": {
+      "source": "chembl",
+      "release": "ChEMBL_37",
+      "query": "molecule_structures__canonical_smiles__isnull=false&molecule_type=Small+molecule",
+      "pool_size": 1915066,
+      "drawn": 1200,
+      "unavailable": 0
+    }
+  },
+  "chembl": {
+    "release": "ChEMBL_37",
+    "release_date": "2026-05-01"
+  },
+  "snapshot": {
+    "name": "kekule-bench-small-v1.tar.xz",
+    "url": "https://github.com/choutkaj/kekule/releases/download/benchmark-data-small-v1/kekule-bench-small-v1.tar.xz",
+    "sha256": "7fa2e495a090e0b3f70e6332827df489e69b95f822e94a046fac42dbf9c15164",
+    "bytes": 13522612,
+    "extras": {
+      "NOTICES/LICENSES.md": "6db68b2ed5008726f79f38d67b06516da697b517904598c68a7e8d088443af7c",
+      "NOTICES/LICENSE-rdkit.txt": "daeb8d194502cbcf34c05c39541a0d02be65bc9bada5b891c1974cd24e9fca30",
+      "references.jsonl.gz": "9f2be9b55dd86c38953223cad91d2dc11a15c75e702bd3a81e3d758e979ef2d2"
+    }
+  }
+}

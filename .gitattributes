@@ -6,6 +6,9 @@ crates/kekule/tests/fixtures/corpus/rdkit-structures/upstream/** binary
 fuzz/provenance/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 tools/openff/upstream/** -text
 tools/openff/models.lock.json -text
+# Benchmark inputs and the notices packed beside them keep their exact bytes.
+benchmarks/datasets/*/curated/** binary
+benchmarks/datasets/*/LICENSE* -text
 crates/kekule-traj/tests/fixtures/*.xyz binary
 crates/kekule/tests/fixtures/cip/*.sdf binary
 crates/kekule/tests/fixtures/perception/*.sdf binary

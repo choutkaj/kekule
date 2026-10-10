@@ -1,0 +1,130 @@
+# Biomolecule benchmark dataset: hand-written selection rules.
+#
+# Entries come from RCSB Search API attribute queries over the PDB archive,
+# never from whether a reference tool or Kekule can read them. Each stratum
+# samples uniformly with its own seeded stream; strata are filled in the order
+# listed and an entry joins only the first stratum that draws it. Files are the
+# wwPDB versioned-archive mmCIF of the entry's current revision (CC0), which
+# carry `_chem_comp_atom` and `_chem_comp_bond`.
+
+[dataset]
+name = "bio"
+version = 1
+seed = 20261010
+# Licence and attribution texts shipped under NOTICES/ in the snapshot.
+notices = ["LICENSES.md"]
+curated_smallest = 1
+curated_random = 1
+
+[rcsb]
+search = "https://search.rcsb.org/rcsbsearch/v2/query"
+entry = "https://data.rcsb.org/rest/v1/core/entry/{id}"
+versioned = "https://files-versioned.wwpdb.org/pdb_versioned/data/entries/{hash}/pdb_0000{id}/pdb_0000{id}_xyz_v{major}-{minor}.cif.gz"
+# Applied to every stratum so a full run stays tractable; documented, not tool-dependent.
+cap = { attribute = "rcsb_entry_info.deposited_atom_count", operator = "less_or_equal", value = 60000 }
+
+[[stratum]]
+id = "xray-ultrahigh"
+source = "wwpdb"
+quota = 25
+description = "Protein-only X-ray structures at 1.2 A or better (alternate locations, hydrogens)"
+all = [
+  { attribute = "exptl.method", operator = "exact_match", value = "X-RAY DIFFRACTION" },
+  { attribute = "rcsb_entry_info.resolution_combined", operator = "less_or_equal", value = 1.2 },
+  { attribute = "rcsb_entry_info.selected_polymer_entity_types", operator = "exact_match", value = "Protein (only)" },
+]
+
+[[stratum]]
+id = "xray-typical"
+source = "wwpdb"
+quota = 30
+include = ["1CRN", "1AKE"]
+description = "Protein-only X-ray structures between 1.5 and 3.0 A"
+all = [
+  { attribute = "exptl.method", operator = "exact_match", value = "X-RAY DIFFRACTION" },
+  { attribute = "rcsb_entry_info.resolution_combined", operator = "range", value = { from = 1.5, to = 3.0, include_lower = true, include_upper = true } },
+  { attribute = "rcsb_entry_info.selected_polymer_entity_types", operator = "exact_match", value = "Protein (only)" },
+]
+
+[[stratum]]
+id = "cryo-em"
+source = "wwpdb"
+quota = 20
+description = "Electron-microscopy structures"
+all = [
+  { attribute = "exptl.method", operator = "exact_match", value = "ELECTRON MICROSCOPY" },
+]
+
+[[stratum]]
+id = "nmr"
+source = "wwpdb"
+quota = 25
+description = "Protein-only solution NMR ensembles (multiple coordinate models)"
+all = [
+  { attribute = "exptl.method", operator = "exact_match", value = "SOLUTION NMR" },
+  { attribute = "rcsb_entry_info.selected_polymer_entity_types", operator = "exact_match", value = "Protein (only)" },
+]
+
+[[stratum]]
+id = "nucleic-acid"
+source = "wwpdb"
+quota = 20
+description = "DNA and RNA without protein"
+all = [
+  { attribute = "rcsb_entry_info.selected_polymer_entity_types", operator = "exact_match", value = "Nucleic acid (only)" },
+]
+
+[[stratum]]
+id = "protein-nucleic-acid"
+source = "wwpdb"
+quota = 20
+description = "Protein-nucleic-acid complexes"
+all = [
+  { attribute = "rcsb_entry_info.selected_polymer_entity_types", operator = "exact_match", value = "Protein/NA" },
+]
+
+[[stratum]]
+id = "branched"
+source = "wwpdb"
+quota = 15
+description = "Branched entities: glycosylation and oligosaccharides"
+all = [
+  { attribute = "rcsb_entry_info.branched_entity_count", operator = "greater_or_equal", value = 1 },
+]
+
+[[stratum]]
+id = "modified-residues"
+source = "wwpdb"
+quota = 15
+description = "Common modified or D-amino-acid residues in polymers"
+any = [
+  { service = "text_chem", attribute = "rcsb_chem_comp_container_identifiers.comp_id", operator = "in", value = ["MSE", "SEP", "TPO", "PTR", "HYP", "MLY", "M3L", "CSO", "CSD", "OCS", "KCX", "LLP", "PCA", "CME", "ALY", "SEC", "NLE", "ABA", "AIB"] },
+  { service = "text_chem", attribute = "chem_comp.type", operator = "exact_match", value = "D-peptide linking" },
+]
+
+[[stratum]]
+id = "cofactors"
+source = "wwpdb"
+quota = 15
+description = "Metal clusters and organic cofactors"
+all = [
+  { attribute = "rcsb_nonpolymer_entity_container_identifiers.nonpolymer_comp_id", operator = "in", value = ["HEM", "HEC", "SF4", "F3S", "FES", "FAD", "FMN", "NAD", "NAP", "CLA", "COA", "PLP", "TPP", "B12"] },
+]
+
+[[stratum]]
+id = "immune-system"
+source = "wwpdb"
+quota = 10
+description = "Immune-system structures, mostly antibodies with insertion codes"
+all = [
+  { attribute = "struct_keywords.pdbx_keywords", operator = "contains_phrase", value = "IMMUNE SYSTEM" },
+]
+
+[[stratum]]
+id = "neutron"
+source = "wwpdb"
+quota = 5
+description = "Neutron diffraction structures with explicit hydrogens and deuteriums"
+all = [
+  { attribute = "exptl.method", operator = "exact_match", value = "NEUTRON DIFFRACTION" },
+]

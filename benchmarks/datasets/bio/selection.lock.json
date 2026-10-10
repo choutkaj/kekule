@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "dataset": "bio",
+  "selected": "2026-10-10",
+  "strata": {
+    "xray-ultrahigh": {
+      "source": "wwpdb",
+      "pool_size": 7252,
+      "pool_sha256": "6b6b3cbbdd787c182e374a9023a4e85923d54706385b448c7b6c0c766e046292",
+      "included": [],
+      "unavailable": 0
+    },
+    "xray-typical": {
+      "source": "wwpdb",
+      "pool_size": 152679,
+      "pool_sha256": "d1d87e25007495baa6ea0cc4dd3c886f6255b2a09a2f831ca1950013532c1e01",
+      "included": [
+        "1CRN",
+        "1AKE"
+      ],
+      "unavailable": 0
+    },
+    "cryo-em": {
+      "source": "wwpdb",
+      "pool_size": 32474,
+      "pool_sha256": "ad40362c8681914156a8cacaf129ef7828b8cbe26ea40752471a5e784a6ae418",
+      "included": [],
+      "unavailable": 0
+    },
+    "nmr": {
+      "source": "wwpdb",
+      "pool_size": 12769,
+      "pool_sha256": "4a1216ee11ac56121f95911f485f6014a565f0e4ae96af530e44e78e45ae8363",
+      "included": [],
+      "unavailable": 0
+    },
+    "nucleic-acid": {
+      "source": "wwpdb",
+      "pool_size": 5138,
+      "pool_sha256": "477e34ce4a10cec9335169e9d78b0fb8e98b3f0e23a87d022a4d2582c7b2a46a",
+      "included": [],
+      "unavailable": 0
+    },
+    "protein-nucleic-acid": {
+      "source": "wwpdb",
+      "pool_size": 14188,
+      "pool_sha256": "5797d17932f9133019d9a7ff2f34016dc09f20ed220cb2b083381c98e680231a",
+      "included": [],
+      "unavailable": 0
+    },
+    "branched": {
+      "source": "wwpdb",
+      "pool_size": 14913,
+      "pool_sha256": "67137850adaf8285f841b9effc7c80777f40e040219d6449a0680906b368652f",
+      "included": [],
+      "unavailable": 0
+    },
+    "modified-residues": {
+      "source": "wwpdb",
+      "pool_size": 22749,
+      "pool_sha256": "5d12238a0da5ae14d04849f49ef991c887b2f27b5ae2434539c5e7229347c5e1",
+      "included": [],
+      "unavailable": 0
+    },
+    "cofactors": {
+      "source": "wwpdb",
+      "pool_size": 20470,
+      "pool_sha256": "680ed50ed4ecfeb2af2a103288dfa93c421cea5ca7d3b68d936e5825aabc355f",
+      "included": [],
+      "unavailable": 0
+    },
+    "immune-system": {
+      "source": "wwpdb",
+      "pool_size": 12168,
+      "pool_sha256": "390ba3d3f409889e504a85f2269e028cf2cf85c716772dcda886d4a0cdfd70a4",
+      "included": [],
+      "unavailable": 0
+    },
+    "neutron": {
+      "source": "wwpdb",
+      "pool_size": 262,
+      "pool_sha256": "0d45e6cab20eb7fc758318cb66c639ceee1368d1889689ea302adab3e2dec743",
+      "included": [],
+      "unavailable": 0
+    }
+  },
+  "snapshot": {
+    "name": "kekule-bench-bio-v1.tar.xz",
+    "url": "https://github.com/choutkaj/kekule/releases/download/benchmark-data-bio-v1/kekule-bench-bio-v1.tar.xz",
+    "sha256": "f8b62126e91a19cf0948264ff5332f091b88d2dc714849f1cc2085fb82f7e9dd",
+    "bytes": 141204896,
+    "extras": {
+      "NOTICES/LICENSES.md": "a2c172ad69ac909dc68a41c3cd9acfaa7962e7ff70d2f281162ef9c14b80b7ab",
+      "references.jsonl.gz": "ff8dc4b8b4397f4a6e8b8100cd10c6134abe278ab00614188b1f13cccf5a732d"
+    }
+  }
+}
