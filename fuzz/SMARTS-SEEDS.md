@@ -1,8 +1,18 @@
 # SMARTS fuzz seeds
 
-The ten seed patterns are copied from the pinned external SMARTS fixtures.
-Matcher seeds pair each pattern with the existing PubChem ethanol target (CID 702).
-Source provenance and licenses are in `../benchmarks/smarts-fixtures`.
+The ten seed patterns are copied verbatim from pinned external SMARTS tables.
+Matcher seeds pair each pattern with the PubChem ethanol target (CID 702).
+Source locks and licenses are in `provenance/`:
+
+- `provenance/rdkit/`: RDKit 2026.03.3 `Functional_Group_Hierarchy.txt`, pinned
+  by the conda-forge `librdkit` archive and file SHA-256 in `sources.lock.json`
+  (BSD 3-Clause, `license.txt`). Source rows count the table's non-comment
+  query rows from 1.
+- `provenance/openff/`: OpenFF force-field and toolkit OFFXML files, pinned by
+  commit, URL and SHA-256 in `sources.lock.json` (`LICENSE-forcefields`,
+  `LICENSE-toolkit`).
+
+The locks are the original corpus locks; only their upstream entries apply.
 
 | Seed | Source | Source row / parameter |
 | --- | --- | --- |

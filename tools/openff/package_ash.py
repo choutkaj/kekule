@@ -2,7 +2,7 @@
 
 Run after `export_model.py` on the checksum-pinned Ash checkpoint:
 
-    python benchmarks/openff/scripts/package_ash.py target/ash-export crates/kekule-openff-ash/data
+    python tools/openff/package_ash.py target/ash-export crates/kekule-openff-ash/data
 
 The manifest is copied unchanged. The float32 weights are stored losslessly as
 four byte planes (all first bytes, then all second bytes, ...) compressed with

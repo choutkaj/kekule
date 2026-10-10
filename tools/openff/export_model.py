@@ -11,7 +11,7 @@ import json
 import shutil
 from pathlib import Path
 
-from audit import HERE, MODEL_HASH, describe_configuration
+from common import MODEL_HASH, ROOT, describe_configuration
 
 
 def export(destination, checkpoint=None, checkpoint_sha256=None, license_path=None):
@@ -21,7 +21,7 @@ def export(destination, checkpoint=None, checkpoint_sha256=None, license_path=No
     if checkpoint is None:
         checkpoint = get_model("openff-gnn-am1bcc-1.0.0.pt")
         checkpoint_sha256 = MODEL_HASH
-        license_path = license_path or HERE / "fixtures/LICENSE-models"
+        license_path = license_path or ROOT / "crates/kekule-openff/data/LICENSE-models"
     checkpoint = Path(checkpoint)
     if not checkpoint_sha256 or hashlib.sha256(checkpoint.read_bytes()).hexdigest() != checkpoint_sha256:
         raise ValueError("Checkpoint SHA-256 must be supplied and match before deserialization")

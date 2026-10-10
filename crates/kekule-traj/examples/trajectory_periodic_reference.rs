@@ -1,7 +1,7 @@
 //! Optional comparison against independently generated periodic references.
 //!
 //! Run with TOPOLOGY.txt INPUT.xtc REFERENCES_DIR. Generate references from
-//! externally supplied data using benchmarks/reference/trajectory/export_periodic.py.
+//! externally supplied data using tools/trajectory-reference/export_periodic.py.
 //! This is a scientific development check, not a routine CI or release gate.
 
 use kekule::structure::Trajectory;

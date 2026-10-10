@@ -239,8 +239,8 @@ Export a bundle in the reference environment (output must be new); with no
 `package_ash.py` converts such an export into that crate's data:
 
 ```text
-micromamba run -p target/openff-reference python benchmarks/openff/scripts/export_model.py target/ash-bundle
-python benchmarks/openff/scripts/package_ash.py target/ash-bundle crates/kekule-openff-ash/data
+micromamba run -p target/openff-reference python tools/openff/export_model.py target/ash-bundle
+python tools/openff/package_ash.py target/ash-bundle crates/kekule-openff-ash/data
 cargo run -p kekule-openff --release --example parameterize -- CCO --model target/ash-bundle
 ```
 

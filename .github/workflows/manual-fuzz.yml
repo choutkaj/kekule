@@ -41,7 +41,7 @@ jobs:
       - uses: taiki-e/install-action@cargo-fuzz
       - name: Seed SMILES with the supplied PubChem smoke inputs
         if: inputs.target == 'smiles'
-        run: cp benchmarks/corpora/smoke/data/pubchem_smiles/*.txt fuzz/corpus/smiles/
+        run: cp crates/kekule/tests/fixtures/corpus/smoke/data/pubchem_smiles/*.txt fuzz/corpus/smiles/
       - name: Run bounded campaign
         env:
           TARGET: ${{ inputs.target }}

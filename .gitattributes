@@ -14,6 +14,12 @@ benchmarks/corpora/rdkit-queries/upstream/** binary
 # Retain the pinned RDKit source-lock bytes across platforms.
 benchmarks/corpora/rdkit-queries/sources.lock.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 benchmarks/corpora/rdkit-structures/upstream/** binary
+crates/kekule/tests/fixtures/corpus/*/data/** binary
+crates/kekule/tests/fixtures/corpus/rdkit-structures/upstream/** binary
+# Seed provenance locks retain their original bytes, including CRLF.
+fuzz/provenance/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+tools/openff/upstream/** -text
+tools/openff/models.lock.json -text
 crates/kekule-traj/tests/fixtures/*.xyz binary
 crates/kekule/tests/fixtures/cip/*.sdf binary
 crates/kekule/tests/fixtures/perception/*.sdf binary

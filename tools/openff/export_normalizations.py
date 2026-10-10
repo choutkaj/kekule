@@ -4,10 +4,10 @@ import json
 import re
 from pathlib import Path
 from rdkit import Chem
-from audit import HERE, ROOT, verify_sources
+from common import HERE, ROOT, verify_sources
 
 verify_sources()
-tree = ast.parse((HERE / "fixtures/openff.py").read_text())
+tree = ast.parse((HERE / "upstream/openff.py").read_text())
 fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "normalize_molecule")
 assignment = next(n for n in fn.body if isinstance(n, ast.Assign) and
                   any(isinstance(t, ast.Name) and t.id == "normalizations" for t in n.targets))

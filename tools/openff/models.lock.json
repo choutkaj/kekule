@@ -4,10 +4,6 @@
     {
       "path": "crates/kekule-openff/tests/fixtures/models.json.gz",
       "sha256": "84ff03696ce9057c03843617dac9aad8eb51ce33f82c67a5eef8c1c8a2411069"
-    },
-    {
-      "path": "benchmarks/openff/results/models.json.gz",
-      "sha256": "d6505cdb86699beaa1ae01531c78bd1235e1ab297229e631ca6b0172f47e579e"
     }
   ],
   "models": [

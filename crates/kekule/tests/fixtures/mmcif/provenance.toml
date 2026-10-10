@@ -8,3 +8,12 @@ retrieved = "2026-09-07"
 sha256 = "01f41b1b42318a1a5df7f650dbab881677aa0e8d825f7c42dd26ae16a94c0948"
 preprocessing = "None; original downloaded bytes, reused from the API ergonomics audit"
 purpose = "Regression for scalar polymer categories and opening-line semicolon text; not a scientific benchmark"
+
+[[fixture]]
+path = "1CRN.cif"
+source = "RCSB PDB / wwPDB entry 1CRN"
+url = "https://files.rcsb.org/download/1CRN.cif"
+retrieved = "by 2026-07-25"
+sha256 = "906659138248207f55f5f42a9e755e03f7bdde405263b3b4261049f99010964b"
+preprocessing = "None; original downloaded bytes with CRLF line endings, moved verbatim from benchmarks/corpora/smoke/data/rcsb"
+purpose = "DSSP and mmCIF round-trip regressions; not a scientific benchmark"

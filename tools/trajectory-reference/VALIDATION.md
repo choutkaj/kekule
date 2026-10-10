@@ -17,7 +17,7 @@ reference versions, units, tolerance and dimensions before comparing values.
 Use a new output directory; existing exports are not overwritten.
 
 ```text
-python benchmarks/reference/trajectory/export_periodic.py --topology SYSTEM.pdb --trajectory INPUT.xtc --output target/periodic-reference
+python tools/trajectory-reference/export_periodic.py --topology SYSTEM.pdb --trajectory INPUT.xtc --output target/periodic-reference
 cargo run -p kekule-traj --release --example trajectory_periodic_reference -- target/periodic-reference/topology.txt INPUT.xtc target/periodic-reference
 ```
 
