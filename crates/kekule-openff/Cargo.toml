@@ -16,8 +16,8 @@ default = ["ash"]
 ash = ["dep:kekule-openff-ash", "dep:flate2"]
 
 [dependencies]
-kekule = { version = "0.2.1", path = "../kekule" }
-kekule-openff-ash = { version = "0.2.1", path = "../kekule-openff-ash", optional = true }
+kekule = { version = "0.3.0", path = "../kekule" }
+kekule-openff-ash = { version = "0.3.0", path = "../kekule-openff-ash", optional = true }
 flate2 = { version = "1", optional = true }
 roxmltree = "0.20"
 serde = { version = "1", features = ["derive"] }
