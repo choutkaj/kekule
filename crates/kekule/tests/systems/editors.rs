@@ -116,6 +116,88 @@ fn split_then_merge_preserves_handles_geometry_and_hierarchy() {
 }
 
 #[test]
+fn merging_fragments_of_two_split_occurrences_keeps_their_annotations() {
+    // Two H2 occurrences with per-atom and per-bond definition annotations.
+    let tagged = |first: i64| {
+        let mut h2 = molecule("[H][H]");
+        let atoms = h2.atom_ids().collect::<Vec<_>>();
+        for (offset, &atom) in atoms.iter().enumerate() {
+            h2.properties_mut()
+                .atoms_mut()
+                .set_value(
+                    key("tag"),
+                    atom,
+                    Some(PropertyValue::Int(first + offset as i64)),
+                )
+                .unwrap();
+        }
+        let bond = h2.bond_ids().next().unwrap();
+        h2.properties_mut()
+            .bonds_mut()
+            .set_value(key("bond_tag"), bond, Some(PropertyValue::Int(first)))
+            .unwrap();
+        h2
+    };
+    let source = Arc::new(Topology::from_molecules([tagged(1), tagged(3)]).unwrap());
+    let mut editor = source.edit();
+    let handles = source
+        .atom_ids()
+        .iter()
+        .map(|&id| editor.atom_handle(id).unwrap())
+        .collect::<Vec<_>>();
+    // Split both occurrences, then join one fragment of each (H-H + H-H -> H + H-H + H).
+    for &bond in source.bond_ids() {
+        editor
+            .delete_bond(editor.bond_handle(bond).unwrap())
+            .unwrap();
+    }
+    editor
+        .add_bond(handles[1], handles[2], BondOrder::Single)
+        .unwrap();
+    let edited = editor.finish().unwrap();
+
+    let mut occurrences = edited
+        .molecules()
+        .map(|instance| {
+            let molecule = instance.molecule();
+            let mut tags = molecule
+                .atom_ids()
+                .map(|atom| {
+                    molecule
+                        .properties()
+                        .atoms()
+                        .value(&key("tag"), atom)
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            tags.sort_by_key(|tag| format!("{tag:?}"));
+            let bond_tags = molecule
+                .bond_ids()
+                .map(|bond| {
+                    molecule
+                        .properties()
+                        .bonds()
+                        .value(&key("bond_tag"), bond)
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            (tags, bond_tags)
+        })
+        .collect::<Vec<_>>();
+    occurrences.sort_by_key(|o| format!("{o:?}"));
+    let int = |value| Some(PropertyValue::Int(value));
+    assert_eq!(
+        occurrences,
+        vec![
+            (vec![int(1)], vec![]),
+            (vec![int(2), int(3)], vec![None]),
+            (vec![int(4)], vec![]),
+        ]
+    );
+    assert_eq!(edited.bond_count(), 1);
+}
+
+#[test]
 fn cross_instance_bond_merges_but_preserves_distinct_chains() {
     let molecule = molecule("C");
     let mut builder = TopologyBuilder::new();

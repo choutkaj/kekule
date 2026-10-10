@@ -2,6 +2,17 @@
 
 All notable changes to Kekule are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- `TopologyEditor` and `ModelEditor` can bond fragments of two occurrences
+  that were both edited in the same draft, for example after deleting a bond
+  in each. Merging copied the second occurrence's atom and bond annotations
+  as if its draft molecule were compact, so rows kept for deleted atoms or
+  bonds made `add_bond` fail with a property `LengthMismatch`. Only live rows
+  are copied now, each to its new slot.
+
 ## [0.3.0] - 2026-10-10
 
 This release adds the `kekule-openff` and `kekule-openff-ash` crates for OpenFF
