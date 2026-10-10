@@ -7,7 +7,7 @@ use crate::chemistry::{
     SourceStereoBondMark, SourceStereoBondMarkKind,
 };
 use crate::core::{
-    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, HydrogenDeclaration, Molecule,
+    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
     MoleculeEditor, StereoCarrier, StereoElement, StereoElementId, StereoElementKind,
     TetrahedralOrientation, TetrahedralStereo,
 };
@@ -521,7 +521,7 @@ fn interpret_smiles_program_component(
         }
         let molecule = editor.working();
         let atom = molecule.atom(atom_id).expect("source atom is live");
-        if let HydrogenDeclaration::Fixed(hydrogens) = atom.hydrogens {
+        if let ImplicitHydrogens::Fixed(hydrogens) = atom.hydrogens {
             let electrons = crate::algorithms::rdkit_bracket_radical_electrons(
                 atom,
                 crate::algorithms::explicit_valence(molecule, atom_id),
@@ -699,11 +699,9 @@ fn interpret_smiles_atom(
     atom.isotope = syntax.isotope;
     atom.formal_charge = syntax.formal_charge;
     atom.hydrogens = if syntax.bracketed {
-        HydrogenDeclaration::Fixed(syntax.specified_hydrogens)
+        ImplicitHydrogens::Fixed(syntax.specified_hydrogens)
     } else {
-        HydrogenDeclaration::Infer {
-            specified: syntax.specified_hydrogens,
-        }
+        ImplicitHydrogens::Inferred
     };
     atom.atom_map = syntax.atom_map;
     Ok(atom)

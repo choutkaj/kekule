@@ -17,7 +17,7 @@ pub(crate) fn atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Value {
         "symbol": atom.element.symbol(),
         "formal_charge": atom.formal_charge,
         "isotope": atom.isotope,
-        "explicit_hydrogens": atom.hydrogens.specified_count(),
+        "explicit_hydrogens": atom.hydrogens.represented_count(),
         "atom_map": atom.atom_map,
         "spin_multiplicity": atom.radical.and_then(AtomRadical::spin_multiplicity),
         "radical_electrons": atom.radical.map(AtomRadical::electron_count).unwrap_or(0),
@@ -38,7 +38,7 @@ pub(crate) fn basic_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Value 
         "symbol": atom.element.symbol(),
         "formal_charge": atom.formal_charge,
         "isotope": atom.isotope,
-        "explicit_hydrogens": atom.hydrogens.specified_count(),
+        "explicit_hydrogens": atom.hydrogens.represented_count(),
         "atom_map": atom.atom_map,
         "aromatic": mol.atom_is_aromatic(id).expect("live atom"),
     })
@@ -50,8 +50,8 @@ pub(crate) fn valence_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Valu
         "atomic_number": atom.element.atomic_number(),
         "symbol": atom.element.symbol(),
         "formal_charge": atom.formal_charge,
-        "explicit_hydrogens": atom.hydrogens.specified_count(),
-        "implicit_hydrogens": mol.inferred_hydrogens(id).expect("live atom"),
+        "explicit_hydrogens": atom.hydrogens.represented_count(),
+        "implicit_hydrogens": mol.perception().inferred_hydrogens(id),
         "explicit_valence": valence::represented_valence(mol, id).expect("live atom"),
     })
 }

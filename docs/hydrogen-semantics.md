@@ -1,68 +1,69 @@
-# Hydrogen representation and API migration
+# Hydrogen representation
 
 Explicit hydrogens are hydrogen atoms in the molecular graph. Implicit hydrogens
-are attached hydrogens represented without separate atoms, including both a
-specified count and any additional count inferred by the valence model.
+are attached hydrogens represented without separate atoms.
 
 `Molecule`, `MoleculeEditor`, and `Topology` expose the same counting contract:
 
 | Method | Counts | Return value |
 | --- | --- | --- |
 | `explicit_hydrogens(atom)` | Hydrogen neighbors in the graph, including isotopic H | `Result<usize>` |
-| `implicit_hydrogens(atom)` | Specified plus inferred non-graph hydrogens | `Result<Option<usize>>` |
+| `implicit_hydrogens(atom)` | Non-graph hydrogens | `Result<Option<usize>>` |
 | `total_hydrogens(atom)` | Explicit plus implicit hydrogens | `Result<Option<usize>>` |
 
 The error type depends on the owner. Invalid atom IDs return an error. `None`
-means inference is unresolved; it never means zero. Counts are widened before
-adding contributions. These getters neither mutate the graph nor run perception.
+means an inferred count is unresolved; it never means zero. These getters
+neither mutate the graph nor run perception.
 
-## Specified counts and inference
+## Fixed and inferred counts
 
-`Atom::hydrogens` remains a `HydrogenDeclaration`:
+`Atom::hydrogens` is an `ImplicitHydrogens`, and an atom's implicit count is
+either wholly fixed or wholly inferred:
 
-- `Fixed(n)` specifies exactly `n` implicit hydrogens. This count is available
-  without perception. Separate graph hydrogen neighbors are additional.
-- `Infer { specified: n }` preserves `n` implicit hydrogens and permits the
-  valence model to infer more. The complete implicit count is unknown until that
-  additional contribution has been perceived, even when `n` is nonzero.
+- `Fixed(n)` represents exactly `n` implicit hydrogens. This count is available
+  without perception, and valence perception never adds to it.
+- `Inferred` lets the valence model supply the complete count. It is unknown
+  until valence perception is installed.
 
-For example, `C` permits inference, `[CH4]` fixes four implicit hydrogens, and
-`[C]` fixes zero. `[H][CH3]` has one explicit hydrogen and three implicit ones.
-SMILES bracket notation specifies a count; it does not create hydrogen atoms.
+For example, `C` infers its count, `[CH4]` fixes four implicit hydrogens, and
+`[C]` fixes zero. `[H][CH3]` has one explicit hydrogen and three fixed implicit
+ones. SMILES bracket notation fixes a count; it does not create hydrogen atoms.
+Molfile atoms fix their count when they declare `HCOUNT` or a valence.
 
-Chemical edits invalidate inferred counts while retaining the declaration.
-After reperception, an inference-enabled count can change with bond order or
-charge. Fixed counts remain fixed: a conflicting edit produces a valence error
-under strict perception, rather than silently removing specified hydrogens.
-Property-only edits do not invalidate chemistry. The architecture's separation
-between represented declarations and derived perception remains intact.
+Chemical edits invalidate inferred counts and keep fixed ones. After
+reperception, an inferred count can change with bond order or charge. A fixed
+count that conflicts with an edit produces a valence error under strict
+perception, rather than silently removing hydrogens. Property-only edits do not
+invalidate chemistry.
 
-`inferred_hydrogens` on molecule, editor, topology, and perception surfaces is an
-expert diagnostic for the installed inferred contribution alone. Likewise,
-`ValencePerception::inferred_hydrogens` iterates those assignments, and
-`PerceptionBuilder::with_valence` accepts inferred contributions. Applications
-counting chemical hydrogens should normally use the combined getters instead.
+`Perception::inferred_hydrogens` and `ValencePerception::inferred_hydrogens`
+expose the valence model's raw assignments, and `PerceptionBuilder::with_valence`
+accepts them. An assignment is zero for every fixed atom: installing a detached
+perception that infers hydrogens on a fixed count fails with
+`PerceptionInstallError::InferredHydrogensOnFixedAtom`. Applications counting
+chemical hydrogens use the molecule-level getters instead.
 
 ## Conversions
 
 `add_hydrogens` materializes resolved implicit hydrogens as graph atoms and bonds.
-Fixed counts need no perception. Inference-enabled atoms require an installed
-assignment; an absent or incomplete assignment fails before mutation.
-`AddHydrogensOptions::specified_only` materializes only the specified contribution
-without requiring inference. Origins in the report are `Specified` or `Inferred`.
+Fixed counts need no perception and become `Fixed(0)`. Inferred atoms require an
+installed assignment; an absent or incomplete assignment fails before mutation.
+`AddHydrogensOptions::fixed_only` materializes only fixed counts without
+requiring inference. Origins in the report are `Fixed` or `Inferred`.
 
 `remove_hydrogens` suppresses eligible explicit hydrogens while preserving the
-total count and stereo relationships. It retains hydrogens with individual
+total count and stereo relationships. A parent keeps `Inferred` only when
+inference on the collapsed graph reproduces its count; fixed parents, stereo
+parents, aromatic `[nH]`, and parents whose count inference would not reproduce
+(for example the hydrogens of `SH4` or `PH5`, or hydrogens on metals) receive
+the count as `Fixed`. Each report adjustment records the resulting declaration
+and complete implicit count. Removal retains hydrogens with individual
 information that cannot be represented by a count, including isotope labels,
-maps, charges, properties, and unsupported stereo roles. The report distinguishes
-remaining explicit neighbors from the complete resulting implicit count; the
-specified/inferred split remains available as diagnostic detail.
+maps, charges, properties, and unsupported stereo roles.
 
 Conversions change representation, not protonation. They invalidate perception
-after graph edits; recompute it before reading counts that require inference.
-Suppression may use a temporary valence calculation to verify that its chosen
-declaration preserves composition. Conversion does not promise to reconstruct
-the original SMILES spelling or the original specified/inferred split.
+after graph edits; recompute it before reading inferred counts. Conversion does
+not promise to reconstruct the original SMILES spelling.
 
 ## Migrating callers
 
@@ -70,23 +71,22 @@ This is an API and behavior change:
 
 | Previous API | Replacement |
 | --- | --- |
-| `implicit_hydrogens` for the inferred contribution only | `inferred_hydrogens` |
-| Manually adding declaration and inferred counts | `implicit_hydrogens` |
-| `HydrogenDeclaration::Infer { explicit: n }` | `Infer { specified: n }` |
-| `explicit_count()` / `with_explicit_count(n)` | `specified_count()` / `with_specified_count(n)` |
-| `allows_implicit()` | `allows_inference()` |
-| `AddHydrogensOptions::explicit_only` | `specified_only` |
-| `AddedHydrogenOrigin::ExplicitCount` / `Implicit` | `Specified` / `Inferred` |
-| Adjustment report's old `explicit_hydrogens` | `specified_hydrogens` |
-| Adjustment report's old `implicit_hydrogens` | `inferred_hydrogens` |
-| `PerceptionComponent::ImplicitHydrogens` | `InferredHydrogens` |
-| `PerceptionBuildError::DuplicateImplicitHydrogen` | `DuplicateInferredHydrogen` |
+| `HydrogenDeclaration` | `ImplicitHydrogens` |
+| `Infer { specified: 0 }` | `Inferred` |
+| `Infer { specified: n }`, `n > 0` | `Fixed(n)` for a fixed count; graph hydrogens to keep inference |
+| `specified_count()` | `fixed_count()` (`None` when inferred) or `represented_count()` (zero when inferred) |
+| `allows_inference()` | `is_inferred()` |
+| `implicit_count(inferred)` | `resolve(inferred)` |
+| `with_specified_count(n)` | Assign `Fixed(n)` |
+| `Molecule`/`MoleculeEditor::inferred_hydrogens(atom)`, topology atom `inferred_hydrogens()` | `implicit_hydrogens`, or `perception().inferred_hydrogens(atom)` for the raw assignment |
+| `AddHydrogensOptions::specified_only` | `fixed_only` |
+| `AddedHydrogenOrigin::Specified` | `Fixed` |
+| Adjustment `specified_hydrogens` / `inferred_hydrogens` | `hydrogens` (the resulting declaration) |
+| `HydrogenTransformError::HydrogenCountNotPreserved` | Removed; collapse preserves counts by construction |
 
-In particular, do not retain a manual addition of the specified count around a
-call to the new `implicit_hydrogens`: that would count the contribution twice.
-DREIDING's `CountedHydrogens` error now reports a single combined `implicit` count.
+`HydrogenCountPolicy::StoredOnly` now counts graph hydrogens and fixed counts.
 
 The reference benchmark's serialized fields retain RDKit's external terminology:
-`explicit_hydrogens` is its stored non-graph count and `implicit_hydrogens` is its
-inferred count. The adapter deliberately uses the diagnostic APIs. Existing
-goldens and strict comparisons remain unchanged, including storage disagreements.
+`explicit_hydrogens` is its stored non-graph count, read here from
+`represented_count`, and `implicit_hydrogens` is its inferred count, read from
+the perception assignment.

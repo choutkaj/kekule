@@ -41,16 +41,16 @@ impl<'a> TargetData<'a> {
                 .enumerate()
                 .map(|(i, a)| (a, offset + i))
                 .collect();
-            for (local, atom) in molecule.atoms() {
+            for local in molecule.atom_ids() {
                 let facts = facts_cache
                     .entry((molecule as *const Molecule as usize, local))
                     .or_insert_with(|| {
                         // Unperceived targets retain the existing partial-facts
-                        // policy: only the specified contribution is known.
+                        // policy: an unresolved inferred count counts as zero.
                         let nongraph_hydrogens = molecule
                             .implicit_hydrogens(local)
                             .expect("valid atom")
-                            .unwrap_or_else(|| usize::from(atom.hydrogens.specified_count()));
+                            .unwrap_or(0);
                         let neighbors = molecule
                             .neighbors(local)
                             .expect("valid atom")

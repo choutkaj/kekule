@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::core::{BondOrder, HydrogenDeclaration, Molecule};
+use crate::core::{BondOrder, Molecule};
 
 use super::{
     Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinition, MoleculeDefinitionId,
@@ -273,12 +273,7 @@ fn is_explicit_water_atoms(atoms: &[&crate::core::Atom]) -> bool {
     let declared_hydrogens = atoms
         .iter()
         .filter(|atom| atom.element.atomic_number() == 8)
-        .map(|atom| match atom.hydrogens {
-            HydrogenDeclaration::Fixed(count) => usize::from(count),
-            HydrogenDeclaration::Infer {
-                specified: explicit,
-            } => usize::from(explicit),
-        })
+        .map(|atom| usize::from(atom.hydrogens.represented_count()))
         .sum::<usize>();
     oxygen_count == 1
         && atoms

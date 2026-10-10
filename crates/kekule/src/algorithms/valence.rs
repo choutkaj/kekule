@@ -114,7 +114,8 @@ pub(crate) fn rdkit_valence_assignments(
 
 /// Derive an uninstalled assignment with the same permissive behavior as
 /// non-strict valence perception. Aromaticity uses this only when the atom has
-/// no installed hydrogen assignment.
+/// no installed hydrogen assignment, and hydrogen collapse uses it to decide
+/// whether inference reproduces a collapsed count.
 pub(crate) fn rdkit_inferred_hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
     rdkit_atom_inferred_hydrogen_count(mol, atom_id, atom, false).unwrap_or(0)
 }
@@ -183,7 +184,7 @@ fn rdkit_atom_inferred_hydrogen_count(
     atom: &Atom,
     strict: bool,
 ) -> std::result::Result<u8, ValenceIssue> {
-    let explicit = explicit_valence(mol, atom_id) + usize::from(atom.hydrogens.specified_count());
+    let explicit = explicit_valence(mol, atom_id) + usize::from(atom.hydrogens.represented_count());
     let radical_electrons = atom
         .radical
         .map_or(0, |radical| usize::from(radical.electron_count()));
@@ -247,7 +248,7 @@ fn rdkit_atom_inferred_hydrogen_count(
 
     // RDKit skips the implicit-valence calculation completely when H inference
     // is disabled, including its radical occupancy check.
-    if !atom.hydrogens.allows_inference() {
+    if !atom.hydrogens.is_inferred() {
         return Ok(0);
     }
     if atom.element.atomic_number() == 1 && explicit == 0 && radical_electrons == 0 {
@@ -355,7 +356,7 @@ fn can_be_rdkit_hypervalent_anion(atom: &Atom, effective_atomic_number: u8) -> b
 ///
 /// Returns an error if `atom` is not live in `mol`.
 pub fn represented_valence(mol: &Molecule, atom: AtomId) -> Result<usize> {
-    let declaration = mol.atom(atom)?.hydrogens.specified_count();
+    let declaration = mol.atom(atom)?.hydrogens.represented_count();
     Ok(explicit_valence(mol, atom) + usize::from(declaration))
 }
 

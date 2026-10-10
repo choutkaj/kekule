@@ -256,8 +256,8 @@ fn stereo_cleanup_is_explicit_transactional_and_preserves_surviving_groups() {
     assert!(cleaned.perception().has_valence());
     for id in before.atom_ids() {
         assert_eq!(
-            cleaned.inferred_hydrogens(id).unwrap(),
-            before.inferred_hydrogens(id).unwrap()
+            cleaned.perception().inferred_hydrogens(id),
+            before.perception().inferred_hydrogens(id)
         );
     }
     assert_eq!(molecule, before);

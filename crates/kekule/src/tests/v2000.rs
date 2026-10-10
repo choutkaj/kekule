@@ -25,7 +25,7 @@ fn v2000_touching_coordinates_preserve_precision_and_atom_fields() {
         let (_, atom) = molecule.atoms().next().unwrap();
         assert_eq!(atom.formal_charge, -1);
         assert_eq!(atom.atom_map, Some(17));
-        assert_eq!(atom.hydrogens, HydrogenDeclaration::Fixed(0));
+        assert_eq!(atom.hydrogens, ImplicitHydrogens::Fixed(0));
     }
 }
 
@@ -624,7 +624,7 @@ fn v2000_materializes_omitted_tetrahedral_hydrogen_from_source_valence() {
             } else {
                 assert_eq!(
                     molecule.atom(AtomId::new(0)).unwrap().hydrogens,
-                    HydrogenDeclaration::Fixed(1)
+                    ImplicitHydrogens::Fixed(1)
                 );
                 StereoCarrier::ImplicitHydrogen
             };
@@ -669,7 +669,7 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
             let center = molecule.atom(AtomId::new(0)).expect("stereo center");
             assert_eq!(
                 center.hydrogens,
-                HydrogenDeclaration::Fixed(expected_hydrogens)
+                ImplicitHydrogens::Fixed(expected_hydrogens)
             );
             assert!(!molecule.perception().has_valence());
             assert_eq!(molecule.stereo_elements().count(), 1);
@@ -692,7 +692,7 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
                     .atom(AtomId::new(0))
                     .expect("reparsed center")
                     .hydrogens,
-                HydrogenDeclaration::Fixed(expected_hydrogens)
+                ImplicitHydrogens::Fixed(expected_hydrogens)
             );
             assert_eq!(
                 reparsed
@@ -710,7 +710,7 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
     let molecule = read_molfile(undeclared).expect("undeclared V2000 atom interprets");
     assert_eq!(
         molecule.atom(AtomId::new(0)).expect("carbon").hydrogens,
-        HydrogenDeclaration::Infer { specified: 0 }
+        ImplicitHydrogens::Inferred
     );
 }
 

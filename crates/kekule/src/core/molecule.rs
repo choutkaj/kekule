@@ -259,15 +259,15 @@ impl Molecule {
             .count())
     }
 
-    /// Counts all implicit hydrogens: specified plus inferred, excluding graph H.
-    /// Fixed counts are available without perception. For inference-enabled atoms,
-    /// `None` means the additional count has not been perceived or was invalidated
-    /// by a chemical edit. This method never runs perception implicitly.
+    /// Counts implicit (non-graph) hydrogens, excluding graph H.
+    /// Fixed counts are available without perception. For inferred counts,
+    /// `None` means the count has not been perceived or was invalidated by a
+    /// chemical edit. This method never runs perception implicitly.
     pub fn implicit_hydrogens(&self, atom: AtomId) -> Result<Option<usize>> {
         Ok(self
             .atom(atom)?
             .hydrogens
-            .implicit_count(self.perception.inferred_hydrogens(atom)))
+            .resolve(self.perception.inferred_hydrogens(atom)))
     }
 
     /// Counts explicit hydrogen neighbors plus all implicit hydrogens.
@@ -277,13 +277,6 @@ impl Molecule {
         Ok(self
             .implicit_hydrogens(atom)?
             .map(|implicit| explicit + implicit))
-    }
-
-    /// Reads only the installed valence-inferred contribution, for model diagnostics.
-    /// For chemical hydrogen counts use [`Self::implicit_hydrogens`] instead.
-    pub fn inferred_hydrogens(&self, atom: AtomId) -> Result<Option<u8>> {
-        self.atom(atom)?;
-        Ok(self.perception.inferred_hydrogens(atom))
     }
 
     pub fn atom_is_aromatic(&self, atom: AtomId) -> Result<Option<bool>> {

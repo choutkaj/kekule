@@ -38,8 +38,8 @@ use data::{exact_isotope_mass, most_abundant_isotope, standard_atomic_weight};
 /// Selects which non-atom hydrogen counts contribute to a descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HydrogenCountPolicy {
-    /// Count explicit graph hydrogens and specified implicit counts only.
-    /// This can describe a partial composition when inference is enabled.
+    /// Count explicit graph hydrogens and fixed implicit counts only.
+    /// Inferred counts are omitted, so this can describe a partial composition.
     StoredOnly,
     /// Count explicit hydrogens and the complete implicit hydrogen count.
     /// Requires perception for atoms whose declarations enable inference.
@@ -291,7 +291,7 @@ fn visit_constituents(
     for (atom_id, atom) in graph.atoms() {
         visit(atom_id, atom.element, atom.isotope, 1)?;
         let implicit = match hydrogen_policy {
-            HydrogenCountPolicy::StoredOnly => usize::from(atom.hydrogens.specified_count()),
+            HydrogenCountPolicy::StoredOnly => usize::from(atom.hydrogens.represented_count()),
             HydrogenCountPolicy::IncludePerceived => graph
                 .implicit_hydrogens(atom_id)
                 .expect("a live atom identifier remains valid during read-only traversal")
@@ -358,7 +358,7 @@ fn molecular_mass(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Atom, AtomRadical, BondOrder, HydrogenDeclaration};
+    use crate::core::{Atom, AtomRadical, BondOrder, ImplicitHydrogens};
 
     fn element(symbol: &str) -> Element {
         Element::from_symbol(symbol).expect("test element")
@@ -394,29 +394,29 @@ mod tests {
     }
 
     #[test]
-    fn represented_hydrogens_can_coexist_with_perceived_hydrogens() {
-        let mut atom = Atom::new(element("C"));
-        atom.hydrogens = HydrogenDeclaration::Infer { specified: 1 };
+    fn stored_only_counts_fixed_hydrogens_and_omits_inferred_ones() {
+        let mut fixed = Atom::new(element("C"));
+        fixed.hydrogens = ImplicitHydrogens::Fixed(3);
         let mut graph = crate::core::MoleculeEditor::new();
-        graph.add_atom(atom).expect("carbon");
-        let mut molecule = graph.finish().expect("single atom");
+        let fixed = graph.add_atom(fixed).expect("fixed carbon");
+        let inferred = graph.add_atom(Atom::new(element("C"))).expect("carbon");
+        graph
+            .add_bond(fixed, inferred, crate::core::BondOrder::Single)
+            .expect("bond");
+        let mut molecule = graph.finish().expect("ethane");
 
         assert_eq!(
             molecular_formula(&molecule, HydrogenCountPolicy::StoredOnly)
                 .expect("stored formula")
                 .to_string(),
-            "CH"
+            "C2H3"
         );
-        molecule.perceive().expect("carbon perceives");
+        molecule.perceive().expect("ethane perceives");
         assert_eq!(
             molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived)
                 .expect("complete formula")
                 .to_string(),
-            "CH4"
-        );
-        assert_eq!(
-            molecule.atom(AtomId::new(0)).expect("carbon").hydrogens,
-            HydrogenDeclaration::Infer { specified: 1 }
+            "C2H6"
         );
     }
 

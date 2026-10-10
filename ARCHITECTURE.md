@@ -86,14 +86,14 @@ Detached perception is checked against graph references and dimensions before
 installation; installation must not repair or rewrite represented chemistry.
 Default perception does not add atoms, materialize stereo, or assign CIP.
 Explicit hydrogens are separate graph atoms. Implicit hydrogens are all attached
-hydrogens represented without graph atoms, including both specified counts and
-the additional valence-inferred contribution. Public implicit counts combine
-these contributions; total counts also include explicit hydrogen neighbors.
-Hydrogen declarations retain specified counts and whether inference is allowed.
-Fixed counts remain known without perception; inference-enabled counts are
-unknown after chemical edits until perception is recomputed. Reperception never
-overwrites a specified count. Explicit/implicit conversion preserves composition
-and stereo and retains graph hydrogens whose individual information would be lost.
+hydrogens represented without graph atoms; total counts also include explicit
+hydrogen neighbors. An atom's implicit count is either fixed or wholly inferred,
+never a mix. Fixed counts remain known without perception, and perception never
+infers hydrogens on them or overwrites them; inferred counts are unknown after
+chemical edits until perception is recomputed. Explicit/implicit conversion
+preserves composition and stereo, fixes a collapsed count that inference would
+not reproduce, and retains graph hydrogens whose individual information would be
+lost.
 CIP assignment is transactional, respects represented stereo, and reports
 unsupported or exhausted ranking rather than treating unfinished work as a tie.
 

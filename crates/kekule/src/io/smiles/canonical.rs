@@ -144,7 +144,12 @@ fn restore_projection_valence(
         .collect::<BTreeMap<_, _>>();
     for adjustment in &removal.adjustments {
         if let Some(parent) = ids.atom(adjustment.parent) {
-            inferred.insert(parent, adjustment.inferred_hydrogens);
+            let count = match adjustment.hydrogens {
+                ImplicitHydrogens::Inferred => u8::try_from(adjustment.implicit_hydrogens)
+                    .expect("inference reproduced this count as u8"),
+                ImplicitHydrogens::Fixed(_) => 0,
+            };
+            inferred.insert(parent, count);
         }
     }
     match valence.model() {
@@ -293,16 +298,8 @@ fn canonical_smiles_atom_representation(
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<(Atom, bool, u8), MolWriteError> {
     let aromatic = mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true);
-    let perceived_hydrogens = mol
-        .inferred_hydrogens(atom_id)
-        .map_err(|error| MolWriteError::new(error.to_string()))?;
+    let perceived_hydrogens = mol.perception().inferred_hydrogens(atom_id);
     let inferred_hydrogens = perceived_hydrogens.unwrap_or(0);
-    atom.hydrogens
-        .specified_count()
-        .checked_add(inferred_hydrogens)
-        .ok_or_else(|| {
-            MolWriteError::new("hydrogen count exceeds the SMILES representation limit")
-        })?;
     let aromatic = aromatic && !matches!(atom_style, CanonicalAtomStyle::StoredKekule);
     let (mut payload, mut inferred_hydrogens) = canonical_smiles_atom_normalized(
         mol,
@@ -313,15 +310,15 @@ fn canonical_smiles_atom_representation(
         matches!(atom_style, CanonicalAtomStyle::StoredKekule),
     )?;
     if smiles_atom_requires_brackets(&payload, aromatic, inferred_hydrogens) {
-        if atom.hydrogens.allows_inference() && perceived_hydrogens.is_none() {
+        if atom.hydrogens.is_inferred() && perceived_hydrogens.is_none() {
             return Err(MolWriteError::new(format!(
                 "canonical SMILES bracket atom {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
             )));
         }
-        payload.hydrogens = HydrogenDeclaration::Fixed(
+        payload.hydrogens = ImplicitHydrogens::Fixed(
             payload
                 .hydrogens
-                .specified_count()
+                .represented_count()
                 .saturating_add(inferred_hydrogens),
         );
         inferred_hydrogens = 0;
@@ -346,9 +343,9 @@ fn canonical_smiles_atom_normalized(
         inferred_hydrogens,
     )? {
         let mut normalized = atom.clone();
-        normalized.hydrogens = HydrogenDeclaration::Fixed(
+        normalized.hydrogens = ImplicitHydrogens::Fixed(
             atom.hydrogens
-                .specified_count()
+                .represented_count()
                 .saturating_add(inferred_hydrogens),
         );
         return Ok((normalized, 0));
@@ -360,7 +357,7 @@ fn canonical_smiles_atom_normalized(
         inferred_hydrogens,
     )? {
         let mut normalized = atom.clone();
-        normalized.hydrogens = HydrogenDeclaration::Fixed(atom.hydrogens.specified_count());
+        normalized.hydrogens = ImplicitHydrogens::Fixed(atom.hydrogens.represented_count());
         return Ok((normalized, 0));
     }
     if canonical_smiles_can_use_organic_form(
@@ -372,19 +369,19 @@ fn canonical_smiles_atom_normalized(
         stored_kekule,
     )? {
         let mut normalized = atom.clone();
-        normalized.hydrogens = HydrogenDeclaration::Infer { specified: 0 };
+        normalized.hydrogens = ImplicitHydrogens::Inferred;
         return Ok((
             normalized,
             atom.hydrogens
-                .specified_count()
+                .represented_count()
                 .saturating_add(inferred_hydrogens),
         ));
     }
     let mut normalized = atom.clone();
     if inferred_hydrogens > 0 {
-        normalized.hydrogens = HydrogenDeclaration::Fixed(
+        normalized.hydrogens = ImplicitHydrogens::Fixed(
             atom.hydrogens
-                .specified_count()
+                .represented_count()
                 .saturating_add(inferred_hydrogens),
         );
     }
@@ -402,8 +399,7 @@ fn canonical_smiles_should_bracket_metal_bound_hydrogens(
         && atom.radical.is_none()
         && atom.atom_map.is_none()
         && !aromatic
-        && atom.hydrogens.allows_inference()
-        && atom.hydrogens.specified_count() == 0
+        && atom.hydrogens.is_inferred()
         && inferred_hydrogens > 0
         && matches!(atom.element.symbol(), "B" | "C" | "N" | "O" | "P" | "S")
         && atom_has_metal_neighbor(mol, atom_id)?)
@@ -418,7 +414,7 @@ fn canonical_smiles_should_bracket_metal_bound_zero_hydrogens(
     Ok(atom.formal_charge == 0
         && atom.radical.is_none()
         && atom.atom_map.is_none()
-        && atom.hydrogens.specified_count() == 0
+        && atom.hydrogens.represented_count() == 0
         && inferred_hydrogens == 0
         && matches!(
             atom.element.symbol(),
@@ -450,7 +446,7 @@ fn canonical_smiles_can_use_organic_form(
     if atom.formal_charge != 0
         || atom.radical.is_some()
         || atom.atom_map.is_some()
-        || (aromatic && atom.hydrogens.specified_count() > 0)
+        || (aromatic && atom.hydrogens.represented_count() > 0)
     {
         return Ok(false);
     }
@@ -460,7 +456,7 @@ fn canonical_smiles_can_use_organic_form(
     ) {
         return Ok(false);
     }
-    if (!atom.hydrogens.allows_inference() || inferred_hydrogens == 0)
+    if (!atom.hydrogens.is_inferred() || inferred_hydrogens == 0)
         && atom_has_metal_neighbor(mol, atom_id)?
     {
         return Ok(false);
@@ -472,13 +468,13 @@ fn canonical_smiles_can_use_organic_form(
         };
         let total_hydrogens = atom
             .hydrogens
-            .specified_count()
+            .represented_count()
             .saturating_add(inferred_hydrogens);
         return Ok(bond_valence.saturating_add(total_hydrogens) == target);
     }
     let total_hydrogens = atom
         .hydrogens
-        .specified_count()
+        .represented_count()
         .saturating_add(inferred_hydrogens);
     let occupied_valence = bond_valence.saturating_add(total_hydrogens);
     Ok(

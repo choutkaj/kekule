@@ -311,14 +311,14 @@ fn observation_schema_requires_measured_nullable_fields_and_rejects_extras() {
 }
 #[test]
 fn radical_observations_assert_electron_count_and_source_spin_separately() {
-    use kekule::core::{AtomRadical, HydrogenDeclaration};
+    use kekule::core::{AtomRadical, ImplicitHydrogens};
     for spin in [None, Some(1), Some(3)] {
         let molecule = smiles::to_molecules("[CH2]").unwrap().pop().unwrap();
         let id = molecule.atom_ids().next().unwrap();
         let mut editor = molecule.into_editor();
         {
             let mut atom = editor.atom_mut(id).unwrap();
-            atom.hydrogens = HydrogenDeclaration::Fixed(2);
+            atom.hydrogens = ImplicitHydrogens::Fixed(2);
             atom.radical = AtomRadical::new(2, spin);
         }
         let molecule = editor.finish().unwrap();

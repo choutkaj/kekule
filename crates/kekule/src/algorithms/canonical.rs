@@ -143,7 +143,7 @@ fn atom_signature(mol: &Molecule, atom_id: AtomId, atom: &Atom, degree: usize) -
         implicit_hydrogens: mol
             .implicit_hydrogens(atom_id)
             .expect("live atom")
-            .unwrap_or_else(|| usize::from(atom.hydrogens.specified_count())),
+            .unwrap_or(0),
         atom_map: atom.atom_map.unwrap_or(0),
         degree,
     }

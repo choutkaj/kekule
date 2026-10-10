@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::sync::{Arc, Weak};
 
-use kekule::core::{Atom, BondOrder, Element, HydrogenDeclaration, MoleculeEditor, Perception};
+use kekule::core::{Atom, BondOrder, Element, ImplicitHydrogens, MoleculeEditor, Perception};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Ensemble, EnsembleMember, Model, Positions};
@@ -45,7 +45,7 @@ fn failing_topology() -> Arc<Topology> {
     // Publication permits represented chemistry rejected by the default valence model.
     let mut editor = MoleculeEditor::new();
     let mut carbon = Atom::new(Element::from_symbol("C").unwrap());
-    carbon.hydrogens = HydrogenDeclaration::Fixed(5);
+    carbon.hydrogens = ImplicitHydrogens::Fixed(5);
     editor.add_atom(carbon).unwrap();
     let mut bad = editor.finish().unwrap();
     perception::rings::perceive_ring_membership(&mut bad);
@@ -154,7 +154,7 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
     assert_eq!(first.molecule(), &molecule);
     assert_eq!(first.molecule().properties(), molecule.properties());
     assert_eq!(
-        first.molecule().inferred_hydrogens(carbon).unwrap(),
+        first.molecule().perception().inferred_hydrogens(carbon),
         Some(2)
     );
     assert_eq!(

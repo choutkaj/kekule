@@ -18,7 +18,7 @@ fn atom(symbol: &str) -> Atom {
 /// perception.
 fn bare_atom(atomic_number: u8) -> Atom {
     let mut atom = Atom::new(Element::from_atomic_number(atomic_number).unwrap());
-    atom.hydrogens = kekule::core::HydrogenDeclaration::Fixed(0);
+    atom.hydrogens = kekule::core::ImplicitHydrogens::Fixed(0);
     atom
 }
 fn key(name: &str) -> PropertyKey {

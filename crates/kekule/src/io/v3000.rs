@@ -101,14 +101,8 @@ pub(super) fn render_mol_v3000(
             out.push_str(&format!(" RAD={}", v3000_radical_code(radical)?));
         }
         match atom.hydrogens {
-            HydrogenDeclaration::Infer { specified: 0 } => {}
-            HydrogenDeclaration::Infer { .. } => {
-                return Err(MolWriteError::new(format!(
-                    "V3000 cannot encode represented hydrogens while leaving implicit-H inference enabled for atom {}",
-                    record_atom.id.index()
-                )));
-            }
-            HydrogenDeclaration::Fixed(explicit) => {
+            ImplicitHydrogens::Inferred => {}
+            ImplicitHydrogens::Fixed(explicit) => {
                 // HCOUNT is a query constraint in CTfile, not a molecular
                 // hydrogen declaration. VAL preserves the fixed total valence
                 // without turning the emitted atom into a query atom.
@@ -644,11 +638,9 @@ fn interpret_v3000_atom(record: &V3000AtomSyntax) -> std::result::Result<Atom, S
     let explicit = interpret_v3000_count_declaration(record.hydrogen_count, "HCOUNT", record.line)?
         .unwrap_or(0);
     let hydrogens = if record.hydrogen_count.is_some() || record.valence.is_some() {
-        HydrogenDeclaration::Fixed(explicit)
+        ImplicitHydrogens::Fixed(explicit)
     } else {
-        HydrogenDeclaration::Infer {
-            specified: explicit,
-        }
+        ImplicitHydrogens::Inferred
     };
     interpret_molfile_atom_fields(
         &record.symbol,
@@ -716,7 +708,7 @@ fn apply_v3000_declared_hydrogens(
                 .atom(atom_id)
                 .expect("interpreted V3000 atom remains live")
                 .hydrogens
-                .specified_count()
+                .represented_count()
         });
         apply_molfile_declared_valence(
             molecule,

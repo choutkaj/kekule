@@ -361,8 +361,9 @@ impl Perception {
         self.valence.as_ref().and_then(|state| state.model)
     }
 
-    /// Reads the inferred contribution only. The parent molecule combines it
-    /// with specified counts through [`Molecule::implicit_hydrogens`].
+    /// Reads the valence model's inferred count. It is the implicit count of an
+    /// atom whose count is inferred and zero for a fixed count; chemical callers
+    /// use [`Molecule::implicit_hydrogens`], which resolves both.
     pub fn inferred_hydrogens(&self, atom: AtomId) -> Option<u8> {
         self.valence
             .as_ref()
@@ -461,8 +462,9 @@ impl PerceptionBuilder {
         self.state.resonance = Some(ResonancePerception { groups });
         Ok(self)
     }
-    /// Installs exact inferred contributions on the detached state.
-    /// Assignments exclude specified counts and graph hydrogen neighbors.
+    /// Installs exact inferred counts on the detached state.
+    /// Assignments exclude graph hydrogen neighbors. Installation rejects a
+    /// nonzero count on an atom whose implicit count is fixed.
     pub fn with_valence(
         mut self,
         model: Option<ValenceModel>,
@@ -686,6 +688,8 @@ pub enum PerceptionInstallError {
     ComponentCapacityExceeded(PerceptionComponent),
     /// An atom reference is not live.
     InvalidAtomId(AtomId),
+    /// Valence assigns inferred hydrogens to an atom whose implicit count is fixed.
+    InferredHydrogensOnFixedAtom(AtomId),
     /// A bond reference is not live.
     InvalidBondId(BondId),
     /// A stereo-element reference is not live.
@@ -736,6 +740,10 @@ impl fmt::Display for PerceptionInstallError {
                 write!(formatter, "{component} capacity exceeded")
             }
             Self::InvalidAtomId(atom) => write!(formatter, "invalid perception atom id: {atom}"),
+            Self::InferredHydrogensOnFixedAtom(atom) => write!(
+                formatter,
+                "perception infers hydrogens on atom {atom}, whose implicit count is fixed"
+            ),
             Self::InvalidBondId(bond) => write!(formatter, "invalid perception bond id: {bond}"),
             Self::InvalidStereoElementId(element) => {
                 write!(formatter, "invalid perception stereo-element id: {element}")
@@ -810,15 +818,17 @@ pub(super) fn validate_perception(
 ) -> std::result::Result<(), PerceptionInstallError> {
     validate_delocalization(molecule, state)?;
     if let Some(valence) = &state.valence {
-        for atom in valence.inferred_hydrogens.keys().copied() {
-            if molecule
+        for (&atom, &count) in &valence.inferred_hydrogens {
+            let Some(payload) = molecule
                 .graph
                 .atoms
                 .get(atom.index())
                 .and_then(Option::as_ref)
-                .is_none()
-            {
+            else {
                 return Err(PerceptionInstallError::InvalidAtomId(atom));
+            };
+            if count != 0 && !payload.hydrogens.is_inferred() {
+                return Err(PerceptionInstallError::InferredHydrogensOnFixedAtom(atom));
             }
         }
     }

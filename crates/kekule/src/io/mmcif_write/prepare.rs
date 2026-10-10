@@ -2,7 +2,7 @@
 use super::entities::{AsymRow, AtomEntityAssignment, EntityKind, EntityPlan, EntityRow};
 use super::one_based_serial;
 use super::MmcifWriteError;
-use crate::core::{AtomId, BondOrder, HydrogenDeclaration};
+use crate::core::{AtomId, BondOrder, ImplicitHydrogens};
 use crate::geometry::Point3;
 use crate::structure::ModelView;
 use crate::topology::{
@@ -141,7 +141,7 @@ fn validate_graph_chemistry(
                 field: "radical",
             });
         }
-        if atom.hydrogens != HydrogenDeclaration::default() {
+        if atom.hydrogens != ImplicitHydrogens::default() {
             return Err(MmcifWriteError::UnsupportedAtomField {
                 atom: atom_id,
                 field: "hydrogens",

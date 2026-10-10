@@ -1,4 +1,4 @@
-use kekule::core::{Atom, Element, HydrogenDeclaration, Molecule, MoleculeEditor};
+use kekule::core::{Atom, Element, ImplicitHydrogens, Molecule, MoleculeEditor};
 use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
 use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfRecordInterpretation, SdfWriteOptions};
@@ -153,7 +153,7 @@ fn minimum_formal_charge_round_trips_without_overflow() {
     let parsed = molecule("[C-128]");
     let mut atom = Atom::new(Element::from_symbol("C").unwrap());
     atom.formal_charge = i8::MIN;
-    atom.hydrogens = HydrogenDeclaration::Fixed(0);
+    atom.hydrogens = ImplicitHydrogens::Fixed(0);
     let mut editor = MoleculeEditor::new();
     editor.add_atom(atom).unwrap();
     let constructed = editor.finish().unwrap();
@@ -263,7 +263,7 @@ fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_cou
 fn automatic_molfile_and_sdf_promotion_preserve_zero_hydrogens_on_reused_instances() {
     let mut builder = TopologyBuilder::new();
     let mut atom = Atom::new(Element::from_symbol("C").unwrap());
-    atom.hydrogens = HydrogenDeclaration::Fixed(0);
+    atom.hydrogens = ImplicitHydrogens::Fixed(0);
     let mut editor = MoleculeEditor::new();
     editor.add_atom(atom).unwrap();
     let definition = builder
@@ -286,12 +286,12 @@ fn automatic_molfile_and_sdf_promotion_preserve_zero_hydrogens_on_reused_instanc
         assert!(restored
             .topology()
             .atoms()
-            .all(|atom| atom.hydrogens == HydrogenDeclaration::Fixed(0)));
+            .all(|atom| atom.hydrogens == ImplicitHydrogens::Fixed(0)));
         restored.perceive().unwrap();
         for instance in restored.topology().molecules() {
             let molecule = instance.molecule();
             let atom = molecule.atom_ids().next().unwrap();
-            assert_eq!(molecule.inferred_hydrogens(atom).unwrap(), Some(0));
+            assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
         }
     }
 }

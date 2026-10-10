@@ -1,6 +1,8 @@
-use kekule::core::{AtomId, BondOrder, HydrogenDeclaration, Molecule, Perception};
+use kekule::core::{
+    AtomId, BondOrder, ImplicitHydrogens, Molecule, Perception, PerceptionInstallError,
+};
 use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
-use kekule::hydrogens::{AddHydrogensOptions, AddedHydrogenOrigin, HydrogenTransformError};
+use kekule::hydrogens::HydrogenTransformError;
 use kekule::topology::{InstanceAtomId, TopologyBuilder};
 use kekule::{smiles, stereo};
 
@@ -48,7 +50,7 @@ fn counts_describe_representation_independently_of_how_implicit_h_were_specified
 }
 
 #[test]
-fn specified_counts_are_known_without_perception_and_unknown_is_not_zero() {
+fn fixed_counts_are_known_without_perception_and_unknown_is_not_zero() {
     for (source, expected) in [
         ("C", None),
         ("[C]", Some(0)),
@@ -78,31 +80,7 @@ fn specified_counts_are_known_without_perception_and_unknown_is_not_zero() {
 }
 
 #[test]
-fn specified_and_inferred_contributions_are_combined_without_double_counting() {
-    let mut editor = parse("C").into_editor();
-    let c = editor.atom_ids().next().unwrap();
-    editor.atom_mut(c).unwrap().hydrogens = HydrogenDeclaration::Infer { specified: 1 };
-    let mut molecule = editor.finish().unwrap();
-    assert_eq!(molecule.implicit_hydrogens(c).unwrap(), None);
-    molecule.perceive().unwrap();
-    assert_eq!(molecule.inferred_hydrogens(c).unwrap(), Some(3));
-    assert_eq!(molecule.implicit_hydrogens(c).unwrap(), Some(4));
-    let report = molecule
-        .add_hydrogens_with_options(AddHydrogensOptions {
-            specified_only: true,
-            ..Default::default()
-        })
-        .unwrap();
-    assert_eq!(report.added.len(), 1);
-    assert_eq!(report.added[0].origin, AddedHydrogenOrigin::Specified);
-    molecule.perceive().unwrap();
-    assert_eq!(molecule.explicit_hydrogens(c).unwrap(), 1);
-    assert_eq!(molecule.implicit_hydrogens(c).unwrap(), Some(3));
-    assert_eq!(molecule.total_hydrogens(c).unwrap(), Some(4));
-}
-
-#[test]
-fn edits_invalidate_inference_and_preserve_specified_counts() {
+fn edits_invalidate_inference_and_preserve_fixed_counts() {
     for (source, after_edit, after_perception) in [("CC", None, 2), ("[CH3]C", Some(3), 3)] {
         let mut molecule = parse(source);
         molecule.perceive().unwrap();
@@ -116,11 +94,11 @@ fn edits_invalidate_inference_and_preserve_specified_counts() {
         let mut molecule = editor.finish().unwrap();
         if source.starts_with('[') {
             // The edit makes the fixed count overvalent. Strict validation must
-            // report it rather than silently removing a specified hydrogen.
+            // report it rather than silently removing a fixed hydrogen.
             assert!(molecule.perceive().is_err());
             assert_eq!(
                 molecule.atom(c).unwrap().hydrogens,
-                HydrogenDeclaration::Fixed(3)
+                ImplicitHydrogens::Fixed(3)
             );
         } else {
             molecule.perceive().unwrap();
@@ -237,17 +215,50 @@ fn stereo_and_smiles_round_trips_use_complete_implicit_counts() {
 
 #[test]
 fn count_arithmetic_does_not_truncate_large_detached_assignments() {
-    let mut editor = parse("C").into_editor();
-    let c = editor.atom_ids().next().unwrap();
-    editor.atom_mut(c).unwrap().hydrogens = HydrogenDeclaration::Infer { specified: 255 };
-    let mut molecule = editor.finish().unwrap();
+    let mut molecule = parse("[H]C");
+    let c = carbon(&molecule);
     let perception = Perception::builder()
         .with_valence(None, vec![(c, 255)])
         .unwrap()
         .build();
     molecule.install_perception(perception).unwrap();
-    assert_eq!(molecule.implicit_hydrogens(c).unwrap(), Some(510));
-    assert_eq!(molecule.total_hydrogens(c).unwrap(), Some(510));
+    assert_eq!(molecule.implicit_hydrogens(c).unwrap(), Some(255));
+    assert_eq!(molecule.total_hydrogens(c).unwrap(), Some(256));
+}
+
+#[test]
+fn installed_perception_cannot_infer_hydrogens_on_a_fixed_count() {
+    // [CH3] fixes three hydrogens on atom 0; atom 1 infers its count.
+    for (assignments, expected) in [
+        (vec![(AtomId::new(0), 0), (AtomId::new(1), 3)], Ok(())),
+        (
+            vec![(AtomId::new(0), 1), (AtomId::new(1), 3)],
+            Err(PerceptionInstallError::InferredHydrogensOnFixedAtom(
+                AtomId::new(0),
+            )),
+        ),
+    ] {
+        let mut molecule = parse("[CH3]C");
+        let before = molecule.perception().clone();
+        let perception = Perception::builder()
+            .with_valence(None, assignments)
+            .unwrap()
+            .build();
+        let installed = molecule.install_perception(perception);
+        assert_eq!(installed, expected);
+        if installed.is_ok() {
+            assert_eq!(
+                molecule.implicit_hydrogens(AtomId::new(0)).unwrap(),
+                Some(3)
+            );
+            assert_eq!(
+                molecule.implicit_hydrogens(AtomId::new(1)).unwrap(),
+                Some(3)
+            );
+        } else {
+            assert_eq!(molecule.perception(), &before);
+        }
+    }
 }
 
 #[test]
