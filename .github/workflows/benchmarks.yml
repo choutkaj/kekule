@@ -1,0 +1,80 @@
+name: Scientific benchmark
+
+# Compares Kekule with stored observations of pinned reference toolkits.
+# Nightly and manual only: differences are triaged, they never gate PRs.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      dataset:
+        description: Dataset
+        type: choice
+        options: [all, small, bio]
+        default: all
+      tier:
+        description: Tier
+        type: choice
+        options: [full, curated]
+        default: full
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: ${{ matrix.dataset }} (${{ inputs.tier || 'full' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        dataset: ${{ fromJSON(inputs.dataset == 'small' && '["small"]' || inputs.dataset == 'bio' && '["bio"]' || '["small", "bio"]') }}
+    env:
+      TIER: ${{ inputs.tier || 'full' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Restore the dataset snapshot
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/kekule-bench/archives
+            target/kekule-bench/data
+          key: kekule-bench-${{ matrix.dataset }}-${{ hashFiles(format('benchmarks/datasets/{0}/selection.lock.json', matrix.dataset)) }}
+      - name: Fetch the full-tier snapshot with its stored references
+        if: env.TIER == 'full'
+        run: python3 benchmarks/bench.py fetch "${{ matrix.dataset }}"
+      - name: Observe with Kekule, compare and triage
+        run: python3 benchmarks/bench.py run "${{ matrix.dataset }}" --tier "$TIER" --jobs 4
+      - name: Publish the report summary
+        if: always()
+        run: |
+          for report in target/kekule-bench/reports/*/report.md; do
+            [ -f "$report" ] && cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-${{ matrix.dataset }}-${{ env.TIER }}
+          path: target/kekule-bench/reports/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  atomic-data:
+    name: Atomic data regenerates from its pinned sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Regenerate and compare
+        run: |
+          python3 tools/atomic-data/generate.py --output target/atomic-data/data.rs
+          diff -u crates/kekule/src/descriptors/data.rs target/atomic-data/data.rs

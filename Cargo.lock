@@ -151,6 +151,14 @@ name = "kekule"
 version = "0.2.1"
 
 [[package]]
+name = "kekule-bench"
+version = "0.2.1"
+dependencies = [
+ "kekule",
+ "serde_json",
+]
+
+[[package]]
 name = "kekule-openff"
 version = "0.2.1"
 dependencies = [

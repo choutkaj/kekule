@@ -4,4 +4,7 @@
 /crates/*/tests/fixtures/**/sources.lock.json @choutkaj
 /crates/*/tests/fixtures/**/provenance.toml @choutkaj
 /fuzz/provenance/ @choutkaj
+/benchmarks/known-differences.toml @choutkaj
+/benchmarks/datasets/ @choutkaj
+/benchmarks/conda-*.lock @choutkaj
 /tools/openff/ @choutkaj

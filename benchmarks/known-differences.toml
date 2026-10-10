@@ -1,0 +1,255 @@
+# Known differences between Kekule and the reference toolkits.
+#
+# A case is known only when every one of its differences matches an entry.
+# `match` holds fnmatch globs over `path|context|transition` signatures.
+# Verdicts: kekule-bug, kekule-gap, reference-limitation, intended-policy.
+# `max_cases` bounds the matched cases per tier and only ever moves down
+# (`bench.py run ... --update-known`). An entry whose example stops showing
+# the difference is stale and fails the run: delete it when the cause is gone.
+
+# --- Biomolecules ----------------------------------------------------------
+
+[[known]]
+id = "bio-deuterium-element"
+task = "bio.*"
+match = ["error|interpret:deuterium|ok→interpret:deuterium"]
+verdict = "kekule-bug"
+reason = "Kekule rejects atom sites whose type_symbol is D, so every neutron or deuterated structure fails to interpret; gemmi and Biotite read them."
+examples = ["pdb:3KMF", "pdb:6GCY"]
+max_cases = { curated = 8, full = 20 }
+
+[[known]]
+id = "bio-token-limit"
+task = "bio.*"
+match = ["error|parse:token-limit|ok→parse:token-limit"]
+verdict = "kekule-bug"
+reason = "The default mmCIF token budget rejects an ordinary 60,000-atom archive entry (6WLO)."
+examples = ["pdb:6WLO"]
+max_cases = { curated = 0, full = 4 }
+
+[[known]]
+id = "bio-altloc-unsatisfiable"
+task = "bio.*"
+match = ["error|interpret:altloc|ok→interpret:altloc"]
+verdict = "kekule-bug"
+reason = "Default altloc interpretation finds no complete alternate configuration for some valid entries (9TA4, 8C5N) and rejects them."
+examples = ["pdb:9TA4", "pdb:8C5N"]
+max_cases = { curated = 0, full = 6 }
+
+[[known]]
+id = "bio-residue-class-tables"
+task = "bio.classification"
+match = [
+  "residue.class|*|amino-acid→other",
+  "residue.class|*|dna→other",
+  "residue.class|*|rna→other",
+  "residue.class|*|carbohydrate→other",
+  "residue.class|*|ion→other",
+]
+verdict = "kekule-gap"
+reason = "Residue classification recognizes only the standard amino acids and nucleotides, ten sugars and fifteen ions by name; modified residues (MSE, SEP, PSU, ...), other sugars and uncharged single-atom ions become Other. Biotite classifies from the CCD."
+examples = ["pdb:6FCE", "pdb:3LTR", "pdb:7X9L"]
+max_cases = { curated = 6, full = 43 }
+
+[[known]]
+id = "bio-metal-coordination"
+task = "bio.connectivity"
+match = ["bond.order||dative→missing"]
+verdict = "intended-policy"
+reason = "Kekule bonds only covalent _struct_conn types (covale*, disulf, modres); metal coordination (metalc) does not define molecules. Biotite adds coordination bonds."
+examples = ["pdb:3LTR", "pdb:1MLK"]
+max_cases = { curated = 8, full = 72 }
+
+[[known]]
+id = "bio-undeclared-bonds"
+task = "bio.connectivity"
+match = ["bond.order||1→missing", "bond.order||2→missing"]
+verdict = "intended-policy"
+reason = "Kekule builds only connectivity the file declares. Biotite also falls back to its bundled CCD for components without _chem_comp_bond rows (UNK in 2WSE) and links adjacent non-polymer residues by name (7FSY)."
+examples = ["pdb:2WSE", "pdb:7FSY"]
+max_cases = { curated = 0, full = 2 }
+
+[[known]]
+id = "bio-nonstandard-polymer-links"
+task = "bio.connectivity"
+match = ["bond.order||missing→1"]
+verdict = "reference-limitation"
+reason = "Kekule links consecutive polymer residues from _entity_poly, including non-standard ones such as a 5'-ATP opening an RNA chain (4HOT); Biotite links only residues whose CCD linking type it recognizes."
+examples = ["pdb:4HOT"]
+max_cases = { curated = 1, full = 13 }
+
+[[known]]
+id = "bio-dssp-unnumbered-residues"
+task = "bio.dssp"
+match = ["dssp||missing→present", "dssp.*||residue→unnumbered", "dssp.*||residue→residue"]
+verdict = "intended-policy"
+reason = "Kekule's DSSP admits otherwise unclassified residues with a complete backbone even without a polymer sequence number, so peptide ligands become hydrogen-bond partners and displace mkdssp's second-best partners; mkdssp skips them."
+examples = ["pdb:8QXQ", "pdb:5ER1", "pdb:2CLO"]
+max_cases = { curated = 0, full = 5 }
+
+# --- Small molecules -------------------------------------------------------
+
+[[known]]
+id = "small-uppercase-element-symbols"
+task = "small.*"
+match = ["error|parse:uppercase-element|ok→parse:uppercase-element"]
+verdict = "kekule-gap"
+reason = "The wwPDB CCD writes two-letter element symbols in upper case (CL, FE, ZN) in its ideal SDF files; Kekule's molfile reader accepts only the periodic-table spelling and rejects the record. RDKit reads them case-insensitively."
+examples = ["ccd:CR", "ccd:DY"]
+max_cases = { curated = 23, full = 199 }
+
+[[known]]
+id = "small-placeholder-atoms"
+task = "small.*"
+match = ["error|parse:query-atom|ok→parse:query-atom"]
+verdict = "intended-policy"
+reason = "Kekule rejects atoms that name no chemical element: R-group atoms (R, R1) in ChEBI test files and the CCD's unknown-atom placeholder X. RDKit reads them as dummy atoms."
+examples = ["rdkit:chebi_57262.v3k.mol", "ccd:ASX"]
+max_cases = { curated = 3, full = 4 }
+
+[[known]]
+id = "small-axial-stereo-candidates"
+task = "small.stereo.candidates"
+match = ["candidate.axis.present|*|true→missing", "candidate.double_bond.present|C-C|2|true→missing"]
+verdict = "kekule-gap"
+reason = "Stereo candidate detection has no axial candidates: hindered biaryl and aryl-N atropisomer axes are missed, and so are 1,3-disubstituted allenes (C=C=CBr), which RDKit reports as two double-bond candidates."
+examples = ["rdkit:atropisomers/RP-6306_atrop1.sdf", "rdkit:atropisomers/Mrtx1719_atrop1.sdf", "chembl:CHEMBL1765726"]
+max_cases = { curated = 33, full = 36 }
+
+[[known]]
+id = "small-rdkit-possible-stereo"
+task = "small.stereo.candidates"
+match = [
+  "candidate.double_bond.present|N-N|2|true→missing",
+  "candidate.double_bond.present|C-N|2|true→missing",
+  "candidate.double_bond.present|N-C|2|true→missing",
+  "candidate.tetrahedral.present|C|true→missing",
+  "candidate.tetrahedral.present|As|true→missing",
+  "candidate.octahedral.present|P|-1|true→missing",
+]
+verdict = "reference-limitation"
+reason = "FindPotentialStereo(flagPossible=True) also lists centres it has not ranked: azide and diazo N=N/C=N (no substituent on the terminal N), isothiocyanate S=C=N, an exocyclic imine on a mirror-symmetric ring (CHEMBL1599370), two-coordinate As in O=[As]O, PF6- with six identical ligands, and carbons whose two ring arms are equivalent (adamantan-2-yl, 4-substituted spiro-pyrrolidinium piperidines, a cyclopentitol C1 whose epimers are one molecule). flagPossible=False would also drop every genuine unspecified centre."
+examples = ["chembl:CHEMBL3103201", "chembl:CHEMBL309036", "chembl:CHEMBL1909222", "chembl:CHEMBL2087763", "chembl:CHEMBL491880", "chembl:CHEMBL339931"]
+max_cases = { curated = 7, full = 73 }
+
+[[known]]
+id = "small-either-mark-on-nonstereogenic-bond"
+task = "small.parse"
+match = ["stereo.double_bond.carriers|*|present→missing", "stereo.double_bond.parity|*|null→missing"]
+verdict = "reference-limitation"
+reason = "An 'either' double-bond mark (V2000 stereo 3) on a guanidine C=N whose carbon carries two identical NH2 is not stereogenic. Kekule drops the assertion; RDKit keeps STEREOANY through cleanup."
+examples = ["chembl:CHEMBL186637", "chembl:CHEMBL1705020"]
+max_cases = { curated = 1, full = 3 }
+
+[[known]]
+id = "small-zero-valence-radicals"
+task = "small.parse"
+match = ["atom.radicals|*|*→0"]
+verdict = "reference-limitation"
+reason = "RDKit turns the V2000 zero-valence marker (valence 15) on an uncharged metal into radical electrons although the record has no RAD property. The same ChEMBL records' own SMILES ([Ca], [Ag]) carry no radicals, as Kekule reads them."
+examples = ["chembl:CHEMBL1200496", "chembl:CHEMBL2001454"]
+max_cases = { curated = 2, full = 2 }
+
+[[known]]
+id = "small-degenerate-tetrahedral-depiction"
+task = "small.parse"
+match = ["stereo.tetrahedral.parity|C|0→1"]
+verdict = "reference-limitation"
+reason = "CHEMBL453168 draws a centre with two plain bonds at 180 degrees and one wedge, so the parity depends on where the implicit hydrogen is assumed. RDKit 2026.03 reads the molfile against the record's own SMILES ([C@@H](C)O); Kekule matches the SMILES."
+examples = ["chembl:CHEMBL453168"]
+max_cases = { curated = 1, full = 1 }
+
+[[known]]
+id = "small-near-linear-double-bond-substituent"
+task = "small.parse"
+match = ["stereo.double_bond.parity|C-C|2|1→0"]
+verdict = "kekule-bug"
+reason = "On CHEMBL3261932 one substituent of each ethylidene C=C is drawn 167 degrees from the double bond, on the same side as the well-placed other substituent. Kekule decides E/Z from the near-collinear substituent and asserts the opposite configuration, with no ambiguity reported; RDKit follows the well-placed substituent and matches the record's SMILES."
+examples = ["chembl:CHEMBL3261932"]
+max_cases = { curated = 0, full = 1 }
+
+[[known]]
+id = "small-misdrawn-wedge-aborts-parse"
+task = "small.*"
+match = ["error|parse:unassembled-wedge|ok→parse:unassembled-wedge"]
+verdict = "kekule-bug"
+reason = "A hashed wedge whose narrow end is on an atom that cannot be a stereocentre (an ester O in CHEMBL1201790) makes Kekule fail the whole parse in source-stereo canonicalization. RDKit ignores the mark and leaves the intended centre unspecified, as the record's SMILES does."
+examples = ["chembl:CHEMBL1201790"]
+max_cases = { curated = 0, full = 1 }
+
+[[known]]
+id = "small-retained-ring-stereo"
+task = "small.parse"
+match = [
+  "stereo.tetrahedral.carriers|C|missing→present",
+  "stereo.tetrahedral.parity|C|missing→*",
+  "stereo.double_bond.carriers|C-C|2|missing→present",
+  "stereo.double_bond.parity|C-C|2|missing→*",
+]
+verdict = "intended-policy"
+reason = "Kekule keeps ring stereo assertions that RDKit's legacy perception discards: a wedge at one end of a 1,4-disubstituted cyclohexane or a 4-alkylidene cyclohexane whose partner end is unspecified (unspecified sites are held fixed, so dependent ring stereo is retained), and the pseudoasymmetric C3 of a tropane, which RDKit's newer stereo perception also keeps."
+examples = ["chembl:CHEMBL4875187", "chembl:CHEMBL518791", "chembl:CHEMBL3794451"]
+max_cases = { curated = 0, full = 3 }
+
+[[known]]
+id = "small-aziridine-nitrogen-stereo"
+task = "small.parse"
+match = ["stereo.tetrahedral.carriers|N|missing→present", "stereo.tetrahedral.parity|N|missing→*"]
+verdict = "intended-policy"
+reason = "Kekule treats three-coordinate nitrogen in a three-membered ring as stereogenic and assigns it from 3D coordinates (the N-methyl aziridine of a mitomycin-type CCD component); RDKit leaves it unassigned."
+examples = ["ccd:A1E3V"]
+max_cases = { curated = 0, full = 1 }
+
+[[known]]
+id = "small-hypervalent-halogen-oxides"
+task = "small.parse"
+match = ["atom.charge|Cl|+3|0→3", "atom.charge|O|-1|0→-1", "bond.order|Cl-O|1|2→1"]
+verdict = "intended-policy"
+reason = "Kekule reads perchlorate written with Cl=O double bonds in charge-separated form, as RDKit's own sanitization cleanup does; the parse is compared with RDKit's reading before that cleanup, and dependent tasks are blocked for these records."
+examples = ["chembl:CHEMBL436008"]
+max_cases = { curated = 0, full = 3 }
+
+[[known]]
+id = "small-symmetric-macrocycle-rings"
+task = "small.rings"
+match = ["rings.count|size=*|fewer"]
+verdict = "kekule-gap"
+reason = "In cyclodextrins and similar cyclic oligosaccharides each glucose offers two equally short paths around the macrocycle. Kekule's RDKit-like ring set installs fewer of these symmetric alternatives than GetSymmSSSR (8 versus 14 rings of 35 atoms)."
+examples = ["chembl:CHEMBL1631363", "chembl:CHEMBL4476317"]
+max_cases = { curated = 0, full = 4 }
+
+[[known]]
+id = "small-kekule-resonance-work-limit"
+task = "small.resonance"
+match = ["error|resonance:resource-limit|ok→resonance:resource-limit"]
+verdict = "kekule-gap"
+reason = "Contributor enumeration stops at its default work limit on very large conjugated systems that RDKit's supplier enumerates."
+examples = ["chembl:CHEMBL413946"]
+max_cases = { curated = 2, full = 3 }
+
+[[known]]
+id = "small-rdkit-resonance-work-limit"
+task = "small.resonance"
+match = ["error|resonance:resource-limit|resonance:resource-limit→ok"]
+verdict = "reference-limitation"
+reason = "RDKit's ResonanceMolSupplier is stopped after 5,000 enumeration steps (RESONANCE_WORK_LIMIT), which porphyrins and large polycations exceed; Kekule enumerates them."
+examples = ["chembl:CHEMBL1195040"]
+max_cases = { curated = 0, full = 1 }
+
+[[known]]
+id = "small-parity-on-three-coordinate-nitrogen"
+task = "small.*"
+match = ["error|parse:stereo-carriers|ok→parse:stereo-carriers"]
+verdict = "intended-policy"
+reason = "Kekule rejects a tetrahedral CFG on an atom without four supported carriers (a three-coordinate amide N in RDKit's deliberately malformed atropBad2 test file); RDKit ignores the flag."
+examples = ["rdkit:atropisomers/BMS-986142_atropBad2.sdf"]
+max_cases = { curated = 1, full = 1 }
+
+[[known]]
+id = "small-v2000-coordinate-width"
+task = "small.write.*"
+match = ["error|write:field-width|ok→write:field-width"]
+verdict = "intended-policy"
+reason = "Kekule refuses to write a V2000 coordinate that does not fit the fixed 10.4 field (z = -15355.5894 in BMS-986142_3d_chiral.sdf, which already overflows in the source) instead of emitting a misaligned atom line."
+examples = ["rdkit:atropisomers/BMS-986142_3d_chiral.sdf"]
+max_cases = { curated = 2, full = 2 }

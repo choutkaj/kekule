@@ -25,6 +25,7 @@ These rules apply to contributors and AI agents working in this repository.
 
 ## Scientific tooling
 
-- RDKit, Biopython, DSSP, and similar tools are benchmark references only, never Rust runtime dependencies.
+- RDKit, gemmi, Biotite, DSSP, and similar tools are benchmark references only, never Rust runtime dependencies.
 - Benchmark fixtures must be externally supplied. Toy molecules belong only in focused unit regressions.
-- Do not weaken comparisons, remove asserted fields, or regenerate goldens merely to hide a mismatch.
+- Do not weaken comparisons, remove asserted fields, widen tolerances, or raise known-difference bounds merely to hide a mismatch. Explain every accepted difference in `benchmarks/known-differences.toml`.
+- ChEMBL records are CC BY-SA; never copy them into `crates/*/tests/fixtures`, which ship under the crates' licences. Take regression molecules from PubChem, the CCD or other permissively licensed sources.

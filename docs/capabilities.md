@@ -29,8 +29,10 @@ must account for input selection and documented scientific conventions without
 discarding asserted fields or relabeling errors as agreements.
 
 For maintenance validation, see [CI](../.github/workflows/ci.yml) and
-[fuzzing](../FUZZING.md). External scientific comparisons are optional and never
-release gates.
+[fuzzing](../FUZZING.md). The [scientific benchmark](../benchmarks/README.md)
+compares Kekule nightly with RDKit, gemmi, Biotite and mkdssp on curated datasets;
+its [known differences](../benchmarks/known-differences.toml) record current
+gaps and intended policies. It is never a release gate.
 
 The retired OpenFF [validation report](https://github.com/choutkaj/kekule/blob/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks/openff/VALIDATION.md) recorded
 parity plots, numerical differences and CPU timings for the 110-molecule panel and
