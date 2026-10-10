@@ -281,21 +281,42 @@ impl MoleculeEditor {
                 staged.add_bond(map.atoms[&bond.a()], map.atoms[&bond.b()], bond.order)?,
             );
         }
-        // Published sources are compact, so each source row maps to one draft row.
+        // Property rows are slots. A source that is another draft's working
+        // molecule keeps rows for deleted slots, so copy only live rows.
         let property_error = |error| MoleculeError::Property(Box::new(error));
-        let atom_rows = map.atoms.values().map(|id| id.index()).collect::<Vec<_>>();
+        let (live, atom_rows): (Vec<_>, Vec<_>) = map
+            .atoms
+            .iter()
+            .map(|(source, draft)| (source.index(), draft.index()))
+            .unzip();
+        let atoms = source
+            .properties()
+            .atoms()
+            .raw()
+            .select_indices(&live)
+            .map_err(property_error)?;
         staged
             .working
             .properties
             .atoms_mut()
-            .copy_rows_from(source.properties().atoms().raw(), &atom_rows)
+            .copy_rows_from(&atoms, &atom_rows)
             .map_err(property_error)?;
-        let bond_rows = map.bonds.values().map(|id| id.index()).collect::<Vec<_>>();
+        let (live, bond_rows): (Vec<_>, Vec<_>) = map
+            .bonds
+            .iter()
+            .map(|(source, draft)| (source.index(), draft.index()))
+            .unzip();
+        let bonds = source
+            .properties()
+            .bonds()
+            .raw()
+            .select_indices(&live)
+            .map_err(property_error)?;
         staged
             .working
             .properties
             .bonds_mut()
-            .copy_rows_from(source.properties().bonds().raw(), &bond_rows)
+            .copy_rows_from(&bonds, &bond_rows)
             .map_err(property_error)?;
         let carrier = |value| match value {
             StereoCarrier::Atom(id) => StereoCarrier::Atom(map.atoms[&id]),
