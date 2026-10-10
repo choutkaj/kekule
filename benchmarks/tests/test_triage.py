@@ -195,10 +195,13 @@ class Triage(unittest.TestCase):
         self.assertEqual((rings.outcome, rings.reason), ("blocked", "parse differs"))
 
 
+INPUTS = "e" * 64
+
+
 class StoredReferencesTest(unittest.TestCase):
     def write(self, path, observers_fingerprint):
         lines = [
-            json.dumps({"dataset": "small", "version": 1, "observers": observers_fingerprint, "tools": {}}),
+            json.dumps({"dataset": "small", "version": 1, "inputs": INPUTS, "observers": observers_fingerprint, "tools": {}}),
             json.dumps({"prepared": "single-conformer|pdb/x.cif", "text": "data_x\n"}),
             json.dumps({"key": "rdkit:parse|a.smi|0", "value": {"status": "ok", "facts": []}}),
         ]
@@ -208,7 +211,7 @@ class StoredReferencesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "references.jsonl.gz"
             self.write(path, observers.fingerprint("small"))
-            stored = run.StoredReferences(path, "small", 1)
+            stored = run.StoredReferences(path, "small", 1, INPUTS)
             self.assertEqual(stored.get("rdkit:parse|a.smi|0"), {"status": "ok", "facts": []})
             self.assertEqual(stored.get("rdkit:rings|a.smi|0")["error"]["kind"], "no-reference")
             self.assertEqual(stored.prepared, {"single-conformer|pdb/x.cif": "data_x\n"})
@@ -218,15 +221,15 @@ class StoredReferencesTest(unittest.TestCase):
             path = Path(directory) / "references.jsonl.gz"
             self.write(path, {"rdkit": "0" * 64})
             with self.assertRaises(DatasetError):
-                run.StoredReferences(path, "small", 1)
+                run.StoredReferences(path, "small", 1, INPUTS)
 
-    def test_references_for_another_dataset_revision_are_refused(self):
+    def test_references_for_another_dataset_revision_or_inputs_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "references.jsonl.gz"
             self.write(path, observers.fingerprint("small"))
-            for dataset, version in (("small", 2), ("bio", 1)):
-                with self.subTest(dataset=dataset, version=version), self.assertRaises(DatasetError):
-                    run.StoredReferences(path, dataset, version)
+            for dataset, version, inputs in (("small", 2, INPUTS), ("bio", 1, INPUTS), ("small", 1, "f" * 64)):
+                with self.subTest(dataset=dataset, version=version, inputs=inputs), self.assertRaises(DatasetError):
+                    run.StoredReferences(path, dataset, version, inputs)
 
     def test_fingerprints_cover_only_the_observers_a_dataset_uses(self):
         self.assertEqual(sorted(observers.fingerprint("small")), ["rdkit"])

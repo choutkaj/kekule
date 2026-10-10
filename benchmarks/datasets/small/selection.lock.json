@@ -106,12 +106,12 @@
   "snapshot": {
     "name": "kekule-bench-small-v1.tar.xz",
     "url": "https://github.com/choutkaj/kekule/releases/download/benchmark-data-small-v1/kekule-bench-small-v1.tar.xz",
-    "sha256": "7fa2e495a090e0b3f70e6332827df489e69b95f822e94a046fac42dbf9c15164",
-    "bytes": 13522612,
+    "sha256": "408a64249679b48169871e2397d4996230629dcfdabe50930ba8fa60f6c040d3",
+    "bytes": 13525948,
     "extras": {
       "NOTICES/LICENSES.md": "6db68b2ed5008726f79f38d67b06516da697b517904598c68a7e8d088443af7c",
       "NOTICES/LICENSE-rdkit.txt": "daeb8d194502cbcf34c05c39541a0d02be65bc9bada5b891c1974cd24e9fca30",
-      "references.jsonl.gz": "9f2be9b55dd86c38953223cad91d2dc11a15c75e702bd3a81e3d758e979ef2d2"
+      "references.jsonl.gz": "05886c2cfd1fa09f95dd7ed772763972bd9501c4757d4a3b7a189c22bedf3680"
     }
   }
 }

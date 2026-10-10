@@ -158,6 +158,12 @@ class Dataset:
     def version(self) -> int:
         return int(self.selection["dataset"]["version"])
 
+    def inputs_digest(self, tier: str) -> str:
+        """SHA-256 over the tier's file paths and their manifest hashes, which
+        binds stored observations to the exact input bytes they describe."""
+        lines = sorted({f"{file.path} {file.sha256}" for record in self.tier(tier) for file in record.files})
+        return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
     def _load_manifest(self) -> dict[str, Record]:
         records: dict[str, Record] = {}
         paths: set[str] = set()

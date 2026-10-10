@@ -36,8 +36,9 @@ otherwise live in `target/kekule-bench`.
 Reference observations are computed once, by maintainers, in the pinned
 environment, and stored: `datasets/<name>/references-curated.jsonl.gz` in git,
 the full set inside the dataset's release archive. Regenerate them after
-changing a dataset or a reference observer it uses (a run refuses references
-made by other observer code). Generation takes about two minutes for `small`
+changing a dataset or a reference observer it uses: each file records the
+dataset version, a digest of the tier's input files and a fingerprint of the
+observer source, and a run refuses a file whose record does not match. Generation takes about two minutes for `small`
 and four for `bio`; RDKit's resonance enumeration is capped at a fixed number of steps
 (`RESONANCE_WORK_LIMIT`) so that a few porphyrins cannot stall it.
 

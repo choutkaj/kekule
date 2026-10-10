@@ -87,11 +87,11 @@
   "snapshot": {
     "name": "kekule-bench-bio-v1.tar.xz",
     "url": "https://github.com/choutkaj/kekule/releases/download/benchmark-data-bio-v1/kekule-bench-bio-v1.tar.xz",
-    "sha256": "f8b62126e91a19cf0948264ff5332f091b88d2dc714849f1cc2085fb82f7e9dd",
-    "bytes": 141204896,
+    "sha256": "258db84772a06d77a6aeb29669b050d04a5cdc29134d2c7b7e8582646274f543",
+    "bytes": 140930064,
     "extras": {
       "NOTICES/LICENSES.md": "a2c172ad69ac909dc68a41c3cd9acfaa7962e7ff70d2f281162ef9c14b80b7ab",
-      "references.jsonl.gz": "ff8dc4b8b4397f4a6e8b8100cd10c6134abe278ab00614188b1f13cccf5a732d"
+      "references.jsonl.gz": "35c94670800275a0fe0c39e550a15beef89d78d9eaffcbdaef14516e4169c4cc"
     }
   }
 }

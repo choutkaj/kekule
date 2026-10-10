@@ -1,6 +1,8 @@
 """Dataset manifests, curated files and snapshot archives (stdlib only)."""
+import gzip
 import hashlib
 import io
+import json
 import sys
 import tarfile
 import tempfile
@@ -150,6 +152,16 @@ class CommittedDatasets(unittest.TestCase):
                         members = {r.id for r in dataset.records.values() if r.stratum == stratum["id"]}
                         self.assertTrue(members <= set(dataset.curated_ids), stratum["id"])
                 dataset.files("curated")
+
+    def test_committed_curated_references_describe_the_curated_inputs(self):
+        for name in ("bio", "small"):
+            with self.subTest(dataset=name):
+                dataset = datasets.Dataset(name)
+                data = gzip.decompress((dataset.directory / "references-curated.jsonl.gz").read_bytes())
+                header = json.loads(data.split(b"\n", 1)[0])
+                self.assertEqual((header["dataset"], header["version"]), (name, dataset.version))
+                self.assertEqual(header["inputs"], dataset.inputs_digest("curated"))
+                self.assertNotEqual(dataset.inputs_digest("curated"), dataset.inputs_digest("full"))
 
 
 if __name__ == "__main__":

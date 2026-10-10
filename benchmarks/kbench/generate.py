@@ -103,8 +103,8 @@ def generate(name: str, workers: int) -> Path:
     curated = {record.id for record in dataset.tier("curated")}
     curated_paths = {file.path for record in dataset.tier("curated") for file in record.files}
     full_path = cache_root() / "references" / f"{name}-v{dataset.version}.jsonl.gz"
-    write(full_path, header, values, prepared)
-    write(dataset.directory / CURATED, header,
+    write(full_path, {**header, "inputs": dataset.inputs_digest("full")}, values, prepared)
+    write(dataset.directory / CURATED, {**header, "inputs": dataset.inputs_digest("curated")},
           {key: value for key, value in values.items() if key.split("|")[1] in curated_paths},
           {key: text for key, text in prepared.items() if key.split("|", 1)[1] in curated_paths})
     run.progress(started, f"wrote {full_path} and {dataset.directory / CURATED} ({len(curated)} curated records)")
