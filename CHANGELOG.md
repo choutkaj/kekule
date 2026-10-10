@@ -32,9 +32,10 @@ breaking API changes throughout the workspace.
   `from_items`, `get`/`get_mut`/`iter`, `push`, `replace`, `remove`,
   `replace_positions`, `select`, `subset`, `perceive`, `into_parts`, and
   `into_items`; item views are `EnsembleMemberView`/`EnsembleMemberMut` and
-  `TrajectoryFrameView`/`TrajectoryFrameMut`. `select` replaces
-  `Trajectory::slice` and copies items in any order, including ranges, strides,
-  and repeated indices. `Ensemble::from_models` consumes models.
+  `TrajectoryFrameView`/`TrajectoryFrameMut`. `subset` replaces
+  `Trajectory::slice` for atom selections, and the new `select` copies items in
+  any order, including ranges, strides, and repeated indices.
+  `Ensemble::from_models` consumes models.
   `Trajectory::into_ensemble` projects frames onto equally weighted members
   without copying conformations. `TrajectoryError` wraps core
   `ConformationError` and `RealizationError`.
