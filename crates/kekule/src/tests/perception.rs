@@ -103,7 +103,7 @@ fn implicit_hydrogen_update_preserves_rings_and_rebuilds_downstream_sections() {
         .expect("installed rings")
         .clone();
     let atom = AtomId::new(0);
-    assert_eq!(molecule.inferred_hydrogens(atom), Ok(Some(1)));
+    assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(1));
 
     molecule.set_inferred_hydrogens(atom, 0);
 
@@ -314,7 +314,7 @@ fn molecule_perception_queries_read_the_installed_state_directly() {
     let graph = molecule;
     for atom in graph.atom_ids() {
         assert_eq!(
-            graph.inferred_hydrogens(atom).expect("live atom"),
+            graph.perception().inferred_hydrogens(atom),
             graph.perception().inferred_hydrogens(atom)
         );
         assert_eq!(
@@ -623,7 +623,7 @@ fn aromaticity_supports_explicit_nitrogen_lone_pair_donor_ring() {
         let mut nitrogen = pyrrole_like
             .atom_mut(atoms[0])
             .expect("ring nitrogen should exist");
-        nitrogen.hydrogens = HydrogenDeclaration::Fixed(1);
+        nitrogen.hydrogens = ImplicitHydrogens::Fixed(1);
     }
     pyrrole_like.set_inferred_hydrogens(atoms[0], 0);
 
@@ -801,7 +801,7 @@ fn aromaticity_rejects_protonated_saturated_ring_nitrogen_donor() {
     {
         let mut nitrogen = mol.atom_mut(atoms[0]).expect("ring atom exists");
         nitrogen.formal_charge = 1;
-        nitrogen.hydrogens = HydrogenDeclaration::Fixed(1);
+        nitrogen.hydrogens = ImplicitHydrogens::Fixed(1);
     }
     mol.set_inferred_hydrogens(atoms[0], 0);
 
@@ -821,7 +821,7 @@ fn aromaticity_accepts_cyclopropenyl_cation_two_electron_ring() {
     {
         let mut cation = mol.atom_mut(atoms[0]).expect("ring atom exists");
         cation.formal_charge = 1;
-        cation.hydrogens = HydrogenDeclaration::Fixed(1);
+        cation.hydrogens = ImplicitHydrogens::Fixed(1);
     }
     mol.set_inferred_hydrogens(atoms[0], 0);
 
@@ -847,7 +847,7 @@ fn aromaticity_requires_every_atom_to_be_candidate_before_huckel_count() {
     );
     {
         let mut saturated = mol.atom_mut(atoms[0]).expect("ring atom exists");
-        saturated.hydrogens = HydrogenDeclaration::Fixed(2);
+        saturated.hydrogens = ImplicitHydrogens::Fixed(2);
     }
     mol.set_inferred_hydrogens(atoms[0], 0);
 

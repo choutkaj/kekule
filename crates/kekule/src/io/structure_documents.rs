@@ -5,7 +5,7 @@ use crate::chemistry::{
     canonicalize_molecule_for_publication, NormalizationError, NormalizationWarning,
 };
 use crate::core::{
-    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, HydrogenDeclaration, Molecule,
+    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
     MoleculeEditor, StereoElement, StereoElementId, StereoElementKind, StereoGroup,
     StereoGroupKind, TetrahedralOrientation, TetrahedralStereo,
 };
@@ -33,7 +33,7 @@ pub(super) fn interpret_molfile_atom_fields(
     formal_charge: i32,
     isotope: Option<i32>,
     radical: Option<AtomRadical>,
-    hydrogens: HydrogenDeclaration,
+    hydrogens: ImplicitHydrogens,
     atom_map: Option<u32>,
     line: usize,
 ) -> Result<Atom, SdfParseError> {
@@ -124,7 +124,7 @@ pub(super) fn apply_molfile_declared_valence(
     molecule
         .atom_mut(atom)
         .expect("interpreted Molfile atom remains live")
-        .hydrogens = HydrogenDeclaration::Fixed(explicit);
+        .hydrogens = ImplicitHydrogens::Fixed(explicit);
     Ok(())
 }
 
@@ -1090,7 +1090,7 @@ pub(super) fn materialize_molfile_stereo_hydrogens(
         // its atom valence permits one. Resolve that format convention into a
         // fixed carrier before the represented-only normalization kernel runs.
         // No installed perception or unmarked coordinate inference is involved.
-        if !atom.hydrogens.allows_inference()
+        if !atom.hydrogens.is_inferred()
             || molecule.incident_bonds(center).ok().map(Iterator::count) != Some(3)
             || crate::algorithms::rdkit_inferred_hydrogen_count(molecule, center, atom) != 1
         {
@@ -1099,7 +1099,7 @@ pub(super) fn materialize_molfile_stereo_hydrogens(
         molecule
             .atom_mut(center)
             .expect("source stereo center exists")
-            .hydrogens = HydrogenDeclaration::Fixed(1);
+            .hydrogens = ImplicitHydrogens::Fixed(1);
     }
 }
 

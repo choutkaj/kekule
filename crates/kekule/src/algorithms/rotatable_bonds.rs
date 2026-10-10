@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::chemistry::PerceptionError;
 use crate::core::{
-    AromaticityModel, AtomId, Bond, BondId, BondOrder, Element, Molecule, RingBasisModel,
-    ValenceModel,
+    AromaticityModel, AtomId, Bond, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
+    RingBasisModel, ValenceModel,
 };
 
 use super::rings::compute_ring_membership;
@@ -351,11 +351,9 @@ fn is_methyl_like(
         return false;
     }
 
-    let represented = usize::from(atom.hydrogens.specified_count());
-    if atom.hydrogens.allows_inference() {
-        graph_hydrogens.saturating_add(represented) <= 3
-    } else {
-        graph_hydrogens.saturating_add(represented) == 3
+    match atom.hydrogens {
+        ImplicitHydrogens::Inferred => graph_hydrogens <= 3,
+        ImplicitHydrogens::Fixed(count) => graph_hydrogens.saturating_add(usize::from(count)) == 3,
     }
 }
 

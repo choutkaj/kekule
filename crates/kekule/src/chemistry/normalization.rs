@@ -3,8 +3,8 @@ use std::fmt;
 
 use crate::algorithms::StereoValidationIssue;
 use crate::core::{
-    canonicalize_represented_chemistry, Atom, AtomId, BondId, BondOrder, Molecule, MoleculeError,
-    StereoElementId,
+    canonicalize_represented_chemistry, Atom, AtomId, BondId, BondOrder, ImplicitHydrogens,
+    Molecule, MoleculeError, StereoElementId,
 };
 
 use super::source_stereo::{
@@ -263,7 +263,7 @@ fn try_localize_aromatic_component_with_limit(
             return Ok(false);
         };
         let explicit_valence =
-            baseline_bond_valence.saturating_add(usize::from(atom.hydrogens.specified_count()));
+            baseline_bond_valence.saturating_add(usize::from(atom.hydrogens.represented_count()));
         let inferred_hydrogens = source_aromatic_inferred_hydrogens(atom, explicit_valence);
         let occupied_valence = explicit_valence
             .saturating_add(inferred_hydrogens)
@@ -420,13 +420,13 @@ fn represented_bond_valence(order: BondOrder) -> usize {
 }
 
 fn source_aromatic_inferred_hydrogens(atom: &Atom, explicit_valence: usize) -> usize {
-    if !atom.hydrogens.allows_inference() {
+    if !atom.hydrogens.is_inferred() {
         return 0;
     }
     let target = match atom.element.symbol() {
         "B" | "C" => 3,
         "N" | "O" | "S" | "Se" | "Te" => {
-            if atom.hydrogens.specified_count() > 0 || atom.formal_charge > 0 {
+            if atom.formal_charge > 0 {
                 3
             } else {
                 2
@@ -447,11 +447,7 @@ fn aromatic_localization_target_valence(
         ("B", 0) => 3,
         ("B", 1) => 2,
         ("C", -1 | 1) => 3,
-        ("C", 0)
-            if !atom.hydrogens.allows_inference()
-                && atom.hydrogens.specified_count() == 0
-                && baseline_bond_valence == 2 =>
-        {
+        ("C", 0) if atom.hydrogens == ImplicitHydrogens::Fixed(0) && baseline_bond_valence == 2 => {
             3
         }
         ("C", 0) => 4,

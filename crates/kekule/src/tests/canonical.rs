@@ -82,7 +82,7 @@ fn canonical_ranking_uses_isotope_hydrogens_and_atom_maps() {
 fn canonical_ranking_uses_current_hydrogen_counts_without_changing_declarations() {
     let mut builder = crate::core::MoleculeEditor::new();
     let mut fixed = carbon();
-    fixed.hydrogens = HydrogenDeclaration::Fixed(3);
+    fixed.hydrogens = ImplicitHydrogens::Fixed(3);
     let fixed = builder.add_atom(fixed).expect("fixed carbon");
     let inferred = builder.add_atom(carbon()).expect("inferred carbon");
     builder
@@ -93,21 +93,17 @@ fn canonical_ranking_uses_current_hydrogen_counts_without_changing_declarations(
     assert_ne!(unperceived.rank_of(fixed), unperceived.rank_of(inferred));
     perceive(&mut molecule).expect("ethane-like graph perceives");
 
-    assert_eq!(molecule.inferred_hydrogens(fixed), Ok(Some(0)));
-    assert_eq!(molecule.inferred_hydrogens(inferred), Ok(Some(3)));
+    assert_eq!(molecule.perception().inferred_hydrogens(fixed), Some(0));
+    assert_eq!(molecule.perception().inferred_hydrogens(inferred), Some(3));
     let before = molecule.clone();
     let ranking = canon::atom_ranking(&molecule);
     assert_eq!(ranking.rank_of(fixed), ranking.rank_of(inferred));
     assert_eq!(molecule, before);
     assert_eq!(
         molecule.atom(fixed).unwrap().hydrogens,
-        HydrogenDeclaration::Fixed(3)
+        ImplicitHydrogens::Fixed(3)
     );
-    assert!(molecule
-        .atom(inferred)
-        .unwrap()
-        .hydrogens
-        .allows_inference());
+    assert!(molecule.atom(inferred).unwrap().hydrogens.is_inferred());
 }
 
 #[test]

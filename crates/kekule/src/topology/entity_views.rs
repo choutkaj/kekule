@@ -128,14 +128,6 @@ impl<'a> AtomView<'a> {
             .expect("published topology atoms are live")
     }
 
-    /// Only the inferred hydrogen contribution, for valence-model diagnostics.
-    pub fn inferred_hydrogens(self) -> Option<u8> {
-        self.molecule()
-            .molecule()
-            .inferred_hydrogens(self.id.atom())
-            .expect("published topology atoms are live")
-    }
-
     /// Perceived aromaticity; `None` before perception.
     pub fn is_aromatic(self) -> Option<bool> {
         self.molecule()

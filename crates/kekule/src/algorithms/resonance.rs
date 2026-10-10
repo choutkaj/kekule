@@ -3,7 +3,7 @@
 //! The search follows RDKit 2026.03.3 (Paolo Tosco, 2015), distributed under
 //! the BSD 3-Clause license reproduced in LICENSE-RDKit in this crate.
 use crate::core::{
-    AtomId, BondId, BondOrder, HydrogenDeclaration, Molecule, ResonanceGroup, ResonancePerception,
+    AtomId, BondId, BondOrder, ImplicitHydrogens, Molecule, ResonanceGroup, ResonancePerception,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -196,7 +196,7 @@ impl ResonanceStructures<'_> {
                 .atom_mut(id)
                 .map_err(|e| ResonanceError::Materialization(e.to_string()))?;
             atom.formal_charge = contributor.charges[&id];
-            atom.hydrogens = HydrogenDeclaration::Fixed(
+            atom.hydrogens = ImplicitHydrogens::Fixed(
                 u8::try_from(h).map_err(|_| ResonanceError::InvalidElectronCount)?,
             );
         }

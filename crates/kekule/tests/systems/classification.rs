@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kekule::core::{Atom, BondOrder, Element, HydrogenDeclaration, Molecule, MoleculeEditor};
+use kekule::core::{Atom, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeEditor};
 use kekule::structure::{Model, Positions};
 use kekule::topology::{
     AtomSelection, AtomSiteMetadata, InstanceAtomId, MoleculeClass, ResidueClass, Topology,
@@ -101,7 +101,7 @@ fn ordinary_connected_molecule_defaults_to_small_molecule() {
 fn water_and_monoatomic_ions_use_strong_local_evidence() {
     let mut water_editor = MoleculeEditor::new();
     let mut oxygen = atom("O");
-    oxygen.hydrogens = HydrogenDeclaration::Fixed(2);
+    oxygen.hydrogens = ImplicitHydrogens::Fixed(2);
     water_editor.add_atom(oxygen).unwrap();
     let explicit_water = Topology::from_molecule(water_editor.finish().unwrap().clone()).unwrap();
     assert_eq!(

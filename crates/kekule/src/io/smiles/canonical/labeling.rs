@@ -200,7 +200,7 @@ fn writer_atom_priority(molecule: &Molecule, id: AtomId) -> (u32, usize, u8, u16
         molecule
             .implicit_hydrogens(id)
             .expect("canonical atom is live")
-            .unwrap_or_else(|| usize::from(atom.hydrogens.specified_count())),
+            .unwrap_or(0),
         // RDKit compares formal charge through an unsigned 32-bit value.
         // Sign-extend before conversion so negative charges follow neutral
         // and positive atoms while retaining their order among themselves.

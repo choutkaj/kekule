@@ -77,29 +77,25 @@ fn atom_new_sets_chemically_general_defaults() {
     assert_eq!(atom.isotope, None);
     assert_eq!(atom.formal_charge, 0);
     assert_eq!(atom.radical, None);
-    assert_eq!(atom.hydrogens, HydrogenDeclaration::Infer { specified: 0 });
+    assert_eq!(atom.hydrogens, ImplicitHydrogens::Inferred);
     assert_eq!(atom.atom_map, None);
 }
 
 #[test]
-fn hydrogen_declaration_expresses_each_canonical_policy_without_overlap() {
-    for (declaration, explicit, allows_inference) in [
-        (HydrogenDeclaration::Infer { specified: 0 }, 0, true),
-        (HydrogenDeclaration::Infer { specified: 2 }, 2, true),
-        (HydrogenDeclaration::Fixed(0), 0, false),
-        (HydrogenDeclaration::Fixed(3), 3, false),
+fn implicit_hydrogens_are_either_wholly_fixed_or_wholly_inferred() {
+    for (hydrogens, fixed, represented, resolved_unperceived, resolved_perceived) in [
+        (ImplicitHydrogens::Inferred, None, 0, None, Some(5)),
+        (ImplicitHydrogens::Fixed(0), Some(0), 0, Some(0), Some(0)),
+        (ImplicitHydrogens::Fixed(3), Some(3), 3, Some(3), Some(3)),
     ] {
-        assert_eq!(declaration.specified_count(), explicit);
-        assert_eq!(declaration.allows_inference(), allows_inference);
-        assert_eq!(
-            declaration.with_specified_count(7),
-            if allows_inference {
-                HydrogenDeclaration::Infer { specified: 7 }
-            } else {
-                HydrogenDeclaration::Fixed(7)
-            }
-        );
+        assert_eq!(hydrogens.fixed_count(), fixed);
+        assert_eq!(hydrogens.represented_count(), represented);
+        assert_eq!(hydrogens.is_inferred(), fixed.is_none());
+        assert_eq!(hydrogens.resolve(None), resolved_unperceived);
+        // A fixed count ignores whatever inference would have supplied.
+        assert_eq!(hydrogens.resolve(Some(5)), resolved_perceived);
     }
+    assert_eq!(ImplicitHydrogens::default(), ImplicitHydrogens::Inferred);
 }
 
 #[test]

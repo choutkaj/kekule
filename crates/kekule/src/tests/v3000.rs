@@ -727,7 +727,7 @@ M  END
                 .atom(AtomId::new(0))
                 .expect("stereo center")
                 .hydrogens,
-            HydrogenDeclaration::Fixed(1)
+            ImplicitHydrogens::Fixed(1)
         );
         assert!(!parsed.perception().has_valence());
         assert_eq!(report.created_stereo_elements().len(), 1);
@@ -840,7 +840,7 @@ M  END
         .expect("VAL can be interpreted from source semantics")
         .into_molecule();
     let carbon = molecule.atom(AtomId::new(0)).expect("carbon");
-    assert_eq!(carbon.hydrogens, HydrogenDeclaration::Fixed(4));
+    assert_eq!(carbon.hydrogens, ImplicitHydrogens::Fixed(4));
     assert!(!molecule.perception().has_valence());
 
     let zero_declarations = valence.replace("VAL=4", "HCOUNT=-1 VAL=-1");
@@ -850,7 +850,7 @@ M  END
         .expect("zero-count sentinels have exact source semantics")
         .into_molecule();
     let carbon = molecule.atom(AtomId::new(0)).expect("carbon");
-    assert_eq!(carbon.hydrogens, HydrogenDeclaration::Fixed(0));
+    assert_eq!(carbon.hydrogens, ImplicitHydrogens::Fixed(0));
 
     let undeclared = valence.replace(" VAL=4", "");
     let document = molfile::parse_str(&undeclared).expect("undeclared atom is valid syntax");
@@ -859,7 +859,7 @@ M  END
         .into_molecule();
     assert_eq!(
         molecule.atom(AtomId::new(0)).expect("carbon").hydrogens,
-        HydrogenDeclaration::Infer { specified: 0 }
+        ImplicitHydrogens::Inferred
     );
 
     let unsupported = valence.replace("1 C 0 0 0 0 VAL=4", "1 Xx 0 0 0 0");
@@ -1165,7 +1165,7 @@ fn mol_writers_reject_radical_states_that_require_guessing_or_losing_spin() {
     ] {
         let mut atom = carbon();
         atom.radical = Some(radical);
-        atom.hydrogens = HydrogenDeclaration::Fixed(0);
+        atom.hydrogens = ImplicitHydrogens::Fixed(0);
         let mut editor = MoleculeEditor::new();
         editor.add_atom(atom).unwrap();
         let molecule = editor.finish().unwrap();

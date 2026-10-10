@@ -6,7 +6,7 @@ pub struct Atom {
     pub isotope: Option<u16>,
     pub formal_charge: i8,
     pub radical: Option<AtomRadical>,
-    pub hydrogens: HydrogenDeclaration,
+    pub hydrogens: ImplicitHydrogens,
     pub atom_map: Option<u32>,
 }
 
@@ -17,7 +17,7 @@ impl Atom {
             isotope: None,
             formal_charge: 0,
             radical: None,
-            hydrogens: HydrogenDeclaration::default(),
+            hydrogens: ImplicitHydrogens::Inferred,
             atom_map: None,
         }
     }
@@ -26,59 +26,57 @@ impl Atom {
 /// Specifies how an atom's implicit (non-graph) hydrogen count is determined.
 ///
 /// Explicit hydrogens are separate graph atoms and are never counted here.
-/// Both specified counts and valence-inferred counts describe implicit hydrogens.
-/// Use [`Molecule::implicit_hydrogens`] for their combined count and
+/// Use [`Molecule::implicit_hydrogens`] for the resolved implicit count and
 /// [`Molecule::total_hydrogens`] to include explicit hydrogen neighbors.
 ///
-/// Chemical edits preserve the specified count and invalidate inferred counts.
-/// Reperception recomputes only the inferred contribution; it never overwrites
-/// this declaration. In particular, SMILES `[C]` fixes the count at zero, whereas
-/// `C` permits inference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum HydrogenDeclaration {
-    /// The represented count is present and valence perception may infer
-    /// additional implicit hydrogens.
-    Infer { specified: u8 },
-    /// Exactly this many non-graph hydrogens are represented.
+/// An atom's implicit count is either wholly fixed or wholly inferred. Chemical
+/// edits preserve a fixed count and invalidate an inferred one; reperception
+/// never overwrites a fixed count. In particular, SMILES `[C]` fixes the count
+/// at zero, `[CH3]` fixes it at three, and `C` infers it.
+///
+/// [`Molecule::implicit_hydrogens`]: super::Molecule::implicit_hydrogens
+/// [`Molecule::total_hydrogens`]: super::Molecule::total_hydrogens
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ImplicitHydrogens {
+    /// The valence model supplies the complete implicit count. It is unknown
+    /// until valence perception is installed.
+    #[default]
+    Inferred,
+    /// Exactly this many non-graph hydrogens, known without perception and
+    /// never changed by valence inference.
     Fixed(u8),
 }
 
-impl HydrogenDeclaration {
-    /// The specified contribution to the implicit hydrogen count, not graph H.
-    pub const fn specified_count(self) -> u8 {
+impl ImplicitHydrogens {
+    /// Returns the fixed count, or `None` when the count is inferred.
+    pub const fn fixed_count(self) -> Option<u8> {
         match self {
-            Self::Infer { specified } | Self::Fixed(specified) => specified,
+            Self::Inferred => None,
+            Self::Fixed(count) => Some(count),
         }
     }
 
-    pub const fn allows_inference(self) -> bool {
-        matches!(self, Self::Infer { .. })
+    /// Returns the count represented without perception: the fixed count, or
+    /// zero for an inferred count. Inferred hydrogens are not included.
+    pub const fn represented_count(self) -> u8 {
+        match self {
+            Self::Inferred => 0,
+            Self::Fixed(count) => count,
+        }
     }
 
-    /// Combines this declaration with an optional inferred contribution.
-    /// Fixed counts are known without perception. An inference-enabled count is
-    /// unknown until perception supplies its additional contribution.
-    pub fn implicit_count(self, inferred: Option<u8>) -> Option<usize> {
+    pub const fn is_inferred(self) -> bool {
+        matches!(self, Self::Inferred)
+    }
+
+    /// Resolves the implicit count from an installed inferred count.
+    /// Fixed counts are known without perception; an inferred count is
+    /// unknown until perception supplies it.
+    pub fn resolve(self, inferred: Option<u8>) -> Option<usize> {
         match self {
             Self::Fixed(count) => Some(usize::from(count)),
-            Self::Infer { specified } => {
-                inferred.map(|count| usize::from(specified) + usize::from(count))
-            }
+            Self::Inferred => inferred.map(usize::from),
         }
-    }
-
-    /// Returns the same inference policy with a different represented count.
-    pub const fn with_specified_count(self, specified: u8) -> Self {
-        match self {
-            Self::Infer { .. } => Self::Infer { specified },
-            Self::Fixed(_) => Self::Fixed(specified),
-        }
-    }
-}
-
-impl Default for HydrogenDeclaration {
-    fn default() -> Self {
-        Self::Infer { specified: 0 }
     }
 }
 

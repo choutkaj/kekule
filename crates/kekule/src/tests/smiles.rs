@@ -164,7 +164,7 @@ fn aromatic_bond(molecule: &Molecule, bond: BondId) -> bool {
 }
 
 fn inferred_hydrogens(molecule: &Molecule, atom: AtomId) -> Option<u8> {
-    molecule.inferred_hydrogens(atom).expect("atom exists")
+    molecule.perception().inferred_hydrogens(atom)
 }
 
 fn aromatic_atom_count(molecule: &Molecule) -> usize {
@@ -361,10 +361,10 @@ fn cxsmiles_radicals_preserve_electron_occupancy_and_explicit_spin() {
                     .atom(AtomId::new(0))
                     .unwrap()
                     .hydrogens
-                    .specified_count()
+                    .represented_count()
                     + molecule
+                        .perception()
                         .inferred_hydrogens(AtomId::new(0))
-                        .unwrap()
                         .unwrap(),
                 4 - electrons
             );
@@ -420,7 +420,7 @@ fn cxsmiles_radicals_override_inference_without_overwriting_source_assertions() 
             AtomRadical::new(1, None)
         );
         assert_eq!(
-            molecule.inferred_hydrogens(AtomId::new(0)).unwrap(),
+            molecule.perception().inferred_hydrogens(AtomId::new(0)),
             Some(0)
         );
         assert_eq!(
@@ -428,7 +428,7 @@ fn cxsmiles_radicals_override_inference_without_overwriting_source_assertions() 
                 .atom(AtomId::new(0))
                 .unwrap()
                 .hydrogens
-                .specified_count(),
+                .represented_count(),
             0
         );
         assert_eq!(aromatic_atom_count(&molecule), 6);
@@ -443,7 +443,7 @@ fn cxsmiles_radicals_override_inference_without_overwriting_source_assertions() 
     );
     assert_eq!(
         molecule.atom(AtomId::new(0)).unwrap().hydrogens,
-        HydrogenDeclaration::Fixed(4)
+        ImplicitHydrogens::Fixed(4)
     );
     molecule.perceive().unwrap();
     assert_eq!(
@@ -713,13 +713,13 @@ fn smiles_interprets_branches_rings_brackets_and_fragments_canonically_without_p
     }
     let bracket_atom = components[2].atom(AtomId::new(0)).expect("bracket atom");
     assert_eq!(bracket_atom.isotope, Some(13));
-    assert_eq!(bracket_atom.hydrogens, HydrogenDeclaration::Fixed(4));
+    assert_eq!(bracket_atom.hydrogens, ImplicitHydrogens::Fixed(4));
     assert_eq!(bracket_atom.formal_charge, 1);
     assert_eq!(bracket_atom.atom_map, Some(7));
     let chiral_atom = components[3]
         .atom(AtomId::new(1))
         .expect("chiral bracket atom");
-    assert_eq!(chiral_atom.hydrogens, HydrogenDeclaration::Fixed(1));
+    assert_eq!(chiral_atom.hydrogens, ImplicitHydrogens::Fixed(1));
     let stereo = components[3]
         .stereo_elements()
         .map(|(_, element)| element)
@@ -743,10 +743,10 @@ fn smiles_interprets_branches_rings_brackets_and_fragments_canonically_without_p
 #[test]
 fn smiles_brackets_publish_exact_hydrogen_declarations() {
     for (source, declaration, perceived_implicit) in [
-        ("C", HydrogenDeclaration::Infer { specified: 0 }, 4),
-        ("[C]", HydrogenDeclaration::Fixed(0), 0),
-        ("[CH]", HydrogenDeclaration::Fixed(1), 0),
-        ("[NH4+]", HydrogenDeclaration::Fixed(4), 0),
+        ("C", ImplicitHydrogens::Inferred, 4),
+        ("[C]", ImplicitHydrogens::Fixed(0), 0),
+        ("[CH]", ImplicitHydrogens::Fixed(1), 0),
+        ("[NH4+]", ImplicitHydrogens::Fixed(4), 0),
     ] {
         let mut molecule = read_smiles(source)
             .unwrap_or_else(|error| panic!("{source} should interpret: {error}"));
@@ -764,8 +764,8 @@ fn smiles_brackets_publish_exact_hydrogen_declarations() {
             "perception must not rewrite {source}"
         );
         assert_eq!(
-            molecule.inferred_hydrogens(AtomId::new(0)),
-            Ok(Some(perceived_implicit)),
+            molecule.perception().inferred_hydrogens(AtomId::new(0)),
+            Some(perceived_implicit),
             "{source}"
         );
     }
@@ -781,7 +781,7 @@ fn metal_bound_organic_subset_halogen_keeps_rdkit_no_implicit_state() {
         .filter(|(_, atom)| atom.element.symbol() == "Br")
         .map(|(atom_id, atom)| {
             (
-                !atom.hydrogens.allows_inference(),
+                !atom.hydrogens.is_inferred(),
                 inferred_hydrogens(&small, atom_id).unwrap_or(0),
             )
         })
@@ -794,7 +794,7 @@ fn metal_bound_organic_subset_halogen_keeps_rdkit_no_implicit_state() {
         .atoms()
         .find_map(|(_, atom)| (atom.element.symbol() == "Br").then_some(atom))
         .expect("bromine atom");
-    assert!(bromine.hydrogens.allows_inference());
+    assert!(bromine.hydrogens.is_inferred());
 }
 
 #[test]
@@ -815,7 +815,7 @@ fn metal_bound_organic_subset_atoms_rely_on_valence_hydrogens() {
             .then_some((id, atom))
         })
         .expect("aryl carbon bound to mercury");
-    assert!(aryl_mercury_carbon.1.hydrogens.allows_inference());
+    assert!(aryl_mercury_carbon.1.hydrogens.is_inferred());
     assert_eq!(
         inferred_hydrogens(&aryl_mercury, aryl_mercury_carbon.0),
         Some(0)
@@ -826,7 +826,7 @@ fn metal_bound_organic_subset_atoms_rely_on_valence_hydrogens() {
         .atoms()
         .find_map(|(id, atom)| (atom.element.symbol() == "C").then_some((id, atom)))
         .expect("carbon atom");
-    assert!(carbon.1.hydrogens.allows_inference());
+    assert!(carbon.1.hydrogens.is_inferred());
     assert_eq!(inferred_hydrogens(&methyl_sodium, carbon.0), None);
 }
 
@@ -842,7 +842,7 @@ fn aromatic_chalcogen_bracket_atoms_localize_without_perceiving() {
         .map(|(_, atom)| {
             (
                 atom.element.symbol().to_owned(),
-                !atom.hydrogens.allows_inference(),
+                !atom.hydrogens.is_inferred(),
             )
         })
         .collect::<Vec<_>>();
@@ -1050,7 +1050,7 @@ fn aromatic_smiles_omitted_bonds_perceive_with_expected_hydrogens() {
     assert!(aromatic_atom(&pyridinium, AtomId::new(0)));
     assert_eq!(nitrogen.formal_charge, 1);
     assert_eq!(nitrogen.radical, None);
-    assert_eq!(nitrogen.hydrogens, HydrogenDeclaration::Fixed(1));
+    assert_eq!(nitrogen.hydrogens, ImplicitHydrogens::Fixed(1));
     assert_eq!(inferred_hydrogens(&pyridinium, AtomId::new(0)), Some(0));
     assert_eq!(aromatic_bond_count(&pyridinium), pyridinium.bond_count());
     assert_eq!(
@@ -1267,7 +1267,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     {
         let mut atom = molecule.atom_mut(a).expect("atom");
         atom.radical = AtomRadical::new(1, Some(2));
-        atom.hydrogens = HydrogenDeclaration::Fixed(2);
+        atom.hydrogens = ImplicitHydrogens::Fixed(2);
     }
     assert!(smiles_api::write(
         molecule.working(),
@@ -1280,7 +1280,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     {
         let mut atom = molecule.atom_mut(a).expect("atom");
         atom.radical = AtomRadical::new(1, None);
-        atom.hydrogens = HydrogenDeclaration::Fixed(0);
+        atom.hydrogens = ImplicitHydrogens::Fixed(0);
     }
     let written = smiles_api::write(
         molecule.working(),
@@ -1291,16 +1291,16 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     let reparsed = read_smiles(&written).expect("writer output should parse");
     assert!(reparsed
         .atoms()
-        .any(|(_, atom)| !atom.hydrogens.allows_inference()));
+        .any(|(_, atom)| !atom.hydrogens.is_inferred()));
 }
 
 #[test]
 fn all_smiles_writers_round_trip_lossless_hydrogen_declarations() {
     for (source, expected) in [
-        ("C", HydrogenDeclaration::Infer { specified: 0 }),
-        ("[C]", HydrogenDeclaration::Fixed(0)),
-        ("[CH]", HydrogenDeclaration::Fixed(1)),
-        ("[NH4+]", HydrogenDeclaration::Fixed(4)),
+        ("C", ImplicitHydrogens::Inferred),
+        ("[C]", ImplicitHydrogens::Fixed(0)),
+        ("[CH]", ImplicitHydrogens::Fixed(1)),
+        ("[NH4+]", ImplicitHydrogens::Fixed(4)),
     ] {
         let molecule = read_smiles(source).unwrap_or_else(|error| panic!("{source}: {error}"));
         for (writer, written) in [
@@ -1335,9 +1335,10 @@ fn all_smiles_writers_round_trip_lossless_hydrogen_declarations() {
 }
 
 #[test]
-fn all_smiles_writers_require_known_total_for_declared_and_inferred_hydrogens() {
+fn all_smiles_writers_require_perception_for_bracketed_inferred_hydrogens() {
+    // The isotope forces a bracket, which must spell out the inferred count.
     let mut atom = carbon();
-    atom.hydrogens = HydrogenDeclaration::Infer { specified: 1 };
+    atom.isotope = Some(13);
     let mut graph = crate::core::MoleculeEditor::new();
     graph.add_atom(atom).expect("carbon");
     let molecule = graph.finish().expect("single atom molecule");
@@ -1358,9 +1359,9 @@ fn all_smiles_writers_require_known_total_for_declared_and_inferred_hydrogens() 
     ] {
         let error = match result {
             Err(error) => error,
-            Ok(written) => panic!(
-                "{writer} writer must not coerce Infer {{ explicit: 1 }} to Fixed(1): {written}"
-            ),
+            Ok(written) => {
+                panic!("{writer} writer must not guess an unperceived inferred count: {written}")
+            }
         };
         assert!(
             error.message().contains("hydrogen perception"),
@@ -1370,17 +1371,22 @@ fn all_smiles_writers_require_known_total_for_declared_and_inferred_hydrogens() 
 }
 
 #[test]
-fn all_smiles_writers_preserve_total_declared_and_inferred_hydrogens() {
-    for (symbol, declared, total) in [("C", 1, 4), ("C", 4, 4), ("N", 1, 3), ("O", 1, 2)] {
+fn all_smiles_writers_preserve_implicit_hydrogen_counts() {
+    for (symbol, hydrogens, total) in [
+        ("C", ImplicitHydrogens::Inferred, 4),
+        ("C", ImplicitHydrogens::Fixed(4), 4),
+        ("N", ImplicitHydrogens::Inferred, 3),
+        ("N", ImplicitHydrogens::Fixed(3), 3),
+        ("O", ImplicitHydrogens::Inferred, 2),
+        ("O", ImplicitHydrogens::Fixed(2), 2),
+    ] {
         let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
-        atom.hydrogens = HydrogenDeclaration::Infer {
-            specified: declared,
-        };
+        atom.hydrogens = hydrogens;
         let mut editor = MoleculeEditor::new();
         let id = editor.add_atom(atom).unwrap();
         let mut molecule = editor.finish().unwrap();
         perceive(&mut molecule).unwrap();
-        assert_eq!(molecule.inferred_hydrogens(id), Ok(Some(total - declared)));
+        assert_eq!(molecule.implicit_hydrogens(id), Ok(Some(total)));
         let before = molecule.clone();
         for written in [
             smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::default()),
@@ -1392,9 +1398,8 @@ fn all_smiles_writers_preserve_total_declared_and_inferred_hydrogens() {
             perceive(&mut reparsed).unwrap();
             let (id, atom) = reparsed.atoms().next().unwrap();
             assert_eq!(
-                atom.hydrogens.specified_count()
-                    + reparsed.inferred_hydrogens(id).unwrap().unwrap(),
-                total,
+                reparsed.implicit_hydrogens(id),
+                Ok(Some(total)),
                 "{symbol}: {written}"
             );
             assert_eq!(atom.element.symbol(), symbol);
@@ -1525,7 +1530,7 @@ fn bracket_radicals_are_consistent_across_aromatic_and_localized_notation() {
 fn smiles_writers_reject_brackets_that_would_change_radical_occupancy() {
     for (hydrogens, radical) in [(0, None), (2, AtomRadical::new(1, None))] {
         let mut atom = carbon();
-        atom.hydrogens = HydrogenDeclaration::Fixed(hydrogens);
+        atom.hydrogens = ImplicitHydrogens::Fixed(hydrogens);
         atom.radical = radical;
         let mut editor = MoleculeEditor::new();
         editor.add_atom(atom).unwrap();
@@ -1551,7 +1556,7 @@ fn isomeric_smiles_writes_tetrahedral_elements_from_stereo_model() {
             .atom(AtomId::new(1))
             .expect("stereo center")
             .hydrogens,
-        HydrogenDeclaration::Fixed(1)
+        ImplicitHydrogens::Fixed(1)
     );
 
     let written = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::isomeric())
@@ -1564,7 +1569,7 @@ fn isomeric_smiles_writes_tetrahedral_elements_from_stereo_model() {
             .atom(AtomId::new(1))
             .expect("reparsed stereo center")
             .hydrogens,
-        HydrogenDeclaration::Fixed(1)
+        ImplicitHydrogens::Fixed(1)
     );
     let stereo = reparsed
         .stereo_elements()
@@ -1599,9 +1604,9 @@ fn isomeric_smiles_materializes_required_tetrahedral_hydrogen_without_mutating_s
     let center = AtomId::new(1);
     assert_eq!(
         molecule.atom(center).expect("center").hydrogens,
-        HydrogenDeclaration::Infer { specified: 0 }
+        ImplicitHydrogens::Inferred
     );
-    assert_eq!(molecule.inferred_hydrogens(center), Ok(Some(1)));
+    assert_eq!(molecule.perception().inferred_hydrogens(center), Some(1));
     molecule
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
@@ -1629,7 +1634,7 @@ fn isomeric_smiles_materializes_required_tetrahedral_hydrogen_without_mutating_s
     }
     assert_eq!(
         molecule.atom(center).expect("center").hydrogens,
-        HydrogenDeclaration::Infer { specified: 0 }
+        ImplicitHydrogens::Inferred
     );
 }
 
@@ -1878,8 +1883,8 @@ fn smiles_aromatic_arsenic_round_trip() {
         let hydrogens = |mol: &Molecule| {
             mol.atoms()
                 .map(|(id, atom)| {
-                    usize::from(atom.hydrogens.specified_count())
-                        + usize::from(mol.inferred_hydrogens(id).unwrap().unwrap_or(0))
+                    usize::from(atom.hydrogens.represented_count())
+                        + usize::from(mol.perception().inferred_hydrogens(id).unwrap_or(0))
                 })
                 .sum::<usize>()
         };

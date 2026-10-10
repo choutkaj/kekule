@@ -2,7 +2,7 @@ use super::neighbors::Neighbors;
 use super::*;
 use crate::{
     core::{
-        Atom, AtomId, BondOrder, Element, HydrogenDeclaration, Molecule, MoleculeEditor,
+        Atom, AtomId, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeEditor,
         VanDerWaalsRadiusSource,
     },
     geometry::{PeriodicCell, PeriodicGeometry, Vector3},
@@ -332,12 +332,12 @@ fn definition(symbol: &str, charge: i8, water: bool) -> Molecule {
     let mut editor = MoleculeEditor::new();
     let mut atom = Atom::new(Element::from_symbol(symbol).expect("built-in element"));
     atom.formal_charge = charge;
-    atom.hydrogens = HydrogenDeclaration::Fixed(0);
+    atom.hydrogens = ImplicitHydrogens::Fixed(0);
     let center = editor.add_atom(atom).expect("small built-in graph");
     if water {
         for _ in 0..2 {
             let mut hydrogen = Atom::new(Element::from_symbol("H").expect("hydrogen"));
-            hydrogen.hydrogens = HydrogenDeclaration::Fixed(0);
+            hydrogen.hydrogens = ImplicitHydrogens::Fixed(0);
             let h = editor.add_atom(hydrogen).expect("small built-in graph");
             editor
                 .add_bond(center, h, BondOrder::Single)

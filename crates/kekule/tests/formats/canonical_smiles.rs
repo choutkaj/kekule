@@ -352,8 +352,8 @@ fn canonical_hydrogen_normalization_preserves_isotope_vertices() {
             .atoms()
             .map(|(id, atom)| {
                 usize::from(atom.element.symbol() == "H")
-                    + usize::from(atom.hydrogens.specified_count())
-                    + usize::from(molecule.inferred_hydrogens(id).unwrap().unwrap_or(0))
+                    + usize::from(atom.hydrogens.represented_count())
+                    + usize::from(molecule.perception().inferred_hydrogens(id).unwrap_or(0))
             })
             .sum::<usize>()
     };

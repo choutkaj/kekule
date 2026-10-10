@@ -6,6 +6,19 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** An atom's implicit hydrogen count is either fixed or wholly
+  inferred. `HydrogenDeclaration { Infer { specified }, Fixed }` becomes
+  `ImplicitHydrogens { Inferred, Fixed }`; the mixed "stored count plus
+  inference" state, `with_specified_count`, `Molecule::inferred_hydrogens`,
+  `MoleculeEditor::inferred_hydrogens`, the topology atom's
+  `inferred_hydrogens`, and `HydrogenTransformError::HydrogenCountNotPreserved`
+  are removed. `AddHydrogensOptions::specified_only` becomes `fixed_only`,
+  `AddedHydrogenOrigin::Specified` becomes `Fixed`, and
+  `HydrogenCountAdjustment` reports the resulting `hydrogens` declaration.
+  Installing perception that infers hydrogens on a fixed count fails with
+  `PerceptionInstallError::InferredHydrogensOnFixedAtom`. V2000 and V3000
+  writers no longer have an unencodable hydrogen state. See
+  [hydrogen semantics](docs/hydrogen-semantics.md) for migration.
 - **Breaking:** `kekule-openff` reports every failure as an `Error` with a stable
   `ErrorKind` (`ForceField`, `Model`, `ModelMismatch`, `UnsupportedMolecule`,
   `Unparameterized`, `Charges`, `ResourceLimit`, ...), the failing molecule
@@ -205,6 +218,10 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- `remove_hydrogens` preserves counts that valence inference cannot reproduce,
+  such as `[H]S([H])([H])[H]` and `PH5`, by fixing them instead of failing with
+  a count-preservation error. Aromatic `[nH]` and stereo parents collapse to
+  fixed counts.
 - Canonical SMILES of a perceived molecule with explicit hydrogen atoms matches
   its hydrogen-suppressed form. Collapsing those atoms used to discard the
   perceived hydrogen counts, so an aromatic NH such as pteridine-2,4-dione's

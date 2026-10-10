@@ -987,14 +987,7 @@ fn normalized_direction(vector: Vector3) -> Option<Vector3> {
 }
 
 pub(crate) fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
-    let Ok(payload) = mol.atom(atom) else {
-        return 0;
-    };
-    let count = mol
-        .implicit_hydrogens(atom)
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| usize::from(payload.hydrogens.specified_count()));
+    let count = mol.implicit_hydrogens(atom).ok().flatten().unwrap_or(0);
     // Stereo eligibility only needs small ligand counts. Preserve the existing
     // saturation for oversized expert-supplied perception assignments.
     u8::try_from(count).unwrap_or(u8::MAX)

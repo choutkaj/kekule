@@ -100,7 +100,7 @@ fn oxohalogen_cleanup_matches_rdkit_for_ester_and_declared_hydrogen_forms() {
         assert_eq!(
             molecule
                 .atom_ids()
-                .map(|atom| molecule.inferred_hydrogens(atom).unwrap().unwrap())
+                .map(|atom| molecule.perception().inferred_hydrogens(atom).unwrap())
                 .collect::<Vec<_>>(),
             inferred_hydrogens,
             "{source}"

@@ -784,16 +784,18 @@ pub mod rotatable_bonds {
 
 /// Explicit small-molecule hydrogen topology transforms.
 ///
-/// Explicit hydrogens are graph atoms; implicit hydrogens are represented by
-/// specified counts and/or valence inference. Addition converts implicit H to
-/// explicit atoms; removal suppresses eligible explicit atoms without losing
-/// chemical information. These operations do not change protonation states.
+/// Explicit hydrogens are graph atoms; an atom's implicit hydrogens are either
+/// a fixed count or wholly inferred by valence perception. Addition converts
+/// implicit H to explicit atoms; removal suppresses eligible explicit atoms
+/// without losing chemical information. These operations do not change
+/// protonation states.
 ///
-/// Addition requires current inference for inference-enabled atoms, unless
-/// `specified_only` is selected. Fixed counts need no perception. Removal needs
-/// current inference on affected parents when their counts are not fixed.
+/// Addition requires current inference for inferred counts, unless `fixed_only`
+/// is selected. Fixed counts need no perception. Removal needs current inference
+/// on affected parents whose counts are inferred, and keeps a parent inferred
+/// only when inference reproduces its collapsed count; otherwise it fixes it.
 /// Successful topology changes invalidate perception state; recompute it before
-/// reading inferred counts. Removal verifies its plan on a temporary copy.
+/// reading inferred counts.
 pub mod hydrogens {
     pub use crate::algorithms::{
         AddHydrogensOptions, AddHydrogensReport, AddedHydrogen, AddedHydrogenOrigin,
@@ -808,7 +810,7 @@ pub mod hydrogens {
 /// algorithms remain available through their focused modules.
 pub mod prelude {
     pub use crate::core::{
-        Atom, AtomId, Bond, BondId, BondOrder, Element, HydrogenDeclaration, Molecule,
+        Atom, AtomId, Bond, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
     };
     pub use crate::topology::Hierarchy;
 }

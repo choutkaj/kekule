@@ -768,7 +768,7 @@ fn interpretation_materializes_omitted_hydrogen_alongside_atrop_stereo() {
     assert_eq!(report.created_stereo_elements().len(), 2);
     assert_eq!(
         molecule.atom(AtomId::new(10)).unwrap().hydrogens,
-        HydrogenDeclaration::Fixed(1)
+        ImplicitHydrogens::Fixed(1)
     );
     assert!(molecule.stereo_elements().any(|(_, element)| matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(8))));
     perceive(&mut molecule).unwrap();
@@ -794,7 +794,7 @@ fn interpretation_preserves_one_ring_endpoint_atrop_and_omitted_hydrogen() {
         assert_eq!(report.created_stereo_elements().len(), 2);
         assert_eq!(
             molecule.atom(AtomId::new(3)).unwrap().hydrogens,
-            HydrogenDeclaration::Fixed(1)
+            ImplicitHydrogens::Fixed(1)
         );
         assert!(molecule.stereo_elements().any(|(_, element)| matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(33))));
         perceive(&mut molecule).unwrap();
@@ -940,7 +940,7 @@ fn molfile_unmarked_3d_tetrahedra_use_shared_geometry_without_installing_percept
                 if explicit_count == 3 {
                     assert_eq!(
                         molecule.atom(AtomId::new(0)).unwrap().hydrogens,
-                        HydrogenDeclaration::Fixed(1)
+                        ImplicitHydrogens::Fixed(1)
                     );
                 }
                 perceive(&mut molecule).unwrap();
