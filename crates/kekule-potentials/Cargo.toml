@@ -16,11 +16,11 @@ default = ["openff"]
 openff = ["dep:kekule-openff"]
 
 [dependencies]
-kekule = { version = "0.2.1", path = "../kekule" }
-kekule-openff = { version = "0.2.1", path = "../kekule-openff", optional = true }
+kekule = { version = "0.3.0", path = "../kekule" }
+kekule-openff = { version = "0.3.0", path = "../kekule-openff", optional = true }
 
 [dev-dependencies]
-kekule-traj = { version = "0.2.1", path = "../kekule-traj" }
+kekule-traj = { version = "0.3.0", path = "../kekule-traj" }
 
 [[example]]
 name = "openff_workflow"

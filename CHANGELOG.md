@@ -2,71 +2,43 @@
 
 All notable changes to Kekule are documented in this file.
 
-## [Unreleased]
+## [0.3.0] - 2026-10-10
+
+This release adds the `kekule-openff` and `kekule-openff-ash` crates for OpenFF
+parameterization, rebuilds `kekule-potentials` around OpenFF energies and L-BFGS
+minimization, and moves trajectories and alignment into `kekule`. It contains
+breaking API changes throughout the workspace.
 
 ### Changed
 
 - **Breaking:** An atom's implicit hydrogen count is either fixed or wholly
-  inferred. `HydrogenDeclaration { Infer { specified }, Fixed }` becomes
-  `ImplicitHydrogens { Inferred, Fixed }`; the mixed "stored count plus
-  inference" state, `with_specified_count`, `Molecule::inferred_hydrogens`,
-  `MoleculeEditor::inferred_hydrogens`, the topology atom's
-  `inferred_hydrogens`, and `HydrogenTransformError::HydrogenCountNotPreserved`
-  are removed. `AddHydrogensOptions::specified_only` becomes `fixed_only`,
-  `AddedHydrogenOrigin::Specified` becomes `Fixed`, and
-  `HydrogenCountAdjustment` reports the resulting `hydrogens` declaration.
-  Installing perception that infers hydrogens on a fixed count fails with
-  `PerceptionInstallError::InferredHydrogensOnFixedAtom`. V2000 and V3000
+  inferred. `HydrogenDeclaration { Infer { explicit }, Fixed }` becomes
+  `ImplicitHydrogens { Inferred, Fixed }`, and the mixed "stored count plus
+  inference" state is removed. `Molecule`, `MoleculeEditor`, and topology atom
+  views report `explicit_hydrogens`, `implicit_hydrogens`, and
+  `total_hydrogens`; `implicit_hydrogens` is now the complete non-graph count
+  instead of the perceived part, which `Perception::inferred_hydrogens` reports.
+  `AddHydrogensOptions::explicit_only` becomes `fixed_only`,
+  `AddedHydrogenOrigin::ExplicitCount` and `Implicit` become `Fixed` and
+  `Inferred`, `HydrogenCountAdjustment` reports the resulting `hydrogens`
+  declaration, and `HydrogenTransformError::HydrogenCountNotPreserved` is
+  removed. Installing perception that infers hydrogens on a fixed count fails
+  with `PerceptionInstallError::InferredHydrogensOnFixedAtom`. V2000 and V3000
   writers no longer have an unencodable hydrogen state. See
   [hydrogen semantics](docs/hydrogen-semantics.md) for migration.
-- **Breaking:** `kekule-openff` reports every failure as an `Error` with a stable
-  `ErrorKind` (`ForceField`, `Model`, `ModelMismatch`, `UnsupportedMolecule`,
-  `Unparameterized`, `Charges`, `ResourceLimit`, ...), the failing molecule
-  definition for system parameterization, the file for loading failures, and
-  the wrapped lower-level error through `Error::get_ref`. `Error` is no longer
-  `PartialEq`.
-- **Breaking:** `ForceField::parameterize(topology, charges)` and
-  `parameterize_molecule(molecule, charges)` take a `ChargeMethod`: `&model`
-  for NAGL charges or `ChargeMethod::LibraryOnly`, replacing
-  `parameterize_without_nagl`. `parameterize_molecule` takes the molecule by
-  value. Supplying a model to a force field without a NAGLCharges handler is now
-  a `ModelMismatch` error instead of being ignored.
-- **Breaking:** `NaglModel::atom_features`, `infer_charges`, and
-  `lookup_entry_count` move to the `kekule_openff::diagnostics` module.
-  `lookup_identifier` is replaced by `diagnostics::lookup_key`, which reports the
-  stored key of the selected entry.
-- **Breaking:** `kekule-openff` is pure Rust and no longer depends on the `inchi`
-  and `inchi-sys` crates or a C toolchain. NAGL lookup selects an entry when the
-  input is exactly that entry's molecule (isotopes ignored). Other bond-order or
-  charge-placement forms that upstream's fixed-H InChI also merges now use
-  inference; for Ash these are exotic, mostly with formal charges of magnitude
-  2-6. There is no identifier size limit.
-- **Breaking:** NAGL bundles must use schema 2; the legacy schema-1 Ash export is
-  no longer accepted. Re-export with `export_model.py`, or use `NaglModel::ash`.
-- Default perception has no molecule size limit. `Molecule::perceive`,
-  `perceive_ring_set`, and `perceive_aromaticity` scale their ring and
-  aromaticity work bounds with the molecule (`RingPerceptionOptions::for_graph`,
-  `AromaticityOptions::for_graph`); explicitly supplied options stay absolute.
-  Smallest-ring searches traverse only ring bonds with workspace proportional to
-  what they visit, so ring perception no longer costs rings times molecule size:
-  a 70,000-atom polymer with 10,000 rings perceives in well under a second. Ring
-  sets are unchanged.
-- `kekule-openff` has no molecule size limit. The 4,096-atom NAGL cap is removed,
-  resonance averaging works per conjugated fragment so its cost no longer grows
-  with the rest of the molecule, normalization is no longer capped at 200
-  applications per rule, ring features no longer scan every ring per atom, and
-  SMIRKS and lookup search bounds grow with the molecule. Charge-equilibration
-  sums accumulate in f64.
-
 - **Breaking:** `Trajectory`, `TrajectoryFrame`, `Velocities`, and `Forces` move
   from `kekule-traj` into `kekule::structure`, next to `Ensemble`. The two
   collections stay distinct types over one private store and share `new`,
   `from_items`, `get`/`get_mut`/`iter`, `push`, `replace`, `remove`,
   `replace_positions`, `select`, `subset`, `perceive`, `into_parts`, and
   `into_items`; item views are `EnsembleMemberView`/`EnsembleMemberMut` and
-  `TrajectoryFrameView`/`TrajectoryFrameMut`. `Ensemble::from_models` consumes
-  models. `Trajectory::into_ensemble` projects frames onto equally weighted
-  members without copying conformations.
+  `TrajectoryFrameView`/`TrajectoryFrameMut`. `subset` replaces
+  `Trajectory::slice` for atom selections, and the new `select` copies items in
+  any order, including ranges, strides, and repeated indices.
+  `Ensemble::from_models` consumes models.
+  `Trajectory::into_ensemble` projects frames onto equally weighted members
+  without copying conformations. `TrajectoryError` wraps core
+  `ConformationError` and `RealizationError`.
 - **Breaking:** every `EnsembleMember` carries a finite, strictly positive
   relative weight: `EnsembleMember::new(conformation, weight)` is fallible,
   `weight()` returns `f64`, and `set_weight` takes `f64`. Models, mmCIF
@@ -92,21 +64,19 @@ All notable changes to Kekule are documented in this file.
   `PropertyError::RemovedRow`. Detached payloads have atom rows only and gain
   bond rows when bound to a collection.
 - **Breaking:** superposition and RMSD move from `kekule-traj` to every
-  collection in `kekule::alignment`: `superpose`, `rmsd`, and `aligned_rmsd`
-  (each with `_with_options`) take a `Reference` (an item index or any borrowed
-  view) and `FitAtoms` (a selection or an `AtomCorrespondence`). Superposition
-  is in place and transactional and returns a `SuperpositionReport`; the
-  copy-returning, `_to_frame`, `_to_model`, and `_in_place` variants are removed.
-  One `AlignmentOptions` (`Weighting`, `PeriodicPolicy`) serves fitting and RMSD.
-  Collection-wide failures are reported once instead of per item.
-- **Breaking:** `kekule-traj` periodic operations are free functions that act in
-  place: `periodic::make_molecules_whole`, `image_molecules`, and `unwrap`.
-  `MoleculeImager`, `TrajectoryUnwrapper`, and `FrameSuperposer` act on a
-  `FrameBuffer`, and `FrameSuperposer::superpose` takes the caller's frame index
-  for diagnostics like the other streaming tools. `rmsf` and
-  `contact_occupancy` are free functions over a `Trajectory`, where every frame
-  counts once; they reject ensembles, whose statistics must be weighted.
-  `TrajectoryError` wraps core `ConformationError` and `RealizationError`.
+  collection in `kekule::alignment`. `Trajectory::superpose_to_frame`,
+  `rmsd_to_frame`, and `aligned_rmsd_to_frame` become `superpose`, `rmsd`, and
+  `aligned_rmsd` (each still with `_with_options`), which take a `Reference`
+  (an item index or any borrowed view) and `FitAtoms` (a selection or an
+  `AtomCorrespondence`). Superposition stays in place and transactional and
+  returns a `SuperpositionReport`. One `AlignmentOptions` (`Weighting`,
+  `PeriodicPolicy`) serves fitting and RMSD. Collection-wide failures are
+  reported once instead of per item.
+- **Breaking:** fitting and RMSD use stored Cartesian coordinates by default,
+  including for periodic frames, which were previously rejected.
+  `PeriodicPolicy::RejectPeriodic` restores rejection. Molecular
+  reconstruction, imaging, and temporal unwrapping are separate preprocessing
+  operations in `kekule_traj::periodic`.
 - **Breaking:** topology reads return views. `Topology::atom`, `bond`,
   `molecule`, `chain`, `residue`, and `atom_site` return `Option` views
   (`AtomView`, `BondView`, ...) with neighbors, hydrogens, aromaticity,
@@ -121,12 +91,13 @@ All notable changes to Kekule are documented in this file.
   collection items, or interpreted records), and mmCIF (`MmcifBlockSource` with
   optional classifications or reports; multiple blocks are suffixed `_1`, `_2`,
   ...). Version- and source-specific writer functions are removed.
-- **Breaking:** constructors that take chemistry accept values:
+- **Breaking:** constructors that take chemistry take ownership:
   `add_molecule_definition`, `add_molecule`, `Topology::from_molecule`,
-  `Topology::from_molecules`, and `Model::from_molecule` take `Molecule`; the
-  `_owned` variants are removed. Substructure search uses `find_match`,
-  `find_matches`, `visit_matches`, and `find_topology_matches` (with
-  `_with_options`); a match limit is a resource error, never a truncation.
+  `Topology::from_molecules`, and `Model::from_molecule` take `Molecule` values
+  instead of references. Substructure search uses `find_match`, `find_matches`,
+  `visit_matches`, and `find_topology_matches` (with `_with_options`) in place
+  of `find_substructure_match` and `find_substructure_matches`; a match limit is
+  a resource error, never a truncation.
 - **Breaking:** editor publication no longer rewrites oxohalogens silently.
   Call `MoleculeEditor::normalize_oxohalogens` first; `finish` rejects
   unnormalized ones with `UnnormalizedOxohalogen`. Format interpretation still
@@ -154,11 +125,11 @@ All notable changes to Kekule are documented in this file.
 - **Breaking:** published molecules have dense IDs. `MoleculeEditor::finish`
   renumbers atoms, bonds, stereo elements, and stereo groups after deletions;
   `finish_with_correspondence` returns the draft-to-published
-  `MoleculeCorrespondence` (renamed from `MoleculeAppendMapping`), and
-  `RemoveHydrogensReport::correspondence` maps input IDs to the result. Remove
-  `Molecule::stereo_group_slots`, `stereo_group_slot_count`, and
-  `MoleculeEditor::append_stereo_group_tombstone`; rename `RingMembership`
-  slot-flag accessors to `from_flags`, `atom_flags`, and `bond_flags`.
+  `MoleculeCorrespondence`, and `RemoveHydrogensReport::correspondence` maps
+  input IDs to the result. Remove `Molecule::stereo_group_slots`,
+  `stereo_group_slot_count`, and `MoleculeEditor::append_stereo_group_tombstone`;
+  rename `RingMembership` slot-flag accessors to `from_flags`, `atom_flags`, and
+  `bond_flags`.
 - **Breaking:** rebuild `kekule-potentials` around a backend-independent
   `Potential` trait over `ModelView`, with validated `Energy` decompositions and
   `Evaluation` gradients. Potentials evaluate through `&self` and are `Send + Sync`.
@@ -167,49 +138,72 @@ All notable changes to Kekule are documented in this file.
   `minimize` are removed.
 - **Breaking:** remove the DREIDING potential and its `dreid-forge`/`dreid-kernel`
   dependencies, which also removes the unmaintained `paste` advisory.
-- **Breaking:** `kekule-openff` interactions and per-atom vdW entries share one
-  `Arc` parameter allocation per rule, and nonbonded methods are typed
-  `VdwMethod`/`ElectrostaticsMethod` values instead of strings.
+- Default perception has no molecule size limit. `Molecule::perceive`,
+  `perceive_ring_set`, and `perceive_aromaticity` scale their ring and
+  aromaticity work bounds with the molecule (`RingPerceptionOptions::for_graph`,
+  `AromaticityOptions::for_graph`); explicitly supplied options stay absolute.
+  Smallest-ring searches traverse only ring bonds with workspace proportional to
+  what they visit, so ring perception no longer costs rings times molecule size:
+  a 70,000-atom polymer with 10,000 rings perceives in well under a second. Ring
+  sets are unchanged.
+- Borrow validated stored frames without rescanning dense properties on every
+  access.
 
 ### Added
 
-- `NaglModel::ash()` loads the Ash charge model bundled in the new
-  `kekule-openff-ash` data crate (default `ash` feature), so `ForceField::rosemary`
-  works without exporting a model.
+- The `kekule-openff` crate: pure-Rust SMIRNOFF parameter assignment with
+  native NAGL partial charges. It bundles the OpenFF Rosemary force field
+  (`ForceField::rosemary`) and, through the default `ash` feature, the Ash
+  charge model from the new `kekule-openff-ash` data crate (`NaglModel::ash`),
+  so a complete parameterization needs no Python, C toolchain, external files,
+  or network access. `ForceField::parameterize` assigns a shared topology once
+  per molecule definition and `parameterize_molecule` takes one molecule; both
+  take a `ChargeMethod` (a NAGL model, or `ChargeMethod::LibraryOnly`). Failures
+  are `Error` values with a stable `ErrorKind`. Custom OFFXML within the
+  supported SMIRNOFF subset and other schema-2 NAGL bundles are accepted, and
+  `kekule_openff::diagnostics` exposes NAGL features, raw inference, and lookup
+  keys. There is no molecule size limit. The crate's `CONTRACT.md` records the
+  supported subset, assignment semantics, error kinds, and validation. Both
+  crates are licensed `(MIT OR Apache-2.0) AND CC-BY-4.0` because they embed
+  CC BY 4.0 OpenFF data.
+- NAGL lookup selects a stored entry only when the input is exactly that
+  entry's molecule (isotopes ignored). Other bond-order or charge-placement
+  forms that upstream's fixed-H InChI lookup also merges use inference instead;
+  for Ash these are exotic, mostly with formal charges of magnitude 2-6.
 - Add `kekule_potentials::openff::OpenFfPotential`, which evaluates OpenFF
   energies, gradients, and per-component gradients from a `ParameterizedTopology`
   in vacuum without cutoffs, with optional replacement charges.
 - Add L-BFGS `minimize` and `minimize_with_observer` with a strong-Wolfe line
   search, per-step displacement bound, singular-trial backtracking, and
   `Minimization::to_model`.
-
+- Add `kekule_traj::periodic::make_molecules_whole`, `image_molecules`, and
+  temporal `unwrap`, which act in place on a `Trajectory`. They support
+  triclinic, rotated, and partially periodic cells, validate bonded ring
+  closure, and reject ambiguous temporal crossings. Imaging uses explicitly
+  selected anchor molecules. Unwrapping rejects decreasing available times,
+  including across frames without timestamps; equal times are allowed.
+- Add streaming `periodic::MoleculeImager`, `periodic::TrajectoryUnwrapper`, and
+  `analysis::FrameSuperposer`, which apply the same transformations to a
+  `FrameBuffer` and take the caller's frame index for diagnostics. Unwrapping
+  retains state across chunks, checks consecutive source indices, supports
+  explicit reset, and rolls back on failure.
+- Add `rmsf` and `contact_occupancy` over a `Trajectory`, where every frame
+  counts once; they reject ensembles, whose statistics must be weighted.
+- Add `kekule_traj::io::read_trajectory` and `read_trajectory_with_options` to
+  load complete trajectories through the existing streaming codecs, preserving
+  decoded frame state, topology sharing, and validation.
 - Add `io::write_trajectory` and `write_trajectory_with_options` for atomic saving
   through the strict codecs, with extension inference, explicit format/precision
   options, metadata preservation checks, and overwrite protection.
-- Add ordered `Trajectory::select_frames` for ranges, strides, reordering, and
-  repeated indices; preserve original time, step, properties, and shared topology.
-- Add complete `TrajectoryFrameView::to_frame`, validated `replace_frame`, and a
-  restricted `TrajectoryFrameMut` editor whose setters preserve dense dimensions.
-- Add reusable `analysis::FrameSuperposer`, `periodic::MoleculeImager`, and stateful
-  `periodic::TrajectoryUnwrapper` for streaming the same transformations used by
-  loaded trajectories. Unwrapping retains state across chunks, checks consecutive
-  source indices, supports explicit reset, and rolls back on failure.
-- Add an optional external-trajectory comparison against pinned MDTraj and
-  MDAnalysis versions, and an informational frame-access/superposition benchmark.
-- Add `kekule_traj::io::read_trajectory` and `read_trajectory_with_options` to load
-  complete trajectories through the existing streaming codecs, preserving decoded
-  frame state, topology sharing, and validation.
 - Add a trajectory workflow example that loads an mmCIF topology, prints frame
   information, and aligns to the first frame. Streaming readers remain public
   for processing files without loading every frame into memory.
 - Add infallible `AtomSelection::all(&topology)` with authoritative dense order
   and exact topology sharing.
-- Add `Trajectory::make_molecules_whole`, `image_molecules`, and temporal `unwrap`,
-  with copy-returning and transactional `_in_place` variants. Support triclinic,
-  rotated, and partially periodic cells; validate bonded ring closure and reject
-  ambiguous temporal crossings. Imaging uses explicitly selected anchor molecules.
-- Add explicit in-place superposition and opt-in superposition reports, and update
-  the runnable workflow example to use ordinary alignment without policy options.
+- Add an optional comparison of the periodic transformations against references
+  generated with pinned MDTraj and MDAnalysis versions
+  (`trajectory_periodic_reference` example), and an informational
+  frame-access/superposition benchmark.
 
 ### Fixed
 
@@ -226,8 +220,6 @@ All notable changes to Kekule are documented in this file.
   to the right atoms when the source interleaves molecules, for example a
   covalently linked ligand listed after water. Dense order used to follow
   molecule instances, so such files silently swapped coordinates.
-- `kekule-openff` places per-atom vdW parameters and charges in dense atom
-  order; instance order misassigned them when instances were not contiguous.
 - Fix compressed XTC decoding when a frame reuses a preceding nonzero coordinate
   run length. Valid trajectories from external GROMACS tooling no longer fail
   mixed-radix bounds checks; existing corruption checks remain intact.
@@ -241,24 +233,6 @@ All notable changes to Kekule are documented in this file.
   `UnresolvedPriority` instead of skipping the bond as nonstereogenic, and
   `add_hydrogens` rejected the molecule. This affected 3D structures such as
   acrylamide atropisomers read with explicit hydrogens.
-
-### Changed
-
-- Borrow validated stored frames without rescanning dense properties on every
-  access, and avoid allocating discarded per-frame superposition report vectors.
-- Temporal unwrapping rejects decreasing available times, including across frames
-  without timestamps. Equal times remain allowed.
-
-### Breaking changes
-
-- `superpose_to_frame` and `superpose_to_frame_with_options` now return a new
-  trajectory, leaving their source unchanged. Use the corresponding `_in_place`
-  methods for mutation or `_with_report` methods for `(trajectory, report)` results.
-  `Trajectory` is marked `must_use` to diagnose accidentally discarded copies.
-- Kabsch fitting, trajectory superposition, and RMSD now use stored Cartesian
-  coordinates by default, including periodic frames. Strict periodic rejection is
-  still available through explicit options. Molecular reconstruction, imaging, and
-  temporal unwrapping are separate preprocessing operations.
 
 ### Removed
 
@@ -362,6 +336,7 @@ This release establishes the canonical object model described in
 
 - Initial release of `kekule`, `kekule-traj`, and `kekule-potentials`.
 
+[0.3.0]: https://github.com/choutkaj/kekule/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/choutkaj/kekule/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/choutkaj/kekule/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/choutkaj/kekule/releases/tag/v0.1.0

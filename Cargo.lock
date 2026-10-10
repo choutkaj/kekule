@@ -148,11 +148,11 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "kekule"
-version = "0.2.1"
+version = "0.3.0"
 
 [[package]]
 name = "kekule-bench"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "kekule",
  "serde_json",
@@ -160,7 +160,7 @@ dependencies = [
 
 [[package]]
 name = "kekule-openff"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "flate2",
  "kekule",
@@ -174,11 +174,11 @@ dependencies = [
 
 [[package]]
 name = "kekule-openff-ash"
-version = "0.2.1"
+version = "0.3.0"
 
 [[package]]
 name = "kekule-potentials"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "kekule",
  "kekule-openff",
@@ -187,7 +187,7 @@ dependencies = [
 
 [[package]]
 name = "kekule-traj"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "kekule",
  "molly",

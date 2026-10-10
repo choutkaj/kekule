@@ -67,21 +67,21 @@ not promise to reconstruct the original SMILES spelling.
 
 ## Migrating callers
 
-This is an API and behavior change:
+Kekule 0.3.0 changes this API and its behavior from 0.2.1:
 
-| Previous API | Replacement |
+| 0.2.1 API | Replacement |
 | --- | --- |
 | `HydrogenDeclaration` | `ImplicitHydrogens` |
-| `Infer { specified: 0 }` | `Inferred` |
-| `Infer { specified: n }`, `n > 0` | `Fixed(n)` for a fixed count; graph hydrogens to keep inference |
-| `specified_count()` | `fixed_count()` (`None` when inferred) or `represented_count()` (zero when inferred) |
-| `allows_inference()` | `is_inferred()` |
-| `implicit_count(inferred)` | `resolve(inferred)` |
-| `with_specified_count(n)` | Assign `Fixed(n)` |
-| `Molecule`/`MoleculeEditor::inferred_hydrogens(atom)`, topology atom `inferred_hydrogens()` | `implicit_hydrogens`, or `perception().inferred_hydrogens(atom)` for the raw assignment |
-| `AddHydrogensOptions::specified_only` | `fixed_only` |
-| `AddedHydrogenOrigin::Specified` | `Fixed` |
-| Adjustment `specified_hydrogens` / `inferred_hydrogens` | `hydrogens` (the resulting declaration) |
+| `Infer { explicit: 0 }` | `Inferred` |
+| `Infer { explicit: n }`, `n > 0` | `Fixed(n)` for a fixed count; graph hydrogens to keep inference |
+| `explicit_count()` | `fixed_count()` (`None` when inferred) or `represented_count()` (zero when inferred) |
+| `allows_implicit()` | `is_inferred()` |
+| `with_explicit_count(n)` | Assign `Fixed(n)` |
+| `Molecule::implicit_hydrogens(atom)` and `Topology::implicit_hydrogens(atom)`, which returned only the perceived part | `implicit_hydrogens` now returns the complete non-graph count (on the topology, through the atom view); `perception().inferred_hydrogens(atom)` returns the raw assignment |
+| `Perception::implicit_hydrogens(atom)`, `ValencePerception::implicit_hydrogens()` | `inferred_hydrogens` |
+| `AddHydrogensOptions::explicit_only` | `fixed_only` |
+| `AddedHydrogenOrigin::ExplicitCount` / `Implicit` | `Fixed` / `Inferred` |
+| Adjustment `explicit_hydrogens` / `implicit_hydrogens` (`u8`) | `usize` counts, plus `hydrogens` (the resulting declaration) |
 | `HydrogenTransformError::HydrogenCountNotPreserved` | Removed; collapse preserves counts by construction |
 
 `HydrogenCountPolicy::StoredOnly` now counts graph hydrogens and fixed counts.
