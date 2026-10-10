@@ -264,10 +264,13 @@ All notable changes to Kekule are documented in this file.
 
 - The unpublished `kekule-bench` benchmark layer under `benchmarks/`: stored
   goldens, contract hashes, dashboard, run history, reference adapters and the
-  OpenFF/OpenMM numerical validation. It is being rebuilt around curated
-  datasets and a checked-in list of known differences. Inputs used by crate
-  tests moved to `crates/kekule/tests/fixtures/corpus`, and the exporters and
-  provenance of shipped OpenFF data moved to `tools/openff`.
+  OpenFF/OpenMM numerical validation. Inputs used by crate tests moved to
+  `crates/kekule/tests/fixtures/corpus`, and the exporters and provenance of
+  shipped OpenFF data moved to `tools/openff`. It is replaced by a scientific
+  benchmark on two curated, hash-locked datasets (small molecules and wwPDB
+  entries) that compares chemistry-level observations with RDKit, gemmi,
+  Biotite and mkdssp nightly and triages every difference against a
+  checked-in list of known differences.
 
 ## [0.2.1] - 2026-09-01
 

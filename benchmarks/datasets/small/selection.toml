@@ -1,0 +1,139 @@
+# Small-molecule benchmark dataset: hand-written selection rules.
+#
+# Records are chosen only from metadata the upstream source provides, never
+# from whether RDKit or Kekule can process them. Sampling is uniform and
+# seeded within each stratum; strata are filled in the order listed and a
+# record joins only the first stratum that draws it. `select.py` resolves
+# these rules; what it resolved is recorded in `selection.lock.json`.
+
+[dataset]
+name = "small"
+version = 1
+seed = 20261010
+# Licence and attribution texts shipped under NOTICES/ in the snapshot.
+notices = ["LICENSES.md", "LICENSE-rdkit.txt"]
+# Curated tier, per stratum: the smallest records by primary file size,
+# then seeded random picks. Strata with `curated = "all"` are kept whole.
+curated_smallest = 5
+curated_random = 25
+
+# ChEMBL (CC BY-SA 3.0). Molfile and canonical SMILES come from the same API
+# record; the release served at selection time is recorded in the lock.
+[[stratum]]
+id = "chembl-clinical"
+source = "chembl"
+quota = 600
+description = "Compounds that reached clinical phase 1 or later"
+filters = { max_phase__gte = "1" }
+
+[[stratum]]
+id = "chembl-natural-products"
+source = "chembl"
+quota = 600
+description = "Compounds ChEMBL flags as natural products"
+filters = { natural_product = "1" }
+
+[[stratum]]
+id = "chembl-large"
+source = "chembl"
+quota = 300
+description = "At least 60 heavy atoms: peptides, macrocycles, glycosides"
+filters = { molecule_properties__heavy_atoms__gte = "60" }
+
+[[stratum]]
+id = "chembl-isotopes"
+source = "chembl"
+quota = 150
+description = "Isotope-labelled atoms in the canonical SMILES"
+filters = { molecule_structures__canonical_smiles__regex = '\[[0-9]+[A-Z]' }
+
+[[stratum]]
+id = "chembl-uncommon-elements"
+source = "chembl"
+quota = 200
+description = "Any element outside H, B, C, N, O, F, Si, P, S, Cl, Br, I in the full formula"
+filters = { molecule_properties__full_molformula__regex = '(He|Li|Be|Ne|Na|Mg|Al|Ar|Ca|Sc|Ti|Cr|Mn|Fe|Co|Ni|Cu|Zn|Ga|Ge|As|Se|Kr|Rb|Sr|Zr|Nb|Mo|Tc|Ru|Rh|Pd|Ag|Cd|In|Sn|Sb|Te|Xe|Cs|Ba|La|Ce|Pr|Nd|Pm|Sm|Eu|Gd|Tb|Dy|Ho|Er|Tm|Yb|Lu|Hf|Ta|Re|Os|Ir|Pt|Au|Hg|Tl|Pb|Bi|Po|At|Rn|Fr|Ra|Ac|Th|Pa|Np|Pu|Am|Cm|Bk|Cf|Es|Fm|Md|No|Lr)|[KVYWU]([A-Z0-9]|$)' }
+
+[[stratum]]
+id = "chembl-charged"
+source = "chembl"
+quota = 250
+description = "Positively charged atoms in the canonical SMILES (cations, zwitterions, nitro groups)"
+filters = { molecule_structures__canonical_smiles__contains = "+" }
+
+[[stratum]]
+id = "chembl-multicomponent"
+source = "chembl"
+quota = 150
+description = "More than one component: salts, solvates, mixtures"
+filters = { molecule_structures__canonical_smiles__contains = "." }
+
+[[stratum]]
+id = "chembl-stereo-rich"
+source = "chembl"
+quota = 400
+description = "At least four atom stereo marks in the canonical SMILES"
+filters = { molecule_structures__canonical_smiles__regex = "(@[^@].*){4}" }
+
+[[stratum]]
+id = "chembl-uniform"
+source = "chembl"
+quota = 1200
+description = "Uniform over ChEMBL small molecules with a structure"
+filters = { molecule_type = "Small molecule" }
+
+# wwPDB Chemical Component Dictionary (CC0), ideal coordinates from RCSB.
+# Formulas come from the RCSB Data API; strata are filled in order.
+[[stratum]]
+id = "ccd-uncommon-elements"
+source = "ccd"
+quota = 150
+description = "Components whose CCD formula has an element outside H, B, C, N, O, F, Si, P, S, Cl, Br, I: metals, clusters, organometallics"
+uncommon_elements = true
+
+[[stratum]]
+id = "ccd-components"
+source = "ccd"
+quota = 800
+description = "Uniform over released components that have ideal coordinates"
+
+# RDKit Release_2026_03_3 test inputs (BSD 3-Clause), kept whole.
+[[stratum]]
+id = "rdkit-structures"
+source = "rdkit-structures"
+curated = "all"
+description = "All 47 atropisomer MOL-block variants and 3 ChEBI V3000 molfiles"
+
+[[stratum]]
+id = "rdkit-queries"
+source = "rdkit-queries"
+curated = "all"
+description = "Every query row of three RDKit SMARTS tables"
+
+[chembl]
+api = "https://www.ebi.ac.uk/chembl/api/data"
+# Every ChEMBL draw must carry a structure.
+required = { molecule_structures__canonical_smiles__isnull = "false" }
+
+[ccd]
+search = "https://search.rcsb.org/rcsbsearch/v2/query"
+graphql = "https://data.rcsb.org/graphql"
+common_elements = ["H", "B", "C", "N", "O", "F", "Si", "P", "S", "Cl", "Br", "I"]
+ideal_sdf = "https://files.rcsb.org/ligands/download/{id}_ideal.sdf"
+
+[rdkit]
+tag = "Release_2026_03_3"
+commit = "e74e7b0a5a2fc4e7f77c04ec26a61d4b8edbf22f"
+raw = "https://raw.githubusercontent.com/rdkit/rdkit/{commit}/{path}"
+structures_dir = "Code/GraphMol/FileParsers/test_data"
+# Git tree of `structures_dir` at `commit`. Inputs: every atropisomers/*.sdf of
+# these compound families and every root chebi_*.mol, excluding generated
+# `.expected` outputs.
+structures_tree = "63f42cde63ef746abf579508dadc4bb71a2e2238"
+families = ["BMS-986142", "JDQ443", "Mrtx1719", "RP-6306", "Sotorasib", "ZM374979"]
+# Tables pinned to the bytes shipped in the conda-forge librdkit 2026.03.3 package.
+query_tables = [
+  { path = "Data/FunctionalGroups.txt", layout = "label-tabs-query", sha256 = "9faf6e0f5ace2da09eb655270c335df11193cb2b55e1b63f83cc5b2dde69fb86" },
+  { path = "Data/Functional_Group_Hierarchy.txt", layout = "label-tabs-query", sha256 = "3f50f5169183643cd88d60e5212968277f96e4a5a7b77858d3729d58342611c3" },
+  { path = "Data/SmartsLib/RLewis_smarts.txt", layout = "query-whitespace-label", sha256 = "eab696e33acaaa877c24e486c80ae23ae93b419eace4a2b057db6a9766c3316e" },
+]

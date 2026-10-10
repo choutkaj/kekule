@@ -487,9 +487,11 @@ unless deliberate promotion defines its canonical meaning and validity scope.
 Keep API inventories and algorithm-specific policies beside the implementation;
 update this document when ownership or cross-module invariants change.
 
-External-reference comparisons, their dataset provenance and reference-tool
-adapters stay outside the runtime crates; reference toolkits are never runtime
-dependencies.
+The unpublished `kekule-bench` workspace package (`benchmarks/observer`) reports
+what Kekule's public APIs compute, keyed by source positions, for comparison
+with pinned reference toolkits. Datasets, reference adapters, comparison and the
+list of known differences stay outside the runtime crates; reference toolkits are
+never runtime dependencies. See the [benchmark README](benchmarks/README.md).
 
 `kekule-openff` owns compiled SMIRNOFF rules, configured NAGL inference, and typed
 `ParameterizedTopology` results retaining the caller's `Arc<Topology>`.

@@ -1,0 +1,12 @@
+# Reference toolkits for the benchmark. Never Rust runtime dependencies.
+# The explicit conda-{linux-64,win-64}.lock files pin every package build.
+name: kekule-bench
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - rdkit=2026.03.3
+  - gemmi=0.7.5
+  - biotite=1.7.1
+  - dssp=4.6.1
