@@ -162,7 +162,9 @@ breaking API changes throughout the workspace.
   supported SMIRNOFF subset and other schema-2 NAGL bundles are accepted, and
   `kekule_openff::diagnostics` exposes NAGL features, raw inference, and lookup
   keys. There is no molecule size limit. The crate's `CONTRACT.md` records the
-  supported subset, assignment semantics, error kinds, and validation.
+  supported subset, assignment semantics, error kinds, and validation. Both
+  crates are licensed `(MIT OR Apache-2.0) AND CC-BY-4.0` because they embed
+  CC BY 4.0 OpenFF data.
 - NAGL lookup selects a stored entry only when the input is exactly that
   entry's molecule (isotopes ignored). Other bond-order or charge-placement
   forms that upstream's fixed-H InChI lookup also merges use inference instead;
