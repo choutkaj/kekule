@@ -44,8 +44,11 @@ materials retain their own licenses; the package license does not relicense them
 reference observations, SHA-256
 `cb4fb4b9527049fc8d6fa9364fff060de99e7595c61793a5d423db39e00f13fe`.
 It contains upstream NAGL fixture selections and PubChem molecules, with original
-source provenance recorded in `benchmarks/openff/fixtures/sources.lock.json`, the existing
-PubChem corpus locks, and `benchmarks/openff/archive/previous-validation.zip`. Tests use reference
+source provenance recorded in the retired
+[`benchmarks/openff/fixtures/sources.lock.json`](https://github.com/choutkaj/kekule/blob/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks/openff/fixtures/sources.lock.json),
+the PubChem corpus locks and
+[`benchmarks/openff/archive/previous-validation.zip`](https://github.com/choutkaj/kekule/blob/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks/openff/archive/previous-validation.zip)
+at that revision. Tests use reference
 fields; original native observations and failures remain unmodified.
 
 Bundled schema-2 Ash fingerprints (`kekule-openff-ash`; schema-1 bundles are no
@@ -60,4 +63,4 @@ New schema-2 exports retain weights exactly and explicitly declare the
 preparation profile. Their fingerprints are recorded separately in
 `tools/openff/models.lock.json`. The two-model fixture contains independent
 OpenFF observations on the original 23 cases and ten additional PubChem cases;
-source locks remain in `benchmarks/openff`.
+their source locks are in the retired [`benchmarks/openff`](https://github.com/choutkaj/kekule/tree/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks/openff).

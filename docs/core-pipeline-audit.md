@@ -1,5 +1,8 @@
 # Core pipeline audit — 2026-09-12
 
+Benchmark paths and commands below refer to the benchmark layer retired after
+[ead90ca9](https://github.com/choutkaj/kekule/tree/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks); they are kept as recorded.
+
 This audit reviews ring membership and selected rings, valence/hydrogens,
 aromaticity, represented stereo/CIP, and SMILES parsing, interpretation and
 writing. It starts from `main` at `45c21f6b`, following the existing

@@ -6,7 +6,6 @@ members = [
     "crates/kekule-traj",
     "crates/kekule-openff",
     "crates/kekule-openff-ash",
-    "benchmarks",
 ]
 
 [workspace.package]

@@ -85,8 +85,3 @@ This is an API and behavior change:
 | `HydrogenTransformError::HydrogenCountNotPreserved` | Removed; collapse preserves counts by construction |
 
 `HydrogenCountPolicy::StoredOnly` now counts graph hydrogens and fixed counts.
-
-The reference benchmark's serialized fields retain RDKit's external terminology:
-`explicit_hydrogens` is its stored non-graph count, read here from
-`represented_count`, and `implicit_hydrogens` is its inferred count, read from
-the perception assignment.

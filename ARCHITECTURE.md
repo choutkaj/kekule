@@ -487,10 +487,9 @@ unless deliberate promotion defines its canonical meaning and validity scope.
 Keep API inventories and algorithm-specific policies beside the implementation;
 update this document when ownership or cross-module invariants change.
 
-The unpublished `kekule-bench` workspace package calls public APIs to compare
-scientific outputs and measure explicitly scoped workflows. Dataset provenance,
-reference-tool adapters and benchmark reports stay outside the runtime crates.
-See the [benchmark guide](benchmarks/GUIDE.md) for the optional execution workflow.
+External-reference comparisons, their dataset provenance and reference-tool
+adapters stay outside the runtime crates; reference toolkits are never runtime
+dependencies.
 
 `kekule-openff` owns compiled SMIRNOFF rules, configured NAGL inference, and typed
 `ParameterizedTopology` results retaining the caller's `Arc<Topology>`.
@@ -499,8 +498,8 @@ instance-qualified atoms without mutating the topology or adding hydrogens.
 All numeric parameters carry canonical units. Complete force-field state stays
 in this result rather than unstructured molecule properties. The crate is pure
 Rust: charge lookup selects an entry only for that entry's exact molecule, so no
-InChI implementation is linked. Python reference tools and checkpoint
-conversion remain in `benchmarks/openff`.
+InChI implementation is linked. Checkpoint conversion and the provenance of
+shipped data live in `tools/openff`.
 Model bundles own feature ordering, supported network configuration, domain and
 lookup data. OFFXML retains the required checkpoint identity; parameterization
 checks it against the supplied model before assigning any molecule. Chemistry

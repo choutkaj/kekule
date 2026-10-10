@@ -176,17 +176,12 @@ All notable changes to Kekule are documented in this file.
 - `NaglModel::ash()` loads the Ash charge model bundled in the new
   `kekule-openff-ash` data crate (default `ash` feature), so `ForceField::rosemary`
   works without exporting a model.
-- A large-protein validation panel of four chains with 4,615-13,818 atoms in
-  `benchmarks/openff`; all eight parameterizations match OpenFF/OpenMM within
-  the main panel's tolerances.
 - Add `kekule_potentials::openff::OpenFfPotential`, which evaluates OpenFF
   energies, gradients, and per-component gradients from a `ParameterizedTopology`
   in vacuum without cutoffs, with optional replacement charges.
 - Add L-BFGS `minimize` and `minimize_with_observer` with a strong-Wolfe line
   search, per-step displacement bound, singular-trial backtracking, and
   `Minimization::to_model`.
-- The optional OpenFF energy and gradient benchmark now exercises the public
-  `OpenFfPotential` instead of a benchmark-local evaluator.
 
 - Add `io::write_trajectory` and `write_trajectory_with_options` for atomic saving
   through the strict codecs, with extension inference, explicit format/precision
@@ -264,6 +259,15 @@ All notable changes to Kekule are documented in this file.
   coordinates by default, including periodic frames. Strict periodic rejection is
   still available through explicit options. Molecular reconstruction, imaging, and
   temporal unwrapping are separate preprocessing operations.
+
+### Removed
+
+- The unpublished `kekule-bench` benchmark layer under `benchmarks/`: stored
+  goldens, contract hashes, dashboard, run history, reference adapters and the
+  OpenFF/OpenMM numerical validation. It is being rebuilt around curated
+  datasets and a checked-in list of known differences. Inputs used by crate
+  tests moved to `crates/kekule/tests/fixtures/corpus`, and the exporters and
+  provenance of shipped OpenFF data moved to `tools/openff`.
 
 ## [0.2.1] - 2026-09-01
 

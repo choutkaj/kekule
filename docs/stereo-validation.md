@@ -1,6 +1,6 @@
 # Historical stereo validation
 
-The results below describe the retired benchmark adapters. They do not validate the new strict comparison layer. Use [the current benchmark guide](../benchmarks/GUIDE.md) to generate fresh reference results; the old standalone comparison commands are no longer available.
+The results below describe retired benchmark adapters; their commands refer to the benchmark layer as of [ead90ca9](https://github.com/choutkaj/kekule/tree/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks) and are kept as recorded.
 
 # Stereo validation
 
@@ -10,8 +10,8 @@ with modern perception and a one-million-iteration bound. The implementation
 follows [IUPAC P-9](https://iupac.qmul.ac.uk/BlueBook/P9.html) and the
 [Hanson et al. refinements](https://doi.org/10.1021/acs.jcim.8b00324) used by
 [RDKit's labeler](https://github.com/rdkit/rdkit/tree/Release_2026_03_6/Code/GraphMol/CIPLabeler).
-See the [support contract](stereo-support.md) and
-[current benchmark contract](../benchmarks/GUIDE.md).
+See the [support contract](stereo-support.md) and the
+[benchmark contract](https://github.com/choutkaj/kekule/blob/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks/GUIDE.md) at that revision.
 
 ## Running the checks
 
