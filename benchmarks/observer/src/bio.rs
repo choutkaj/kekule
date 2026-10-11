@@ -6,8 +6,7 @@ use std::sync::Arc;
 use kekule::core::BondOrder;
 use kekule::dssp::{self, DsspHydrogenBond, DsspOptions};
 use kekule::mmcif::{
-    self, MmcifDocument, MmcifEnsembleInterpretOptions, MmcifEntry, MmcifInterpretOptions,
-    MmcifModelSelection, MmcifValue,
+    self, MmcifDocument, MmcifEntry, MmcifInterpretOptions, MmcifModelSelection, MmcifValue,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, ResidueClass, ResidueId};
 use kekule::units::{ANGSTROM, SQUARE_ANGSTROM};
@@ -89,7 +88,7 @@ fn syntax(document: &MmcifDocument) -> Result<Facts, Failure> {
 }
 
 fn first_model(document: &MmcifDocument) -> Result<mmcif::MmcifInterpretation, Failure> {
-    mmcif::interpret(
+    mmcif::interpret_with_options(
         document,
         MmcifInterpretOptions {
             model_selection: MmcifModelSelection::First,
@@ -311,8 +310,7 @@ fn secondary_structure(document: &MmcifDocument) -> Result<Facts, Failure> {
 /// Cα RMSD of every coordinate model after fitting it onto the first.
 fn superposition(document: &MmcifDocument) -> Result<Facts, Failure> {
     let interpretation =
-        mmcif::interpret_ensemble(document, MmcifEnsembleInterpretOptions::default())
-            .map_err(|e| Failure::new("interpret", e))?;
+        mmcif::interpret_ensemble(document).map_err(|e| Failure::new("interpret", e))?;
     let ensemble = interpretation.ensemble();
     let topology: Arc<_> = ensemble.shared_topology();
     let first = &interpretation.reports()[0];

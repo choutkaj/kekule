@@ -443,18 +443,15 @@ fn deterministic_mmcif_parser_and_interpreters_fuzz_smoke_are_panic_free() {
                 ) else {
                     return;
                 };
-                let _ = mmcif::interpret(
+                let _ = mmcif::interpret_with_options(
                     &document,
                     MmcifInterpretOptions {
                         model_selection: MmcifModelSelection::First,
                         ..MmcifInterpretOptions::default()
                     },
                 );
-                let _ = mmcif::interpret_ensemble(
-                    &document,
-                    mmcif::MmcifEnsembleInterpretOptions::default(),
-                );
-                let _ = mmcif::interpret_ensemble(
+                let _ = mmcif::interpret_ensemble(&document);
+                let _ = mmcif::interpret_ensemble_with_options(
                     &document,
                     mmcif::MmcifEnsembleInterpretOptions {
                         model_ids: Some(Vec::new()),
@@ -501,16 +498,16 @@ fn mmcif_parse_preserves_multiple_named_blocks() {
 #[test]
 fn sibling_blocks_are_interpreted_independently() {
     let document = parse(MULTI_BLOCK);
-    let first = mmcif::interpret_block(
-        document.block("FIRST").expect("first block"),
-        MmcifInterpretOptions::default(),
-    )
-    .expect("first block interprets");
-    let second = mmcif::interpret_block(
-        document.block("SECOND").expect("second block"),
-        MmcifInterpretOptions::default(),
-    )
-    .expect("second block interprets");
+    let first = document
+        .block("FIRST")
+        .expect("first block")
+        .interpret()
+        .expect("first block interprets");
+    let second = document
+        .block("SECOND")
+        .expect("second block")
+        .interpret()
+        .expect("second block interprets");
 
     assert_eq!(first.report().block_name(), "FIRST");
     assert_eq!(second.report().block_name(), "SECOND");
@@ -527,11 +524,10 @@ fn block_interpreters_reject_a_block_without_atom_site_data() {
     let document = parse("data_METADATA\n_entry.id metadata-only\n");
     let block = document.block("METADATA").expect("metadata block");
 
-    let model_error = mmcif::interpret_block(block, MmcifInterpretOptions::default())
-        .expect_err("metadata block has no model");
+    let model_error = block.interpret().expect_err("metadata block has no model");
     assert!(model_error.message().contains("no atom-site category"));
     assert!(matches!(
-        mmcif::interpret_ensemble_block(block, mmcif::MmcifEnsembleInterpretOptions::default()),
+        block.interpret_ensemble(),
         Err(mmcif::MmcifEnsembleInterpretError::NoCoordinateModels)
     ));
 }
@@ -539,11 +535,8 @@ fn block_interpreters_reject_a_block_without_atom_site_data() {
 #[test]
 fn document_model_interpretation_delegates_for_exactly_one_atom_site_block() {
     let document = parse(MIXED);
-    let from_document =
-        mmcif::interpret(&document, MmcifInterpretOptions::default()).expect("document interprets");
-    let from_block =
-        mmcif::interpret_block(&document.blocks()[0], MmcifInterpretOptions::default())
-            .expect("block interprets");
+    let from_document = mmcif::interpret(&document).expect("document interprets");
+    let from_block = document.blocks()[0].interpret().expect("block interprets");
 
     assert_eq!(from_document.report(), from_block.report());
     assert!(from_document.topology().same_layout(from_block.topology()));
@@ -614,7 +607,7 @@ _atom_site.pdbx_PDB_model_num
 ATOM 1 C C1 GLY A 2 1 0.0 0.0 0.0 1
 ATOM 2 C C1 GLY Z 1 1 1.0 0.0 0.0 1
 "#;
-    let result = mmcif::interpret(&parse(input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(input)).unwrap();
     assert_eq!(result.model().topology().instance_count(), 1);
     let hierarchy = result.model().topology().hierarchy();
     let chain_order = hierarchy
@@ -633,7 +626,7 @@ ATOM 2 C C1 GLY Z 1 1 1.0 0.0 0.0 1
         MmcifWriteOptions::default(),
     )
     .expect("one connected molecule may retain two source asymmetries");
-    let round_trip = mmcif::interpret(&parse(&written), MmcifInterpretOptions::default()).unwrap();
+    let round_trip = mmcif::interpret(&parse(&written)).unwrap();
     assert_eq!(round_trip.topology().instance_count(), 1);
     // Rows are written in dense order, which keeps the source atom-site order
     // (A before Z). Without a written polymer sequence scheme, the reread
@@ -663,7 +656,7 @@ ATOM 2 C C1 GLY Z 1 1 1.0 0.0 0.0 1
 
 #[test]
 fn interpretation_builds_connected_typed_instances_and_complete_positions() {
-    let interpreted = mmcif::interpret(&parse(MIXED), MmcifInterpretOptions::default()).unwrap();
+    let interpreted = mmcif::interpret(&parse(MIXED)).unwrap();
     let model = interpreted.model();
     assert_eq!(model.topology().instance_count(), 4);
     assert_eq!(model.atom_count(), 4);
@@ -798,7 +791,7 @@ _atom_site.Cartn_y
 _atom_site.Cartn_z
 ATOM 1 C CA CAX GLY GLC A X 1 7 100 B 0.0 0.0 0.0
 "#;
-    let result = mmcif::interpret(&parse(input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(input)).unwrap();
     let hierarchy = result.model().topology().hierarchy();
     let (_, chain) = hierarchy.chains().next().unwrap();
     assert_eq!(chain.label_id(), "A");
@@ -846,7 +839,7 @@ _atom_site.Cartn_y
 _atom_site.Cartn_z
 ATOM 1 C . CAX . GLC . X 1 . 100 0.0 0.0 0.0
 "#;
-    let interpreted = mmcif::interpret(&parse(input), MmcifInterpretOptions::default()).unwrap();
+    let interpreted = mmcif::interpret(&parse(input)).unwrap();
     let atom = &interpreted.report().instances()[0].atoms()[0];
     assert_eq!(atom.label_asym_id(), None);
     assert_eq!(atom.auth_asym_id(), Some("X"));
@@ -871,7 +864,7 @@ ATOM 1 C . CAX . GLC . X 1 . 100 0.0 0.0 0.0
         MmcifWriteOptions::default(),
     )
     .unwrap();
-    let normalized = mmcif::interpret(&parse(&written), MmcifInterpretOptions::default()).unwrap();
+    let normalized = mmcif::interpret(&parse(&written)).unwrap();
     let atom = &normalized.report().instances()[0].atoms()[0];
     assert_eq!(atom.label_asym_id(), Some("X"));
     assert_eq!(atom.label_atom_name(), Some("CAX"));
@@ -911,7 +904,7 @@ _atom_site.Cartn_z
 ATOM 1 N N GLY GLC A X 1 7 100 0.0 0.0 0.0
 ATOM 2 C CA GLY GLC A X 1 7 101 10.0 0.0 0.0
 "#;
-    let error = mmcif::interpret(&parse(input), MmcifInterpretOptions::default()).unwrap_err();
+    let error = mmcif::interpret(&parse(input)).unwrap_err();
     assert!(error
         .message()
         .contains("conflicting _atom_site.auth_seq_id"));
@@ -920,22 +913,14 @@ ATOM 2 C CA GLY GLC A X 1 7 101 10.0 0.0 0.0
         "ATOM 2 C CA GLY GLC A X 1 7 101",
         "ATOM 2 C CA ALA GLC A X 1 7 100",
     );
-    let error = mmcif::interpret(
-        &parse(&conflicting_label_component),
-        MmcifInterpretOptions::default(),
-    )
-    .unwrap_err();
+    let error = mmcif::interpret(&parse(&conflicting_label_component)).unwrap_err();
     assert!(error.message().contains("canonical residue identity"));
 
     let conflicting_author_component = input.replace(
         "ATOM 2 C CA GLY GLC A X 1 7 101",
         "ATOM 2 C CA GLY ALC A X 1 7 100",
     );
-    let error = mmcif::interpret(
-        &parse(&conflicting_author_component),
-        MmcifInterpretOptions::default(),
-    )
-    .unwrap_err();
+    let error = mmcif::interpret(&parse(&conflicting_author_component)).unwrap_err();
     assert!(error
         .message()
         .contains("conflicting _atom_site.auth_comp_id"));
@@ -944,11 +929,7 @@ ATOM 2 C CA GLY GLC A X 1 7 101 10.0 0.0 0.0
         "ATOM 2 C CA GLY GLC A X 1 7 101",
         "ATOM 2 C CA GLY GLC A Y 1 7 100",
     );
-    let error = mmcif::interpret(
-        &parse(&conflicting_chain_alias),
-        MmcifInterpretOptions::default(),
-    )
-    .unwrap_err();
+    let error = mmcif::interpret(&parse(&conflicting_chain_alias)).unwrap_err();
     assert!(error
         .message()
         .contains("conflicting _atom_site.auth_asym_id"));
@@ -984,7 +965,7 @@ _atom_site.Cartn_z
 ATOM 1 N N GLY GLC A X 1 7 . 0.0 0.0 0.0
 ATOM 2 C CA GLY GLC A X 1 7 100 10.0 0.0 0.0
 "#;
-    let interpreted = mmcif::interpret(&parse(input), MmcifInterpretOptions::default()).unwrap();
+    let interpreted = mmcif::interpret(&parse(input)).unwrap();
     let hierarchy = interpreted.topology().hierarchy();
     let (_, chain) = hierarchy.chains().next().unwrap();
     assert_eq!(chain.residues().len(), 1);
@@ -1019,7 +1000,7 @@ _atom_site.Cartn_z
 HETATM 1 C C1 LIG A 1 0.0 0.0 0.0
 HETATM 2 C C1 ION A 1 10.0 0.0 0.0
 "#;
-    let interpreted = mmcif::interpret(&parse(input), MmcifInterpretOptions::default()).unwrap();
+    let interpreted = mmcif::interpret(&parse(input)).unwrap();
     assert_eq!(interpreted.topology().instance_count(), 2);
     let hierarchy = interpreted.topology().hierarchy();
     let (_, chain) = hierarchy.chains().next().unwrap();
@@ -1060,7 +1041,7 @@ _atom_site.Cartn_z
 HETATM 1 O O HOH W 1 0.0 0.0 0.0
 HETATM 2 O O HOH W 1 5.0 0.0 0.0
 "#;
-    let result = mmcif::interpret(&parse(input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(input)).unwrap();
     assert_eq!(result.model().topology().instance_count(), 2);
     let hierarchy = result.model().topology().hierarchy();
     let (_, chain) = hierarchy.chains().next().unwrap();
@@ -1075,7 +1056,7 @@ HETATM 2 O O HOH W 1 5.0 0.0 0.0
         MmcifWriteOptions::default(),
     )
     .unwrap();
-    let round_trip = mmcif::interpret(&parse(&written), MmcifInterpretOptions::default()).unwrap();
+    let round_trip = mmcif::interpret(&parse(&written)).unwrap();
     assert_eq!(round_trip.topology().instance_count(), 2);
     assert_eq!(round_trip.topology().hierarchy().chains().count(), 1);
     assert!(round_trip
@@ -1091,7 +1072,7 @@ fn mmcif_connectivity_candidates_do_not_create_bonds() {
         "ATOM 2 C CA GLY A 1 1 1.0 0.0 0.0 1",
         "ATOM 2 C CA GLY A 1 1 1.45 0.0 0.0 1\nATOM 5 C C GLY A 1 1 2.90 0.0 0.0 1",
     );
-    let interpreted = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let interpreted = mmcif::interpret(&parse(&input)).unwrap();
     assert_eq!(interpreted.model().topology().instance_count(), 5);
     assert_eq!(interpreted.model().topology().atom_count(), 5);
     assert_eq!(interpreted.model().topology().bonds().count(), 0);
@@ -1120,9 +1101,7 @@ fn connectivity_diagnostic_cell_boundaries_are_finite_and_panic_free() {
 
     for coordinate in [near_positive, near_negative] {
         let document = parse(&with_coordinate(coordinate));
-        let result = std::panic::catch_unwind(|| {
-            mmcif::interpret(&document, MmcifInterpretOptions::default())
-        });
+        let result = std::panic::catch_unwind(|| mmcif::interpret(&document));
         assert!(
             matches!(result, Ok(Ok(_))),
             "supported finite coordinate {coordinate:e} must interpret without panicking"
@@ -1131,9 +1110,7 @@ fn connectivity_diagnostic_cell_boundaries_are_finite_and_panic_free() {
 
     for coordinate in [beyond_positive, beyond_negative] {
         let document = parse(&with_coordinate(coordinate));
-        let result = std::panic::catch_unwind(|| {
-            mmcif::interpret(&document, MmcifInterpretOptions::default())
-        });
+        let result = std::panic::catch_unwind(|| mmcif::interpret(&document));
         let error = result
             .expect("out-of-range finite coordinate must not panic")
             .expect_err("out-of-range finite coordinate must be rejected");
@@ -1151,10 +1128,10 @@ fn multiple_coordinate_models_require_explicit_selection() {
         "HETATM 4 O O HOH W 3 . 3.0 0.0 0.0 1\nHETATM 5 O O HOH W 3 . 8.0 0.0 0.0 2",
     );
     let document = parse(&input);
-    let error = mmcif::interpret(&document, MmcifInterpretOptions::default()).unwrap_err();
+    let error = mmcif::interpret(&document).unwrap_err();
     assert!(error.message().contains("select one explicitly"));
 
-    let selected = mmcif::interpret(
+    let selected = mmcif::interpret_with_options(
         &document,
         MmcifInterpretOptions {
             model_selection: MmcifModelSelection::Select("2".into()),
@@ -1167,7 +1144,7 @@ fn multiple_coordinate_models_require_explicit_selection() {
     assert!((selected.model().positions().values().value()[0].x - 0.8).abs() < 1.0e-15);
     assert_eq!(selected.report().ignored_coordinate_models, vec!["1"]);
 
-    let first = mmcif::interpret(
+    let first = mmcif::interpret_with_options(
         &document,
         MmcifInterpretOptions {
             model_selection: MmcifModelSelection::First,
@@ -1182,7 +1159,7 @@ fn multiple_coordinate_models_require_explicit_selection() {
 fn ensemble_interpretation_rejects_empty_explicit_model_selection_without_panicking() {
     let document = parse(MULTI_MODEL);
     let result = std::panic::catch_unwind(|| {
-        mmcif::interpret_ensemble(
+        mmcif::interpret_ensemble_with_options(
             &document,
             mmcif::MmcifEnsembleInterpretOptions {
                 model_ids: Some(Vec::new()),
@@ -1199,13 +1176,12 @@ fn ensemble_interpretation_rejects_empty_explicit_model_selection_without_panick
 #[test]
 fn document_interpreters_reject_multiple_atom_site_blocks() {
     let document = parse(MULTI_BLOCK);
-    let single_error = mmcif::interpret(&document, MmcifInterpretOptions::default())
-        .expect_err("ambiguous blocks");
+    let single_error = mmcif::interpret(&document).expect_err("ambiguous blocks");
     assert!(single_error
         .message()
         .contains("atom-site data in more than one data block"));
     assert!(matches!(
-        mmcif::interpret_ensemble(&document, mmcif::MmcifEnsembleInterpretOptions::default(),),
+        mmcif::interpret_ensemble(&document),
         Err(mmcif::MmcifEnsembleInterpretError::MultipleAtomSiteBlocks)
     ));
 }
@@ -1213,14 +1189,10 @@ fn document_interpreters_reject_multiple_atom_site_blocks() {
 #[test]
 fn ensemble_block_interpretation_matches_exactly_one_document_helper() {
     let document = parse(MULTI_MODEL);
-    let from_document =
-        mmcif::interpret_ensemble(&document, mmcif::MmcifEnsembleInterpretOptions::default())
-            .expect("document ensemble interprets");
-    let from_block = mmcif::interpret_ensemble_block(
-        &document.blocks()[0],
-        mmcif::MmcifEnsembleInterpretOptions::default(),
-    )
-    .expect("block ensemble interprets");
+    let from_document = mmcif::interpret_ensemble(&document).expect("document ensemble interprets");
+    let from_block = document.blocks()[0]
+        .interpret_ensemble()
+        .expect("block ensemble interprets");
     let method_default = document.blocks()[0]
         .interpret_ensemble()
         .expect("default block method interprets");
@@ -1259,11 +1231,8 @@ fn ensemble_block_interpretation_matches_exactly_one_document_helper() {
 
 #[test]
 fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
-    let interpreted = mmcif::interpret_ensemble(
-        &parse(MULTI_MODEL),
-        mmcif::MmcifEnsembleInterpretOptions::default(),
-    )
-    .expect("consistent coordinate models form an ensemble");
+    let interpreted = mmcif::interpret_ensemble(&parse(MULTI_MODEL))
+        .expect("consistent coordinate models form an ensemble");
     let ensemble = interpreted.ensemble();
     assert_eq!(ensemble.len(), 2);
     assert_eq!(interpreted.reports().len(), 2);
@@ -1305,7 +1274,7 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
     let input = format!("{MULTI_MODEL}\nloop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\nLIG C1 O1 DOUB\n");
     let document = parse(&input);
     for model_ids in [vec!["2", "1"], vec!["2"]] {
-        let interpreted = mmcif::interpret_ensemble(
+        let interpreted = mmcif::interpret_ensemble_with_options(
             &document,
             mmcif::MmcifEnsembleInterpretOptions {
                 model_ids: Some(model_ids.iter().map(|id| (*id).to_owned()).collect()),
@@ -1335,7 +1304,7 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
             .zip(interpreted.reports())
             .zip(model_ids)
         {
-            let single = mmcif::interpret(
+            let single = mmcif::interpret_with_options(
                 &document,
                 MmcifInterpretOptions {
                     model_selection: MmcifModelSelection::Select(model_id.to_owned()),
@@ -1355,12 +1324,10 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
 #[test]
 fn ensemble_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
     let changed = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 N C1");
-    assert!(
-        matches!(mmcif::interpret_ensemble(&parse(&changed), mmcif::MmcifEnsembleInterpretOptions::default()),
-        Err(mmcif::MmcifEnsembleInterpretError::InconsistentTopology { model_id }) if model_id == "2")
-    );
+    assert!(matches!(mmcif::interpret_ensemble(&parse(&changed)),
+        Err(mmcif::MmcifEnsembleInterpretError::InconsistentTopology { model_id }) if model_id == "2"));
     let invalid = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 Xx C1");
-    let error = mmcif::interpret_ensemble(
+    let error = mmcif::interpret_ensemble_with_options(
         &parse(&invalid),
         mmcif::MmcifEnsembleInterpretOptions {
             model_ids: Some(vec!["1".into()]),
@@ -1377,10 +1344,7 @@ fn ensemble_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
 fn multimodel_interpretation_rejects_inconsistent_atom_sets() {
     let inconsistent = MULTI_MODEL.replace("HETATM 4 O O1 LIG A 1 6.2 0.0 0.0 0.90 21.0 2\n", "");
     assert!(matches!(
-        mmcif::interpret_ensemble(
-            &parse(&inconsistent),
-            mmcif::MmcifEnsembleInterpretOptions::default(),
-        ),
+        mmcif::interpret_ensemble(&parse(&inconsistent)),
         Err(mmcif::MmcifEnsembleInterpretError::InconsistentAtomSet { model_id })
             if model_id == "2"
     ));
@@ -1388,11 +1352,8 @@ fn multimodel_interpretation_rejects_inconsistent_atom_sets() {
 
 #[test]
 fn ensemble_identity_distinguishes_repeated_residues_and_insertion_codes() {
-    let interpreted = mmcif::interpret_ensemble(
-        &parse(REPEATED_RESIDUE_ENSEMBLE),
-        mmcif::MmcifEnsembleInterpretOptions::default(),
-    )
-    .expect("stable repeated-residue identities form an ensemble");
+    let interpreted = mmcif::interpret_ensemble(&parse(REPEATED_RESIDUE_ENSEMBLE))
+        .expect("stable repeated-residue identities form an ensemble");
 
     assert_eq!(interpreted.ensemble().len(), 2);
     assert_eq!(interpreted.ensemble().topology().atom_count(), 3);
@@ -1414,11 +1375,8 @@ fn ensemble_identity_distinguishes_repeated_residues_and_insertion_codes() {
 
 #[test]
 fn ensemble_identity_preserves_repeated_nonpolymer_occurrences() {
-    let interpreted = mmcif::interpret_ensemble(
-        &parse(REPEATED_NONPOLYMER_ENSEMBLE),
-        mmcif::MmcifEnsembleInterpretOptions::default(),
-    )
-    .expect("stable occurrence discriminators form an ensemble");
+    let interpreted = mmcif::interpret_ensemble(&parse(REPEATED_NONPOLYMER_ENSEMBLE))
+        .expect("stable occurrence discriminators form an ensemble");
 
     assert_eq!(interpreted.ensemble().len(), 2);
     assert_eq!(interpreted.ensemble().topology().instance_count(), 4);
@@ -1465,10 +1423,7 @@ HETATM 3 C C1 LIG B XB 1 15.0 0.0 0.0 2
 HETATM 4 C C1 LIG A XA 1 10.0 0.0 0.0 2
 "#;
     assert!(matches!(
-        mmcif::interpret_ensemble(
-            &parse(reordered),
-            mmcif::MmcifEnsembleInterpretOptions::default(),
-        ),
+        mmcif::interpret_ensemble(&parse(reordered)),
         Err(mmcif::MmcifEnsembleInterpretError::InconsistentDenseAtomOrder { model_id })
             if model_id == "2"
     ));
@@ -1481,10 +1436,7 @@ fn ensemble_identity_detects_true_repeated_atom_set_mismatch() {
         "ATOM 6 C CA GLY A X 1 9 101 . . 14.0 0.0 0.0 2",
     );
     assert!(matches!(
-        mmcif::interpret_ensemble(
-            &parse(&mismatched),
-            mmcif::MmcifEnsembleInterpretOptions::default(),
-        ),
+        mmcif::interpret_ensemble(&parse(&mismatched)),
         Err(mmcif::MmcifEnsembleInterpretError::InconsistentAtomSet { model_id })
             if model_id == "2"
     ));
@@ -1518,11 +1470,8 @@ ATOM 2 C CA GLY A 1 1 B 0.2 1.0 0.0 0.0 1
 ATOM 3 C CA GLY A 1 1 A 0.1 10.0 0.0 0.0 2
 ATOM 4 C CA GLY A 1 1 B 0.9 11.0 0.0 0.0 2
 "#;
-    let interpreted = mmcif::interpret_ensemble(
-        &parse(input),
-        mmcif::MmcifEnsembleInterpretOptions::default(),
-    )
-    .expect("selected altloc is provenance rather than atom identity");
+    let interpreted = mmcif::interpret_ensemble(&parse(input))
+        .expect("selected altloc is provenance rather than atom identity");
     let ensemble = interpreted.ensemble();
     assert_eq!(ensemble.len(), 2);
     assert_eq!(ensemble.topology().atom_count(), 1);
@@ -1579,13 +1528,13 @@ fn alternate_location_policy_is_explicit_and_reported() {
         .replace(" 2.0 0.0 0.0 1", " . 1.0 2.0 0.0 0.0 1")
         .replace(" 3.0 0.0 0.0 1", " . 1.0 3.0 0.0 0.0 1");
     let document = parse(&input);
-    let result = mmcif::interpret(&document, MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&document).unwrap();
     assert!((result.model().positions().values().value()[0].x - 0.5).abs() < 1.0e-15);
     assert!(result.report().issues.iter().any(|issue| matches!(
         issue,
         mmcif::MmcifInterpretIssue::AlternateLocationOmitted { alt_id: Some(id), .. } if id == "A"
     )));
-    assert!(mmcif::interpret(
+    assert!(mmcif::interpret_with_options(
         &document,
         MmcifInterpretOptions {
             altloc_policy: MmcifAltLocPolicy::ErrorOnAlternateLocations,
@@ -1598,7 +1547,7 @@ fn alternate_location_policy_is_explicit_and_reported() {
 #[test]
 fn selected_model_requires_complete_positions() {
     let input = MIXED.replace("3.0 0.0 0.0 1", ". . . 1");
-    let error = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap_err();
+    let error = mmcif::interpret(&parse(&input)).unwrap_err();
     assert!(error.message().contains("complete position"));
 }
 
@@ -1617,7 +1566,7 @@ _struct_conn.ptnr2_label_atom_id
 _struct_conn.pdbx_value_order"#,
         "label-sequence covale A GLY 1 CA A ALA 2 CA doub",
     );
-    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(&input)).unwrap();
     assert_eq!(result.report().applied_connections(), 1);
     assert_declared_bond(
         &result,
@@ -1643,7 +1592,7 @@ _struct_conn.ptnr2_auth_atom_id
 _struct_conn.pdbx_ptnr2_PDB_ins_code"#,
         "insertion covale X CYS 20 SG A X CYS 20 SG B",
     );
-    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(&input)).unwrap();
     assert_eq!(result.report().applied_connections(), 1);
     assert_declared_bond(
         &result,
@@ -1667,7 +1616,7 @@ _struct_conn.ptnr2_auth_seq_id
 _struct_conn.ptnr2_auth_atom_id"#,
         "author-only covale Y LIG 50 C7 Y LIG 50 O7",
     );
-    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(&input)).unwrap();
     assert_eq!(result.report().applied_connections(), 1);
     assert_declared_bond(
         &result,
@@ -1699,7 +1648,7 @@ _struct_conn.ptnr2_auth_seq_id
 _struct_conn.ptnr2_auth_atom_id"#,
         "consistent covale A GLY 1 N X GLY 10 N A GLY 1 CA X GLY 10 CA",
     );
-    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(&input)).unwrap();
     assert_eq!(result.report().applied_connections(), 1);
     assert_declared_bond(
         &result,
@@ -1727,7 +1676,7 @@ _struct_conn.ptnr2_label_seq_id
 _struct_conn.ptnr2_label_atom_id"#,
         "conflict covale A GLY 1 N X ALA 11 CA A GLY 1 CA",
     );
-    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(&input)).unwrap();
     assert_eq!(result.report().applied_connections(), 0);
     assert!(result.report().issues().iter().any(|issue| matches!(
         issue,
@@ -1754,7 +1703,7 @@ _struct_conn.ptnr2_label_seq_id
 _struct_conn.ptnr2_label_atom_id"#,
         "ambiguous covale A CA A GLY 1 N",
     );
-    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(&input)).unwrap();
     assert_eq!(result.report().applied_connections(), 0);
     assert!(result.report().issues().iter().any(|issue| matches!(
         issue,
@@ -1781,7 +1730,7 @@ _struct_conn.ptnr2_label_seq_id
 _struct_conn.ptnr2_label_atom_id"#,
         "missing covale Z CA A GLY 1 N",
     );
-    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(&input)).unwrap();
     assert_eq!(result.report().applied_connections(), 0);
     assert!(result.report().issues().iter().any(|issue| matches!(
         issue,
@@ -1815,7 +1764,7 @@ _struct_conn.ptnr2_label_seq_id
 _struct_conn.ptnr2_label_atom_id"#,
         "omitted-alt covale A SER 5 OG B B X SER 30 OG B A GLY 1 N",
     );
-    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(&input)).unwrap();
     assert_eq!(result.report().applied_connections(), 0);
     assert!(result.report().issues().iter().any(|issue| matches!(
         issue,
@@ -1846,16 +1795,10 @@ _struct_conn.ptnr2_label_atom_id"#;
         "ATOM 1 N N GLY A N GLY X 1 1 10 . . 1.0 0.0 0.0 0.0 1\nATOM 2 C CA GLY A CA GLY X 1 1 10 . . 1.0 2.0 0.0 0.0 1\nATOM 3 N N ALA A N ALA X 1 2 11 . . 1.0 4.0 0.0 0.0 1\nATOM 4 C CA ALA A CA ALA X 1 2 11 . . 1.0 6.0 0.0 0.0 1",
         "ATOM 4 C CA ALA A CA ALA X 1 2 11 . . 1.0 6.0 0.0 0.0 1\nATOM 3 N N ALA A N ALA X 1 2 11 . . 1.0 4.0 0.0 0.0 1\nATOM 2 C CA GLY A CA GLY X 1 1 10 . . 1.0 2.0 0.0 0.0 1\nATOM 1 N N GLY A N GLY X 1 1 10 . . 1.0 0.0 0.0 0.0 1",
     );
-    let original = mmcif::interpret(
-        &parse(&connection_input(CONNECTION_ATOMS, tags, values)),
-        MmcifInterpretOptions::default(),
-    )
-    .unwrap();
-    let reordered = mmcif::interpret(
-        &parse(&connection_input(&reordered_atoms, tags, values)),
-        MmcifInterpretOptions::default(),
-    )
-    .unwrap();
+    let original =
+        mmcif::interpret(&parse(&connection_input(CONNECTION_ATOMS, tags, values))).unwrap();
+    let reordered =
+        mmcif::interpret(&parse(&connection_input(&reordered_atoms, tags, values))).unwrap();
     for interpretation in [&original, &reordered] {
         assert_eq!(interpretation.report().applied_connections(), 1);
         assert_declared_bond(
@@ -1882,7 +1825,7 @@ _struct_conn.ptnr2_label_atom_id
 _struct_conn.pdbx_value_order"#,
         "ordinary covale A CYS 3 SG A GLY 1 N sing",
     );
-    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(&input)).unwrap();
     assert_eq!(result.report().applied_connections(), 1);
     assert_declared_bond(
         &result,
@@ -1906,7 +1849,7 @@ _struct_conn.ptnr2_label_seq_id
 _struct_conn.ptnr2_label_atom_id"#,
         "default-order covale A GLY 1 N A GLY 1 CA",
     );
-    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(&input)).unwrap();
     assert_declared_bond(
         &result,
         connection_atom(&result, "N", Some(1), None),
@@ -1930,7 +1873,7 @@ covale A CA 1 L C1 .
 hydrog A N 1 W O .
 "#;
     let input = format!("{MIXED}\n{connections}");
-    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(&input)).unwrap();
     assert_eq!(result.model().topology().instance_count(), 3);
     let merged = result
         .report()
@@ -1960,7 +1903,7 @@ hydrog A N 1 W O .
         MmcifWriteOptions::default(),
     )
     .expect("one connected molecule may span distinct source entities and asymmetries");
-    let round_trip = mmcif::interpret(&parse(&written), MmcifInterpretOptions::default()).unwrap();
+    let round_trip = mmcif::interpret(&parse(&written)).unwrap();
     assert!(round_trip.report().instances().iter().any(|instance| {
         instance.entity_kinds().contains(&MmcifEntityKind::Polymer)
             && instance
@@ -1987,7 +1930,7 @@ _struct_conn.ptnr2_symmetry
 symmetry-link disulf A N 1 1_555 A N 1 15_545
 "#;
     let input = format!("{MIXED}\n{connection}");
-    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(&input)).unwrap();
     assert_eq!(result.report().applied_connections, 0);
     assert!(result.report().issues.iter().any(|issue| matches!(
         issue,
@@ -2018,7 +1961,7 @@ _struct_conn.pdbx_value_order
 covale A N 1 A CA 1 doub
 "#;
     let input = format!("{MIXED}\n{connection}");
-    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let result = mmcif::interpret(&parse(&input)).unwrap();
     let first = result.model().topology().definitions().next().unwrap();
     assert_eq!(
         first
@@ -2031,11 +1974,7 @@ covale A N 1 A CA 1 doub
         BondOrder::Double
     );
 
-    let error = mmcif::interpret(
-        &parse(&input.replace("doub", "arom")),
-        MmcifInterpretOptions::default(),
-    )
-    .unwrap_err();
+    let error = mmcif::interpret(&parse(&input.replace("doub", "arom"))).unwrap_err();
     assert!(error.location().is_some());
     assert!(error
         .message()
@@ -2056,12 +1995,9 @@ _struct_conn.ptnr2_label_seq_id
 _struct_conn.pdbx_value_order
 covale A N 1 A CA 1 doub
 "#;
-    let (mut original, report) = mmcif::interpret(
-        &parse(&format!("{MIXED}\n{connection}")),
-        MmcifInterpretOptions::default(),
-    )
-    .unwrap()
-    .into_parts();
+    let (mut original, report) = mmcif::interpret(&parse(&format!("{MIXED}\n{connection}")))
+        .unwrap()
+        .into_parts();
     let first_atom = TopologyAtomIndex::new(0);
     original.set_occupancy(first_atom, Some(0.625)).unwrap();
     original
@@ -2095,7 +2031,7 @@ covale A N 1 A CA 1 doub
         .loop_with_tag("_atom_site.type_symbol")
         .expect("writer emits atom-site loop");
     assert_eq!(atom_sites.row_count(), 4);
-    let round_trip = mmcif::interpret(&document, MmcifInterpretOptions::default()).unwrap();
+    let round_trip = mmcif::interpret(&document).unwrap();
     assert_eq!(round_trip.model().topology().instance_count(), 3);
     assert_eq!(
         round_trip.model().positions().values(),
@@ -2133,8 +2069,7 @@ covale A N 1 A CA 1 doub
 
 #[test]
 fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
-    let interpreted =
-        mmcif::interpret(&parse(SPLIT_SOURCE_CHAIN), MmcifInterpretOptions::default()).unwrap();
+    let interpreted = mmcif::interpret(&parse(SPLIT_SOURCE_CHAIN)).unwrap();
     assert_eq!(interpreted.topology().instance_count(), 2);
     assert_eq!(interpreted.topology().hierarchy().chains().count(), 1);
     assert!(interpreted
@@ -2173,7 +2108,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
             == Some(asym_entity)
     }));
 
-    let round_trip = mmcif::interpret(&document, MmcifInterpretOptions::default()).unwrap();
+    let round_trip = mmcif::interpret(&document).unwrap();
     assert_eq!(round_trip.topology().instance_count(), 2);
     assert_eq!(round_trip.topology().hierarchy().chains().count(), 1);
     assert_eq!(round_trip.topology().bond_count(), 0);
@@ -2196,8 +2131,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
         MmcifWriteOptions::default(),
     )
     .expect("consistent generic classifications represent a cross-molecule chain");
-    let generic_round_trip =
-        mmcif::interpret(&parse(&generic_written), MmcifInterpretOptions::default()).unwrap();
+    let generic_round_trip = mmcif::interpret(&parse(&generic_written)).unwrap();
     assert_eq!(generic_round_trip.topology().instance_count(), 2);
     assert_eq!(
         generic_round_trip.topology().hierarchy().chains().count(),
@@ -2300,8 +2234,7 @@ fn mmcif_writer_preserves_supported_bond_orders() {
             MmcifWriteOptions::default(),
         )
         .unwrap();
-        let interpreted =
-            mmcif::interpret(&parse(&written), MmcifInterpretOptions::default()).unwrap();
+        let interpreted = mmcif::interpret(&parse(&written)).unwrap();
         let round_trip = interpreted
             .model()
             .topology()
@@ -2504,11 +2437,7 @@ fn mmcif_writer_does_not_infer_multi_residue_carbohydrate_entity_semantics() {
 
 #[test]
 fn mmcif_writer_preserves_source_branched_carbohydrate_semantics() {
-    let interpreted = mmcif::interpret(
-        &parse(BRANCHED_CARBOHYDRATE),
-        MmcifInterpretOptions::default(),
-    )
-    .unwrap();
+    let interpreted = mmcif::interpret(&parse(BRANCHED_CARBOHYDRATE)).unwrap();
     let model = interpreted.model();
     let molecule = model.topology().molecules().next().unwrap();
     assert_eq!(molecule.class(), MoleculeClass::Carbohydrate);
@@ -2605,7 +2534,7 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
 
 #[test]
 fn mmcif_writer_partial_overrides_still_validate_shared_asymmetry_semantics() {
-    let interpreted = mmcif::interpret(&parse(MIXED), MmcifInterpretOptions::default()).unwrap();
+    let interpreted = mmcif::interpret(&parse(MIXED)).unwrap();
     let model = interpreted.model();
     let mut instances = model.topology().instances().map(|(id, _)| id);
     let classified = instances.next().unwrap();

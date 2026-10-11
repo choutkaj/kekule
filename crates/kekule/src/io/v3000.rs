@@ -5,7 +5,7 @@ use crate::chemistry::SourceStereoBondMarkKind;
 use crate::core::*;
 use crate::diagnostics::DiagnosticKind;
 use crate::geometry::Point3;
-use crate::io::{MolWriteError, MolfileParseOptions};
+use crate::io::{MoleculeWriteError, MolfileParseOptions};
 
 use super::molfile_document::{
     MolfileAtom, MolfileAtomParity, MolfileBond, MolfileBondOrder, MolfileBondStereo, MolfileCtab,
@@ -17,7 +17,7 @@ use super::molfile_write::MolfileRecord;
 pub(super) fn render_mol_v3000(
     record: &MolfileRecord<'_>,
     title: &str,
-) -> std::result::Result<String, MolWriteError> {
+) -> std::result::Result<String, MoleculeWriteError> {
     let program = "kekule";
     let comment = "";
 
@@ -106,7 +106,7 @@ pub(super) fn render_mol_v3000(
                 StereoGroupKind::Or => format!("MDLV30/STEREL{}", index + 1),
                 StereoGroupKind::And => format!("MDLV30/STERAC{}", index + 1),
                 _ => {
-                    return Err(MolWriteError::new(
+                    return Err(MoleculeWriteError::new(
                         "V3000 cannot encode this stereo group kind",
                     ))
                 }
@@ -213,6 +213,11 @@ pub(super) fn parse_v3000_ctab(
                     if bonds_read {
                         return Err(syntax("V3000 must contain exactly one BOND section"));
                     }
+                    if collection_read {
+                        return Err(syntax(
+                            "V3000 BOND section must precede the COLLECTION section",
+                        ));
+                    }
                     if rows.len() != counts.bonds {
                         return Err(lines.error(
                             counts_index,
@@ -224,7 +229,7 @@ pub(super) fn parse_v3000_ctab(
                     bonds_read = true;
                 }
                 "COLLECTION" => {
-                    if !bonds_read {
+                    if !bonds_read && !bond_block_optional(counts, atoms_read) {
                         return Err(syntax(
                             "V3000 COLLECTION section must follow the BOND section",
                         ));
@@ -282,10 +287,15 @@ pub(super) fn parse_v3000_ctab(
     if !atoms_read {
         return Err(lines.error(end, DiagnosticKind::Syntax, "missing V3000 ATOM section"));
     }
-    if !bonds_read {
+    if !bonds_read && !bond_block_optional(counts, atoms_read) {
         return Err(lines.error(end, DiagnosticKind::Syntax, "missing V3000 BOND section"));
     }
     Ok((ctab, end))
+}
+
+/// Writers such as RDKit omit the BOND section of a CTAB without bonds.
+fn bond_block_optional(counts: Option<(V3000Counts, usize)>, atoms_read: bool) -> bool {
+    atoms_read && counts.is_some_and(|(counts, _)| counts.bonds == 0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -762,14 +772,14 @@ fn parse_v3000_collection(
     Ok(())
 }
 
-fn v3000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
+fn v3000_bond_code(order: BondOrder) -> std::result::Result<u8, MoleculeWriteError> {
     match order {
         BondOrder::Zero => Ok(0),
         BondOrder::Single => Ok(1),
         BondOrder::Double => Ok(2),
         BondOrder::Triple => Ok(3),
         BondOrder::Dative => Ok(9),
-        BondOrder::Quadruple => Err(MolWriteError::new(
+        BondOrder::Quadruple => Err(MoleculeWriteError::new(
             "V3000 writer does not support quadruple bonds",
         )),
     }
@@ -778,7 +788,7 @@ fn v3000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
 fn v3000_bond_cfg(
     order: BondOrder,
     stereo: Option<SourceStereoBondMarkKind>,
-) -> std::result::Result<Option<u8>, MolWriteError> {
+) -> std::result::Result<Option<u8>, MoleculeWriteError> {
     match (order, stereo) {
         (_, None) => Ok(None),
         (BondOrder::Double, Some(SourceStereoBondMarkKind::MolfileDoubleBondGeometry)) => Ok(None),
@@ -786,18 +796,18 @@ fn v3000_bond_cfg(
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeEither)) => Ok(Some(2)),
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeDown)) => Ok(Some(3)),
         (BondOrder::Double, Some(SourceStereoBondMarkKind::DoubleBondEither)) => Ok(Some(2)),
-        _ => Err(MolWriteError::new(
+        _ => Err(MoleculeWriteError::new(
             "V3000 bond CFG is incompatible with the bond order",
         )),
     }
 }
 
-fn v3000_radical_code(radical: AtomRadical) -> std::result::Result<u8, MolWriteError> {
+fn v3000_radical_code(radical: AtomRadical) -> std::result::Result<u8, MoleculeWriteError> {
     match (radical.electron_count(), radical.spin_multiplicity()) {
         (2, Some(1)) => Ok(1),
         (1, Some(2)) => Ok(2),
         (2, Some(3)) => Ok(3),
-        _ => Err(MolWriteError::new(
+        _ => Err(MoleculeWriteError::new(
             "V3000 writer requires an encodable radical electron count and explicit spin multiplicity",
         )),
     }

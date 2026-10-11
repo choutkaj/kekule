@@ -8,7 +8,7 @@ const CRAMBIN_MMCIF: &str = include_str!("../fixtures/mmcif/1CRN.cif");
 
 fn crambin_model() -> kekule::structure::Model {
     let document = mmcif::parse_str(CRAMBIN_MMCIF).expect("checked-in RCSB 1CRN fixture parses");
-    mmcif::interpret(
+    mmcif::interpret_with_options(
         &document,
         MmcifInterpretOptions {
             model_selection: MmcifModelSelection::First,
@@ -183,7 +183,7 @@ fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
     let reference = dssp::assign(crambin_model().as_model_view(), DsspOptions::default()).unwrap();
     let source = CRAMBIN_MMCIF.replace("_atom_site.label_seq_id", "_atom_site.audit_sequence");
     let document = mmcif::parse_str(&source).unwrap();
-    let model = mmcif::interpret(
+    let model = mmcif::interpret_with_options(
         &document,
         MmcifInterpretOptions {
             model_selection: MmcifModelSelection::First,

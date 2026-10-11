@@ -9,7 +9,7 @@ use kekule::structure::Model;
 use crate::support::fixture;
 
 fn interpret(text: &str) -> (Model, mmcif::MmcifInterpretationReport) {
-    mmcif::interpret(
+    mmcif::interpret_with_options(
         &mmcif::parse_str(text).unwrap(),
         MmcifInterpretOptions {
             model_selection: MmcifModelSelection::First,

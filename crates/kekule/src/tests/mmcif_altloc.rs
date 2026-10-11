@@ -465,7 +465,9 @@ fn mmcif_altloc_explicit_conformer_ensemble_is_unweighted_and_preserves_order() 
         .reports()
         .iter()
         .all(|report| report.selected_model() == Some("1")));
-    let block = interpret_conformations_block(&source.blocks()[0], &options).unwrap();
+    let block = source.blocks()[0]
+        .interpret_conformations(&options)
+        .unwrap();
     assert_eq!(block.reports(), result.reports());
     assert!(block
         .ensemble()

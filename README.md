@@ -103,7 +103,7 @@ use std::{
 };
 
 use kekule::{
-    mmcif::{self, MmcifBlockSource, MmcifInterpretOptions, MmcifWriteOptions},
+    mmcif::{self, MmcifBlockSource, MmcifWriteOptions},
     sdf::{self, SdfWriteOptions},
     structure::Model,
 };
@@ -131,9 +131,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     // mmCIF is block-oriented. `interpret` requires exactly one atom-site block
-    // and selects one coordinate model using the supplied options.
+    // and selects one coordinate model using the default options.
     let cif_document = mmcif::parse_str(&fs::read_to_string("cofactor.cif")?)?;
-    let cif_interpretation = mmcif::interpret(&cif_document, MmcifInterpretOptions::default())?;
+    let cif_interpretation = mmcif::interpret(&cif_document)?;
     let cif_model = cif_interpretation.model();
     assert_eq!(cif_model.topology().instance_count(), 1);
     print_model("mmCIF model", cif_model);

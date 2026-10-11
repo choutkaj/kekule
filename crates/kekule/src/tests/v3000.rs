@@ -990,6 +990,16 @@ fn malformed_mol_v3000_fails_with_structured_kinds_and_lines() {
             (FailureStage::Interpret, DiagnosticKind::Unsupported, Some(12)),
         ),
         (
+            "declared bonds without a BOND section",
+            "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 2 1 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 2 C 1 0 0 0\nM  V30 END ATOM\nM  V30 END CTAB\nM  END\n",
+            (FailureStage::Parse, DiagnosticKind::Syntax, Some(12)),
+        ),
+        (
+            "BOND section after COLLECTION",
+            "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN COLLECTION\nM  V30 MDLV30/HILITE ATOMS=(1 1)\nM  V30 END COLLECTION\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (FailureStage::Parse, DiagnosticKind::Syntax, Some(13)),
+        ),
+        (
             "duplicate bond option",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 2 1 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 2 C 1 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2 CFG=1 CFG=1\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
             (FailureStage::Parse, DiagnosticKind::Syntax, Some(12)),
@@ -1000,6 +1010,50 @@ fn malformed_mol_v3000_fails_with_structured_kinds_and_lines() {
         let failure = std::panic::catch_unwind(|| molfile_failure(input))
             .unwrap_or_else(|_| panic!("{name} panicked"));
         assert_eq!(failure, expected, "{name}");
+    }
+}
+
+#[test]
+fn mol_v3000_bond_block_is_optional_without_declared_bonds() {
+    // RDKit 2026.03.6 `MolToV3KMolBlock` writes the first two inputs byte for
+    // byte, omitting the BOND section of a CTAB without bonds, and
+    // `MolFromMolBlock` reads them back. It rejects declared bonds without one.
+    let ions = "\n     RDKit          2D\n\n  0  0  0  0  0  0  0  0  0  0999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 2 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 Na 0.000000 0.000000 0.000000 0 CHG=1 VAL=-1\nM  V30 2 Cl 1.000000 0.000000 0.000000 0 CHG=-1\nM  V30 END ATOM\nM  V30 END CTAB\nM  END\n";
+    let methane = "\n     RDKit          2D\n\n  0  0  0  0  0  0  0  0  0  0999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0.000000 0.000000 0.000000 0\nM  V30 END ATOM\nM  V30 END CTAB\nM  END\n";
+    let highlighted = methane.replace(
+        "M  V30 END CTAB",
+        "M  V30 BEGIN COLLECTION\nM  V30 MDLV30/HILITE ATOMS=(1 1)\nM  V30 END COLLECTION\nM  V30 END CTAB",
+    );
+    let hilite = molfile::MolfileUnsupported::new(
+        molfile::MolfileUnsupportedContent::Collection("MDLV30/HILITE".to_owned()),
+        SourceLocation::at_line(11),
+    );
+    for (input, charges, unsupported) in [
+        (ions, vec![1, -1], vec![]),
+        (methane, vec![0], vec![]),
+        (highlighted.as_str(), vec![0], vec![hilite]),
+    ] {
+        let document = molfile::parse_str(input).unwrap();
+        assert!(document.bonds().is_empty(), "{input}");
+        assert_eq!(
+            document
+                .atoms()
+                .iter()
+                .map(molfile::MolfileAtom::formal_charge)
+                .collect::<Vec<_>>(),
+            charges
+        );
+        assert_eq!(document.unsupported(), unsupported);
+        let model = molfile::interpret_with_options(
+            &document,
+            molfile::MolfileInterpretOptions {
+                unsupported: UnsupportedContent::Report,
+            },
+        )
+        .unwrap()
+        .into_model();
+        assert_eq!(model.topology().instance_count(), charges.len());
+        assert_eq!(model.topology().bond_count(), 0);
     }
 }
 

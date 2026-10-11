@@ -1,6 +1,6 @@
 //! SMILES output is a faithful, numbering-independent serialization.
 
-use kekule::smiles::{self, MolWriteErrorKind, SmilesWriteOptions};
+use kekule::smiles::{self, MoleculeWriteErrorKind, SmilesWriteOptions};
 use kekule::topology::Topology;
 
 use crate::contract;
@@ -23,7 +23,8 @@ fn smiles_writers_round_trip_every_corpus_molecule() {
                 SmilesWriteOptions::canonical(),
             ] {
                 match smiles::write(&molecule, options) {
-                    Err(error) if error.kind() == MolWriteErrorKind::UnsupportedRepresentation => {}
+                    Err(error)
+                        if error.kind() == MoleculeWriteErrorKind::UnsupportedRepresentation => {}
                     other => fail(format!(
                         "axial stereo must be rejected explicitly, got {other:?}"
                     )),
@@ -49,7 +50,7 @@ fn smiles_writers_round_trip_every_corpus_molecule() {
                 Err(error)
                     if writer == "ordinary"
                         && has_stereo
-                        && error.kind() == MolWriteErrorKind::UnsupportedRepresentation =>
+                        && error.kind() == MoleculeWriteErrorKind::UnsupportedRepresentation =>
                 {
                     continue
                 }
