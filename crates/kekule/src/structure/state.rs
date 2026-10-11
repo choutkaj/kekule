@@ -1,4 +1,4 @@
-//! Validation and accessors shared by the flat realization owners: models,
+//! Validation and accessors shared by the flat structure owners: models,
 //! ensemble members, trajectory frames, and model drafts.
 //!
 //! Each owner stores its own `positions`, `cell`, and `properties` fields, and
@@ -11,7 +11,7 @@
 use std::fmt;
 
 use crate::geometry::{PeriodicCell, PeriodicCellError, RigidTransform};
-use crate::properties::{PropertyError, RealizationProperties};
+use crate::properties::{PropertyError, StructureProperties};
 use crate::topology::transform::TopologySubset;
 use crate::topology::{Topology, TopologyAtomIndex};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
@@ -19,40 +19,40 @@ use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 use super::{PositionError, Positions};
 
 /// The row of one dense atom index in an owner with `len` atoms.
-pub(crate) fn atom_row(len: usize, atom: TopologyAtomIndex) -> Result<usize, ConformationError> {
+pub(crate) fn atom_row(len: usize, atom: TopologyAtomIndex) -> Result<usize, StructureError> {
     let index = atom.index();
     if index >= len {
-        return Err(ConformationError::InvalidAtomIndex { index, len });
+        return Err(StructureError::InvalidAtomIndex { index, len });
     }
     Ok(index)
 }
 
-/// Checks that realization rows can be bound to `topology` without changing
+/// Checks that structure rows can be bound to `topology` without changing
 /// anything: one position per atom, and bond rows either matching or not yet
 /// allocated.
 pub(crate) fn validate_binding(
     atoms: usize,
-    properties: &RealizationProperties,
+    properties: &StructureProperties,
     topology: &Topology,
-) -> Result<(), ConformationError> {
+) -> Result<(), StructureError> {
     if atoms != topology.atom_count() {
-        return Err(ConformationError::AtomCountMismatch {
+        return Err(StructureError::AtomCountMismatch {
             expected: topology.atom_count(),
             actual: atoms,
         });
     }
     properties
         .validate_bond_rows(topology.bond_count())
-        .map_err(|_| ConformationError::BondCountMismatch {
+        .map_err(|_| StructureError::BondCountMismatch {
             expected: topology.bond_count(),
             actual: properties.bonds().len(),
         })
 }
 
-/// Whether realization rows already cover every atom and bond of `topology`.
+/// Whether structure rows already cover every atom and bond of `topology`.
 pub(crate) fn is_bound(
     atoms: usize,
-    properties: &RealizationProperties,
+    properties: &StructureProperties,
     topology: &Topology,
 ) -> bool {
     atoms == topology.atom_count() && properties.bonds().len() == topology.bond_count()
@@ -61,17 +61,17 @@ pub(crate) fn is_bound(
 /// Checks that a replacement keeps the current atom and bond row counts.
 pub(crate) fn check_property_rows(
     atoms: usize,
-    current: &RealizationProperties,
-    replacement: &RealizationProperties,
-) -> Result<(), ConformationError> {
+    current: &StructureProperties,
+    replacement: &StructureProperties,
+) -> Result<(), StructureError> {
     if replacement.atoms().len() != atoms {
-        return Err(ConformationError::AtomCountMismatch {
+        return Err(StructureError::AtomCountMismatch {
             expected: atoms,
             actual: replacement.atoms().len(),
         });
     }
     if replacement.bonds().len() != current.bonds().len() {
-        return Err(ConformationError::BondCountMismatch {
+        return Err(StructureError::BondCountMismatch {
             expected: current.bonds().len(),
             actual: replacement.bonds().len(),
         });
@@ -99,7 +99,7 @@ pub(crate) fn subset_rows(subset: &TopologySubset) -> (Vec<usize>, Vec<usize>) {
 pub(crate) fn transform_positions(
     positions: &Positions,
     transform: RigidTransform,
-) -> Result<Positions, ConformationError> {
+) -> Result<Positions, StructureError> {
     let points = positions
         .values()
         .value()
@@ -116,7 +116,7 @@ pub(crate) fn transform_positions(
 pub(crate) fn transform_cell(
     cell: Option<PeriodicCell>,
     transform: RigidTransform,
-) -> Result<Option<PeriodicCell>, ConformationError> {
+) -> Result<Option<PeriodicCell>, StructureError> {
     cell.map(|cell| {
         let vectors = cell
             .vectors()
@@ -126,8 +126,8 @@ pub(crate) fn transform_cell(
     .transpose()
 }
 
-/// Positions, cell, and realization-property readers.
-macro_rules! realization_readers {
+/// Positions, cell, and structure-property readers.
+macro_rules! structure_readers {
     () => {
         /// Positions in dense topology atom order.
         pub fn positions(&self) -> &$crate::structure::Positions {
@@ -138,14 +138,14 @@ macro_rules! realization_readers {
             self.storage_ref().cell.as_ref()
         }
 
-        /// Realization annotations: owner values plus one row per dense atom
+        /// Structure annotations: owner values plus one row per dense atom
         /// and bond.
-        pub fn properties(&self) -> &$crate::properties::RealizationProperties {
+        pub fn properties(&self) -> &$crate::properties::StructureProperties {
             &self.storage_ref().properties
         }
     };
 }
-pub(crate) use realization_readers;
+pub(crate) use structure_readers;
 
 /// Occupancy and B-factor readers of models and ensemble members.
 macro_rules! site_readers {
@@ -154,7 +154,7 @@ macro_rules! site_readers {
         pub fn occupancy(
             &self,
             atom: $crate::topology::TopologyAtomIndex,
-        ) -> Result<Option<f64>, $crate::structure::ConformationError> {
+        ) -> Result<Option<f64>, $crate::structure::StructureError> {
             let storage = self.storage_ref();
             storage.occupancies.get(atom, storage.positions.len())
         }
@@ -169,7 +169,7 @@ macro_rules! site_readers {
         pub fn b_factor(
             &self,
             atom: $crate::topology::TopologyAtomIndex,
-        ) -> Result<Option<$crate::units::Quantity<f64>>, $crate::structure::ConformationError> {
+        ) -> Result<Option<$crate::units::Quantity<f64>>, $crate::structure::StructureError> {
             let storage = self.storage_ref();
             Ok($crate::structure::scalars::b_factor_quantity(
                 storage.b_factors.get(atom, storage.positions.len())?,
@@ -185,15 +185,15 @@ macro_rules! site_readers {
 }
 pub(crate) use site_readers;
 
-/// Dimension-preserving position, cell, and realization-property mutators.
-macro_rules! realization_mutators {
+/// Dimension-preserving position, cell, and structure-property mutators.
+macro_rules! structure_mutators {
     () => {
         /// Replaces every position without changing the atom count. Units,
         /// dimensions, and finite values are checked before mutation.
         pub fn set_positions<T: AsRef<[$crate::geometry::Point3]>>(
             &mut self,
             positions: $crate::units::Quantity<T>,
-        ) -> Result<(), $crate::structure::ConformationError> {
+        ) -> Result<(), $crate::structure::StructureError> {
             Ok(self.storage().positions.set_all(positions)?)
         }
 
@@ -202,7 +202,7 @@ macro_rules! realization_mutators {
             &mut self,
             atom: $crate::topology::TopologyAtomIndex,
             position: $crate::units::Quantity<$crate::geometry::Point3>,
-        ) -> Result<(), $crate::structure::ConformationError> {
+        ) -> Result<(), $crate::structure::StructureError> {
             Ok(self
                 .storage()
                 .positions
@@ -213,13 +213,13 @@ macro_rules! realization_mutators {
             self.storage().cell = cell;
         }
 
-        /// Replaces every realization annotation with rows of the same
-        /// dimensions, for example ones copied from another realization of the
+        /// Replaces every structure annotation with rows of the same
+        /// dimensions, for example ones copied from another structure of the
         /// same topology. Detached payloads accept no bond rows.
         pub fn set_properties(
             &mut self,
-            properties: $crate::properties::RealizationProperties,
-        ) -> Result<(), $crate::structure::ConformationError> {
+            properties: $crate::properties::StructureProperties,
+        ) -> Result<(), $crate::structure::StructureError> {
             let storage = self.storage();
             $crate::structure::state::check_property_rows(
                 storage.positions.len(),
@@ -230,13 +230,13 @@ macro_rules! realization_mutators {
             Ok(())
         }
 
-        /// Length-preserving mutable access to realization annotations.
-        pub fn properties_mut(&mut self) -> $crate::properties::RealizationPropertiesMut<'_> {
-            $crate::properties::RealizationPropertiesMut::new(&mut self.storage().properties)
+        /// Length-preserving mutable access to structure annotations.
+        pub fn properties_mut(&mut self) -> $crate::properties::StructurePropertiesMut<'_> {
+            $crate::properties::StructurePropertiesMut::new(&mut self.storage().properties)
         }
     };
 }
-pub(crate) use realization_mutators;
+pub(crate) use structure_mutators;
 
 /// Occupancy and B-factor mutators of models and ensemble members.
 macro_rules! site_mutators {
@@ -246,7 +246,7 @@ macro_rules! site_mutators {
             &mut self,
             atom: $crate::topology::TopologyAtomIndex,
             value: Option<f64>,
-        ) -> Result<(), $crate::structure::ConformationError> {
+        ) -> Result<(), $crate::structure::StructureError> {
             let storage = self.storage();
             let len = storage.positions.len();
             storage.occupancies.set(atom, len, value)
@@ -256,7 +256,7 @@ macro_rules! site_mutators {
         pub fn set_occupancies(
             &mut self,
             values: Option<Vec<Option<f64>>>,
-        ) -> Result<(), $crate::structure::ConformationError> {
+        ) -> Result<(), $crate::structure::StructureError> {
             let storage = self.storage();
             let len = storage.positions.len();
             storage.occupancies.replace(len, values)
@@ -268,7 +268,7 @@ macro_rules! site_mutators {
             &mut self,
             atom: $crate::topology::TopologyAtomIndex,
             value: Option<$crate::units::Quantity<f64>>,
-        ) -> Result<(), $crate::structure::ConformationError> {
+        ) -> Result<(), $crate::structure::StructureError> {
             let value = $crate::structure::scalars::canonical_b_factor(value)?;
             let storage = self.storage();
             let len = storage.positions.len();
@@ -279,7 +279,7 @@ macro_rules! site_mutators {
         pub fn set_b_factors(
             &mut self,
             values: Option<$crate::units::Quantity<Vec<Option<f64>>>>,
-        ) -> Result<(), $crate::structure::ConformationError> {
+        ) -> Result<(), $crate::structure::StructureError> {
             let values = $crate::structure::scalars::canonical_b_factors(values)?;
             let storage = self.storage();
             let len = storage.positions.len();
@@ -289,10 +289,10 @@ macro_rules! site_mutators {
 }
 pub(crate) use site_mutators;
 
-/// Invalid realization payload state.
+/// Invalid structure payload state.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum ConformationError {
+pub enum StructureError {
     /// Dense atom state has the wrong number of rows.
     AtomCountMismatch {
         expected: usize,
@@ -303,7 +303,7 @@ pub enum ConformationError {
         expected: usize,
         actual: usize,
     },
-    /// A dense atom index is outside the realization.
+    /// A dense atom index is outside the structure.
     InvalidAtomIndex {
         index: usize,
         len: usize,
@@ -328,20 +328,20 @@ pub enum ConformationError {
     Unit(Box<UnitError>),
 }
 
-impl fmt::Display for ConformationError {
+impl fmt::Display for StructureError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::AtomCountMismatch { expected, actual } => write!(
                 formatter,
-                "realization requires {expected} atom rows, but received {actual}"
+                "structure requires {expected} atom rows, but received {actual}"
             ),
             Self::BondCountMismatch { expected, actual } => write!(
                 formatter,
-                "realization requires {expected} bond property rows, but has {actual}"
+                "structure requires {expected} bond property rows, but has {actual}"
             ),
             Self::InvalidAtomIndex { index, len } => write!(
                 formatter,
-                "atom index {index} is outside a realization of {len} atoms"
+                "atom index {index} is outside a structure of {len} atoms"
             ),
             Self::NonFiniteValue { index } => {
                 write!(formatter, "atom value at index {index} must be finite")
@@ -353,18 +353,16 @@ impl fmt::Display for ConformationError {
             Self::InvalidWeight => {
                 formatter.write_str("ensemble weight must be finite and positive")
             }
-            Self::CapacityOverflow => {
-                formatter.write_str("realization exceeds addressable capacity")
-            }
+            Self::CapacityOverflow => formatter.write_str("structure exceeds addressable capacity"),
             Self::Position(error) => write!(formatter, "invalid positions: {error}"),
-            Self::Property(error) => write!(formatter, "invalid realization property: {error}"),
+            Self::Property(error) => write!(formatter, "invalid structure property: {error}"),
             Self::Cell(error) => write!(formatter, "invalid periodic cell: {error}"),
             Self::Unit(error) => write!(formatter, "invalid quantity unit: {error}"),
         }
     }
 }
 
-impl std::error::Error for ConformationError {
+impl std::error::Error for StructureError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Position(error) => Some(error),
@@ -376,25 +374,25 @@ impl std::error::Error for ConformationError {
     }
 }
 
-impl From<PositionError> for ConformationError {
+impl From<PositionError> for StructureError {
     fn from(error: PositionError) -> Self {
         Self::Position(error)
     }
 }
 
-impl From<PropertyError> for ConformationError {
+impl From<PropertyError> for StructureError {
     fn from(error: PropertyError) -> Self {
         Self::Property(Box::new(error))
     }
 }
 
-impl From<PeriodicCellError> for ConformationError {
+impl From<PeriodicCellError> for StructureError {
     fn from(error: PeriodicCellError) -> Self {
         Self::Cell(Box::new(error))
     }
 }
 
-impl From<UnitError> for ConformationError {
+impl From<UnitError> for StructureError {
     fn from(error: UnitError) -> Self {
         Self::Unit(Box::new(error))
     }

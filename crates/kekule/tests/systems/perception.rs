@@ -169,7 +169,7 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
 }
 
 #[test]
-fn model_perception_changes_snapshot_preserving_realization_and_existing_bindings() {
+fn model_perception_changes_snapshot_preserving_structure_and_existing_bindings() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
     let selection = AtomSelection::from_atoms(&topology, [topology.atom_ids()[0]]).unwrap();
     let positions = Positions::new(Quantity::new(

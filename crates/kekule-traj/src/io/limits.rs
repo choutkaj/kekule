@@ -1,5 +1,5 @@
 use crate::{
-    TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat,
+    TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError,
     TrajectoryIoOperation,
 };
 
@@ -33,8 +33,8 @@ pub(super) fn reserve_scratch<T>(
     required_capacity: usize,
     other_bytes: Option<usize>,
     limit: usize,
-    error: impl Fn(&str) -> TrajectoryError,
-) -> Result<(), TrajectoryError> {
+    error: impl Fn(&str) -> TrajectoryIoError,
+) -> Result<(), TrajectoryIoError> {
     let fits = |capacity: usize| {
         capacity
             .checked_mul(std::mem::size_of::<T>())
@@ -133,7 +133,7 @@ pub(crate) fn reserve_index_for_push(
     format: TrajectoryFormat,
     source_label: &str,
     frame: u64,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     if offsets.len() < offsets.capacity() {
         return Ok(());
     }
@@ -174,7 +174,7 @@ pub(crate) fn reserve_index_for_push(
 mod scratch_tests {
     use super::*;
 
-    fn error(detail: &str) -> TrajectoryError {
+    fn error(detail: &str) -> TrajectoryIoError {
         TrajectoryCodecErrorContext::new(
             TrajectoryCodecErrorKind::ResourceLimitExceeded,
             TrajectoryIoOperation::ReadFrame,

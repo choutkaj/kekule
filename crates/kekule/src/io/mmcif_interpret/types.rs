@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::altloc::{MmcifAltLocDecision, MmcifAltLocPolicy, MmcifResidueId};
 use crate::core::Molecule;
-use crate::structure::{Ensemble, Model, RealizationError};
+use crate::structure::{Ensemble, EnsembleError, Model};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -532,7 +532,7 @@ impl Default for MmcifEnsembleInterpretOptions {
 }
 
 #[derive(Debug, Clone)]
-/// One shared-topology ensemble and one mmCIF report per selected realization.
+/// One shared-topology ensemble and one mmCIF report per selected conformation.
 pub struct MmcifEnsembleInterpretation {
     pub(super) ensemble: Ensemble,
     pub(super) reports: Vec<MmcifInterpretationReport>,
@@ -588,7 +588,7 @@ pub enum MmcifEnsembleInterpretError {
     InconsistentDenseAtomOrder {
         model_id: String,
     },
-    Ensemble(Box<RealizationError>),
+    Ensemble(Box<EnsembleError>),
 }
 
 impl fmt::Display for MmcifEnsembleInterpretError {

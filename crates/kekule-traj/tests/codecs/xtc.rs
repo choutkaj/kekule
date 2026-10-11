@@ -8,7 +8,7 @@ use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use kekule_traj::io::xtc::{XtcMagic, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
 use kekule_traj::io::TrajectoryIoLimits;
 use kekule_traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryError,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryIoError,
     TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
@@ -422,7 +422,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
             codec_kind(&error),
             Some(TrajectoryCodecErrorKind::InvalidHeader)
         );
-        let TrajectoryError::Codec(context) = error else {
+        let TrajectoryIoError::Codec(context) = error else {
             panic!("expected typed XTC count error");
         };
         assert_eq!(context.frame(), Some(0));
@@ -444,7 +444,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
         codec_kind(&error),
         Some(TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep)
     );
-    let TrajectoryError::Codec(context) = error else {
+    let TrajectoryIoError::Codec(context) = error else {
         panic!("expected typed XTC step error");
     };
     assert_eq!(context.frame(), Some(0));
@@ -541,7 +541,7 @@ fn indexed_xtc_restoration_failure_does_not_publish_or_change_destination() {
     let before = buffer_snapshot(&destination);
     control.arm_at_current_position();
     let error = indexed.read_frame(1, &mut destination).unwrap_err();
-    assert!(matches!(error, TrajectoryError::Io(_)));
+    assert!(matches!(error, TrajectoryIoError::Io(_)));
     assert_eq!(buffer_snapshot(&destination), before);
 }
 
@@ -766,7 +766,7 @@ fn xtc_rejects_trailing_compressed_data_and_mixed_file_profiles() {
         codec_kind(&error),
         Some(TrajectoryCodecErrorKind::CorruptCompressedData)
     );
-    let TrajectoryError::Codec(context) = &error else {
+    let TrajectoryIoError::Codec(context) = &error else {
         panic!("expected typed XTC codec context");
     };
     assert_eq!(context.frame(), Some(0));

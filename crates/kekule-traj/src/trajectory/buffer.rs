@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::properties::{OwnerProperties, RealizationProperties};
+use kekule::properties::{OwnerProperties, StructureProperties};
 use kekule::structure::{
-    AsModelView, ConformationError, Forces, ModelView, Positions, Trajectory, TrajectoryFrame,
+    AsModelView, Forces, ModelView, Positions, StructureError, Trajectory, TrajectoryFrame,
     TrajectoryFrameMut, TrajectoryFrameView, Velocities,
 };
 use kekule::topology::Topology;
 use kekule::units::Quantity;
 
-use super::TrajectoryError;
+use super::TrajectoryIoError;
 
 /// Complete borrowed frame state ready for transactional publication.
 ///
@@ -26,7 +26,7 @@ pub struct FrameBufferData<'a> {
     time: Option<Quantity<f64>>,
     step: Option<u64>,
     owner: Option<&'a OwnerProperties>,
-    annotations: Option<&'a RealizationProperties>,
+    annotations: Option<&'a StructureProperties>,
 }
 
 impl<'a> FrameBufferData<'a> {
@@ -44,7 +44,7 @@ impl<'a> FrameBufferData<'a> {
         }
     }
 
-    /// Borrows every field, including all realization properties, from a
+    /// Borrows every field, including all structure properties, from a
     /// topology-bound frame.
     pub fn from_frame_view(frame: TrajectoryFrameView<'a>) -> Self {
         let frame = frame.payload();
@@ -161,7 +161,7 @@ impl FrameBuffer {
     pub fn set_velocities<T>(
         &mut self,
         velocities: Option<Quantity<T>>,
-    ) -> Result<(), ConformationError>
+    ) -> Result<(), StructureError>
     where
         T: AsRef<[Vector3]>,
     {
@@ -173,7 +173,7 @@ impl FrameBuffer {
     }
 
     /// Copies forces into reusable storage, or clears them with `None`.
-    pub fn set_forces<T>(&mut self, forces: Option<Quantity<T>>) -> Result<(), ConformationError>
+    pub fn set_forces<T>(&mut self, forces: Option<Quantity<T>>) -> Result<(), StructureError>
     where
         T: AsRef<[Vector3]>,
     {
@@ -209,21 +209,18 @@ impl FrameBuffer {
     /// All count, unit, finite-value, and annotation validation completes
     /// before any field changes. Optional fields absent from `data`, including
     /// annotations, are cleared.
-    pub fn replace_from_data(
-        &mut self,
-        data: FrameBufferData<'_>,
-    ) -> Result<(), ConformationError> {
+    pub fn replace_from_data(&mut self, data: FrameBufferData<'_>) -> Result<(), StructureError> {
         self.positions().validate_all(&data.positions)?;
         let time = validated_time(data.time)?;
         if let Some(source) = data.annotations {
             if source.atoms().len() != self.atom_count() {
-                return Err(ConformationError::AtomCountMismatch {
+                return Err(StructureError::AtomCountMismatch {
                     expected: self.atom_count(),
                     actual: source.atoms().len(),
                 });
             }
             if source.bonds().len() != self.properties().bonds().len() {
-                return Err(ConformationError::BondCountMismatch {
+                return Err(StructureError::BondCountMismatch {
                     expected: self.properties().bonds().len(),
                     actual: source.bonds().len(),
                 });
@@ -271,9 +268,9 @@ impl FrameBuffer {
     }
 
     /// Copies a complete frame of any snapshot sharing this buffer's layout.
-    pub fn copy_from(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
+    pub fn copy_from(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(frame.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         Ok(self.replace_from_data(FrameBufferData::from_frame_view(frame))?)
     }
@@ -281,7 +278,7 @@ impl FrameBuffer {
     fn stage_velocities<T: AsRef<[Vector3]>>(
         &mut self,
         values: Quantity<T>,
-    ) -> Result<Velocities, ConformationError> {
+    ) -> Result<Velocities, StructureError> {
         let atoms = self.atom_count();
         let mut storage = self
             .spare_velocities
@@ -299,7 +296,7 @@ impl FrameBuffer {
     fn stage_forces<T: AsRef<[Vector3]>>(
         &mut self,
         values: Quantity<T>,
-    ) -> Result<Forces, ConformationError> {
+    ) -> Result<Forces, StructureError> {
         let atoms = self.atom_count();
         let mut storage = self
             .spare_forces
@@ -342,7 +339,7 @@ impl FrameBuffer {
     }
 }
 
-fn validated_time(time: Option<Quantity<f64>>) -> Result<Option<Quantity<f64>>, ConformationError> {
+fn validated_time(time: Option<Quantity<f64>>) -> Result<Option<Quantity<f64>>, StructureError> {
     let mut probe = TrajectoryFrame::new(Positions::zeros(0));
     probe.set_time(time)?;
     Ok(probe.time())

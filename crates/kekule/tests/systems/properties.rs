@@ -3,7 +3,7 @@ use std::sync::Arc;
 use kekule::core::Molecule;
 use kekule::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
 use kekule::structure::{
-    ConformationError, Ensemble, EnsembleMember, EnsembleMemberView, Model, Positions, Trajectory,
+    Ensemble, EnsembleMember, EnsembleMemberView, Model, Positions, StructureError, Trajectory,
     TrajectoryFrame,
 };
 use kekule::topology::{
@@ -86,7 +86,7 @@ fn replacing_hierarchy_cannot_silently_truncate_populated_columns() {
 }
 
 #[test]
-fn topology_only_domains_are_typed_and_stay_out_of_realizations() {
+fn topology_only_domains_are_typed_and_stay_out_of_structures() {
     let mut builder = builder();
     builder
         .properties_mut()
@@ -133,13 +133,13 @@ fn topology_only_domains_are_typed_and_stay_out_of_realizations() {
         properties.atom_sites().value(&key(), site).unwrap(),
         Some(PropertyValue::Int(4))
     );
-    // Realization annotations have no hierarchy domains at all.
+    // Structure annotations have no hierarchy domains at all.
     let model = Model::new(Arc::clone(&topology), Positions::zeros(1)).unwrap();
     assert!(model.properties().is_empty());
 }
 
 #[test]
-fn realizations_reject_mismatched_property_rows_transactionally() {
+fn structures_reject_mismatched_property_rows_transactionally() {
     let methane = Arc::new(builder().build().unwrap());
     let ethane = Arc::new(Topology::from_molecule(molecule("C=C")).unwrap());
     let mut source = Model::new(Arc::clone(&ethane), Positions::zeros(2)).unwrap();
@@ -159,7 +159,7 @@ fn realizations_reject_mismatched_property_rows_transactionally() {
     let original = model.properties().clone();
     assert_eq!(
         model.set_properties(bound.clone()),
-        Err(ConformationError::AtomCountMismatch {
+        Err(StructureError::AtomCountMismatch {
             expected: 1,
             actual: 2
         })
@@ -171,7 +171,7 @@ fn realizations_reject_mismatched_property_rows_transactionally() {
     let detached = member.properties().clone();
     assert_eq!(
         member.set_properties(bound.clone()),
-        Err(ConformationError::BondCountMismatch {
+        Err(StructureError::BondCountMismatch {
             expected: 0,
             actual: 1
         })

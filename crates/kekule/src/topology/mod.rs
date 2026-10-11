@@ -578,7 +578,7 @@ impl<'a> MoleculeInstanceView<'a> {
 /// `Topology` owns reusable molecule definitions, explicit instances of those
 /// definitions, topology-global dense atom and bond order, one system
 /// [`Hierarchy`], and topology-scoped properties. It does not own coordinates.
-/// Attach positions through [`crate::structure::Model`] or another realization
+/// Attach positions through [`crate::structure::Model`] or another structure
 /// type.
 ///
 /// Local [`crate::core::AtomId`] and [`crate::core::BondId`] values identify
@@ -601,7 +601,7 @@ impl<'a> MoleculeInstanceView<'a> {
 /// snapshot that keeps the same layout identity, because perception never
 /// changes atoms, bonds, IDs, dense order, or hierarchy. Clones and annotation
 /// edits through [`Self::properties_mut`] keep it as well. Consumers that only
-/// address atoms and bonds by index, such as selections, realizations, frame
+/// address atoms and bonds by index, such as selections, structures, frame
 /// buffers, readers, alignment, and potentials, accept any snapshot sharing
 /// their layout ([`Self::shares_layout`]). Consumers that read perception, such
 /// as prepared substructure targets, bind the exact snapshot. Independently

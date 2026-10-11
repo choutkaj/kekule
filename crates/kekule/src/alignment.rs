@@ -68,7 +68,7 @@
 use std::fmt;
 
 use crate::geometry::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
-use crate::structure::{ConformationError, ModelView};
+use crate::structure::{ModelView, StructureError};
 use crate::topology::{AtomSelection, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
@@ -474,7 +474,7 @@ pub enum AlignmentError {
         source: Box<AlignmentError>,
     },
     /// A fitted transform could not be applied to one item's state.
-    Transform(ConformationError),
+    Transform(StructureError),
 }
 
 impl fmt::Display for AlignmentError {
@@ -522,9 +522,9 @@ impl fmt::Display for AlignmentError {
             Self::EmptySelection => formatter.write_str("RMSD requires at least one atom pair"),
             Self::ReferenceOutOfRange { index, len } => write!(
                 formatter,
-                "reference index {index} is out of range for {len} realizations"
+                "reference index {index} is out of range for {len} structures"
             ),
-            Self::Item { index, source } => write!(formatter, "realization {index}: {source}"),
+            Self::Item { index, source } => write!(formatter, "structure {index}: {source}"),
             Self::Transform(error) => write!(formatter, "cannot apply fitted transform: {error}"),
         }
     }

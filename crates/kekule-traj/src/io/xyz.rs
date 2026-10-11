@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
-    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryIoOperation,
+    TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation,
     TrajectoryReader, TrajectoryWriter,
 };
 use kekule::core::Element;
@@ -117,7 +117,7 @@ impl<R: BufRead> XyzReader<R> {
         reader: R,
         topology: impl Into<Arc<Topology>>,
         options: XyzReadOptions,
-    ) -> Result<Self, TrajectoryError> {
+    ) -> Result<Self, TrajectoryIoError> {
         let topology = topology.into();
         let source_label = &options.source_label;
         let limits = &options.limits;
@@ -159,7 +159,7 @@ impl<R: BufRead> XyzReader<R> {
         self.topology.as_ref()
     }
 
-    fn parse_next(&mut self, retain_positions: bool) -> Result<bool, TrajectoryError> {
+    fn parse_next(&mut self, retain_positions: bool) -> Result<bool, TrajectoryIoError> {
         let operation = if self.frame_cursor == 0 {
             TrajectoryIoOperation::ReadHeader
         } else {
@@ -386,7 +386,7 @@ impl<R: BufRead> XyzReader<R> {
         Ok(true)
     }
 
-    fn publish(&self, destination: &mut FrameBuffer) -> Result<(), TrajectoryError> {
+    fn publish(&self, destination: &mut FrameBuffer) -> Result<(), TrajectoryIoError> {
         destination
             .replace_from_data(FrameBufferData::new(Quantity::new(
                 self.positions.as_slice(),
@@ -405,9 +405,9 @@ impl<R: BufRead> TrajectoryReader for XyzReader<R> {
         Arc::clone(&self.topology)
     }
 
-    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         if !self.parse_next(true)? {
             return Ok(false);
@@ -427,7 +427,7 @@ impl<R: BufRead> TrajectoryReader for XyzReader<R> {
 }
 
 impl<R: BufRead + Seek> XyzReader<R> {
-    pub fn validate_first_frame(&mut self) -> Result<(), TrajectoryError> {
+    pub fn validate_first_frame(&mut self) -> Result<(), TrajectoryIoError> {
         let start = self.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
@@ -458,7 +458,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
         Ok(())
     }
 
-    pub fn into_indexed(mut self) -> Result<IndexedXyzReader<R>, TrajectoryError> {
+    pub fn into_indexed(mut self) -> Result<IndexedXyzReader<R>, TrajectoryIoError> {
         self.reader.seek(SeekFrom::Start(0)).map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Index,
@@ -563,7 +563,7 @@ impl<R: BufRead + Seek> TrajectoryReader for IndexedXyzReader<R> {
         self.reader.shared_topology()
     }
 
-    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         self.reader.read_next(destination)
     }
 }
@@ -577,16 +577,16 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
         &mut self,
         index: u64,
         destination: &mut FrameBuffer,
-    ) -> Result<(), TrajectoryError> {
+    ) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         let index_usize =
-            usize::try_from(index).map_err(|_| TrajectoryError::FrameIndexOutOfRange(index))?;
+            usize::try_from(index).map_err(|_| TrajectoryIoError::FrameIndexOutOfRange(index))?;
         let offset = *self
             .offsets
             .get(index_usize)
-            .ok_or(TrajectoryError::FrameIndexOutOfRange(index))?;
+            .ok_or(TrajectoryIoError::FrameIndexOutOfRange(index))?;
         let saved_offset = self.reader.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
@@ -623,7 +623,7 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
             });
         self.reader.frame_cursor = saved_cursor;
         if !parsed? {
-            return Err(TrajectoryError::FrameIndexOutOfRange(index));
+            return Err(TrajectoryIoError::FrameIndexOutOfRange(index));
         }
         restore?;
         self.reader.publish(destination)
@@ -645,7 +645,7 @@ impl<W: Write> XyzWriter<W> {
         topology: Arc<Topology>,
         options: XyzWriteOptions,
         source_label: impl Into<String>,
-    ) -> Result<Self, TrajectoryError> {
+    ) -> Result<Self, TrajectoryIoError> {
         let source_label = source_label.into();
         options
             .length_unit
@@ -716,12 +716,12 @@ impl<W: Write> XyzWriter<W> {
         self.writer.flush()
     }
 
-    pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryError> {
+    pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryIoError> {
         require_nonempty_writer(self.frame_count, TrajectoryFormat::Xyz, &self.source_label)
     }
 
     /// Flushes and returns the completed nonempty XYZ stream.
-    pub fn finish(mut self) -> Result<W, TrajectoryError> {
+    pub fn finish(mut self) -> Result<W, TrajectoryIoError> {
         self.validate_finish()?;
         self.flush().map_err(|error| {
             io_context(
@@ -744,9 +744,9 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
         Arc::clone(&self.topology)
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
+    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(frame.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         let unsupported = [
             (frame.cell().is_some(), "periodic cell"),
@@ -849,7 +849,7 @@ fn validate_atom_limit(
     atom_count: usize,
     limits: &TrajectoryIoLimits,
     source_label: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     if atom_count > limits.max_atoms {
         return Err(codec_context(
             TrajectoryCodecErrorKind::ResourceLimitExceeded,
@@ -894,7 +894,7 @@ fn validate_frame_bytes(
     source_label: &str,
     frame: u64,
     operation: TrajectoryIoOperation,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     if frame_bytes > limits.max_frame_bytes {
         return Err(frame_codec_error(
             TrajectoryCodecErrorKind::ResourceLimitExceeded,
@@ -916,7 +916,7 @@ fn checked_frame_add(
     source_label: &str,
     frame: u64,
     operation: TrajectoryIoOperation,
-) -> Result<u64, TrajectoryError> {
+) -> Result<u64, TrajectoryIoError> {
     u64::try_from(line_bytes)
         .ok()
         .and_then(|bytes| bytes.checked_add(1))
@@ -938,7 +938,7 @@ fn read_line<'a, R: BufRead>(
     limit: usize,
     source_label: &str,
     operation: TrajectoryIoOperation,
-) -> Result<Option<&'a str>, TrajectoryError> {
+) -> Result<Option<&'a str>, TrajectoryIoError> {
     line.clear();
     let bounded = limit.checked_add(1).ok_or_else(|| {
         codec_context(
@@ -980,7 +980,7 @@ fn frame_codec_error(
     source_label: &str,
     frame: u64,
     detail: impl Into<String>,
-) -> TrajectoryError {
+) -> TrajectoryIoError {
     TrajectoryCodecErrorContext::new(kind, operation, Some(TrajectoryFormat::Xyz))
         .with_source_label(source_label)
         .with_frame(frame)
@@ -988,7 +988,7 @@ fn frame_codec_error(
         .into()
 }
 
-fn writer_field_error(source_label: &str, frame: u64, field: &str) -> TrajectoryError {
+fn writer_field_error(source_label: &str, frame: u64, field: &str) -> TrajectoryIoError {
     TrajectoryCodecErrorContext::new(
         TrajectoryCodecErrorKind::UnsupportedField,
         TrajectoryIoOperation::WriteFrame,

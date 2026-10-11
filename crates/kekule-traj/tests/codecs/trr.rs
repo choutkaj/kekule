@@ -19,7 +19,7 @@ use kekule_traj::io::{
     ScalarPrecision, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 use kekule_traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryError,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryIoError,
     TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
@@ -483,7 +483,7 @@ fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
     let before = buffer_snapshot(&destination);
     control.arm_at_current_position();
     let error = indexed.read_frame(1, &mut destination).unwrap_err();
-    assert!(matches!(error, TrajectoryError::Io(_)));
+    assert!(matches!(error, TrajectoryIoError::Io(_)));
     assert_eq!(buffer_snapshot(&destination), before);
 }
 
@@ -644,7 +644,7 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
         codec_kind(&error),
         Some(TrajectoryCodecErrorKind::TruncatedRecord)
     );
-    let TrajectoryError::Codec(context) = &error else {
+    let TrajectoryIoError::Codec(context) = &error else {
         panic!("expected typed TRR codec context");
     };
     assert_eq!(context.frame(), Some(1));

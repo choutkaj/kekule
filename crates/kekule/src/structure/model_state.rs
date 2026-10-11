@@ -1,14 +1,14 @@
 use std::collections::BTreeSet;
 
 use crate::geometry::{PeriodicCell, Point3};
-use crate::properties::{RealizationProperties, RealizationPropertiesMut};
+use crate::properties::{StructureProperties, StructurePropertiesMut};
 use crate::topology::TopologyAtomIndex;
 use crate::units::Quantity;
 
 use super::scalars::{b_factor_quantity, canonical_b_factor, AtomScalars};
-use super::{ConformationError, ModelView, Positions};
+use super::{ModelView, Positions, StructureError};
 
-/// Realization state staged by [`super::ModelBuilder`] and
+/// Structure state staged by [`super::ModelBuilder`] and
 /// [`super::ModelEditor`] before it becomes a [`super::Model`].
 ///
 /// Rows follow the draft's staged dense order or private editor slot order and
@@ -20,7 +20,7 @@ pub(crate) struct ModelState {
     pub(crate) cell: Option<PeriodicCell>,
     pub(crate) occupancies: AtomScalars,
     pub(crate) b_factors: AtomScalars,
-    pub(crate) properties: RealizationProperties,
+    pub(crate) properties: StructureProperties,
 }
 
 impl Default for ModelState {
@@ -30,7 +30,7 @@ impl Default for ModelState {
             cell: None,
             occupancies: AtomScalars::default(),
             b_factors: AtomScalars::default(),
-            properties: RealizationProperties::new(0),
+            properties: StructureProperties::new(0),
         }
     }
 }
@@ -40,18 +40,15 @@ impl ModelState {
         &mut self,
         atom: TopologyAtomIndex,
         position: Quantity<Point3>,
-    ) -> Result<(), ConformationError> {
+    ) -> Result<(), StructureError> {
         Ok(self.positions.set_position_at(atom.index(), position)?)
     }
 
-    pub(crate) fn properties_mut(&mut self) -> RealizationPropertiesMut<'_> {
-        RealizationPropertiesMut::new(&mut self.properties)
+    pub(crate) fn properties_mut(&mut self) -> StructurePropertiesMut<'_> {
+        StructurePropertiesMut::new(&mut self.properties)
     }
 
-    pub(crate) fn occupancy(
-        &self,
-        atom: TopologyAtomIndex,
-    ) -> Result<Option<f64>, ConformationError> {
+    pub(crate) fn occupancy(&self, atom: TopologyAtomIndex) -> Result<Option<f64>, StructureError> {
         self.occupancies.get(atom, self.positions.len())
     }
 
@@ -59,7 +56,7 @@ impl ModelState {
         &mut self,
         atom: TopologyAtomIndex,
         value: Option<f64>,
-    ) -> Result<(), ConformationError> {
+    ) -> Result<(), StructureError> {
         let len = self.positions.len();
         self.occupancies.set(atom, len, value)
     }
@@ -67,7 +64,7 @@ impl ModelState {
     pub(crate) fn b_factor(
         &self,
         atom: TopologyAtomIndex,
-    ) -> Result<Option<Quantity<f64>>, ConformationError> {
+    ) -> Result<Option<Quantity<f64>>, StructureError> {
         Ok(b_factor_quantity(
             self.b_factors.get(atom, self.positions.len())?,
         ))
@@ -77,16 +74,16 @@ impl ModelState {
         &mut self,
         atom: TopologyAtomIndex,
         value: Option<Quantity<f64>>,
-    ) -> Result<(), ConformationError> {
+    ) -> Result<(), StructureError> {
         let value = canonical_b_factor(value)?;
         let len = self.positions.len();
         self.b_factors.set(atom, len, value)
     }
 
-    pub(crate) fn try_reserve_atoms(&mut self, additional: usize) -> Result<(), ConformationError> {
+    pub(crate) fn try_reserve_atoms(&mut self, additional: usize) -> Result<(), StructureError> {
         self.positions
             .try_reserve(additional)
-            .map_err(|_| ConformationError::CapacityOverflow)
+            .map_err(|_| StructureError::CapacityOverflow)
     }
 
     /// Appends atoms and bond rows for staged construction. Owner properties
@@ -157,16 +154,12 @@ impl ModelState {
         self.b_factors = self.b_factors.select(previous);
         self.properties
             .reorder_atoms(previous)
-            .expect("staged realization atom rows follow staged atoms");
+            .expect("staged structure atom rows follow staged atoms");
     }
 
     /// Projects atom and bond rows into published dense order. Owner
     /// properties are dropped because the projection is a new owner.
-    pub(crate) fn project(
-        &self,
-        atoms: &[usize],
-        bonds: &[usize],
-    ) -> Result<Self, ConformationError> {
+    pub(crate) fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, StructureError> {
         Ok(Self {
             positions: self.positions.select_indices(atoms)?,
             cell: self.cell,

@@ -1,7 +1,7 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use crate::{TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryIoOperation};
+use crate::{TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation};
 
 use super::{
     codec_context, io_context, FormatDetectionEvidence, TrajectoryFormatHint, TrajectoryIoLimits,
@@ -18,7 +18,7 @@ pub(crate) fn select_format<R: Read + Seek>(
     hint: TrajectoryFormatHint,
     limits: &TrajectoryIoLimits,
     source_label: &str,
-) -> Result<DetectionResult, TrajectoryError> {
+) -> Result<DetectionResult, TrajectoryIoError> {
     let start = reader
         .stream_position()
         .map_err(|error| io_context(TrajectoryIoOperation::Detect, None, source_label, error))?;

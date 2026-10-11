@@ -5,7 +5,7 @@ use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::units::{Quantity, ANGSTROM};
 use kekule_traj::{
-    FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryError, TrajectoryReader,
+    FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryIoError, TrajectoryReader,
     TrajectoryWriter,
 };
 
@@ -29,7 +29,7 @@ impl TrajectoryReader for CompanionSequential {
         Arc::clone(&self.topology)
     }
 
-    fn read_next(&mut self, _destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+    fn read_next(&mut self, _destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         Ok(false)
     }
 }
@@ -47,7 +47,7 @@ impl TrajectoryReader for CompanionIndexed {
         Arc::clone(&self.topology)
     }
 
-    fn read_next(&mut self, _destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+    fn read_next(&mut self, _destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         Ok(false)
     }
 }
@@ -61,8 +61,8 @@ impl SeekableTrajectoryReader for CompanionIndexed {
         &mut self,
         index: u64,
         _destination: &mut FrameBuffer,
-    ) -> Result<(), TrajectoryError> {
-        Err(TrajectoryError::FrameIndexOutOfRange(index))
+    ) -> Result<(), TrajectoryIoError> {
+        Err(TrajectoryIoError::FrameIndexOutOfRange(index))
     }
 }
 
@@ -79,9 +79,9 @@ impl TrajectoryWriter for CompanionWriter {
         Arc::clone(&self.topology)
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
+    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !std::ptr::eq(self.topology.as_ref(), frame.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         Ok(())
     }

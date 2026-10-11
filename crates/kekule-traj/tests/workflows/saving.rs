@@ -13,7 +13,7 @@ use kekule_traj::io::{
     read_trajectory, read_trajectory_with_options, write_trajectory, write_trajectory_with_options,
     OverwritePolicy, TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
-use kekule_traj::{TrajectoryError, TrajectoryFormat};
+use kekule_traj::{TrajectoryFormat, TrajectoryIoError};
 
 use crate::support;
 use support::{linear_carbon_topology, topology};
@@ -227,7 +227,7 @@ fn failed_saves_leave_no_output_or_temporary_files_and_preserve_existing_destina
         .unwrap();
     assert_eq!(
         write_trajectory(&path, &trajectory),
-        Err(TrajectoryError::UnsupportedField("collection properties"))
+        Err(TrajectoryIoError::UnsupportedField("collection properties"))
     );
     assert_eq!(directory.count(), 0);
     trajectory.properties_mut().clear();

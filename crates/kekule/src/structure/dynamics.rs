@@ -1,7 +1,7 @@
 use crate::geometry::Vector3;
 use crate::units::{Quantity, Unit, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT};
 
-use super::ConformationError;
+use super::StructureError;
 
 #[derive(Debug, Clone, PartialEq)]
 struct DenseVectors {
@@ -10,20 +10,20 @@ struct DenseVectors {
 }
 
 impl DenseVectors {
-    fn from_vec(values: Quantity<Vec<Vector3>>, unit: Unit) -> Result<Self, ConformationError> {
+    fn from_vec(values: Quantity<Vec<Vector3>>, unit: Unit) -> Result<Self, StructureError> {
         let factor = values.unit().conversion_factor_to(unit)?;
         let mut values = values.into_value();
         for (index, vector) in values.iter_mut().enumerate() {
             let converted = *vector * factor;
             if !converted.is_finite() {
-                return Err(ConformationError::NonFiniteVector { index });
+                return Err(StructureError::NonFiniteVector { index });
             }
             *vector = converted;
         }
         Ok(Self { values, unit })
     }
 
-    fn new<T>(values: Quantity<T>, unit: Unit) -> Result<Self, ConformationError>
+    fn new<T>(values: Quantity<T>, unit: Unit) -> Result<Self, StructureError>
     where
         T: AsRef<[Vector3]>,
     {
@@ -38,7 +38,7 @@ impl DenseVectors {
         }
     }
 
-    fn set_all<T>(&mut self, values: Quantity<T>) -> Result<(), ConformationError>
+    fn set_all<T>(&mut self, values: Quantity<T>) -> Result<(), StructureError>
     where
         T: AsRef<[Vector3]>,
     {
@@ -46,7 +46,7 @@ impl DenseVectors {
         let factor = values.unit().conversion_factor_to(self.unit)?;
         let source = values.value().as_ref();
         if source.len() != self.values.len() {
-            return Err(ConformationError::AtomCountMismatch {
+            return Err(StructureError::AtomCountMismatch {
                 expected: self.values.len(),
                 actual: source.len(),
             });
@@ -55,7 +55,7 @@ impl DenseVectors {
             .iter()
             .position(|vector| !(*vector * factor).is_finite())
         {
-            return Err(ConformationError::NonFiniteVector { index });
+            return Err(StructureError::NonFiniteVector { index });
         }
         for (destination, source) in self.values.iter_mut().zip(source) {
             *destination = *source * factor;
@@ -63,7 +63,7 @@ impl DenseVectors {
         Ok(())
     }
 
-    fn rotated(&self, rotate: impl Fn(Vector3) -> Vector3) -> Result<Self, ConformationError> {
+    fn rotated(&self, rotate: impl Fn(Vector3) -> Vector3) -> Result<Self, StructureError> {
         let values = self.values.iter().map(|vector| rotate(*vector)).collect();
         Self::from_vec(Quantity::new(values, self.unit), self.unit)
     }
@@ -80,7 +80,7 @@ macro_rules! vector_array {
 
         impl $name {
             /// Copies dense vectors and converts them to canonical units.
-            pub fn new<T>(values: Quantity<T>) -> Result<Self, ConformationError>
+            pub fn new<T>(values: Quantity<T>) -> Result<Self, StructureError>
             where
                 T: AsRef<[Vector3]>,
             {
@@ -88,7 +88,7 @@ macro_rules! vector_array {
             }
 
             /// Takes ownership of dense vectors, converting and validating in place.
-            pub fn from_vec(values: Quantity<Vec<Vector3>>) -> Result<Self, ConformationError> {
+            pub fn from_vec(values: Quantity<Vec<Vector3>>) -> Result<Self, StructureError> {
                 Ok(Self(DenseVectors::from_vec(values, $unit)?))
             }
 
@@ -117,7 +117,7 @@ macro_rules! vector_array {
             }
 
             /// Replaces every vector without changing the length.
-            pub fn set_all<T>(&mut self, values: Quantity<T>) -> Result<(), ConformationError>
+            pub fn set_all<T>(&mut self, values: Quantity<T>) -> Result<(), StructureError>
             where
                 T: AsRef<[Vector3]>,
             {
@@ -131,7 +131,7 @@ macro_rules! vector_array {
             pub(crate) fn rotated(
                 &self,
                 rotate: impl Fn(Vector3) -> Vector3,
-            ) -> Result<Self, ConformationError> {
+            ) -> Result<Self, StructureError> {
                 Ok(Self(self.0.rotated(rotate)?))
             }
         }

@@ -3,7 +3,7 @@ use std::path::Path;
 
 use kekule::units::Unit;
 
-use crate::{TrajectoryError, TrajectoryFormat};
+use crate::{TrajectoryFormat, TrajectoryIoError};
 
 use super::{dcd, detect, trr, xtc, xyz, TrajectoryIoLimits};
 
@@ -326,7 +326,7 @@ pub fn detect_trajectory_format<R: io::Read + io::Seek>(
     source_name: impl AsRef<Path>,
     hint: TrajectoryFormatHint,
     limits: &TrajectoryIoLimits,
-) -> Result<TrajectoryFormatDetection, TrajectoryError> {
+) -> Result<TrajectoryFormatDetection, TrajectoryIoError> {
     let source_name = source_name.as_ref();
     let source_label = source_name.display().to_string();
     let result = detect::select_format(reader, source_name, hint, limits, &source_label)?;

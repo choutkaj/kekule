@@ -43,7 +43,7 @@ impl Topology {
     /// Represented graphs, definition reuse, all semantic IDs, dense ordering,
     /// hierarchy, classifications, and properties are preserved exactly, so the
     /// result shares this topology's layout and its static storage without
-    /// copying it ([`Self::shares_layout`]). Selections, realizations, buffers,
+    /// copying it ([`Self::shares_layout`]). Selections, structures, buffers,
     /// and prepared potentials bound to this topology remain usable with the
     /// result. Values that read perception, such as prepared substructure
     /// targets, stay bound to the snapshot they were prepared from.

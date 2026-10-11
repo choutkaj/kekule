@@ -2,7 +2,7 @@
 
 use crate::core::{Atom, AtomId, BondId, BondOrder, Element, Molecule};
 use crate::geometry::Point3;
-use crate::structure::{ConformationError, Model, ModelBuildError, PositionError, Positions};
+use crate::structure::{Model, ModelBuildError, PositionError, Positions, StructureError};
 use crate::topology::AtomSiteMetadata;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, TopologyBuildError};
 use crate::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT, NANOMETER};
@@ -234,7 +234,7 @@ fn position_updates_are_complete_finite_and_transactional() {
     let original = model.positions().values().value().to_vec();
     assert!(matches!(
         model.set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
-        Err(ConformationError::Position(
+        Err(StructureError::Position(
             PositionError::PositionCountMismatch { .. }
         ))
     ));
@@ -243,9 +243,9 @@ fn position_updates_are_complete_finite_and_transactional() {
     invalid[0] = Point3::new(f64::INFINITY, 0.0, 0.0);
     assert!(matches!(
         model.set_positions(Quantity::new(&invalid, ANGSTROM)),
-        Err(ConformationError::Position(
-            PositionError::NonFinitePosition { index: 0 }
-        ))
+        Err(StructureError::Position(PositionError::NonFinitePosition {
+            index: 0
+        }))
     ));
     assert_eq!(model.positions().values().into_value(), original.as_slice());
 }

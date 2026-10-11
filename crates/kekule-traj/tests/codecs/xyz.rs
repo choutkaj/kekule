@@ -16,7 +16,7 @@ use kekule_traj::io::{
 };
 use kekule_traj::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
-    TrajectoryError, TrajectoryFormat, TrajectoryReader, TrajectoryWriter,
+    TrajectoryFormat, TrajectoryIoError, TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
@@ -231,7 +231,7 @@ fn indexed_xyz_matches_sequential_and_random_reads_preserve_cursor() {
     assert_xs_close(&buffer, &[0.0, 0.3]);
     assert!(matches!(
         reader.read_frame(2, &mut buffer),
-        Err(TrajectoryError::FrameIndexOutOfRange(2))
+        Err(TrajectoryIoError::FrameIndexOutOfRange(2))
     ));
     assert_xs_close(&buffer, &[0.0, 0.3]);
 }
@@ -425,7 +425,7 @@ fn detection_restores_position_on_read_failure_and_honors_a_zero_byte_limit() {
     .unwrap_err();
     assert!(matches!(
         error,
-        TrajectoryError::Io(context) if context.error_kind() == io::ErrorKind::ConnectionReset
+        TrajectoryIoError::Io(context) if context.error_kind() == io::ErrorKind::ConnectionReset
     ));
     assert_eq!(reader.stream_position().unwrap(), 3);
 

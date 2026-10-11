@@ -11,7 +11,7 @@ use kekule_traj::io::{
     read_trajectory, read_trajectory_with_options, TrajectoryFormatHint, TrajectoryIoLimits,
     TrajectoryOpenOptions,
 };
-use kekule_traj::{TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat};
+use kekule_traj::{TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError};
 
 use crate::support;
 use support::{codec_kind, linear_carbon_topology, topology};
@@ -145,7 +145,7 @@ fn loading_accepts_owned_topology_and_honors_format_units_and_sequential_limits(
 fn loading_reports_a_late_decode_error_instead_of_returning_a_prefix() {
     let input = TemporaryInput::new(b"1\ncomplete\nC 1 2 3\n1\ntruncated\n");
     let error = read_trajectory(&input.0, linear_carbon_topology(1)).unwrap_err();
-    let TrajectoryError::Codec(context) = error else {
+    let TrajectoryIoError::Codec(context) = error else {
         panic!("expected a codec error, got {error}");
     };
     assert_eq!(context.kind(), TrajectoryCodecErrorKind::TruncatedRecord);
@@ -193,7 +193,7 @@ fn loading_preserves_codec_policy_and_open_errors() {
     fs::remove_file(&input.0).unwrap();
     assert!(matches!(
         read_trajectory(&input.0, topology),
-        Err(TrajectoryError::Io(_))
+        Err(TrajectoryIoError::Io(_))
     ));
 }
 

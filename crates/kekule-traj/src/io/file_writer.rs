@@ -9,7 +9,7 @@ use std::sync::{
 use kekule::topology::Topology;
 
 use crate::{
-    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryIoOperation,
+    TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation,
     TrajectoryWriter,
 };
 use kekule::structure::{Trajectory, TrajectoryFrameView};
@@ -101,7 +101,7 @@ impl FileWriterInner {
         }
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
+    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         match self {
             Self::Xyz(writer) => writer.write_frame(frame),
             Self::Dcd(writer) => writer.write_frame(frame),
@@ -110,7 +110,7 @@ impl FileWriterInner {
         }
     }
 
-    fn flush_and_sync(&mut self, label: &str) -> Result<(), TrajectoryError> {
+    fn flush_and_sync(&mut self, label: &str) -> Result<(), TrajectoryIoError> {
         let (format, flushed, file) = match self {
             Self::Xyz(writer) => {
                 writer.validate_finish()?;
@@ -169,7 +169,7 @@ impl FileTrajectoryWriter {
     ///
     /// Finishing before any successful frame write returns a structured error
     /// and removes the unpublished temporary sibling.
-    pub fn finish(mut self) -> Result<(), TrajectoryError> {
+    pub fn finish(mut self) -> Result<(), TrajectoryIoError> {
         let label = self.destination.display().to_string();
         if self.failed {
             return Err(codec_context(
@@ -232,7 +232,7 @@ impl TrajectoryWriter for FileTrajectoryWriter {
         }
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
+    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         if self.failed {
             return Err(codec_context(
                 TrajectoryCodecErrorKind::InvalidFrame,
@@ -280,14 +280,14 @@ impl Drop for FileTrajectoryWriter {
 ///
 /// ```no_run
 /// # use kekule::structure::Trajectory;
-/// # fn save(trajectory: &Trajectory) -> Result<(), kekule_traj::TrajectoryError> {
+/// # fn save(trajectory: &Trajectory) -> Result<(), kekule_traj::TrajectoryIoError> {
 /// kekule_traj::io::write_trajectory("aligned.trr", trajectory)?;
 /// # Ok(()) }
 /// ```
 pub fn write_trajectory(
     path: impl AsRef<Path>,
     trajectory: &Trajectory,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     let path = path.as_ref();
     let format = detect::extension_format(path).ok_or_else(|| codec_context(
         TrajectoryCodecErrorKind::UnknownFormat, TrajectoryIoOperation::Open, None,
@@ -302,9 +302,9 @@ pub fn write_trajectory_with_options(
     path: impl AsRef<Path>,
     trajectory: &Trajectory,
     options: TrajectoryWriteOptions,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     if !trajectory.properties().is_empty() {
-        return Err(TrajectoryError::UnsupportedField("collection properties"));
+        return Err(TrajectoryIoError::UnsupportedField("collection properties"));
     }
     let mut writer = create_trajectory_writer(path, trajectory.shared_topology(), options)?;
     for frame in trajectory {
@@ -318,7 +318,7 @@ pub fn create_trajectory_writer(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
     options: TrajectoryWriteOptions,
-) -> Result<FileTrajectoryWriter, TrajectoryError> {
+) -> Result<FileTrajectoryWriter, TrajectoryIoError> {
     let topology = topology.into();
     let destination = path.as_ref().to_path_buf();
     let label = destination.display().to_string();
@@ -392,7 +392,7 @@ pub fn create_trajectory_writer(
 fn create_temporary_sibling(
     destination: &Path,
     format: TrajectoryFormat,
-) -> Result<PathBuf, TrajectoryError> {
+) -> Result<PathBuf, TrajectoryIoError> {
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
     let name = destination
         .file_name()

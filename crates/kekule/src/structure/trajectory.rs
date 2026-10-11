@@ -1,18 +1,20 @@
+use std::fmt;
 use std::sync::Arc;
 
 use crate::geometry::{PeriodicCell, RigidTransform};
-use crate::properties::{OwnerProperties, RealizationProperties, TopologyPropertiesMut};
+use crate::properties::{OwnerProperties, StructureProperties, TopologyPropertiesMut};
+use crate::topology::transform::TopologySubsetError;
 use crate::topology::{AtomSelection, Topology, TopologyPerceptionError};
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
 
 use super::scalars::ABSENT;
 use super::state::{
-    is_bound, realization_mutators, realization_readers, subset_rows, transform_cell,
+    is_bound, structure_mutators, structure_readers, subset_rows, transform_cell,
     transform_positions, validate_binding,
 };
 use super::{
-    AsModelView, ConformationError, Ensemble, EnsembleMember, Forces, Model, ModelView, Positions,
-    RealizationError, Velocities,
+    AsModelView, Ensemble, EnsembleMember, Forces, Model, ModelView, Positions, StructureError,
+    Velocities,
 };
 
 /// A time-ordered sequence of frames of one shared topology, as produced by
@@ -51,7 +53,7 @@ impl Trajectory {
     pub fn from_items(
         topology: impl Into<Arc<Topology>>,
         frames: impl IntoIterator<Item = TrajectoryFrame>,
-    ) -> Result<Self, RealizationError> {
+    ) -> Result<Self, TrajectoryError> {
         let mut trajectory = Self::new(topology);
         for frame in frames {
             trajectory.push(frame)?;
@@ -109,7 +111,7 @@ impl Trajectory {
     }
 
     /// Validates and appends one frame, binding its bond property rows.
-    pub fn push(&mut self, mut frame: TrajectoryFrame) -> Result<(), RealizationError> {
+    pub fn push(&mut self, mut frame: TrajectoryFrame) -> Result<(), TrajectoryError> {
         self.bind(&mut frame)?;
         self.frames.push(frame);
         Ok(())
@@ -121,14 +123,14 @@ impl Trajectory {
         &mut self,
         index: usize,
         mut frame: TrajectoryFrame,
-    ) -> Result<TrajectoryFrame, RealizationError> {
+    ) -> Result<TrajectoryFrame, TrajectoryError> {
         self.check_index(index)?;
         self.bind(&mut frame)?;
         Ok(std::mem::replace(&mut self.frames[index], frame))
     }
 
     /// Removes and returns one frame, shifting later ones down.
-    pub fn remove(&mut self, index: usize) -> Result<TrajectoryFrame, RealizationError> {
+    pub fn remove(&mut self, index: usize) -> Result<TrajectoryFrame, TrajectoryError> {
         self.check_index(index)?;
         Ok(self.frames.remove(index))
     }
@@ -138,17 +140,17 @@ impl Trajectory {
     pub fn replace_positions(
         &mut self,
         positions: impl IntoIterator<Item = Positions>,
-    ) -> Result<(), RealizationError> {
+    ) -> Result<(), TrajectoryError> {
         let positions = positions.into_iter().collect::<Vec<_>>();
         if positions.len() != self.frames.len() {
-            return Err(RealizationError::ItemCountMismatch {
+            return Err(TrajectoryError::FrameCountMismatch {
                 expected: self.frames.len(),
                 actual: positions.len(),
             });
         }
         for values in &positions {
             if values.len() != self.topology.atom_count() {
-                return Err(ConformationError::AtomCountMismatch {
+                return Err(StructureError::AtomCountMismatch {
                     expected: self.topology.atom_count(),
                     actual: values.len(),
                 }
@@ -168,14 +170,14 @@ impl Trajectory {
     pub fn select(
         &self,
         indices: impl IntoIterator<Item = usize>,
-    ) -> Result<Self, RealizationError> {
+    ) -> Result<Self, TrajectoryError> {
         let frames = indices
             .into_iter()
             .map(|index| {
                 self.check_index(index)?;
                 Ok(self.frames[index].clone())
             })
-            .collect::<Result<Vec<_>, RealizationError>>()?;
+            .collect::<Result<Vec<_>, TrajectoryError>>()?;
         Ok(Self {
             topology: self.shared_topology(),
             properties: self.properties.clone(),
@@ -185,7 +187,7 @@ impl Trajectory {
 
     /// Publishes one induced topology subset and projects every frame onto
     /// it. Trajectory and per-frame owner properties are dropped.
-    pub fn subset(&self, selection: &AtomSelection) -> Result<Self, RealizationError> {
+    pub fn subset(&self, selection: &AtomSelection) -> Result<Self, TrajectoryError> {
         let subset = self.topology.subset(selection)?;
         let (atoms, bonds) = subset_rows(&subset);
         let frames = self
@@ -234,18 +236,18 @@ impl Trajectory {
 
     /// Checks that every present time is non-decreasing; with `require_all`,
     /// a frame without time is an error.
-    pub fn validate_monotonic_time(&self, require_all: bool) -> Result<(), RealizationError> {
+    pub fn validate_monotonic_time(&self, require_all: bool) -> Result<(), TrajectoryError> {
         let mut previous = None;
         for (index, frame) in self.frames.iter().enumerate() {
             let Some(time) = frame.time else {
                 if require_all {
-                    return Err(RealizationError::MissingTime { frame: index });
+                    return Err(TrajectoryError::MissingTime { frame: index });
                 }
                 continue;
             };
             let value = time.into_value();
             if previous.is_some_and(|previous| value < previous) {
-                return Err(RealizationError::NonMonotonicTime { frame: index });
+                return Err(TrajectoryError::NonMonotonicTime { frame: index });
             }
             previous = Some(value);
         }
@@ -273,7 +275,7 @@ impl Trajectory {
     pub(crate) fn transform_frames(
         &mut self,
         transforms: &[RigidTransform],
-    ) -> Result<(), ConformationError> {
+    ) -> Result<(), StructureError> {
         debug_assert_eq!(transforms.len(), self.frames.len());
         let frames = self
             .frames
@@ -285,9 +287,9 @@ impl Trajectory {
         Ok(())
     }
 
-    fn check_index(&self, index: usize) -> Result<(), RealizationError> {
+    fn check_index(&self, index: usize) -> Result<(), TrajectoryError> {
         if index >= self.frames.len() {
-            return Err(RealizationError::IndexOutOfRange {
+            return Err(TrajectoryError::IndexOutOfRange {
                 index,
                 len: self.frames.len(),
             });
@@ -295,7 +297,7 @@ impl Trajectory {
         Ok(())
     }
 
-    fn bind(&self, frame: &mut TrajectoryFrame) -> Result<(), RealizationError> {
+    fn bind(&self, frame: &mut TrajectoryFrame) -> Result<(), TrajectoryError> {
         validate_binding(frame.atom_count(), &frame.properties, &self.topology)?;
         frame.properties.bind_bond_rows(self.topology.bond_count());
         Ok(())
@@ -312,7 +314,7 @@ impl<'a> IntoIterator for &'a Trajectory {
 }
 
 /// One trajectory frame: positions in dense topology atom order, an optional
-/// periodic cell, realization properties, and optional velocities, forces,
+/// periodic cell, structure properties, and optional velocities, forces,
 /// time, and step.
 ///
 /// Frames carry no crystallographic occupancies or B-factors. The frame
@@ -327,7 +329,7 @@ impl<'a> IntoIterator for &'a Trajectory {
 pub struct TrajectoryFrame {
     positions: Positions,
     cell: Option<PeriodicCell>,
-    properties: RealizationProperties,
+    properties: StructureProperties,
     velocities: Option<Velocities>,
     forces: Option<Forces>,
     time: Option<Quantity<f64>>,
@@ -337,7 +339,7 @@ pub struct TrajectoryFrame {
 impl TrajectoryFrame {
     /// Creates a non-periodic frame without properties or dynamics.
     pub fn new(positions: Positions) -> Self {
-        let properties = RealizationProperties::new(positions.len());
+        let properties = StructureProperties::new(positions.len());
         Self {
             positions,
             cell: None,
@@ -377,10 +379,7 @@ impl TrajectoryFrame {
     }
 
     /// Sets or clears velocities; they must have one vector per atom.
-    pub fn set_velocities(
-        &mut self,
-        velocities: Option<Velocities>,
-    ) -> Result<(), ConformationError> {
+    pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), StructureError> {
         if let Some(values) = &velocities {
             self.check_len(values.len())?;
         }
@@ -389,7 +388,7 @@ impl TrajectoryFrame {
     }
 
     /// Sets or clears forces; they must have one vector per atom.
-    pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), ConformationError> {
+    pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), StructureError> {
         if let Some(values) = &forces {
             self.check_len(values.len())?;
         }
@@ -408,12 +407,12 @@ impl TrajectoryFrame {
     }
 
     /// Sets or clears a finite time, converted to the canonical time unit.
-    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), ConformationError> {
+    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), StructureError> {
         self.time = time
             .map(|time| {
                 let time = time.into_unit(CANONICAL_TIME_UNIT)?;
                 if !time.value().is_finite() {
-                    return Err(ConformationError::NonFiniteTime);
+                    return Err(StructureError::NonFiniteTime);
                 }
                 Ok(time)
             })
@@ -430,14 +429,14 @@ impl TrajectoryFrame {
     pub fn apply_rigid_transform(
         &mut self,
         transform: &RigidTransform,
-    ) -> Result<(), ConformationError> {
+    ) -> Result<(), StructureError> {
         *self = self.transformed(*transform)?;
         Ok(())
     }
 
-    fn check_len(&self, actual: usize) -> Result<(), ConformationError> {
+    fn check_len(&self, actual: usize) -> Result<(), StructureError> {
         if actual != self.positions.len() {
-            return Err(ConformationError::AtomCountMismatch {
+            return Err(StructureError::AtomCountMismatch {
                 expected: self.positions.len(),
                 actual,
             });
@@ -457,7 +456,7 @@ impl TrajectoryFrame {
     }
 
     /// Projects every dense row through a subset correspondence.
-    fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, ConformationError> {
+    fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, StructureError> {
         Ok(Self {
             positions: self.positions.select_indices(atoms)?,
             cell: self.cell,
@@ -470,7 +469,7 @@ impl TrajectoryFrame {
     }
 
     /// Positions move; cells, velocities, and forces rotate.
-    fn transformed(&self, transform: RigidTransform) -> Result<Self, ConformationError> {
+    fn transformed(&self, transform: RigidTransform) -> Result<Self, StructureError> {
         let rotate = |vector| transform.transform_vector(vector);
         Ok(Self {
             cell: transform_cell(self.cell, transform)?,
@@ -499,8 +498,8 @@ impl TrajectoryFrame {
         self
     }
 
-    realization_readers!();
-    realization_mutators!();
+    structure_readers!();
+    structure_mutators!();
 }
 
 /// One topology-bound [`TrajectoryFrame`] borrowed from a [`Trajectory`].
@@ -526,10 +525,10 @@ impl<'a> TrajectoryFrameView<'a> {
     pub fn new(
         topology: &'a Arc<Topology>,
         frame: &'a TrajectoryFrame,
-    ) -> Result<Self, ConformationError> {
+    ) -> Result<Self, StructureError> {
         validate_binding(frame.atom_count(), &frame.properties, topology)?;
         if !is_bound(frame.atom_count(), &frame.properties, topology) {
-            return Err(ConformationError::BondCountMismatch {
+            return Err(StructureError::BondCountMismatch {
                 expected: topology.bond_count(),
                 actual: frame.properties.bonds().len(),
             });
@@ -587,18 +586,15 @@ impl std::ops::Deref for TrajectoryFrameMut<'_> {
 }
 
 impl TrajectoryFrameMut<'_> {
-    pub fn set_velocities(
-        &mut self,
-        velocities: Option<Velocities>,
-    ) -> Result<(), ConformationError> {
+    pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), StructureError> {
         self.frame.set_velocities(velocities)
     }
 
-    pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), ConformationError> {
+    pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), StructureError> {
         self.frame.set_forces(forces)
     }
 
-    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), ConformationError> {
+    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), StructureError> {
         self.frame.set_time(time)
     }
 
@@ -621,7 +617,7 @@ impl TrajectoryFrameMut<'_> {
     pub fn apply_rigid_transform(
         &mut self,
         transform: &RigidTransform,
-    ) -> Result<(), ConformationError> {
+    ) -> Result<(), StructureError> {
         self.frame.apply_rigid_transform(transform)
     }
 
@@ -629,7 +625,7 @@ impl TrajectoryFrameMut<'_> {
         self.frame
     }
 
-    realization_mutators!();
+    structure_mutators!();
 }
 
 /// Iterator over the topology-bound frames of a [`Trajectory`], in temporal
@@ -656,3 +652,68 @@ impl<'a> Iterator for TrajectoryIter<'a> {
 }
 
 impl ExactSizeIterator for TrajectoryIter<'_> {}
+
+/// Failure of a [`Trajectory`] operation.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum TrajectoryError {
+    IndexOutOfRange {
+        index: usize,
+        len: usize,
+    },
+    /// A trajectory-wide replacement has the wrong number of frames.
+    FrameCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    MissingTime {
+        frame: usize,
+    },
+    NonMonotonicTime {
+        frame: usize,
+    },
+    Structure(StructureError),
+    Subset(TopologySubsetError),
+}
+
+impl fmt::Display for TrajectoryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::IndexOutOfRange { index, len } => {
+                write!(formatter, "index {index} is out of range for {len} frames")
+            }
+            Self::FrameCountMismatch { expected, actual } => write!(
+                formatter,
+                "trajectory requires {expected} replacement frames, but received {actual}"
+            ),
+            Self::MissingTime { frame } => write!(formatter, "frame {frame} has no time"),
+            Self::NonMonotonicTime { frame } => {
+                write!(formatter, "time decreases at frame {frame}")
+            }
+            Self::Structure(error) => write!(formatter, "invalid trajectory frame: {error}"),
+            Self::Subset(error) => write!(formatter, "cannot subset trajectory: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for TrajectoryError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Structure(error) => Some(error),
+            Self::Subset(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<StructureError> for TrajectoryError {
+    fn from(error: StructureError) -> Self {
+        Self::Structure(error)
+    }
+}
+
+impl From<TopologySubsetError> for TrajectoryError {
+    fn from(error: TopologySubsetError) -> Self {
+        Self::Subset(error)
+    }
+}
