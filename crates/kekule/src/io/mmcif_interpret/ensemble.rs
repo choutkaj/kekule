@@ -73,6 +73,7 @@ pub(crate) fn interpret_mmcif_ensemble_block(
         block,
         options.strict_entity_metadata,
         &options.altloc_policy,
+        &options.connectivity,
     )
     .map_err(|error| MmcifEnsembleInterpretError::Model {
         model_id: selected[0].clone(),

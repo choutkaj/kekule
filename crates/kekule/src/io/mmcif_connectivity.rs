@@ -1,13 +1,23 @@
+//! Resolves the bonds an mmCIF block does not state, from ranked evidence:
+//! the block's own component bond table, component templates, polymer and
+//! branch linkage, and, for residues no template covers, covalent radii.
 use crate::diagnostics::DiagnosticKind;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::chemistry::localize_source_aromatic_bonds;
-use crate::core::{AtomId, BondOrder, Molecule, MoleculeEditor};
+use crate::components::{
+    Component, ComponentBond as TemplateBond, ComponentBondOrder as TemplateOrder,
+    ComponentLibrary, ComponentLinking,
+};
+use crate::core::{AtomId, BondOrder, Element, Molecule, MoleculeEditor};
+use crate::geometry::Point3;
 
 use super::mmcif_category::MmcifCategory;
 use super::mmcif_interpret as raw;
 use super::MmcifBlock;
 
+/// One staged atom with the source fields connectivity resolution reads.
 pub(crate) struct StagedAtomProvenance<'a> {
     pub(crate) atom: AtomId,
     pub(crate) atom_name: &'a str,
@@ -18,44 +28,85 @@ pub(crate) struct StagedAtomProvenance<'a> {
     pub(crate) author_sequence_id: Option<&'a str>,
     pub(crate) insertion_code: Option<&'a str>,
     pub(crate) occurrence: Option<usize>,
+    pub(crate) element: Element,
+    pub(crate) point: Point3,
+    pub(crate) line: usize,
+    pub(crate) stated_charge: Option<i8>,
 }
 
+/// The evidence of each staged bond, keyed by its ordered atom pair. The first
+/// evidence recorded for a pair is kept.
+pub(crate) type BondEvidence = BTreeMap<(AtomId, AtomId), raw::MmcifBondEvidence>;
+
+pub(crate) fn record_evidence(
+    evidence: &mut BondEvidence,
+    a: AtomId,
+    b: AtomId,
+    source: raw::MmcifBondEvidence,
+) {
+    evidence.entry((a.min(b), a.max(b))).or_insert(source);
+}
+
+/// Resolves the bonds of one staged molecule group in place. Bonds already
+/// present, from `_struct_conn`, must agree with every other source.
 pub(crate) fn complete_editor_connectivity<'a>(
     catalog: &ConnectivityCatalog,
     editor: &mut MoleculeEditor,
     atoms: impl IntoIterator<Item = StagedAtomProvenance<'a>>,
+    model_id: &str,
+    evidence: &mut BondEvidence,
+    issues: &mut Vec<raw::MmcifInterpretIssue>,
 ) -> Result<(), raw::MmcifInterpretError> {
     let mut source_aromatic_bonds = BTreeSet::new();
-    apply_instance_connectivity(
-        editor.working_mut(),
-        atoms,
+    let mut resolver = Resolver {
         catalog,
-        &mut source_aromatic_bonds,
-    )?;
+        graph: editor.working_mut(),
+        source_aromatic_bonds: &mut source_aromatic_bonds,
+        evidence,
+        issues,
+        model_id,
+    };
+    resolver.resolve(residue_atoms(atoms))?;
     localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds)
         .map_err(interpret_error)
 }
 
-#[derive(Debug, Clone)]
-struct ComponentBond {
-    atom_1: String,
-    atom_2: String,
-    order: ComponentBondOrder,
-}
-
+/// A bond order as a source states it, before aromatic localization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ComponentBondOrder {
+enum SourceBondOrder {
     Localized(BondOrder),
     Aromatic,
 }
 
-impl ComponentBondOrder {
+impl SourceBondOrder {
     const fn staged_order(self) -> BondOrder {
         match self {
             Self::Localized(order) => order,
             Self::Aromatic => BondOrder::Single,
         }
     }
+
+    /// Metal coordination is covalent but does not count toward the valence
+    /// of the ligand atom, so it is a dative bond whatever its stated order.
+    const fn of_template(bond: &TemplateBond) -> Self {
+        if bond.metal_coordination() {
+            return Self::Localized(BondOrder::Dative);
+        }
+        match bond.order() {
+            TemplateOrder::Double | TemplateOrder::Pi => Self::Localized(BondOrder::Double),
+            TemplateOrder::Triple => Self::Localized(BondOrder::Triple),
+            TemplateOrder::Quadruple => Self::Localized(BondOrder::Quadruple),
+            TemplateOrder::Aromatic | TemplateOrder::Delocalized => Self::Aromatic,
+            _ => Self::Localized(BondOrder::Single),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ComponentBond {
+    atom_1: String,
+    atom_2: String,
+    order: SourceBondOrder,
 }
 
 #[derive(Debug, Clone)]
@@ -74,9 +125,10 @@ struct BranchLink {
     atom_1: String,
     number_2: i32,
     atom_2: String,
-    order: ComponentBondOrder,
+    order: SourceBondOrder,
 }
 
+/// Block-level connectivity evidence and the templates to resolve residues with.
 #[derive(Debug, Default)]
 pub(crate) struct ConnectivityCatalog {
     component_bonds: BTreeMap<String, Vec<ComponentBond>>,
@@ -84,22 +136,37 @@ pub(crate) struct ConnectivityCatalog {
     nonstandard_polymer_linkage: BTreeSet<String>,
     branch_sites: Vec<BranchSchemeSite>,
     branch_links: Vec<BranchLink>,
+    components: Option<Arc<ComponentLibrary>>,
+    infer_bonds_from_distance: bool,
 }
 
 impl ConnectivityCatalog {
-    pub(crate) fn from_block(block: &MmcifBlock) -> Result<Self, raw::MmcifInterpretError> {
-        let mut catalog = Self::default();
+    pub(crate) fn from_block(
+        block: &MmcifBlock,
+        options: &raw::MmcifConnectivityOptions,
+    ) -> Result<Self, raw::MmcifInterpretError> {
+        let mut catalog = Self {
+            components: options.components.clone(),
+            infer_bonds_from_distance: options.infer_bonds_from_distance,
+            ..Self::default()
+        };
         if let Some(table) = block.category("_chem_comp_bond")? {
             let table = &table;
             for row in 0..table.row_count() {
                 let comp_id = required(table, row, "_chem_comp_bond.comp_id")?;
                 let atom_1 = required(table, row, "_chem_comp_bond.atom_id_1")?;
                 let atom_2 = required(table, row, "_chem_comp_bond.atom_id_2")?;
-                let order = component_bond_order(
-                    optional(table, row, "_chem_comp_bond.value_order").unwrap_or("sing"),
-                    table,
-                    row,
-                )?;
+                let order = if optional(table, row, "_chem_comp_bond.pdbx_metal_coordination_flag")
+                    .is_some_and(is_yes)
+                {
+                    SourceBondOrder::Localized(BondOrder::Dative)
+                } else {
+                    component_bond_order(
+                        optional(table, row, "_chem_comp_bond.value_order").unwrap_or("sing"),
+                        table,
+                        row,
+                    )?
+                };
                 catalog
                     .component_bonds
                     .entry(normalized(comp_id))
@@ -178,6 +245,22 @@ impl ConnectivityCatalog {
         }
         Ok(catalog)
     }
+
+    /// The template of a component and its protonation variants: the caller's
+    /// library takes precedence over the bundled one.
+    fn template(&self, component_id: &str) -> Option<(&Component, Vec<&Component>)> {
+        let library = match self.components.as_deref() {
+            Some(library) if library.get(component_id).is_some() => library,
+            _ => ComponentLibrary::bundled(),
+        };
+        let component = library.get(component_id)?;
+        Some((component, library.variants(component_id).collect()))
+    }
+
+    fn linking(&self, component_id: &str) -> ComponentLinking {
+        self.template(component_id)
+            .map_or(ComponentLinking::None, |(component, _)| component.linking())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -191,37 +274,54 @@ struct ResidueKey {
     component_id: String,
 }
 
+impl ResidueKey {
+    fn id(&self, model_id: &str) -> raw::MmcifResidueId {
+        raw::MmcifResidueId {
+            model_id: model_id.to_owned(),
+            asym_id: self.asym_id.clone(),
+            position: match (self.label_sequence_id, &self.author_sequence_id) {
+                (Some(sequence), _) => raw::MmcifResiduePosition::Label(sequence),
+                (None, Some(sequence)) => raw::MmcifResiduePosition::Author(sequence.clone()),
+                (None, None) => raw::MmcifResiduePosition::Occurrence {
+                    component_id: self.component_id.clone(),
+                    index: self.occurrence.unwrap_or_default(),
+                },
+            },
+            insertion_code: self.insertion_code.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ResidueSite {
+    name: String,
+    atom: AtomId,
+    element: Element,
+    point: Point3,
+    line: usize,
+    stated_charge: Option<i8>,
+}
+
 #[derive(Debug, Clone)]
 struct ResidueAtoms {
     key: ResidueKey,
     atoms: BTreeMap<String, AtomId>,
+    sites: Vec<ResidueSite>,
 }
 
-fn apply_instance_connectivity<'a>(
-    graph: &mut Molecule,
-    atoms: impl IntoIterator<Item = StagedAtomProvenance<'a>>,
-    catalog: &ConnectivityCatalog,
-    source_aromatic_bonds: &mut BTreeSet<crate::core::BondId>,
-) -> Result<(), raw::MmcifInterpretError> {
-    let residues = residue_atoms(atoms);
-    for residue in residues.values() {
-        if let Some(template) = catalog
-            .component_bonds
-            .get(&normalized(&residue.key.component_id))
-        {
-            for bond in template {
-                let (Some(&left), Some(&right)) = (
-                    residue.atoms.get(&bond.atom_1),
-                    residue.atoms.get(&bond.atom_2),
-                ) else {
-                    continue;
-                };
-                add_bond_if_missing(graph, left, right, bond.order, source_aromatic_bonds)?;
-            }
-        }
+impl ResidueAtoms {
+    fn site(&self, atom: AtomId) -> Option<&ResidueSite> {
+        self.sites.iter().find(|site| site.atom == atom)
     }
-    apply_branch_links(graph, &residues, catalog, source_aromatic_bonds)?;
-    apply_polymer_links(graph, &residues, catalog, source_aromatic_bonds)
+}
+
+/// A residue whose bonds came from a template; `matched` maps template atom
+/// indices to staged atoms.
+struct TemplatedResidue<'c> {
+    key: ResidueKey,
+    component: &'c Component,
+    variants: Vec<&'c Component>,
+    matched: BTreeMap<usize, AtomId>,
 }
 
 fn residue_atoms<'a>(
@@ -238,44 +338,713 @@ fn residue_atoms<'a>(
             occurrence: atom.occurrence,
             component_id: atom.component_id.to_owned(),
         };
-        residues
-            .entry(key.clone())
-            .or_insert_with(|| ResidueAtoms {
-                key,
-                atoms: BTreeMap::new(),
-            })
-            .atoms
-            .insert(atom.atom_name.to_owned(), atom.atom);
+        let residue = residues.entry(key.clone()).or_insert_with(|| ResidueAtoms {
+            key,
+            atoms: BTreeMap::new(),
+            sites: Vec::new(),
+        });
+        residue.atoms.insert(atom.atom_name.to_owned(), atom.atom);
+        residue.sites.push(ResidueSite {
+            name: atom.atom_name.to_owned(),
+            atom: atom.atom,
+            element: atom.element,
+            point: atom.point,
+            line: atom.line,
+            stated_charge: atom.stated_charge,
+        });
     }
     residues
 }
 
-fn apply_branch_links(
-    graph: &mut Molecule,
-    residues: &BTreeMap<ResidueKey, ResidueAtoms>,
-    catalog: &ConnectivityCatalog,
-    source_aromatic_bonds: &mut BTreeSet<crate::core::BondId>,
-) -> Result<(), raw::MmcifInterpretError> {
-    for link in &catalog.branch_links {
-        let left = resolve_branch_residue(residues, catalog, &link.entity_id, link.number_1);
-        let right = resolve_branch_residue(residues, catalog, &link.entity_id, link.number_2);
-        let (Some(left), Some(right)) = (left, right) else {
-            continue;
-        };
-        let (Some(&left_atom), Some(&right_atom)) =
-            (left.atoms.get(&link.atom_1), right.atoms.get(&link.atom_2))
-        else {
-            continue;
-        };
-        add_bond_if_missing(
-            graph,
-            left_atom,
-            right_atom,
-            link.order,
-            source_aromatic_bonds,
-        )?;
+const COVALENT_BOND_TOLERANCE_ANGSTROM: f64 = 0.45;
+const MIN_COVALENT_BOND_DISTANCE_SQUARED: f64 = 0.16;
+const FALLBACK_COVALENT_RADIUS_ANGSTROM: f64 = 0.77;
+
+/// Whether two atoms lie within covalent bonding distance: the sum of their
+/// covalent radii plus a tolerance, and not implausibly close.
+pub(crate) fn within_bonding_distance(
+    (left, left_point): (Element, Point3),
+    (right, right_point): (Element, Point3),
+) -> bool {
+    let radius = |element: Element| {
+        element
+            .covalent_radius_angstrom()
+            .unwrap_or(FALLBACK_COVALENT_RADIUS_ANGSTROM)
+    };
+    let cutoff = radius(left) + radius(right) + COVALENT_BOND_TOLERANCE_ANGSTROM;
+    let distance_squared = (left_point.x - right_point.x).powi(2)
+        + (left_point.y - right_point.y).powi(2)
+        + (left_point.z - right_point.z).powi(2);
+    distance_squared > MIN_COVALENT_BOND_DISTANCE_SQUARED && distance_squared <= cutoff * cutoff
+}
+
+fn is_hydrogen(element: Element) -> bool {
+    element.atomic_number() == 1
+}
+
+fn is_carbon(element: Element) -> bool {
+    element.atomic_number() == 6
+}
+
+struct Resolver<'r, 'g> {
+    catalog: &'r ConnectivityCatalog,
+    graph: &'g mut Molecule,
+    source_aromatic_bonds: &'g mut BTreeSet<crate::core::BondId>,
+    evidence: &'g mut BondEvidence,
+    issues: &'g mut Vec<raw::MmcifInterpretIssue>,
+    model_id: &'r str,
+}
+
+impl<'r> Resolver<'r, '_> {
+    fn resolve(
+        &mut self,
+        residues: BTreeMap<ResidueKey, ResidueAtoms>,
+    ) -> Result<(), raw::MmcifInterpretError> {
+        let mut templated = Vec::new();
+        let mut stray_hydrogens = Vec::new();
+        for residue in residues.values() {
+            let component_id = normalized(&residue.key.component_id);
+            let template = self.catalog.template(&component_id);
+            if let Some(bonds) = self.catalog.component_bonds.get(&component_id) {
+                for bond in bonds {
+                    let (Some(&left), Some(&right)) = (
+                        residue.atoms.get(&bond.atom_1),
+                        residue.atoms.get(&bond.atom_2),
+                    ) else {
+                        continue;
+                    };
+                    self.add_bond(
+                        left,
+                        right,
+                        bond.order,
+                        raw::MmcifBondEvidence::ComponentTable,
+                    )?;
+                }
+                // The block's own table supplies the bonds; a template whose
+                // atoms the residue matches still supplies charges.
+                if let Some((component, variants)) = template {
+                    if let Some((matched, _)) = match_template(residue, component, false)? {
+                        templated.push(TemplatedResidue {
+                            key: residue.key.clone(),
+                            component,
+                            variants,
+                            matched,
+                        });
+                    }
+                }
+            } else if self.has_stated_internal_bond(residue)? {
+                // The source enumerates this residue's bonds, as files that
+                // write complete connectivity do; templates and inference
+                // only fill residues the source leaves without bonds.
+            } else if let Some((component, variants)) = template {
+                let (matched, strays) =
+                    match_template(residue, component, true)?.expect("strict matches fail loudly");
+                self.add_template_bonds(component, &matched)?;
+                stray_hydrogens.extend(strays.into_iter().map(|atom| (residue.key.clone(), atom)));
+                templated.push(TemplatedResidue {
+                    key: residue.key.clone(),
+                    component,
+                    variants,
+                    matched,
+                });
+            } else if residue.sites.len() > 1 {
+                self.infer_residue_bonds(residue)?;
+            }
+        }
+        self.apply_branch_links(&residues)?;
+        self.apply_polymer_links(&residues)?;
+        self.attach_stray_hydrogens(&residues, stray_hydrogens)?;
+        for residue in &templated {
+            self.assign_template_charges(residue, &residues[&residue.key])?;
+        }
+        self.report_fragmented_residues(&residues);
+        Ok(())
     }
-    Ok(())
+
+    /// Whether a declared connection already bonds two atoms of the residue.
+    fn has_stated_internal_bond(
+        &self,
+        residue: &ResidueAtoms,
+    ) -> Result<bool, raw::MmcifInterpretError> {
+        for site in &residue.sites {
+            if self
+                .graph
+                .neighbors(site.atom)
+                .map_err(interpret_error)?
+                .any(|neighbor| residue.site(neighbor).is_some())
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn add_bond(
+        &mut self,
+        left: AtomId,
+        right: AtomId,
+        order: SourceBondOrder,
+        source: raw::MmcifBondEvidence,
+    ) -> Result<(), raw::MmcifInterpretError> {
+        add_bond_if_missing(self.graph, left, right, order, self.source_aromatic_bonds)?;
+        record_evidence(self.evidence, left, right, source);
+        Ok(())
+    }
+
+    /// Adds the template bonds among matched atoms. Bonds the source states
+    /// explicitly outrank the template.
+    fn add_template_bonds(
+        &mut self,
+        component: &Component,
+        matched: &BTreeMap<usize, AtomId>,
+    ) -> Result<(), raw::MmcifInterpretError> {
+        for bond in component.bonds() {
+            let [a, b] = bond.atoms();
+            let (Some(&left), Some(&right)) = (matched.get(&a), matched.get(&b)) else {
+                continue;
+            };
+            if self
+                .graph
+                .bond_between(left, right)
+                .map_err(interpret_error)?
+                .is_some()
+            {
+                continue;
+            }
+            self.add_bond(
+                left,
+                right,
+                SourceBondOrder::of_template(bond),
+                raw::MmcifBondEvidence::Template {
+                    component_id: component.id().to_owned(),
+                    variant: None,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Bonds every pair of a residue's atoms within covalent bonding
+    /// distance, when the caller allows it.
+    fn infer_residue_bonds(
+        &mut self,
+        residue: &ResidueAtoms,
+    ) -> Result<(), raw::MmcifInterpretError> {
+        if !self.catalog.infer_bonds_from_distance {
+            return Err(raw::MmcifInterpretError::new(
+                DiagnosticKind::Unsupported,
+                residue.sites.first().map(|site| site.line),
+                format!(
+                    "component `{}` has no template or bond table; supply a template or enable distance inference",
+                    residue.key.component_id
+                ),
+            ));
+        }
+        let mut bonds = 0;
+        for (index, left) in residue.sites.iter().enumerate() {
+            for right in &residue.sites[index + 1..] {
+                if within_bonding_distance((left.element, left.point), (right.element, right.point))
+                    && self
+                        .graph
+                        .bond_between(left.atom, right.atom)
+                        .map_err(interpret_error)?
+                        .is_none()
+                {
+                    self.add_bond(
+                        left.atom,
+                        right.atom,
+                        SourceBondOrder::Localized(BondOrder::Single),
+                        raw::MmcifBondEvidence::Distance,
+                    )?;
+                    bonds += 1;
+                }
+            }
+        }
+        self.issues
+            .push(raw::MmcifInterpretIssue::ResidueBondsInferred {
+                residue: residue.key.id(self.model_id),
+                component_id: residue.key.component_id.clone(),
+                bonds,
+            });
+        Ok(())
+    }
+
+    fn apply_branch_links(
+        &mut self,
+        residues: &BTreeMap<ResidueKey, ResidueAtoms>,
+    ) -> Result<(), raw::MmcifInterpretError> {
+        for link in &self.catalog.branch_links {
+            let left =
+                resolve_branch_residue(residues, self.catalog, &link.entity_id, link.number_1);
+            let right =
+                resolve_branch_residue(residues, self.catalog, &link.entity_id, link.number_2);
+            let (Some(left), Some(right)) = (left, right) else {
+                continue;
+            };
+            let (Some(&left_atom), Some(&right_atom)) =
+                (left.atoms.get(&link.atom_1), right.atoms.get(&link.atom_2))
+            else {
+                continue;
+            };
+            self.add_bond(
+                left_atom,
+                right_atom,
+                link.order,
+                raw::MmcifBondEvidence::BranchLink,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Links residues adjacent in sequence within one chain: peptide `C`-`N`
+    /// or nucleotide `O3'`-`P`, accepted only within bonding distance. The
+    /// polymer type comes from `_entity_poly`, or from both residues'
+    /// templates when the block does not describe the entity.
+    fn apply_polymer_links(
+        &mut self,
+        residues: &BTreeMap<ResidueKey, ResidueAtoms>,
+    ) -> Result<(), raw::MmcifInterpretError> {
+        let mut chains = BTreeMap::<(String, Option<String>), Vec<&ResidueAtoms>>::new();
+        for residue in residues.values() {
+            if residue.key.label_sequence_id.is_none() {
+                continue;
+            }
+            chains
+                .entry((residue.key.asym_id.clone(), residue.key.entity_id.clone()))
+                .or_default()
+                .push(residue);
+        }
+        for ((_, entity), chain) in &mut chains {
+            chain.sort_by_key(|residue| residue.key.label_sequence_id);
+            // The flag states that at least one monomer-to-monomer linkage
+            // differs from the linkage implied by the polymer type, but does
+            // not identify that pair. Remain conservative rather than
+            // inventing a standard bond.
+            if entity
+                .as_ref()
+                .is_some_and(|entity| self.catalog.nonstandard_polymer_linkage.contains(entity))
+            {
+                continue;
+            }
+            let declared = entity
+                .as_ref()
+                .and_then(|entity| self.catalog.polymer_types.get(entity));
+            for pair in chain.windows(2) {
+                let (left, right) = (pair[0], pair[1]);
+                let (Some(left_seq), Some(right_seq)) =
+                    (left.key.label_sequence_id, right.key.label_sequence_id)
+                else {
+                    continue;
+                };
+                // label_seq_id includes unmodelled residues, so only adjacent
+                // values prove that the two observed residues are consecutive.
+                if right_seq != left_seq.saturating_add(1) {
+                    continue;
+                }
+                let linking = match declared {
+                    Some(kind) if is_polypeptide(kind) => ComponentLinking::Peptide,
+                    Some(kind) if is_nucleic_acid(kind) => ComponentLinking::Nucleotide,
+                    Some(_) => ComponentLinking::None,
+                    None => {
+                        let left_linking = self.catalog.linking(&left.key.component_id);
+                        if left_linking == self.catalog.linking(&right.key.component_id) {
+                            left_linking
+                        } else {
+                            ComponentLinking::None
+                        }
+                    }
+                };
+                let pair = match linking {
+                    ComponentLinking::Peptide => left.atoms.get("C").zip(right.atoms.get("N")),
+                    ComponentLinking::Nucleotide => left
+                        .atoms
+                        .get("O3'")
+                        .or_else(|| left.atoms.get("O3*"))
+                        .zip(right.atoms.get("P")),
+                    _ => None,
+                };
+                let Some((&left_atom, &right_atom)) = pair else {
+                    continue;
+                };
+                let (left_site, right_site) = (
+                    left.site(left_atom)
+                        .expect("linking atom is a residue site"),
+                    right
+                        .site(right_atom)
+                        .expect("linking atom is a residue site"),
+                );
+                if within_bonding_distance(
+                    (left_site.element, left_site.point),
+                    (right_site.element, right_site.point),
+                ) {
+                    self.add_bond(
+                        left_atom,
+                        right_atom,
+                        SourceBondOrder::Localized(BondOrder::Single),
+                        raw::MmcifBondEvidence::PolymerLink,
+                    )?;
+                } else {
+                    self.issues.push(raw::MmcifInterpretIssue::ChainBreak {
+                        residue: left.key.id(self.model_id),
+                        next: right.key.id(self.model_id),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Bonds each hydrogen its template does not name to the nearest heavy
+    /// atom of its residue within bonding distance.
+    fn attach_stray_hydrogens(
+        &mut self,
+        residues: &BTreeMap<ResidueKey, ResidueAtoms>,
+        stray_hydrogens: Vec<(ResidueKey, AtomId)>,
+    ) -> Result<(), raw::MmcifInterpretError> {
+        for (key, hydrogen) in stray_hydrogens {
+            let residue = &residues[&key];
+            let site = residue
+                .site(hydrogen)
+                .expect("stray hydrogen is a residue site");
+            if self
+                .graph
+                .incident_bonds(hydrogen)
+                .map_err(interpret_error)?
+                .next()
+                .is_some()
+            {
+                continue;
+            }
+            let distance = |other: &ResidueSite| {
+                (other.point.x - site.point.x).powi(2)
+                    + (other.point.y - site.point.y).powi(2)
+                    + (other.point.z - site.point.z).powi(2)
+            };
+            let nearest = residue
+                .sites
+                .iter()
+                .filter(|other| !is_hydrogen(other.element))
+                .filter(|other| {
+                    within_bonding_distance(
+                        (site.element, site.point),
+                        (other.element, other.point),
+                    )
+                })
+                .min_by(|a, b| distance(a).total_cmp(&distance(b)));
+            let Some(heavy) = nearest else {
+                continue;
+            };
+            self.add_bond(
+                hydrogen,
+                heavy.atom,
+                SourceBondOrder::Localized(BondOrder::Single),
+                raw::MmcifBondEvidence::HydrogenDistance,
+            )?;
+            self.issues
+                .push(raw::MmcifInterpretIssue::HydrogenAttachedByDistance {
+                    residue: key.id(self.model_id),
+                    atom_name: site.name.clone(),
+                    heavy_atom_name: heavy.name.clone(),
+                });
+        }
+        Ok(())
+    }
+
+    /// Sets formal charges of a templated residue. Stated charges win. Without
+    /// model hydrogens, the template's charges apply. With them, the template
+    /// or protonation variant matching the hydrogens on every heteroatom is
+    /// preferred; otherwise one whose differences lie on heteroatoms with only
+    /// single bonds, each added or removed hydrogen changing the charge by one.
+    /// Hydrogens absent from carbon are left to valence.
+    fn assign_template_charges(
+        &mut self,
+        templated: &TemplatedResidue<'_>,
+        residue: &ResidueAtoms,
+    ) -> Result<(), raw::MmcifInterpretError> {
+        let named = templated
+            .matched
+            .iter()
+            .map(|(&index, &atom)| (templated.component.atoms()[index].name(), atom))
+            .collect::<Vec<_>>();
+        let has_hydrogens = residue.sites.iter().any(|site| is_hydrogen(site.element));
+        let candidates =
+            std::iter::once(templated.component).chain(templated.variants.iter().copied());
+        let mut evaluated = Vec::new();
+        for candidate in candidates {
+            if let Some(charges) =
+                self.candidate_charges(candidate, &named, residue, has_hydrogens)?
+            {
+                evaluated.push((candidate, charges));
+            }
+        }
+        let chosen = evaluated
+            .iter()
+            .find(|(_, charges)| charges.iter().all(|charge| charge.delta == 0))
+            .or_else(|| evaluated.first())
+            .ok_or_else(|| {
+                raw::MmcifInterpretError::new(
+                    DiagnosticKind::Inconsistent,
+                    residue.sites.first().map(|site| site.line),
+                    format!(
+                        "hydrogens of a `{}` residue match neither its template nor a protonation variant",
+                        templated.component.id()
+                    ),
+                )
+            })?;
+        let (candidate, charges) = chosen;
+        let mut charged_atoms = Vec::new();
+        for charge in charges {
+            let site = residue
+                .site(charge.atom)
+                .expect("charged atom is a residue site");
+            let value = site.stated_charge.unwrap_or(charge.value);
+            self.graph
+                .atom_mut(charge.atom)
+                .map_err(interpret_error)?
+                .formal_charge = value;
+            if charge.delta != 0 {
+                charged_atoms.push((site.name.clone(), value));
+            }
+        }
+        if candidate.variant().is_some() {
+            self.apply_variant_bonds(candidate, &named)?;
+        }
+        if candidate.variant().is_some() || !charged_atoms.is_empty() {
+            self.issues
+                .push(raw::MmcifInterpretIssue::ProtonationFromHydrogens {
+                    residue: templated.key.id(self.model_id),
+                    component_id: templated.component.id().to_owned(),
+                    variant: candidate.variant().map(str::to_owned),
+                    charged_atoms,
+                });
+        }
+        Ok(())
+    }
+
+    /// The charges a candidate template gives the residue's atoms, or `None`
+    /// when the model's hydrogens contradict it.
+    fn candidate_charges(
+        &self,
+        candidate: &Component,
+        named: &[(&str, AtomId)],
+        residue: &ResidueAtoms,
+        has_hydrogens: bool,
+    ) -> Result<Option<Vec<TemplateCharge>>, raw::MmcifInterpretError> {
+        let mut charges = Vec::new();
+        for &(name, atom) in named {
+            let Some((index, template_atom)) = candidate.atom(name) else {
+                // Variants only remove hydrogens; a model hydrogen the
+                // variant lacks shows up on its heavy atom below.
+                if is_hydrogen(residue.site(atom).expect("matched site").element) {
+                    continue;
+                }
+                return Ok(None);
+            };
+            let base = template_atom.formal_charge().unwrap_or(0);
+            let element = template_atom.element();
+            let mut delta = 0i8;
+            if has_hydrogens && !is_hydrogen(element) && !is_carbon(element) {
+                let expected =
+                    expected_hydrogens(candidate, index, self.links_outside(atom, residue)?);
+                let present = self
+                    .graph
+                    .neighbors(atom)
+                    .map_err(interpret_error)?
+                    .filter(|&neighbor| {
+                        self.graph
+                            .atom(neighbor)
+                            .is_ok_and(|neighbor| is_hydrogen(neighbor.element))
+                    })
+                    .count();
+                if present != expected {
+                    let only_single = candidate
+                        .bonds()
+                        .iter()
+                        .filter(|bond| bond.atoms().contains(&index))
+                        .all(|bond| {
+                            bond.order() == TemplateOrder::Single
+                                && !bond.aromatic()
+                                && !bond.metal_coordination()
+                        });
+                    if !only_single {
+                        return Ok(None);
+                    }
+                    delta = i8::try_from(present as isize - expected as isize).map_err(|_| {
+                        interpret_error("hydrogen count difference exceeds charge range")
+                    })?;
+                }
+            }
+            charges.push(TemplateCharge {
+                atom,
+                value: base.saturating_add(delta),
+                delta,
+            });
+        }
+        Ok(Some(charges))
+    }
+
+    /// Whether a residue atom is bonded to an atom of another residue.
+    fn links_outside(
+        &self,
+        atom: AtomId,
+        residue: &ResidueAtoms,
+    ) -> Result<bool, raw::MmcifInterpretError> {
+        Ok(self
+            .graph
+            .neighbors(atom)
+            .map_err(interpret_error)?
+            .any(|neighbor| residue.site(neighbor).is_none()))
+    }
+
+    /// Replaces template bond orders with a variant's.
+    fn apply_variant_bonds(
+        &mut self,
+        variant: &Component,
+        named: &[(&str, AtomId)],
+    ) -> Result<(), raw::MmcifInterpretError> {
+        let atom_of = |index: usize| {
+            let name = variant.atoms()[index].name();
+            named
+                .iter()
+                .find(|(candidate, _)| *candidate == name)
+                .map(|&(_, atom)| atom)
+        };
+        for bond in variant.bonds() {
+            let [a, b] = bond.atoms();
+            let (Some(left), Some(right)) = (atom_of(a), atom_of(b)) else {
+                continue;
+            };
+            let Some(existing) = self
+                .graph
+                .bond_between(left, right)
+                .map_err(interpret_error)?
+            else {
+                continue;
+            };
+            self.graph
+                .bond_mut(existing)
+                .map_err(interpret_error)?
+                .set_order(SourceBondOrder::of_template(bond).staged_order());
+            self.evidence.insert(
+                (left.min(right), left.max(right)),
+                raw::MmcifBondEvidence::Template {
+                    component_id: variant.id().to_owned(),
+                    variant: variant.variant().map(str::to_owned),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn report_fragmented_residues(&mut self, residues: &BTreeMap<ResidueKey, ResidueAtoms>) {
+        let components = self.graph.connected_components();
+        let mut component_of = BTreeMap::new();
+        for (index, component) in components.iter().enumerate() {
+            for atom in component {
+                component_of.insert(*atom, index);
+            }
+        }
+        for residue in residues.values() {
+            let fragments = residue
+                .sites
+                .iter()
+                .filter_map(|site| component_of.get(&site.atom))
+                .collect::<BTreeSet<_>>()
+                .len();
+            if fragments > 1 {
+                self.issues
+                    .push(raw::MmcifInterpretIssue::ResidueFragmented {
+                        residue: residue.key.id(self.model_id),
+                        fragments,
+                    });
+            }
+        }
+    }
+}
+
+/// Template atom indices matched to staged atoms, and unnamed hydrogens.
+type TemplateMatch = (BTreeMap<usize, AtomId>, Vec<AtomId>);
+
+/// Matches residue atoms to template atoms by name and element, returning the
+/// match and the hydrogens the template does not name. A strict match fails on
+/// any other unknown or mismatched atom; a lenient one returns `None`.
+fn match_template(
+    residue: &ResidueAtoms,
+    component: &Component,
+    strict: bool,
+) -> Result<Option<TemplateMatch>, raw::MmcifInterpretError> {
+    let mut matched = BTreeMap::new();
+    let mut strays = Vec::new();
+    for site in &residue.sites {
+        let failure = |message: String| {
+            if strict {
+                Err(raw::MmcifInterpretError::new(
+                    DiagnosticKind::Inconsistent,
+                    Some(site.line),
+                    message,
+                ))
+            } else {
+                Ok(None)
+            }
+        };
+        match component.atom(&site.name) {
+            Some((index, template_atom)) => {
+                if template_atom.element() != site.element {
+                    return failure(format!(
+                        "atom `{}` of component `{}` is {} in the model but {} in its template",
+                        site.name,
+                        component.id(),
+                        site.element.symbol(),
+                        template_atom.element().symbol()
+                    ));
+                }
+                if matched.insert(index, site.atom).is_some() {
+                    return failure(format!(
+                        "two atoms of one `{}` residue match template atom `{}`",
+                        component.id(),
+                        template_atom.name()
+                    ));
+                }
+            }
+            None if is_hydrogen(site.element) => strays.push(site.atom),
+            None => {
+                return failure(format!(
+                    "atom `{}` is not in component `{}`",
+                    site.name,
+                    component.id()
+                ))
+            }
+        }
+    }
+    Ok(Some((matched, strays)))
+}
+
+/// A formal charge from a template, after hydrogen differences.
+struct TemplateCharge {
+    atom: AtomId,
+    value: i8,
+    delta: i8,
+}
+
+/// The hydrogens a template atom carries, less leaving hydrogens when the
+/// atom links to another residue.
+fn expected_hydrogens(component: &Component, index: usize, linked: bool) -> usize {
+    component
+        .bonds()
+        .iter()
+        .filter_map(|bond| {
+            let [a, b] = bond.atoms();
+            match (a == index, b == index) {
+                (true, _) => Some(b),
+                (_, true) => Some(a),
+                _ => None,
+            }
+        })
+        .filter(|&other| {
+            let atom = &component.atoms()[other];
+            is_hydrogen(atom.element()) && !(linked && atom.leaving())
+        })
+        .count()
 }
 
 fn resolve_branch_residue<'a>(
@@ -300,83 +1069,11 @@ fn resolve_branch_residue<'a>(
         })
 }
 
-fn apply_polymer_links(
-    graph: &mut Molecule,
-    residues: &BTreeMap<ResidueKey, ResidueAtoms>,
-    catalog: &ConnectivityCatalog,
-    source_aromatic_bonds: &mut BTreeSet<crate::core::BondId>,
-) -> Result<(), raw::MmcifInterpretError> {
-    let mut chains = BTreeMap::<(String, String), Vec<&ResidueAtoms>>::new();
-    for residue in residues.values() {
-        let (Some(entity), Some(_)) = (
-            residue.key.entity_id.as_ref(),
-            residue.key.label_sequence_id,
-        ) else {
-            continue;
-        };
-        chains
-            .entry((residue.key.asym_id.clone(), entity.clone()))
-            .or_default()
-            .push(residue);
-    }
-    for ((_, entity), chain) in &mut chains {
-        chain.sort_by_key(|residue| residue.key.label_sequence_id);
-        let Some(polymer_type) = catalog.polymer_types.get(entity) else {
-            continue;
-        };
-        // The flag states that at least one monomer-to-monomer linkage differs
-        // from the linkage implied by the polymer type, but does not identify
-        // that pair. Remain conservative rather than inventing a standard bond.
-        if catalog.nonstandard_polymer_linkage.contains(entity) {
-            continue;
-        }
-        for pair in chain.windows(2) {
-            let left = pair[0];
-            let right = pair[1];
-            let (Some(left_seq), Some(right_seq)) =
-                (left.key.label_sequence_id, right.key.label_sequence_id)
-            else {
-                continue;
-            };
-            // label_seq_id includes unmodelled residues, so only adjacent values
-            // prove that the two observed residues are consecutive in sequence.
-            if right_seq != left_seq.saturating_add(1) {
-                continue;
-            }
-            if is_polypeptide(polymer_type) {
-                if let (Some(&carbonyl), Some(&nitrogen)) =
-                    (left.atoms.get("C"), right.atoms.get("N"))
-                {
-                    add_bond_if_missing(
-                        graph,
-                        carbonyl,
-                        nitrogen,
-                        ComponentBondOrder::Localized(BondOrder::Single),
-                        source_aromatic_bonds,
-                    )?;
-                }
-            } else if is_nucleic_acid(polymer_type) {
-                let oxygen = left.atoms.get("O3'").or_else(|| left.atoms.get("O3*"));
-                if let (Some(&oxygen), Some(&phosphorus)) = (oxygen, right.atoms.get("P")) {
-                    add_bond_if_missing(
-                        graph,
-                        oxygen,
-                        phosphorus,
-                        ComponentBondOrder::Localized(BondOrder::Single),
-                        source_aromatic_bonds,
-                    )?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 fn add_bond_if_missing(
     graph: &mut Molecule,
     left: AtomId,
     right: AtomId,
-    source_order: ComponentBondOrder,
+    source_order: SourceBondOrder,
     source_aromatic_bonds: &mut BTreeSet<crate::core::BondId>,
 ) -> Result<(), raw::MmcifInterpretError> {
     let existing = graph.bond_between(left, right).map_err(interpret_error)?;
@@ -384,28 +1081,48 @@ fn add_bond_if_missing(
         let bond = graph
             .add_bond(left, right, source_order.staged_order())
             .map_err(interpret_error)?;
-        if source_order == ComponentBondOrder::Aromatic {
+        if source_order == SourceBondOrder::Aromatic {
             source_aromatic_bonds.insert(bond);
         }
         return Ok(());
     };
     let existing_order = graph.bond(existing).map_err(interpret_error)?.order;
     let consistent = match source_order {
-        ComponentBondOrder::Aromatic => source_aromatic_bonds.contains(&existing),
-        ComponentBondOrder::Localized(order) => {
+        SourceBondOrder::Aromatic => source_aromatic_bonds.contains(&existing),
+        SourceBondOrder::Localized(order) => {
             !source_aromatic_bonds.contains(&existing) && existing_order == order
         }
     };
     if !consistent {
         let source_order = match source_order {
-            ComponentBondOrder::Localized(order) => format!("{order:?}"),
-            ComponentBondOrder::Aromatic => "Aromatic".to_owned(),
+            SourceBondOrder::Localized(order) => format!("{order:?}"),
+            SourceBondOrder::Aromatic => "Aromatic".to_owned(),
         };
         return Err(interpret_error(format!(
             "conflicting authoritative mmCIF bond evidence for one atom pair: {existing_order:?} versus {source_order}"
         )));
     }
     Ok(())
+}
+
+fn component_bond_order(
+    value: &str,
+    table: &MmcifCategory<'_>,
+    row: usize,
+) -> Result<SourceBondOrder, raw::MmcifInterpretError> {
+    match value.to_ascii_lowercase().as_str() {
+        "sing" | "poly" => Ok(SourceBondOrder::Localized(BondOrder::Single)),
+        "doub" | "pi" => Ok(SourceBondOrder::Localized(BondOrder::Double)),
+        "trip" => Ok(SourceBondOrder::Localized(BondOrder::Triple)),
+        "quad" => Ok(SourceBondOrder::Localized(BondOrder::Quadruple)),
+        "arom" | "delo" => Ok(SourceBondOrder::Aromatic),
+        other => Err(row_error(
+            table,
+            row,
+            DiagnosticKind::Unsupported,
+            format!("unsupported component bond order `{other}`"),
+        )),
+    }
 }
 
 fn is_yes(value: &str) -> bool {
@@ -419,26 +1136,6 @@ fn is_polypeptide(value: &str) -> bool {
 fn is_nucleic_acid(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
     value.contains("polyribonucleotide") || value.contains("polydeoxyribonucleotide")
-}
-
-fn component_bond_order(
-    value: &str,
-    table: &MmcifCategory<'_>,
-    row: usize,
-) -> Result<ComponentBondOrder, raw::MmcifInterpretError> {
-    match value.to_ascii_lowercase().as_str() {
-        "sing" | "poly" => Ok(ComponentBondOrder::Localized(BondOrder::Single)),
-        "doub" | "pi" => Ok(ComponentBondOrder::Localized(BondOrder::Double)),
-        "trip" => Ok(ComponentBondOrder::Localized(BondOrder::Triple)),
-        "quad" => Ok(ComponentBondOrder::Localized(BondOrder::Quadruple)),
-        "arom" | "delo" => Ok(ComponentBondOrder::Aromatic),
-        other => Err(row_error(
-            table,
-            row,
-            DiagnosticKind::Unsupported,
-            format!("unsupported component bond order `{other}`"),
-        )),
-    }
 }
 
 fn normalized(value: &str) -> String {
@@ -645,12 +1342,16 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             crate::tests::mmcif_syntax::singleton_loops_as_scalars(source),
         ] {
             let doc = crate::mmcif::parse_str(&input).unwrap();
-            let catalog = ConnectivityCatalog::from_block(&doc.blocks()[0]).unwrap();
+            let catalog = ConnectivityCatalog::from_block(
+                &doc.blocks()[0],
+                &raw::MmcifConnectivityOptions::default(),
+            )
+            .unwrap();
             let bond = &catalog.component_bonds["GLY"][0];
             assert_eq!((&*bond.atom_1, &*bond.atom_2), ("C", "O"));
             assert!(matches!(
                 bond.order,
-                ComponentBondOrder::Localized(BondOrder::Double)
+                SourceBondOrder::Localized(BondOrder::Double)
             ));
             assert_eq!(catalog.branch_sites.len(), 1);
             let site = &catalog.branch_sites[0];
@@ -745,5 +1446,541 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .bonds()
             .all(|(_, bond)| bond.order == BondOrder::Single));
         assert!(graph.is_connected());
+    }
+
+    use crate::components::ComponentLibrary;
+    use crate::mmcif::{
+        MmcifBondEvidence, MmcifConnectivityOptions, MmcifInterpretIssue, MmcifInterpretOptions,
+        MmcifInterpretation, MmcifResidueId, MmcifResiduePosition,
+    };
+
+    /// A minimal block whose `rows` are `type name component asym seq x y z`.
+    /// Coordinates of standard residues are the dictionary's ideal ones.
+    fn block(rows: &str, extra: &str) -> String {
+        records("HETATM", rows, extra)
+    }
+
+    /// Like [`block`]; `ATOM` records make the chain an inferred polymer.
+    fn records(group: &str, rows: &str, extra: &str) -> String {
+        let mut text = format!(
+            "data_test\n{extra}\nloop_\n_atom_site.group_PDB\n_atom_site.id\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.label_seq_id\n_atom_site.Cartn_x\n_atom_site.Cartn_y\n_atom_site.Cartn_z\n"
+        );
+        for (index, row) in rows
+            .lines()
+            .map(str::trim)
+            .filter(|row| !row.is_empty())
+            .enumerate()
+        {
+            text.push_str(&format!("{group} {} {row}\n", index + 1));
+        }
+        text
+    }
+
+    fn interpret(text: &str) -> MmcifInterpretation {
+        crate::mmcif::parse_str(text).unwrap().interpret().unwrap()
+    }
+
+    /// Report issues other than the entity kinds these minimal blocks omit.
+    fn issues(result: &MmcifInterpretation) -> Vec<MmcifInterpretIssue> {
+        result
+            .report()
+            .issues()
+            .iter()
+            .filter(|issue| !matches!(issue, MmcifInterpretIssue::EntityTypeInferred { .. }))
+            .cloned()
+            .collect()
+    }
+
+    fn line_of(text: &str, needle: &str) -> usize {
+        text.lines().position(|line| line.contains(needle)).unwrap() + 1
+    }
+
+    /// Bonds by atom names, order, and evidence.
+    fn bonds(result: &MmcifInterpretation) -> Vec<(String, String, BondOrder, MmcifBondEvidence)> {
+        let name = |atom| {
+            result
+                .report()
+                .instances()
+                .iter()
+                .flat_map(|instance| instance.atoms())
+                .find(|candidate| candidate.atom() == atom)
+                .unwrap()
+                .atom_name()
+                .to_owned()
+        };
+        result
+            .report()
+            .instances()
+            .iter()
+            .flat_map(|instance| instance.bonds())
+            .map(|bond| {
+                let [a, b] = bond.atoms();
+                let order = result
+                    .topology()
+                    .molecule(a.molecule())
+                    .unwrap()
+                    .molecule()
+                    .bond_between(a.atom(), b.atom())
+                    .unwrap()
+                    .map(|id| {
+                        result
+                            .topology()
+                            .molecule(a.molecule())
+                            .unwrap()
+                            .molecule()
+                            .bond(id)
+                            .unwrap()
+                            .order
+                    })
+                    .unwrap();
+                (name(a), name(b), order, bond.evidence().clone())
+            })
+            .collect()
+    }
+
+    fn order_between(result: &MmcifInterpretation, a: &str, b: &str) -> BondOrder {
+        bonds(result)
+            .into_iter()
+            .find(|(left, right, _, _)| (left == a && right == b) || (left == b && right == a))
+            .unwrap()
+            .2
+    }
+
+    /// Nonzero formal charges by atom name.
+    fn charges(result: &MmcifInterpretation) -> Vec<(String, i8)> {
+        result
+            .report()
+            .instances()
+            .iter()
+            .flat_map(|instance| instance.atoms())
+            .filter_map(|atom| {
+                let charge = result
+                    .topology()
+                    .molecule(atom.atom().molecule())
+                    .unwrap()
+                    .molecule()
+                    .atom(atom.atom().atom())
+                    .unwrap()
+                    .formal_charge;
+                (charge != 0).then(|| (atom.atom_name().to_owned(), charge))
+            })
+            .collect()
+    }
+
+    fn residue(asym: &str, sequence: i32) -> MmcifResidueId {
+        MmcifResidueId {
+            model_id: "1".to_owned(),
+            asym_id: asym.to_owned(),
+            position: MmcifResiduePosition::Label(sequence),
+            insertion_code: None,
+        }
+    }
+
+    fn template(component: &str, variant: Option<&str>) -> MmcifBondEvidence {
+        MmcifBondEvidence::Template {
+            component_id: component.to_owned(),
+            variant: variant.map(str::to_owned),
+        }
+    }
+
+    const ASPARTATE: &str = "
+        N N ASP A 1 -0.317 1.688 0.066
+        C CA ASP A 1 -0.470 0.286 -0.344
+        C C ASP A 1 -1.868 -0.180 -0.029
+        O O ASP A 1 -2.534 0.415 0.786
+        C CB ASP A 1 0.539 -0.580 0.413
+        C CG ASP A 1 1.938 -0.195 0.004
+        O OD1 ASP A 1 2.109 0.681 -0.810
+        O OD2 ASP A 1 2.992 -0.826 0.543
+        O OXT ASP A 1 -2.374 -1.256 -0.652
+        H H ASP A 1 -0.928 2.289 -0.467
+        H H2 ASP A 1 -0.478 1.795 1.056
+        H HA ASP A 1 -0.292 0.199 -1.416
+        H HB2 ASP A 1 0.419 -0.425 1.485
+        H HB3 ASP A 1 0.367 -1.630 0.176
+        H HD2 ASP A 1 3.869 -0.545 0.250
+        H HXT ASP A 1 -3.275 -1.517 -0.416";
+
+    const HISTIDINE: &str = "
+        N N HIS A 1 -0.040 -1.210 0.053
+        C CA HIS A 1 1.172 -1.709 0.652
+        C C HIS A 1 1.083 -3.207 0.905
+        O O HIS A 1 0.040 -3.770 1.222
+        C CB HIS A 1 1.484 -0.975 1.962
+        C CG HIS A 1 2.940 -1.060 2.353
+        N ND1 HIS A 1 3.380 -2.075 3.129
+        C CD2 HIS A 1 3.960 -0.251 2.046
+        C CE1 HIS A 1 4.693 -1.908 3.317
+        N NE2 HIS A 1 5.058 -0.801 2.662
+        O OXT HIS A 1 2.247 -3.882 0.744
+        H H HIS A 1 -0.102 -1.155 -0.950
+        H H2 HIS A 1 -0.715 -0.741 0.634
+        H HA HIS A 1 1.965 -1.558 -0.089
+        H HB2 HIS A 1 1.215 0.087 1.879
+        H HB3 HIS A 1 0.859 -1.368 2.775
+        H HD1 HIS A 1 2.828 -2.838 3.511
+        H HD2 HIS A 1 4.108 0.647 1.479
+        H HE1 HIS A 1 5.340 -2.550 3.892
+        H HE2 HIS A 1 6.002 -0.428 2.627
+        H HXT HIS A 1 2.188 -4.848 0.901";
+
+    fn without(rows: &str, atoms: &[&str]) -> String {
+        rows.lines()
+            .filter(|row| {
+                !atoms
+                    .iter()
+                    .any(|atom| row.split_whitespace().nth(1) == Some(atom))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn templates_supply_bonds_and_metal_coordination_is_dative() {
+        // The SF4 template flags every Fe-S bond as metal coordination;
+        // its sulfides carry -2 and its iron charges are unknown.
+        let cluster = interpret(&block(
+            "FE FE1 SF4 A 1 40.988 0.074 22.637
+             FE FE2 SF4 A 1 39.644 2.319 22.749
+             FE FE3 SF4 A 1 42.036 2.170 23.811
+             FE FE4 SF4 A 1 41.755 2.132 21.208
+             S S1 SF4 A 1 41.267 3.911 22.551
+             S S2 SF4 A 1 43.144 0.781 22.394
+             S S3 SF4 A 1 39.806 0.980 20.921
+             S S4 SF4 A 1 40.200 1.034 24.551",
+            "",
+        ));
+        assert_eq!(cluster.topology().instance_count(), 1);
+        let cluster_bonds = bonds(&cluster);
+        assert_eq!(cluster_bonds.len(), 12);
+        assert!(cluster_bonds
+            .iter()
+            .all(|(_, _, order, evidence)| *order == BondOrder::Dative
+                && *evidence == template("SF4", None)));
+        assert_eq!(
+            charges(&cluster),
+            [("S1", -2), ("S2", -2), ("S3", -2), ("S4", -2)]
+                .map(|(name, charge)| (name.to_owned(), charge))
+        );
+
+        // A metal-coordination link joins a zinc ion and a cysteine into one
+        // molecule; the ion's charge comes from its template.
+        let zinc = interpret(&block(
+            "N N CYS A 1 1.585 0.483 -0.081
+             C CA CYS A 1 0.141 0.450 0.186
+             C C CYS A 1 -0.095 0.006 1.606
+             O O CYS A 1 0.685 -0.742 2.143
+             C CB CYS A 1 -0.533 -0.530 -0.774
+             S SG CYS A 1 -0.247 0.004 -2.484
+             ZN ZN ZN B . -0.247 0.004 -4.784",
+            "loop_\n_struct_conn.id\n_struct_conn.conn_type_id\n_struct_conn.ptnr1_label_asym_id\n_struct_conn.ptnr1_label_atom_id\n_struct_conn.ptnr1_label_seq_id\n_struct_conn.ptnr2_label_asym_id\n_struct_conn.ptnr2_label_atom_id\n_struct_conn.ptnr2_label_seq_id\nmetalc1 metalc A SG 1 B ZN .\n",
+        ));
+        assert_eq!(zinc.topology().instance_count(), 1);
+        let cysteine = template("CYS", None);
+        let as_strings = |rows: &[(&str, &str, BondOrder, MmcifBondEvidence)]| {
+            rows.iter()
+                .map(|(a, b, order, evidence)| {
+                    ((*a).to_owned(), (*b).to_owned(), *order, evidence.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            bonds(&zinc),
+            as_strings(&[
+                (
+                    "SG",
+                    "ZN",
+                    BondOrder::Dative,
+                    MmcifBondEvidence::Connection {
+                        connection_id: Some("metalc1".to_owned()),
+                        connection_type: "metalc".to_owned(),
+                    },
+                ),
+                ("N", "CA", BondOrder::Single, cysteine.clone()),
+                ("CA", "C", BondOrder::Single, cysteine.clone()),
+                ("CA", "CB", BondOrder::Single, cysteine.clone()),
+                ("C", "O", BondOrder::Double, cysteine.clone()),
+                ("CB", "SG", BondOrder::Single, cysteine),
+            ])
+        );
+        assert_eq!(charges(&zinc), [("ZN".to_owned(), 2)]);
+    }
+
+    #[test]
+    fn model_hydrogens_set_heteroatom_charges_and_select_tautomers() {
+        // Without model hydrogens the template's charges apply: the
+        // dictionary's histidine is the ND1-protonated imidazolium.
+        let heavy = interpret(&block(
+            &without(
+                HISTIDINE,
+                &[
+                    "H", "H2", "HA", "HB2", "HB3", "HD1", "HD2", "HE1", "HE2", "HXT",
+                ],
+            ),
+            "",
+        ));
+        assert_eq!(charges(&heavy), [("ND1".to_owned(), 1)]);
+        assert!(issues(&heavy).is_empty());
+
+        // An extra amine hydrogen named outside the template attaches by
+        // distance; with OXT unprotonated the aspartate is a zwitterion.
+        let zwitterion = interpret(&block(
+            &format!(
+                "{}\nH H3 ASP A 1 0.633 1.938 -0.134",
+                without(ASPARTATE, &["HXT"])
+            ),
+            "",
+        ));
+        assert_eq!(
+            charges(&zwitterion),
+            [("N".to_owned(), 1), ("OXT".to_owned(), -1)]
+        );
+        assert_eq!(
+            issues(&zwitterion),
+            [
+                MmcifInterpretIssue::HydrogenAttachedByDistance {
+                    residue: residue("A", 1),
+                    atom_name: "H3".to_owned(),
+                    heavy_atom_name: "N".to_owned(),
+                },
+                MmcifInterpretIssue::ProtonationFromHydrogens {
+                    residue: residue("A", 1),
+                    component_id: "ASP".to_owned(),
+                    variant: None,
+                    charged_atoms: vec![("N".to_owned(), 1), ("OXT".to_owned(), -1)],
+                },
+            ]
+        );
+
+        // A deprotonated side chain carries the charge on its acid oxygen.
+        let aspartate = interpret(&block(&without(ASPARTATE, &["HD2"]), ""));
+        assert_eq!(charges(&aspartate), [("OD2".to_owned(), -1)]);
+
+        // Missing ring hydrogens select a neutral tautomer, whose ring bonds
+        // follow the hydrogen.
+        for (removed, variant, nd1_ce1, ce1_ne2) in [
+            (
+                "HD1",
+                "NE2-protonated",
+                BondOrder::Double,
+                BondOrder::Single,
+            ),
+            (
+                "HE2",
+                "ND1-protonated",
+                BondOrder::Single,
+                BondOrder::Double,
+            ),
+        ] {
+            let tautomer = interpret(&block(&without(HISTIDINE, &[removed]), ""));
+            assert_eq!(charges(&tautomer), [], "{variant}");
+            assert_eq!(
+                issues(&tautomer),
+                [MmcifInterpretIssue::ProtonationFromHydrogens {
+                    residue: residue("A", 1),
+                    component_id: "HIS".to_owned(),
+                    variant: Some(variant.to_owned()),
+                    charged_atoms: Vec::new(),
+                }]
+            );
+            assert_eq!(order_between(&tautomer, "ND1", "CE1"), nd1_ce1, "{variant}");
+            assert_eq!(order_between(&tautomer, "CE1", "NE2"), ce1_ne2, "{variant}");
+        }
+    }
+
+    const UNKNOWN_LIGAND: &str = "
+        C C1 XYZ A 1 0.0 0.0 0.0
+        C C2 XYZ A 1 1.5 0.0 0.0
+        O O1 XYZ A 1 2.0 1.2 0.0";
+
+    #[test]
+    fn residues_without_templates_infer_bonds_unless_disabled() {
+        let text = block(UNKNOWN_LIGAND, "");
+        let inferred = interpret(&text);
+        assert_eq!(
+            bonds(&inferred),
+            [
+                ("C1", "C2", BondOrder::Single, MmcifBondEvidence::Distance),
+                ("C2", "O1", BondOrder::Single, MmcifBondEvidence::Distance),
+            ]
+            .map(|(a, b, order, evidence)| (
+                a.to_owned(),
+                b.to_owned(),
+                order,
+                evidence
+            ))
+        );
+        assert_eq!(
+            issues(&inferred),
+            [MmcifInterpretIssue::ResidueBondsInferred {
+                residue: residue("A", 1),
+                component_id: "XYZ".to_owned(),
+                bonds: 2,
+            }]
+        );
+
+        let strict = MmcifInterpretOptions {
+            connectivity: MmcifConnectivityOptions {
+                infer_bonds_from_distance: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error = crate::mmcif::parse_str(&text)
+            .unwrap()
+            .interpret_with_options(strict.clone())
+            .unwrap_err();
+        assert_eq!(error.kind(), DiagnosticKind::Unsupported);
+        assert_eq!(
+            error.location().map(|location| location.line()),
+            Some(line_of(&text, " C1 XYZ"))
+        );
+
+        // A caller template takes precedence and supplies the bond order.
+        let library = ComponentLibrary::from_mmcif(
+            &crate::mmcif::parse_str(
+                "data_XYZ\n_chem_comp.id XYZ\n_chem_comp.type NON-POLYMER\nloop_\n_chem_comp_atom.comp_id\n_chem_comp_atom.atom_id\n_chem_comp_atom.type_symbol\n_chem_comp_atom.charge\nXYZ C1 C 0\nXYZ C2 C 0\nXYZ O1 O 0\nloop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\nXYZ C1 C2 SING\nXYZ C2 O1 DOUB\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let with_library = MmcifInterpretOptions {
+            connectivity: MmcifConnectivityOptions {
+                components: Some(std::sync::Arc::new(library)),
+                ..strict.connectivity
+            },
+            ..strict
+        };
+        let templated = crate::mmcif::parse_str(&text)
+            .unwrap()
+            .interpret_with_options(with_library)
+            .unwrap();
+        assert_eq!(
+            bonds(&templated),
+            [
+                ("C1", "C2", BondOrder::Single, template("XYZ", None)),
+                ("C2", "O1", BondOrder::Double, template("XYZ", None)),
+            ]
+            .map(|(a, b, order, evidence)| (
+                a.to_owned(),
+                b.to_owned(),
+                order,
+                evidence
+            ))
+        );
+        assert!(issues(&templated).is_empty());
+    }
+
+    const DIGLYCINE: &str = "
+        N N GLY A 1 0.0 0.0 0.0
+        C CA GLY A 1 1.45 0.0 0.0
+        C C GLY A 1 2.0 1.4 0.0
+        O O GLY A 1 1.3 2.4 0.0
+        N N GLY A 2 3.33 1.4 0.0
+        C CA GLY A 2 4.0 2.6 0.0
+        C C GLY A 2 5.5 2.6 0.0
+        O O GLY A 2 6.1 3.6 0.0";
+
+    #[test]
+    fn polymer_links_require_bonding_distance() {
+        // Without _entity_poly, both residues' templates identify a peptide.
+        let linked = interpret(&records("ATOM", DIGLYCINE, ""));
+        assert_eq!(linked.topology().instance_count(), 1);
+        assert_eq!(
+            bonds(&linked)
+                .iter()
+                .filter(|(_, _, _, evidence)| *evidence == MmcifBondEvidence::PolymerLink)
+                .map(|(a, b, _, _)| (a.clone(), b.clone()))
+                .collect::<Vec<_>>(),
+            [("C".to_owned(), "N".to_owned())]
+        );
+        assert!(issues(&linked).is_empty());
+
+        // Residue 2 moved 3 A away: adjacent in sequence, but not bonded.
+        let shifted = DIGLYCINE
+            .lines()
+            .map(|row| {
+                let fields = row.split_whitespace().collect::<Vec<_>>();
+                if fields.get(4) == Some(&"2") {
+                    let x = fields[5].parse::<f64>().unwrap() + 3.0;
+                    format!(
+                        "{} {} {} {} {} {x} {} {}",
+                        fields[0], fields[1], fields[2], fields[3], fields[4], fields[6], fields[7]
+                    )
+                } else {
+                    row.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let broken = interpret(&records("ATOM", &shifted, ""));
+        assert_eq!(broken.topology().instance_count(), 2);
+        assert_eq!(broken.topology().bond_count(), 6);
+        assert_eq!(
+            issues(&broken),
+            [MmcifInterpretIssue::ChainBreak {
+                residue: residue("A", 1),
+                next: residue("A", 2),
+            }]
+        );
+    }
+
+    #[test]
+    fn template_mismatches_fail_and_split_residues_are_reported() {
+        let unknown_atom = block(
+            "N N GLY A 1 0.0 0.0 0.0
+             C CA GLY A 1 1.45 0.0 0.0
+             C CX GLY A 1 2.0 1.4 0.0",
+            "",
+        );
+        let error = crate::mmcif::parse_str(&unknown_atom)
+            .unwrap()
+            .interpret()
+            .unwrap_err();
+        assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+        assert_eq!(
+            error.location().map(|location| location.line()),
+            Some(line_of(&unknown_atom, " CX GLY"))
+        );
+        assert_eq!(error.message(), "atom `CX` is not in component `GLY`");
+
+        // Without its CA, a glycine's amine is cut off from its carbonyl.
+        let split = interpret(&block(
+            "N N GLY A 1 0.0 0.0 0.0
+             C C GLY A 1 2.0 1.4 0.0
+             O O GLY A 1 1.3 2.4 0.0",
+            "",
+        ));
+        assert_eq!(split.topology().instance_count(), 2);
+        assert_eq!(
+            issues(&split),
+            [MmcifInterpretIssue::ResidueFragmented {
+                residue: residue("A", 1),
+                fragments: 2,
+            }]
+        );
+    }
+
+    #[test]
+    fn stated_internal_bonds_take_precedence_over_templates() {
+        // Files that enumerate a residue's bonds, as Kekule's writer does,
+        // are taken as stated; the template does not add the others.
+        let text = block(
+            &DIGLYCINE.lines().take(5).collect::<Vec<_>>().join("\n"),
+            "loop_\n_struct_conn.id\n_struct_conn.conn_type_id\n_struct_conn.ptnr1_label_asym_id\n_struct_conn.ptnr1_label_atom_id\n_struct_conn.ptnr1_label_seq_id\n_struct_conn.ptnr2_label_asym_id\n_struct_conn.ptnr2_label_atom_id\n_struct_conn.ptnr2_label_seq_id\nc1 covale A N 1 A CA 1\n",
+        );
+        let stated = interpret(&text);
+        assert_eq!(
+            bonds(&stated),
+            [(
+                "N".to_owned(),
+                "CA".to_owned(),
+                BondOrder::Single,
+                MmcifBondEvidence::Connection {
+                    connection_id: Some("c1".to_owned()),
+                    connection_type: "covale".to_owned(),
+                },
+            )]
+        );
     }
 }

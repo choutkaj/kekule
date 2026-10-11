@@ -3,20 +3,21 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::chemistry::canonicalize_molecule_for_publication;
-use crate::core::{Atom, AtomId, Molecule, MoleculeEditor};
+use crate::core::{Atom, AtomId, Element, Molecule, MoleculeEditor};
 use crate::geometry::Point3;
 use crate::structure::Positions;
 use crate::topology::{AtomSiteMetadata, Hierarchy};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::{Quantity, ANGSTROM};
 
+use super::super::mmcif_connectivity::{record_evidence, BondEvidence};
 use super::super::staged_coordinates::StagedCoordinates;
 use super::super::MmcifBlock;
 use super::atom_site::{required, AtomRow};
 use super::struct_conn::{DeclaredConnection, InstanceUnion};
 use super::types::{
-    MmcifAtomProvenance, MmcifEntityKind, MmcifInstanceProvenance, MmcifInterpretError,
-    MmcifInterpretIssue, MmcifInterpretationReport,
+    MmcifAtomProvenance, MmcifBondEvidence, MmcifBondProvenance, MmcifEntityKind,
+    MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretationReport,
 };
 
 #[derive(Debug)]
@@ -86,6 +87,7 @@ pub(super) struct BuiltMolecule {
     pub(super) editor: MoleculeEditor,
     pub(super) coordinates: StagedCoordinates,
     pub(super) provenance: BuiltMoleculeProvenance,
+    evidence: BondEvidence,
 }
 
 pub(super) struct PublishedMolecule {
@@ -101,11 +103,15 @@ pub(super) struct BuiltMoleculeProvenance {
     entity_ids: Vec<String>,
     entity_kinds: Vec<MmcifEntityKind>,
     atoms: Vec<BuiltAtomProvenance>,
+    bonds: Vec<([AtomId; 2], MmcifBondEvidence)>,
 }
 
 #[derive(Clone)]
 struct BuiltAtomProvenance {
     atom: AtomId,
+    element: Element,
+    point: Point3,
+    stated_charge: Option<i8>,
     type_symbol: String,
     source_line: usize,
     source_order: usize,
@@ -145,6 +151,17 @@ impl BuiltMoleculeProvenance {
             asym_ids: self.asym_ids,
             entity_ids: self.entity_ids,
             entity_kinds: self.entity_kinds,
+            bonds: self
+                .bonds
+                .into_iter()
+                .map(|([a, b], evidence)| MmcifBondProvenance {
+                    atoms: [
+                        InstanceAtomId::new(molecule, a),
+                        InstanceAtomId::new(molecule, b),
+                    ],
+                    evidence,
+                })
+                .collect(),
             atoms: self
                 .atoms
                 .into_iter()
@@ -186,9 +203,13 @@ impl BuiltMolecule {
     pub(super) fn complete_connectivity(
         &mut self,
         catalog: &super::super::mmcif_connectivity::ConnectivityCatalog,
+        report: &mut MmcifInterpretationReport,
     ) -> Result<(), MmcifInterpretError> {
         let Self {
-            editor, provenance, ..
+            editor,
+            provenance,
+            evidence,
+            ..
         } = self;
         let atoms = provenance.atoms.iter().map(|atom| {
             super::super::mmcif_connectivity::StagedAtomProvenance {
@@ -201,9 +222,37 @@ impl BuiltMolecule {
                 author_sequence_id: atom.author_sequence_id.as_deref(),
                 insertion_code: atom.insertion_code.as_deref(),
                 occurrence: atom.occurrence,
+                element: atom.element,
+                point: atom.point,
+                line: atom.source_line,
+                stated_charge: atom.stated_charge,
             }
         });
-        super::super::mmcif_connectivity::complete_editor_connectivity(catalog, editor, atoms)
+        super::super::mmcif_connectivity::complete_editor_connectivity(
+            catalog,
+            editor,
+            atoms,
+            &provenance.coordinate_model_id,
+            evidence,
+            &mut report.issues,
+        )?;
+        // Close contacts that no evidence bonds, counted once every bond is known.
+        let sites = provenance
+            .atoms
+            .iter()
+            .map(|atom| (atom.atom, atom.element, atom.point, atom.source_line))
+            .collect::<Vec<_>>();
+        let candidates = count_bond_candidates(editor.working(), &sites)?;
+        if candidates > 0 {
+            report.connectivity_candidates += candidates;
+            report
+                .issues
+                .push(MmcifInterpretIssue::ConnectivityCandidatesInferred {
+                    atom_count: editor.working().atom_count(),
+                    candidate_count: candidates,
+                });
+        }
+        Ok(())
     }
 
     pub(super) fn publish_components(self) -> Result<Vec<PublishedMolecule>, MmcifInterpretError> {
@@ -226,15 +275,21 @@ impl BuiltMolecule {
                 let target_atom = editor.add_atom(atom).map_err(graph_error)?;
                 atom_map.insert(source_atom, target_atom);
             }
+            let mut bonds = Vec::new();
             for (_, source_bond) in self.editor.working().bonds() {
                 let (left, right) = source_bond.endpoints();
                 if !selected.contains(&left) || !selected.contains(&right) {
                     continue;
                 }
-                let target = editor
+                editor
                     .add_bond(atom_map[&left], atom_map[&right], source_bond.order)
                     .map_err(graph_error)?;
-                let _ = target;
+                let evidence = self
+                    .evidence
+                    .get(&(left.min(right), left.max(right)))
+                    .cloned()
+                    .ok_or_else(|| graph_error("an mmCIF bond has no recorded evidence"))?;
+                bonds.push(([atom_map[&left], atom_map[&right]], evidence));
             }
             let bond_sources = self
                 .editor
@@ -283,6 +338,7 @@ impl BuiltMolecule {
             for atom in &mut provenance.atoms {
                 atom.atom = atom_map[&atom.atom];
             }
+            provenance.bonds = bonds;
             published.push(PublishedMolecule {
                 molecule,
                 positions,
@@ -296,7 +352,6 @@ impl BuiltMolecule {
 pub(super) fn build_molecule(
     group: MoleculeGroup,
     connections: &[DeclaredConnection],
-    report: &mut MmcifInterpretationReport,
 ) -> Result<BuiltMolecule, MmcifInterpretError> {
     let mut editor = crate::core::MoleculeEditor::new();
     let mut atoms = BTreeMap::new();
@@ -327,7 +382,7 @@ pub(super) fn build_molecule(
     }
     for (key, row) in &representative {
         let mut atom = Atom::new(row.element);
-        atom.formal_charge = row.formal_charge;
+        atom.formal_charge = row.formal_charge.unwrap_or_default();
         atoms.insert(key.clone(), editor.add_atom(atom).map_err(graph_error)?);
     }
     let model_id = group
@@ -354,6 +409,7 @@ pub(super) fn build_molecule(
             .set_position(atoms[&row.atom_key()], Quantity::new(point, ANGSTROM))
             .map_err(graph_error)?;
     }
+    let mut evidence = BondEvidence::new();
     for connection in connections {
         let Some(&left) = atoms.get(&connection.left_atom) else {
             continue;
@@ -361,6 +417,15 @@ pub(super) fn build_molecule(
         let Some(&right) = atoms.get(&connection.right_atom) else {
             continue;
         };
+        record_evidence(
+            &mut evidence,
+            left,
+            right,
+            MmcifBondEvidence::Connection {
+                connection_id: connection.connection_id.clone(),
+                connection_type: connection.connection_type.clone(),
+            },
+        );
         if editor
             .working()
             .bond_between(left, right)
@@ -385,17 +450,6 @@ pub(super) fn build_molecule(
             }
         }
     }
-    let connectivity_candidates =
-        infer_covalent_bonds(editor.working_mut(), &representative, &atoms)?;
-    if connectivity_candidates > 0 {
-        report.connectivity_candidates += connectivity_candidates;
-        report
-            .issues
-            .push(MmcifInterpretIssue::ConnectivityCandidatesInferred {
-                atom_count: editor.working().atom_count(),
-                candidate_count: connectivity_candidates,
-            });
-    }
     let asym_ids = representative
         .iter()
         .map(|(_, row)| row)
@@ -415,6 +469,11 @@ pub(super) fn build_molecule(
         .iter()
         .map(|(key, row)| BuiltAtomProvenance {
             atom: atoms[key],
+            element: row.element,
+            point: row
+                .point
+                .expect("selected mmCIF atom rows have complete positions"),
+            stated_charge: row.formal_charge,
             type_symbol: row.element.symbol().to_owned(),
             source_line: row.line,
             source_order: row.site_order,
@@ -446,11 +505,13 @@ pub(super) fn build_molecule(
         entity_ids,
         entity_kinds,
         atoms: atom_provenance,
+        bonds: Vec::new(),
     };
     Ok(BuiltMolecule {
         editor,
         coordinates,
         provenance,
+        evidence,
     })
 }
 
@@ -459,45 +520,38 @@ const COVALENT_BOND_TOLERANCE_ANGSTROM: f64 = 0.45;
 const MIN_COVALENT_BOND_DISTANCE_SQUARED: f64 = 0.16;
 const FALLBACK_COVALENT_RADIUS_ANGSTROM: f64 = 0.77;
 
-fn infer_covalent_bonds(
+/// Counts atom pairs within covalent bonding distance that are not bonded.
+fn count_bond_candidates(
     graph: &Molecule,
-    representative: &[(String, AtomRow)],
-    atoms: &BTreeMap<String, AtomId>,
+    sites: &[(AtomId, Element, Point3, usize)],
 ) -> Result<usize, MmcifInterpretError> {
     let mut cells = BTreeMap::<[i64; 3], Vec<usize>>::new();
     let mut candidates = 0usize;
 
-    for (right_index, (right_key, right_row)) in representative.iter().enumerate() {
-        let right_point = right_row
-            .point
-            .expect("selected mmCIF atom rows have complete positions");
-        let right_cell = covalent_bond_cell(right_point, right_row.line)?;
+    for (right_index, &(right, right_element, right_point, right_line)) in sites.iter().enumerate()
+    {
+        let right_cell = covalent_bond_cell(right_point, right_line)?;
         for offset_x in -1_i64..=1 {
             for offset_y in -1_i64..=1 {
                 for offset_z in -1_i64..=1 {
                     let neighbor = covalent_bond_neighbor(
                         right_cell,
                         [offset_x, offset_y, offset_z],
-                        right_row.line,
+                        right_line,
                     )?;
                     let Some(left_indexes) = cells.get(&neighbor) else {
                         continue;
                     };
                     for &left_index in left_indexes {
-                        let (left_key, left_row) = &representative[left_index];
-                        let left_point = left_row
-                            .point
-                            .expect("selected mmCIF atom rows have complete positions");
+                        let (left, left_element, left_point, _) = sites[left_index];
                         let distance_squared = point_distance_squared(left_point, right_point);
                         if distance_squared <= MIN_COVALENT_BOND_DISTANCE_SQUARED {
                             continue;
                         }
-                        let left_radius = left_row
-                            .element
+                        let left_radius = left_element
                             .covalent_radius_angstrom()
                             .unwrap_or(FALLBACK_COVALENT_RADIUS_ANGSTROM);
-                        let right_radius = right_row
-                            .element
+                        let right_radius = right_element
                             .covalent_radius_angstrom()
                             .unwrap_or(FALLBACK_COVALENT_RADIUS_ANGSTROM);
                         let cutoff =
@@ -507,8 +561,6 @@ fn infer_covalent_bonds(
                             continue;
                         }
 
-                        let left = atoms[left_key];
-                        let right = atoms[right_key];
                         if graph
                             .bond_between(left, right)
                             .map_err(graph_error)?

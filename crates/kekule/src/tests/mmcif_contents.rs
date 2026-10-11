@@ -604,8 +604,8 @@ _atom_site.Cartn_x
 _atom_site.Cartn_y
 _atom_site.Cartn_z
 _atom_site.pdbx_PDB_model_num
-ATOM 1 C C1 GLY A 2 1 0.0 0.0 0.0 1
-ATOM 2 C C1 GLY Z 1 1 1.0 0.0 0.0 1
+ATOM 1 C C1 LIG A 2 1 0.0 0.0 0.0 1
+ATOM 2 C C1 LIG Z 1 1 1.0 0.0 0.0 1
 "#;
     let result = mmcif::interpret(&parse(input)).unwrap();
     assert_eq!(result.model().topology().instance_count(), 1);
@@ -658,7 +658,7 @@ ATOM 2 C C1 GLY Z 1 1 1.0 0.0 0.0 1
 fn interpretation_builds_connected_typed_instances_and_complete_positions() {
     let interpreted = mmcif::interpret(&parse(MIXED)).unwrap();
     let model = interpreted.model();
-    assert_eq!(model.topology().instance_count(), 4);
+    assert_eq!(model.topology().instance_count(), 3);
     assert_eq!(model.atom_count(), 4);
     assert_eq!(model.positions().len(), 4);
     assert!(model
@@ -689,7 +689,7 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
         .collect::<Vec<_>>();
     chain_a_instances.sort_unstable();
     chain_a_instances.dedup();
-    assert_eq!(chain_a_instances.len(), 2);
+    assert_eq!(chain_a_instances.len(), 1);
     for (label, component) in [("L", "LIG"), ("W", "HOH")] {
         let chain = hierarchy
             .chains()
@@ -713,7 +713,7 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
             > 0
     );
     assert_eq!(interpreted.report().selected_model.as_deref(), Some("1"));
-    assert_eq!(interpreted.report().instances.len(), 4);
+    assert_eq!(interpreted.report().instances.len(), 3);
     assert_eq!(
         interpreted
             .report()
@@ -728,11 +728,8 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
         .contains(&MmcifEntityKind::Polymer));
     assert!(interpreted.report().instances[1]
         .entity_kinds()
-        .contains(&MmcifEntityKind::Polymer));
-    assert!(interpreted.report().instances[2]
-        .entity_kinds()
         .contains(&MmcifEntityKind::NonPolymer));
-    assert!(interpreted.report().instances[3]
+    assert!(interpreted.report().instances[2]
         .entity_kinds()
         .contains(&MmcifEntityKind::Water));
     for definition in model.topology().definitions() {
@@ -749,15 +746,16 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
     assert_eq!(first_provenance.asym_ids, vec!["A"]);
     assert_eq!(first_provenance.entity_ids, vec!["1"]);
     assert_eq!(first_provenance.atoms[0].atom_name, "N");
-    assert_eq!(model.topology().bonds().count(), 0);
-    assert_eq!(interpreted.report().connectivity_candidates(), 1);
-    assert!(interpreted.report().issues().iter().any(|issue| matches!(
-        issue,
-        mmcif::MmcifInterpretIssue::ConnectivityCandidatesInferred {
-            candidate_count: 1,
-            ..
+    // The glycine template bonds N-CA; nothing is left as a bare candidate.
+    assert_eq!(model.topology().bonds().count(), 1);
+    assert_eq!(
+        first_provenance.bonds()[0].evidence(),
+        &mmcif::MmcifBondEvidence::Template {
+            component_id: "GLY".to_owned(),
+            variant: None,
         }
-    )));
+    );
+    assert_eq!(interpreted.report().connectivity_candidates(), 0);
 }
 
 #[test]
@@ -1070,18 +1068,18 @@ HETATM 2 O O HOH W 1 5.0 0.0 0.0
 fn mmcif_connectivity_candidates_do_not_create_bonds() {
     let input = MIXED.replace(
         "ATOM 2 C CA GLY A 1 1 1.0 0.0 0.0 1",
-        "ATOM 2 C CA GLY A 1 1 1.45 0.0 0.0 1\nATOM 5 C C GLY A 1 1 2.90 0.0 0.0 1",
+        "ATOM 2 C CA GLY A 1 1 1.45 0.0 0.0 1\nATOM 5 N N GLY A 1 3 1.45 1.6 0.0 1",
     );
     let interpreted = mmcif::interpret(&parse(&input)).unwrap();
-    assert_eq!(interpreted.model().topology().instance_count(), 5);
+    assert_eq!(interpreted.model().topology().instance_count(), 4);
     assert_eq!(interpreted.model().topology().atom_count(), 5);
-    assert_eq!(interpreted.model().topology().bonds().count(), 0);
+    assert_eq!(interpreted.model().topology().bonds().count(), 1);
     assert!(interpreted
         .model()
         .topology()
         .definitions()
         .all(|definition| definition.molecule().validate_connected().is_ok()));
-    assert_eq!(interpreted.report().connectivity_candidates(), 2);
+    assert_eq!(interpreted.report().connectivity_candidates(), 1);
 }
 
 #[test]
@@ -1379,7 +1377,7 @@ fn ensemble_identity_preserves_repeated_nonpolymer_occurrences() {
         .expect("stable occurrence discriminators form an ensemble");
 
     assert_eq!(interpreted.ensemble().len(), 2);
-    assert_eq!(interpreted.ensemble().topology().instance_count(), 4);
+    assert_eq!(interpreted.ensemble().topology().instance_count(), 2);
     for report in interpreted.reports() {
         let occurrences = report
             .instances()
@@ -1874,7 +1872,7 @@ hydrog A N 1 W O .
 "#;
     let input = format!("{MIXED}\n{connections}");
     let result = mmcif::interpret(&parse(&input)).unwrap();
-    assert_eq!(result.model().topology().instance_count(), 3);
+    assert_eq!(result.model().topology().instance_count(), 2);
     let merged = result
         .report()
         .instances()
@@ -1910,7 +1908,7 @@ hydrog A N 1 W O .
                 .entity_kinds()
                 .contains(&MmcifEntityKind::NonPolymer)
     }));
-    assert_eq!(round_trip.report().applied_connections(), 1);
+    assert_eq!(round_trip.report().applied_connections(), 2);
 }
 
 #[test]
@@ -2169,18 +2167,47 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
 
 #[test]
 fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hierarchy() {
-    let dative = small_model_with_bond(BondOrder::Dative);
-    let classifications = classifications_for(&dative, MmcifEntityKind::NonPolymer);
+    let zero = small_model_with_bond(BondOrder::Zero);
+    let classifications = classifications_for(&zero, MmcifEntityKind::NonPolymer);
     assert!(matches!(
         mmcif::write(
-            [mmcif::MmcifBlockSource::model(&dative).with_classifications(&classifications)],
+            [mmcif::MmcifBlockSource::model(&zero).with_classifications(&classifications)],
             MmcifWriteOptions::default()
         ),
         Err(MmcifWriteError::UnsupportedBondOrder {
-            order: BondOrder::Dative,
+            order: BondOrder::Zero,
             ..
         })
     ));
+
+    // Dative bonds are metal coordination and survive a round trip as such.
+    let dative = small_model_with_bond(BondOrder::Dative);
+    let classifications = classifications_for(&dative, MmcifEntityKind::NonPolymer);
+    let written = mmcif::write(
+        [mmcif::MmcifBlockSource::model(&dative).with_classifications(&classifications)],
+        MmcifWriteOptions::default(),
+    )
+    .unwrap();
+    let document = mmcif::parse_str(&written).unwrap();
+    let connections = document.blocks()[0]
+        .loop_with_tag("_struct_conn.conn_type_id")
+        .unwrap();
+    assert_eq!(
+        connections
+            .value(0, "_struct_conn.conn_type_id")
+            .unwrap()
+            .text(),
+        "metalc"
+    );
+    let reread = mmcif::interpret(&document).unwrap();
+    let molecule = reread
+        .model()
+        .topology()
+        .molecules()
+        .next()
+        .unwrap()
+        .molecule();
+    assert_eq!(molecule.bonds().next().unwrap().1.order, BondOrder::Dative);
 
     let mut graph = crate::core::MoleculeEditor::new();
     let atom = graph
@@ -2534,7 +2561,11 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
 
 #[test]
 fn mmcif_writer_partial_overrides_still_validate_shared_asymmetry_semantics() {
-    let interpreted = mmcif::interpret(&parse(MIXED)).unwrap();
+    let input = MIXED.replace(
+        "ATOM 2 C CA GLY A 1 1 1.0 0.0 0.0 1",
+        "ATOM 2 C CA GLY A 1 3 9.0 0.0 0.0 1",
+    );
+    let interpreted = mmcif::interpret(&parse(&input)).unwrap();
     let model = interpreted.model();
     let mut instances = model.topology().instances().map(|(id, _)| id);
     let classified = instances.next().unwrap();
@@ -2584,6 +2615,7 @@ fn report_with_entity_kinds(model: &Model, kinds: &[MmcifEntityKind]) -> MmcifIn
                 entity_ids: Vec::new(),
                 entity_kinds: kinds.to_vec(),
                 atoms: Vec::new(),
+                bonds: Vec::new(),
             })
             .collect(),
         ..MmcifInterpretationReport::default()

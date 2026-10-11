@@ -27,10 +27,11 @@ pub(crate) use ensemble::{
     interpret_mmcif_ensemble_block,
 };
 pub use types::{
-    MmcifAtomProvenance, MmcifConnectionResolutionReason, MmcifEnsembleInterpretError,
-    MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation, MmcifEntityKind,
-    MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions,
-    MmcifInterpretation, MmcifInterpretationReport, MmcifModelSelection,
+    MmcifAtomProvenance, MmcifBondEvidence, MmcifBondProvenance, MmcifConnectionResolutionReason,
+    MmcifConnectivityOptions, MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions,
+    MmcifEnsembleInterpretation, MmcifEntityKind, MmcifInstanceProvenance, MmcifInterpretError,
+    MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport,
+    MmcifModelSelection,
 };
 
 pub(crate) fn interpret_mmcif(
@@ -67,6 +68,7 @@ pub(crate) fn interpret_mmcif_block(
         block,
         options.strict_entity_metadata,
         &options.altloc_policy,
+        &options.connectivity,
     )?;
     let model_id = match &options.model_selection {
         MmcifModelSelection::RequireSingle if prepared.model_sizes.len() == 1 => {
@@ -109,6 +111,7 @@ impl<'a> PreparedBlock<'a> {
         block: &'a MmcifBlock,
         strict_entity_metadata: bool,
         altloc_policy: &MmcifAltLocPolicy,
+        connectivity: &MmcifConnectivityOptions,
     ) -> Result<Self, MmcifInterpretError> {
         let entities = read_entity_types(block)?;
         let asym_entities = read_asym_entities(block)?;
@@ -170,7 +173,10 @@ impl<'a> PreparedBlock<'a> {
             model_sizes,
             report,
             polymer_order: polymer_asym_order(block)?,
-            connectivity: super::mmcif_connectivity::ConnectivityCatalog::from_block(block)?,
+            connectivity: super::mmcif_connectivity::ConnectivityCatalog::from_block(
+                block,
+                connectivity,
+            )?,
         })
     }
 
@@ -262,8 +268,8 @@ fn publish_model(
     let mut builder = ModelBuilder::new();
     let mut qualified_atom_data = Vec::new();
     for group in groups {
-        let mut built = build_molecule(group, &connections, &mut report)?;
-        built.complete_connectivity(connectivity)?;
+        let mut built = build_molecule(group, &connections)?;
+        built.complete_connectivity(connectivity, &mut report)?;
         for built in built.publish_components()? {
             let id = builder
                 .add_molecule(built.molecule, &built.positions)

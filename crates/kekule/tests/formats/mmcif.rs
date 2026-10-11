@@ -258,3 +258,126 @@ fn mmcif_loop_accessors_reject_out_of_range_indices_in_all_build_profiles() {
     assert!(table.row(0).is_none());
     assert!(table.value(usize::MAX, "_x.a").is_none());
 }
+
+const CRAMBIN: &str = include_str!("../fixtures/mmcif/1CRN.cif");
+const ADENYLATE_KINASE: &str = include_str!("../fixtures/mmcif/1AKE.cif");
+
+/// The block without its `_chem_comp_bond` loop, as wwPDB archive entries are
+/// distributed, so that every residue bond comes from a template or distance.
+fn without_component_bonds(text: &str) -> String {
+    let lines = text.lines().collect::<Vec<_>>();
+    let mut kept = Vec::with_capacity(lines.len());
+    let mut index = 0;
+    while index < lines.len() {
+        if lines[index].trim() == "loop_"
+            && lines
+                .get(index + 1)
+                .is_some_and(|line| line.starts_with("_chem_comp_bond."))
+        {
+            index += 1;
+            while lines[index].starts_with("_chem_comp_bond.") {
+                index += 1;
+            }
+            while index < lines.len() && !lines[index].starts_with(['#', '_']) {
+                index += 1;
+            }
+            continue;
+        }
+        kept.push(lines[index]);
+        index += 1;
+    }
+    kept.join("\n")
+}
+
+#[test]
+fn mmcif_connectivity_matches_an_independent_reference() {
+    use kekule::mmcif::{MmcifInterpretIssue, MmcifResidueId, MmcifResiduePosition};
+
+    // Atom, bond, and molecule counts from Biotite 1.2.0
+    // (`pdbx.get_structure(include_bonds=True, altloc="occupancy")`), which
+    // resolves residue bonds from `_chem_comp_bond` or its own copy of the
+    // Chemical Component Dictionary; it gives the same counts with and without
+    // the files' bond tables. Charged atoms count the LYS NZ, ARG NH2, and
+    // HIS ND1 sites the dictionary charges (+1), counted from the files.
+    for (name, text, atoms, bonds, largest, molecules, charged) in [
+        ("1CRN", CRAMBIN, 327, 337, vec![327], 1, 2),
+        (
+            "1AKE",
+            ADENYLATE_KINASE,
+            3804,
+            3484,
+            vec![1656, 1656, 57, 57],
+            382,
+            68,
+        ),
+    ] {
+        for stripped in [false, true] {
+            let source = if stripped {
+                without_component_bonds(text)
+            } else {
+                text.to_owned()
+            };
+            let interpreted = mmcif::interpret(&mmcif::parse_str(&source).unwrap()).unwrap();
+            let topology = interpreted.topology();
+            let mut sizes = topology
+                .molecules()
+                .map(|instance| instance.molecule().atom_count())
+                .collect::<Vec<_>>();
+            sizes.sort_unstable_by(|a, b| b.cmp(a));
+            let charges = topology
+                .molecules()
+                .flat_map(|instance| instance.molecule().atoms())
+                .filter(|(_, atom)| atom.formal_charge != 0)
+                .map(|(_, atom)| atom.formal_charge)
+                .collect::<Vec<_>>();
+            let case = format!("{name} stripped={stripped}");
+            assert_eq!(topology.atom_count(), atoms, "{case}");
+            assert_eq!(topology.bond_count(), bonds, "{case}");
+            assert_eq!(sizes.len(), molecules, "{case}");
+            assert_eq!(&sizes[..largest.len()], largest.as_slice(), "{case}");
+            assert_eq!(charges, vec![1; charged], "{case}");
+            assert!(interpreted.report().instances().iter().all(|instance| {
+                instance.bonds().len()
+                    == topology
+                        .molecule(instance.molecule())
+                        .unwrap()
+                        .molecule()
+                        .bond_count()
+            }));
+
+            // The bundled templates do not cover AP5, so without the file's
+            // table its bonds are inferred: as many as the dictionary has.
+            let inferred = interpreted
+                .report()
+                .issues()
+                .iter()
+                .filter_map(|issue| match issue {
+                    MmcifInterpretIssue::ResidueBondsInferred {
+                        residue,
+                        component_id,
+                        bonds,
+                    } => Some((residue.clone(), component_id.clone(), *bonds)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let ap5 = |asym: &str| {
+                (
+                    MmcifResidueId {
+                        model_id: "1".to_owned(),
+                        asym_id: asym.to_owned(),
+                        position: MmcifResiduePosition::Author("215".to_owned()),
+                        insertion_code: None,
+                    },
+                    "AP5".to_owned(),
+                    62,
+                )
+            };
+            let expected = if stripped && name == "1AKE" {
+                vec![ap5("C"), ap5("D")]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(inferred, expected, "{case}");
+        }
+    }
+}

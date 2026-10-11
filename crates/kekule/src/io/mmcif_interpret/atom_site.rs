@@ -213,7 +213,8 @@ pub(super) struct AtomRow {
     pub(super) b_factor: Option<f64>,
     pub(super) point: Option<Point3>,
     pub(super) element: Element,
-    pub(super) formal_charge: i8,
+    /// The stated `pdbx_formal_charge`, if any.
+    pub(super) formal_charge: Option<i8>,
 }
 
 impl AtomRow {
@@ -369,7 +370,7 @@ pub(super) fn read_atom_rows(
         } else {
             format!("small:{asym_id}:{residue_key}")
         };
-        let formal_charge = optional_i8(table, row, fields.formal_charge)?.unwrap_or_default();
+        let formal_charge = optional_i8(table, row, fields.formal_charge)?;
         let point = optional_point(table, row, fields.cartn)?;
         rows.push(AtomRow {
             line: type_value.line(),

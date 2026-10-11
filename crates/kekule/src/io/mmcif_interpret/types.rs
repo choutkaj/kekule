@@ -2,6 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::altloc::{MmcifAltLocDecision, MmcifAltLocPolicy, MmcifResidueId};
+use crate::components::ComponentLibrary;
 use crate::core::Molecule;
 use crate::diagnostics::{DiagnosticKind, SourceLocation};
 use crate::structure::{Ensemble, EnsembleError, Model};
@@ -14,11 +15,39 @@ pub enum MmcifModelSelection {
     First,
 }
 
+/// How interpretation resolves bonds the file does not state.
+///
+/// Each residue takes its bonds from the block's `_chem_comp_bond` rows for
+/// its component when present, otherwise from a component template: the
+/// caller's [`components`](Self::components) first, then
+/// [`ComponentLibrary::bundled`]. A residue that neither covers has its bonds
+/// inferred from covalent radii when
+/// [`infer_bonds_from_distance`](Self::infer_bonds_from_distance) is set, and
+/// fails otherwise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MmcifConnectivityOptions {
+    /// Templates consulted before the bundled ones.
+    pub components: Option<Arc<ComponentLibrary>>,
+    /// Infer the bonds of residues without a template or bond table from
+    /// covalent radii. Inferred bonds are single and reported. On by default.
+    pub infer_bonds_from_distance: bool,
+}
+
+impl Default for MmcifConnectivityOptions {
+    fn default() -> Self {
+        Self {
+            components: None,
+            infer_bonds_from_distance: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifInterpretOptions {
     pub strict_entity_metadata: bool,
     pub altloc_policy: MmcifAltLocPolicy,
     pub model_selection: MmcifModelSelection,
+    pub connectivity: MmcifConnectivityOptions,
 }
 
 impl Default for MmcifInterpretOptions {
@@ -27,6 +56,7 @@ impl Default for MmcifInterpretOptions {
             strict_entity_metadata: false,
             altloc_policy: MmcifAltLocPolicy::HighestOccupancy,
             model_selection: MmcifModelSelection::RequireSingle,
+            connectivity: MmcifConnectivityOptions::default(),
         }
     }
 }
@@ -121,10 +151,90 @@ pub enum MmcifInterpretIssue {
         residues: Vec<MmcifResidueId>,
         alternatives: Vec<String>,
     },
+    /// Atom pairs within covalent bonding distance that no evidence bonds,
+    /// such as close contacts between residues. They are counted, not bonded.
     ConnectivityCandidatesInferred {
         atom_count: usize,
         candidate_count: usize,
     },
+    /// A residue without template or bond table had its bonds inferred from
+    /// covalent radii; inferred bonds are single.
+    ResidueBondsInferred {
+        residue: MmcifResidueId,
+        component_id: String,
+        bonds: usize,
+    },
+    /// A hydrogen absent from its residue template was bonded to the nearest
+    /// heavy atom of its residue.
+    HydrogenAttachedByDistance {
+        residue: MmcifResidueId,
+        atom_name: String,
+        heavy_atom_name: String,
+    },
+    /// Residues adjacent in sequence whose linking atoms lie beyond bonding
+    /// distance are not bonded.
+    ChainBreak {
+        residue: MmcifResidueId,
+        next: MmcifResidueId,
+    },
+    /// The model's hydrogens differ from the reference template: a protonation
+    /// variant was selected, or heteroatom charges were adjusted by one per
+    /// added or removed hydrogen.
+    ProtonationFromHydrogens {
+        residue: MmcifResidueId,
+        component_id: String,
+        variant: Option<String>,
+        charged_atoms: Vec<(String, i8)>,
+    },
+    /// The resolved atoms of one residue lie in more than one molecule, for
+    /// example because a bridging atom is missing from the model.
+    ResidueFragmented {
+        residue: MmcifResidueId,
+        fragments: usize,
+    },
+}
+
+/// The evidence a bond was resolved from.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MmcifBondEvidence {
+    /// A `_chem_comp_bond` row of the interpreted block.
+    ComponentTable,
+    /// A component template; `variant` names a protonation variant.
+    Template {
+        component_id: String,
+        variant: Option<String>,
+    },
+    /// Standard linkage between polymer residues adjacent in sequence.
+    PolymerLink,
+    /// A `_pdbx_entity_branch_link` row.
+    BranchLink,
+    /// A `_struct_conn` record; metal coordination yields a dative bond.
+    Connection {
+        connection_id: Option<String>,
+        connection_type: String,
+    },
+    /// Covalent radii, for a residue without template or bond table.
+    Distance,
+    /// A hydrogen absent from its template, bonded to the nearest heavy atom.
+    HydrogenDistance,
+}
+
+/// The evidence for one interpreted bond.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MmcifBondProvenance {
+    pub(crate) atoms: [InstanceAtomId; 2],
+    pub(crate) evidence: MmcifBondEvidence,
+}
+
+impl MmcifBondProvenance {
+    pub const fn atoms(&self) -> [InstanceAtomId; 2] {
+        self.atoms
+    }
+
+    pub fn evidence(&self) -> &MmcifBondEvidence {
+        &self.evidence
+    }
 }
 
 /// Why a `_struct_conn` partner could not be resolved uniquely.
@@ -310,6 +420,7 @@ pub struct MmcifInstanceProvenance {
     pub(crate) entity_ids: Vec<String>,
     pub(crate) entity_kinds: Vec<MmcifEntityKind>,
     pub(crate) atoms: Vec<MmcifAtomProvenance>,
+    pub(crate) bonds: Vec<MmcifBondProvenance>,
 }
 
 impl MmcifInstanceProvenance {
@@ -336,12 +447,17 @@ impl MmcifInstanceProvenance {
     pub fn atoms(&self) -> &[MmcifAtomProvenance] {
         &self.atoms
     }
+
+    /// The evidence for every bond of the molecule, in bond order.
+    pub fn bonds(&self) -> &[MmcifBondProvenance] {
+        &self.bonds
+    }
 }
 
 /// Structured record of one mmCIF interpretation.
 ///
-/// Applied connection counts include only uniquely resolved local covalent
-/// records. [`Self::issues`] retains source-aware unresolved and ambiguous
+/// Applied connection counts include only uniquely resolved local covalent and
+/// metal-coordination records. [`Self::issues`] retains source-aware unresolved and ambiguous
 /// partner diagnostics.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MmcifInterpretationReport {
@@ -528,6 +644,7 @@ impl std::error::Error for MmcifInterpretError {}
 pub struct MmcifEnsembleInterpretOptions {
     pub strict_entity_metadata: bool,
     pub altloc_policy: MmcifAltLocPolicy,
+    pub connectivity: MmcifConnectivityOptions,
     /// `None` selects all coordinate models in source order. `Some` must
     /// contain at least one model ID.
     pub model_ids: Option<Vec<String>>,
@@ -538,6 +655,7 @@ impl Default for MmcifEnsembleInterpretOptions {
         Self {
             strict_entity_metadata: false,
             altloc_policy: MmcifAltLocPolicy::HighestOccupancy,
+            connectivity: MmcifConnectivityOptions::default(),
             model_ids: None,
         }
     }
