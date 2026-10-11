@@ -13,7 +13,7 @@ Rustdoc beside their implementations. The links below point to those sources;
 | --- | --- | --- |
 | `Molecule` | One nonempty connected `Graph`, derived `Perception`, `MoleculeProperties` | Coordinates, hierarchy, system classification |
 | `Topology` | Reusable definitions and their complete molecule instances, qualified identities, dense atom and bond order, one `Hierarchy`, classification, `TopologyProperties`, layout identity | Geometry or bonds between separate instances |
-| `Model` | One shared `Topology` and one realization of it: dense positions, optional cell, occupancies, B factors, and `RealizationProperties`, addressed by dense topology index | A second chemical or hierarchy model; temporal state |
+| `Model` | One shared `Topology` and one structure of it: dense positions, optional cell, occupancies, B factors, and `StructureProperties`, addressed by dense topology index | A second chemical or hierarchy model; temporal state |
 | `Ensemble` | One shared topology, collection owner properties, and a weighted, unordered sample of `EnsembleMember` payloads (positions, optional cell, occupancies, B factors, properties, and a finite positive relative weight) | An owned `Model` or topology in each member; temporal meaning |
 | `Trajectory` | One shared topology, collection owner properties, and time-ordered `TrajectoryFrame` payloads (positions, optional cell, properties, and optional velocities, forces, time, and step) | Implicit topology changes between frames; statistical weights; crystallographic site parameters |
 
@@ -33,11 +33,12 @@ collection storage or generic collection type. Weight- or time-dependent
 behavior belongs to one type only; do not add a public abstraction that erases
 the difference.
 
-Realizations are flat. `Model`, `EnsembleMember`, and `TrajectoryFrame` each
-own exactly the fields that are meaningful for them; there is no shared
-conformation payload. Positions, cell, and realization properties are common
-to all three. Occupancies and B factors are crystallographic per-atom fields of
-a model or ensemble member and never belong to a trajectory frame. Velocities,
+Structures are flat. A structure is one set of coordinates and per-atom state
+of a topology: a `Model`, an `EnsembleMember`, or a `TrajectoryFrame`. Each
+owns exactly the fields that are meaningful for it; there is no shared payload
+type. Positions, cell, and structure properties are common to all three.
+Occupancies and B factors are crystallographic per-atom fields of a model or
+ensemble member and never belong to a trajectory frame. Velocities,
 forces, time, and step belong only to frames, and a weight only to an ensemble
 member. Coordinate kernels share code through the borrowed `ModelView`, not
 through a common owned payload.
@@ -53,7 +54,7 @@ noncovalent interactions do not. Adding a bond between occurrences constructs a
 new connected molecule and publishes a new topology.
 
 Dense numerical containers carry values and units, not atom identity or topology
-handles. The owning topology or realization translates semantic IDs to dense
+handles. The owning topology or structure translates semantic IDs to dense
 indices and validates every associated array and property column.
 
 See the [crate overview](crates/kekule/src/lib.rs),
@@ -115,7 +116,7 @@ shared topology snapshot without copying coordinate payloads or static topology
 state. The snapshot keeps the source's layout identity, so existing selections,
 prepared potentials, and streaming bindings stay attached to their original
 snapshot and remain usable with the new one. Failure leaves all definitions and
-realization state intact.
+structure state intact.
 
 See [graph storage](crates/kekule/src/core/graph.rs),
 [represented stereo](crates/kekule/src/core/stereo.rs),
@@ -191,7 +192,7 @@ mutation guard's destructor being called.
 | `TopologyBuilder` | Complete definitions, instances, hierarchy, classification, properties | Immutable topology |
 | `ModelBuilder` | Complete composition with explicit coordinates | Valid model |
 | `TopologyEditor` | Occurrence-local atom, bond, component, and hierarchy changes | Repartitioned topology |
-| `ModelEditor` | Structural edits coordinated with one realization | Topology and coordinates together |
+| `ModelEditor` | Structural edits coordinated with one structure | Topology and coordinates together |
 
 `MoleculeEditor` is a draft, not a molecule view. Mutable chemistry access
 invalidates perception immediately; validated no-op replacements retain state.
@@ -210,7 +211,7 @@ Per-entity annotations follow the operation's explicit correspondence. Generic
 owner annotations are conservatively cleared when their owner changes, including
 ambiguous instance splits or merges. No-op edits preserve them.
 
-Complete model append accepts borrowed realizations. It imports definitions,
+Complete model append accepts borrowed structures. It imports definitions,
 reuse, perception, classification, hierarchy, coordinates, and entity properties
 without interning independent sources or merging equal hierarchy labels.
 Coordinates remain in the supplied coordinate system. Incompatible cells,
@@ -227,7 +228,7 @@ endpoints. Whole-residue and whole-chain expansion retain selected atoms without
 hierarchy assignments. Structural subsets
 may cut molecules and must repartition the induced graph into connected output
 definitions. The same operation-specific mapping transfers hierarchy,
-classification, properties, and every realization array. Do not add a universal
+classification, properties, and every structure array. Do not add a universal
 topology remapping or provenance framework.
 
 See [molecular editing](crates/kekule/src/core/molecule_edit.rs),
@@ -248,7 +249,7 @@ repeated entity.
 | --- | --- | --- |
 | Molecule definition | `MoleculeProperties` | `AtomId`, `BondId` |
 | Topology | `TopologyProperties` | Instances, dense atoms and bonds, chains, residues, atom sites |
-| Realization (model, ensemble member, trajectory frame) | `RealizationProperties` | Dense atoms and bonds |
+| Structure (model, ensemble member, trajectory frame) | `StructureProperties` | Dense atoms and bonds |
 | Ensemble or trajectory collection | `OwnerProperties` | Owner values only |
 
 Unsupported domains are unrepresentable rather than rejected at runtime. Reads
@@ -281,7 +282,7 @@ values. Exact units, tolerances, and conversion policies belong with
 [units](crates/kekule/src/units.rs) and
 [properties](crates/kekule/src/properties.rs), not in a second architecture table.
 
-## Geometry and realization ownership
+## Geometry and structure ownership
 
 A model, ensemble, or trajectory owns its shared topology once. Members and frames
 store flat payloads, not nested models; a detached payload has
@@ -294,7 +295,7 @@ one shared layout; there is no special single-member ownership model.
 
 Read access is through views: `Topology` lookups return `Option` views
 (`AtomView`, `BondView`, molecule, chain, residue, and atom-site views), and
-`Model::atom` joins an `AtomView` with that atom's realization state. Mutation
+`Model::atom` joins an `AtomView` with that atom's structure state. Mutation
 goes through explicit, dimension-preserving setters on models, detached
 payloads, and the collection item guards returned by `get_mut()`, and through
 `properties_mut()` on topologies (`topology_properties_mut()` on models and
@@ -303,15 +304,15 @@ have no `DerefMut`; whole payloads are replaced through the owner.
 
 Dense positions, velocities, and forces validate values and units without carrying
 semantic IDs. Consuming vector constructors and projections transfer storage;
-borrowed bulk inputs are evaluated once. The owning realization checks lengths,
+borrowed bulk inputs are evaluated once. The owning structure checks lengths,
 property domains, and table dimensions on insertion, replacement, or publication.
 Empty property tables may acquire their owner's dimensions; populated tables may
 not be silently resized or discarded. Stored editing surfaces enforce these
 invariants immediately, including when a guard is forgotten.
 
-Measurements and spatial selections operate on borrowed realizations. Cartesian
+Measurements and spatial selections operate on borrowed structures. Cartesian
 measurements do not silently apply periodic imaging. A spatial selection is one
-realization's result; reevaluating it across frames is explicit. Prepared bond
+structure's result; reevaluating it across frames is explicit. Prepared bond
 dihedrals bind topology-selected references to one topology layout. CIP
 priority and atom-ID ties choose the references without coordinates; undefined
 geometry yields an absent value rather than substituting references. Numerical
@@ -408,7 +409,7 @@ in source order. MOL/SDF interpretation supplies deterministic synthetic hierarc
 at topology scope. mmCIF preserves label/author hierarchy identities and interprets
 all coordinate-model candidates against the same identity, chemistry, and dense
 layout. Malformed rows in unselected models still fail validation. Ensemble
-assembly releases redundant topologies while transferring realization payloads;
+assembly releases redundant topologies while transferring structure payloads;
 multiple coordinate models do not imply temporal trajectory semantics.
 
 mmCIF alternate rows remain in the source document. Interpretation selects whole
@@ -433,7 +434,7 @@ string and one `write_to(writer, source, options)` sink writer per format. Each
 source type converts from the inputs that format can represent: molecules,
 models, collection items, interpreted records, or mmCIF block sources carrying
 classifications or reports. Models and collection items share a borrowed
-realization path. Coordinate-bearing writers emit atoms in dense order.
+structure path. Coordinate-bearing writers emit atoms in dense order.
 Unsupported representational content must fail explicitly. There is no
 universal save trait or implicit trajectory-to-structure export.
 
@@ -487,7 +488,7 @@ See [alignment correspondence](crates/kekule/src/alignment/correspondence.rs) an
 Reconstruction validates represented graph connectedness first, then property
 references/dimensions, then installs checked perception. Topology reconstruction
 restores definitions, instances, classes, hierarchy, qualified IDs, and dense
-layout consistently before validating realization payloads. Disconnected persisted
+layout consistently before validating structure payloads. Disconnected persisted
 graphs must be partitioned or rejected. Export to scientific formats is not exact
 native persistence and must not weaken these boundaries. See
 [reconstruction regressions](crates/kekule/tests/molecule/identity.rs).
@@ -544,7 +545,7 @@ incompatible. Energies and
 gradients are separate result objects in canonical units, not model properties.
 Backends lower explicit parameters, currently an OpenFF `ParameterizedTopology`,
 into private functional-form kernels. Parameter assignment stays in its own
-companion crate. Unsupported realization state, such as a periodic cell, is
+companion crate. Unsupported structure state, such as a periodic cell, is
 rejected rather than ignored. Gradients are exact derivatives and never capped;
 coordinates fail only where a requested energy or gradient is undefined.
 Minimization reads a borrowed view and returns new positions without changing

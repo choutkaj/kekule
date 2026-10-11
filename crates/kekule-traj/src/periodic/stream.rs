@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use kekule::geometry::Point3;
-use kekule::structure::{ModelView, Positions, RealizationError, TrajectoryFrameView};
+use kekule::structure::{ModelView, Positions, TrajectoryError, TrajectoryFrameView};
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex};
 
 use super::{checked_image, positions, Lattice, MoleculePlan, PeriodicError};
@@ -237,7 +237,5 @@ fn publish_buffer(frame: &mut FrameBuffer, positions: &Positions) -> Result<(), 
     frame
         .frame_mut()
         .set_positions(positions.values())
-        .map_err(|error| {
-            PeriodicError::Publication(Box::new(RealizationError::Conformation(error)))
-        })
+        .map_err(|error| PeriodicError::Publication(Box::new(TrajectoryError::Structure(error))))
 }

@@ -5,11 +5,11 @@ use std::sync::Arc;
 
 use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
-    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryIoOperation,
+    TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation,
     TrajectoryReader, TrajectoryWriter,
 };
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::properties::{OwnerProperties, PropertyKey, PropertyValue, RealizationProperties};
+use kekule::properties::{OwnerProperties, PropertyKey, PropertyValue, StructureProperties};
 use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::units::{
@@ -194,7 +194,7 @@ impl<R: Read + Seek> TrrReader<R> {
         mut reader: R,
         topology: impl Into<Arc<Topology>>,
         options: TrrReadOptions,
-    ) -> Result<Self, TrajectoryError> {
+    ) -> Result<Self, TrajectoryIoError> {
         let topology = topology.into();
         let source_label = &options.source_label;
         let limits = &options.limits;
@@ -281,7 +281,7 @@ impl<R: Read + Seek> TrrReader<R> {
         self.precision_mixed
     }
 
-    fn next_header(&mut self) -> Result<Option<TrrFrameHeader>, TrajectoryError> {
+    fn next_header(&mut self) -> Result<Option<TrrFrameHeader>, TrajectoryIoError> {
         if let Some(header) = self.pending_header.take() {
             return Ok(Some(header));
         }
@@ -304,7 +304,7 @@ impl<R: Read + Seek> TrrReader<R> {
         .map_err(|error| frame_offset_context(error, self.frame_cursor, self.current_header_offset))
     }
 
-    fn parse_next(&mut self) -> Result<Option<TrrDecodedFrame>, TrajectoryError> {
+    fn parse_next(&mut self) -> Result<Option<TrrDecodedFrame>, TrajectoryIoError> {
         if self.frame_cursor >= self.options.limits.max_frames {
             let clean_eof = if self.pending_header.is_some() {
                 false
@@ -511,7 +511,7 @@ impl<R: Read + Seek> TrrReader<R> {
         properties: &OwnerProperties,
         decoded: &TrrDecodedFrame,
         destination: &mut FrameBuffer,
-    ) -> Result<(), TrajectoryError> {
+    ) -> Result<(), TrajectoryIoError> {
         let mut data = FrameBufferData::new(Quantity::new(positions, NANOMETER))
             .with_time(Quantity::new(decoded.header.time, PICOSECOND))
             .with_step(decoded.header.step)
@@ -528,7 +528,7 @@ impl<R: Read + Seek> TrrReader<R> {
         destination.replace_from_data(data).map_err(Into::into)
     }
 
-    pub fn into_indexed(mut self) -> Result<IndexedTrrReader<R>, TrajectoryError> {
+    pub fn into_indexed(mut self) -> Result<IndexedTrrReader<R>, TrajectoryIoError> {
         let mut offsets = Vec::new();
         loop {
             if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
@@ -586,7 +586,7 @@ impl<R: Read + Seek> TrrReader<R> {
         })
     }
 
-    fn rewind(&mut self) -> Result<(), TrajectoryError> {
+    fn rewind(&mut self) -> Result<(), TrajectoryIoError> {
         self.reader
             .seek(SeekFrom::Start(self.stream_start))
             .map_err(|error| {
@@ -620,9 +620,9 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
         Arc::clone(&self.topology)
     }
 
-    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         let offset = if self.pending_header.is_some() {
             self.current_header_offset
@@ -686,7 +686,7 @@ impl<R: Read + Seek> TrajectoryReader for IndexedTrrReader<R> {
         self.inner.shared_topology()
     }
 
-    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         self.inner.read_next(destination)
     }
 }
@@ -700,15 +700,18 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
         &mut self,
         index: u64,
         destination: &mut FrameBuffer,
-    ) -> Result<(), TrajectoryError> {
+    ) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         let offset = self
             .offsets
-            .get(usize::try_from(index).map_err(|_| TrajectoryError::FrameIndexOutOfRange(index))?)
+            .get(
+                usize::try_from(index)
+                    .map_err(|_| TrajectoryIoError::FrameIndexOutOfRange(index))?,
+            )
             .copied()
-            .ok_or(TrajectoryError::FrameIndexOutOfRange(index))?;
+            .ok_or(TrajectoryIoError::FrameIndexOutOfRange(index))?;
         let saved_offset = self.inner.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Index,
@@ -739,7 +742,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
             .inner
             .parse_next()
             .map_err(|error| frame_offset_context(error, index, offset))
-            .and_then(|decoded| decoded.ok_or(TrajectoryError::FrameIndexOutOfRange(index)));
+            .and_then(|decoded| decoded.ok_or(TrajectoryIoError::FrameIndexOutOfRange(index)));
         let restore = self
             .inner
             .reader
@@ -785,7 +788,7 @@ impl<W: Write> TrrWriter<W> {
         topology: Arc<Topology>,
         options: TrrWriteOptions,
         source_label: impl Into<String>,
-    ) -> Result<Self, TrajectoryError> {
+    ) -> Result<Self, TrajectoryIoError> {
         let source_label = source_label.into();
         if topology.atom_count() == 0 || topology.atom_count() > i32::MAX as usize / 3 {
             return Err(codec_context(
@@ -818,12 +821,12 @@ impl<W: Write> TrrWriter<W> {
         self.writer.flush()
     }
 
-    pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryError> {
+    pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryIoError> {
         require_nonempty_writer(self.frame_count, TrajectoryFormat::Trr, &self.source_label)
     }
 
     /// Flushes and returns the completed nonempty TRR stream.
-    pub fn finish(mut self) -> Result<W, TrajectoryError> {
+    pub fn finish(mut self) -> Result<W, TrajectoryIoError> {
         self.validate_finish()?;
         self.writer.flush().map_err(|error| {
             io_context(
@@ -846,9 +849,9 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         Arc::clone(&self.topology)
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
+    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !frame.topology().shares_layout(self.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         if frame.properties().atoms().has_data() {
             return Err(writer_field_error(
@@ -1132,7 +1135,7 @@ fn read_header<R: Read>(
     source_label: &str,
     expected_atoms: Option<usize>,
     clean_eof: bool,
-) -> Result<Option<TrrFrameHeader>, TrajectoryError> {
+) -> Result<Option<TrrFrameHeader>, TrajectoryIoError> {
     let mut magic = [0_u8; 4];
     match reader.read(&mut magic[..1]) {
         Ok(0) if clean_eof => return Ok(None),
@@ -1303,7 +1306,7 @@ fn infer_precision(
     v_size: usize,
     f_size: usize,
     source_label: &str,
-) -> Result<TrrScalarPrecision, TrajectoryError> {
+) -> Result<TrrScalarPrecision, TrajectoryIoError> {
     let candidates = [
         (box_size, 9_usize),
         (x_size, atom_count.saturating_mul(3)),
@@ -1335,7 +1338,7 @@ fn read_xdr_string<R: Read>(
     reader: &mut R,
     limits: &TrajectoryIoLimits,
     source_label: &str,
-) -> Result<(bool, u64), TrajectoryError> {
+) -> Result<(bool, u64), TrajectoryIoError> {
     let length = usize::try_from(read_i32(reader, source_label, None, "TRR version length")?)
         .map_err(|_| header_error(source_label, "TRR version length is negative"))?;
     if length > 256 || length > limits.max_text_line_bytes || length > limits.max_scratch_bytes {
@@ -1374,7 +1377,7 @@ fn read_raw<R: Read>(
     source_label: &str,
     frame: u64,
     field: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     if length > limits.max_scratch_bytes || length as u64 > limits.max_record_bytes {
         return Err(resource_error(
             source_label,
@@ -1410,7 +1413,7 @@ fn decode_triplets<T>(
     source_label: &str,
     frame: u64,
     field: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     for (destination, values) in destination
         .iter_mut()
         .zip(raw.chunks_exact(3 * precision.bytes()))
@@ -1435,7 +1438,7 @@ fn decode_cell(
     precision: TrrScalarPrecision,
     source_label: &str,
     frame: u64,
-) -> Result<PeriodicCell, TrajectoryError> {
+) -> Result<PeriodicCell, TrajectoryIoError> {
     let mut vectors = [Vector3::zero(); 3];
     decode_triplets(
         raw,
@@ -1473,7 +1476,7 @@ fn encode_points_to_raw(
     factor: f64,
     precision: TrrScalarPrecision,
     source_label: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     encode_triplets_to_raw(
         raw,
         points.iter().map(|p| [p.x, p.y, p.z]),
@@ -1492,7 +1495,7 @@ fn encode_vectors_to_raw(
     precision: TrrScalarPrecision,
     source_label: &str,
     field: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     encode_triplets_to_raw(
         raw,
         vectors.iter().map(|v| [v.x, v.y, v.z]),
@@ -1512,7 +1515,7 @@ fn encode_triplets_to_raw(
     source_label: &str,
     field: &str,
     overflow_message: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     raw.clear();
     let bytes = values
         .len()
@@ -1534,7 +1537,7 @@ fn push_scalar(
     precision: TrrScalarPrecision,
     source_label: &str,
     field: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     validate_representable(value, precision, source_label, field)?;
     match precision {
         TrrScalarPrecision::Float32 => bytes.extend_from_slice(&(value as f32).to_be_bytes()),
@@ -1548,7 +1551,7 @@ fn validate_representable(
     precision: TrrScalarPrecision,
     source_label: &str,
     field: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     if !value.is_finite()
         || (precision == TrrScalarPrecision::Float32 && !(value as f32).is_finite())
     {
@@ -1568,11 +1571,11 @@ fn trr_lambda_key() -> PropertyKey {
 }
 
 fn writer_lambda(
-    properties: &RealizationProperties,
+    properties: &StructureProperties,
     policy: TrrLambdaPolicy,
     source_label: &str,
     frame: u64,
-) -> Result<f64, TrajectoryError> {
+) -> Result<f64, TrajectoryIoError> {
     match policy {
         TrrLambdaPolicy::FrameProperty => {
             if properties.owner().len() != 1
@@ -1616,7 +1619,7 @@ fn validate_lambda(
     policy: TrrLambdaPolicy,
     source_label: &str,
     frame: u64,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     if policy == TrrLambdaPolicy::RequireZero && lambda != 0.0 {
         return Err(TrajectoryCodecErrorContext::new(
             TrajectoryCodecErrorKind::InconsistentMetadata,
@@ -1636,7 +1639,7 @@ fn read_i32<R: Read>(
     source_label: &str,
     frame: Option<u64>,
     detail: &str,
-) -> Result<i32, TrajectoryError> {
+) -> Result<i32, TrajectoryIoError> {
     let mut bytes = [0_u8; 4];
     read_exact(reader, &mut bytes, source_label, frame, detail)?;
     Ok(i32::from_be_bytes(bytes))
@@ -1648,7 +1651,7 @@ fn read_scalar<R: Read>(
     source_label: &str,
     frame: Option<u64>,
     detail: &str,
-) -> Result<f64, TrajectoryError> {
+) -> Result<f64, TrajectoryIoError> {
     let mut bytes = [0_u8; 8];
     read_exact(
         reader,
@@ -1671,7 +1674,7 @@ fn read_exact<R: Read>(
     source_label: &str,
     frame: Option<u64>,
     detail: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     reader.read_exact(bytes).map_err(|error| {
         if error.kind() == std::io::ErrorKind::UnexpectedEof {
             let mut context = TrajectoryCodecErrorContext::new(
@@ -1708,7 +1711,7 @@ fn write_i32<W: Write>(
     writer: &mut W,
     value: i32,
     source_label: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     write_bytes(writer, &value.to_be_bytes(), source_label)
 }
 
@@ -1716,7 +1719,7 @@ fn write_xdr_string<W: Write>(
     writer: &mut W,
     value: &[u8],
     source_label: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     write_i32(
         writer,
         i32::try_from(value.len())
@@ -1733,7 +1736,7 @@ fn write_scalar<W: Write>(
     value: f64,
     precision: TrrScalarPrecision,
     source_label: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     match precision {
         TrrScalarPrecision::Float32 => {
             write_bytes(writer, &(value as f32).to_be_bytes(), source_label)
@@ -1746,7 +1749,7 @@ fn write_bytes<W: Write>(
     writer: &mut W,
     bytes: &[u8],
     source_label: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     writer.write_all(bytes).map_err(|error| {
         io_context(
             TrajectoryIoOperation::WriteFrame,
@@ -1761,7 +1764,7 @@ fn validate_atom_count(
     atom_count: usize,
     limits: &TrajectoryIoLimits,
     source_label: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     if atom_count == 0 || atom_count > limits.max_atoms || atom_count > i32::MAX as usize / 3 {
         return Err(resource_error(
             source_label,
@@ -1772,7 +1775,7 @@ fn validate_atom_count(
     Ok(())
 }
 
-fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryError {
+fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
     codec_context(
         TrajectoryCodecErrorKind::InvalidHeader,
         TrajectoryIoOperation::ReadHeader,
@@ -1782,7 +1785,7 @@ fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryErro
     )
 }
 
-fn frame_error(source_label: &str, frame: u64, detail: impl Into<String>) -> TrajectoryError {
+fn frame_error(source_label: &str, frame: u64, detail: impl Into<String>) -> TrajectoryIoError {
     TrajectoryCodecErrorContext::new(
         TrajectoryCodecErrorKind::InvalidFrame,
         TrajectoryIoOperation::ReadFrame,
@@ -1798,7 +1801,7 @@ fn resource_error(
     source_label: &str,
     frame: Option<u64>,
     detail: impl Into<String>,
-) -> TrajectoryError {
+) -> TrajectoryIoError {
     let mut context = TrajectoryCodecErrorContext::new(
         TrajectoryCodecErrorKind::ResourceLimitExceeded,
         if frame.is_some() {
@@ -1816,7 +1819,7 @@ fn resource_error(
     context.into()
 }
 
-fn writer_limit(source_label: &str, detail: impl Into<String>) -> TrajectoryError {
+fn writer_limit(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
     codec_context(
         TrajectoryCodecErrorKind::ResourceLimitExceeded,
         TrajectoryIoOperation::WriteFrame,
@@ -1826,7 +1829,11 @@ fn writer_limit(source_label: &str, detail: impl Into<String>) -> TrajectoryErro
     )
 }
 
-fn writer_unit(source_label: &str, field: &str, error: impl std::fmt::Display) -> TrajectoryError {
+fn writer_unit(
+    source_label: &str,
+    field: &str,
+    error: impl std::fmt::Display,
+) -> TrajectoryIoError {
     codec_context(
         TrajectoryCodecErrorKind::InconsistentMetadata,
         TrajectoryIoOperation::WriteFrame,
@@ -1836,7 +1843,7 @@ fn writer_unit(source_label: &str, field: &str, error: impl std::fmt::Display) -
     )
 }
 
-fn writer_field_error(source_label: &str, frame: u64, field: &str) -> TrajectoryError {
+fn writer_field_error(source_label: &str, frame: u64, field: &str) -> TrajectoryIoError {
     TrajectoryCodecErrorContext::new(
         TrajectoryCodecErrorKind::UnsupportedField,
         TrajectoryIoOperation::WriteFrame,

@@ -425,7 +425,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
         None
     );
     assert_eq!(
-        result.atom(new).unwrap().realization_property(&key("live")),
+        result.atom(new).unwrap().structure_property(&key("live")),
         Some(PropertyValue::Int(8))
     );
     assert_eq!(result.atom_count(), 2);
@@ -995,7 +995,7 @@ fn editor_property_batches_are_transactional_and_follow_ordered_update_semantics
         editor.owner_properties().get(&key("owner")),
         Some(&PropertyValue::String("retained".into()))
     );
-    // Generic realization keys are unreserved: "occupancy" is independent of
+    // Generic structure keys are unreserved: "occupancy" is independent of
     // the typed occupancy state.
     let atom = editor.atom_ids().next().unwrap();
     editor
@@ -1094,7 +1094,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
         result
             .atom(result.topology().atom_ids()[0])
             .unwrap()
-            .realization_property(&key("tag")),
+            .structure_property(&key("tag")),
         None
     );
 
@@ -1196,10 +1196,7 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
         carbon.perception()
     );
     assert_eq!(
-        result
-            .atom(a)
-            .unwrap()
-            .realization_property(&key("dynamic")),
+        result.atom(a).unwrap().structure_property(&key("dynamic")),
         Some(PropertyValue::Int(4))
     );
     assert_eq!(
@@ -1210,7 +1207,7 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
         result
             .atom(result.topology().atom_ids()[4])
             .unwrap()
-            .realization_property(&key("dynamic")),
+            .structure_property(&key("dynamic")),
         None
     );
     assert!(result.properties().owner().get(&key("old_owner")).is_none());
@@ -1283,7 +1280,7 @@ fn sparse_batches_are_atomic_and_deleted_rows_do_not_poison_new_values() {
         result
             .atom(result.topology().atom_ids()[0])
             .unwrap()
-            .realization_property(&key("tag")),
+            .structure_property(&key("tag")),
         Some(PropertyValue::String("valid".into()))
     );
 }

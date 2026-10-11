@@ -140,11 +140,11 @@ fn compatible_cells(left: PeriodicCell, right: PeriodicCell) -> bool {
 pub struct ModelAppendReport {
     /// Destination topology owner keys cleared because the system changed.
     pub cleared_topology_properties: Vec<PropertyKey>,
-    /// Destination realization owner keys cleared because the model changed.
+    /// Destination structure owner keys cleared because the model changed.
     pub cleared_model_properties: Vec<PropertyKey>,
     /// Source topology owner keys that do not describe the combined system.
     pub omitted_topology_properties: Vec<PropertyKey>,
-    /// Source realization owner keys that do not describe the combined model.
+    /// Source structure owner keys that do not describe the combined model.
     pub omitted_model_properties: Vec<PropertyKey>,
 }
 

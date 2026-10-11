@@ -1,9 +1,9 @@
-//! One-realization coordination over the coordinate-free structural editor.
+//! One-structure coordination over the coordinate-free structural editor.
 mod append;
 pub use append::*;
 
 use super::model_state::ModelState;
-use super::{ConformationError, Model, ModelError, PositionError, Positions};
+use super::{Model, ModelError, PositionError, Positions, StructureError};
 use crate::core::{Atom, BondOrder, Molecule};
 use crate::geometry::{PeriodicCell, Point3};
 use crate::properties::{
@@ -23,7 +23,7 @@ use std::fmt;
 /// deletion, splitting and merging. The coordinate-free [`TopologyEditor`] is
 /// readable through `Deref` (`editor.atoms()`, `editor.neighbors(id)`, ...);
 /// structural changes go through the coordinated methods here so geometry stays
-/// in step. Realization annotations are addressed by editing handle; explicitly
+/// in step. Structure annotations are addressed by editing handle; explicitly
 /// named `topology_*` methods edit static annotations. Generic coordinate
 /// changes preserve stored annotations without asserting that arbitrary derived
 /// values remain valid.
@@ -45,7 +45,7 @@ use std::fmt;
 #[derive(Debug, Clone, Default)]
 pub struct ModelEditor {
     topology: TopologyEditor,
-    /// Realization state in private editor slot order.
+    /// Structure state in private editor slot order.
     slots: ModelState,
 }
 
@@ -61,7 +61,7 @@ impl Model {
     pub fn edit(&self) -> ModelEditor {
         self.clone().into_editor()
     }
-    /// Moves the realization state into a draft while retaining the shared
+    /// Moves the structure state into a draft while retaining the shared
     /// topology. Source slots are source dense indices.
     pub fn into_editor(self) -> ModelEditor {
         let (topology, slots) = self.into_state();
@@ -263,7 +263,7 @@ impl ModelEditor {
     pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
         self.slots.cell = cell;
     }
-    /// Realization-level owner annotations. Structural edits clear them.
+    /// Structure-level owner annotations. Structural edits clear them.
     pub fn owner_properties(&self) -> &OwnerProperties {
         self.slots.properties.owner()
     }
@@ -344,15 +344,15 @@ impl ModelEditor {
             .bonds_mut()
             .set_values(key, values)?)
     }
-    /// One realization atom column in live atom-handle order.
+    /// One structure atom column in live atom-handle order.
     pub fn atom_property_column(&self, key: &PropertyKey) -> Option<PropertyColumn> {
         live_column(self.slots.properties.atoms().raw(), &self.atom_slots(), key)
     }
-    /// One realization bond column in live bond-handle order.
+    /// One structure bond column in live bond-handle order.
     pub fn bond_property_column(&self, key: &PropertyKey) -> Option<PropertyColumn> {
         live_column(self.slots.properties.bonds().raw(), &self.bond_slots(), key)
     }
-    /// Inserts a realization atom column given in live atom-handle order.
+    /// Inserts a structure atom column given in live atom-handle order.
     pub fn insert_atom_property_column(
         &mut self,
         key: PropertyKey,
@@ -367,7 +367,7 @@ impl ModelEditor {
             .insert(key, column)?;
         Ok(previous)
     }
-    /// Inserts a realization bond column given in live bond-handle order.
+    /// Inserts a structure bond column given in live bond-handle order.
     pub fn insert_bond_property_column(
         &mut self,
         key: PropertyKey,
@@ -591,7 +591,7 @@ impl ModelEditor {
 
     /// Runs one topology edit and keeps slot rows in step: new slots get rows,
     /// dead slots lose their annotations, and a structural change clears
-    /// realization owner properties.
+    /// structure owner properties.
     fn structural<T>(
         &mut self,
         edit: impl FnOnce(&mut TopologyEditor) -> Result<T, TopologyEditError>,
@@ -663,12 +663,12 @@ pub enum ModelEditError {
     Topology(TopologyEditError),
     Position(PositionError),
     Property(PropertyError),
-    Conformation(ConformationError),
+    Structure(StructureError),
     Model(Box<ModelError>),
     CapacityOverflow,
     /// A periodic source cannot be imported under the destination's cell.
     IncompatibleAppendCell,
-    /// An imported realization property cannot be combined with its destination table.
+    /// An imported structure property cannot be combined with its destination table.
     AppendProperty {
         domain: &'static str,
         error: Box<PropertyError>,
@@ -680,7 +680,7 @@ impl fmt::Display for ModelEditError {
             Self::Topology(e) => e.fmt(f),
             Self::Position(e) => e.fmt(f),
             Self::Property(e) => e.fmt(f),
-            Self::Conformation(e) => e.fmt(f),
+            Self::Structure(e) => e.fmt(f),
             Self::Model(e) => e.fmt(f),
             Self::CapacityOverflow => f.write_str("model editing exceeds coordinate capacity"),
             Self::IncompatibleAppendCell => f.write_str(
@@ -696,7 +696,7 @@ impl std::error::Error for ModelEditError {
             Self::Topology(e) => Some(e),
             Self::Position(e) => Some(e),
             Self::Property(e) => Some(e),
-            Self::Conformation(e) => Some(e),
+            Self::Structure(e) => Some(e),
             Self::Model(e) => Some(e.as_ref()),
             Self::AppendProperty { error, .. } => Some(error.as_ref()),
             Self::CapacityOverflow | Self::IncompatibleAppendCell => None,
@@ -715,7 +715,7 @@ macro_rules! convert {
 convert!(TopologyEditError, Topology);
 convert!(PositionError, Position);
 convert!(PropertyError, Property);
-convert!(ConformationError, Conformation);
+convert!(StructureError, Structure);
 impl From<ModelError> for ModelEditError {
     fn from(error: ModelError) -> Self {
         Self::Model(Box::new(error))
@@ -763,9 +763,9 @@ mod allocation_tests {
         }
     }
 
-    // Realization batches stage only their own column, as topology batches do.
+    // Structure batches stage only their own column, as topology batches do.
     #[test]
-    fn realization_batches_keep_unrelated_column_allocations() {
+    fn structure_batches_keep_unrelated_column_allocations() {
         let topology = crate::smiles::to_topology("CCC").unwrap();
         let atoms = topology.atom_count();
         let mut editor = Model::new(topology, Positions::zeros(atoms))

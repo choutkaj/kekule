@@ -4,7 +4,7 @@
 //! type: definition-invariant annotations are [`MoleculeProperties`] of a
 //! [`crate::core::Molecule`], system annotations are [`TopologyProperties`] of a
 //! [`crate::topology::Topology`], and coordinate-dependent annotations are
-//! [`RealizationProperties`] of a [`crate::structure::Model`], ensemble member,
+//! [`StructureProperties`] of a [`crate::structure::Model`], ensemble member,
 //! or trajectory frame. Each scope holds [`OwnerProperties`] plus one
 //! [`PropertyTable`] per entity domain, addressed by that domain's identifier
 //! ([`PropertyRow`]).
@@ -1323,19 +1323,19 @@ impl<'a> TopologyPropertiesMut<'a> {
     }
 }
 
-/// Coordinate-dependent annotations of one realization: owner values plus one
+/// Coordinate-dependent annotations of one structure: owner values plus one
 /// row per topology atom and bond, in dense topology order.
 ///
-/// A detached realization payload has atom rows only; bond rows are allocated
+/// A detached structure payload has atom rows only; bond rows are allocated
 /// when the payload is bound to a topology.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct RealizationProperties {
+pub struct StructureProperties {
     owner: OwnerProperties,
     atoms: PropertyTable<TopologyAtomIndex>,
     bonds: PropertyTable<TopologyBondIndex>,
 }
 
-impl RealizationProperties {
+impl StructureProperties {
     pub(crate) fn new(atoms: usize) -> Self {
         Self {
             owner: OwnerProperties::new(),
@@ -1403,7 +1403,7 @@ impl RealizationProperties {
     }
 
     /// Projects atom and bond rows; owner values are dropped because the
-    /// projected realization is a new owner.
+    /// projected structure is a new owner.
     pub(crate) fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, PropertyError> {
         let bonds = if self.bonds.is_empty() {
             RawPropertyTable::new(0)
@@ -1418,22 +1418,22 @@ impl RealizationProperties {
     }
 }
 
-/// Length-preserving mutable access to [`RealizationProperties`].
+/// Length-preserving mutable access to [`StructureProperties`].
 #[derive(Debug)]
-pub struct RealizationPropertiesMut<'a> {
-    properties: &'a mut RealizationProperties,
+pub struct StructurePropertiesMut<'a> {
+    properties: &'a mut StructureProperties,
 }
 
-impl std::ops::Deref for RealizationPropertiesMut<'_> {
-    type Target = RealizationProperties;
+impl std::ops::Deref for StructurePropertiesMut<'_> {
+    type Target = StructureProperties;
 
     fn deref(&self) -> &Self::Target {
         self.properties
     }
 }
 
-impl<'a> RealizationPropertiesMut<'a> {
-    pub(crate) fn new(properties: &'a mut RealizationProperties) -> Self {
+impl<'a> StructurePropertiesMut<'a> {
+    pub(crate) fn new(properties: &'a mut StructureProperties) -> Self {
         Self { properties }
     }
 
@@ -1588,9 +1588,9 @@ mod tests {
     }
 
     #[test]
-    fn detached_realization_bond_rows_bind_once_and_then_must_match() {
+    fn detached_structure_bond_rows_bind_once_and_then_must_match() {
         let score = key("score");
-        let mut properties = RealizationProperties::new(3);
+        let mut properties = StructureProperties::new(3);
         properties
             .owner_mut()
             .insert(score.clone(), PropertyValue::Int(9))
@@ -1599,7 +1599,7 @@ mod tests {
         assert!(properties.bonds().is_empty());
         assert!(properties.validate_bond_rows(2).is_ok());
         properties.bind_bond_rows(2);
-        RealizationPropertiesMut::new(&mut properties)
+        StructurePropertiesMut::new(&mut properties)
             .bonds_mut()
             .set_value(
                 score.clone(),
@@ -1986,7 +1986,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_tables_do_not_reserve_realization_semantic_names() {
+    fn generic_tables_do_not_reserve_structure_semantic_names() {
         let mut table = RawPropertyTable::new(1);
         table
             .set_value(key("occupancy"), 0, Some(PropertyValue::Int(7)))

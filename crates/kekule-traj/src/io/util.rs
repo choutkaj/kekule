@@ -1,16 +1,16 @@
 use crate::{
-    TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat,
+    TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError,
     TrajectoryIoErrorContext, TrajectoryIoOperation,
 };
 use std::io;
 
 pub(crate) fn frame_offset_context(
-    error: TrajectoryError,
+    error: TrajectoryIoError,
     frame: u64,
     byte_offset: u64,
-) -> TrajectoryError {
+) -> TrajectoryIoError {
     match error {
-        TrajectoryError::Io(context) => {
+        TrajectoryIoError::Io(context) => {
             let mut context = *context;
             if context.frame().is_none() {
                 context = context.with_frame(frame);
@@ -18,9 +18,9 @@ pub(crate) fn frame_offset_context(
             if context.byte_offset().is_none() {
                 context = context.with_byte_offset(byte_offset);
             }
-            TrajectoryError::Io(Box::new(context))
+            TrajectoryIoError::Io(Box::new(context))
         }
-        TrajectoryError::Codec(context) => {
+        TrajectoryIoError::Codec(context) => {
             let mut context = *context;
             if context.frame().is_none() {
                 context = context.with_frame(frame);
@@ -28,7 +28,7 @@ pub(crate) fn frame_offset_context(
             if context.byte_offset().is_none() {
                 context = context.with_byte_offset(byte_offset);
             }
-            TrajectoryError::Codec(Box::new(context))
+            TrajectoryIoError::Codec(Box::new(context))
         }
         error => error,
     }
@@ -39,7 +39,7 @@ pub(crate) fn probe_seekable_eof<R: io::Read + io::Seek>(
     operation: TrajectoryIoOperation,
     format: TrajectoryFormat,
     source_label: &str,
-) -> Result<bool, TrajectoryError> {
+) -> Result<bool, TrajectoryIoError> {
     let start = reader
         .stream_position()
         .map_err(|error| io_context(operation, Some(format), source_label, error))?;
@@ -60,7 +60,7 @@ pub(crate) fn require_nonempty_writer(
     frame_count: u64,
     format: TrajectoryFormat,
     source_label: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     if frame_count == 0 {
         return Err(codec_context(
             TrajectoryCodecErrorKind::InvalidFrame,
@@ -78,7 +78,7 @@ pub(crate) fn io_context(
     format: Option<TrajectoryFormat>,
     source_label: &str,
     error: io::Error,
-) -> TrajectoryError {
+) -> TrajectoryIoError {
     let mut context = TrajectoryIoErrorContext::new(operation, error.kind(), error.to_string())
         .with_source_label(source_label);
     if let Some(format) = format {
@@ -93,7 +93,7 @@ pub(crate) fn codec_context(
     format: Option<TrajectoryFormat>,
     source_label: &str,
     detail: impl Into<String>,
-) -> TrajectoryError {
+) -> TrajectoryIoError {
     TrajectoryCodecErrorContext::new(kind, operation, format)
         .with_source_label(source_label)
         .with_detail(detail)

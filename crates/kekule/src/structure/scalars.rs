@@ -2,7 +2,7 @@ use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, SQUARE_NANOMETER};
 
 use super::state::atom_row;
-use super::ConformationError;
+use super::StructureError;
 
 /// One optional per-atom scalar column in dense atom order, such as the
 /// occupancies or B-factors of a model or ensemble member.
@@ -36,7 +36,7 @@ impl AtomScalars {
         &self,
         atom: TopologyAtomIndex,
         len: usize,
-    ) -> Result<Option<f64>, ConformationError> {
+    ) -> Result<Option<f64>, StructureError> {
         let row = atom_row(len, atom)?;
         Ok(self.0.as_ref().and_then(|values| values[row]))
     }
@@ -47,7 +47,7 @@ impl AtomScalars {
         atom: TopologyAtomIndex,
         len: usize,
         value: Option<f64>,
-    ) -> Result<(), ConformationError> {
+    ) -> Result<(), StructureError> {
         let row = atom_row(len, atom)?;
         self.set_row(row, len, value)
     }
@@ -57,10 +57,10 @@ impl AtomScalars {
         &mut self,
         len: usize,
         values: Option<Vec<Option<f64>>>,
-    ) -> Result<(), ConformationError> {
+    ) -> Result<(), StructureError> {
         if let Some(values) = &values {
             if values.len() != len {
-                return Err(ConformationError::AtomCountMismatch {
+                return Err(StructureError::AtomCountMismatch {
                     expected: len,
                     actual: values.len(),
                 });
@@ -69,7 +69,7 @@ impl AtomScalars {
                 .iter()
                 .position(|value| value.is_some_and(|value| !value.is_finite()))
             {
-                return Err(ConformationError::NonFiniteValue { index });
+                return Err(StructureError::NonFiniteValue { index });
             }
         }
         self.0 = values.filter(|values| values.iter().any(Option::is_some));
@@ -112,9 +112,9 @@ impl AtomScalars {
         row: usize,
         len: usize,
         value: Option<f64>,
-    ) -> Result<(), ConformationError> {
+    ) -> Result<(), StructureError> {
         if value.is_some_and(|value| !value.is_finite()) {
-            return Err(ConformationError::NonFiniteValue { index: row });
+            return Err(StructureError::NonFiniteValue { index: row });
         }
         match (&mut self.0, value) {
             (Some(values), value) => values[row] = value,
@@ -132,7 +132,7 @@ impl AtomScalars {
 /// Converts one B-factor to the stored square nanometres.
 pub(crate) fn canonical_b_factor(
     value: Option<Quantity<f64>>,
-) -> Result<Option<f64>, ConformationError> {
+) -> Result<Option<f64>, StructureError> {
     Ok(value
         .map(|value| value.into_unit(SQUARE_NANOMETER).map(Quantity::into_value))
         .transpose()?)
@@ -141,7 +141,7 @@ pub(crate) fn canonical_b_factor(
 /// Converts a B-factor column to the stored square nanometres.
 pub(crate) fn canonical_b_factors(
     values: Option<Quantity<Vec<Option<f64>>>>,
-) -> Result<Option<Vec<Option<f64>>>, ConformationError> {
+) -> Result<Option<Vec<Option<f64>>>, StructureError> {
     values
         .map(|values| {
             let factor = values.unit().conversion_factor_to(SQUARE_NANOMETER)?;

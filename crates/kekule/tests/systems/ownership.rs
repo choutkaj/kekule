@@ -9,8 +9,7 @@ use kekule::properties::{
 };
 use kekule::smiles;
 use kekule::structure::{
-    ConformationError, Model, ModelError, PositionError, Positions, RealizationError,
-    TrajectoryFrame,
+    EnsembleError, Model, ModelError, PositionError, Positions, StructureError, TrajectoryFrame,
 };
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{
@@ -69,9 +68,9 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
             },
             CANONICAL_LENGTH_UNIT
         )),
-        Err(ConformationError::Position(
-            PositionError::NonFinitePosition { index: 0 }
-        ))
+        Err(StructureError::Position(PositionError::NonFinitePosition {
+            index: 0
+        }))
     ));
     assert_eq!(calls.get(), 1);
     assert_eq!(model.positions(), &before);
@@ -197,14 +196,14 @@ fn structural_error_chains_retain_the_underlying_unit_failure() {
     let position_error =
         Positions::new(Quantity::new([Point3::origin()], DIMENSIONLESS)).unwrap_err();
     assert!(position_error.source().unwrap().is::<UnitError>());
-    let error = RealizationError::from(ConformationError::from(position_error.clone()));
-    let conformation = error.source().unwrap();
-    assert!(conformation.is::<ConformationError>());
-    let position = conformation.source().unwrap();
+    let error = EnsembleError::from(StructureError::from(position_error.clone()));
+    let structure = error.source().unwrap();
+    assert!(structure.is::<StructureError>());
+    let position = structure.source().unwrap();
     assert!(position.is::<PositionError>());
     assert!(position.source().unwrap().is::<UnitError>());
     let error = ModelError::from(position_error);
-    assert!(error.source().unwrap().is::<ConformationError>());
+    assert!(error.source().unwrap().is::<StructureError>());
     assert!(error
         .source()
         .unwrap()

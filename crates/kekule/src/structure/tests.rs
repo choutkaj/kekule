@@ -114,7 +114,7 @@ fn model_builder_rejects_excess_replacement_positions_before_mutation() {
     let before = builder.clone();
     assert_eq!(
         builder.set_positions(Quantity::new(vec![Point3::origin(); 2], NANOMETER)),
-        Err(ConformationError::Position(
+        Err(StructureError::Position(
             PositionError::PositionCountMismatch {
                 expected: 1,
                 actual: 2
@@ -126,11 +126,11 @@ fn model_builder_rejects_excess_replacement_positions_before_mutation() {
 }
 
 #[test]
-fn realizations_reject_rows_of_other_dimensions() {
+fn structures_reject_rows_of_other_dimensions() {
     let (model, _, _) = model_fixture();
     assert_eq!(
         Model::new(model.shared_topology(), single_position(1.0)).unwrap_err(),
-        ModelError::Conformation(ConformationError::AtomCountMismatch {
+        ModelError::Structure(StructureError::AtomCountMismatch {
             expected: 2,
             actual: 1
         })
@@ -162,11 +162,53 @@ fn realizations_reject_rows_of_other_dimensions() {
     assert_eq!(bound.properties().bonds().len(), 1);
     assert_eq!(
         Ensemble::from_items(two_atoms, [bound]).unwrap_err(),
-        RealizationError::Conformation(ConformationError::BondCountMismatch {
+        EnsembleError::Structure(StructureError::BondCountMismatch {
             expected: 0,
             actual: 1
         })
     );
+}
+
+#[test]
+fn collection_position_replacement_checks_counts_per_collection_transactionally() {
+    let (model, _, _) = model_fixture();
+    let mut ensemble = Ensemble::from_models([model.clone(), model.clone()]).unwrap();
+    assert_eq!(
+        ensemble.replace_positions([Positions::zeros(2)]),
+        Err(EnsembleError::MemberCountMismatch {
+            expected: 2,
+            actual: 1
+        })
+    );
+    assert_eq!(
+        ensemble.replace_positions([Positions::zeros(2), Positions::zeros(3)]),
+        Err(EnsembleError::Structure(
+            StructureError::AtomCountMismatch {
+                expected: 2,
+                actual: 3
+            }
+        ))
+    );
+    assert!(ensemble
+        .iter()
+        .all(|member| member.positions() == model.positions()));
+    ensemble
+        .replace_positions([Positions::zeros(2), Positions::zeros(2)])
+        .unwrap();
+    assert!(ensemble
+        .iter()
+        .all(|member| member.positions() == &Positions::zeros(2)));
+
+    let frame = TrajectoryFrame::new(model.positions().clone());
+    let mut trajectory = Trajectory::from_items(model.shared_topology(), [frame]).unwrap();
+    assert_eq!(
+        trajectory.replace_positions([]),
+        Err(TrajectoryError::FrameCountMismatch {
+            expected: 1,
+            actual: 0
+        })
+    );
+    assert_eq!(trajectory.get(0).unwrap().positions(), model.positions());
 }
 
 #[test]
@@ -333,7 +375,7 @@ fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
         .unwrap();
 
     let replacement = EnsembleMember::new(Positions::zeros(1), 1.0).unwrap();
-    let expected = RealizationError::Conformation(ConformationError::AtomCountMismatch {
+    let expected = EnsembleError::Structure(StructureError::AtomCountMismatch {
         expected: 2,
         actual: 1,
     });
@@ -357,14 +399,14 @@ fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
     for index in [1, usize::MAX] {
         assert_eq!(
             ensemble.replace(index, original.clone()),
-            Err(RealizationError::IndexOutOfRange { index, len: 1 })
+            Err(EnsembleError::IndexOutOfRange { index, len: 1 })
         );
         assert!(ensemble.get_mut(index).is_none());
     }
     let mut empty = Ensemble::new(topology);
     assert_eq!(
         empty.replace(0, original.clone()),
-        Err(RealizationError::IndexOutOfRange { index: 0, len: 0 })
+        Err(EnsembleError::IndexOutOfRange { index: 0, len: 0 })
     );
     assert!(empty.is_empty());
     assert_eq!(ensemble.replace(0, original.clone()).unwrap(), original);
@@ -431,7 +473,7 @@ fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
         for weight in [f64::NAN, f64::INFINITY, -1.0, 0.0] {
             assert_eq!(
                 member.set_weight(weight),
-                Err(ConformationError::InvalidWeight)
+                Err(StructureError::InvalidWeight)
             );
             assert_eq!(member.weight(), 0.5);
         }
@@ -442,7 +484,7 @@ fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
             .clone();
         assert_eq!(
             member.set_properties(detached),
-            Err(ConformationError::BondCountMismatch {
+            Err(StructureError::BondCountMismatch {
                 expected: 1,
                 actual: 0
             })
@@ -453,7 +495,7 @@ fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
             .clone();
         assert_eq!(
             member.set_properties(wrong_atoms),
-            Err(ConformationError::AtomCountMismatch {
+            Err(StructureError::AtomCountMismatch {
                 expected: 2,
                 actual: 1
             })
@@ -461,7 +503,7 @@ fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
         assert_eq!(member.properties(), &properties);
         assert_eq!(
             member.set_positions(Quantity::new(vec![Point3::origin(); 3], NANOMETER)),
-            Err(ConformationError::Position(
+            Err(StructureError::Position(
                 PositionError::PositionCountMismatch {
                     expected: 2,
                     actual: 3
@@ -477,7 +519,7 @@ fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
 }
 
 #[test]
-fn model_view_materialization_clones_realization_and_shares_topology() {
+fn model_view_materialization_clones_structure_and_shares_topology() {
     let mut source = Model::new(single_atom_topology(), single_position(1.0)).unwrap();
     let topology = source.shared_topology();
     let score = key("score");
@@ -536,19 +578,19 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
     let before = model.clone();
     assert_eq!(
         model.set_occupancy(ATOM0, Some(f64::NAN)),
-        Err(ConformationError::NonFiniteValue { index: 0 })
+        Err(StructureError::NonFiniteValue { index: 0 })
     );
     assert!(matches!(
         model.set_b_factor(ATOM0, Some(Quantity::new(1.0, KELVIN))),
-        Err(ConformationError::Unit(_))
+        Err(StructureError::Unit(_))
     ));
     assert_eq!(
         model.set_occupancy(TopologyAtomIndex::new(2), Some(1.0)),
-        Err(ConformationError::InvalidAtomIndex { index: 2, len: 2 })
+        Err(StructureError::InvalidAtomIndex { index: 2, len: 2 })
     );
     assert_eq!(
         model.set_occupancies(Some(vec![Some(1.0)])),
-        Err(ConformationError::AtomCountMismatch {
+        Err(StructureError::AtomCountMismatch {
             expected: 2,
             actual: 1
         })
@@ -672,7 +714,7 @@ fn trajectories_reinterpret_as_ensembles_without_copying_positions() {
     frame.set_velocities(Some(Velocities::zeros(2))).unwrap();
     assert_eq!(
         frame.set_forces(Some(Forces::zeros(3))),
-        Err(ConformationError::AtomCountMismatch {
+        Err(StructureError::AtomCountMismatch {
             expected: 2,
             actual: 3
         })
@@ -728,7 +770,7 @@ fn occupancies_and_b_factors_follow_models_and_members_but_never_frames() {
     assert_eq!(view.b_factor(ATOM0), Ok(None));
     assert_eq!(
         view.occupancy(TopologyAtomIndex::new(2)),
-        Err(ConformationError::InvalidAtomIndex { index: 2, len: 2 })
+        Err(StructureError::InvalidAtomIndex { index: 2, len: 2 })
     );
     assert_eq!(view.to_model().occupancies(), None);
 
@@ -744,7 +786,7 @@ fn occupancies_and_b_factors_follow_models_and_members_but_never_frames() {
 }
 
 #[test]
-fn model_atom_views_join_topology_identity_with_realization_state() {
+fn model_atom_views_join_topology_identity_with_structure_state() {
     let (mut model, carbon, _) = model_fixture();
     model.set_occupancy(ATOM0, Some(0.5)).unwrap();
     model
@@ -765,7 +807,7 @@ fn model_atom_views_join_topology_identity_with_realization_state() {
     let b_factor = atom.b_factor().unwrap().value_in(SQUARE_ANGSTROM).unwrap();
     assert!((b_factor - 20.0).abs() < 1.0e-12);
     assert_eq!(
-        atom.realization_property(&key("charge")),
+        atom.structure_property(&key("charge")),
         Some(PropertyValue::Int(-1))
     );
     // Static annotations stay on the topology view.
@@ -796,7 +838,7 @@ fn ensemble_members_always_carry_finite_positive_relative_weights() {
     for weight in [0.0, -1.0, f64::NAN, f64::INFINITY] {
         assert_eq!(
             EnsembleMember::new(single_position(0.0), weight),
-            Err(ConformationError::InvalidWeight)
+            Err(StructureError::InvalidWeight)
         );
     }
     let topology = Arc::new(single_atom_topology());
@@ -839,14 +881,12 @@ fn ensemble_members_always_carry_finite_positive_relative_weights() {
     let mut extreme = Ensemble::from_items(Arc::clone(&topology), extreme).unwrap();
     assert_eq!(
         extreme.normalize_weights(),
-        Err(RealizationError::Conformation(
-            ConformationError::InvalidWeight
-        ))
+        Err(EnsembleError::Structure(StructureError::InvalidWeight))
     );
     assert_eq!(extreme.get(1).unwrap().weight(), f64::MIN_POSITIVE);
     assert_eq!(
         Ensemble::new(topology).normalize_weights(),
-        Err(RealizationError::EmptySource)
+        Err(EnsembleError::EmptySource)
     );
 
     // Models carry no statistical weight; they become equally weighted members.

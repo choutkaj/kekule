@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
-    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryIoOperation,
+    TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation,
     TrajectoryReader, TrajectoryWriter,
 };
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
@@ -263,7 +263,7 @@ impl<R: Read + Seek> DcdReader<R> {
         mut reader: R,
         topology: impl Into<Arc<Topology>>,
         options: DcdReadOptions,
-    ) -> Result<Self, TrajectoryError> {
+    ) -> Result<Self, TrajectoryIoError> {
         let topology = topology.into();
         let source_label = &options.source_label;
         let limits = &options.limits;
@@ -546,7 +546,7 @@ impl<R: Read + Seek> DcdReader<R> {
         &self.header
     }
 
-    fn early_eof_error(&self, frame_start: u64) -> TrajectoryError {
+    fn early_eof_error(&self, frame_start: u64) -> TrajectoryIoError {
         TrajectoryCodecErrorContext::new(
             TrajectoryCodecErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::ReadFrame,
@@ -563,7 +563,7 @@ impl<R: Read + Seek> DcdReader<R> {
     fn parse_next(
         &mut self,
         capture_fixed_reference: bool,
-    ) -> Result<Option<DcdDecodedFrame>, TrajectoryError> {
+    ) -> Result<Option<DcdDecodedFrame>, TrajectoryIoError> {
         let other_scratch_bytes = scratch_bytes(&self.positions)
             .and_then(|bytes| bytes.checked_add(scratch_bytes(&self.free_indices)?))
             .and_then(|bytes| bytes.checked_add(scratch_bytes(&self.fixed_indices)?))
@@ -795,7 +795,7 @@ impl<R: Read + Seek> DcdReader<R> {
         positions: &[Point3],
         decoded: DcdDecodedFrame,
         destination: &mut FrameBuffer,
-    ) -> Result<(), TrajectoryError> {
+    ) -> Result<(), TrajectoryIoError> {
         let mut data =
             FrameBufferData::new(Quantity::new(positions, ANGSTROM)).with_step(decoded.step);
         if let Some(cell) = decoded.cell {
@@ -809,7 +809,7 @@ impl<R: Read + Seek> DcdReader<R> {
         destination.replace_from_data(data).map_err(Into::into)
     }
 
-    pub fn into_indexed(mut self) -> Result<IndexedDcdReader<R>, TrajectoryError> {
+    pub fn into_indexed(mut self) -> Result<IndexedDcdReader<R>, TrajectoryIoError> {
         let mut offsets = Vec::new();
         loop {
             if offsets.len() as u64 == self.header.declared_frames {
@@ -917,9 +917,9 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
         Arc::clone(&self.topology)
     }
 
-    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         let offset = self.reader.stream_position().map_err(|error| {
             io_context(
@@ -968,7 +968,7 @@ impl<R: Read + Seek> TrajectoryReader for IndexedDcdReader<R> {
         self.inner.shared_topology()
     }
 
-    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         self.inner.read_next(destination)
     }
 }
@@ -982,15 +982,18 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
         &mut self,
         index: u64,
         destination: &mut FrameBuffer,
-    ) -> Result<(), TrajectoryError> {
+    ) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         let offset = self
             .offsets
-            .get(usize::try_from(index).map_err(|_| TrajectoryError::FrameIndexOutOfRange(index))?)
+            .get(
+                usize::try_from(index)
+                    .map_err(|_| TrajectoryIoError::FrameIndexOutOfRange(index))?,
+            )
             .copied()
-            .ok_or(TrajectoryError::FrameIndexOutOfRange(index))?;
+            .ok_or(TrajectoryIoError::FrameIndexOutOfRange(index))?;
         let saved_offset = self.inner.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Index,
@@ -1016,7 +1019,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
             .inner
             .parse_next(false)
             .map_err(|error| frame_offset_context(error, index, offset))
-            .and_then(|decoded| decoded.ok_or(TrajectoryError::FrameIndexOutOfRange(index)));
+            .and_then(|decoded| decoded.ok_or(TrajectoryIoError::FrameIndexOutOfRange(index)));
         let restore = self
             .inner
             .reader
@@ -1055,7 +1058,7 @@ impl<W: Write + Seek> DcdWriter<W> {
         topology: Arc<Topology>,
         options: DcdWriteOptions,
         source_label: impl Into<String>,
-    ) -> Result<Self, TrajectoryError> {
+    ) -> Result<Self, TrajectoryIoError> {
         let source_label = source_label.into();
         if options.step_interval == 0
             || options.start_step > i32::MAX as u64
@@ -1151,7 +1154,7 @@ impl<W: Write + Seek> DcdWriter<W> {
         self.writer.flush()
     }
 
-    pub fn finalize(&mut self) -> Result<(), TrajectoryError> {
+    pub fn finalize(&mut self) -> Result<(), TrajectoryIoError> {
         if self.finalized {
             return Ok(());
         }
@@ -1206,7 +1209,7 @@ impl<W: Write + Seek> DcdWriter<W> {
     }
 
     /// Finalizes the frame count, flushes, and returns the nonempty DCD stream.
-    pub fn finish(mut self) -> Result<W, TrajectoryError> {
+    pub fn finish(mut self) -> Result<W, TrajectoryIoError> {
         self.finalize()?;
         self.writer.flush().map_err(|error| {
             io_context(
@@ -1229,7 +1232,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
         Arc::clone(&self.topology)
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
+    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         if self.finalized {
             return Err(codec_context(
                 TrajectoryCodecErrorKind::InvalidFrame,
@@ -1240,7 +1243,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             ));
         }
         if !frame.topology().shares_layout(self.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         if frame.velocities().is_some() {
             return Err(writer_field_error(
@@ -1304,7 +1307,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
         match (self.options.time_policy, frame.time()) {
             (DcdTimePolicy::Absent, None) => {}
             (DcdTimePolicy::Absent, Some(_)) => {
-                return Err(TrajectoryError::UnsupportedField("time"))
+                return Err(TrajectoryIoError::UnsupportedField("time"))
             }
             (DcdTimePolicy::HeaderDelta { unit }, Some(time)) => {
                 let actual = time.value_in(unit).map_err(|error| {
@@ -1472,7 +1475,7 @@ fn parse_controls(
     bytes: &[u8],
     endian: DcdEndian,
     source_label: &str,
-) -> Result<[i32; 20], TrajectoryError> {
+) -> Result<[i32; 20], TrajectoryIoError> {
     if bytes.len() != 80 {
         return Err(header_error(
             source_label,
@@ -1490,7 +1493,7 @@ fn validate_title_record(
     record: &[u8],
     endian: DcdEndian,
     source_label: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     if record.len() < 4 {
         return Err(header_error(source_label, "DCD title record is too short"));
     }
@@ -1512,7 +1515,10 @@ fn validate_title_record(
     Ok(())
 }
 
-fn validate_time_policy(policy: DcdTimePolicy, source_label: &str) -> Result<(), TrajectoryError> {
+fn validate_time_policy(
+    policy: DcdTimePolicy,
+    source_label: &str,
+) -> Result<(), TrajectoryIoError> {
     if let DcdTimePolicy::HeaderDelta { unit } = policy {
         unit.conversion_factor_to(CANONICAL_TIME_UNIT)
             .map_err(|error| {
@@ -1533,7 +1539,7 @@ fn decode_cell(
     endian: DcdEndian,
     source_label: &str,
     frame: u64,
-) -> Result<PeriodicCell, TrajectoryError> {
+) -> Result<PeriodicCell, TrajectoryIoError> {
     let mut values = [0_f64; 6];
     for (target, chunk) in values.iter_mut().zip(record.as_chunks::<8>().0.iter()) {
         *target = endian.f64(*chunk);
@@ -1608,7 +1614,7 @@ fn decode_cell(
     })
 }
 
-fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], TrajectoryError> {
+fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], TrajectoryIoError> {
     if cell.periodic_axes() != [true; 3] {
         return Err(codec_context(
             TrajectoryCodecErrorKind::UnsupportedVariant,
@@ -1686,7 +1692,7 @@ fn read_record<R: Read>(
     operation: TrajectoryIoOperation,
     frame: Option<u64>,
     clean_eof: bool,
-) -> Result<bool, TrajectoryError> {
+) -> Result<bool, TrajectoryIoError> {
     let mut marker = [0_u8; 4];
     match reader.read(&mut marker[..1]) {
         Ok(0) if clean_eof => return Ok(false),
@@ -1781,7 +1787,7 @@ fn read_exact_required<R: Read>(
     source_label: &str,
     frame: Option<u64>,
     detail: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     reader.read_exact(bytes).map_err(|error| {
         if error.kind() == std::io::ErrorKind::UnexpectedEof {
             record_error(source_label, operation, frame, detail)
@@ -1797,7 +1803,7 @@ fn write_record<W: Write>(
     payload: &[u8],
     source_label: &str,
     operation: TrajectoryIoOperation,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     let size = u32::try_from(payload.len())
         .map_err(|_| writer_overflow(source_label, "DCD record length exceeds u32 capacity"))?;
     writer
@@ -1811,7 +1817,7 @@ fn validate_atom_count(
     count: usize,
     limits: &TrajectoryIoLimits,
     source_label: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     if count == 0 || count > limits.max_atoms || count > i32::MAX as usize {
         return Err(resource_error(
             TrajectoryIoOperation::ReadHeader,
@@ -1823,7 +1829,7 @@ fn validate_atom_count(
     Ok(())
 }
 
-fn checked_coordinate_bytes(count: usize, source_label: &str) -> Result<usize, TrajectoryError> {
+fn checked_coordinate_bytes(count: usize, source_label: &str) -> Result<usize, TrajectoryIoError> {
     count.checked_mul(4).ok_or_else(|| {
         resource_error(
             TrajectoryIoOperation::ReadFrame,
@@ -1834,12 +1840,12 @@ fn checked_coordinate_bytes(count: usize, source_label: &str) -> Result<usize, T
     })
 }
 
-fn nonnegative_u64(value: i32, field: &str, source_label: &str) -> Result<u64, TrajectoryError> {
+fn nonnegative_u64(value: i32, field: &str, source_label: &str) -> Result<u64, TrajectoryIoError> {
     u64::try_from(value)
         .map_err(|_| header_error(source_label, format!("DCD {field} must be nonnegative")))
 }
 
-fn positive_u64(value: i32, field: &str, source_label: &str) -> Result<u64, TrajectoryError> {
+fn positive_u64(value: i32, field: &str, source_label: &str) -> Result<u64, TrajectoryIoError> {
     if value <= 0 {
         return Err(header_error(
             source_label,
@@ -1853,12 +1859,12 @@ fn nonnegative_usize(
     value: i32,
     field: &str,
     source_label: &str,
-) -> Result<usize, TrajectoryError> {
+) -> Result<usize, TrajectoryIoError> {
     usize::try_from(value)
         .map_err(|_| header_error(source_label, format!("DCD {field} must be nonnegative")))
 }
 
-fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryError {
+fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
     codec_context(
         TrajectoryCodecErrorKind::InvalidHeader,
         TrajectoryIoOperation::ReadHeader,
@@ -1873,7 +1879,7 @@ fn record_error(
     operation: TrajectoryIoOperation,
     frame: Option<u64>,
     detail: impl Into<String>,
-) -> TrajectoryError {
+) -> TrajectoryIoError {
     let mut context = TrajectoryCodecErrorContext::new(
         TrajectoryCodecErrorKind::TruncatedRecord,
         operation,
@@ -1892,7 +1898,7 @@ fn frame_error(
     source_label: &str,
     frame: u64,
     detail: impl Into<String>,
-) -> TrajectoryError {
+) -> TrajectoryIoError {
     TrajectoryCodecErrorContext::new(
         kind,
         TrajectoryIoOperation::ReadFrame,
@@ -1909,7 +1915,7 @@ fn resource_error(
     source_label: &str,
     frame: Option<u64>,
     detail: impl Into<String>,
-) -> TrajectoryError {
+) -> TrajectoryIoError {
     let mut context = TrajectoryCodecErrorContext::new(
         TrajectoryCodecErrorKind::ResourceLimitExceeded,
         operation,
@@ -1923,7 +1929,7 @@ fn resource_error(
     context.into()
 }
 
-fn writer_overflow(source_label: &str, detail: impl Into<String>) -> TrajectoryError {
+fn writer_overflow(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
     codec_context(
         TrajectoryCodecErrorKind::ResourceLimitExceeded,
         TrajectoryIoOperation::WriteFrame,
@@ -1933,7 +1939,7 @@ fn writer_overflow(source_label: &str, detail: impl Into<String>) -> TrajectoryE
     )
 }
 
-fn writer_field_error(source_label: &str, frame: u64, field: &str) -> TrajectoryError {
+fn writer_field_error(source_label: &str, frame: u64, field: &str) -> TrajectoryIoError {
     TrajectoryCodecErrorContext::new(
         TrajectoryCodecErrorKind::UnsupportedField,
         TrajectoryIoOperation::WriteFrame,

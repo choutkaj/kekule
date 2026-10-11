@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use kekule::core::{Atom, BondOrder, Element};
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule_traj::{FrameBuffer, TrajectoryCodecErrorKind, TrajectoryError, TrajectoryReader};
+use kekule_traj::{FrameBuffer, TrajectoryCodecErrorKind, TrajectoryIoError, TrajectoryReader};
 
 /// Reject another topology context without changing its buffer or consuming input.
 /// Call before reading and checking the first expected frame in the caller.
@@ -18,7 +18,7 @@ pub fn assert_rejects_unrelated_buffer(reader: &mut impl TrajectoryReader) {
     let before = buffer_snapshot(&wrong);
     assert!(matches!(
         reader.read_next(&mut wrong),
-        Err(TrajectoryError::TopologyMismatch)
+        Err(TrajectoryIoError::TopologyMismatch)
     ));
     assert_eq!(buffer_snapshot(&wrong), before);
     assert!(Arc::ptr_eq(
@@ -58,9 +58,9 @@ pub fn linear_carbon_topology(atom_count: usize) -> Arc<Topology> {
     topology(&symbols, &bonds)
 }
 
-pub fn codec_kind(error: &TrajectoryError) -> Option<TrajectoryCodecErrorKind> {
+pub fn codec_kind(error: &TrajectoryIoError) -> Option<TrajectoryCodecErrorKind> {
     match error {
-        TrajectoryError::Codec(context) => Some(context.kind()),
+        TrajectoryIoError::Codec(context) => Some(context.kind()),
         _ => None,
     }
 }

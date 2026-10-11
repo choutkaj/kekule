@@ -1,9 +1,9 @@
-//! Geometry-bearing realizations of coordinate-free topologies.
+//! Geometry-bearing structures of coordinate-free topologies.
 //!
 //! [`Positions`] is a topology-agnostic dense coordinate array. [`Model`]
 //! combines one immutable [`crate::topology::Topology`] with one complete set
-//! of positions, an optional periodic cell, and realization-scoped properties.
-//! [`Ensemble`] stores several non-temporal realizations of one shared topology.
+//! of positions, an optional periodic cell, and structure-scoped properties.
+//! [`Ensemble`] stores several non-temporal structures of one shared topology.
 //!
 //! Dense arrays intentionally carry no atom identity. Topology-owning values
 //! validate their dimensions and translate semantic atom or bond identifiers to
@@ -64,7 +64,6 @@ mod model;
 mod model_editor;
 mod model_state;
 mod positions;
-mod realizations;
 mod scalars;
 mod solvation;
 mod state;
@@ -77,8 +76,7 @@ pub use geometry_edit::*;
 pub use model::*;
 pub use model_editor::*;
 pub use positions::*;
-pub use realizations::RealizationError;
-pub use state::ConformationError;
+pub use state::StructureError;
 pub use trajectory::*;
 
 #[cfg(test)]

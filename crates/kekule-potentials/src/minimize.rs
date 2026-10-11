@@ -20,7 +20,7 @@ use std::fmt;
 use std::ops::ControlFlow;
 
 use kekule::geometry::{Point3, Vector3};
-use kekule::structure::{ConformationError, Model, ModelView, PositionError, Positions};
+use kekule::structure::{Model, ModelView, PositionError, Positions, StructureError};
 use kekule::units::{
     Quantity, UnitError, CANONICAL_GRADIENT_UNIT, CANONICAL_LENGTH_UNIT,
     KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
@@ -126,7 +126,7 @@ impl Minimization {
     /// Copies `source` with the minimized coordinates.
     ///
     /// `source` must share the minimized topology snapshot. Its cell and
-    /// realization properties are retained unchanged.
+    /// structure properties are retained unchanged.
     pub fn to_model(&self, source: ModelView<'_>) -> Result<Model, MinimizationError> {
         if !self.evaluation.topology().shares_layout(source.topology()) {
             return Err(MinimizationError::IncompatibleTopology);
@@ -556,7 +556,7 @@ pub enum MinimizationError {
     Evaluation(EvaluationError),
     /// [`Minimization::to_model`] received a view of a different topology.
     IncompatibleTopology,
-    Conformation(ConformationError),
+    Structure(StructureError),
     Position(PositionError),
     Unit(UnitError),
 }
@@ -572,8 +572,8 @@ impl fmt::Display for MinimizationError {
             Self::IncompatibleTopology => f.write_str(
                 "model view belongs to a different topology layout than the minimization",
             ),
-            Self::Conformation(error) => {
-                write!(f, "cannot build the minimized realization: {error}")
+            Self::Structure(error) => {
+                write!(f, "cannot build the minimized structure: {error}")
             }
             Self::Position(error) => write!(f, "cannot update positions: {error}"),
             Self::Unit(error) => write!(f, "invalid minimization quantity unit: {error}"),
@@ -585,7 +585,7 @@ impl std::error::Error for MinimizationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Evaluation(error) => Some(error),
-            Self::Conformation(error) => Some(error),
+            Self::Structure(error) => Some(error),
             Self::Position(error) => Some(error),
             Self::Unit(error) => Some(error),
             Self::InvalidOptions(_) | Self::NumericalFailure(_) | Self::IncompatibleTopology => {
@@ -601,9 +601,9 @@ impl From<EvaluationError> for MinimizationError {
     }
 }
 
-impl From<ConformationError> for MinimizationError {
-    fn from(error: ConformationError) -> Self {
-        Self::Conformation(error)
+impl From<StructureError> for MinimizationError {
+    fn from(error: StructureError) -> Self {
+        Self::Structure(error)
     }
 }
 

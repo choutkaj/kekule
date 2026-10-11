@@ -11,7 +11,7 @@ use kekule_traj::io::{
 };
 use kekule_traj::{
     validate_atom_order, CoordinateFrameReader, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
-    TrajectoryError, TrajectoryFormat, TrajectoryReader,
+    TrajectoryFormat, TrajectoryIoError, TrajectoryReader,
 };
 
 use crate::support;
@@ -30,7 +30,7 @@ fn trajectory_payload_and_buffer_reject_mismatched_annotation_rows() {
     let topology = topology();
     let key = PropertyKey::new("tag").unwrap();
     let positions = Positions::zeros(1);
-    // Annotations of a larger realization do not fit this topology's rows.
+    // Annotations of a larger structure do not fit this topology's rows.
     let mut larger = TrajectoryFrame::new(Positions::zeros(2));
     larger
         .properties_mut()
@@ -124,7 +124,7 @@ fn format_agnostic_public_api_opens_sequential_and_indexed_readers() {
     // the same atom count. Rejection must not consume the pending frame.
     assert!(matches!(
         default_sequential.read_next(&mut destination),
-        Err(TrajectoryError::TopologyMismatch)
+        Err(TrajectoryIoError::TopologyMismatch)
     ));
     assert!(default_sequential.read_next(&mut owned_buffer).unwrap());
     assert_eq!(
@@ -170,7 +170,7 @@ fn path_options_enforce_global_limits_and_path_diagnostics() {
             support::codec_kind(&error),
             Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
         );
-        let TrajectoryError::Codec(context) = error else {
+        let TrajectoryIoError::Codec(context) = error else {
             panic!("expected codec error")
         };
         assert_eq!(context.source_label(), Some(path.to_str().unwrap()));
@@ -191,7 +191,7 @@ fn optional_atom_order_validation_checks_the_entire_sequence() {
     ] {
         assert!(matches!(
             validate_atom_order(&topology, &order),
-            Err(TrajectoryError::AtomOrderMismatch)
+            Err(TrajectoryIoError::AtomOrderMismatch)
         ));
     }
 }

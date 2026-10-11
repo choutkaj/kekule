@@ -35,7 +35,7 @@ pub use bonds::{BondSelection, BondSelectionMode};
 /// | Hierarchy | [`Self::for_chains`], [`Self::for_chain_label`], [`Self::for_residues`], [`Self::for_residue_classes`], [`Self::for_atom_sites`] |
 /// | Exact names in separate namespaces | [`Self::for_label_atom_names`], [`Self::for_author_atom_names`] |
 /// | Substructure matches | [`Self::from_query_matches`], [`Self::from_topology_query_matches`] |
-/// | Cartesian distance in one realization | [`crate::structure::measure::within`] |
+/// | Cartesian distance in one structure | [`crate::structure::measure::within`] |
 ///
 /// Hierarchy constructors return atom sets, not independently selected hierarchy
 /// nodes. Implicit hydrogens have no atom IDs and cannot be selected separately.

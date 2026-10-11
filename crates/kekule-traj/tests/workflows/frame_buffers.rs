@@ -6,11 +6,11 @@ use std::error::Error;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
-    ConformationError, Forces, Positions, RealizationError, Trajectory, TrajectoryFrame, Velocities,
+    Forces, Positions, StructureError, Trajectory, TrajectoryError, TrajectoryFrame, Velocities,
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use kekule_traj::{
-    MemoryTrajectoryReader, SeekableTrajectoryReader, TrajectoryError, TrajectoryReader,
+    MemoryTrajectoryReader, SeekableTrajectoryReader, TrajectoryIoError, TrajectoryReader,
 };
 
 use crate::support;
@@ -97,7 +97,7 @@ fn memory_random_reads_preserve_sequential_cursor_and_error_destinations() {
     let before = (*destination).clone();
     assert_eq!(
         reader.read_frame(99, &mut destination),
-        Err(TrajectoryError::FrameIndexOutOfRange(99))
+        Err(TrajectoryIoError::FrameIndexOutOfRange(99))
     );
     assert_eq!((*destination).clone(), before);
     let unrelated = annotated();
@@ -105,7 +105,7 @@ fn memory_random_reads_preserve_sequential_cursor_and_error_destinations() {
     let unrelated_before = (*unrelated_buffer).clone();
     assert_eq!(
         reader.read_frame(0, &mut unrelated_buffer),
-        Err(TrajectoryError::TopologyMismatch)
+        Err(TrajectoryIoError::TopologyMismatch)
     );
     assert_eq!((*unrelated_buffer).clone(), unrelated_before);
     for index in 1..4 {
@@ -123,10 +123,10 @@ fn memory_random_reads_preserve_sequential_cursor_and_error_destinations() {
 fn errors_retain_nested_causes() {
     let position_error =
         Positions::new(Quantity::new([Point3::new(f64::NAN, 0.0, 0.0)], NANOMETER)).unwrap_err();
-    let frame_error = ConformationError::from(position_error);
+    let frame_error = StructureError::from(position_error);
     let source_text = frame_error.source().unwrap().to_string();
-    let trajectory_error = TrajectoryError::from(frame_error.clone());
-    assert!(matches!(trajectory_error, TrajectoryError::Conformation(_)));
+    let trajectory_error = TrajectoryIoError::from(frame_error.clone());
+    assert!(matches!(trajectory_error, TrajectoryIoError::Structure(_)));
     assert_eq!(
         trajectory_error
             .source()
@@ -136,10 +136,10 @@ fn errors_retain_nested_causes() {
             .to_string(),
         source_text
     );
-    // A collection error wrapping a conformation error flattens to it.
-    let flattened = TrajectoryError::from(RealizationError::from(frame_error));
+    // A collection error wrapping a structure error flattens to it.
+    let flattened = TrajectoryIoError::from(TrajectoryError::from(frame_error));
     assert_eq!(flattened, trajectory_error);
-    let collection_error = TrajectoryError::from(RealizationError::NonMonotonicTime { frame: 1 });
-    assert!(matches!(collection_error, TrajectoryError::Realization(_)));
-    assert!(collection_error.source().unwrap().is::<RealizationError>());
+    let collection_error = TrajectoryIoError::from(TrajectoryError::NonMonotonicTime { frame: 1 });
+    assert!(matches!(collection_error, TrajectoryIoError::Trajectory(_)));
+    assert!(collection_error.source().unwrap().is::<TrajectoryError>());
 }

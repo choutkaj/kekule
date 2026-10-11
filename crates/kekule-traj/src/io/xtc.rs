@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
-    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryIoOperation,
+    TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation,
     TrajectoryReader, TrajectoryWriter,
 };
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
@@ -138,7 +138,7 @@ impl XtcWriteOptions {
     /// Sets the coordinate scale in inverse nanometers.
     ///
     /// Compressed coordinates have nominal resolution `1 / precision` nm.
-    pub fn with_precision(mut self, precision: f32) -> Result<Self, TrajectoryError> {
+    pub fn with_precision(mut self, precision: f32) -> Result<Self, TrajectoryIoError> {
         validate_precision(precision, "XTC writer options")?;
         self.precision = precision;
         Ok(self)
@@ -208,7 +208,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         frame_index: u64,
         clean_eof: bool,
         positions_capacity: usize,
-    ) -> Result<Option<XtcFrameInfo>, TrajectoryError> {
+    ) -> Result<Option<XtcFrameInfo>, TrajectoryIoError> {
         let limits = &options.limits;
         let source_label = &options.source_label;
         self.decoded_start = None;
@@ -549,7 +549,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         limits: &TrajectoryIoLimits,
         source_label: &str,
         frame: u64,
-    ) -> Result<(), TrajectoryError> {
+    ) -> Result<(), TrajectoryIoError> {
         let position_bytes = positions_capacity.checked_mul(std::mem::size_of::<Point3>());
         let error = |detail: &str| resource_error(source_label, Some(frame), detail);
         // Include the forthcoming byte buffer before reserving scalar storage;
@@ -580,7 +580,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         info: &XtcFrameInfo,
         source_label: &str,
         frame_index: u64,
-    ) -> Result<(), TrajectoryError> {
+    ) -> Result<(), TrajectoryIoError> {
         if self.decoded_start != Some(info.start) {
             return Err(corrupt_error(
                 source_label,
@@ -652,7 +652,7 @@ impl<R: Read + Seek> XtcReader<R> {
         reader: R,
         topology: impl Into<Arc<Topology>>,
         options: XtcReadOptions,
-    ) -> Result<Self, TrajectoryError> {
+    ) -> Result<Self, TrajectoryIoError> {
         let topology = topology.into();
         let source_label = &options.source_label;
         let limits = &options.limits;
@@ -700,7 +700,7 @@ impl<R: Read + Seek> XtcReader<R> {
         &self.first_info
     }
 
-    fn next_info(&mut self) -> Result<Option<XtcFrameInfo>, TrajectoryError> {
+    fn next_info(&mut self) -> Result<Option<XtcFrameInfo>, TrajectoryIoError> {
         if let Some(info) = self.pending_info.take() {
             return Ok(Some(info));
         }
@@ -723,7 +723,7 @@ impl<R: Read + Seek> XtcReader<R> {
             .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))
     }
 
-    fn parse_next(&mut self) -> Result<Option<XtcFrameInfo>, TrajectoryError> {
+    fn parse_next(&mut self) -> Result<Option<XtcFrameInfo>, TrajectoryIoError> {
         if self.frame_cursor >= self.options.limits.max_frames {
             let clean_eof = if self.pending_info.is_some() {
                 false
@@ -823,7 +823,7 @@ impl<R: Read + Seek> XtcReader<R> {
         positions: &[Point3],
         info: &XtcFrameInfo,
         destination: &mut FrameBuffer,
-    ) -> Result<(), TrajectoryError> {
+    ) -> Result<(), TrajectoryIoError> {
         let mut data = FrameBufferData::new(Quantity::new(positions, NANOMETER))
             .with_time(Quantity::new(info.time, PICOSECOND))
             .with_step(info.step);
@@ -833,7 +833,7 @@ impl<R: Read + Seek> XtcReader<R> {
         destination.replace_from_data(data).map_err(Into::into)
     }
 
-    pub fn into_indexed(mut self) -> Result<IndexedXtcReader<R>, TrajectoryError> {
+    pub fn into_indexed(mut self) -> Result<IndexedXtcReader<R>, TrajectoryIoError> {
         let mut offsets = Vec::new();
         loop {
             if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
@@ -892,7 +892,7 @@ impl<R: Read + Seek> XtcReader<R> {
         })
     }
 
-    fn rewind(&mut self) -> Result<(), TrajectoryError> {
+    fn rewind(&mut self) -> Result<(), TrajectoryIoError> {
         self.adapter
             .reader
             .seek(SeekFrom::Start(self.stream_start))
@@ -925,9 +925,9 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
         Arc::clone(&self.topology)
     }
 
-    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         let offset = self.pending_info.as_ref().map_or_else(
             || {
@@ -982,7 +982,7 @@ impl<R: Read + Seek> TrajectoryReader for IndexedXtcReader<R> {
         self.inner.shared_topology()
     }
 
-    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         self.inner.read_next(destination)
     }
 }
@@ -996,15 +996,18 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
         &mut self,
         index: u64,
         destination: &mut FrameBuffer,
-    ) -> Result<(), TrajectoryError> {
+    ) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         let offset = self
             .offsets
-            .get(usize::try_from(index).map_err(|_| TrajectoryError::FrameIndexOutOfRange(index))?)
+            .get(
+                usize::try_from(index)
+                    .map_err(|_| TrajectoryIoError::FrameIndexOutOfRange(index))?,
+            )
             .copied()
-            .ok_or(TrajectoryError::FrameIndexOutOfRange(index))?;
+            .ok_or(TrajectoryIoError::FrameIndexOutOfRange(index))?;
         let saved_offset = self
             .inner
             .adapter
@@ -1039,7 +1042,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
             .inner
             .parse_next()
             .map_err(|error| frame_offset_context(error, index, offset))
-            .and_then(|info| info.ok_or(TrajectoryError::FrameIndexOutOfRange(index)));
+            .and_then(|info| info.ok_or(TrajectoryIoError::FrameIndexOutOfRange(index)));
         let restore = self
             .inner
             .adapter
@@ -1079,7 +1082,7 @@ impl<W: Write> MollyWriterAdapter<W> {
         }
     }
 
-    fn write(&mut self, source_label: &str, frame_index: u64) -> Result<(), TrajectoryError> {
+    fn write(&mut self, source_label: &str, frame_index: u64) -> Result<(), TrajectoryIoError> {
         match catch_unwind(AssertUnwindSafe(|| self.inner.write_frame(&self.frame))) {
             Ok(Ok(())) => Ok(()),
             Ok(Err(error)) => Err(io_context(
@@ -1116,7 +1119,7 @@ impl<W: Write> XtcWriter<W> {
         topology: Arc<Topology>,
         options: XtcWriteOptions,
         source_label: impl Into<String>,
-    ) -> Result<Self, TrajectoryError> {
+    ) -> Result<Self, TrajectoryIoError> {
         let source_label = source_label.into();
         validate_precision(options.precision, &source_label)?;
         if topology.atom_count() == 0 || topology.atom_count() > i32::MAX as usize {
@@ -1156,12 +1159,12 @@ impl<W: Write> XtcWriter<W> {
         self.adapter.inner.file.flush()
     }
 
-    pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryError> {
+    pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryIoError> {
         require_nonempty_writer(self.frame_count, TrajectoryFormat::Xtc, &self.source_label)
     }
 
     /// Flushes and returns the completed nonempty XTC stream.
-    pub fn finish(mut self) -> Result<W, TrajectoryError> {
+    pub fn finish(mut self) -> Result<W, TrajectoryIoError> {
         self.validate_finish()?;
         self.adapter.inner.file.flush().map_err(|error| {
             io_context(
@@ -1184,9 +1187,9 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         Arc::clone(&self.topology)
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
+    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !frame.topology().shares_layout(self.topology()) {
-            return Err(TrajectoryError::TopologyMismatch);
+            return Err(TrajectoryIoError::TopologyMismatch);
         }
         for (present, field) in [
             (frame.velocities().is_some(), "velocities"),
@@ -1371,7 +1374,7 @@ impl<'a> CheckedByteBuffer<'a> {
         Self { bytes, index: 0 }
     }
 
-    fn pop(&mut self, source_label: &str, frame_index: u64) -> Result<u8, TrajectoryError> {
+    fn pop(&mut self, source_label: &str, frame_index: u64) -> Result<u8, TrajectoryIoError> {
         let value = self.bytes.get(self.index).copied().ok_or_else(|| {
             corrupt_error(
                 source_label,
@@ -1404,7 +1407,7 @@ fn decode_compressed_payload(
     output: &mut Vec<f32>,
     source_label: &str,
     frame_index: u64,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     let CompressedLayout {
         atom_count,
         minimum,
@@ -1648,7 +1651,7 @@ fn decode_checked_bits(
     count: u32,
     source_label: &str,
     frame_index: u64,
-) -> Result<u32, TrajectoryError> {
+) -> Result<u32, TrajectoryIoError> {
     if count > 32 {
         return Err(corrupt_error(
             source_label,
@@ -1690,7 +1693,7 @@ fn push_checked_coordinate(
     inverse_precision: f32,
     source_label: &str,
     frame_index: u64,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     for value in coordinate {
         let value = value as f32 * inverse_precision;
         if !value.is_finite() {
@@ -1710,7 +1713,7 @@ fn validate_decoded_count(
     atom_count: usize,
     source_label: &str,
     frame_index: u64,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     if output.len() != atom_count.saturating_mul(3) {
         return Err(corrupt_error(
             source_label,
@@ -1749,7 +1752,7 @@ fn decode_checked_triplet(
     sizes: [u32; 3],
     source_label: &str,
     frame_index: u64,
-) -> Result<[i32; 3], TrajectoryError> {
+) -> Result<[i32; 3], TrajectoryIoError> {
     let mut encoded = [0_u8; 32];
     let mut bytes = 0_usize;
     while count >= 8 {
@@ -1808,7 +1811,7 @@ fn decode_cell(
     policy: XtcCellPolicy,
     source_label: &str,
     frame: u64,
-) -> Result<Option<PeriodicCell>, TrajectoryError> {
+) -> Result<Option<PeriodicCell>, TrajectoryIoError> {
     if values.iter().any(|value| !value.is_finite()) {
         return Err(frame_error(
             source_label,
@@ -1849,7 +1852,7 @@ fn read_nbytes<R: Read>(
     magic: XtcMagic,
     source_label: &str,
     frame: u64,
-) -> Result<usize, TrajectoryError> {
+) -> Result<usize, TrajectoryIoError> {
     let mut bytes = [0_u8; 8];
     read_exact(
         reader,
@@ -1877,7 +1880,7 @@ fn read_exact<R: Read>(
     source_label: &str,
     frame: Option<u64>,
     detail: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     reader.read_exact(bytes).map_err(|error| {
         if error.kind() == std::io::ErrorKind::UnexpectedEof {
             truncated_error(source_label, frame, detail)
@@ -1900,7 +1903,7 @@ fn validate_atom_count(
     atom_count: usize,
     limits: &TrajectoryIoLimits,
     source_label: &str,
-) -> Result<(), TrajectoryError> {
+) -> Result<(), TrajectoryIoError> {
     if atom_count == 0 || atom_count > limits.max_atoms || atom_count > u32::MAX as usize {
         return Err(resource_error(
             source_label,
@@ -1917,7 +1920,7 @@ fn nonnegative_xdr_count(
     source_label: &str,
     frame: u64,
     byte_offset: u64,
-) -> Result<usize, TrajectoryError> {
+) -> Result<usize, TrajectoryIoError> {
     usize::try_from(value).map_err(|_| {
         TrajectoryCodecErrorContext::new(
             TrajectoryCodecErrorKind::InvalidHeader,
@@ -1932,7 +1935,7 @@ fn nonnegative_xdr_count(
     })
 }
 
-fn validate_precision(precision: f32, source_label: &str) -> Result<(), TrajectoryError> {
+fn validate_precision(precision: f32, source_label: &str) -> Result<(), TrajectoryIoError> {
     if !precision.is_finite() || precision <= 0.0 {
         return Err(codec_context(
             TrajectoryCodecErrorKind::InvalidPrecision,
@@ -1945,7 +1948,7 @@ fn validate_precision(precision: f32, source_label: &str) -> Result<(), Trajecto
     Ok(())
 }
 
-fn finite_f32(value: f64, source_label: &str, field: &str) -> Result<f32, TrajectoryError> {
+fn finite_f32(value: f64, source_label: &str, field: &str) -> Result<f32, TrajectoryIoError> {
     let narrowed = value as f32;
     if !value.is_finite() || !narrowed.is_finite() {
         return Err(codec_context(
@@ -1959,7 +1962,7 @@ fn finite_f32(value: f64, source_label: &str, field: &str) -> Result<f32, Trajec
     Ok(narrowed)
 }
 
-fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryError {
+fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
     codec_context(
         TrajectoryCodecErrorKind::InvalidHeader,
         TrajectoryIoOperation::ReadHeader,
@@ -1969,7 +1972,7 @@ fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryErro
     )
 }
 
-fn frame_error(source_label: &str, frame: u64, detail: impl Into<String>) -> TrajectoryError {
+fn frame_error(source_label: &str, frame: u64, detail: impl Into<String>) -> TrajectoryIoError {
     TrajectoryCodecErrorContext::new(
         TrajectoryCodecErrorKind::InvalidFrame,
         TrajectoryIoOperation::ReadFrame,
@@ -1981,7 +1984,7 @@ fn frame_error(source_label: &str, frame: u64, detail: impl Into<String>) -> Tra
     .into()
 }
 
-fn corrupt_error(source_label: &str, frame: u64, detail: impl Into<String>) -> TrajectoryError {
+fn corrupt_error(source_label: &str, frame: u64, detail: impl Into<String>) -> TrajectoryIoError {
     TrajectoryCodecErrorContext::new(
         TrajectoryCodecErrorKind::CorruptCompressedData,
         TrajectoryIoOperation::ReadFrame,
@@ -1997,7 +2000,7 @@ fn truncated_error(
     source_label: &str,
     frame: Option<u64>,
     detail: impl Into<String>,
-) -> TrajectoryError {
+) -> TrajectoryIoError {
     let mut context = TrajectoryCodecErrorContext::new(
         TrajectoryCodecErrorKind::TruncatedRecord,
         if frame.is_some() {
@@ -2019,7 +2022,7 @@ fn resource_error(
     source_label: &str,
     frame: Option<u64>,
     detail: impl Into<String>,
-) -> TrajectoryError {
+) -> TrajectoryIoError {
     let mut context = TrajectoryCodecErrorContext::new(
         TrajectoryCodecErrorKind::ResourceLimitExceeded,
         if frame.is_some() {
@@ -2037,7 +2040,7 @@ fn resource_error(
     context.into()
 }
 
-fn writer_field_error(source_label: &str, frame: u64, field: &str) -> TrajectoryError {
+fn writer_field_error(source_label: &str, frame: u64, field: &str) -> TrajectoryIoError {
     TrajectoryCodecErrorContext::new(
         TrajectoryCodecErrorKind::UnsupportedField,
         TrajectoryIoOperation::WriteFrame,

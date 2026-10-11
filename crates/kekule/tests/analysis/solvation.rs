@@ -440,13 +440,13 @@ fn original_entities_properties_and_existing_water_survive() {
     assert_eq!(
         m.atom(ids[0])
             .unwrap()
-            .realization_property(&key("atom_note")),
+            .structure_property(&key("atom_note")),
         Some(PropertyValue::Int(3))
     );
     assert_eq!(
         m.atom(m.topology().atom_ids()[3])
             .unwrap()
-            .realization_property(&key("atom_note")),
+            .structure_property(&key("atom_note")),
         None
     );
     assert_eq!(

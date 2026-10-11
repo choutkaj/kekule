@@ -1,6 +1,6 @@
 use super::*;
 
-/// Internal row projection needed to publish a model's realization arrays.
+/// Internal row projection needed to publish a model's structure arrays.
 pub(crate) struct TopologyPublication {
     pub topology: Arc<Topology>,
     pub atom_slots: Vec<usize>,

@@ -14,7 +14,7 @@ use super::atom_site::AtomRow;
 pub(crate) use select::inventory;
 pub(super) use select::select_alt_locations;
 
-/// Policy for reducing source alternate locations to one coordinate realization.
+/// Policy for reducing source alternate locations to one coordinate set.
 ///
 /// The default ranks complete residue alternatives by their mean labelled-atom
 /// occupancy. Missing occupancies contribute zero and are reported; shared atoms

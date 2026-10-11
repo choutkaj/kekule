@@ -16,7 +16,7 @@ pub use stream::{
 
 use std::{fmt, io};
 
-use kekule::structure::{ConformationError, RealizationError};
+use kekule::structure::{StructureError, TrajectoryError};
 
 /// Stable identity for a trajectory file format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -295,7 +295,7 @@ impl TrajectoryCodecErrorContext {
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum TrajectoryError {
+pub enum TrajectoryIoError {
     TopologyMismatch,
     AtomOrderMismatch,
     FrameIndexOutOfRange(u64),
@@ -303,14 +303,14 @@ pub enum TrajectoryError {
     MissingRequiredTopology,
     UnsupportedField(&'static str),
     /// Decoded or supplied frame state is invalid for its topology.
-    Conformation(Box<ConformationError>),
+    Structure(Box<StructureError>),
     /// Frames could not be collected into an in-memory trajectory.
-    Realization(Box<RealizationError>),
+    Trajectory(Box<TrajectoryError>),
     Io(Box<TrajectoryIoErrorContext>),
     Codec(Box<TrajectoryCodecErrorContext>),
 }
 
-impl fmt::Display for TrajectoryError {
+impl fmt::Display for TrajectoryIoError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TopologyMismatch => {
@@ -331,8 +331,8 @@ impl fmt::Display for TrajectoryError {
             Self::UnsupportedField(field) => {
                 write!(formatter, "trajectory writer does not support {field}")
             }
-            Self::Conformation(error) => write!(formatter, "invalid trajectory frame: {error}"),
-            Self::Realization(error) => write!(formatter, "invalid trajectory: {error}"),
+            Self::Structure(error) => write!(formatter, "invalid trajectory frame: {error}"),
+            Self::Trajectory(error) => write!(formatter, "invalid trajectory: {error}"),
             Self::Io(context) => {
                 write!(formatter, "trajectory {} I/O failed", context.operation)?;
                 if let Some(format) = context.format {
@@ -380,49 +380,48 @@ impl fmt::Display for TrajectoryError {
     }
 }
 
-impl std::error::Error for TrajectoryError {
+impl std::error::Error for TrajectoryIoError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Conformation(source) => Some(source.as_ref()),
-            Self::Realization(source) => Some(source.as_ref()),
+            Self::Structure(source) => Some(source.as_ref()),
+            Self::Trajectory(source) => Some(source.as_ref()),
             // Codec and I/O contexts already hold the terminal diagnostic facts.
             _ => None,
         }
     }
 }
 
-impl From<ConformationError> for TrajectoryError {
-    fn from(error: ConformationError) -> Self {
-        Self::Conformation(Box::new(error))
+impl From<StructureError> for TrajectoryIoError {
+    fn from(error: StructureError) -> Self {
+        Self::Structure(Box::new(error))
     }
 }
 
-impl From<kekule::structure::PositionError> for TrajectoryError {
+impl From<kekule::structure::PositionError> for TrajectoryIoError {
     fn from(error: kekule::structure::PositionError) -> Self {
-        Self::Conformation(Box::new(error.into()))
+        Self::Structure(Box::new(error.into()))
     }
 }
 
-impl From<RealizationError> for TrajectoryError {
-    fn from(error: RealizationError) -> Self {
+impl From<TrajectoryError> for TrajectoryIoError {
+    fn from(error: TrajectoryError) -> Self {
         match error {
-            RealizationError::TopologyMismatch => Self::TopologyMismatch,
-            RealizationError::IndexOutOfRange { index, .. } => {
+            TrajectoryError::IndexOutOfRange { index, .. } => {
                 Self::FrameIndexOutOfRange(index as u64)
             }
-            RealizationError::Conformation(error) => Self::Conformation(Box::new(error)),
-            error => Self::Realization(Box::new(error)),
+            TrajectoryError::Structure(error) => Self::Structure(Box::new(error)),
+            error => Self::Trajectory(Box::new(error)),
         }
     }
 }
 
-impl From<TrajectoryIoErrorContext> for TrajectoryError {
+impl From<TrajectoryIoErrorContext> for TrajectoryIoError {
     fn from(context: TrajectoryIoErrorContext) -> Self {
         Self::Io(Box::new(context))
     }
 }
 
-impl From<TrajectoryCodecErrorContext> for TrajectoryError {
+impl From<TrajectoryCodecErrorContext> for TrajectoryIoError {
     fn from(context: TrajectoryCodecErrorContext) -> Self {
         Self::Codec(Box::new(context))
     }

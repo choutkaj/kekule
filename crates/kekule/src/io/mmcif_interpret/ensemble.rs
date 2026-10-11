@@ -94,7 +94,8 @@ pub(crate) fn interpret_mmcif_ensemble_block(
     assemble(first, remaining)
 }
 
-/// Explicit caller-selected realizations, never automatic altloc enumeration.
+/// Explicit caller-selected alternate conformations, never automatic altloc
+/// enumeration.
 pub(crate) fn interpret_mmcif_conformations(
     document: &MmcifDocument,
     selections: &[MmcifInterpretOptions],

@@ -22,7 +22,7 @@ use kekule::units::{Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_GRADIE
 /// parallel. Coordinate-dependent caches belong to the caller driving the
 /// evaluations, not to the potential.
 ///
-/// Accepting a [`ModelView`] does not imply support for every realization
+/// Accepting a [`ModelView`] does not imply support for every structure
 /// field. Implementations document capabilities such as periodic-cell support
 /// and return a structured [`EvaluationError`] for unsupported state. Every
 /// evaluation of a view from a different topology snapshot, including an
@@ -152,7 +152,7 @@ impl Energy {
     }
 }
 
-/// A validated energy and Cartesian gradient `dE/dx` for one realization.
+/// A validated energy and Cartesian gradient `dE/dx` for one structure.
 ///
 /// The gradient has one finite vector per topology atom in dense order. It is
 /// the derivative of the potential energy; forces are its negation.
@@ -196,7 +196,7 @@ impl Evaluation {
         })
     }
 
-    /// The exact topology snapshot of the evaluated realization.
+    /// The exact topology snapshot of the evaluated structure.
     pub fn topology(&self) -> &Arc<Topology> {
         &self.topology
     }

@@ -70,7 +70,7 @@ impl SdfRecord {
     }
 
     /// Interprets this independently meaningful record once into its richest
-    /// canonical one-realization state.
+    /// canonical one-structure state.
     pub fn interpret(&self) -> Result<SdfRecordInterpretation, SdfInterpretError> {
         interpret_sdf_record(self)
     }

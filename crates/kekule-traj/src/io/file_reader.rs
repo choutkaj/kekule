@@ -6,8 +6,8 @@ use std::sync::Arc;
 use kekule::topology::Topology;
 
 use crate::{
-    FrameBuffer, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryError,
-    TrajectoryFormat, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryFormat,
+    TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::structure::Trajectory;
 
@@ -64,7 +64,7 @@ impl TrajectoryReader for SequentialFileTrajectoryReader {
         }
     }
 
-    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         match &mut self.inner {
             SequentialReaderInner::Xyz(reader) => reader.read_next(destination),
             SequentialReaderInner::Dcd(reader) => reader.read_next(destination),
@@ -123,7 +123,7 @@ impl TrajectoryReader for IndexedFileTrajectoryReader {
         }
     }
 
-    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         match &mut self.inner {
             IndexedReaderInner::Xyz(reader) => reader.read_next(destination),
             IndexedReaderInner::Dcd(reader) => reader.read_next(destination),
@@ -147,7 +147,7 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
         &mut self,
         index: u64,
         destination: &mut FrameBuffer,
-    ) -> Result<(), TrajectoryError> {
+    ) -> Result<(), TrajectoryIoError> {
         match &mut self.inner {
             IndexedReaderInner::Xyz(reader) => reader.read_frame(index, destination),
             IndexedReaderInner::Dcd(reader) => reader.read_frame(index, destination),
@@ -184,7 +184,7 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
 pub fn read_trajectory(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
-) -> Result<Trajectory, TrajectoryError> {
+) -> Result<Trajectory, TrajectoryIoError> {
     read_trajectory_with_options(path, topology, TrajectoryOpenOptions::default())
 }
 
@@ -198,7 +198,7 @@ pub fn read_trajectory_with_options(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
     options: TrajectoryOpenOptions,
-) -> Result<Trajectory, TrajectoryError> {
+) -> Result<Trajectory, TrajectoryIoError> {
     let mut reader = open_trajectory_with_options(path, topology, options)?;
     let mut buffer = reader.frame_buffer();
     let mut writer = MemoryTrajectoryWriter::new(reader.shared_topology());
@@ -234,7 +234,7 @@ pub fn read_trajectory_with_options(
 pub fn open_trajectory(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
-) -> Result<SequentialFileTrajectoryReader, TrajectoryError> {
+) -> Result<SequentialFileTrajectoryReader, TrajectoryIoError> {
     open_trajectory_with_options(path, topology, TrajectoryOpenOptions::default())
 }
 
@@ -247,7 +247,7 @@ pub fn open_trajectory_with_options(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
     options: TrajectoryOpenOptions,
-) -> Result<SequentialFileTrajectoryReader, TrajectoryError> {
+) -> Result<SequentialFileTrajectoryReader, TrajectoryIoError> {
     let topology = topology.into();
     let path = path.as_ref();
     let label = path.display().to_string();
@@ -358,7 +358,7 @@ pub fn open_trajectory_with_options(
 pub fn open_indexed_trajectory(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
-) -> Result<IndexedFileTrajectoryReader, TrajectoryError> {
+) -> Result<IndexedFileTrajectoryReader, TrajectoryIoError> {
     open_indexed_trajectory_with_options(path, topology, TrajectoryOpenOptions::default())
 }
 
@@ -372,7 +372,7 @@ pub fn open_indexed_trajectory_with_options(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
     options: TrajectoryOpenOptions,
-) -> Result<IndexedFileTrajectoryReader, TrajectoryError> {
+) -> Result<IndexedFileTrajectoryReader, TrajectoryIoError> {
     let topology = topology.into();
     let path = path.as_ref();
     let label = path.display().to_string();

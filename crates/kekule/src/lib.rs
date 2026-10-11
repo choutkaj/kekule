@@ -10,9 +10,9 @@
 //!   geometry-independent properties.
 //! - [`topology::Topology`] is one coordinate-free system containing one or
 //!   more explicit molecule instances plus an optional biological hierarchy.
-//! - [`structure::Model`] is one realization of a topology: positions, an
-//!   optional periodic cell, and realization-scoped properties.
-//! - [`structure::Ensemble`] stores several non-temporal realizations of one
+//! - [`structure::Model`] is one structure of a topology: positions, an
+//!   optional periodic cell, and structure-scoped properties.
+//! - [`structure::Ensemble`] stores several non-temporal structures of one
 //!   shared topology. Ordered trajectories live in the `kekule-traj`
 //!   companion crate.
 //!
@@ -67,8 +67,8 @@
 //! | Assemble complete molecules and reusable instances | [`topology::TopologyBuilder`] | `build()` |
 //! | Assemble a system with explicit geometry | [`structure::ModelBuilder`] | `build()` |
 //! | Edit system atoms, bonds, components, and hierarchy | [`topology::TopologyEditor`] | `finish()` |
-//! | Edit structure while coordinating one realization | [`structure::ModelEditor`] | `finish()` |
-//! | Change geometry or realization annotations | [`structure::Model`] setters | Immediate checked update |
+//! | Edit a system together with its coordinates | [`structure::ModelEditor`] | `finish()` |
+//! | Change geometry or structure annotations | [`structure::Model`] setters | Immediate checked update |
 //!
 //! Builders and editors offer non-consuming `validate()` and recoverable
 //! `try_build()` / `try_finish()`. Use `edit()` for a detached draft or

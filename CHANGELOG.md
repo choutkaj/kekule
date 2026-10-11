@@ -22,14 +22,14 @@ All notable changes to Kekule are documented in this file.
   snapshots still share static storage, including properties until one
   snapshot edits them.
 - **Breaking:** `Conformation` and `ConformationMut` are removed. `Model`,
-  `EnsembleMember`, and `TrajectoryFrame` own their realization fields
+  `EnsembleMember`, and `TrajectoryFrame` own their structure fields
   directly, and each holds only the fields meaningful for it: all three have
-  positions, an optional cell, and realization properties; models and members
+  positions, an optional cell, and structure properties; models and members
   also have occupancies and B-factors; frames also have velocities, forces,
   time, and step.
   - `Model::new`, `EnsembleMember::new`, and `TrajectoryFrame::new` take
     `Positions`; each type has `with_cell`.
-  - Read realization state from the owner (`positions()`, `cell()`,
+  - Read structure state from the owner (`positions()`, `cell()`,
     `properties()`, `occupancies()`, ...) and change it with the owner's
     dimension-preserving setters (`set_positions`, `set_position_at`,
     `set_cell`, `set_properties`, `properties_mut`, `set_occupancy`, ...).
@@ -44,7 +44,7 @@ All notable changes to Kekule are documented in this file.
     occupancies or B-factors. `Realization` no longer requires `Deref`.
   - Trajectory frames cannot hold occupancies or B-factors, so trajectory
     writers no longer reject them, and `FrameBufferData` borrows only
-    realization properties from a source frame.
+    structure properties from a source frame.
 - **Breaking:** `Ensemble` and `Trajectory` each own their topology,
   collection properties, and items and implement their own operations, so
   the two can diverge. The generic `Realization` trait and the
@@ -54,6 +54,18 @@ All notable changes to Kekule are documented in this file.
   `iter()` returns `EnsembleIter` or `TrajectoryIter`. Use
   `EnsembleMemberView::new` or `TrajectoryFrameView::new` in place of
   `RealizationView::new`.
+- **Breaking:** "Structure" is the common term for a model, ensemble member,
+  or trajectory frame, replacing "realization" and "conformation":
+  `RealizationProperties` and `RealizationPropertiesMut` are now
+  `StructureProperties` and `StructurePropertiesMut`,
+  `ModelAtomView::realization_property` is `structure_property`, and
+  `ConformationError` is `StructureError`. Error variants that wrapped it are
+  renamed from `Conformation` to `Structure`.
+- **Breaking:** `RealizationError` is split into `EnsembleError` and
+  `TrajectoryError`, each with only the variants its collection can produce;
+  `ItemCountMismatch` becomes `MemberCountMismatch` or `FrameCountMismatch`.
+  The `kekule-traj` error formerly named `TrajectoryError` is now
+  `TrajectoryIoError`, and its `Realization` variant is `Trajectory`.
 
 ### Fixed
 

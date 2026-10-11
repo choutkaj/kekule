@@ -1,18 +1,22 @@
+use std::fmt;
 use std::sync::Arc;
 
 use crate::core::Molecule;
 use crate::geometry::{PeriodicCell, RigidTransform};
-use crate::properties::{OwnerProperties, RealizationProperties, TopologyPropertiesMut};
-use crate::topology::{AtomSelection, Topology, TopologyBuilder, TopologyPerceptionError};
+use crate::properties::{OwnerProperties, StructureProperties, TopologyPropertiesMut};
+use crate::topology::transform::TopologySubsetError;
+use crate::topology::{
+    AtomSelection, Topology, TopologyBuildError, TopologyBuilder, TopologyPerceptionError,
+};
 
 use super::scalars::AtomScalars;
 use super::state::{
-    is_bound, realization_mutators, realization_readers, site_mutators, site_readers, subset_rows,
+    is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
     transform_cell, transform_positions, validate_binding,
 };
-use super::{AsModelView, ConformationError, Model, ModelView, Positions, RealizationError};
+use super::{AsModelView, Model, ModelView, Positions, StructureError};
 
-/// A weighted, unordered sample of realizations of one shared topology, such
+/// A weighted, unordered sample of structures of one shared topology, such
 /// as conformers, Monte Carlo samples, or alternate experimental models.
 ///
 /// Every [`EnsembleMember`] carries a finite positive statistical weight.
@@ -67,7 +71,7 @@ impl Ensemble {
     pub fn from_items(
         topology: impl Into<Arc<Topology>>,
         members: impl IntoIterator<Item = EnsembleMember>,
-    ) -> Result<Self, RealizationError> {
+    ) -> Result<Self, EnsembleError> {
         let mut ensemble = Self::new(topology);
         for member in members {
             ensemble.push(member)?;
@@ -78,14 +82,14 @@ impl Ensemble {
     /// Collects models that share one topology layout as equally weighted
     /// members (weight `1.0`), keeping the first model's snapshot. Positions,
     /// cells, occupancies, B-factors, and properties move without copying.
-    pub fn from_models(models: impl IntoIterator<Item = Model>) -> Result<Self, RealizationError> {
+    pub fn from_models(models: impl IntoIterator<Item = Model>) -> Result<Self, EnsembleError> {
         let mut models = models.into_iter();
-        let first = models.next().ok_or(RealizationError::EmptySource)?;
+        let first = models.next().ok_or(EnsembleError::EmptySource)?;
         let mut ensemble = Self::new(first.shared_topology());
         ensemble.members.push(EnsembleMember::from_model(first));
         for model in models {
             if !model.topology().shares_layout(&ensemble.topology) {
-                return Err(RealizationError::TopologyMismatch);
+                return Err(EnsembleError::TopologyMismatch);
             }
             ensemble.members.push(EnsembleMember::from_model(model));
         }
@@ -97,7 +101,7 @@ impl Ensemble {
     pub fn from_molecule_positions(
         molecule: Molecule,
         positions: impl IntoIterator<Item = Positions>,
-    ) -> Result<Self, RealizationError> {
+    ) -> Result<Self, EnsembleError> {
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_molecule_definition(molecule)?;
         builder.add_instance(definition)?;
@@ -176,7 +180,7 @@ impl Ensemble {
     }
 
     /// Validates and appends one member, binding its bond property rows.
-    pub fn push(&mut self, mut member: EnsembleMember) -> Result<(), RealizationError> {
+    pub fn push(&mut self, mut member: EnsembleMember) -> Result<(), EnsembleError> {
         self.bind(&mut member)?;
         self.members.push(member);
         Ok(())
@@ -188,14 +192,14 @@ impl Ensemble {
         &mut self,
         index: usize,
         mut member: EnsembleMember,
-    ) -> Result<EnsembleMember, RealizationError> {
+    ) -> Result<EnsembleMember, EnsembleError> {
         self.check_index(index)?;
         self.bind(&mut member)?;
         Ok(std::mem::replace(&mut self.members[index], member))
     }
 
     /// Removes and returns one member, shifting later ones down.
-    pub fn remove(&mut self, index: usize) -> Result<EnsembleMember, RealizationError> {
+    pub fn remove(&mut self, index: usize) -> Result<EnsembleMember, EnsembleError> {
         self.check_index(index)?;
         Ok(self.members.remove(index))
     }
@@ -205,17 +209,17 @@ impl Ensemble {
     pub fn replace_positions(
         &mut self,
         positions: impl IntoIterator<Item = Positions>,
-    ) -> Result<(), RealizationError> {
+    ) -> Result<(), EnsembleError> {
         let positions = positions.into_iter().collect::<Vec<_>>();
         if positions.len() != self.members.len() {
-            return Err(RealizationError::ItemCountMismatch {
+            return Err(EnsembleError::MemberCountMismatch {
                 expected: self.members.len(),
                 actual: positions.len(),
             });
         }
         for values in &positions {
             if values.len() != self.topology.atom_count() {
-                return Err(ConformationError::AtomCountMismatch {
+                return Err(StructureError::AtomCountMismatch {
                     expected: self.topology.atom_count(),
                     actual: values.len(),
                 }
@@ -231,17 +235,14 @@ impl Ensemble {
     /// Copies members in the requested order, sharing the topology. Ranges
     /// and strides can be written as `(start..end).step_by(stride)`;
     /// duplicates and reordering are allowed. Ensemble properties are kept.
-    pub fn select(
-        &self,
-        indices: impl IntoIterator<Item = usize>,
-    ) -> Result<Self, RealizationError> {
+    pub fn select(&self, indices: impl IntoIterator<Item = usize>) -> Result<Self, EnsembleError> {
         let members = indices
             .into_iter()
             .map(|index| {
                 self.check_index(index)?;
                 Ok(self.members[index].clone())
             })
-            .collect::<Result<Vec<_>, RealizationError>>()?;
+            .collect::<Result<Vec<_>, EnsembleError>>()?;
         Ok(Self {
             topology: self.shared_topology(),
             properties: self.properties.clone(),
@@ -251,7 +252,7 @@ impl Ensemble {
 
     /// Publishes one induced topology subset and projects every member onto
     /// it. Ensemble and per-member owner properties are dropped.
-    pub fn subset(&self, selection: &AtomSelection) -> Result<Self, RealizationError> {
+    pub fn subset(&self, selection: &AtomSelection) -> Result<Self, EnsembleError> {
         let subset = self.topology.subset(selection)?;
         let (atoms, bonds) = subset_rows(&subset);
         let members = self
@@ -302,9 +303,9 @@ impl Ensemble {
     ///
     /// Fails on an empty ensemble, which has no probabilities, or when a
     /// scaled weight would underflow to zero. Failure changes nothing.
-    pub fn normalize_weights(&mut self) -> Result<(), RealizationError> {
+    pub fn normalize_weights(&mut self) -> Result<(), EnsembleError> {
         if self.is_empty() {
-            return Err(RealizationError::EmptySource);
+            return Err(EnsembleError::EmptySource);
         }
         // Scale by the largest weight first so the total cannot overflow.
         let maximum = self
@@ -332,7 +333,7 @@ impl Ensemble {
     pub(crate) fn transform_members(
         &mut self,
         transforms: &[RigidTransform],
-    ) -> Result<(), ConformationError> {
+    ) -> Result<(), StructureError> {
         debug_assert_eq!(transforms.len(), self.members.len());
         let members = self
             .members
@@ -344,9 +345,9 @@ impl Ensemble {
         Ok(())
     }
 
-    fn check_index(&self, index: usize) -> Result<(), RealizationError> {
+    fn check_index(&self, index: usize) -> Result<(), EnsembleError> {
         if index >= self.members.len() {
-            return Err(RealizationError::IndexOutOfRange {
+            return Err(EnsembleError::IndexOutOfRange {
                 index,
                 len: self.members.len(),
             });
@@ -354,7 +355,7 @@ impl Ensemble {
         Ok(())
     }
 
-    fn bind(&self, member: &mut EnsembleMember) -> Result<(), RealizationError> {
+    fn bind(&self, member: &mut EnsembleMember) -> Result<(), EnsembleError> {
         validate_binding(member.atom_count(), &member.properties, &self.topology)?;
         member.properties.bind_bond_rows(self.topology.bond_count());
         Ok(())
@@ -372,7 +373,7 @@ impl<'a> IntoIterator for &'a Ensemble {
 
 /// One ensemble member: positions in dense topology atom order, an optional
 /// periodic cell, optional crystallographic occupancies and B-factors,
-/// realization properties, and a statistical weight.
+/// structure properties, and a statistical weight.
 ///
 /// The member carries no topology; it is bound when inserted into an
 /// [`Ensemble`].
@@ -382,14 +383,14 @@ pub struct EnsembleMember {
     cell: Option<PeriodicCell>,
     occupancies: AtomScalars,
     b_factors: AtomScalars,
-    properties: RealizationProperties,
+    properties: StructureProperties,
     weight: f64,
 }
 
 impl EnsembleMember {
     /// Creates a non-periodic member without occupancies, B-factors, or
     /// properties, with a finite positive relative weight.
-    pub fn new(positions: Positions, weight: f64) -> Result<Self, ConformationError> {
+    pub fn new(positions: Positions, weight: f64) -> Result<Self, StructureError> {
         let mut member = Self::unit(positions);
         member.weight = checked_weight(weight)?;
         Ok(member)
@@ -397,7 +398,7 @@ impl EnsembleMember {
 
     /// A member of an equally weighted collection.
     fn unit(positions: Positions) -> Self {
-        let properties = RealizationProperties::new(positions.len());
+        let properties = StructureProperties::new(positions.len());
         Self {
             positions,
             cell: None,
@@ -408,7 +409,7 @@ impl EnsembleMember {
         }
     }
 
-    /// An equally weighted member holding a model's realization state; the
+    /// An equally weighted member holding a model's structure state; the
     /// model's topology is dropped.
     pub(crate) fn from_model(model: Model) -> Self {
         Self {
@@ -426,7 +427,7 @@ impl EnsembleMember {
     pub(crate) fn from_frame_state(
         positions: Positions,
         cell: Option<PeriodicCell>,
-        properties: RealizationProperties,
+        properties: StructureProperties,
     ) -> Self {
         Self {
             positions,
@@ -455,7 +456,7 @@ impl EnsembleMember {
     }
 
     /// Sets a finite positive relative weight.
-    pub fn set_weight(&mut self, weight: f64) -> Result<(), ConformationError> {
+    pub fn set_weight(&mut self, weight: f64) -> Result<(), StructureError> {
         self.weight = checked_weight(weight)?;
         Ok(())
     }
@@ -465,7 +466,7 @@ impl EnsembleMember {
     pub fn apply_rigid_transform(
         &mut self,
         transform: &RigidTransform,
-    ) -> Result<(), ConformationError> {
+    ) -> Result<(), StructureError> {
         *self = self.transformed(*transform)?;
         Ok(())
     }
@@ -482,7 +483,7 @@ impl EnsembleMember {
     }
 
     /// Projects every dense row through a subset correspondence.
-    fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, ConformationError> {
+    fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, StructureError> {
         Ok(Self {
             positions: self.positions.select_indices(atoms)?,
             cell: self.cell,
@@ -494,7 +495,7 @@ impl EnsembleMember {
     }
 
     /// Positions move and the cell rotates.
-    fn transformed(&self, transform: RigidTransform) -> Result<Self, ConformationError> {
+    fn transformed(&self, transform: RigidTransform) -> Result<Self, StructureError> {
         Ok(Self {
             cell: transform_cell(self.cell, transform)?,
             positions: transform_positions(&self.positions, transform)?,
@@ -513,17 +514,17 @@ impl EnsembleMember {
         self
     }
 
-    realization_readers!();
+    structure_readers!();
     site_readers!();
-    realization_mutators!();
+    structure_mutators!();
     site_mutators!();
 }
 
-fn checked_weight(weight: f64) -> Result<f64, ConformationError> {
+fn checked_weight(weight: f64) -> Result<f64, StructureError> {
     if weight.is_finite() && weight > 0.0 {
         Ok(weight)
     } else {
-        Err(ConformationError::InvalidWeight)
+        Err(StructureError::InvalidWeight)
     }
 }
 
@@ -550,10 +551,10 @@ impl<'a> EnsembleMemberView<'a> {
     pub fn new(
         topology: &'a Arc<Topology>,
         member: &'a EnsembleMember,
-    ) -> Result<Self, ConformationError> {
+    ) -> Result<Self, StructureError> {
         validate_binding(member.atom_count(), &member.properties, topology)?;
         if !is_bound(member.atom_count(), &member.properties, topology) {
-            return Err(ConformationError::BondCountMismatch {
+            return Err(StructureError::BondCountMismatch {
                 expected: topology.bond_count(),
                 actual: member.properties.bonds().len(),
             });
@@ -611,7 +612,7 @@ impl std::ops::Deref for EnsembleMemberMut<'_> {
 
 impl EnsembleMemberMut<'_> {
     /// Sets a finite positive relative weight.
-    pub fn set_weight(&mut self, weight: f64) -> Result<(), ConformationError> {
+    pub fn set_weight(&mut self, weight: f64) -> Result<(), StructureError> {
         self.member.set_weight(weight)
     }
 
@@ -620,7 +621,7 @@ impl EnsembleMemberMut<'_> {
     pub fn apply_rigid_transform(
         &mut self,
         transform: &RigidTransform,
-    ) -> Result<(), ConformationError> {
+    ) -> Result<(), StructureError> {
         self.member.apply_rigid_transform(transform)
     }
 
@@ -628,7 +629,7 @@ impl EnsembleMemberMut<'_> {
         self.member
     }
 
-    realization_mutators!();
+    structure_mutators!();
     site_mutators!();
 }
 
@@ -655,3 +656,76 @@ impl<'a> Iterator for EnsembleIter<'a> {
 }
 
 impl ExactSizeIterator for EnsembleIter<'_> {}
+
+/// Failure of an [`Ensemble`] operation.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum EnsembleError {
+    /// A constructor received no models, or weights of an empty ensemble
+    /// were normalized.
+    EmptySource,
+    IndexOutOfRange {
+        index: usize,
+        len: usize,
+    },
+    /// A model belongs to a different topology layout.
+    TopologyMismatch,
+    /// An ensemble-wide replacement has the wrong number of members.
+    MemberCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    Structure(StructureError),
+    Subset(TopologySubsetError),
+    TopologyBuild(TopologyBuildError),
+}
+
+impl fmt::Display for EnsembleError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptySource => formatter.write_str("ensemble source is empty"),
+            Self::IndexOutOfRange { index, len } => {
+                write!(formatter, "index {index} is out of range for {len} members")
+            }
+            Self::TopologyMismatch => {
+                formatter.write_str("model belongs to a different topology layout")
+            }
+            Self::MemberCountMismatch { expected, actual } => write!(
+                formatter,
+                "ensemble requires {expected} replacement members, but received {actual}"
+            ),
+            Self::Structure(error) => write!(formatter, "invalid ensemble member: {error}"),
+            Self::Subset(error) => write!(formatter, "cannot subset ensemble: {error}"),
+            Self::TopologyBuild(error) => write!(formatter, "cannot build topology: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for EnsembleError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Structure(error) => Some(error),
+            Self::Subset(error) => Some(error),
+            Self::TopologyBuild(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<StructureError> for EnsembleError {
+    fn from(error: StructureError) -> Self {
+        Self::Structure(error)
+    }
+}
+
+impl From<TopologySubsetError> for EnsembleError {
+    fn from(error: TopologySubsetError) -> Self {
+        Self::Subset(error)
+    }
+}
+
+impl From<TopologyBuildError> for EnsembleError {
+    fn from(error: TopologyBuildError) -> Self {
+        Self::TopologyBuild(error)
+    }
+}
