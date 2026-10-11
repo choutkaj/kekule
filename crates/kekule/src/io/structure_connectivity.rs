@@ -453,6 +453,15 @@ impl<'r> Resolver<'r, '_> {
                     self.add_bond(left, right, bond.order, raw::BondEvidence::ComponentTable)?;
                 }
                 self.add_listed_bonds(&listed)?;
+                // Hydrogens the table leaves unbonded, such as N-terminal or
+                // 5'-hydroxyl hydrogens of a polymer residue, are strays.
+                stray_hydrogens.extend(
+                    residue
+                        .sites
+                        .iter()
+                        .filter(|site| is_hydrogen(site.element))
+                        .map(|site| (residue.key.clone(), site.atom)),
+                );
                 // The block's own table supplies the bonds; a template whose
                 // atoms the residue matches still supplies charges.
                 if let Some((component, variants)) = template {
@@ -1814,35 +1823,46 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         assert_eq!(charges(&heavy), [("ND1".to_owned(), 1)]);
         assert!(issues(&heavy).is_empty());
 
-        // An extra amine hydrogen named outside the template attaches by
-        // distance; with OXT unprotonated the aspartate is a zwitterion.
-        let zwitterion = interpret(&block(
-            &format!(
-                "{}\nH H3 ASP A 1 0.633 1.938 -0.134",
-                without(ASPARTATE, &["HXT"])
-            ),
-            "",
-        ));
-        assert_eq!(
-            charges(&zwitterion),
-            [("N".to_owned(), 1), ("OXT".to_owned(), -1)]
-        );
-        assert_eq!(
-            issues(&zwitterion),
-            [
-                StructureInterpretIssue::HydrogenAttachedByDistance {
-                    residue: residue("A", 1),
-                    atom_name: "H3".to_owned(),
-                    heavy_atom_name: "N".to_owned(),
-                },
-                StructureInterpretIssue::ProtonationFromHydrogens {
-                    residue: residue("A", 1),
-                    component_id: "ASP".to_owned(),
-                    variant: None,
-                    charged_atoms: vec![("N".to_owned(), 1), ("OXT".to_owned(), -1)],
-                },
-            ]
-        );
+        // An extra amine hydrogen named outside the template, or outside the
+        // block's own bond table, attaches by distance; with OXT unprotonated
+        // the aspartate is a zwitterion.
+        let table = "loop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n\
+            _chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\n\
+            ASP N CA sing\nASP CA C sing\nASP C O doub\nASP C OXT sing\nASP CA CB sing\n\
+            ASP CB CG sing\nASP CG OD1 doub\nASP CG OD2 sing\nASP N H sing\nASP N H2 sing\n\
+            ASP CA HA sing\nASP CB HB2 sing\nASP CB HB3 sing\nASP OD2 HD2 sing\n";
+        for extra in ["", table] {
+            let zwitterion = interpret(&block(
+                &format!(
+                    "{}\nH H3 ASP A 1 0.633 1.938 -0.134",
+                    without(ASPARTATE, &["HXT"])
+                ),
+                extra,
+            ));
+            assert_eq!(zwitterion.topology().instance_count(), 1, "{extra}");
+            assert_eq!(
+                charges(&zwitterion),
+                [("N".to_owned(), 1), ("OXT".to_owned(), -1)],
+                "{extra}"
+            );
+            assert_eq!(
+                issues(&zwitterion),
+                [
+                    StructureInterpretIssue::HydrogenAttachedByDistance {
+                        residue: residue("A", 1),
+                        atom_name: "H3".to_owned(),
+                        heavy_atom_name: "N".to_owned(),
+                    },
+                    StructureInterpretIssue::ProtonationFromHydrogens {
+                        residue: residue("A", 1),
+                        component_id: "ASP".to_owned(),
+                        variant: None,
+                        charged_atoms: vec![("N".to_owned(), 1), ("OXT".to_owned(), -1)],
+                    },
+                ],
+                "{extra}"
+            );
+        }
 
         // A deprotonated side chain carries the charge on its acid oxygen.
         let aspartate = interpret(&block(&without(ASPARTATE, &["HD2"]), ""));
