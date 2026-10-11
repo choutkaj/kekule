@@ -1439,7 +1439,7 @@ fn v3000_round_trips_absolute_or_and_stereo_groups_and_promotes_auto_output() {
                 .unwrap(),
             cx
         );
-        assert!(interpreted.reports()[0].ignored_record_lines().is_empty());
+        assert!(document.unsupported().is_empty());
         let written =
             molfile::write(interpreted.model(), molfile::MolfileWriteOptions::default()).unwrap();
         assert!(written.contains("V3000"));
@@ -1609,7 +1609,7 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
         assert!(report.created_stereo_elements().is_empty());
         let [molfile::MolfileInterpretationWarning::ConflictingAtropisomericWedgeMarks {
             axis,
-            source_line,
+            location,
             mark_count,
         }] = report.warnings()
         else {
@@ -1618,13 +1618,13 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
         assert_eq!(*axis, BondId::new(3));
         assert_eq!(*mark_count, 2);
         assert_eq!(
-            *source_line,
+            *location,
             report
                 .bond_mappings()
                 .iter()
                 .find(|mapping| mapping.bond() == *axis)
                 .unwrap()
-                .source_line()
+                .location()
         );
     }
     let model = molfile::parse_str(&source).unwrap().interpret().unwrap();
@@ -1651,12 +1651,11 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
             .collect::<String>();
         let document = molfile::parse_str(&conflicting).unwrap();
         let interpretation = document.interpret().unwrap();
-        assert_eq!(document.source(), conflicting);
         assert_eq!(interpretation.molecules().next().unwrap(), &unmarked_v3000);
         let report = &interpretation.reports()[0];
         let [molfile::MolfileInterpretationWarning::ConflictingAtropisomericWedgeMarks {
             axis,
-            source_line,
+            location,
             mark_count,
         }] = report.warnings()
         else {
@@ -1664,13 +1663,13 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
         };
         assert_eq!(*mark_count, 2);
         assert_eq!(
-            *source_line,
+            *location,
             report
                 .bond_mappings()
                 .iter()
                 .find(|mapping| mapping.bond() == *axis)
                 .unwrap()
-                .source_line()
+                .location()
         );
     }
     for (left, right) in [(4, 0), (4, 1), (4, 6), (1, 4), (6, 4), (4, 4)] {
@@ -1735,7 +1734,7 @@ fn v3000_stereo_groups_validate_members_and_preserve_source_ids_and_continuation
         .1;
     assert_eq!(group.kind, StereoGroupKind::Or);
     assert_eq!(group.members.len(), 1);
-    assert!(interpreted.reports()[0].ignored_record_lines().is_empty());
+    assert!(document.unsupported().is_empty());
 
     for row in [
         "MDLV30/STEREL0 ATOMS=(1 101)",
@@ -1784,7 +1783,7 @@ fn v3000_repeated_group_ids_preserve_one_relation() {
             let molecule = interpreted.molecules().next().unwrap();
             assert_eq!(molecule.stereo_groups().count(), 1);
             assert_eq!(molecule.stereo_groups().next().unwrap().1.members.len(), 2);
-            assert!(interpreted.reports()[0].ignored_record_lines().is_empty());
+            assert!(document.unsupported().is_empty());
         }
     }
 }

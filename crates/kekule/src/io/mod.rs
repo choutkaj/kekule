@@ -3,6 +3,7 @@ mod mmcif_connectivity;
 mod mmcif_document;
 mod mmcif_interpret;
 mod mmcif_write;
+mod molfile_document;
 mod molfile_write;
 mod sdf_document;
 mod serialization_write;
@@ -22,6 +23,12 @@ pub use mmcif_interpret::{
     MmcifModelSelection, MmcifResidueId, MmcifResiduePosition,
 };
 pub use mmcif_write::*;
+pub use molfile_document::{
+    parse_molfile_document, parse_molfile_document_with_options, parse_molfile_reader, MolfileAtom,
+    MolfileAtomParity, MolfileBond, MolfileBondOrder, MolfileBondStereo, MolfileDocument,
+    MolfileHeader, MolfileParseError, MolfileParseOptions, MolfileRadical, MolfileStereoGroup,
+    MolfileStereoGroupKind, MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion,
+};
 pub use sdf_document::*;
 pub use serialization_write::*;
 pub use smiles::{
@@ -32,9 +39,7 @@ pub use smiles::{
     SmilesInterpretationReport, SmilesParseError, SmilesParseOptions,
 };
 pub use structure_documents::{
-    interpret_molfile_document, parse_molfile_document, parse_molfile_document_with_options,
-    MolfileAtomMapping, MolfileBondMapping, MolfileDocument, MolfileHeader, MolfileInterpretError,
-    MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning, MolfileLine,
-    MolfileParseError, MolfileParseOptions, MolfileVersion,
+    MolfileAtomMapping, MolfileBondMapping, MolfileInterpretError, MolfileInterpretOptions,
+    MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning,
 };
 pub use v2000::*;

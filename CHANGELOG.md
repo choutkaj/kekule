@@ -12,6 +12,23 @@ All notable changes to Kekule are documented in this file.
   reference, unsupported, inconsistent, chemistry), and `UnsupportedContent`.
 - `mmcif::parse_reader` and `parse_reader_with_options` read from any
   `std::io::Read`, enforcing the byte limit while reading.
+- Molfile documents are typed. `MolfileDocument` exposes the decoded
+  connection table: `atoms()`, `bonds()`, `stereo_groups()`, `chiral_flag()`,
+  and `unsupported()`, as `MolfileAtom`, `MolfileBond`, `MolfileStereoGroup`,
+  and `MolfileUnsupported` values with source locations.
+- `sdf::records` and `records_with_options` stream SDF records one at a time.
+  Records are split at `$$$$` lines, so a malformed, oversized, or non-UTF-8
+  record yields one error and reading resumes at the next record; memory is
+  bounded by one record.
+- `molfile::parse_reader` and `sdf::parse_reader` (with `_with_options`
+  variants) read from any `std::io::Read`, enforcing the byte limit while
+  reading.
+- `MolfileInterpretOptions` selects the unsupported-content policy for
+  `molfile::interpret_with_options`, `MolfileDocument::interpret_with_options`,
+  and `SdfRecord::interpret_with_options`. With
+  `UnsupportedContent::Report`, omitted content is listed in
+  `MolfileInterpretation::omitted()` and
+  `SdfRecordInterpretationReport::omitted()`.
 - Published topology annotations can be edited without changing the layout.
   `Topology::properties_mut` edits in place, and
   `Model`, `Ensemble`, and `Trajectory` gain `topology_properties_mut`, which
@@ -33,6 +50,43 @@ All notable changes to Kekule are documented in this file.
 - **Breaking:** `MmcifParseError` and `MmcifInterpretError` report `kind()` and
   `location()` instead of `line()`. `MmcifEnsembleInterpretError` gains
   `kind()`, `location()`, and an error `source()`.
+- **Breaking:** Molfile and SDF record interpretation rejects unsupported
+  content by default instead of ignoring it: V2000 property records other
+  than `M  CHG`, `M  ISO`, and `M  RAD` (such as S-groups), atom aliases,
+  values, and group abbreviations; V3000 atom options other than `CFG`,
+  `CHG`, `MASS`, `RAD`, `HCOUNT`, and `VAL`, bond options other than `CFG`,
+  collections other than enhanced stereo groups, blocks such as `SGROUP`, and
+  other CTAB records; and text after `M  END`. Previously only V3000 atom and
+  bond options failed, and the rest was listed by line in
+  `MolfileInterpretationReport::ignored_record_lines`, which is removed.
+  V3000 option values in parentheses or quotes are one field, so list-valued
+  options such as `RGROUPS=(1 1)` are unsupported content rather than syntax
+  errors.
+- **Breaking:** Molfile codes are decoded while parsing. Unknown bond types,
+  stereo codes that do not fit the bond order, and out-of-range mass numbers,
+  `HCOUNT`, or `VAL` now fail parsing instead of interpretation, and negative
+  mass numbers are rejected instead of ignored. `MolfileDocument` no longer
+  keeps a copy of its source: `source()`, `atom_records()`, `bond_records()`,
+  `property_records()`, `unsupported_records()`, and `MolfileLine` are
+  removed.
+- **Breaking:** `MolfileParseError`, `MolfileInterpretError`,
+  `SdfParseError`, and `SdfInterpretError` report `kind()` and `location()`
+  instead of `line()`. Interpretation failures that concern no source line
+  have no location instead of a placeholder line. `SdfInterpretErrorKind` is
+  removed; the Molfile failure is the error `source()`.
+- **Breaking:** Locations inside SDF records are lines of the SDF input,
+  where Molfile-level lines used to count from the record start. Atom and
+  bond mappings report `location()` instead of `source_line()`, and Molfile
+  interpretation warnings carry a `location`. `SdfRecord` reports `number()`
+  and `location()` instead of `source_record_number()` and
+  `source_start_line()`, `SdfDataField::line()` is now `location()`, and
+  `SdfRecordInterpretationReport::source_start_line()` is now `location()`.
+- **Breaking:** SDF records are interpreted individually, so one failing
+  record no longer fails its siblings: `sdf::interpret`,
+  `SdfDocument::interpret`, and `SdfInterpretation` are removed in favor of
+  `SdfRecord::interpret`. Records are parsed from the input lines instead of
+  re-joining each record's Molfile text. `MolfileInterpretation::into_parts`
+  also returns the omitted content.
 - The default `MmcifParseOptions` limits are consistent with each other: the
   token budget admits the default 5,000,000 atom-site rows of a typical
   21-column table, and the input limit is 1 GiB. Previously the default token
