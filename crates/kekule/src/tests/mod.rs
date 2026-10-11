@@ -6,7 +6,7 @@ use crate::perception::{
     aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
     valence as valence_api, valence::*,
 };
-use crate::sdf::*;
+use crate::sdf::{SdfDataField, SdfParseOptions, SdfRecord, SdfRecordInterpretation};
 use crate::smiles::*;
 use crate::structure::{Model, Positions};
 use crate::{
@@ -110,25 +110,25 @@ pub(super) fn read_molfile(
     exactly_one(molecules, "molfile")
 }
 
-/// The stage at which a malformed Molfile fails.
+/// The stage at which malformed input fails.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MolfileStage {
+pub(super) enum FailureStage {
     Parse,
     Interpret,
 }
 
 /// Where a malformed Molfile fails: its stage, diagnostic kind, and line.
-pub(super) fn molfile_failure(input: &str) -> (MolfileStage, DiagnosticKind, Option<usize>) {
+pub(super) fn molfile_failure(input: &str) -> (FailureStage, DiagnosticKind, Option<usize>) {
     match molfile::parse_str(input) {
         Err(error) => (
-            MolfileStage::Parse,
+            FailureStage::Parse,
             error.kind(),
             Some(error.location().line()),
         ),
         Ok(document) => {
             let error = molfile::interpret(&document).expect_err("malformed Molfile must fail");
             (
-                MolfileStage::Interpret,
+                FailureStage::Interpret,
                 error.kind(),
                 error.location().map(|location| location.line()),
             )

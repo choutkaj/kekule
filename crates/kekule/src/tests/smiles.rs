@@ -559,39 +559,165 @@ fn cxsmiles_stereo_references_use_source_indices_and_respect_component_ownership
 
 #[test]
 fn cxsmiles_rejects_ambiguous_invalid_and_unsupported_chemical_fields() {
-    for fields in [
-        "^0:1",
-        "^8:1",
-        "^1:",
-        "^1:4",
-        "^1:-1",
-        "^1:1,1",
-        "^1:1,^2:1",
-        "a:1,1",
-        "a:1,&2:1",
-        "a:0",
-        "&:1",
-        "&999999999999999999999999999999:1",
-        "&1:1,",
-        "&1:1,,r",
-        "r,r",
-        "r:0",
-        "&1:1,unknown:0",
-        "w:0.0",
-        "C:0.0",
-        "(0,0,0)",
+    use DiagnosticKind::*;
+    use FailureStage::{Interpret, Parse};
+
+    // Field text starts at byte 14 of `F[C@H](Cl)Br |...|`.
+    for (fields, stage, kind, offset) in [
+        ("^0:1", Parse, InvalidValue, 15),
+        ("^8:1", Parse, InvalidValue, 15),
+        ("^1:", Parse, Syntax, 17),
+        ("^1:4", Interpret, InvalidReference, 14),
+        ("^1:-1", Parse, Syntax, 17),
+        ("^1:1,1", Interpret, Inconsistent, 14),
+        ("^1:1,^2:1", Interpret, Inconsistent, 19),
+        ("a:1,1", Interpret, Inconsistent, 14),
+        ("a:1,&2:1", Interpret, Inconsistent, 18),
+        ("a:0", Interpret, Chemistry, 14),
+        ("&:1", Parse, Syntax, 15),
+        ("&999999999999999999999999999999:1", Parse, InvalidValue, 15),
+        ("&1:1,", Parse, Syntax, 19),
+        ("&1:1,,r", Parse, Syntax, 19),
+        ("r,r", Interpret, Inconsistent, 16),
+        ("r:0", Interpret, Unsupported, 14),
+        ("&1:1,unknown:0", Interpret, Unsupported, 19),
+        ("w:0.0", Interpret, Unsupported, 14),
+        ("C:0.0", Interpret, Unsupported, 14),
+        ("(0,0,0)", Interpret, Unsupported, 14),
     ] {
         let source = format!("F[C@H](Cl)Br |{fields}|");
-        let document = smiles_api::parse_str(&source).unwrap();
+        let document = match smiles_api::parse_str(&source) {
+            Err(error) => {
+                assert_eq!(
+                    (Parse, error.kind(), error.offset()),
+                    (stage, kind, offset),
+                    "{source}: {error}"
+                );
+                continue;
+            }
+            Ok(document) => document,
+        };
         let error = document.interpret().unwrap_err();
-        let span = document.cx_extension_span().unwrap();
-        assert!(span.contains(&error.offset()), "{source}: {error}");
+        assert_eq!(
+            (Interpret, error.kind(), error.offset()),
+            (stage, kind, offset),
+            "{source}: {error}"
+        );
         assert!(error.message().contains("CXSMILES"), "{source}: {error}");
         assert!(
             document.interpret_base().is_ok(),
-            "explicit projection retains original fields"
+            "explicit projection omits every parsed field"
         );
     }
+}
+
+#[test]
+fn unsupported_cxsmiles_fields_are_typed_and_reported_on_request() {
+    let source = "C/C=C/[C@H](F)Cl |c:1,t:3,&1:3,$_AV:;;x$| name";
+    let document = smiles_api::parse_str(source).unwrap();
+    let fields = document
+        .cx_fields()
+        .iter()
+        .map(|field| (field.kind().clone(), &source[field.span()]))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        fields,
+        [
+            (SmilesCxFieldKind::Unsupported("c:1".to_owned()), "c:1"),
+            (SmilesCxFieldKind::Unsupported("t:3".to_owned()), "t:3"),
+            (
+                SmilesCxFieldKind::StereoGroup {
+                    kind: SmilesCxStereoGroupKind::And(1),
+                    atoms: vec![3],
+                },
+                "&1:3"
+            ),
+            (
+                SmilesCxFieldKind::Unsupported("$_AV:;;x$".to_owned()),
+                "$_AV:;;x$"
+            ),
+        ]
+    );
+
+    let error = document.interpret().unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Unsupported);
+    assert_eq!(error.location(), SourceLocation::at_column(1, 19));
+    assert_eq!(error.message(), "unsupported CXSMILES field `c:1`");
+
+    let report = SmilesInterpretOptions {
+        unsupported: UnsupportedContent::Report,
+    };
+    let interpretation = smiles_api::interpret_with_options(&document, report).unwrap();
+    let omitted = interpretation
+        .omitted_cx_fields()
+        .iter()
+        .map(|field| &source[field.span()])
+        .collect::<Vec<_>>();
+    assert_eq!(omitted, ["c:1", "t:3", "$_AV:;;x$"]);
+    let molecule = interpretation.molecule().unwrap();
+    assert_eq!(
+        molecule.stereo_groups().next().unwrap().1.kind,
+        StereoGroupKind::And
+    );
+    assert_eq!(interpretation.omitted_cx_extension_span(), None);
+
+    let base = document.interpret_base().unwrap();
+    assert_eq!(base.omitted_cx_fields(), document.cx_fields());
+}
+
+#[test]
+fn smiles_record_stream_locates_records_and_isolates_malformed_lines() {
+    let input = b"CCO ethanol\r\n\r\nC1CC bad ring\nc1ccccc1 benzene\rO\xff water\n[Na+].[Cl-] |^1:9| salt\n";
+    let records = smiles_api::records(input.as_slice())
+        .map(|record| match record {
+            Ok(document) => Ok((
+                document.location().line(),
+                document.name().map(str::to_owned),
+            )),
+            Err(error) => Err((error.kind(), error.location())),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        records,
+        [
+            Ok((1, Some("ethanol".to_owned()))),
+            Err((DiagnosticKind::Syntax, SourceLocation::at_column(3, 5))),
+            Ok((4, Some("benzene".to_owned()))),
+            Err((DiagnosticKind::Io, SourceLocation::at_column(5, 2))),
+            Ok((6, Some("salt".to_owned()))),
+        ]
+    );
+
+    // Interpretation failures are located at the record's input line.
+    let document = smiles_api::records(input.as_slice())
+        .last()
+        .unwrap()
+        .unwrap();
+    let error = document.interpret().unwrap_err();
+    assert_eq!(
+        (error.kind(), error.location()),
+        (
+            DiagnosticKind::InvalidReference,
+            SourceLocation::at_column(6, 14)
+        )
+    );
+
+    let options = SmilesParseOptions {
+        max_input_bytes: 8,
+        ..SmilesParseOptions::default()
+    };
+    let limited = smiles_api::records_with_options(b"CCO\nCCCCCCCCCCCC\nO\n".as_slice(), options)
+        .map(|record| record.map(|document| document.base_smiles().to_owned()))
+        .map(|record| record.map_err(|error| (error.kind(), error.location())))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        limited,
+        [
+            Ok("CCO".to_owned()),
+            Err((DiagnosticKind::Limit, SourceLocation::at_column(2, 1))),
+            Ok("O".to_owned()),
+        ]
+    );
 }
 
 #[test]
@@ -860,35 +986,40 @@ fn aromatic_chalcogen_bracket_atoms_localize_without_perceiving() {
 
 #[test]
 fn malformed_smiles_grammar_is_rejected_by_the_document_parser() {
-    for (input, offset) in [
-        ("C(", 2),
-        ("C1", 2),
-        ("C%1", 1),
-        ("C%a1", 1),
-        ("C=", 1),
-        ("=C", 0),
-        ("C..C", 2),
-        ("C=1CCCCC-1", 9),
-        ("[]", 0),
-        ("[13]", 0),
-        ("[é]", 0),
-        ("[C@@@H]", 4),
-        ("[C/]", 2),
-        ("[*]", 1),
-        ("[C+999]", 6),
-        ("[C:]", 3),
-        ("[Clx]", 3),
-        ("[si]1ccccc1", 2),
-        ("Cé", 1),
+    for (input, kind, offset) in [
+        ("C(", DiagnosticKind::Syntax, 2),
+        ("C1", DiagnosticKind::Syntax, 2),
+        ("C%1", DiagnosticKind::Syntax, 1),
+        ("C%a1", DiagnosticKind::Syntax, 1),
+        ("C=", DiagnosticKind::Syntax, 1),
+        ("=C", DiagnosticKind::Syntax, 0),
+        ("C..C", DiagnosticKind::Syntax, 2),
+        ("C=1CCCCC-1", DiagnosticKind::Inconsistent, 9),
+        ("[]", DiagnosticKind::Syntax, 0),
+        ("[13]", DiagnosticKind::Syntax, 0),
+        ("[é]", DiagnosticKind::Syntax, 0),
+        ("[C@@@H]", DiagnosticKind::Unsupported, 4),
+        ("[C/]", DiagnosticKind::Unsupported, 2),
+        ("[*]", DiagnosticKind::Syntax, 1),
+        ("[C+999]", DiagnosticKind::InvalidValue, 6),
+        ("[C:]", DiagnosticKind::Syntax, 3),
+        ("[Clx]", DiagnosticKind::Unsupported, 3),
+        ("[si]1ccccc1", DiagnosticKind::Unsupported, 2),
+        ("Cé", DiagnosticKind::Syntax, 1),
     ] {
         let parsed = std::panic::catch_unwind(|| smiles_api::parse_str(input))
             .unwrap_or_else(|_| panic!("`{input}` panicked"));
         let error = parsed.expect_err("malformed SMILES must fail document parsing");
-        assert_eq!(error.offset(), offset, "{input}: {error}");
+        assert_eq!(
+            (error.kind(), error.offset()),
+            (kind, offset),
+            "{input}: {error}"
+        );
+        assert_eq!(error.location(), SourceLocation::at_column(1, offset + 1));
     }
     assert_eq!(
         smiles_api::parse_str("C(").unwrap_err().to_string(),
-        "SMILES parse error at 2: unclosed branch"
+        "SMILES parse error at line 1, column 3: unclosed branch"
     );
 }
 

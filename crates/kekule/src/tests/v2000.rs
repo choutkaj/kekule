@@ -375,47 +375,47 @@ fn v2000_malformed_structural_fields_fail_with_structured_kinds_and_lines() {
             (
                 "zero endpoint",
                 "Bad\nkekule\n\n  1  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n  0  1  1  0  0  0  0\nM  END\n",
-                (MolfileStage::Parse, DiagnosticKind::InvalidReference, Some(6)),
+                (FailureStage::Parse, DiagnosticKind::InvalidReference, Some(6)),
             ),
             (
                 "non-ASCII counts",
                 "Bad\nkekule\n\né  1  0  0  0  0            999 V2000\nM  END\n",
-                (MolfileStage::Parse, DiagnosticKind::Syntax, Some(4)),
+                (FailureStage::Parse, DiagnosticKind::Syntax, Some(4)),
             ),
             (
                 "non-ASCII atom",
                 "Bad\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 Cé  0  0  0  0  0  0\nM  END\n",
-                (MolfileStage::Parse, DiagnosticKind::Syntax, Some(5)),
+                (FailureStage::Parse, DiagnosticKind::Syntax, Some(5)),
             ),
             (
                 "truncated atom",
                 "Bad\nkekule\n\n  1  0  0  0  0  0            999 V2000\n0.0 C\nM  END\n",
-                (MolfileStage::Parse, DiagnosticKind::Syntax, Some(5)),
+                (FailureStage::Parse, DiagnosticKind::Syntax, Some(5)),
             ),
             (
                 "non-ASCII bond",
                 "Bad\nkekule\n\n  1  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n  1  é  1  0\nM  END\n",
-                (MolfileStage::Parse, DiagnosticKind::Syntax, Some(6)),
+                (FailureStage::Parse, DiagnosticKind::Syntax, Some(6)),
             ),
             (
                 "count over format limit",
                 "Bad\nkekule\n\n1000 0 V2000\nM  END\n",
-                (MolfileStage::Parse, DiagnosticKind::InvalidValue, Some(4)),
+                (FailureStage::Parse, DiagnosticKind::InvalidValue, Some(4)),
             ),
             (
                 "inconsistent counts",
                 "Bad\nkekule\n\n  2  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\n",
-                (MolfileStage::Parse, DiagnosticKind::Syntax, Some(6)),
+                (FailureStage::Parse, DiagnosticKind::Syntax, Some(6)),
             ),
             (
                 "truncated M record",
                 "Bad\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  CHG  2   1   1\nM  END\n",
-                (MolfileStage::Parse, DiagnosticKind::Syntax, Some(6)),
+                (FailureStage::Parse, DiagnosticKind::Syntax, Some(6)),
             ),
             (
                 "zero M-record atom",
                 "Bad\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  CHG  1   0   1\nM  END\n",
-                (MolfileStage::Parse, DiagnosticKind::InvalidReference, Some(6)),
+                (FailureStage::Parse, DiagnosticKind::InvalidReference, Some(6)),
             ),
         ];
 
