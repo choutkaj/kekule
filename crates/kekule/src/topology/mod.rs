@@ -36,6 +36,7 @@ mod tests;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use crate::core::{AtomId, BondId, Molecule};
 use crate::properties::{
@@ -610,14 +611,16 @@ impl<'a> MoleculeInstanceView<'a> {
 pub struct Topology {
     definitions: Vec<MoleculeDefinition>,
     instances: Vec<MoleculeInstance>,
-    atom_order: DenseOrder<InstanceAtomId>,
-    bond_order: DenseOrder<InstanceBondId>,
-    hierarchy: Hierarchy,
+    // Static state a perception snapshot shares instead of copying.
+    atom_order: Arc<DenseOrder<InstanceAtomId>>,
+    bond_order: Arc<DenseOrder<InstanceBondId>>,
+    hierarchy: Arc<Hierarchy>,
     // Retain explicit assignment intent separately from inferred class values.
     // It affects future editing policy, not current topology layout equality.
     molecule_class_overrides: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
     residue_class_overrides: BTreeMap<ResidueId, ResidueClass>,
-    properties: TopologyProperties,
+    // Shared with perception snapshots until edited.
+    properties: Arc<TopologyProperties>,
     layout: LayoutId,
 }
 
@@ -811,7 +814,7 @@ impl Topology {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn properties_mut(&mut self) -> TopologyPropertiesMut<'_> {
-        TopologyPropertiesMut::new(&mut self.properties)
+        TopologyPropertiesMut::new(Arc::make_mut(&mut self.properties))
     }
 
     /// Every hierarchy chain in hierarchy order.

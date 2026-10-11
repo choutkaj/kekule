@@ -205,14 +205,14 @@ fn retain_normalized(
     }
 
     let mut target = builder.build()?;
-    target.properties = project_topology_properties(
+    target.properties = Arc::new(project_topology_properties(
         topology,
         &target,
         &instance_sources,
         &atom_targets,
         &bond_targets,
         &hierarchy_projection,
-    )?;
+    )?);
     Ok(Arc::new(target))
 }
 
@@ -461,14 +461,14 @@ impl Topology {
             }
         }
         let mut target = builder.build()?;
-        target.properties = project_topology_properties(
+        target.properties = Arc::new(project_topology_properties(
             self,
             &target,
             &instance_sources,
             &atom_targets,
             &bond_targets,
             &hierarchy_projection,
-        )?;
+        )?);
         let target = Arc::new(target);
         let atom_sources = atom_targets
             .iter()

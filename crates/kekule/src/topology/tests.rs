@@ -506,6 +506,13 @@ fn property_edits_and_clones_keep_layout_identity_while_publication_mints_one() 
         None
     );
     assert_eq!(source.properties().owner().get(&key), None);
+    // Editing copies only the properties; other static storage stays shared.
+    assert!(!std::ptr::eq(edited.properties(), source.properties()));
+    assert!(std::ptr::eq(edited.hierarchy(), source.hierarchy()));
+    assert!(std::ptr::eq(
+        edited.atom_ids().as_ptr(),
+        source.atom_ids().as_ptr()
+    ));
 
     // Republishing equal content mints a new identity.
     let republished = Arc::new(Arc::unwrap_or_clone(edited).into_builder().build().unwrap());

@@ -190,6 +190,11 @@ impl TopologyBuilder {
             properties,
             layout: _,
         } = topology;
+        // Perceived snapshots may still share static state.
+        let atoms = Arc::unwrap_or_clone(atoms);
+        let bonds = Arc::unwrap_or_clone(bonds);
+        let hierarchy = Arc::unwrap_or_clone(hierarchy);
+        let properties = Arc::unwrap_or_clone(properties);
         let preserved_molecule_classes = definitions.iter().map(|d| (d.id(), d.class())).collect();
         let preserved_residue_classes = hierarchy
             .residues()
@@ -436,12 +441,12 @@ impl TopologyBuilder {
         Ok(Topology {
             definitions: self.definitions,
             instances: self.instances,
-            atom_order: self.atoms,
-            bond_order: self.bonds,
-            hierarchy: self.hierarchy,
+            atom_order: Arc::new(self.atoms),
+            bond_order: Arc::new(self.bonds),
+            hierarchy: Arc::new(self.hierarchy),
             molecule_class_overrides: self.molecule_class_overrides,
             residue_class_overrides: self.residue_class_overrides,
-            properties: self.properties,
+            properties: Arc::new(self.properties),
             layout: LayoutId::mint(),
         })
     }

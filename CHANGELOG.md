@@ -19,7 +19,8 @@ All notable changes to Kekule are documented in this file.
 - `Topology` is one flat owner. Instances, dense orders, hierarchy, and
   properties sit beside the definitions instead of in a shared allocation,
   and layout identity is an explicit token minted at publication. Perception
-  snapshots now copy that static state instead of sharing it.
+  snapshots still share static storage, including properties until one
+  snapshot edits them.
 
 ### Fixed
 

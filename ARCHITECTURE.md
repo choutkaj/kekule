@@ -99,8 +99,8 @@ unsupported or exhausted ranking rather than treating unfinished work as a tie.
 
 Owning perception runs once per reusable definition and publishes atomically.
 A successful model, ensemble, or trajectory perception operation installs a new
-shared topology snapshot without copying coordinate payloads.
-The snapshot keeps the source's layout identity, so existing selections,
+shared topology snapshot without copying coordinate payloads or static topology
+state. The snapshot keeps the source's layout identity, so existing selections,
 prepared potentials, and streaming bindings stay attached to their original
 snapshot and remain usable with the new one. Failure leaves all definitions and
 realization state intact.
