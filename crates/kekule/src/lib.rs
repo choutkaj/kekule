@@ -123,6 +123,7 @@ pub mod alignment;
 mod chemistry;
 pub mod core;
 pub mod descriptors;
+pub mod diagnostics;
 pub mod dssp;
 pub mod geometry;
 mod io;
@@ -556,6 +557,23 @@ pub mod mmcif {
         options: MmcifParseOptions,
     ) -> Result<MmcifDocument, MmcifParseError> {
         crate::io::parse_mmcif_str(input, options)
+    }
+
+    /// Reads and parses CIF/mmCIF text from `reader`.
+    ///
+    /// The configured byte limit is enforced while reading, before the input
+    /// is held in memory; non-UTF-8 input fails with
+    /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
+    pub fn parse_reader(reader: impl std::io::Read) -> Result<MmcifDocument, MmcifParseError> {
+        parse_reader_with_options(reader, MmcifParseOptions::default())
+    }
+
+    /// Reads and parses CIF/mmCIF text with explicit syntax and resource limits.
+    pub fn parse_reader_with_options(
+        reader: impl std::io::Read,
+        options: MmcifParseOptions,
+    ) -> Result<MmcifDocument, MmcifParseError> {
+        crate::io::parse_mmcif_reader(reader, options)
     }
 
     /// Interprets a document containing exactly one atom-site block.

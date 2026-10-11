@@ -2,7 +2,7 @@
 use crate::mmcif::{self, MmcifParseOptions};
 
 // Test-only re-encoding of focused source fixtures. No chemistry is generated.
-fn token(value: &mmcif::MmcifValue) -> String {
+fn token(value: mmcif::MmcifValue<'_>) -> String {
     let text = value.text();
     if value.is_missing() {
         text.to_owned()
@@ -128,7 +128,6 @@ fn mmcif_present_categories_missing_required_fields_reject_in_both_encodings() {
                             table
                                 .row(0)
                                 .unwrap()
-                                .iter()
                                 .map(token)
                                 .collect::<Vec<_>>()
                                 .join(" ")
@@ -149,7 +148,7 @@ fn mmcif_present_categories_missing_required_fields_reject_in_both_encodings() {
             scalar_error.message().contains("missing required"),
             "{category}: {scalar_error}"
         );
-        assert!(loop_error.line().is_some() && scalar_error.line().is_some());
+        assert!(loop_error.location().is_some() && scalar_error.location().is_some());
         assert!(scalar_doc.interpret_ensemble().is_err());
     }
 }
@@ -173,7 +172,7 @@ fn mmcif_category_ambiguity_is_rejected_without_normalizing_the_document() {
         let doc = mmcif::parse_str(&format!("{SINGLE_SITE}{extra}")).unwrap();
         let error = doc.interpret().unwrap_err();
         assert!(error.message().contains(message), "{error}");
-        assert!(error.line().is_some());
+        assert!(error.location().is_some());
         assert!(doc.interpret_ensemble().is_err());
     }
     let doc = mmcif::parse_str(&format!(
@@ -213,7 +212,6 @@ fn mmcif_1ake_preserves_declared_sequence_and_polymer_connectivity() {
     let category = &SOURCE[start..end];
     let tags = doc.blocks()[0]
         .entries()
-        .iter()
         .filter_map(|entry| match entry {
             mmcif::MmcifEntry::Item(item) if item.tag().starts_with("_entity_poly.") => {
                 Some(item.tag())
@@ -285,7 +283,7 @@ fn mmcif_quoted_values_allow_embedded_delimiters() {
 fn mmcif_quotes_must_close_before_whitespace_or_end_of_line() {
     for literal in ["'value'junk", "\"value\"junk", "'value'#comment"] {
         let error = mmcif::parse_str(&format!("data_x\n_x.text {literal}\n")).unwrap_err();
-        assert_eq!(error.line(), 2);
+        assert_eq!(error.location().line(), 2);
         assert!(error.message().contains("unterminated quoted value"));
     }
 }
@@ -328,10 +326,10 @@ fn mmcif_semicolon_closing_line_preserves_following_tokens() {
     assert_eq!(doc.blocks()[0].item("_x.text").unwrap().text(), "value");
     assert_eq!(doc.blocks()[0].item("_x.after").unwrap().line(), 4);
     let error = mmcif::parse_str("data_x\n_x.text\n;value\n;not_delimited\n").unwrap_err();
-    assert_eq!(error.line(), 4);
+    assert_eq!(error.location().line(), 4);
     assert!(error.message().contains("closing semicolon"));
     let error = mmcif::parse_str("data_x\n_x.text\n;value\nno end").unwrap_err();
-    assert_eq!(error.line(), 3);
+    assert_eq!(error.location().line(), 3);
     assert!(error.message().contains("unterminated semicolon"));
 }
 
@@ -349,7 +347,109 @@ fn mmcif_semicolon_size_limit_counts_opening_line_and_newlines() {
     for field in [";123456789\n;", ";1234\n6789\n;", ";12345678\n\n;"] {
         let error = mmcif::parse_str_with_options(&format!("data_x\n_x.v\n{field}\n"), options)
             .unwrap_err();
-        assert_eq!(error.line(), 3);
+        assert_eq!(error.location().line(), 3);
         assert!(error.message().contains("token limit"));
     }
+}
+
+#[test]
+fn mmcif_failures_carry_structured_kinds_and_original_lines() {
+    use crate::diagnostics::{DiagnosticKind, SourceLocation};
+    for (input, kind, line) in [
+        ("loop_\n", DiagnosticKind::Syntax, 1),
+        ("data_x\n_a.b 'open\n", DiagnosticKind::Syntax, 2),
+        ("data_x\r\n_a.b 'open\r\n", DiagnosticKind::Syntax, 2),
+        ("data_x\r_a.b 1\r_a.b 2\r", DiagnosticKind::Inconsistent, 3),
+        ("data_x\nloop_\n_a.b\n_a.c\n1\n", DiagnosticKind::Syntax, 5),
+        ("data_x\n_a.b\n;text\n", DiagnosticKind::Syntax, 3),
+    ] {
+        let error = mmcif::parse_str(input).unwrap_err();
+        assert_eq!(
+            (error.kind(), error.location()),
+            (kind, SourceLocation::at_line(line)),
+            "{input:?}: {error}"
+        );
+    }
+    let limited = MmcifParseOptions {
+        max_tokens: 2,
+        ..MmcifParseOptions::default()
+    };
+    let error = mmcif::parse_str_with_options("data_x\n_a.b 1\n_a.c 2\n", limited).unwrap_err();
+    assert_eq!(
+        (error.kind(), error.location()),
+        (DiagnosticKind::Limit, SourceLocation::at_line(2))
+    );
+
+    let unknown_element = SINGLE_SITE.replace("O O HOH", "Xx O HOH");
+    let error = mmcif::parse_str(&unknown_element)
+        .unwrap()
+        .interpret()
+        .unwrap_err();
+    assert_eq!(
+        (error.kind(), error.location()),
+        (
+            DiagnosticKind::InvalidValue,
+            Some(SourceLocation::at_line(19))
+        )
+    );
+    let error = mmcif::parse_str("data_x\n_cell.length_a 1\n")
+        .unwrap()
+        .interpret()
+        .unwrap_err();
+    assert_eq!(
+        (error.kind(), error.location()),
+        (DiagnosticKind::Inconsistent, None)
+    );
+    let error = mmcif::parse_str(SINGLE_SITE)
+        .unwrap()
+        .interpret_ensemble_with_options(mmcif::MmcifEnsembleInterpretOptions {
+            model_ids: Some(vec!["9".into()]),
+            ..Default::default()
+        })
+        .unwrap_err();
+    assert_eq!(
+        (error.kind(), error.location()),
+        (DiagnosticKind::Inconsistent, None)
+    );
+}
+
+#[test]
+fn mmcif_readers_enforce_limits_while_reading_and_match_string_parsing() {
+    use crate::diagnostics::{DiagnosticKind, SourceLocation};
+    assert_eq!(
+        mmcif::parse_reader(SINGLE_SITE.as_bytes()).unwrap(),
+        mmcif::parse_str(SINGLE_SITE).unwrap()
+    );
+    let limited = MmcifParseOptions {
+        max_input_bytes: 8,
+        ..MmcifParseOptions::default()
+    };
+    let error = mmcif::parse_reader_with_options(SINGLE_SITE.as_bytes(), limited).unwrap_err();
+    assert_eq!(
+        (error.kind(), error.location()),
+        (DiagnosticKind::Limit, SourceLocation::at_line(1))
+    );
+    let error = mmcif::parse_reader([b'd', b'a', 0xff].as_slice()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Io);
+}
+
+#[test]
+fn mmcif_values_borrow_the_source_and_columns_resolve_once() {
+    let doc = mmcif::parse_str(SINGLE_SITE).unwrap();
+    let table = doc.blocks()[0].loop_with_tag("_ATOM_SITE.CARTN_Y").unwrap();
+    let column = table.column_index("_atom_site.Cartn_y").unwrap();
+    assert_eq!(column, 6);
+    let value = table.value_at(0, column).unwrap();
+    assert_eq!((value.text(), value.line()), ("2.0", 19));
+    assert_eq!(table.value(0, "_atom_site.cartn_y"), Some(value));
+    assert_eq!(table.value_at(1, column), None);
+    assert_eq!(table.value_at(0, 8), None);
+    assert_eq!(
+        table
+            .row(0)
+            .unwrap()
+            .map(|value| value.text())
+            .collect::<Vec<_>>(),
+        ["O", "O", "HOH", "A", "1", "1.0", "2.0", "3.0"]
+    );
 }

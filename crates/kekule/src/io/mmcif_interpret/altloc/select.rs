@@ -1,3 +1,4 @@
+use crate::diagnostics::DiagnosticKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::atom_site::{read_asym_entities, read_atom_rows, read_entity_types, AtomRow};
@@ -29,6 +30,7 @@ fn residues(rows: &[AtomRow]) -> Result<Vec<Residue<'_>>, MmcifInterpretError> {
             for row in &rows {
                 if !identities.insert((&row.comp_id, &row.atom_name, &row.alt_id)) {
                     return Err(MmcifInterpretError::new(
+                        DiagnosticKind::Inconsistent,
                         Some(row.line),
                         format!(
                             "atom `{}` has duplicate records for one alternate location in {id:?}",
@@ -48,9 +50,13 @@ pub(crate) fn inventory(
 ) -> Result<Vec<MmcifAltLocResidue>, MmcifInterpretError> {
     let entities = read_entity_types(block)?;
     let asym = read_asym_entities(block)?;
-    let table = block
-        .category("_atom_site")?
-        .ok_or_else(|| MmcifInterpretError::new(None, "block has no atom-site category"))?;
+    let table = block.category("_atom_site")?.ok_or_else(|| {
+        MmcifInterpretError::new(
+            DiagnosticKind::Inconsistent,
+            None,
+            "block has no atom-site category",
+        )
+    })?;
     let rows = read_atom_rows(
         &table,
         &entities,
@@ -85,8 +91,13 @@ fn configuration(policy: &MmcifAltLocPolicy) -> MmcifAltLocSelection {
     }
 }
 
-fn selection_error(residue: &Residue<'_>, message: impl std::fmt::Display) -> MmcifInterpretError {
+fn selection_error(
+    residue: &Residue<'_>,
+    kind: DiagnosticKind,
+    message: impl std::fmt::Display,
+) -> MmcifInterpretError {
     MmcifInterpretError::new(
+        kind,
         Some(residue.rows[0].line),
         format!("{message} at {:?}", residue.id),
     )
@@ -122,6 +133,7 @@ fn candidate_rows<'a>(
     if components.len() != 1 {
         return Err(selection_error(
             residue,
+            DiagnosticKind::Inconsistent,
             "canonical residue identity has conflicting chemical components in alternate selection",
         ));
     }
@@ -138,6 +150,7 @@ fn candidate_rows<'a>(
         if !atoms.insert(row.atom_name.as_str()) {
             return Err(selection_error(
                 residue,
+                DiagnosticKind::Inconsistent,
                 format!(
                     "alternate selection contains overlapping sites for atom `{}`",
                     row.atom_name
@@ -211,6 +224,7 @@ fn groups(
     {
         if !indices.contains_key(id) || residues[indices[id]].labels.is_empty() {
             return Err(MmcifInterpretError::new(
+                DiagnosticKind::Inconsistent,
                 None,
                 format!(
                     "alternate-location selection refers to unknown or unlabelled residue {id:?}"
@@ -221,12 +235,14 @@ fn groups(
     for group in &selection.groups {
         if group.len() < 2 || group.iter().collect::<BTreeSet<_>>().len() != group.len() {
             return Err(MmcifInterpretError::new(
+                DiagnosticKind::Inconsistent,
                 None,
                 "alternate-location group requires at least two distinct residues",
             ));
         }
         if group.iter().any(|id| id.model_id != group[0].model_id) {
             return Err(MmcifInterpretError::new(
+                DiagnosticKind::Inconsistent,
                 None,
                 "alternate-location group crosses source coordinate models",
             ));
@@ -279,6 +295,7 @@ pub(in crate::io::mmcif_interpret) fn select_alt_locations(
     if let Some(id) = &selection.source_conformation {
         if !conformations.contains_key(id) {
             return Err(MmcifInterpretError::new(
+                DiagnosticKind::Inconsistent,
                 None,
                 format!("source alternate conformation `{id}` is unavailable"),
             ));
@@ -295,7 +312,11 @@ pub(in crate::io::mmcif_interpret) fn select_alt_locations(
                 MmcifAltLocPreference::ErrorOnAlternateLocations
             ) && !selection.overrides.contains_key(&residue.id)
             {
-                return Err(selection_error(residue, "residue has alternate locations"));
+                return Err(selection_error(
+                    residue,
+                    DiagnosticKind::Unsupported,
+                    "residue has alternate locations",
+                ));
             }
             let missing = residue
                 .rows
@@ -486,7 +507,11 @@ fn choose<'a>(
             } else {
                 match &selection.default {
                     MmcifAltLocPreference::ErrorOnAlternateLocations => {
-                        return Err(selection_error(residue, "residue has alternate locations"))
+                        return Err(selection_error(
+                            residue,
+                            DiagnosticKind::Unsupported,
+                            "residue has alternate locations",
+                        ))
                     }
                     MmcifAltLocPreference::PreferLabel(label)
                         if selected_labels.contains(label) =>
@@ -525,7 +550,7 @@ fn choose<'a>(
         }
     }
     if candidates.is_empty() {
-        return Err(last_error.unwrap_or_else(|| selection_error(&residues[group[0]], format!(
+        return Err(last_error.unwrap_or_else(|| selection_error(&residues[group[0]], DiagnosticKind::Inconsistent, format!(
             "no complete alternate configuration satisfies the requested labels, residue groups, and source constraints (default: {:?}, overrides: {:?}, available: {})",
             selection.default, selection.overrides, alternatives.keys().cloned().collect::<Vec<_>>().join(", ")
         ))));

@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::core::Molecule;
+use crate::diagnostics::{normalize_line_endings, read_bounded, DiagnosticKind, SourceLocation};
 use crate::structure::Model;
 use crate::topology::Topology;
 
@@ -13,41 +14,63 @@ use super::mmcif_interpret::{
     MmcifInterpretError, MmcifInterpretOptions, MmcifInterpretation,
 };
 
+/// Number of `_atom_site` columns in a typical wwPDB entry, used to keep the
+/// default token budget consistent with the default atom-site row limit.
+const TYPICAL_ATOM_SITE_COLUMNS: usize = 21;
+
+/// Syntax and resource limits of CIF/mmCIF parsing.
+///
+/// Parsed values are stored as compact spans into one shared copy of the
+/// source, about 16 bytes per tag or value. The defaults are mutually
+/// consistent: `max_tokens` admits `max_atom_site_rows` rows of a typical
+/// 21-column wwPDB atom-site table plus the other categories of the entry, and
+/// `max_input_bytes` admits the largest current wwPDB entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MmcifParseOptions {
+    /// Maximum UTF-8 byte length of the input; at most 4 GiB.
     pub max_input_bytes: usize,
+    /// Maximum number of tags, values, and control words.
     pub max_tokens: usize,
+    /// Maximum byte length of one value.
     pub max_token_bytes: usize,
+    /// Maximum number of `_atom_site` rows in one data block.
     pub max_atom_site_rows: usize,
 }
 
 impl Default for MmcifParseOptions {
     fn default() -> Self {
+        let max_atom_site_rows = 5_000_000;
         Self {
-            max_input_bytes: 256 * 1024 * 1024,
-            max_tokens: 10_000_000,
+            max_input_bytes: 1024 * 1024 * 1024,
+            max_tokens: max_atom_site_rows * TYPICAL_ATOM_SITE_COLUMNS + 20_000_000,
             max_token_bytes: 16 * 1024 * 1024,
-            max_atom_site_rows: 5_000_000,
+            max_atom_site_rows,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifParseError {
-    pub(crate) line: usize,
-    pub(crate) message: String,
+    kind: DiagnosticKind,
+    location: SourceLocation,
+    message: String,
 }
 
 impl MmcifParseError {
-    fn new(line: usize, message: impl Into<String>) -> Self {
+    fn new(kind: DiagnosticKind, line: usize, message: impl Into<String>) -> Self {
         Self {
-            line,
+            kind,
+            location: SourceLocation::at_line(line),
             message: message.into(),
         }
     }
 
-    pub const fn line(&self) -> usize {
-        self.line
+    pub const fn kind(&self) -> DiagnosticKind {
+        self.kind
+    }
+
+    pub const fn location(&self) -> SourceLocation {
+        self.location
     }
 
     pub fn message(&self) -> &str {
@@ -59,19 +82,27 @@ impl fmt::Display for MmcifParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "mmCIF parse error at line {}: {}",
-            self.line, self.message
+            "mmCIF parse error at {}: {}",
+            self.location, self.message
         )
     }
 }
 
 impl std::error::Error for MmcifParseError {}
 
-#[derive(Debug, Clone)]
-struct MmcifToken {
-    text: String,
-    line: usize,
+/// One parsed tag or value: a byte span of the shared source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Span {
+    start: u32,
+    end: u32,
+    line: u32,
     bare: bool,
+}
+
+impl Span {
+    fn text(self, source: &str) -> &str {
+        &source[self.start as usize..self.end as usize]
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,10 +162,42 @@ impl MmcifDocument {
 }
 
 /// One independently interpretable CIF/mmCIF data block.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The block shares one copy of the source text with its document; items and
+/// loops are read through borrowed views.
+#[derive(Clone, PartialEq, Eq)]
 pub struct MmcifBlock {
     name: String,
-    entries: Vec<MmcifEntry>,
+    source: Arc<str>,
+    entries: Vec<EntryData>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EntryData {
+    Item(ItemData),
+    Loop(LoopData),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ItemData {
+    tag: String,
+    value: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LoopData {
+    tags: Vec<String>,
+    values: Vec<Span>,
+}
+
+impl fmt::Debug for MmcifBlock {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MmcifBlock")
+            .field("name", &self.name)
+            .field("entries", &self.entries().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 impl MmcifBlock {
@@ -151,8 +214,18 @@ impl MmcifBlock {
         interpret_mmcif_conformations_block(self, selections)
     }
 
-    pub fn entries(&self) -> &[MmcifEntry] {
-        &self.entries
+    /// Scalar items and loops in source order.
+    pub fn entries(&self) -> impl ExactSizeIterator<Item = MmcifEntry<'_>> {
+        self.entries.iter().map(|entry| match entry {
+            EntryData::Item(data) => MmcifEntry::Item(MmcifItem {
+                source: &self.source,
+                data,
+            }),
+            EntryData::Loop(data) => MmcifEntry::Loop(MmcifLoopTable {
+                source: &self.source,
+                data,
+            }),
+        })
     }
 
     /// Inventories alternate labels and stable residue identities without
@@ -164,15 +237,17 @@ impl MmcifBlock {
         super::mmcif_interpret::alternate_location_inventory(self)
     }
 
-    pub fn item(&self, tag: &str) -> Option<&MmcifValue> {
-        self.entries.iter().find_map(|entry| match entry {
-            MmcifEntry::Item(item) if item.tag.eq_ignore_ascii_case(tag) => Some(&item.value),
+    /// The value of one scalar item, matching the tag case-insensitively.
+    pub fn item(&self, tag: &str) -> Option<MmcifValue<'_>> {
+        self.entries().find_map(|entry| match entry {
+            MmcifEntry::Item(item) if item.tag().eq_ignore_ascii_case(tag) => Some(item.value()),
             _ => None,
         })
     }
 
-    pub fn loop_with_tag(&self, tag: &str) -> Option<&MmcifLoopTable> {
-        self.entries.iter().find_map(|entry| match entry {
+    /// The loop containing `tag`, matching it case-insensitively.
+    pub fn loop_with_tag(&self, tag: &str) -> Option<MmcifLoopTable<'_>> {
+        self.entries().find_map(|entry| match entry {
             MmcifEntry::Loop(table) if table.column_index(tag).is_some() => Some(table),
             _ => None,
         })
@@ -240,178 +315,260 @@ impl MmcifBlock {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MmcifEntry {
-    Item(MmcifItem),
-    Loop(MmcifLoopTable),
+/// One scalar item or loop of a data block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MmcifEntry<'a> {
+    Item(MmcifItem<'a>),
+    Loop(MmcifLoopTable<'a>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcifItem {
-    tag: String,
-    value: MmcifValue,
+/// One scalar `_tag value` item.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct MmcifItem<'a> {
+    source: &'a str,
+    data: &'a ItemData,
 }
 
-impl MmcifItem {
-    pub fn tag(&self) -> &str {
-        &self.tag
+impl<'a> MmcifItem<'a> {
+    pub fn tag(&self) -> &'a str {
+        &self.data.tag
     }
 
-    pub fn value(&self) -> &MmcifValue {
-        &self.value
+    pub fn value(&self) -> MmcifValue<'a> {
+        MmcifValue::new(self.source, self.data.value)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcifLoopTable {
-    tags: Vec<String>,
-    values: Vec<MmcifValue>,
+impl fmt::Debug for MmcifItem<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MmcifItem")
+            .field("tag", &self.tag())
+            .field("value", &self.value())
+            .finish()
+    }
 }
 
-impl MmcifLoopTable {
-    pub fn tags(&self) -> &[String] {
-        &self.tags
+/// One `loop_` table with complete rows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct MmcifLoopTable<'a> {
+    source: &'a str,
+    data: &'a LoopData,
+}
+
+impl<'a> MmcifLoopTable<'a> {
+    pub fn tags(&self) -> &'a [String] {
+        &self.data.tags
     }
 
     pub fn row_count(&self) -> usize {
-        self.values.len() / self.tags.len()
+        self.data.values.len() / self.data.tags.len()
     }
 
+    /// The column of `tag`, matching it case-insensitively. Resolve columns
+    /// once and read cells with [`Self::value_at`] when scanning many rows.
     pub fn column_index(&self, tag: &str) -> Option<usize> {
-        self.tags
+        self.data
+            .tags
             .iter()
             .position(|candidate| candidate.eq_ignore_ascii_case(tag))
     }
 
-    pub fn value(&self, row: usize, tag: &str) -> Option<&MmcifValue> {
-        let column = self.column_index(tag)?;
-        self.row(row)?.get(column)
+    pub fn value(&self, row: usize, tag: &str) -> Option<MmcifValue<'a>> {
+        self.value_at(row, self.column_index(tag)?)
     }
 
-    pub fn row(&self, row: usize) -> Option<&[MmcifValue]> {
+    /// The cell at a row and a column from [`Self::column_index`].
+    pub fn value_at(&self, row: usize, column: usize) -> Option<MmcifValue<'a>> {
+        if row >= self.row_count() || column >= self.data.tags.len() {
+            return None;
+        }
+        // Parsed loops contain complete rows, so the offset is in bounds.
+        let span = self.data.values[row * self.data.tags.len() + column];
+        Some(MmcifValue::new(self.source, span))
+    }
+
+    /// The cells of one row in tag order.
+    pub fn row(&self, row: usize) -> Option<impl ExactSizeIterator<Item = MmcifValue<'a>> + 'a> {
         if row >= self.row_count() {
             return None;
         }
-        // Parsed loops contain complete rows, so both offsets are bounded by
-        // values.len() after checking the row index.
-        let start = row * self.tags.len();
-        self.values.get(start..start + self.tags.len())
+        let width = self.data.tags.len();
+        let source = self.source;
+        let cells = &self.data.values[row * width..(row + 1) * width];
+        Some(cells.iter().map(move |span| MmcifValue::new(source, *span)))
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcifValue {
-    text: String,
+impl fmt::Debug for MmcifLoopTable<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MmcifLoopTable")
+            .field("tags", &self.tags())
+            .field("rows", &self.row_count())
+            .finish()
+    }
+}
+
+/// One parsed value with its source line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MmcifValue<'a> {
+    text: &'a str,
     line: usize,
     bare: bool,
 }
 
-impl MmcifValue {
-    pub fn text(&self) -> &str {
-        &self.text
+impl<'a> MmcifValue<'a> {
+    fn new(source: &'a str, span: Span) -> Self {
+        Self {
+            text: span.text(source),
+            line: span.line as usize,
+            bare: span.bare,
+        }
+    }
+
+    pub fn text(&self) -> &'a str {
+        self.text
     }
 
     pub const fn line(&self) -> usize {
         self.line
     }
 
-    pub fn is_missing(&self) -> bool {
-        self.bare && matches!(self.text.as_str(), "." | "?")
+    pub const fn location(&self) -> SourceLocation {
+        SourceLocation::at_line(self.line)
     }
 
-    pub fn optional_text(&self) -> Option<&str> {
-        (!self.is_missing()).then_some(self.text.as_str())
+    /// Whether this is an unquoted `.` (inapplicable) or `?` (unknown).
+    pub fn is_missing(&self) -> bool {
+        self.bare && matches!(self.text, "." | "?")
     }
+
+    pub fn optional_text(&self) -> Option<&'a str> {
+        (!self.is_missing()).then_some(self.text)
+    }
+}
+
+/// Reads and parses CIF/mmCIF text, enforcing the byte limit while reading.
+pub fn parse_mmcif_reader(
+    reader: impl std::io::Read,
+    options: MmcifParseOptions,
+) -> Result<MmcifDocument, MmcifParseError> {
+    let input = read_bounded(reader, options.max_input_bytes)
+        .map_err(|(kind, message)| MmcifParseError::new(kind, 1, message))?;
+    parse_mmcif_str(&input, options)
 }
 
 pub fn parse_mmcif_str(
     input: &str,
     options: MmcifParseOptions,
 ) -> Result<MmcifDocument, MmcifParseError> {
-    let tokens = tokenize_mmcif(input, options)?;
-    parse_tokens(&tokens, options.max_atom_site_rows)
+    if input.len() > options.max_input_bytes {
+        return Err(MmcifParseError::new(
+            DiagnosticKind::Limit,
+            1,
+            "input exceeds configured byte limit",
+        ));
+    }
+    if u32::try_from(input.len()).is_err() {
+        return Err(MmcifParseError::new(
+            DiagnosticKind::Limit,
+            1,
+            "input exceeds the 4 GiB addressable mmCIF limit",
+        ));
+    }
+    let source: Arc<str> = normalize_line_endings(input).into();
+    let mut tokens = Tokens {
+        tokenizer: Tokenizer {
+            source: &source,
+            line_start: 0,
+            line: 1,
+            column: 0,
+            count: 0,
+            options,
+        },
+        peeked: None,
+    };
+    parse_blocks(&source, &mut tokens, options.max_atom_site_rows)
 }
 
-fn parse_tokens(
-    tokens: &[MmcifToken],
+fn parse_blocks(
+    source: &Arc<str>,
+    tokens: &mut Tokens<'_>,
     max_atom_site_rows: usize,
 ) -> Result<MmcifDocument, MmcifParseError> {
+    let text = |span: Span| span.text(source);
     let mut blocks = Vec::new();
     let mut block_names = BTreeSet::new();
-    let mut index = 0usize;
-    while index < tokens.len() {
-        let token = &tokens[index];
-        if !has_bare_prefix(token, "data_") {
-            return Err(MmcifParseError::new(
-                token.line,
+    while let Some(token) = tokens.next()? {
+        if !has_bare_prefix(token, text(token), "data_") {
+            return Err(syntax_error(
+                token,
                 "content appears before the first data block",
             ));
         }
-        let name = token.text[5..].to_owned();
+        let name = text(token)[5..].to_owned();
         if name.is_empty() {
-            return Err(MmcifParseError::new(token.line, "data block has no name"));
+            return Err(syntax_error(token, "data block has no name"));
         }
         if !block_names.insert(name.to_ascii_lowercase()) {
             return Err(MmcifParseError::new(
-                token.line,
+                DiagnosticKind::Inconsistent,
+                token.line as usize,
                 format!("duplicate data block {name}"),
             ));
         }
-        index += 1;
         let mut entries = Vec::new();
         let mut data_names = BTreeSet::new();
-        while index < tokens.len() && !has_bare_prefix(&tokens[index], "data_") {
-            if is_bare_word(&tokens[index], "loop_") {
-                let (table, next) = parse_loop(tokens, index)?;
+        while let Some(token) = tokens.peek()? {
+            if has_bare_prefix(token, text(token), "data_") {
+                break;
+            }
+            tokens.next()?;
+            if is_bare_word(token, text(token), "loop_") {
+                let table = parse_loop(source, tokens, token)?;
                 if table
-                    .tags()
+                    .tags
                     .iter()
                     .any(|tag| tag.to_ascii_lowercase().starts_with("_atom_site."))
-                    && table.row_count() > max_atom_site_rows
+                    && table.values.len() / table.tags.len() > max_atom_site_rows
                 {
                     return Err(MmcifParseError::new(
-                        tokens[index].line,
+                        DiagnosticKind::Limit,
+                        token.line as usize,
                         "atom-site row count exceeds configured limit",
                     ));
                 }
-                for tag in table.tags() {
+                for tag in &table.tags {
                     if !data_names.insert(tag.to_ascii_lowercase()) {
                         return Err(MmcifParseError::new(
-                            tokens[index].line,
+                            DiagnosticKind::Inconsistent,
+                            token.line as usize,
                             format!("duplicate data name {tag}"),
                         ));
                     }
                 }
-                entries.push(MmcifEntry::Loop(table));
-                index = next;
-            } else if tokens[index].bare && tokens[index].text.starts_with('_') {
-                let tag = tokens[index].text.clone();
-                let line = tokens[index].line;
+                entries.push(EntryData::Loop(table));
+            } else if token.bare && text(token).starts_with('_') {
+                let tag = text(token).to_owned();
                 if !data_names.insert(tag.to_ascii_lowercase()) {
                     return Err(MmcifParseError::new(
-                        line,
+                        DiagnosticKind::Inconsistent,
+                        token.line as usize,
                         format!("duplicate data name {tag}"),
                     ));
                 }
-                index += 1;
-                let value = tokens.get(index).ok_or_else(|| {
-                    MmcifParseError::new(line, format!("missing value for {tag}"))
-                })?;
-                if is_control(value) {
-                    return Err(MmcifParseError::new(
-                        value.line,
-                        format!("missing value for {tag}"),
-                    ));
+                let value = tokens
+                    .next()?
+                    .ok_or_else(|| syntax_error(token, format!("missing value for {tag}")))?;
+                if is_control(value, text(value)) {
+                    return Err(syntax_error(value, format!("missing value for {tag}")));
                 }
-                entries.push(MmcifEntry::Item(MmcifItem {
-                    tag,
-                    value: owned_value(value),
-                }));
-                index += 1;
+                entries.push(EntryData::Item(ItemData { tag, value }));
             } else {
-                return Err(MmcifParseError::new(
-                    tokens[index].line,
-                    format!("unexpected token `{}` in data block", tokens[index].text),
+                return Err(syntax_error(
+                    token,
+                    format!("unexpected token `{}` in data block", text(token)),
                 ));
             }
         }
@@ -419,230 +576,316 @@ fn parse_tokens(
         // as a one-row loop. Other category semantics belong to interpretation.
         if max_atom_site_rows == 0 {
             if let Some(item) = entries.iter().find_map(|entry| match entry {
-                MmcifEntry::Item(item)
-                    if super::mmcif_category::in_category(item.tag(), "_atom_site") =>
+                EntryData::Item(item)
+                    if super::mmcif_category::in_category(&item.tag, "_atom_site") =>
                 {
                     Some(item)
                 }
                 _ => None,
             }) {
                 return Err(MmcifParseError::new(
-                    item.value().line(),
+                    DiagnosticKind::Limit,
+                    item.value.line as usize,
                     "atom-site row count exceeds configured limit",
                 ));
             }
         }
-        blocks.push(MmcifBlock { name, entries });
+        blocks.push(MmcifBlock {
+            name,
+            source: Arc::clone(source),
+            entries,
+        });
     }
     if blocks.is_empty() {
-        return Err(MmcifParseError::new(1, "missing data block"));
+        return Err(MmcifParseError::new(
+            DiagnosticKind::Syntax,
+            1,
+            "missing data block",
+        ));
     }
     Ok(MmcifDocument { blocks })
 }
 
 fn parse_loop(
-    tokens: &[MmcifToken],
-    start: usize,
-) -> Result<(MmcifLoopTable, usize), MmcifParseError> {
-    let line = tokens[start].line;
-    let mut index = start + 1;
+    source: &str,
+    tokens: &mut Tokens<'_>,
+    keyword: Span,
+) -> Result<LoopData, MmcifParseError> {
+    let text = |span: Span| span.text(source);
     let mut tags = Vec::new();
     let mut seen = BTreeSet::new();
-    while index < tokens.len() && tokens[index].bare && tokens[index].text.starts_with('_') {
-        if !seen.insert(tokens[index].text.to_ascii_lowercase()) {
+    while let Some(token) = tokens.peek()? {
+        if !(token.bare && text(token).starts_with('_')) {
+            break;
+        }
+        tokens.next()?;
+        if !seen.insert(text(token).to_ascii_lowercase()) {
             return Err(MmcifParseError::new(
-                tokens[index].line,
-                format!("duplicate loop tag {}", tokens[index].text),
+                DiagnosticKind::Inconsistent,
+                token.line as usize,
+                format!("duplicate loop tag {}", text(token)),
             ));
         }
-        tags.push(tokens[index].text.clone());
-        index += 1;
+        tags.push(text(token).to_owned());
     }
     if tags.is_empty() {
-        return Err(MmcifParseError::new(line, "loop has no tags"));
+        return Err(syntax_error(keyword, "loop has no tags"));
     }
     let mut values = Vec::new();
-    while index < tokens.len() && !is_control(&tokens[index]) {
-        values.push(owned_value(&tokens[index]));
-        index += 1;
+    while let Some(token) = tokens.peek()? {
+        if is_control(token, text(token)) {
+            break;
+        }
+        tokens.next()?;
+        values.push(token);
     }
     if values.len() % tags.len() != 0 {
-        let line = values.last().map(MmcifValue::line).unwrap_or(line);
-        return Err(MmcifParseError::new(line, "loop has ragged rows"));
+        let line = values.last().map_or(keyword.line, |value| value.line);
+        return Err(MmcifParseError::new(
+            DiagnosticKind::Syntax,
+            line as usize,
+            "loop has ragged rows",
+        ));
     }
-    if index < tokens.len() && is_bare_word(&tokens[index], "stop_") {
-        index += 1;
+    if let Some(token) = tokens.peek()? {
+        if is_bare_word(token, text(token), "stop_") {
+            tokens.next()?;
+        }
     }
-    Ok((MmcifLoopTable { tags, values }, index))
+    Ok(LoopData { tags, values })
 }
 
-fn is_control(token: &MmcifToken) -> bool {
+fn syntax_error(token: Span, message: impl Into<String>) -> MmcifParseError {
+    MmcifParseError::new(DiagnosticKind::Syntax, token.line as usize, message)
+}
+
+fn is_control(token: Span, text: &str) -> bool {
     token.bare
-        && (token.text.eq_ignore_ascii_case("loop_")
-            || token.text.eq_ignore_ascii_case("stop_")
-            || token.text.eq_ignore_ascii_case("global_")
-            || token
-                .text
+        && (text.eq_ignore_ascii_case("loop_")
+            || text.eq_ignore_ascii_case("stop_")
+            || text.eq_ignore_ascii_case("global_")
+            || text
                 .get(..5)
                 .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data_"))
-            || token.text.starts_with('_')
-            || token
-                .text
+            || text.starts_with('_')
+            || text
                 .get(..5)
                 .is_some_and(|prefix| prefix.eq_ignore_ascii_case("save_")))
 }
 
-fn is_bare_word(token: &MmcifToken, word: &str) -> bool {
-    token.bare && token.text.eq_ignore_ascii_case(word)
+fn is_bare_word(token: Span, text: &str, word: &str) -> bool {
+    token.bare && text.eq_ignore_ascii_case(word)
 }
 
-fn has_bare_prefix(token: &MmcifToken, prefix: &str) -> bool {
+fn has_bare_prefix(token: Span, text: &str, prefix: &str) -> bool {
     token.bare
-        && token
-            .text
+        && text
             .get(..prefix.len())
             .is_some_and(|value| value.eq_ignore_ascii_case(prefix))
 }
 
-fn owned_value(token: &MmcifToken) -> MmcifValue {
-    MmcifValue {
-        text: token.text.clone(),
-        line: token.line,
-        bare: token.bare,
+/// One-token lookahead over the lazy tokenizer.
+struct Tokens<'a> {
+    tokenizer: Tokenizer<'a>,
+    peeked: Option<Option<Span>>,
+}
+
+impl Tokens<'_> {
+    fn peek(&mut self) -> Result<Option<Span>, MmcifParseError> {
+        if self.peeked.is_none() {
+            self.peeked = Some(self.tokenizer.next_token()?);
+        }
+        Ok(self.peeked.expect("peeked token is present"))
+    }
+
+    fn next(&mut self) -> Result<Option<Span>, MmcifParseError> {
+        match self.peeked.take() {
+            Some(token) => Ok(token),
+            None => self.tokenizer.next_token(),
+        }
     }
 }
 
-fn tokenize_mmcif(
-    input: &str,
+/// Splits line-normalized CIF text into value spans without copying it.
+struct Tokenizer<'a> {
+    source: &'a str,
+    line_start: usize,
+    line: usize,
+    column: usize,
+    count: usize,
     options: MmcifParseOptions,
-) -> Result<Vec<MmcifToken>, MmcifParseError> {
-    if input.len() > options.max_input_bytes {
-        return Err(MmcifParseError::new(
-            1,
-            "input exceeds configured byte limit",
-        ));
-    }
-    let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
-    let lines = normalized.lines().collect::<Vec<_>>();
-    let mut tokens = Vec::new();
-    let mut line_index = 0usize;
+}
 
-    while line_index < lines.len() {
-        let line_number = line_index + 1;
-        let mut column = 0usize;
-        if let Some(opening) = lines[line_index].strip_prefix(';') {
-            if opening.len() > options.max_token_bytes {
-                return Err(MmcifParseError::new(
-                    line_number,
-                    "semicolon value exceeds configured token limit",
-                ));
+impl Tokenizer<'_> {
+    fn next_token(&mut self) -> Result<Option<Span>, MmcifParseError> {
+        loop {
+            if self.line_start > self.source.len() {
+                return Ok(None);
             }
-            // CIF text starts immediately after the opening semicolon. Only
-            // the newline introducing the closing semicolon is excluded.
-            let mut text = opening.to_owned();
-            line_index += 1;
-            while line_index < lines.len() && !lines[line_index].starts_with(';') {
-                let next_len = text
-                    .len()
-                    .checked_add(1)
-                    .and_then(|len| len.checked_add(lines[line_index].len()))
-                    .ok_or_else(|| MmcifParseError::new(line_number, "token length overflow"))?;
-                if next_len > options.max_token_bytes {
-                    return Err(MmcifParseError::new(
-                        line_number,
-                        "semicolon value exceeds configured token limit",
-                    ));
-                }
-                text.push('\n');
-                text.push_str(lines[line_index]);
-                line_index += 1;
+            let line_end = self.line_end(self.line_start);
+            if self.column == 0 && self.source[self.line_start..].starts_with(';') {
+                return self.semicolon_text(line_end).map(Some);
             }
-            if line_index == lines.len() {
+            let line = &self.source[self.line_start..line_end];
+            let bytes = line.as_bytes();
+            while self.column < bytes.len() && bytes[self.column].is_ascii_whitespace() {
+                self.column += 1;
+            }
+            if self.column == bytes.len() || bytes[self.column] == b'#' {
+                self.line_start = line_end + 1;
+                self.line += 1;
+                self.column = 0;
+                continue;
+            }
+            let start = self.column;
+            let (value_start, value_end, bare) =
+                if bytes[self.column] == b'\'' || bytes[self.column] == b'"' {
+                    let quote = bytes[self.column];
+                    self.column += 1;
+                    let value_start = self.column;
+                    // In CIF 1.1 an embedded matching quote belongs to the value
+                    // unless it is followed by whitespace or the end of the line.
+                    while self.column < bytes.len()
+                        && !(bytes[self.column] == quote
+                            && bytes
+                                .get(self.column + 1)
+                                .is_none_or(u8::is_ascii_whitespace))
+                    {
+                        self.column += 1;
+                    }
+                    if self.column == bytes.len() {
+                        return Err(MmcifParseError::new(
+                            DiagnosticKind::Syntax,
+                            self.line,
+                            "unterminated quoted value",
+                        ));
+                    }
+                    let value_end = self.column;
+                    self.column += 1;
+                    (value_start, value_end, false)
+                } else {
+                    while self.column < bytes.len() && !bytes[self.column].is_ascii_whitespace() {
+                        self.column += 1;
+                    }
+                    (start, self.column, true)
+                };
+            return self
+                .span(
+                    self.line_start + value_start,
+                    self.line_start + value_end,
+                    self.line,
+                    bare,
+                )
+                .map(Some);
+        }
+    }
+
+    /// A `;`-delimited text field starting at the current line. CIF text starts
+    /// immediately after the opening semicolon; only the newline introducing
+    /// the closing semicolon is excluded.
+    fn semicolon_text(&mut self, opening_end: usize) -> Result<Span, MmcifParseError> {
+        let opening_line = self.line;
+        let text_start = self.line_start + 1;
+        let mut next = opening_end + 1;
+        let mut line = self.line + 1;
+        let closing = loop {
+            if next > self.source.len() {
                 return Err(MmcifParseError::new(
-                    line_number,
+                    DiagnosticKind::Syntax,
+                    opening_line,
                     "unterminated semicolon text",
                 ));
             }
-            push_mmcif_token(&mut tokens, text, line_number, false, options)?;
-            // A closing delimiter can be followed by more tokens on its line.
-            if lines[line_index]
-                .as_bytes()
-                .get(1)
-                .is_some_and(|byte| !byte.is_ascii_whitespace())
-            {
+            if self.source[next..].starts_with(';') {
+                break next;
+            }
+            let end = self.line_end(next);
+            if end - text_start > self.options.max_token_bytes {
                 return Err(MmcifParseError::new(
-                    line_index + 1,
-                    "closing semicolon must be followed by whitespace or end of line",
+                    DiagnosticKind::Limit,
+                    opening_line,
+                    "semicolon value exceeds configured token limit",
                 ));
             }
-            column = 1;
+            next = end + 1;
+            line += 1;
+        };
+        let text_end = closing - 1;
+        if text_end - text_start > self.options.max_token_bytes {
+            return Err(MmcifParseError::new(
+                DiagnosticKind::Limit,
+                opening_line,
+                "semicolon value exceeds configured token limit",
+            ));
         }
-
-        let line_number = line_index + 1;
-        let line = lines[line_index];
-        let bytes = line.as_bytes();
-        while column < bytes.len() {
-            while column < bytes.len() && bytes[column].is_ascii_whitespace() {
-                column += 1;
-            }
-            if column == bytes.len() || bytes[column] == b'#' {
-                break;
-            }
-            let start = column;
-            let (text, bare) = if bytes[column] == b'\'' || bytes[column] == b'"' {
-                let quote = bytes[column];
-                column += 1;
-                let value_start = column;
-                // In CIF 1.1 an embedded matching quote belongs to the value
-                // unless it is followed by whitespace or the end of the line.
-                while column < bytes.len()
-                    && !(bytes[column] == quote
-                        && bytes.get(column + 1).is_none_or(u8::is_ascii_whitespace))
-                {
-                    column += 1;
-                }
-                if column == bytes.len() {
-                    return Err(MmcifParseError::new(
-                        line_number,
-                        "unterminated quoted value",
-                    ));
-                }
-                let value = &line[value_start..column];
-                column += 1;
-                (value.to_owned(), false)
-            } else {
-                while column < bytes.len() && !bytes[column].is_ascii_whitespace() {
-                    column += 1;
-                }
-                (line[start..column].to_owned(), true)
-            };
-            push_mmcif_token(&mut tokens, text, line_number, bare, options)?;
+        // A closing delimiter can be followed by more tokens on its line.
+        if self
+            .source
+            .as_bytes()
+            .get(closing + 1)
+            .is_some_and(|byte| !byte.is_ascii_whitespace())
+        {
+            return Err(MmcifParseError::new(
+                DiagnosticKind::Syntax,
+                line,
+                "closing semicolon must be followed by whitespace or end of line",
+            ));
         }
-        line_index += 1;
+        self.line_start = closing;
+        self.line = line;
+        self.column = 1;
+        self.span(text_start, text_end, opening_line, false)
     }
 
-    Ok(tokens)
+    fn line_end(&self, start: usize) -> usize {
+        self.source[start..]
+            .find('\n')
+            .map_or(self.source.len(), |offset| start + offset)
+    }
+
+    fn span(
+        &mut self,
+        start: usize,
+        end: usize,
+        line: usize,
+        bare: bool,
+    ) -> Result<Span, MmcifParseError> {
+        if end - start > self.options.max_token_bytes {
+            return Err(MmcifParseError::new(
+                DiagnosticKind::Limit,
+                line,
+                "value exceeds configured token limit",
+            ));
+        }
+        if self.count >= self.options.max_tokens {
+            return Err(MmcifParseError::new(
+                DiagnosticKind::Limit,
+                line,
+                "input exceeds configured token count",
+            ));
+        }
+        self.count += 1;
+        let narrow = |value: usize| u32::try_from(value).expect("input length fits u32");
+        Ok(Span {
+            start: narrow(start),
+            end: narrow(end),
+            line: u32::try_from(line).unwrap_or(u32::MAX),
+            bare,
+        })
+    }
 }
 
-fn push_mmcif_token(
-    tokens: &mut Vec<MmcifToken>,
-    text: String,
-    line: usize,
-    bare: bool,
-    options: MmcifParseOptions,
-) -> Result<(), MmcifParseError> {
-    if text.len() > options.max_token_bytes {
-        return Err(MmcifParseError::new(
-            line,
-            "value exceeds configured token limit",
-        ));
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_limits_admit_the_default_atom_site_row_limit() {
+        let options = MmcifParseOptions::default();
+        assert!(
+            options.max_tokens >= options.max_atom_site_rows * (TYPICAL_ATOM_SITE_COLUMNS + 1),
+            "token budget must cover a full default-sized atom-site table"
+        );
+        assert!(u32::try_from(options.max_input_bytes).is_ok());
     }
-    if tokens.len() >= options.max_tokens {
-        return Err(MmcifParseError::new(
-            line,
-            "input exceeds configured token count",
-        ));
-    }
-    tokens.push(MmcifToken { text, line, bare });
-    Ok(())
 }

@@ -1,3 +1,4 @@
+use crate::diagnostics::DiagnosticKind;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -311,6 +312,7 @@ pub(super) fn build_molecule(
                 || prior.entity_id != row.entity_id
             {
                 return Err(MmcifInterpretError::new(
+                    DiagnosticKind::Inconsistent,
                     Some(row.line),
                     format!(
                         "atom `{}` has inconsistent topology payload across coordinate models",
@@ -332,12 +334,15 @@ pub(super) fn build_molecule(
         .rows
         .first()
         .map(|row| row.model_id.clone())
-        .ok_or_else(|| MmcifInterpretError::new(None, "empty molecule group"))?;
+        .ok_or_else(|| {
+            MmcifInterpretError::new(DiagnosticKind::Chemistry, None, "empty molecule group")
+        })?;
     let mut coordinates =
         StagedCoordinates::with_atom_capacity(atoms.len(), ANGSTROM).map_err(graph_error)?;
     for row in &group.rows {
         let point = row.point.ok_or_else(|| {
             MmcifInterpretError::new(
+                DiagnosticKind::InvalidValue,
                 Some(row.line),
                 format!(
                     "missing selected-model position for atom `{}`",
@@ -373,6 +378,7 @@ pub(super) fn build_molecule(
                 .expect("existing bond was found");
             if editor.working().bond(existing).map_err(graph_error)?.order != connection.order {
                 return Err(MmcifInterpretError::new(
+                    DiagnosticKind::Inconsistent,
                     None,
                     "duplicate struct_conn records assign conflicting bond orders",
                 ));
@@ -535,7 +541,7 @@ fn covalent_bond_cell_axis(
 ) -> Result<i64, MmcifInterpretError> {
     let cell = (coordinate / COVALENT_BOND_CELL_ANGSTROM).floor();
     if !cell.is_finite() || cell <= i64::MIN as f64 || cell >= i64::MAX as f64 {
-        return Err(MmcifInterpretError::new(
+        return Err(MmcifInterpretError::new(DiagnosticKind::Limit,
             Some(line),
             format!(
                 "_atom_site.Cartn_{axis} coordinate is outside the supported covalent-connectivity diagnostic cell range"
@@ -553,6 +559,7 @@ fn covalent_bond_neighbor(
     let checked = |axis: usize| {
         cell[axis].checked_add(offset[axis]).ok_or_else(|| {
             MmcifInterpretError::new(
+                DiagnosticKind::Limit,
                 Some(line),
                 "atom-site coordinate exceeds the covalent-connectivity diagnostic neighbor range",
             )
@@ -725,7 +732,7 @@ fn merge_optional_source_value(
     };
     if let Some(current) = current {
         if current != incoming {
-            return Err(MmcifInterpretError::new(
+            return Err(MmcifInterpretError::new(DiagnosticKind::Inconsistent,
                 Some(source_line),
                 format!(
                     "canonical hierarchy identity `{identity}` has conflicting _atom_site.{field} values `{current}` and `{incoming}`"
@@ -743,6 +750,7 @@ fn inconsistent_residue_metadata(
     field: &'static str,
 ) -> MmcifInterpretError {
     MmcifInterpretError::new(
+        DiagnosticKind::Inconsistent,
         Some(atom.source_line),
         format!(
             "canonical residue `{}` in asymmetry `{}` has inconsistent {field}",
@@ -752,11 +760,11 @@ fn inconsistent_residue_metadata(
 }
 
 pub(super) fn graph_error(error: impl fmt::Display) -> MmcifInterpretError {
-    MmcifInterpretError::new(None, error.to_string())
+    MmcifInterpretError::new(DiagnosticKind::Chemistry, None, error.to_string())
 }
 
 fn hierarchy_error(error: impl fmt::Display) -> MmcifInterpretError {
-    MmcifInterpretError::new(None, error.to_string())
+    MmcifInterpretError::new(DiagnosticKind::Inconsistent, None, error.to_string())
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use crate::diagnostics::DiagnosticKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::chemistry::localize_source_aromatic_bonds;
@@ -5,7 +6,7 @@ use crate::core::{AtomId, BondOrder, Molecule, MoleculeEditor};
 
 use super::mmcif_category::MmcifCategory;
 use super::mmcif_interpret as raw;
-use super::{MmcifBlock, MmcifValue};
+use super::MmcifBlock;
 
 pub(crate) struct StagedAtomProvenance<'a> {
     pub(crate) atom: AtomId,
@@ -434,6 +435,7 @@ fn component_bond_order(
         other => Err(row_error(
             table,
             row,
+            DiagnosticKind::Unsupported,
             format!("unsupported component bond order `{other}`"),
         )),
     }
@@ -448,12 +450,22 @@ fn required<'a>(
     row: usize,
     tag: &str,
 ) -> Result<&'a str, raw::MmcifInterpretError> {
-    let value = table
-        .value(row, tag)
-        .ok_or_else(|| row_error(table, row, format!("missing required {tag}")))?;
-    value
-        .optional_text()
-        .ok_or_else(|| row_error(table, row, format!("missing required {tag}")))
+    let value = table.value(row, tag).ok_or_else(|| {
+        row_error(
+            table,
+            row,
+            DiagnosticKind::InvalidValue,
+            format!("missing required {tag}"),
+        )
+    })?;
+    value.optional_text().ok_or_else(|| {
+        row_error(
+            table,
+            row,
+            DiagnosticKind::InvalidValue,
+            format!("missing required {tag}"),
+        )
+    })
 }
 
 fn required_i32(
@@ -461,31 +473,33 @@ fn required_i32(
     row: usize,
     tag: &str,
 ) -> Result<i32, raw::MmcifInterpretError> {
-    required(table, row, tag)?
-        .parse::<i32>()
-        .map_err(|_| row_error(table, row, format!("invalid integer {tag}")))
+    required(table, row, tag)?.parse::<i32>().map_err(|_| {
+        row_error(
+            table,
+            row,
+            DiagnosticKind::InvalidValue,
+            format!("invalid integer {tag}"),
+        )
+    })
 }
 
 fn optional<'a>(table: &'a MmcifCategory<'_>, row: usize, tag: &str) -> Option<&'a str> {
-    table.value(row, tag).and_then(MmcifValue::optional_text)
+    table
+        .value(row, tag)
+        .and_then(|value| value.optional_text())
 }
 
 fn row_error(
     table: &MmcifCategory<'_>,
     row: usize,
+    kind: DiagnosticKind,
     message: impl Into<String>,
 ) -> raw::MmcifInterpretError {
-    raw::MmcifInterpretError {
-        line: table.row_line(row),
-        message: message.into(),
-    }
+    raw::MmcifInterpretError::new(kind, table.row_line(row), message)
 }
 
 fn interpret_error(error: impl std::fmt::Display) -> raw::MmcifInterpretError {
-    raw::MmcifInterpretError {
-        line: None,
-        message: error.to_string(),
-    }
+    raw::MmcifInterpretError::new(DiagnosticKind::Chemistry, None, error.to_string())
 }
 
 #[cfg(test)]

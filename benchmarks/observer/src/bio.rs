@@ -48,7 +48,7 @@ fn fingerprint(values: impl Iterator<Item = String>) -> String {
 }
 
 /// Unquoted `?` and `.` are null values, distinct from the quoted text.
-fn token(value: &MmcifValue) -> String {
+fn token(value: MmcifValue<'_>) -> String {
     if value.is_missing() {
         format!("\u{0}{}", value.text())
     } else {

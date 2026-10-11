@@ -1137,7 +1137,7 @@ fn connectivity_diagnostic_cell_boundaries_are_finite_and_panic_free() {
         let error = result
             .expect("out-of-range finite coordinate must not panic")
             .expect_err("out-of-range finite coordinate must be rejected");
-        assert!(error.line().is_some());
+        assert!(error.location().is_some());
         assert!(error
             .message()
             .contains("supported covalent-connectivity diagnostic cell range"));
@@ -1152,7 +1152,7 @@ fn multiple_coordinate_models_require_explicit_selection() {
     );
     let document = parse(&input);
     let error = mmcif::interpret(&document, MmcifInterpretOptions::default()).unwrap_err();
-    assert!(error.message.contains("select one explicitly"));
+    assert!(error.message().contains("select one explicitly"));
 
     let selected = mmcif::interpret(
         &document,
@@ -1599,7 +1599,7 @@ fn alternate_location_policy_is_explicit_and_reported() {
 fn selected_model_requires_complete_positions() {
     let input = MIXED.replace("3.0 0.0 0.0 1", ". . . 1");
     let error = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap_err();
-    assert!(error.message.contains("complete position"));
+    assert!(error.message().contains("complete position"));
 }
 
 #[test]
@@ -2036,9 +2036,9 @@ covale A N 1 A CA 1 doub
         MmcifInterpretOptions::default(),
     )
     .unwrap_err();
-    assert!(error.line().is_some());
+    assert!(error.location().is_some());
     assert!(error
-        .message
+        .message()
         .contains("unsupported struct_conn bond order `arom`"));
 }
 

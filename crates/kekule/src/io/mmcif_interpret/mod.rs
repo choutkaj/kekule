@@ -5,6 +5,7 @@ mod ensemble;
 mod struct_conn;
 mod types;
 
+use crate::diagnostics::DiagnosticKind;
 use crate::structure::ModelBuilder;
 use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};
 
@@ -43,12 +44,14 @@ pub(crate) fn interpret_mmcif(
         .collect::<Vec<_>>();
     if blocks.is_empty() {
         return Err(MmcifInterpretError::new(
+            DiagnosticKind::Inconsistent,
             None,
             "document has no atom-site category",
         ));
     }
     if blocks.len() > 1 {
         return Err(MmcifInterpretError::new(
+            DiagnosticKind::Inconsistent,
             None,
             "document has atom-site data in more than one data block",
         ));
@@ -71,6 +74,7 @@ pub(crate) fn interpret_mmcif_block(
         }
         MmcifModelSelection::RequireSingle => {
             return Err(MmcifInterpretError::new(
+                DiagnosticKind::Inconsistent,
                 None,
                 format!(
                     "coordinate data contains {} models; select one explicitly",
@@ -108,11 +112,16 @@ impl<'a> PreparedBlock<'a> {
     ) -> Result<Self, MmcifInterpretError> {
         let entities = read_entity_types(block)?;
         let asym_entities = read_asym_entities(block)?;
-        let atom_table = block
-            .category("_atom_site")?
-            .ok_or_else(|| MmcifInterpretError::new(None, "block has no atom-site category"))?;
+        let atom_table = block.category("_atom_site")?.ok_or_else(|| {
+            MmcifInterpretError::new(
+                DiagnosticKind::Inconsistent,
+                None,
+                "block has no atom-site category",
+            )
+        })?;
         if atom_table.row_count() == 0 {
             return Err(MmcifInterpretError::new(
+                DiagnosticKind::Inconsistent,
                 None,
                 "atom-site category contains no rows",
             ));
@@ -171,12 +180,14 @@ impl<'a> PreparedBlock<'a> {
     ) -> Result<MmcifInterpretation, MmcifInterpretError> {
         let rows = self.models.remove(model_id).ok_or_else(|| {
             MmcifInterpretError::new(
+                DiagnosticKind::Inconsistent,
                 None,
                 format!("coordinate model `{model_id}` is unavailable"),
             )
         })?;
         if let Some(row) = rows.selected.iter().find(|row| row.point.is_none()) {
             return Err(MmcifInterpretError::new(
+                DiagnosticKind::InvalidValue,
                 Some(row.line),
                 format!(
                     "selected coordinate model `{model_id}` has no complete position for atom `{}`",

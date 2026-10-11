@@ -1,3 +1,4 @@
+use crate::diagnostics::DiagnosticKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::core::Element;
@@ -9,17 +10,126 @@ use super::types::{
     MmcifEntityKind, MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretationReport,
 };
 
+/// A tag whose column is resolved once per table, for reads in row loops.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Field {
+    tag: &'static str,
+    column: Option<usize>,
+}
+
+impl Field {
+    pub(super) fn resolve(table: &MmcifCategory<'_>, tag: &'static str) -> Self {
+        Self {
+            tag,
+            column: table.column(tag),
+        }
+    }
+}
+
+/// How a helper finds one cell: by tag, or by a pre-resolved [`Field`].
+pub(super) trait FieldKey: Copy {
+    fn tag(&self) -> &str;
+    fn lookup<'a>(&self, table: &MmcifCategory<'a>, row: usize) -> Option<MmcifValue<'a>>;
+}
+
+impl FieldKey for &str {
+    fn tag(&self) -> &str {
+        self
+    }
+
+    fn lookup<'a>(&self, table: &MmcifCategory<'a>, row: usize) -> Option<MmcifValue<'a>> {
+        table.value(row, self)
+    }
+}
+
+impl FieldKey for &String {
+    fn tag(&self) -> &str {
+        self
+    }
+
+    fn lookup<'a>(&self, table: &MmcifCategory<'a>, row: usize) -> Option<MmcifValue<'a>> {
+        table.value(row, self)
+    }
+}
+
+impl FieldKey for Field {
+    fn tag(&self) -> &str {
+        self.tag
+    }
+
+    fn lookup<'a>(&self, table: &MmcifCategory<'a>, row: usize) -> Option<MmcifValue<'a>> {
+        table.value_at(row, self.column?)
+    }
+}
+
+/// Every `_atom_site` column read per row, resolved once.
+struct AtomSiteFields {
+    type_symbol: Field,
+    label_asym_id: Field,
+    auth_asym_id: Field,
+    label_comp_id: Field,
+    auth_comp_id: Field,
+    label_atom_id: Field,
+    auth_atom_id: Field,
+    model_num: Field,
+    label_entity_id: Field,
+    group_pdb: Field,
+    label_seq_id: Field,
+    auth_seq_id: Field,
+    insertion_code: Field,
+    label_alt_id: Field,
+    formal_charge: Field,
+    id: Field,
+    occupancy: Field,
+    b_factor: Field,
+    cartn: [Field; 3],
+}
+
+impl AtomSiteFields {
+    fn resolve(table: &MmcifCategory<'_>) -> Self {
+        let field = |tag| Field::resolve(table, tag);
+        Self {
+            type_symbol: field("_atom_site.type_symbol"),
+            label_asym_id: field("_atom_site.label_asym_id"),
+            auth_asym_id: field("_atom_site.auth_asym_id"),
+            label_comp_id: field("_atom_site.label_comp_id"),
+            auth_comp_id: field("_atom_site.auth_comp_id"),
+            label_atom_id: field("_atom_site.label_atom_id"),
+            auth_atom_id: field("_atom_site.auth_atom_id"),
+            model_num: field("_atom_site.pdbx_PDB_model_num"),
+            label_entity_id: field("_atom_site.label_entity_id"),
+            group_pdb: field("_atom_site.group_PDB"),
+            label_seq_id: field("_atom_site.label_seq_id"),
+            auth_seq_id: field("_atom_site.auth_seq_id"),
+            insertion_code: field("_atom_site.pdbx_PDB_ins_code"),
+            label_alt_id: field("_atom_site.label_alt_id"),
+            formal_charge: field("_atom_site.pdbx_formal_charge"),
+            id: field("_atom_site.id"),
+            occupancy: field("_atom_site.occupancy"),
+            b_factor: field("_atom_site.B_iso_or_equiv"),
+            cartn: [
+                field("_atom_site.Cartn_x"),
+                field("_atom_site.Cartn_y"),
+                field("_atom_site.Cartn_z"),
+            ],
+        }
+    }
+}
+
 pub(super) fn coordinate_model_ids(block: &MmcifBlock) -> Result<Vec<String>, MmcifInterpretError> {
-    let table = block
-        .category("_atom_site")?
-        .ok_or_else(|| MmcifInterpretError::new(None, "data block has no atom-site category"))?;
+    let table = block.category("_atom_site")?.ok_or_else(|| {
+        MmcifInterpretError::new(
+            DiagnosticKind::Inconsistent,
+            None,
+            "data block has no atom-site category",
+        )
+    })?;
     let table = &table;
+    let model_num = Field::resolve(table, "_atom_site.pdbx_PDB_model_num");
     let mut seen = BTreeSet::new();
     let mut models = Vec::new();
     for row in 0..table.row_count() {
-        let model = optional(table, row, "_atom_site.pdbx_PDB_model_num")
-            .unwrap_or("1")
-            .to_owned();
+        let model = optional(table, row, model_num).unwrap_or("1").to_owned();
         if seen.insert(model.clone()) {
             models.push(model);
         }
@@ -40,7 +150,12 @@ pub(super) fn read_entity_types(
                 .insert(id.to_owned(), MmcifEntityKind::from_mmcif(kind))
                 .is_some()
             {
-                return Err(row_error(table, row, format!("duplicate entity `{id}`")));
+                return Err(row_error(
+                    table,
+                    row,
+                    DiagnosticKind::Inconsistent,
+                    format!("duplicate entity `{id}`"),
+                ));
             }
         }
     }
@@ -60,6 +175,7 @@ pub(super) fn read_asym_entities(
                 return Err(row_error(
                     table,
                     row,
+                    DiagnosticKind::Inconsistent,
                     format!("duplicate structural instance `{id}`"),
                 ));
             }
@@ -122,44 +238,65 @@ pub(super) fn read_atom_rows(
     let mut rows = Vec::with_capacity(table.row_count());
     let mut occurrences = BTreeMap::<(String, String, String), OccurrenceState>::new();
     let mut inferred = BTreeSet::new();
+    let fields = AtomSiteFields::resolve(table);
     for row in 0..table.row_count() {
-        let type_symbol = required(table, row, "_atom_site.type_symbol")?;
-        let type_value = table
-            .value(row, "_atom_site.type_symbol")
-            .expect("required");
+        let type_symbol = required(table, row, fields.type_symbol)?;
+        let type_value = fields.type_symbol.lookup(table, row).expect("required");
         let element = Element::from_symbol(&canonical_mmcif_element_symbol(type_symbol))
             .ok_or_else(|| {
                 MmcifInterpretError::new(
+                    DiagnosticKind::InvalidValue,
                     Some(type_value.line()),
                     format!("unknown atom-site element `{type_symbol}`"),
                 )
             })?;
-        let label_asym_id = optional(table, row, "_atom_site.label_asym_id").map(str::to_owned);
+        let label_asym_id = optional(table, row, fields.label_asym_id).map(str::to_owned);
         let asym_id = label_asym_id
             .as_deref()
-            .or_else(|| optional(table, row, "_atom_site.auth_asym_id"))
-            .ok_or_else(|| row_error(table, row, "missing atom-site chain identifier"))?
+            .or_else(|| optional(table, row, fields.auth_asym_id))
+            .ok_or_else(|| {
+                row_error(
+                    table,
+                    row,
+                    DiagnosticKind::InvalidValue,
+                    "missing atom-site chain identifier",
+                )
+            })?
             .to_owned();
-        let auth_asym_id = optional(table, row, "_atom_site.auth_asym_id").map(str::to_owned);
-        let label_comp_id = optional(table, row, "_atom_site.label_comp_id").map(str::to_owned);
+        let auth_asym_id = optional(table, row, fields.auth_asym_id).map(str::to_owned);
+        let label_comp_id = optional(table, row, fields.label_comp_id).map(str::to_owned);
         let comp_id = label_comp_id
             .as_deref()
-            .or_else(|| optional(table, row, "_atom_site.auth_comp_id"))
-            .ok_or_else(|| row_error(table, row, "missing atom-site component identifier"))?
+            .or_else(|| optional(table, row, fields.auth_comp_id))
+            .ok_or_else(|| {
+                row_error(
+                    table,
+                    row,
+                    DiagnosticKind::InvalidValue,
+                    "missing atom-site component identifier",
+                )
+            })?
             .to_owned();
-        let label_atom_name = optional(table, row, "_atom_site.label_atom_id").map(str::to_owned);
+        let label_atom_name = optional(table, row, fields.label_atom_id).map(str::to_owned);
         let atom_name = label_atom_name
             .as_deref()
-            .or_else(|| optional(table, row, "_atom_site.auth_atom_id"))
-            .ok_or_else(|| row_error(table, row, "missing atom-site atom identifier"))?
+            .or_else(|| optional(table, row, fields.auth_atom_id))
+            .ok_or_else(|| {
+                row_error(
+                    table,
+                    row,
+                    DiagnosticKind::InvalidValue,
+                    "missing atom-site atom identifier",
+                )
+            })?
             .to_owned();
-        let model_id = optional(table, row, "_atom_site.pdbx_PDB_model_num")
+        let model_id = optional(table, row, fields.model_num)
             .unwrap_or("1")
             .to_owned();
-        let entity_id = optional(table, row, "_atom_site.label_entity_id")
+        let entity_id = optional(table, row, fields.label_entity_id)
             .map(str::to_owned)
             .or_else(|| asym_entities.get(&asym_id).cloned());
-        let group_pdb = optional(table, row, "_atom_site.group_PDB").map(str::to_owned);
+        let group_pdb = optional(table, row, fields.group_pdb).map(str::to_owned);
         let kind = entity_id
             .as_ref()
             .and_then(|entity| entities.get(entity))
@@ -174,6 +311,7 @@ pub(super) fn read_atom_rows(
                 return Err(row_error(
                     table,
                     row,
+                    DiagnosticKind::InvalidValue,
                     format!("missing entity type for structural instance `{asym_id}`"),
                 ));
             }
@@ -184,11 +322,10 @@ pub(super) fn read_atom_rows(
                 });
             }
         }
-        let label_seq_id = optional_i32(table, row, "_atom_site.label_seq_id")?;
-        let auth_seq_id = optional(table, row, "_atom_site.auth_seq_id").map(str::to_owned);
-        let insertion_code =
-            optional(table, row, "_atom_site.pdbx_PDB_ins_code").map(str::to_owned);
-        let alt_id = optional(table, row, "_atom_site.label_alt_id").map(str::to_owned);
+        let label_seq_id = optional_i32(table, row, fields.label_seq_id)?;
+        let auth_seq_id = optional(table, row, fields.auth_seq_id).map(str::to_owned);
+        let insertion_code = optional(table, row, fields.insertion_code).map(str::to_owned);
+        let alt_id = optional(table, row, fields.label_alt_id).map(str::to_owned);
         let (residue_key, occurrence) = if let Some(sequence) = label_seq_id {
             (
                 format!(
@@ -232,9 +369,8 @@ pub(super) fn read_atom_rows(
         } else {
             format!("small:{asym_id}:{residue_key}")
         };
-        let formal_charge =
-            optional_i8(table, row, "_atom_site.pdbx_formal_charge")?.unwrap_or_default();
-        let point = optional_point(table, row)?;
+        let formal_charge = optional_i8(table, row, fields.formal_charge)?.unwrap_or_default();
+        let point = optional_point(table, row, fields.cartn)?;
         rows.push(AtomRow {
             line: type_value.line(),
             row_index: row,
@@ -253,14 +389,14 @@ pub(super) fn read_atom_rows(
             occurrence,
             label_comp_id,
             comp_id,
-            auth_comp_id: optional(table, row, "_atom_site.auth_comp_id").map(str::to_owned),
+            auth_comp_id: optional(table, row, fields.auth_comp_id).map(str::to_owned),
             label_atom_name,
             atom_name,
-            auth_atom_name: optional(table, row, "_atom_site.auth_atom_id").map(str::to_owned),
-            atom_site_id: optional(table, row, "_atom_site.id").map(str::to_owned),
+            auth_atom_name: optional(table, row, fields.auth_atom_id).map(str::to_owned),
+            atom_site_id: optional(table, row, fields.id).map(str::to_owned),
             alt_id,
-            occupancy: optional_f64(table, row, "_atom_site.occupancy")?,
-            b_factor: optional_f64(table, row, "_atom_site.B_iso_or_equiv")?,
+            occupancy: optional_f64(table, row, fields.occupancy)?,
+            b_factor: optional_f64(table, row, fields.b_factor)?,
             point,
             element,
             formal_charge,
@@ -295,32 +431,58 @@ fn canonical_mmcif_element_symbol(symbol: &str) -> String {
 pub(super) fn required<'a>(
     table: &'a MmcifCategory<'_>,
     row: usize,
-    tag: &str,
+    key: impl FieldKey,
 ) -> Result<&'a str, MmcifInterpretError> {
-    let value = table
-        .value(row, tag)
-        .ok_or_else(|| row_error(table, row, format!("missing required {tag}")))?;
+    let tag = key.tag();
+    let value = key.lookup(table, row).ok_or_else(|| {
+        row_error(
+            table,
+            row,
+            DiagnosticKind::InvalidValue,
+            format!("missing required {tag}"),
+        )
+    })?;
     value.optional_text().ok_or_else(|| {
-        MmcifInterpretError::new(Some(value.line()), format!("missing required {tag}"))
+        MmcifInterpretError::new(
+            DiagnosticKind::InvalidValue,
+            Some(value.line()),
+            format!("missing required {tag}"),
+        )
     })
 }
 
-pub(super) fn optional<'a>(table: &'a MmcifCategory<'_>, row: usize, tag: &str) -> Option<&'a str> {
-    table.value(row, tag).and_then(MmcifValue::optional_text)
+pub(super) fn optional<'a>(
+    table: &'a MmcifCategory<'_>,
+    row: usize,
+    key: impl FieldKey,
+) -> Option<&'a str> {
+    key.lookup(table, row)
+        .and_then(|value| value.optional_text())
 }
 
 fn optional_f64(
     table: &MmcifCategory<'_>,
     row: usize,
-    tag: &str,
+    key: impl FieldKey,
 ) -> Result<Option<f64>, MmcifInterpretError> {
-    optional(table, row, tag)
+    let tag = key.tag();
+    optional(table, row, key)
         .map(|value| {
-            let parsed = value
-                .parse::<f64>()
-                .map_err(|_| row_error(table, row, format!("invalid float {tag}")))?;
+            let parsed = value.parse::<f64>().map_err(|_| {
+                row_error(
+                    table,
+                    row,
+                    DiagnosticKind::InvalidValue,
+                    format!("invalid float {tag}"),
+                )
+            })?;
             if !parsed.is_finite() {
-                return Err(row_error(table, row, format!("non-finite float {tag}")));
+                return Err(row_error(
+                    table,
+                    row,
+                    DiagnosticKind::InvalidValue,
+                    format!("non-finite float {tag}"),
+                ));
             }
             Ok(parsed)
         })
@@ -330,13 +492,19 @@ fn optional_f64(
 pub(super) fn optional_i32(
     table: &MmcifCategory<'_>,
     row: usize,
-    tag: &str,
+    key: impl FieldKey,
 ) -> Result<Option<i32>, MmcifInterpretError> {
-    optional(table, row, tag)
+    let tag = key.tag();
+    optional(table, row, key)
         .map(|value| {
-            value
-                .parse::<i32>()
-                .map_err(|_| row_error(table, row, format!("invalid integer {tag}")))
+            value.parse::<i32>().map_err(|_| {
+                row_error(
+                    table,
+                    row,
+                    DiagnosticKind::InvalidValue,
+                    format!("invalid integer {tag}"),
+                )
+            })
         })
         .transpose()
 }
@@ -344,13 +512,19 @@ pub(super) fn optional_i32(
 fn optional_i8(
     table: &MmcifCategory<'_>,
     row: usize,
-    tag: &str,
+    key: impl FieldKey,
 ) -> Result<Option<i8>, MmcifInterpretError> {
-    optional(table, row, tag)
+    let tag = key.tag();
+    optional(table, row, key)
         .map(|value| {
-            value
-                .parse::<i8>()
-                .map_err(|_| row_error(table, row, format!("invalid integer {tag}")))
+            value.parse::<i8>().map_err(|_| {
+                row_error(
+                    table,
+                    row,
+                    DiagnosticKind::InvalidValue,
+                    format!("invalid integer {tag}"),
+                )
+            })
         })
         .transpose()
 }
@@ -358,16 +532,18 @@ fn optional_i8(
 fn optional_point(
     table: &MmcifCategory<'_>,
     row: usize,
+    [x, y, z]: [Field; 3],
 ) -> Result<Option<Point3>, MmcifInterpretError> {
-    let x = optional_f64(table, row, "_atom_site.Cartn_x")?;
-    let y = optional_f64(table, row, "_atom_site.Cartn_y")?;
-    let z = optional_f64(table, row, "_atom_site.Cartn_z")?;
+    let x = optional_f64(table, row, x)?;
+    let y = optional_f64(table, row, y)?;
+    let z = optional_f64(table, row, z)?;
     match (x, y, z) {
         (Some(x), Some(y), Some(z)) => Ok(Some(Point3::new(x, y, z))),
         (None, None, None) => Ok(None),
         _ => Err(row_error(
             table,
             row,
+            DiagnosticKind::InvalidValue,
             "partial atom-site coordinate triplet",
         )),
     }
@@ -376,7 +552,8 @@ fn optional_point(
 pub(super) fn row_error(
     table: &MmcifCategory<'_>,
     row: usize,
+    kind: DiagnosticKind,
     message: impl Into<String>,
 ) -> MmcifInterpretError {
-    MmcifInterpretError::new(table.row_line(row), message)
+    MmcifInterpretError::new(kind, table.row_line(row), message)
 }
