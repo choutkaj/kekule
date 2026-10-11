@@ -491,16 +491,16 @@ fn force_field_libraries_define_their_residue_names() {
         (
             &amber,
             "DA",
-            &["OP2"][..],
-            &["HOP2"][..],
+            &["P", "OP1", "OP2"][..],
+            &["HOP2", "OP3", "HOP3"][..],
             -1,
             ComponentLinking::Nucleotide,
         ),
         (
             &amber,
             "DA5",
-            &["HOP2"][..],
-            &[][..],
+            &["HO5'|H5T"][..],
+            &["P", "OP1", "OP2", "OP3", "HOP2"][..],
             0,
             ComponentLinking::Nucleotide,
         ),
@@ -633,6 +633,31 @@ fn force_field_libraries_define_their_residue_names() {
         assert_eq!(component.id(), id);
         assert_eq!(component.variant(), None, "{id}");
     }
+    // Exact inventories where a derivation adds or removes atoms.
+    let primary = |library: &ComponentLibrary, id: &str| {
+        library
+            .get(id)
+            .unwrap()
+            .atoms()
+            .iter()
+            .map(|atom| atom.name().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        primary(&amber, "NPRO"),
+        [
+            "N", "CA", "C", "O", "CB", "CG", "CD", "OXT", "H2", "HA", "HB2", "HB3", "HG2", "HG3",
+            "HD2", "HD3", "HXT", "H3",
+        ]
+    );
+    assert_eq!(
+        primary(&amber, "DA5"),
+        [
+            "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", "C2'", "C1'", "N9", "C8", "N7", "C5", "C6",
+            "N6", "N1", "C2", "N3", "C4", "H5'", "H5''", "H4'", "H3'", "HO3'", "H2'", "H2''",
+            "H1'", "H8", "H61", "H62", "H2", "HO5'",
+        ]
+    );
     // Names the libraries do not define fall back to the bundled templates.
     assert!(amber.get("ALA").is_none() && charmm.get("DA").is_none());
     // The libraries are opt-in: CHARMM chloride is the dictionary's chlorophyll a.

@@ -1270,3 +1270,130 @@ fn force_field_libraries_interpret_their_residue_names() {
     let error = pdb::interpret(&document).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
 }
+
+#[test]
+fn force_field_termini_carry_their_charges() {
+    use kekule::components::ComponentLibrary;
+    use kekule::pdb::ConnectivityOptions;
+    use std::sync::Arc;
+
+    // Ideal coordinates of the dictionary's PRO and DA entries; the third
+    // ammonium hydrogen of proline and the 5'-hydroxyl hydrogen are placed
+    // 1.0 A from their heavy atoms.
+    let proline = |names: [&'static str; 9]| -> Vec<Atom> {
+        let [h2, h3, hb2, hb3, hg2, hg3, hd2, hd3, oxt] = names;
+        vec![
+            (" N  ", "N", [-0.816, 1.108, 0.254]),
+            (" CA ", "C", [0.001, -0.107, 0.509]),
+            (" C  ", "C", [1.408, 0.091, 0.005]),
+            (" O  ", "O", [1.650, 0.980, -0.777]),
+            (" CB ", "C", [-0.703, -1.227, -0.286]),
+            (" CG ", "C", [-2.163, -0.753, -0.439]),
+            (" CD ", "C", [-2.218, 0.614, 0.276]),
+            (oxt, "O", [2.391, -0.721, 0.424]),
+            (h2, "H", [-0.707, 1.708, 1.057]),
+            (h3, "H", [-0.567, 1.588, -0.599]),
+            (" HA ", "H", [0.009, -0.343, 1.573]),
+            (hb2, "H", [-0.240, -1.345, -1.266]),
+            (hb3, "H", [-0.666, -2.165, 0.267]),
+            (hg2, "H", [-2.416, -0.638, -1.493]),
+            (hg3, "H", [-2.843, -1.458, 0.040]),
+            (hd2, "H", [-2.872, 1.300, -0.263]),
+            (hd3, "H", [-2.559, 0.492, 1.304]),
+        ]
+    };
+    let mut amber_proline = proline([
+        " H2 ", " H3 ", " HB2", " HB3", " HG2", " HG3", " HD2", " HD3", " OXT",
+    ]);
+    amber_proline.push((" HXT", "H", [3.293, -0.594, 0.101]));
+    let charmm_proline = proline([
+        " HN1", " HN2", " HB1", " HB2", " HG1", " HG2", " HD1", " HD2", " OT2",
+    ]);
+    // A free deoxyadenosine: no phosphate, and hydroxyl hydrogens at 5' and 3'.
+    const DEOXYADENOSINE: &[Atom] = &[
+        (" O5'", "O", [0.241, -0.771, -3.320]),
+        (" C5'", "C", [-0.549, 0.270, -2.744]),
+        (" C4'", "C", [-1.239, -0.251, -1.482]),
+        (" O4'", "O", [-0.267, -0.564, -0.458]),
+        (" C3'", "C", [-2.105, 0.859, -0.835]),
+        (" O3'", "O", [-3.409, 0.895, -1.418]),
+        (" C2'", "C", [-2.173, 0.398, 0.640]),
+        (" C1'", "C", [-0.965, -0.545, 0.797]),
+        (" N9 ", "N", [-0.078, -0.047, 1.852]),
+        (" C8 ", "C", [0.962, 0.817, 1.689]),
+        (" N7 ", "N", [1.535, 1.044, 2.835]),
+        (" C5 ", "C", [0.897, 0.346, 3.805]),
+        (" C6 ", "C", [1.069, 0.196, 5.191]),
+        (" N6 ", "N", [2.079, 0.869, 5.856]),
+        (" N1 ", "N", [0.236, -0.603, 5.850]),
+        (" C2 ", "C", [-0.729, -1.249, 5.224]),
+        (" N3 ", "N", [-0.925, -1.144, 3.927]),
+        (" C4 ", "C", [-0.142, -0.368, 3.184]),
+        ("HO5'", "H", [0.659, -0.400, -4.113]),
+        (" H5'", "H", [-1.302, 0.594, -3.463]),
+        ("H5''", "H", [0.092, 1.112, -2.486]),
+        (" H4'", "H", [-1.846, -1.126, -1.712]),
+        (" H3'", "H", [-1.617, 1.830, -0.918]),
+        ("HO3'", "H", [-3.924, 1.538, -0.913]),
+        (" H2'", "H", [-3.103, -0.136, 0.831]),
+        ("H2''", "H", [-2.079, 1.253, 1.311]),
+        (" H1'", "H", [-1.309, -1.549, 1.046]),
+        (" H8 ", "H", [1.266, 1.250, 0.748]),
+        (" H61", "H", [2.185, 0.761, 6.814]),
+        (" H62", "H", [2.683, 1.447, 5.363]),
+        (" H2 ", "H", [-1.383, -1.889, 5.798]),
+    ];
+    let cases = [
+        (
+            ComponentLibrary::amber(),
+            residue_records("ATOM", "DAN", 'D', DEOXYADENOSINE, 0.0),
+            vec![],
+            vec![],
+        ),
+        (
+            ComponentLibrary::amber(),
+            residue_records("ATOM", "NPRO", 'P', &amber_proline, 0.0),
+            vec![("N".to_owned(), 1)],
+            vec![],
+        ),
+        // CHARMM's N-terminal proline patch names its hydrogens HN1 and HN2;
+        // the C-terminal patch makes a carboxylate.
+        (
+            ComponentLibrary::charmm(),
+            residue_records("ATOM", "PRO", 'P', &charmm_proline, 0.0),
+            vec![("N".to_owned(), 1), ("OT2".to_owned(), -1)],
+            vec![("HN2".to_owned(), "N".to_owned())],
+        ),
+    ];
+    for (library, lines, expected_charges, expected_attached) in cases {
+        let document = pdb::parse_str(&entry(&lines)).unwrap();
+        let interpreted = pdb::interpret_with_options(
+            &document,
+            StructureInterpretOptions {
+                connectivity: ConnectivityOptions {
+                    components: Some(Arc::new(library)),
+                    ..ConnectivityOptions::default()
+                },
+                ..StructureInterpretOptions::default()
+            },
+        )
+        .unwrap();
+        let attached = interpreted
+            .report()
+            .issues()
+            .iter()
+            .filter_map(|issue| match issue {
+                StructureInterpretIssue::HydrogenAttachedByDistance {
+                    atom_name,
+                    heavy_atom_name,
+                    ..
+                } => Some((atom_name.clone(), heavy_atom_name.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(charges(&interpreted), expected_charges, "{lines:?}");
+        assert_eq!(attached, expected_attached, "{lines:?}");
+        assert_eq!(inferred_components(&interpreted), Vec::<String>::new());
+        assert_eq!(interpreted.topology().instance_count(), 1);
+    }
+}

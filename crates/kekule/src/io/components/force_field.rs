@@ -67,8 +67,10 @@ pub(super) fn amber() -> ComponentLibrary {
             .named("Cl-", "chloride ion"),
     ];
     // Nucleotides keep the atom names of their residues. A linking phosphate
-    // is an anion; 5'-terminal and free nucleotides have none, and atoms a
-    // residue lacks are simply absent.
+    // is an anion. 5'-terminal and free nucleotides have no phosphate but a
+    // 5'-hydroxyl hydrogen, HO5' (H5T in older libraries); atoms a residue
+    // lacks, such as the 3'-hydroxyl hydrogen of a linked nucleotide, are
+    // simply absent.
     for (nucleotide, name) in [
         ("DA", "deoxyadenosine"),
         ("DC", "deoxycytidine"),
@@ -79,16 +81,32 @@ pub(super) fn amber() -> ComponentLibrary {
         ("G", "guanosine"),
         ("U", "uridine"),
     ] {
-        let phosphate = || base(nucleotide).without_atom("HOP2").charged("OP2", -1);
+        // The terminal OP3 leaves when the phosphate links; AMBER residues
+        // never carry it.
+        let phosphate = || {
+            ["HOP3", "OP3", "HOP2"]
+                .into_iter()
+                .fold(base(nucleotide), |component, atom| {
+                    component.without_atom(atom)
+                })
+                .charged("OP2", -1)
+        };
+        let hydroxyl = || {
+            ["HOP3", "HOP2", "OP3", "OP2", "OP1", "P"]
+                .into_iter()
+                .fold(base(nucleotide), |component, atom| {
+                    component.without_atom(atom)
+                })
+                .with_hydrogen("HO5'", "O5'")
+                .alternates(&[("HO5'", "H5T")])
+        };
         residues.push(phosphate().named(nucleotide, &format!("{name} monophosphate")));
         residues.push(phosphate().named(
             &format!("{nucleotide}3"),
             &format!("3'-terminal {name} monophosphate"),
         ));
-        residues.push(
-            base(nucleotide).named(&format!("{nucleotide}5"), &format!("5'-terminal {name}")),
-        );
-        residues.push(base(nucleotide).named(&format!("{nucleotide}N"), &format!("free {name}")));
+        residues.push(hydroxyl().named(&format!("{nucleotide}5"), &format!("5'-terminal {name}")));
+        residues.push(hydroxyl().named(&format!("{nucleotide}N"), &format!("free {name}")));
     }
     let mut library = ComponentLibrary::new();
     for residue in residues {
