@@ -422,10 +422,11 @@ does not support is rejected by default; an explicit option downgrades it to typ
 report entries that name the record and the kind of content omitted. A deliberately
 lossy projection, such as base-only SMILES, says so in its name.
 
-Every stage reports through one diagnostics model. Parse errors, interpretation
-errors, and non-fatal report issues carry a structured kind and a source location
-relative to the original input, so callers can match on failures and map them to
-the source without format-specific arithmetic.
+Every stage reports through one diagnostics model. Parse and interpretation
+errors carry a structured kind and a source location relative to the original
+input, so callers can match on failures and map them to the source without
+format-specific arithmetic. Non-fatal report issues carry a structured kind and
+identify the source records they concern.
 
 Coordinate-only trajectory formats are the deliberate exception: they carry no
 chemistry to interpret, so streaming codecs decode frames directly against a
