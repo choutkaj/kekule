@@ -1,0 +1,21 @@
+schema_version = 1
+
+[[fixture]]
+path = "1AKE.pdb"
+source = "RCSB PDB / wwPDB entry 1AKE"
+url = "https://files.rcsb.org/download/1AKE.pdb"
+retrieved = "2026-10-11"
+sha256 = "651e952f55f1317f50f4e82b7f0e99053397032cd8da5b2896f79d0af9f619a9"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "None; original downloaded bytes"
+purpose = "Independent-reference regression for PDB connectivity, alternate locations, and CONECT records"
+
+[[fixture]]
+path = "1CRN.pdb"
+source = "RCSB PDB / wwPDB entry 1CRN"
+url = "https://files.rcsb.org/download/1CRN.pdb"
+retrieved = "2026-10-11"
+sha256 = "42199a30a0701864a2a5cc76cd7f35cc544cd0e65fbcf63e03c166543249b811"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "None; original downloaded bytes"
+purpose = "Independent-reference regression for PDB connectivity and disulfide records"

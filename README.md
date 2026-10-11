@@ -44,6 +44,22 @@ Ensemble        = Topology + weighted EnsembleMembers (positions, cell, occupanc
 Trajectory      = Topology + time-ordered TrajectoryFrames (positions, cell, properties, velocities, forces, time, step)
 ```
 
+## Formats
+
+| Format | Read | Write |
+| --- | --- | --- |
+| SMILES, including CXSMILES extensions and `.smi` record streams | yes | yes |
+| Molfile V2000 and V3000 | yes | yes |
+| SDF, streamed record by record | yes | yes |
+| mmCIF | yes | yes |
+| PDB | yes | no |
+
+Macromolecular formats rarely state every bond, so mmCIF and PDB interpretation
+resolves connectivity from the file's own records, bundled templates from the
+wwPDB Chemical Component Dictionary (`kekule::components`), polymer linkage, and,
+for residues nothing else covers, covalent radii. The sister crate `kekule-traj`
+reads and writes XYZ, DCD, TRR, and XTC trajectories.
+
 ## Examples
 
 ### SMILES
@@ -170,6 +186,55 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 The combined-model example intentionally requires one connected small molecule per input. Multi-record SDF documents, multi-block or multi-model mmCIF documents, and macromolecular systems require explicit source selection.
+
+### PDB structures
+
+Read a PDB entry, see where its bonds came from, and read every coordinate model
+as an ensemble:
+
+```rust
+use std::{error::Error, fs};
+
+use kekule::pdb::{self, BondEvidence, StructureInterpretIssue};
+
+fn main() -> Result<(), Box<dyn Error>> {
+    // A PDB file holds one entry. Bonds it does not state come from residue
+    // templates, polymer linkage, and its CONECT, LINK, and SSBOND records.
+    let document = pdb::parse_str(&fs::read_to_string("1ake.pdb")?)?;
+    let interpretation = pdb::interpret(&document)?;
+    let report = interpretation.report();
+    println!("entry: {}", report.block_name());
+    println!(
+        "macromolecules: {}, small molecules: {}, waters: {}",
+        report.macromolecules(),
+        report.small_molecules(),
+        report.solvent_molecules(),
+    );
+
+    // Every bond records its evidence; residues without a template have
+    // their bonds inferred from covalent radii.
+    let inferred = report
+        .instances()
+        .iter()
+        .flat_map(|instance| instance.bonds())
+        .filter(|bond| matches!(bond.evidence(), BondEvidence::Distance))
+        .count();
+    println!("bonds inferred from distance: {inferred}");
+
+    // Non-fatal findings, such as chain breaks, are listed in the report.
+    for issue in report.issues() {
+        if let StructureInterpretIssue::ChainBreak { residue, next } = issue {
+            println!("chain break between {residue:?} and {next:?}");
+        }
+    }
+
+    // Entries with several MODEL records, such as NMR ensembles, read as one
+    // ensemble of equally weighted members.
+    let ensemble = pdb::interpret_ensemble(&document)?;
+    println!("models: {}", ensemble.ensemble().len());
+    Ok(())
+}
+```
 
 ## Contributing
 
