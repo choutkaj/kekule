@@ -1,5 +1,6 @@
 use crate::chemistry::*;
 use crate::core::*;
+use crate::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
 use crate::geometry::Point3;
 use crate::perception::{
     aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
@@ -109,12 +110,38 @@ pub(super) fn read_molfile(
     exactly_one(molecules, "molfile")
 }
 
+/// The stage at which a malformed Molfile fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MolfileStage {
+    Parse,
+    Interpret,
+}
+
+/// Where a malformed Molfile fails: its stage, diagnostic kind, and line.
+pub(super) fn molfile_failure(input: &str) -> (MolfileStage, DiagnosticKind, Option<usize>) {
+    match molfile::parse_str(input) {
+        Err(error) => (
+            MolfileStage::Parse,
+            error.kind(),
+            Some(error.location().line()),
+        ),
+        Ok(document) => {
+            let error = molfile::interpret(&document).expect_err("malformed Molfile must fail");
+            (
+                MolfileStage::Interpret,
+                error.kind(),
+                error.location().map(|location| location.line()),
+            )
+        }
+    }
+}
+
 pub(super) fn read_molfile_with_report(
     input: &str,
 ) -> std::result::Result<(Molecule, molfile::MolfileInterpretationReport), Box<dyn std::error::Error>>
 {
     let document = molfile::parse_str(input)?;
-    let (model, mut reports) = molfile::interpret(&document)?.into_parts();
+    let (model, mut reports, _) = molfile::interpret(&document)?.into_parts();
     if reports.len() != 1 {
         return Err(format!("expected one molfile component, found {}", reports.len()).into());
     }
@@ -139,7 +166,11 @@ pub(super) fn read_sdf_records_with_options(
     options: SdfParseOptions,
 ) -> std::result::Result<Vec<SdfRecordInterpretation>, Box<dyn std::error::Error>> {
     let document = sdf::parse_str_with_options(input, options)?;
-    Ok(sdf::interpret(&document)?.into_records())
+    Ok(document
+        .records()
+        .iter()
+        .map(SdfRecord::interpret)
+        .collect::<std::result::Result<_, _>>()?)
 }
 
 pub(super) fn read_sdf_molecules(

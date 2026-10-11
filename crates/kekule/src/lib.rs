@@ -414,13 +414,17 @@ pub mod smiles {
 /// Molfile version cannot represent.
 pub mod molfile {
     pub use crate::io::{
-        MolWriteError, MolWriteErrorKind, MolfileAtomMapping, MolfileBondMapping, MolfileDocument,
-        MolfileHeader, MolfileInterpretError, MolfileInterpretation, MolfileInterpretationReport,
-        MolfileInterpretationWarning, MolfileLine, MolfileParseError, MolfileParseOptions,
-        MolfileSource, MolfileVersion, MolfileWriteOptions, MolfileWriteVersion,
+        MolWriteError, MolWriteErrorKind, MolfileAtom, MolfileAtomMapping, MolfileAtomParity,
+        MolfileBond, MolfileBondMapping, MolfileBondOrder, MolfileBondStereo, MolfileDocument,
+        MolfileHeader, MolfileInterpretError, MolfileInterpretOptions, MolfileInterpretation,
+        MolfileInterpretationReport, MolfileInterpretationWarning, MolfileParseError,
+        MolfileParseOptions, MolfileRadical, MolfileSource, MolfileStereoGroup,
+        MolfileStereoGroupKind, MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion,
+        MolfileWriteOptions, MolfileWriteVersion,
     };
 
-    /// Parses one V2000 or V3000 Molfile without assigning canonical meaning.
+    /// Parses one V2000 or V3000 Molfile into its typed connection table
+    /// without assigning canonical meaning.
     pub fn parse_str(input: &str) -> Result<MolfileDocument, MolfileParseError> {
         crate::io::parse_molfile_document(input)
     }
@@ -433,16 +437,43 @@ pub mod molfile {
         crate::io::parse_molfile_document_with_options(input, options)
     }
 
+    /// Reads and parses one Molfile from `reader`.
+    ///
+    /// The configured byte limit is enforced while reading; non-UTF-8 input
+    /// fails with [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
+    pub fn parse_reader(reader: impl std::io::Read) -> Result<MolfileDocument, MolfileParseError> {
+        parse_reader_with_options(reader, MolfileParseOptions::default())
+    }
+
+    /// Reads and parses one Molfile with explicit syntax and resource limits.
+    pub fn parse_reader_with_options(
+        reader: impl std::io::Read,
+        options: MolfileParseOptions,
+    ) -> Result<MolfileDocument, MolfileParseError> {
+        crate::io::parse_molfile_reader(reader, options)
+    }
+
     /// Interprets a parsed Molfile into canonical molecules, geometry, and a report.
     /// Unmarked tetrahedral configurations in 3D coordinates use the shared
     /// chemical eligibility and symmetry model. Explicit unknown assertions
     /// remain unknown; derived perception is not installed on the result.
     /// Valence outside that model is reported as a warning without discarding
     /// the represented graph. Resource exhaustion remains an error.
+    ///
+    /// [`MolfileDocument::unsupported`] content fails interpretation; see
+    /// [`interpret_with_options`] to omit and report it instead.
     pub fn interpret(
         document: &MolfileDocument,
     ) -> Result<MolfileInterpretation, MolfileInterpretError> {
         document.interpret()
+    }
+
+    /// Interprets a parsed Molfile with an explicit unsupported-content policy.
+    pub fn interpret_with_options(
+        document: &MolfileDocument,
+        options: MolfileInterpretOptions,
+    ) -> Result<MolfileInterpretation, MolfileInterpretError> {
+        document.interpret_with_options(options)
     }
 
     /// Writes one CTAB from a molecule (zero coordinates) or a model.
@@ -470,18 +501,37 @@ pub mod molfile {
 
 /// Record-oriented SDF parsing, interpretation, and writing.
 ///
-/// [`sdf::SdfDocument`] preserves independent records. Interpret or write those
-/// records explicitly; sibling records are not merged into one model or
-/// reinterpreted as an ensemble.
+/// An SDF input is a sequence of independent records. [`sdf::records`] streams
+/// them one at a time, so a malformed record fails alone; [`sdf::parse_str`]
+/// collects every record into a [`sdf::SdfDocument`]. Interpret each record
+/// explicitly with [`sdf::SdfRecord::interpret`]; sibling records are not
+/// merged into one model or reinterpreted as an ensemble.
 pub mod sdf {
     pub use crate::io::{
-        MolWriteError, MolfileWriteVersion, SdfDataField, SdfDocument, SdfInterpretError,
-        SdfInterpretErrorKind, SdfInterpretation, SdfParseError, SdfParseOptions, SdfRecord,
-        SdfRecordInterpretation, SdfRecordInterpretationReport, SdfRecordSource, SdfWriteError,
-        SdfWriteOptions,
+        MolWriteError, MolfileInterpretOptions, MolfileWriteVersion, SdfDataField, SdfDocument,
+        SdfInterpretError, SdfParseError, SdfParseOptions, SdfRecord, SdfRecordInterpretation,
+        SdfRecordInterpretationReport, SdfRecordSource, SdfRecords, SdfWriteError, SdfWriteOptions,
     };
 
-    /// Parses an SDF document while preserving independent record boundaries.
+    /// Streams the records of an SDF input from `reader`.
+    ///
+    /// Each item is one record or the failure of one record; reading resumes at
+    /// the next `$$$$` delimiter after a malformed, oversized, or non-UTF-8
+    /// record. Memory is bounded by one record.
+    pub fn records<R: std::io::Read>(reader: R) -> SdfRecords<R> {
+        records_with_options(reader, SdfParseOptions::default())
+    }
+
+    /// Streams SDF records with explicit record-boundary and resource options.
+    pub fn records_with_options<R: std::io::Read>(
+        reader: R,
+        options: SdfParseOptions,
+    ) -> SdfRecords<R> {
+        SdfRecords::new(reader, options)
+    }
+
+    /// Parses every record of an SDF input, failing on the first malformed
+    /// record. Use [`records`] to skip past malformed records instead.
     pub fn parse_str(input: &str) -> Result<SdfDocument, SdfParseError> {
         parse_str_with_options(input, SdfParseOptions::default())
     }
@@ -494,9 +544,20 @@ pub mod sdf {
         crate::io::parse_sdf_document(input, options)
     }
 
-    /// Interprets every SDF record independently in source order.
-    pub fn interpret(document: &SdfDocument) -> Result<SdfInterpretation, SdfInterpretError> {
-        document.interpret()
+    /// Reads and parses every record of an SDF input from `reader`.
+    ///
+    /// The configured byte limit is enforced while reading; non-UTF-8 input
+    /// fails with [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
+    pub fn parse_reader(reader: impl std::io::Read) -> Result<SdfDocument, SdfParseError> {
+        parse_reader_with_options(reader, SdfParseOptions::default())
+    }
+
+    /// Reads and parses an SDF document with explicit options.
+    pub fn parse_reader_with_options(
+        reader: impl std::io::Read,
+        options: SdfParseOptions,
+    ) -> Result<SdfDocument, SdfParseError> {
+        crate::io::parse_sdf_reader(reader, options)
     }
 
     /// Writes independent records in input order.

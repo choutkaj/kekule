@@ -104,7 +104,7 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
         check(molfile::interpret(&parsed).unwrap().model());
         let text = sdf::write([model], sdf::SdfWriteOptions { version }).unwrap();
         let parsed = sdf::parse_str(&text).unwrap();
-        check(sdf::interpret(&parsed).unwrap().records()[0].model());
+        check(parsed.records()[0].interpret().unwrap().model());
     }
 }
 
@@ -902,119 +902,105 @@ M  END
 }
 
 #[test]
-fn malformed_mol_v3000_returns_errors_without_panicking() {
+fn malformed_mol_v3000_fails_with_structured_kinds_and_lines() {
     let cases = [
         (
             "bad counts",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS nope 0 0 0 0\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Syntax, Some(6)),
         ),
         (
             "count mismatch",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 2 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Inconsistent, Some(6)),
         ),
         (
             "non-finite coordinates",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 1e999 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Syntax, Some(8)),
         ),
         (
             "bad endpoint",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 1 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::InvalidReference, Some(11)),
         ),
         (
             "unsupported atom stereo",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0 CFG=1\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Interpret, DiagnosticKind::Chemistry, Some(8)),
         ),
         (
             "unsupported bond type",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 2 1 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 2 C 1 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 8 1 2\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Unsupported, Some(12)),
         ),
         (
             "incomplete counts",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Syntax, Some(6)),
         ),
         (
             "zero atom index",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 0 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::InvalidValue, Some(8)),
         ),
         (
             "duplicate bond index",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 3 2 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 2 C 1 0 0 0\nM  V30 3 C 2 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2\nM  V30 1 1 2 3\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Inconsistent, Some(14)),
         ),
         (
             "duplicate counts",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Syntax, Some(7)),
         ),
         (
             "counts after atom section",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Syntax, Some(6)),
         ),
         (
             "duplicate atom section",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 BEGIN ATOM\nM  V30 END ATOM\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Syntax, Some(12)),
         ),
         (
             "duplicate bond section",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Syntax, Some(12)),
         ),
         (
             "record outside CTAB",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 NOTE=outside\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Syntax, Some(5)),
         ),
         (
             "malformed atom option",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0 BROKEN\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Syntax, Some(8)),
         ),
         (
             "duplicate atom option",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0 CHG=1 CHG=2\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Syntax, Some(8)),
         ),
         (
             "unsupported bond option",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 2 1 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 2 C 1 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2 TOPO=1\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Interpret, DiagnosticKind::Unsupported, Some(12)),
         ),
         (
             "duplicate bond option",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 2 1 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 2 C 1 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2 CFG=1 CFG=1\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+            (MolfileStage::Parse, DiagnosticKind::Syntax, Some(12)),
         ),
     ];
 
-    for (name, input) in cases {
-        let parsed = std::panic::catch_unwind(|| read_molfile(input))
+    for (name, input, expected) in cases {
+        let failure = std::panic::catch_unwind(|| molfile_failure(input))
             .unwrap_or_else(|_| panic!("{name} panicked"));
-        let error = parsed.expect_err("malformed V3000 input should fail");
-        assert!(!error.to_string().is_empty(), "message for {name}");
+        assert_eq!(failure, expected, "{name}");
     }
-}
-
-#[test]
-fn mol_v3000_reports_only_nonstructural_unsupported_records_as_ignored() {
-    let input = "\
-collection
-kekule
-
-  0  0  0  0  0  0            999 V3000
-M  V30 BEGIN CTAB
-M  V30 COUNTS 1 0 0 0 0
-M  V30 BEGIN ATOM
-M  V30 1 C 0 0 0 0
-M  V30 END ATOM
-M  V30 BEGIN BOND
-M  V30 END BOND
-M  V30 BEGIN COLLECTION
-M  V30 MDLV30/HILITE ATOMS=(1 1)
-M  V30 END COLLECTION
-M  V30 END CTAB
-M  END
-";
-
-    let document = molfile::parse_str(input).expect("unsupported collection is loss-preserved");
-    assert_eq!(document.property_records().len(), 3);
-    let interpretation =
-        molfile::interpret(&document).expect("unsupported collection is reported, not hidden");
-    assert_eq!(
-        interpretation.report().ignored_record_lines(),
-        &[12, 13, 14]
-    );
 }
 
 #[test]

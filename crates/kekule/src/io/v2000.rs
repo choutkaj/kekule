@@ -2,449 +2,83 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::algorithms::explicit_valence;
-use crate::chemistry::{
-    localize_source_aromatic_bonds, SourceStereoBondMark, SourceStereoBondMarkKind,
-};
+use crate::chemistry::SourceStereoBondMarkKind;
 use crate::core::*;
+use crate::diagnostics::DiagnosticKind;
 use crate::geometry::Point3;
-use crate::units::{Quantity, ANGSTROM};
 
+use super::molfile_document::{
+    MolfileAtom, MolfileBond, MolfileBondOrder, MolfileBondStereo, MolfileCtab, MolfileLines,
+    MolfileParseError, MolfileRadical, MolfileUnsupported, MolfileUnsupportedContent,
+};
 use super::molfile_write::MolfileRecord;
 use super::sdf_document::SdfDataField;
-use super::staged_coordinates::StagedCoordinates;
-use super::structure_documents::{
-    apply_molfile_declared_valence, checked_line_number, interpret_molfile_atom_fields,
-    MolfileVersion,
-};
 
 pub(super) const V2000_MAX_ATOMS: usize = 999;
 pub(super) const V2000_MAX_BONDS: usize = 999;
 
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct V2000Syntax {
-    pub(super) atoms: Vec<V2000AtomSyntax>,
-    pub(super) bonds: Vec<V2000BondSyntax>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct V2000AtomSyntax {
-    pub(super) symbol: String,
-    pub(super) isotope: Option<i32>,
-    pub(super) formal_charge: i32,
-    pub(super) radical: Option<V2000RadicalSyntax>,
-    pub(super) hydrogen_count: Option<u8>,
-    pub(super) valence: Option<u8>,
-    pub(super) atom_map: Option<u32>,
-    pub(super) coordinates: [f64; 3],
-    pub(super) line: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum V2000RadicalSyntax {
-    Singlet,
-    Doublet,
-    Triplet,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct V2000BondSyntax {
-    pub(super) a: usize,
-    pub(super) b: usize,
-    pub(super) order_code: u8,
-    pub(super) stereo_code: u8,
-    pub(super) line: usize,
-}
-
-/// Resource and record-boundary policy for SDF parsing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SdfParseOptions {
-    /// Accept a nonempty final record without its terminating `$$$$` line.
-    pub allow_missing_final_delimiter: bool,
-    /// Maximum UTF-8 byte length of the complete input document.
-    pub max_input_bytes: usize,
-    /// Maximum number of nonempty records.
-    pub max_records: usize,
-    /// Maximum normalized byte length of one record, excluding its delimiter.
-    pub max_record_bytes: usize,
-}
-
-impl Default for SdfParseOptions {
-    fn default() -> Self {
-        Self {
-            allow_missing_final_delimiter: false,
-            max_input_bytes: 256 * 1024 * 1024,
-            max_records: 1_000_000,
-            max_record_bytes: 64 * 1024 * 1024,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SdfParseError {
-    pub(crate) record: usize,
-    pub(crate) line: usize,
-    pub(crate) message: String,
-}
-
-impl SdfParseError {
-    pub(crate) fn new(record: usize, line: usize, message: impl Into<String>) -> Self {
-        Self {
-            record,
-            line,
-            message: message.into(),
-        }
-    }
-
-    pub const fn record(&self) -> usize {
-        self.record
-    }
-
-    pub const fn line(&self) -> usize {
-        self.line
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl fmt::Display for SdfParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "SDF parse error in record {} at line {}: {}",
-            self.record, self.line, self.message
-        )
-    }
-}
-
-impl std::error::Error for SdfParseError {}
-
-pub(super) fn parse_v2000_syntax(
-    record: usize,
-    start_line: usize,
-    lines: &[&str],
-) -> std::result::Result<V2000Syntax, SdfParseError> {
-    if lines.len() < 4 {
-        return Err(SdfParseError::new(
-            record,
-            start_line,
-            "record must contain three header lines and a counts line",
-        ));
-    }
-    let counts = lines[3];
-    let counts_line = checked_line_number(record, start_line, 3)?;
-    if counts.contains("V3000") {
-        return Err(SdfParseError::new(
-            record,
-            counts_line,
-            "V3000 records are not supported by the V2000 parser",
-        ));
-    }
-    if !counts.contains("V2000") {
-        return Err(SdfParseError::new(
-            record,
-            counts_line,
-            "counts line must declare V2000",
-        ));
-    }
+/// Parses the V2000 connection table after the header and returns the index
+/// of its `M  END` line.
+pub(super) fn parse_v2000_ctab(
+    lines: MolfileLines<'_>,
+) -> std::result::Result<(MolfileCtab, usize), MolfileParseError> {
+    let counts = lines.text(3).expect("the caller checked the counts line");
     let (atom_count, bond_count) = parse_counts_line(counts)
-        .ok_or_else(|| SdfParseError::new(record, counts_line, "invalid V2000 counts line"))?;
+        .ok_or_else(|| lines.error(3, DiagnosticKind::Syntax, "invalid V2000 counts line"))?;
     if atom_count > V2000_MAX_ATOMS || bond_count > V2000_MAX_BONDS {
-        return Err(SdfParseError::new(
-            record,
-            counts_line,
+        return Err(lines.error(
+            3,
+            DiagnosticKind::InvalidValue,
             "V2000 counts exceed the supported 999 atom or bond limit",
         ));
     }
-
-    let atom_start = 4usize;
-    let bond_start = atom_start.checked_add(atom_count).ok_or_else(|| {
-        SdfParseError::new(record, start_line, "V2000 atom block offset overflow")
-    })?;
-    let property_start = bond_start.checked_add(bond_count).ok_or_else(|| {
-        SdfParseError::new(record, start_line, "V2000 bond block offset overflow")
-    })?;
+    let bond_start = 4 + atom_count;
+    let property_start = bond_start + bond_count;
     if lines.len() < property_start {
-        return Err(SdfParseError::new(
-            record,
-            checked_line_number(record, start_line, lines.len())?,
-            "record ended before declared atom and bond blocks",
+        return Err(lines.error(
+            lines.len() - 1,
+            DiagnosticKind::Syntax,
+            "Molfile ended before declared atom and bond blocks",
         ));
     }
 
-    let mut atoms = Vec::with_capacity(atom_count);
-    for atom_index in 0..atom_count {
-        let block_index = atom_start
-            .checked_add(atom_index)
-            .ok_or_else(|| SdfParseError::new(record, start_line, "V2000 atom index overflow"))?;
-        let line_number = checked_line_number(record, start_line, block_index)?;
-        let atom_line = lines
-            .get(block_index)
-            .copied()
-            .ok_or_else(|| SdfParseError::new(record, line_number, "truncated V2000 atom block"))?;
-        let symbol = atom_symbol_from_v2000_line(atom_line)
-            .ok_or_else(|| SdfParseError::new(record, line_number, "invalid atom line"))?;
-        let mut atom = V2000AtomSyntax {
-            symbol: symbol.to_owned(),
-            isotope: None,
-            formal_charge: 0,
-            radical: None,
-            hydrogen_count: None,
-            valence: None,
-            atom_map: None,
-            coordinates: atom_coordinates_from_v2000_line(atom_line).ok_or_else(|| {
-                SdfParseError::new(record, line_number, "invalid atom coordinates")
-            })?,
-            line: line_number,
-        };
-        apply_atom_v2000_fields(record, line_number, &mut atom, atom_line)?;
-        atoms.push(atom);
+    let mut ctab = MolfileCtab {
+        chiral_flag: v2000_chiral_flag(counts),
+        ..MolfileCtab::default()
+    };
+    for index in 4..bond_start {
+        let line = lines.text(index).expect("block length checked");
+        ctab.atoms.push(parse_v2000_atom(lines, index, line)?);
     }
-
-    let mut bonds = Vec::with_capacity(bond_count);
-    let mut endpoints = std::collections::BTreeSet::new();
-    for bond_index in 0..bond_count {
-        let block_index = bond_start
-            .checked_add(bond_index)
-            .ok_or_else(|| SdfParseError::new(record, start_line, "V2000 bond index overflow"))?;
-        let line_number = checked_line_number(record, start_line, block_index)?;
-        let bond_line = lines
-            .get(block_index)
-            .copied()
-            .ok_or_else(|| SdfParseError::new(record, line_number, "truncated V2000 bond block"))?;
-        let (a, b, order_code, stereo_code) = parse_v2000_bond_line(bond_line)
-            .ok_or_else(|| SdfParseError::new(record, line_number, "invalid bond line"))?;
-        let a_index = a.checked_sub(1).ok_or_else(|| {
-            SdfParseError::new(record, line_number, "bond endpoint must be one-based")
-        })?;
-        let b_index = b.checked_sub(1).ok_or_else(|| {
-            SdfParseError::new(record, line_number, "bond endpoint must be one-based")
-        })?;
-        if a_index >= atoms.len() || b_index >= atoms.len() {
-            return Err(SdfParseError::new(
-                record,
-                line_number,
-                "bond endpoint outside atom block",
-            ));
-        }
-        if a_index == b_index {
-            return Err(SdfParseError::new(
-                record,
-                line_number,
-                "bond endpoints must be distinct",
-            ));
-        }
-        let ordered = if a_index < b_index {
-            (a_index, b_index)
-        } else {
-            (b_index, a_index)
-        };
-        if !endpoints.insert(ordered) {
-            return Err(SdfParseError::new(
-                record,
-                line_number,
+    let mut endpoints = BTreeSet::new();
+    for index in bond_start..property_start {
+        let line = lines.text(index).expect("block length checked");
+        let bond = parse_v2000_bond(lines, index, line, ctab.atoms.len())?;
+        let [a, b] = bond.atoms;
+        if !endpoints.insert((a.min(b), a.max(b))) {
+            return Err(lines.error(
+                index,
+                DiagnosticKind::Inconsistent,
                 "duplicate bond endpoints",
             ));
         }
-        bonds.push(V2000BondSyntax {
-            a: a_index,
-            b: b_index,
-            order_code,
-            stereo_code,
-            line: line_number,
-        });
+        ctab.bonds.push(bond);
     }
-
-    let property_line = checked_line_number(record, start_line, property_start)?;
-    let relative_end = lines[property_start..]
-        .iter()
-        .position(|line| line.trim() == "M  END")
-        .ok_or_else(|| SdfParseError::new(record, property_line, "missing M  END"))?;
-    let end_index = property_start.checked_add(relative_end).ok_or_else(|| {
-        SdfParseError::new(
-            record,
-            property_line,
-            "V2000 property block offset overflow",
-        )
-    })?;
-    parse_m_records(
-        record,
-        property_line,
-        &mut atoms,
-        &lines[property_start..end_index],
-    )?;
-
-    Ok(V2000Syntax { atoms, bonds })
-}
-
-pub(super) fn interpret_v2000_syntax(
-    syntax: &V2000Syntax,
-) -> std::result::Result<
-    (MoleculeEditor, StagedCoordinates, Vec<SourceStereoBondMark>),
-    SdfParseError,
-> {
-    let mut editor = crate::core::MoleculeEditor::new();
-    let mut atom_ids = Vec::with_capacity(syntax.atoms.len());
-    let mut coordinates = StagedCoordinates::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
-        .map_err(|error| SdfParseError::new(1, 1, error.to_string()))?;
-    for record in &syntax.atoms {
-        let atom = interpret_v2000_atom(record)?;
-        let atom_id = editor.add_atom(atom).map_err(|error| {
-            SdfParseError::new(1, record.line, format!("invalid graph atom: {error}"))
-        })?;
-        coordinates
-            .set_position(
-                atom_id,
-                Quantity::new(
-                    Point3::new(
-                        record.coordinates[0],
-                        record.coordinates[1],
-                        record.coordinates[2],
-                    ),
-                    ANGSTROM,
-                ),
+    let end = (property_start..lines.len())
+        .find(|&index| {
+            lines
+                .text(index)
+                .is_some_and(|line| line.trim() == "M  END")
+        })
+        .ok_or_else(|| {
+            lines.error(
+                lines.len().saturating_sub(1),
+                DiagnosticKind::Syntax,
+                "missing M  END",
             )
-            .map_err(|error| SdfParseError::new(1, record.line, error.to_string()))?;
-        atom_ids.push(atom_id);
-    }
-    let mut source_aromatic_bonds = BTreeSet::new();
-    let mut source_stereo = Vec::new();
-    let mut first_aromatic_line = None;
-    for bond in &syntax.bonds {
-        let a = atom_ids.get(bond.a).copied().ok_or_else(|| {
-            SdfParseError::new(1, bond.line, "bond endpoint outside parsed atom records")
         })?;
-        let b = atom_ids.get(bond.b).copied().ok_or_else(|| {
-            SdfParseError::new(1, bond.line, "bond endpoint outside parsed atom records")
-        })?;
-        let (order, source_aromatic) = interpret_v2000_bond_order(bond.order_code, bond.line)?;
-        let bond_id = editor.add_bond(a, b, order).map_err(|error| {
-            SdfParseError::new(1, bond.line, format!("invalid graph bond: {error}"))
-        })?;
-        if source_aromatic {
-            source_aromatic_bonds.insert(bond_id);
-            first_aromatic_line.get_or_insert(bond.line);
-        }
-        if let Some(kind) =
-            interpret_v2000_bond_stereo(order, source_aromatic, bond.stereo_code, bond.line)?
-        {
-            source_stereo.push(SourceStereoBondMark {
-                bond: bond_id,
-                from: a,
-                kind,
-            });
-        }
-    }
-
-    apply_v2000_declared_hydrogens(
-        editor.working_mut(),
-        syntax,
-        &atom_ids,
-        &source_aromatic_bonds,
-    )?;
-    localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds).map_err(
-        |error| {
-            SdfParseError::new(
-                1,
-                first_aromatic_line.unwrap_or(1),
-                format!("aromatic bond localization failed: {error}"),
-            )
-        },
-    )?;
-    Ok((editor, coordinates, source_stereo))
-}
-
-fn interpret_v2000_atom(record: &V2000AtomSyntax) -> std::result::Result<Atom, SdfParseError> {
-    let radical = record.radical.and_then(|radical| match radical {
-        V2000RadicalSyntax::Singlet => AtomRadical::new(2, Some(1)),
-        V2000RadicalSyntax::Doublet => AtomRadical::new(1, Some(2)),
-        V2000RadicalSyntax::Triplet => AtomRadical::new(2, Some(3)),
-    });
-    let explicit = record.hydrogen_count.unwrap_or(0);
-    let hydrogens = if record.hydrogen_count.is_some() || record.valence.is_some() {
-        ImplicitHydrogens::Fixed(explicit)
-    } else {
-        ImplicitHydrogens::Inferred
-    };
-    interpret_molfile_atom_fields(
-        &record.symbol,
-        record.formal_charge,
-        record.isotope,
-        radical,
-        hydrogens,
-        record.atom_map,
-        record.line,
-    )
-}
-
-fn interpret_v2000_bond_order(
-    code: u8,
-    line: usize,
-) -> std::result::Result<(BondOrder, bool), SdfParseError> {
-    match code {
-        0 => Ok((BondOrder::Zero, false)),
-        1 => Ok((BondOrder::Single, false)),
-        2 => Ok((BondOrder::Double, false)),
-        3 => Ok((BondOrder::Triple, false)),
-        4 => Ok((BondOrder::Single, true)),
-        9 => Ok((BondOrder::Dative, false)),
-        _ => Err(SdfParseError::new(
-            1,
-            line,
-            format!("unsupported V2000 bond order code {code}"),
-        )),
-    }
-}
-
-fn interpret_v2000_bond_stereo(
-    order: BondOrder,
-    source_aromatic: bool,
-    code: u8,
-    line: usize,
-) -> std::result::Result<Option<SourceStereoBondMarkKind>, SdfParseError> {
-    if source_aromatic && code != 0 {
-        return Err(SdfParseError::new(
-            1,
-            line,
-            format!("V2000 stereo code {code} is unsupported for an aromatic source bond"),
-        ));
-    }
-    match (order, code) {
-        (_, 0) => Ok(None),
-        (BondOrder::Single, 1) => Ok(Some(SourceStereoBondMarkKind::WedgeUp)),
-        (BondOrder::Single, 4) => Ok(Some(SourceStereoBondMarkKind::WedgeEither)),
-        (BondOrder::Single, 6) => Ok(Some(SourceStereoBondMarkKind::WedgeDown)),
-        (BondOrder::Double, 3) => Ok(Some(SourceStereoBondMarkKind::DoubleBondEither)),
-        _ => Err(SdfParseError::new(
-            1,
-            line,
-            format!("V2000 stereo code {code} is unsupported for bond order {order:?}"),
-        )),
-    }
-}
-
-fn apply_v2000_declared_hydrogens(
-    molecule: &mut Molecule,
-    syntax: &V2000Syntax,
-    atom_ids: &[AtomId],
-    source_aromatic_bonds: &BTreeSet<BondId>,
-) -> std::result::Result<(), SdfParseError> {
-    for (record, atom_id) in syntax.atoms.iter().zip(atom_ids.iter().copied()) {
-        let Some(declared_valence) = record.valence else {
-            continue;
-        };
-        apply_molfile_declared_valence(
-            molecule,
-            atom_id,
-            declared_valence,
-            record.hydrogen_count,
-            source_aromatic_bonds,
-            MolfileVersion::V2000,
-            record.line,
-        )?;
-    }
-    Ok(())
+    parse_v2000_properties(lines, property_start..end, &mut ctab)?;
+    Ok((ctab, end))
 }
 
 pub(super) fn parse_counts_line(line: &str) -> Option<(usize, usize)> {
@@ -459,6 +93,32 @@ pub(super) fn parse_counts_line(line: &str) -> Option<(usize, usize)> {
     }
     let fields = line.split_whitespace().collect::<Vec<_>>();
     Some((fields.first()?.parse().ok()?, fields.get(1)?.parse().ok()?))
+}
+
+fn v2000_chiral_flag(line: &str) -> bool {
+    match ascii_field(line, 12, 15) {
+        Some(field) if line.is_ascii() => field.trim() == "1",
+        _ => line.split_whitespace().nth(4) == Some("1"),
+    }
+}
+
+fn parse_v2000_atom(
+    lines: MolfileLines<'_>,
+    index: usize,
+    line: &str,
+) -> std::result::Result<MolfileAtom, MolfileParseError> {
+    let symbol = atom_symbol_from_v2000_line(line)
+        .ok_or_else(|| lines.error(index, DiagnosticKind::Syntax, "invalid V2000 atom line"))?;
+    let [x, y, z] = atom_coordinates_from_v2000_line(line).ok_or_else(|| {
+        lines.error(
+            index,
+            DiagnosticKind::Syntax,
+            "invalid V2000 atom coordinates",
+        )
+    })?;
+    let mut atom = MolfileAtom::new(symbol, Point3::new(x, y, z), lines.location(index));
+    apply_atom_v2000_fields(lines, index, &mut atom, line)?;
+    Ok(atom)
 }
 
 fn atom_symbol_from_v2000_line(line: &str) -> Option<&str> {
@@ -513,11 +173,11 @@ fn fixed_atom_coordinates(line: &str) -> Option<[f64; 3]> {
 }
 
 fn apply_atom_v2000_fields(
-    record: usize,
-    line_number: usize,
-    atom: &mut V2000AtomSyntax,
+    lines: MolfileLines<'_>,
+    index: usize,
+    atom: &mut MolfileAtom,
     line: &str,
-) -> std::result::Result<(), SdfParseError> {
+) -> std::result::Result<(), MolfileParseError> {
     // Coordinate fields can touch, for example a negative y immediately
     // followed by a full-width negative z. Tokenize only the atom fields so
     // that this cannot shift charge, hydrogen, valence or atom-map columns.
@@ -528,7 +188,11 @@ fn apply_atom_v2000_fields(
     };
     if let Some(value) = fields.get(2) {
         let charge_code = value.parse::<u8>().map_err(|_| {
-            SdfParseError::new(record, line_number, "invalid V2000 atom charge code")
+            lines.error(
+                index,
+                DiagnosticKind::Syntax,
+                "invalid V2000 atom charge code",
+            )
         })?;
         atom.formal_charge = match charge_code {
             0 | 4 => 0,
@@ -539,15 +203,15 @@ fn apply_atom_v2000_fields(
             6 => -2,
             7 => -3,
             _ => {
-                return Err(SdfParseError::new(
-                    record,
-                    line_number,
-                    "unsupported V2000 atom charge code",
+                return Err(lines.error(
+                    index,
+                    DiagnosticKind::InvalidValue,
+                    format!("invalid V2000 atom charge code {charge_code}"),
                 ))
             }
         };
         if charge_code == 4 {
-            atom.radical = Some(V2000RadicalSyntax::Doublet);
+            atom.radical = Some(MolfileRadical::Doublet);
         }
     }
     if let Some(code) = fields.get(4).and_then(|value| value.parse::<u8>().ok()) {
@@ -555,10 +219,10 @@ fn apply_atom_v2000_fields(
             0 => None,
             1..=5 => Some(code - 1),
             _ => {
-                return Err(SdfParseError::new(
-                    record,
-                    line_number,
-                    "unsupported V2000 atom hydrogen-count code",
+                return Err(lines.error(
+                    index,
+                    DiagnosticKind::InvalidValue,
+                    format!("invalid V2000 atom hydrogen-count code {code}"),
                 ))
             }
         };
@@ -569,10 +233,10 @@ fn apply_atom_v2000_fields(
             1..=14 => Some(code),
             15 => Some(0),
             _ => {
-                return Err(SdfParseError::new(
-                    record,
-                    line_number,
-                    "unsupported V2000 atom valence code",
+                return Err(lines.error(
+                    index,
+                    DiagnosticKind::InvalidValue,
+                    format!("invalid V2000 atom valence code {code}"),
                 ))
             }
         };
@@ -587,6 +251,85 @@ fn apply_atom_v2000_fields(
         }
     }
     Ok(())
+}
+
+fn parse_v2000_bond(
+    lines: MolfileLines<'_>,
+    index: usize,
+    line: &str,
+    atom_count: usize,
+) -> std::result::Result<MolfileBond, MolfileParseError> {
+    let (a, b, order_code, stereo_code) = parse_v2000_bond_line(line)
+        .ok_or_else(|| lines.error(index, DiagnosticKind::Syntax, "invalid V2000 bond line"))?;
+    let endpoint = |serial: usize| {
+        serial
+            .checked_sub(1)
+            .filter(|&atom| atom < atom_count)
+            .ok_or_else(|| {
+                lines.error(
+                    index,
+                    DiagnosticKind::InvalidReference,
+                    "bond endpoint outside atom block",
+                )
+            })
+    };
+    let atoms = [endpoint(a)?, endpoint(b)?];
+    if atoms[0] == atoms[1] {
+        return Err(lines.error(
+            index,
+            DiagnosticKind::InvalidValue,
+            "bond endpoints must be distinct",
+        ));
+    }
+    let order = match order_code {
+        0 => MolfileBondOrder::Zero,
+        1 => MolfileBondOrder::Single,
+        2 => MolfileBondOrder::Double,
+        3 => MolfileBondOrder::Triple,
+        4 => MolfileBondOrder::Aromatic,
+        9 => MolfileBondOrder::Dative,
+        5..=8 | 10 => {
+            return Err(lines.error(
+                index,
+                DiagnosticKind::Unsupported,
+                format!("unsupported V2000 bond order code {order_code}"),
+            ))
+        }
+        _ => {
+            return Err(lines.error(
+                index,
+                DiagnosticKind::InvalidValue,
+                format!("invalid V2000 bond order code {order_code}"),
+            ))
+        }
+    };
+    let stereo = match (order, stereo_code) {
+        (_, 0) => None,
+        (MolfileBondOrder::Aromatic, _) => {
+            return Err(lines.error(
+                index,
+                DiagnosticKind::Unsupported,
+                format!("V2000 stereo code {stereo_code} is unsupported for an aromatic bond"),
+            ))
+        }
+        (MolfileBondOrder::Single, 1) => Some(MolfileBondStereo::Up),
+        (MolfileBondOrder::Single, 4) => Some(MolfileBondStereo::Either),
+        (MolfileBondOrder::Single, 6) => Some(MolfileBondStereo::Down),
+        (MolfileBondOrder::Double, 3) => Some(MolfileBondStereo::Either),
+        _ => {
+            return Err(lines.error(
+                index,
+                DiagnosticKind::InvalidValue,
+                format!("V2000 stereo code {stereo_code} is invalid for bond order {order:?}"),
+            ))
+        }
+    };
+    Ok(MolfileBond {
+        atoms,
+        order,
+        stereo,
+        location: lines.location(index),
+    })
 }
 
 fn parse_v2000_bond_line(line: &str) -> Option<(usize, usize, u8, u8)> {
@@ -621,116 +364,130 @@ fn ascii_field(line: &str, start: usize, end: usize) -> Option<&str> {
     std::str::from_utf8(line.as_bytes().get(start..end)?).ok()
 }
 
-fn parse_m_records(
-    record: usize,
-    start_line: usize,
-    atoms: &mut [V2000AtomSyntax],
-    lines: &[&str],
-) -> std::result::Result<(), SdfParseError> {
+/// Reads the properties block: `M  CHG`, `M  ISO`, and `M  RAD` update atoms;
+/// every other record is classified as unsupported content.
+fn parse_v2000_properties(
+    lines: MolfileLines<'_>,
+    range: std::ops::Range<usize>,
+    ctab: &mut MolfileCtab,
+) -> std::result::Result<(), MolfileParseError> {
     let mut replaced_legacy_charge_and_radical = false;
-    for (offset, line) in lines.iter().enumerate() {
-        let fields = line.split_whitespace().collect::<Vec<_>>();
-        if matches!(fields.as_slice(), ["M", "CHG" | "RAD", ..])
-            && !replaced_legacy_charge_and_radical
-        {
+    let mut index = range.start;
+    while index < range.end {
+        let start = index;
+        let line = lines
+            .text(index)
+            .expect("properties lie inside the Molfile");
+        index += 1;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Some(record) = line.strip_prefix("M  ") else {
+            let keyword = line
+                .split_whitespace()
+                .next()
+                .expect("nonblank line has a field");
+            // An atom alias or group abbreviation continues on the next line.
+            if matches!(keyword, "A" | "G") && index < range.end {
+                index += 1;
+            }
+            ctab.unsupported.push(MolfileUnsupported {
+                content: MolfileUnsupportedContent::Record(keyword.to_owned()),
+                location: lines.location(start),
+            });
+            continue;
+        };
+        let fields = record.split_whitespace().collect::<Vec<_>>();
+        let code = fields.first().copied().unwrap_or_default();
+        if matches!(code, "CHG" | "RAD") && !replaced_legacy_charge_and_radical {
             // CTfile properties replace the entire legacy charge/radical block.
             // Clear once: later property lines accumulate independent entries.
-            for atom in atoms.iter_mut() {
+            for atom in &mut ctab.atoms {
                 atom.formal_charge = 0;
                 atom.radical = None;
             }
             replaced_legacy_charge_and_radical = true;
         }
-        match fields.as_slice() {
-            ["M", "CHG", count, rest @ ..] => {
-                parse_atom_value_pairs(
-                    record,
-                    start_line + offset,
-                    count,
-                    rest,
-                    atoms,
-                    |atom, value| {
-                        atom.formal_charge = value;
-                        Ok(())
-                    },
-                )?;
+        let pairs = &fields[fields.len().min(1)..];
+        match code {
+            "CHG" => {
+                parse_atom_value_pairs(lines, start, pairs, &mut ctab.atoms, |atom, value| {
+                    atom.formal_charge = value;
+                    Ok(())
+                })?
             }
-            ["M", "ISO", count, rest @ ..] => {
-                parse_atom_value_pairs(
-                    record,
-                    start_line + offset,
-                    count,
-                    rest,
-                    atoms,
-                    |atom, value| {
-                        atom.isotope = (value > 0).then_some(value);
-                        Ok(())
-                    },
-                )?;
+            "ISO" => {
+                parse_atom_value_pairs(lines, start, pairs, &mut ctab.atoms, |atom, value| {
+                    atom.isotope = match value {
+                        0 => None,
+                        value if value > 0 => Some(
+                            u16::try_from(value).map_err(|_| "M  ISO mass number exceeds u16")?,
+                        ),
+                        _ => return Err("M  ISO mass number must not be negative"),
+                    };
+                    Ok(())
+                })?
             }
-            ["M", "RAD", count, rest @ ..] => {
-                parse_atom_value_pairs(
-                    record,
-                    start_line + offset,
-                    count,
-                    rest,
-                    atoms,
-                    |atom, value| {
-                        atom.radical = match value {
-                            0 => None,
-                            1 => Some(V2000RadicalSyntax::Singlet),
-                            2 => Some(V2000RadicalSyntax::Doublet),
-                            3 => Some(V2000RadicalSyntax::Triplet),
-                            _ => return Err("unsupported M  RAD code"),
-                        };
-                        Ok(())
-                    },
-                )?;
+            "RAD" => {
+                parse_atom_value_pairs(lines, start, pairs, &mut ctab.atoms, |atom, value| {
+                    atom.radical = match value {
+                        0 => None,
+                        1 => Some(MolfileRadical::Singlet),
+                        2 => Some(MolfileRadical::Doublet),
+                        3 => Some(MolfileRadical::Triplet),
+                        _ => return Err("invalid M  RAD code"),
+                    };
+                    Ok(())
+                })?
             }
-            _ => {}
+            _ => ctab.unsupported.push(MolfileUnsupported {
+                content: MolfileUnsupportedContent::PropertyRecord(code.to_owned()),
+                location: lines.location(start),
+            }),
         }
     }
     Ok(())
 }
 
 fn parse_atom_value_pairs<F>(
-    record: usize,
-    line: usize,
-    count: &str,
-    rest: &[&str],
-    atoms: &mut [V2000AtomSyntax],
+    lines: MolfileLines<'_>,
+    index: usize,
+    fields: &[&str],
+    atoms: &mut [MolfileAtom],
     mut apply: F,
-) -> std::result::Result<(), SdfParseError>
+) -> std::result::Result<(), MolfileParseError>
 where
-    F: FnMut(&mut V2000AtomSyntax, i32) -> std::result::Result<(), &'static str>,
+    F: FnMut(&mut MolfileAtom, i32) -> std::result::Result<(), &'static str>,
 {
+    let syntax = |message: &str| lines.error(index, DiagnosticKind::Syntax, message);
+    let (count, pairs) = fields
+        .split_first()
+        .ok_or_else(|| syntax("invalid M record count"))?;
     let count = count
         .parse::<usize>()
-        .map_err(|_| SdfParseError::new(record, line, "invalid M record count"))?;
-    let pair_fields = count
-        .checked_mul(2)
-        .ok_or_else(|| SdfParseError::new(record, line, "M record pair count overflow"))?;
-    if rest.len() != pair_fields {
-        return Err(SdfParseError::new(
-            record,
-            line,
-            "M record pair count does not match its fields",
-        ));
+        .map_err(|_| syntax("invalid M record count"))?;
+    if count.checked_mul(2) != Some(pairs.len()) {
+        return Err(syntax("M record pair count does not match its fields"));
     }
-    for pair in rest.chunks(2).take(count) {
-        let atom_index = pair[0]
+    for pair in pairs.chunks(2) {
+        let serial = pair[0]
             .parse::<usize>()
-            .map_err(|_| SdfParseError::new(record, line, "invalid M record atom index"))?;
+            .map_err(|_| syntax("invalid M record atom index"))?;
         let value = pair[1]
             .parse::<i32>()
-            .map_err(|_| SdfParseError::new(record, line, "invalid M record value"))?;
-        let atom_offset = atom_index.checked_sub(1).ok_or_else(|| {
-            SdfParseError::new(record, line, "M record atom index must be one-based")
-        })?;
-        let atom = atoms
-            .get_mut(atom_offset)
-            .ok_or_else(|| SdfParseError::new(record, line, "M record atom outside atom block"))?;
-        apply(atom, value).map_err(|message| SdfParseError::new(record, line, message))?;
+            .map_err(|_| syntax("invalid M record value"))?;
+        let atom = serial
+            .checked_sub(1)
+            .and_then(|atom| atoms.get_mut(atom))
+            .ok_or_else(|| {
+                lines.error(
+                    index,
+                    DiagnosticKind::InvalidReference,
+                    "M record atom outside atom block",
+                )
+            })?;
+        apply(atom, value)
+            .map_err(|message| lines.error(index, DiagnosticKind::InvalidValue, message))?;
     }
     Ok(())
 }

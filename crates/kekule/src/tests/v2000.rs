@@ -34,8 +34,16 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
     let molfile_text = "Header title\nprogram line\ncomment line\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nX  UNSUPPORTED\nM  END\n";
     let document = molfile::parse_str(molfile_text).expect("Molfile document parses");
     assert_eq!(document.header().title(), "Header title");
-    assert_eq!(document.unsupported_records().len(), 1);
-    let interpretation = molfile::interpret(&document).expect("Molfile interprets");
+    let unsupported = [molfile::MolfileUnsupported::new(
+        molfile::MolfileUnsupportedContent::Record("X".to_owned()),
+        SourceLocation::at_line(6),
+    )];
+    assert_eq!(document.unsupported(), unsupported);
+    let report = molfile::MolfileInterpretOptions {
+        unsupported: UnsupportedContent::Report,
+    };
+    let interpretation =
+        molfile::interpret_with_options(&document, report).expect("Molfile interprets");
     let molecule = interpretation.molecule();
     assert!(molecule
         .properties()
@@ -43,33 +51,42 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
         .get(&PropertyKey::new("sdf.title").unwrap())
         .is_none());
     assert_eq!(interpretation.report().atom_mappings().len(), 1);
-    assert_eq!(interpretation.report().ignored_record_lines(), &[6]);
+    assert_eq!(interpretation.omitted(), unsupported);
 
     let sdf_text = format!("{molfile_text}>  <FIELD>\nvalue\n\n$$$$\n");
     let document = sdf::parse_str(&sdf_text).expect("SDF parses");
-    assert_eq!(document.records()[0].data_fields()[0].value(), "value");
-    let interpretation = sdf::interpret(&document).expect("SDF interprets");
-    let records = interpretation.records();
-    assert_eq!(records[0].title(), "Header title");
-    assert_eq!(records[0].data_fields()[0].name(), "FIELD");
-    assert!(records[0]
+    let field = &document.records()[0].data_fields()[0];
+    assert_eq!(field.value(), "value");
+    assert_eq!(field.location(), Some(SourceLocation::at_line(8)));
+    let record = document.records()[0]
+        .interpret_with_options(report)
+        .expect("SDF interprets");
+    assert_eq!(record.title(), "Header title");
+    assert_eq!(record.data_fields()[0].name(), "FIELD");
+    assert!(record
         .molecule()
         .properties()
         .owner()
         .get(&PropertyKey::new("sdf.field.FIELD").unwrap())
         .is_none());
-    assert_eq!(interpretation.reports().len(), 1);
+    assert_eq!(record.report().omitted(), unsupported);
 }
 
 #[test]
 fn molfile_document_reports_nonempty_content_after_m_end_as_unsupported() {
     let input = "Header title\nprogram line\ncomment line\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\ntrailing content\n";
     let document = molfile::parse_str(input).expect("Molfile document parses");
-    assert_eq!(document.unsupported_records().len(), 1);
-    assert_eq!(document.unsupported_records()[0].number(), 7);
-    assert_eq!(document.unsupported_records()[0].text(), "trailing content");
-    let interpretation = molfile::interpret(&document).expect("Molfile interprets");
-    assert_eq!(interpretation.report().ignored_record_lines(), &[7]);
+    assert_eq!(
+        document.unsupported(),
+        [molfile::MolfileUnsupported::new(
+            molfile::MolfileUnsupportedContent::TrailingContent,
+            SourceLocation::at_line(7),
+        )]
+    );
+    let error = molfile::interpret(&document).expect_err("trailing content is not discarded");
+    assert_eq!(error.kind(), DiagnosticKind::Unsupported);
+    assert_eq!(error.location(), Some(SourceLocation::at_line(7)));
+    assert_eq!(error.message(), "unsupported content after `M  END`");
 }
 
 #[test]
@@ -86,14 +103,14 @@ fn molfile_and_sdf_documents_parse_adjacent_three_digit_counts() {
     molfile_text.push_str("M  END\n");
 
     let document = molfile::parse_str(&molfile_text).expect("fixed-width counts parse");
-    assert_eq!(document.atom_records().len(), 999);
-    assert_eq!(document.bond_records().len(), 999);
+    assert_eq!(document.atoms().len(), 999);
+    assert_eq!(document.bonds().len(), 999);
 
     let sdf_text = format!("{molfile_text}$$$$\n");
     let document =
         sdf::parse_str(&sdf_text).expect("SDF delegates to fixed-width Molfile counts parsing");
-    assert_eq!(document.records()[0].molfile().atom_records().len(), 999);
-    assert_eq!(document.records()[0].molfile().bond_records().len(), 999);
+    assert_eq!(document.records()[0].molfile().atoms().len(), 999);
+    assert_eq!(document.records()[0].molfile().bonds().len(), 999);
 }
 
 #[test]
@@ -102,14 +119,16 @@ fn molfile_document_parser_validates_declared_atom_and_bond_records() {
         "Bad\nprogram\ncomment\n  1  0  0  0  0  0            999 V2000\natom record\nM  END\n";
     let error =
         molfile::parse_str(invalid_atom).expect_err("invalid atom syntax must fail parsing");
-    assert_eq!(error.line, 5);
-    assert!(error.message.contains("atom"));
+    assert_eq!(error.kind(), DiagnosticKind::Syntax);
+    assert_eq!(error.location(), SourceLocation::at_line(5));
+    assert_eq!(error.message(), "invalid V2000 atom line");
 
     let invalid_bond = "Bad\nprogram\ncomment\n  2  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.0000    0.0000    0.0000 C   0  0  0  0  0  0\nbond record\nM  END\n";
     let error =
         molfile::parse_str(invalid_bond).expect_err("invalid bond syntax must fail parsing");
-    assert_eq!(error.line, 7);
-    assert!(error.message.contains("bond"));
+    assert_eq!(error.kind(), DiagnosticKind::Syntax);
+    assert_eq!(error.location(), SourceLocation::at_line(7));
+    assert_eq!(error.message(), "invalid V2000 bond line");
 }
 
 #[test]
@@ -351,51 +370,59 @@ $$$$
 }
 
 #[test]
-fn v2000_malformed_structural_fields_return_errors_without_panicking() {
+fn v2000_malformed_structural_fields_fail_with_structured_kinds_and_lines() {
     let cases = [
             (
                 "zero endpoint",
                 "Bad\nkekule\n\n  1  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n  0  1  1  0  0  0  0\nM  END\n",
+                (MolfileStage::Parse, DiagnosticKind::InvalidReference, Some(6)),
             ),
             (
                 "non-ASCII counts",
                 "Bad\nkekule\n\né  1  0  0  0  0            999 V2000\nM  END\n",
+                (MolfileStage::Parse, DiagnosticKind::Syntax, Some(4)),
             ),
             (
                 "non-ASCII atom",
                 "Bad\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 Cé  0  0  0  0  0  0\nM  END\n",
+                (MolfileStage::Parse, DiagnosticKind::Syntax, Some(5)),
             ),
             (
                 "truncated atom",
                 "Bad\nkekule\n\n  1  0  0  0  0  0            999 V2000\n0.0 C\nM  END\n",
+                (MolfileStage::Parse, DiagnosticKind::Syntax, Some(5)),
             ),
             (
                 "non-ASCII bond",
                 "Bad\nkekule\n\n  1  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n  1  é  1  0\nM  END\n",
+                (MolfileStage::Parse, DiagnosticKind::Syntax, Some(6)),
             ),
             (
                 "count over format limit",
                 "Bad\nkekule\n\n1000 0 V2000\nM  END\n",
+                (MolfileStage::Parse, DiagnosticKind::InvalidValue, Some(4)),
             ),
             (
                 "inconsistent counts",
                 "Bad\nkekule\n\n  2  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\n",
+                (MolfileStage::Parse, DiagnosticKind::Syntax, Some(6)),
             ),
             (
                 "truncated M record",
                 "Bad\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  CHG  2   1   1\nM  END\n",
+                (MolfileStage::Parse, DiagnosticKind::Syntax, Some(6)),
             ),
             (
                 "zero M-record atom",
                 "Bad\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  CHG  1   0   1\nM  END\n",
+                (MolfileStage::Parse, DiagnosticKind::InvalidReference, Some(6)),
             ),
         ];
 
-    for (name, input) in cases {
-        let parsed = std::panic::catch_unwind(|| read_molfile(input))
+    for (name, input, expected) in cases {
+        let failure = std::panic::catch_unwind(|| molfile_failure(input))
             .unwrap_or_else(|_| panic!("{name} panicked"));
-        let error = parsed.expect_err("malformed V2000 input should fail");
-        assert!(!error.to_string().is_empty(), "message for {name}");
+        assert_eq!(failure, expected, "{name}");
     }
 }
 
@@ -605,7 +632,8 @@ fn v2000_bond_stereo_requires_enough_source_context_to_canonicalize() {
         let document = molfile::parse_str(&input).expect("bond stereo syntax should parse");
         let error = molfile::interpret(&document)
             .expect_err("under-specified stereo must not publish a molecule");
-        assert_eq!(error.line(), 7);
+        assert_eq!(error.kind(), DiagnosticKind::Chemistry);
+        assert_eq!(error.location(), Some(SourceLocation::at_line(7)));
         assert!(error.message().contains("source-stereo canonicalization"));
     }
 }
@@ -727,10 +755,13 @@ fn molfile_and_sdf_parse_supported_syntax_before_chemistry_interpretation() {
     let sdf_source = format!("{molfile_source}$$$$\n");
     let document =
         sdf::parse_str(&sdf_source).expect("SDF record structure should parse independently");
-    let error =
-        sdf::interpret(&document).expect_err("SDF delegates chemistry interpretation to Molfile");
+    let error = document.records()[0]
+        .interpret()
+        .expect_err("SDF delegates chemistry interpretation to Molfile");
     assert_eq!(error.record(), 1);
-    assert!(error.message().contains("unsupported element"));
+    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
+    assert_eq!(error.location(), Some(SourceLocation::at_line(5)));
+    assert_eq!(error.message(), "unsupported element symbol `Xx`");
 }
 
 #[test]

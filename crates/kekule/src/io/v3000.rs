@@ -1,67 +1,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::explicit_valence;
-use crate::chemistry::{
-    localize_source_aromatic_bonds, SourceStereoBondMark, SourceStereoBondMarkKind,
-};
+use crate::chemistry::SourceStereoBondMarkKind;
 use crate::core::*;
+use crate::diagnostics::DiagnosticKind;
 use crate::geometry::Point3;
-use crate::io::{MolWriteError, MolfileParseOptions, MolfileVersion, SdfParseError};
-use crate::units::{Quantity, ANGSTROM};
+use crate::io::{MolWriteError, MolfileParseOptions};
 
-use super::molfile_write::MolfileRecord;
-use super::staged_coordinates::StagedCoordinates;
-use super::structure_documents::{
-    apply_molfile_declared_valence, checked_line_number, interpret_molfile_atom_fields,
+use super::molfile_document::{
+    MolfileAtom, MolfileAtomParity, MolfileBond, MolfileBondOrder, MolfileBondStereo, MolfileCtab,
+    MolfileLines, MolfileParseError, MolfileRadical, MolfileStereoGroup, MolfileStereoGroupKind,
+    MolfileUnsupported, MolfileUnsupportedContent,
 };
-
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct V3000Syntax {
-    pub(super) atoms: Vec<V3000AtomSyntax>,
-    pub(super) bonds: Vec<V3000BondSyntax>,
-    pub(super) stereo_groups: Vec<V3000StereoGroupSyntax>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct V3000StereoGroupSyntax {
-    pub(super) kind: StereoGroupKind,
-    pub(super) atoms: Vec<usize>,
-    pub(super) line: usize,
-    pub(super) source_lines: Vec<usize>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct V3000AtomSyntax {
-    pub(super) index: usize,
-    pub(super) symbol: String,
-    pub(super) formal_charge: i32,
-    pub(super) isotope: Option<i32>,
-    pub(super) radical: Option<V3000RadicalSyntax>,
-    pub(super) hydrogen_count: Option<i32>,
-    pub(super) valence: Option<i32>,
-    pub(super) atom_map: Option<u32>,
-    pub(super) stereo_cfg: Option<u8>,
-    pub(super) unsupported_options: Vec<String>,
-    pub(super) coordinates: [f64; 3],
-    pub(super) line: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum V3000RadicalSyntax {
-    Singlet,
-    Doublet,
-    Triplet,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct V3000BondSyntax {
-    pub(super) a: usize,
-    pub(super) b: usize,
-    pub(super) order_code: u8,
-    pub(super) stereo_code: Option<u8>,
-    pub(super) unsupported_options: Vec<String>,
-    pub(super) line: usize,
-}
+use super::molfile_write::MolfileRecord;
 
 pub(super) fn render_mol_v3000(
     record: &MolfileRecord<'_>,
@@ -175,665 +126,236 @@ pub(super) fn render_mol_v3000(
     Ok(out)
 }
 
-pub(super) fn parse_v3000_syntax(
-    record: usize,
-    start_line: usize,
-    lines: &[&str],
+/// Parses the V3000 connection table after the header and returns the index
+/// of its `M  END` line.
+pub(super) fn parse_v3000_ctab(
+    lines: MolfileLines<'_>,
     options: MolfileParseOptions,
-) -> std::result::Result<V3000Syntax, SdfParseError> {
-    if lines.len() < 4 {
-        return Err(SdfParseError::new(
-            record,
-            start_line,
-            "record must contain three header lines and a counts line",
-        ));
-    }
-    let counts_line = checked_line_number(record, start_line, 3)?;
-    if !lines[3].contains("V3000") {
-        return Err(SdfParseError::new(
-            record,
-            counts_line,
-            "counts line must declare V3000",
-        ));
-    }
-
-    let v30_lines = collect_v3000_lines(record, start_line, lines, options)?;
-    for control in [
-        "BEGIN CTAB",
-        "END CTAB",
-        "BEGIN ATOM",
-        "END ATOM",
-        "BEGIN BOND",
-        "END BOND",
-    ] {
-        if v30_lines.iter().filter(|line| line.body == control).count() != 1 {
-            return Err(SdfParseError::new(
-                record,
-                counts_line,
-                format!("V3000 must contain exactly one `{control}` control record"),
-            ));
-        }
-    }
-    let ctab = v3000_section(record, &v30_lines, "CTAB", 0)?;
-    if ctab.start != 0 || ctab.end + 1 != v30_lines.len() {
-        return Err(SdfParseError::new(
-            record,
-            v30_lines
-                .get(ctab.start)
-                .map_or(counts_line, |line| line.line),
-            "V3000 CTAB must contain every V30 record",
-        ));
-    }
-    let atom_section = v3000_section(record, &v30_lines, "ATOM", ctab.start + 1)?;
-    let counts_indexes = v30_lines
-        .iter()
-        .enumerate()
-        .filter_map(|(index, line)| {
-            (line.body.split_whitespace().next() == Some("COUNTS")).then_some(index)
-        })
-        .collect::<Vec<_>>();
-    let [counts_index] = counts_indexes.as_slice() else {
-        return Err(SdfParseError::new(
-            record,
-            counts_line,
-            "V3000 CTAB must contain exactly one COUNTS line before the ATOM section",
-        ));
+) -> std::result::Result<(MolfileCtab, usize), MolfileParseError> {
+    let (records, end) = collect_v3000_lines(lines, options)?;
+    let Some(first) = records.first() else {
+        return Err(lines.error(end, DiagnosticKind::Syntax, "missing V3000 BEGIN CTAB"));
     };
-    let counts_index = *counts_index;
-    if counts_index <= ctab.start || counts_index >= atom_section.start {
-        return Err(SdfParseError::new(
-            record,
-            v30_lines[counts_index].line,
-            "V3000 COUNTS line must occur before the ATOM section inside the CTAB",
+    if first.body != "BEGIN CTAB" {
+        return Err(lines.error(
+            first.index,
+            DiagnosticKind::Syntax,
+            "V3000 records must be inside the CTAB",
         ));
     }
-    let counts = parse_v3000_counts(&v30_lines[counts_index].body).ok_or_else(|| {
-        SdfParseError::new(
-            record,
-            v30_lines[counts_index].line,
-            "invalid V3000 COUNTS line",
-        )
-    })?;
-    if counts.atoms > options.max_v3000_atoms {
-        return Err(SdfParseError::new(
-            record,
-            v30_lines[counts_index].line,
-            "V3000 atom count exceeds configured limit",
-        ));
-    }
-    if counts.bonds > options.max_v3000_bonds {
-        return Err(SdfParseError::new(
-            record,
-            v30_lines[counts_index].line,
-            "V3000 bond count exceeds configured limit",
+    let Some(close) = records.iter().position(|record| record.body == "END CTAB") else {
+        return Err(lines.error(end, DiagnosticKind::Syntax, "missing V3000 END CTAB"));
+    };
+    if let Some(outside) = records.get(close + 1) {
+        return Err(lines.error(
+            outside.index,
+            DiagnosticKind::Syntax,
+            "V3000 records must be inside the CTAB",
         ));
     }
 
-    let bond_section = v3000_section(record, &v30_lines, "BOND", atom_section.end + 1)?;
-    if atom_section.end > ctab.end || bond_section.end > ctab.end {
-        return Err(SdfParseError::new(
-            record,
-            v30_lines[ctab.end].line,
-            "V3000 ATOM/BOND section escapes CTAB",
-        ));
-    }
-
-    let atom_rows = &v30_lines[atom_section.start + 1..atom_section.end];
-    let bond_rows = &v30_lines[bond_section.start + 1..bond_section.end];
-    if atom_rows.len() != counts.atoms || bond_rows.len() != counts.bonds {
-        return Err(SdfParseError::new(
-            record,
-            v30_lines[counts_index].line,
-            "V3000 COUNTS do not match ATOM/BOND section sizes",
-        ));
-    }
-
-    let mut atoms = Vec::with_capacity(atom_rows.len());
-    let mut atom_indices = BTreeMap::<usize, usize>::new();
-    for row in atom_rows {
-        let parsed = parse_v3000_atom(&row.body)
-            .ok_or_else(|| SdfParseError::new(record, row.line, "invalid V3000 atom line"))?;
-        if parsed.index == 0 {
-            return Err(SdfParseError::new(
-                record,
-                row.line,
-                "V3000 atom indices must be positive",
-            ));
-        }
-        if atom_indices.contains_key(&parsed.index) {
-            return Err(SdfParseError::new(
-                record,
-                row.line,
-                "duplicate V3000 atom index",
-            ));
-        }
-        let mut atom = V3000AtomSyntax {
-            index: parsed.index,
-            symbol: parsed.symbol.to_owned(),
-            formal_charge: 0,
-            isotope: None,
-            radical: None,
-            hydrogen_count: None,
-            valence: None,
-            atom_map: (parsed.atom_map != 0).then_some(parsed.atom_map),
-            stereo_cfg: None,
-            unsupported_options: Vec::new(),
-            coordinates: parsed.coordinates,
-            line: row.line,
-        };
-        apply_v3000_atom_options(record, row.line, &mut atom, &parsed.options)?;
-        atom_indices.insert(parsed.index, atoms.len());
-        atoms.push(atom);
-    }
-
-    let mut bonds = Vec::with_capacity(bond_rows.len());
-    let mut bond_indices = BTreeMap::new();
-    let mut endpoints = std::collections::BTreeSet::new();
-    for row in bond_rows {
-        let parsed = parse_v3000_bond(record, row.line, &row.body)?;
-        if parsed.index == 0 {
-            return Err(SdfParseError::new(
-                record,
-                row.line,
-                "V3000 bond indices must be positive",
-            ));
-        }
-        if bond_indices.insert(parsed.index, bonds.len()).is_some() {
-            return Err(SdfParseError::new(
-                record,
-                row.line,
-                "duplicate V3000 bond index",
-            ));
-        }
-        atom_indices.get(&parsed.a).ok_or_else(|| {
-            SdfParseError::new(record, row.line, "bond endpoint outside atom block")
-        })?;
-        atom_indices.get(&parsed.b).ok_or_else(|| {
-            SdfParseError::new(record, row.line, "bond endpoint outside atom block")
-        })?;
-        if parsed.a == parsed.b {
-            return Err(SdfParseError::new(
-                record,
-                row.line,
-                "bond endpoints must be distinct",
-            ));
-        }
-        let ordered = if parsed.a < parsed.b {
-            (parsed.a, parsed.b)
-        } else {
-            (parsed.b, parsed.a)
-        };
-        if !endpoints.insert(ordered) {
-            return Err(SdfParseError::new(
-                record,
-                row.line,
-                "duplicate bond endpoints",
-            ));
-        }
-        bonds.push(V3000BondSyntax {
-            a: parsed.a,
-            b: parsed.b,
-            order_code: parsed.order_code,
-            stereo_code: parsed.stereo_code,
-            unsupported_options: parsed.unsupported_options,
-            line: row.line,
-        });
-    }
-
-    let mut stereo_groups: Vec<V3000StereoGroupSyntax> = Vec::new();
-    let mut group_indexes = BTreeMap::new();
-    let collection_begins = v30_lines
-        .iter()
-        .filter(|line| line.body == "BEGIN COLLECTION")
-        .count();
-    let collection_ends = v30_lines
-        .iter()
-        .filter(|line| line.body == "END COLLECTION")
-        .count();
-    if collection_begins > 1 || collection_ends != collection_begins {
-        return Err(SdfParseError::new(
-            record,
-            counts_line,
-            "V3000 permits one complete COLLECTION section",
-        ));
-    }
-    if v30_lines.iter().any(|line| line.body == "BEGIN COLLECTION") {
-        let section = v3000_section(record, &v30_lines, "COLLECTION", bond_section.end + 1)?;
-        if section.end >= ctab.end {
-            return Err(SdfParseError::new(
-                record,
-                v30_lines[section.end].line,
-                "V3000 COLLECTION escapes CTAB",
-            ));
-        }
-        for index in section.start + 1..section.end {
-            let row = &v30_lines[index];
-            let mut fields = row.body.split_whitespace();
-            let name = fields.next().unwrap_or("");
-            let (kind, group_key) = match name {
-                "MDLV30/STEABS" => (StereoGroupKind::Absolute, (0, 0)),
-                _ if name.starts_with("MDLV30/STEREL") => {
-                    let number = parse_v3000_stereo_group_number(record, row.line, &name[13..])?;
-                    (StereoGroupKind::Or, (1, number))
-                }
-                _ if name.starts_with("MDLV30/STERAC") => {
-                    let number = parse_v3000_stereo_group_number(record, row.line, &name[13..])?;
-                    (StereoGroupKind::And, (2, number))
-                }
-                _ => continue,
-            };
-            let mut group = V3000StereoGroupSyntax {
-                kind,
-                atoms: Vec::new(),
-                line: row.line,
-                source_lines: (row.line..v30_lines[index + 1].line).collect(),
-            };
-            let mut seen = BTreeSet::new();
-            let mut options = row.body[name.len()..].trim();
-            while !options.is_empty() {
-                let (key, list) = options.split_once("=(").ok_or_else(|| {
-                    SdfParseError::new(record, row.line, "invalid V3000 stereo group member list")
-                })?;
-                let (values, remaining) = list.split_once(')').ok_or_else(|| {
-                    SdfParseError::new(
-                        record,
-                        row.line,
-                        "unterminated V3000 stereo group member list",
-                    )
-                })?;
-                options = remaining.trim();
-                if !seen.insert(key) {
-                    return Err(SdfParseError::new(
-                        record,
-                        row.line,
-                        "duplicate V3000 stereo group member list",
-                    ));
-                }
-                let (indexes, output) = match key {
-                    "ATOMS" => (&atom_indices, &mut group.atoms),
-                    _ => {
-                        return Err(SdfParseError::new(
-                            record,
-                            row.line,
-                            "unsupported V3000 stereo group member list",
-                        ))
+    let body = &records[1..close];
+    let mut ctab = MolfileCtab::default();
+    let mut counts = None::<(V3000Counts, usize)>;
+    let mut atom_positions = BTreeMap::<usize, usize>::new();
+    let mut atoms_read = false;
+    let mut bonds_read = false;
+    let mut collection_read = false;
+    let mut position = 0;
+    while position < body.len() {
+        let record = &body[position];
+        let syntax = |message: &str| lines.error(record.index, DiagnosticKind::Syntax, message);
+        position += 1;
+        if let Some(name) = record.body.strip_prefix("BEGIN ") {
+            let name = name.trim();
+            let close = format!("END {name}");
+            let length = body[position..]
+                .iter()
+                .position(|row| row.body == close)
+                .ok_or_else(|| syntax(&format!("missing V3000 END {name}")))?;
+            let rows = &body[position..position + length];
+            position += length + 1;
+            match name {
+                "ATOM" => {
+                    if atoms_read {
+                        return Err(syntax("V3000 must contain exactly one ATOM section"));
                     }
-                };
-                let mut values = values.split_whitespace();
-                let count = values.next().unwrap_or("").parse::<usize>().map_err(|_| {
-                    SdfParseError::new(record, row.line, "invalid V3000 stereo group member count")
-                })?;
-                for field in values {
-                    let serial = field.parse::<usize>().map_err(|_| {
-                        SdfParseError::new(record, row.line, "invalid V3000 stereo group member")
-                    })?;
-                    output.push(*indexes.get(&serial).ok_or_else(|| {
-                        SdfParseError::new(
-                            record,
-                            row.line,
-                            "V3000 stereo group member is outside its source table",
-                        )
-                    })?);
+                    let Some((counts, counts_index)) = counts else {
+                        return Err(syntax(
+                            "V3000 COUNTS line must occur before the ATOM section",
+                        ));
+                    };
+                    if rows.len() != counts.atoms {
+                        return Err(lines.error(
+                            counts_index,
+                            DiagnosticKind::Inconsistent,
+                            "V3000 COUNTS do not match the ATOM section size",
+                        ));
+                    }
+                    for row in rows {
+                        let (serial, atom) =
+                            parse_v3000_atom(lines, row, ctab.atoms.len(), &mut ctab.unsupported)?;
+                        if atom_positions.insert(serial, ctab.atoms.len()).is_some() {
+                            return Err(lines.error(
+                                row.index,
+                                DiagnosticKind::Inconsistent,
+                                "duplicate V3000 atom index",
+                            ));
+                        }
+                        ctab.atoms.push(atom);
+                    }
+                    atoms_read = true;
                 }
-                if output.len() != count {
-                    return Err(SdfParseError::new(
-                        record,
-                        row.line,
-                        "V3000 stereo group member count mismatch",
-                    ));
+                "BOND" => {
+                    let (Some((counts, counts_index)), true) = (counts, atoms_read) else {
+                        return Err(syntax("V3000 BOND section must follow the ATOM section"));
+                    };
+                    if bonds_read {
+                        return Err(syntax("V3000 must contain exactly one BOND section"));
+                    }
+                    if rows.len() != counts.bonds {
+                        return Err(lines.error(
+                            counts_index,
+                            DiagnosticKind::Inconsistent,
+                            "V3000 COUNTS do not match the BOND section size",
+                        ));
+                    }
+                    parse_v3000_bonds(lines, rows, &atom_positions, &mut ctab)?;
+                    bonds_read = true;
                 }
+                "COLLECTION" => {
+                    if !bonds_read {
+                        return Err(syntax(
+                            "V3000 COLLECTION section must follow the BOND section",
+                        ));
+                    }
+                    if collection_read {
+                        return Err(syntax("V3000 permits one COLLECTION section"));
+                    }
+                    parse_v3000_collection(lines, rows, &atom_positions, &mut ctab)?;
+                    collection_read = true;
+                }
+                "CTAB" => return Err(syntax("V3000 must contain exactly one CTAB")),
+                _ => ctab.unsupported.push(MolfileUnsupported {
+                    content: MolfileUnsupportedContent::Block(name.to_owned()),
+                    location: lines.location(record.index),
+                }),
             }
-            if group.atoms.is_empty() {
-                return Err(SdfParseError::new(
-                    record,
-                    row.line,
-                    "V3000 stereo group must have members",
+            continue;
+        }
+        let Some(keyword) = record.body.split_whitespace().next() else {
+            continue;
+        };
+        if keyword == "COUNTS" {
+            if counts.is_some() {
+                return Err(syntax("V3000 CTAB must contain exactly one COUNTS line"));
+            }
+            let parsed = parse_v3000_counts(&record.body)
+                .ok_or_else(|| syntax("invalid V3000 COUNTS line"))?;
+            if parsed.atoms > options.max_v3000_atoms {
+                return Err(lines.error(
+                    record.index,
+                    DiagnosticKind::Limit,
+                    "V3000 atom count exceeds configured limit",
                 ));
             }
-            if let Some(index) = group_indexes.get(&group_key).copied() {
-                let existing: &mut V3000StereoGroupSyntax = &mut stereo_groups[index];
-                existing.atoms.extend(group.atoms);
-                existing.source_lines.extend(group.source_lines);
-            } else {
-                group_indexes.insert(group_key, stereo_groups.len());
-                stereo_groups.push(group);
+            if parsed.bonds > options.max_v3000_bonds {
+                return Err(lines.error(
+                    record.index,
+                    DiagnosticKind::Limit,
+                    "V3000 bond count exceeds configured limit",
+                ));
             }
-        }
-    }
-    for row in &v30_lines {
-        if (row.body.starts_with("MDLV30/STEABS")
-            || row.body.starts_with("MDLV30/STEREL")
-            || row.body.starts_with("MDLV30/STERAC"))
-            && !stereo_groups
-                .iter()
-                .any(|group| group.source_lines.contains(&row.line))
-        {
-            return Err(SdfParseError::new(
-                record,
-                row.line,
-                "V3000 stereo group is outside COLLECTION",
-            ));
-        }
-    }
-    Ok(V3000Syntax {
-        atoms,
-        bonds,
-        stereo_groups,
-    })
-}
-
-fn parse_v3000_stereo_group_number(
-    record: usize,
-    line: usize,
-    number: &str,
-) -> std::result::Result<usize, SdfParseError> {
-    match number.parse::<usize>() {
-        Ok(value) if value > 0 => Ok(value),
-        _ => Err(SdfParseError::new(
-            record,
-            line,
-            "invalid V3000 stereo group number",
-        )),
-    }
-}
-
-pub(super) fn interpret_v3000_syntax(
-    syntax: &V3000Syntax,
-) -> std::result::Result<
-    (MoleculeEditor, StagedCoordinates, Vec<SourceStereoBondMark>),
-    SdfParseError,
-> {
-    let mut editor = crate::core::MoleculeEditor::new();
-    let mut atom_ids = BTreeMap::<usize, AtomId>::new();
-    let mut coordinates = StagedCoordinates::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
-        .map_err(|error| SdfParseError::new(1, 1, error.to_string()))?;
-    for record in &syntax.atoms {
-        let atom = interpret_v3000_atom(record)?;
-        let atom_id = editor.add_atom(atom).map_err(|error| {
-            SdfParseError::new(1, record.line, format!("invalid graph atom: {error}"))
-        })?;
-        coordinates
-            .set_position(
-                atom_id,
-                Quantity::new(
-                    Point3::new(
-                        record.coordinates[0],
-                        record.coordinates[1],
-                        record.coordinates[2],
-                    ),
-                    ANGSTROM,
-                ),
-            )
-            .map_err(|error| SdfParseError::new(1, record.line, error.to_string()))?;
-        atom_ids.insert(record.index, atom_id);
-    }
-    let mut source_aromatic_bonds = BTreeSet::new();
-    let mut source_stereo = Vec::new();
-    let mut first_aromatic_line = None;
-    for record in &syntax.bonds {
-        let a = *atom_ids.get(&record.a).ok_or_else(|| {
-            SdfParseError::new(1, record.line, "bond endpoint outside parsed atom records")
-        })?;
-        let b = *atom_ids.get(&record.b).ok_or_else(|| {
-            SdfParseError::new(1, record.line, "bond endpoint outside parsed atom records")
-        })?;
-        if let Some(option) = record.unsupported_options.first() {
-            return Err(SdfParseError::new(
-                1,
-                record.line,
-                format!("unsupported V3000 bond option `{option}`"),
-            ));
-        }
-        let (order, source_aromatic) = interpret_v3000_bond_order(record.order_code, record.line)?;
-        let bond_id = editor
-            .add_bond(a, b, order)
-            .map_err(|error| SdfParseError::new(1, record.line, error.to_string()))?;
-        if source_aromatic {
-            source_aromatic_bonds.insert(bond_id);
-            first_aromatic_line.get_or_insert(record.line);
-        }
-        if let Some(kind) =
-            interpret_v3000_bond_stereo(order, source_aromatic, record.stereo_code, record.line)?
-        {
-            source_stereo.push(SourceStereoBondMark {
-                bond: bond_id,
-                from: a,
-                kind,
+            ctab.chiral_flag = parsed.chiral;
+            counts = Some((parsed, record.index));
+        } else if keyword == "END" {
+            return Err(syntax(&format!("unexpected V3000 {}", record.body)));
+        } else if is_v3000_stereo_group(keyword) {
+            return Err(syntax("V3000 stereo group is outside COLLECTION"));
+        } else {
+            ctab.unsupported.push(MolfileUnsupported {
+                content: MolfileUnsupportedContent::Record(keyword.to_owned()),
+                location: lines.location(record.index),
             });
         }
     }
-
-    apply_v3000_declared_hydrogens(
-        editor.working_mut(),
-        syntax,
-        &atom_ids,
-        &source_aromatic_bonds,
-    )?;
-    localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds).map_err(
-        |error| {
-            SdfParseError::new(
-                1,
-                first_aromatic_line.unwrap_or(1),
-                format!("aromatic bond localization failed: {error}"),
-            )
-        },
-    )?;
-
-    Ok((editor, coordinates, source_stereo))
-}
-
-fn interpret_v3000_atom(record: &V3000AtomSyntax) -> std::result::Result<Atom, SdfParseError> {
-    if let Some(option) = record.unsupported_options.first() {
-        return Err(SdfParseError::new(
-            1,
-            record.line,
-            format!("unsupported V3000 atom option `{option}`"),
-        ));
+    if !atoms_read {
+        return Err(lines.error(end, DiagnosticKind::Syntax, "missing V3000 ATOM section"));
     }
-    let radical = record.radical.and_then(|radical| match radical {
-        V3000RadicalSyntax::Singlet => AtomRadical::new(2, Some(1)),
-        V3000RadicalSyntax::Doublet => AtomRadical::new(1, Some(2)),
-        V3000RadicalSyntax::Triplet => AtomRadical::new(2, Some(3)),
-    });
-    let explicit = interpret_v3000_count_declaration(record.hydrogen_count, "HCOUNT", record.line)?
-        .unwrap_or(0);
-    let hydrogens = if record.hydrogen_count.is_some() || record.valence.is_some() {
-        ImplicitHydrogens::Fixed(explicit)
-    } else {
-        ImplicitHydrogens::Inferred
-    };
-    interpret_molfile_atom_fields(
-        &record.symbol,
-        record.formal_charge,
-        record.isotope,
-        radical,
-        hydrogens,
-        record.atom_map,
-        record.line,
-    )
-}
-
-fn interpret_v3000_bond_order(
-    code: u8,
-    line: usize,
-) -> std::result::Result<(BondOrder, bool), SdfParseError> {
-    match code {
-        4 => Ok((BondOrder::Single, true)),
-        _ => v3000_bond_order(code)
-            .map(|order| (order, false))
-            .ok_or_else(|| {
-                SdfParseError::new(1, line, format!("unsupported V3000 bond order code {code}"))
-            }),
+    if !bonds_read {
+        return Err(lines.error(end, DiagnosticKind::Syntax, "missing V3000 BOND section"));
     }
-}
-
-fn interpret_v3000_bond_stereo(
-    order: BondOrder,
-    source_aromatic: bool,
-    code: Option<u8>,
-    line: usize,
-) -> std::result::Result<Option<SourceStereoBondMarkKind>, SdfParseError> {
-    let Some(code) = code else {
-        return Ok(None);
-    };
-    if source_aromatic {
-        return Err(SdfParseError::new(
-            1,
-            line,
-            format!("V3000 bond CFG value {code} is unsupported for an aromatic source bond"),
-        ));
-    }
-    v3000_bond_stereo(order, &code.to_string()).ok_or_else(|| {
-        SdfParseError::new(1, line, format!("unsupported V3000 bond CFG value {code}"))
-    })
-}
-
-fn apply_v3000_declared_hydrogens(
-    molecule: &mut Molecule,
-    syntax: &V3000Syntax,
-    atom_ids: &BTreeMap<usize, AtomId>,
-    source_aromatic_bonds: &BTreeSet<BondId>,
-) -> std::result::Result<(), SdfParseError> {
-    for record in &syntax.atoms {
-        let Some(declared_valence) =
-            interpret_v3000_count_declaration(record.valence, "VAL", record.line)?
-        else {
-            continue;
-        };
-        let atom_id = *atom_ids.get(&record.index).ok_or_else(|| {
-            SdfParseError::new(1, record.line, "V3000 atom index was not interpreted")
-        })?;
-        let declared_hydrogens = record.hydrogen_count.map(|_| {
-            molecule
-                .atom(atom_id)
-                .expect("interpreted V3000 atom remains live")
-                .hydrogens
-                .represented_count()
-        });
-        apply_molfile_declared_valence(
-            molecule,
-            atom_id,
-            declared_valence,
-            declared_hydrogens,
-            source_aromatic_bonds,
-            MolfileVersion::V3000,
-            record.line,
-        )?;
-    }
-    Ok(())
-}
-
-fn interpret_v3000_count_declaration(
-    value: Option<i32>,
-    name: &str,
-    line: usize,
-) -> std::result::Result<Option<u8>, SdfParseError> {
-    value
-        .map(|value| {
-            let value = if value == -1 { 0 } else { value };
-            u8::try_from(value).map_err(|_| {
-                SdfParseError::new(
-                    1,
-                    line,
-                    format!("V3000 {name} declaration is outside the represented count range"),
-                )
-            })
-        })
-        .transpose()
+    Ok((ctab, end))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct V3000Counts {
     atoms: usize,
     bonds: usize,
+    chiral: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct V3000Section {
-    start: usize,
-    end: usize,
-}
-
+/// One `M  V30` logical line after joining continuations, located at its
+/// first physical line.
 #[derive(Debug, Clone, PartialEq)]
 struct V3000Line {
-    line: usize,
+    index: usize,
     body: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct V3000Atom<'a> {
-    index: usize,
-    symbol: &'a str,
-    coordinates: [f64; 3],
-    atom_map: u32,
-    options: Vec<(&'a str, &'a str)>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct V3000Bond {
-    index: usize,
-    order_code: u8,
-    a: usize,
-    b: usize,
-    stereo_code: Option<u8>,
-    unsupported_options: Vec<String>,
-}
-
 fn collect_v3000_lines(
-    record: usize,
-    start_line: usize,
-    lines: &[&str],
+    lines: MolfileLines<'_>,
     options: MolfileParseOptions,
-) -> std::result::Result<Vec<V3000Line>, SdfParseError> {
+) -> std::result::Result<(Vec<V3000Line>, usize), MolfileParseError> {
+    let limit = |index| {
+        lines.error(
+            index,
+            DiagnosticKind::Limit,
+            "V3000 logical line exceeds configured byte limit",
+        )
+    };
     let mut records = Vec::new();
     let mut index = 4usize;
-    while index < lines.len() {
-        let line_number = checked_line_number(record, start_line, index)?;
-        let line = lines[index];
+    while let Some(line) = lines.text(index) {
+        let start = index;
         if line.trim() == "M  END" {
-            return Ok(records);
+            return Ok((records, index));
         }
         let body = v3000_body(line)
-            .ok_or_else(|| SdfParseError::new(record, line_number, "expected M  V30 record"))?;
+            .ok_or_else(|| lines.error(index, DiagnosticKind::Syntax, "expected M  V30 record"))?;
         if body.len() > options.max_v3000_logical_line_bytes {
-            return Err(SdfParseError::new(
-                record,
-                line_number,
-                "V3000 logical line exceeds configured byte limit",
-            ));
+            return Err(limit(start));
         }
         let mut body = body.to_owned();
         while body.ends_with('-') {
             body.pop();
-            index = index.checked_add(1).ok_or_else(|| {
-                SdfParseError::new(record, line_number, "V3000 continuation overflow")
+            index += 1;
+            let continuation_line = lines.text(index).ok_or_else(|| {
+                lines.error(
+                    start,
+                    DiagnosticKind::Syntax,
+                    "unterminated V3000 continuation",
+                )
             })?;
-            let continuation_line = lines.get(index).copied().ok_or_else(|| {
-                SdfParseError::new(record, line_number, "unterminated V3000 continuation")
-            })?;
-            let continuation = v3000_body(continuation_line).ok_or_else(|| {
-                SdfParseError::new(record, line_number, "invalid V3000 continuation")
-            })?;
-            let continuation = continuation.trim_start();
-            let next_len = body.len().checked_add(continuation.len()).ok_or_else(|| {
-                SdfParseError::new(record, line_number, "V3000 continuation length overflow")
-            })?;
-            if next_len > options.max_v3000_logical_line_bytes {
-                return Err(SdfParseError::new(
-                    record,
-                    line_number,
-                    "V3000 logical line exceeds configured byte limit",
-                ));
+            let continuation = v3000_body(continuation_line)
+                .ok_or_else(|| {
+                    lines.error(index, DiagnosticKind::Syntax, "invalid V3000 continuation")
+                })?
+                .trim_start();
+            if body.len().saturating_add(continuation.len()) > options.max_v3000_logical_line_bytes
+            {
+                return Err(limit(start));
             }
             body.push_str(continuation);
         }
-        records.push(V3000Line {
-            line: line_number,
-            body,
-        });
+        records.push(V3000Line { index: start, body });
         index += 1;
     }
-    Err(SdfParseError::new(record, start_line, "missing M  END"))
+    Err(lines.error(
+        lines.len().saturating_sub(1),
+        DiagnosticKind::Syntax,
+        "missing M  END",
+    ))
 }
 
 fn v3000_body(line: &str) -> Option<&str> {
@@ -841,48 +363,46 @@ fn v3000_body(line: &str) -> Option<&str> {
     Some(trimmed.trim())
 }
 
-fn v3000_section(
-    record: usize,
-    lines: &[V3000Line],
-    name: &str,
-    search_start: usize,
-) -> std::result::Result<V3000Section, SdfParseError> {
-    let begin = format!("BEGIN {name}");
-    let end = format!("END {name}");
-    let start = lines
-        .iter()
-        .enumerate()
-        .skip(search_start)
-        .find_map(|(index, line)| (line.body == begin).then_some(index))
-        .ok_or_else(|| SdfParseError::new(record, 1, format!("missing V3000 BEGIN {name}")))?;
-    let end = lines
-        .iter()
-        .enumerate()
-        .skip(start + 1)
-        .find_map(|(index, line)| (line.body == end).then_some(index))
-        .ok_or_else(|| {
-            SdfParseError::new(
-                record,
-                lines[start].line,
-                format!("missing V3000 END {name}"),
-            )
-        })?;
-    Ok(V3000Section { start, end })
+/// Splits a V3000 record at whitespace outside parentheses and double quotes.
+fn v3000_fields(body: &str) -> Option<Vec<&str>> {
+    let mut fields = Vec::new();
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut start = None;
+    for (offset, character) in body.char_indices() {
+        match character {
+            '"' => quoted = !quoted,
+            '(' if !quoted => depth += 1,
+            ')' if !quoted => depth = depth.checked_sub(1)?,
+            _ if character.is_whitespace() && !quoted && depth == 0 => {
+                if let Some(start) = start.take() {
+                    fields.push(&body[start..offset]);
+                }
+                continue;
+            }
+            _ => {}
+        }
+        start.get_or_insert(offset);
+    }
+    if quoted || depth != 0 {
+        return None;
+    }
+    fields.extend(start.map(|start| &body[start..]));
+    Some(fields)
 }
 
 fn parse_v3000_counts(line: &str) -> Option<V3000Counts> {
     let mut fields = line.split_whitespace();
     (fields.next()? == "COUNTS").then_some(())?;
-    let counts = V3000Counts {
-        atoms: fields.next()?.parse().ok()?,
-        bonds: fields.next()?.parse().ok()?,
-    };
+    let atoms = fields.next()?.parse().ok()?;
+    let bonds = fields.next()?.parse().ok()?;
     let _sgroups = fields.next()?.parse::<usize>().ok()?;
     let _three_dimensional_constraints = fields.next()?.parse::<usize>().ok()?;
-    let chiral = fields.next()?.parse::<u8>().ok()?;
-    if chiral > 1 {
-        return None;
-    }
+    let chiral = match fields.next()? {
+        "0" => false,
+        "1" => true,
+        _ => return None,
+    };
     if let Some(regno) = fields.next() {
         regno
             .strip_prefix("REGNO=")?
@@ -890,192 +410,356 @@ fn parse_v3000_counts(line: &str) -> Option<V3000Counts> {
             .ok()
             .map(|_| ())?;
     }
-    fields.next().is_none().then_some(counts)
-}
-
-fn parse_v3000_atom(line: &str) -> Option<V3000Atom<'_>> {
-    let mut fields = line.split_whitespace();
-    let index = fields.next()?.parse().ok()?;
-    let symbol = fields.next()?;
-    let coordinates = [
-        parse_finite_f64(fields.next()?)?,
-        parse_finite_f64(fields.next()?)?,
-        parse_finite_f64(fields.next()?)?,
-    ];
-    let atom_map = fields.next()?.parse().ok()?;
-    let options = fields.map(split_v3000_option).collect::<Option<Vec<_>>>()?;
-    Some(V3000Atom {
-        index,
-        symbol,
-        coordinates,
-        atom_map,
-        options,
+    fields.next().is_none().then_some(V3000Counts {
+        atoms,
+        bonds,
+        chiral,
     })
 }
 
-fn apply_v3000_atom_options(
-    record: usize,
-    line: usize,
-    atom: &mut V3000AtomSyntax,
-    options: &[(&str, &str)],
-) -> std::result::Result<(), SdfParseError> {
-    let mut seen = std::collections::BTreeSet::new();
-    for (key, value) in options {
-        if !seen.insert(*key) {
-            return Err(SdfParseError::new(
-                record,
-                line,
+fn parse_v3000_atom(
+    lines: MolfileLines<'_>,
+    row: &V3000Line,
+    position: usize,
+    unsupported: &mut Vec<MolfileUnsupported>,
+) -> std::result::Result<(usize, MolfileAtom), MolfileParseError> {
+    let syntax = || lines.error(row.index, DiagnosticKind::Syntax, "invalid V3000 atom line");
+    let invalid = |name: &str| {
+        lines.error(
+            row.index,
+            DiagnosticKind::InvalidValue,
+            format!("invalid V3000 {name} value"),
+        )
+    };
+    let fields = v3000_fields(&row.body).ok_or_else(syntax)?;
+    let [serial, symbol, x, y, z, atom_map, options @ ..] = fields.as_slice() else {
+        return Err(syntax());
+    };
+    let serial = serial.parse::<usize>().map_err(|_| syntax())?;
+    if serial == 0 {
+        return Err(lines.error(
+            row.index,
+            DiagnosticKind::InvalidValue,
+            "V3000 atom indices must be positive",
+        ));
+    }
+    let coordinate = |value: &str| parse_finite_f64(value).ok_or_else(syntax);
+    let position_value = Point3::new(coordinate(x)?, coordinate(y)?, coordinate(z)?);
+    let mut atom = MolfileAtom::new(symbol, position_value, lines.location(row.index));
+    let atom_map = atom_map.parse::<u32>().map_err(|_| syntax())?;
+    atom.atom_map = (atom_map != 0).then_some(atom_map);
+    let mut seen = BTreeSet::new();
+    for field in options {
+        let (key, value) = split_v3000_option(field).ok_or_else(syntax)?;
+        if !seen.insert(key) {
+            return Err(lines.error(
+                row.index,
+                DiagnosticKind::Syntax,
                 format!("duplicate V3000 atom option `{key}`"),
             ));
         }
-        match *key {
+        match key {
             "CFG" => {
-                atom.stereo_cfg = match *value {
+                atom.parity = match value {
                     "0" => None,
-                    "1" => Some(1),
-                    "2" => Some(2),
-                    "3" => Some(3),
-                    _ => {
-                        return Err(SdfParseError::new(
-                            record,
-                            line,
-                            "invalid V3000 atom CFG value",
-                        ))
-                    }
+                    "1" => Some(MolfileAtomParity::Odd),
+                    "2" => Some(MolfileAtomParity::Even),
+                    "3" => Some(MolfileAtomParity::Either),
+                    _ => return Err(invalid("CFG")),
                 };
             }
-            "CHG" => {
-                atom.formal_charge = value
-                    .parse()
-                    .map_err(|_| SdfParseError::new(record, line, "invalid V3000 CHG value"))?;
-            }
+            "CHG" => atom.formal_charge = value.parse().map_err(|_| invalid("CHG"))?,
             "MASS" => {
-                let isotope = value
-                    .parse::<i32>()
-                    .map_err(|_| SdfParseError::new(record, line, "invalid V3000 MASS value"))?;
-                atom.isotope = (isotope != 0).then_some(isotope);
+                atom.isotope = match value.parse::<i32>().map_err(|_| invalid("MASS"))? {
+                    0 => None,
+                    mass => Some(u16::try_from(mass).map_err(|_| invalid("MASS"))?),
+                };
             }
             "RAD" => {
-                atom.radical = match *value {
+                atom.radical = match value {
                     "0" => None,
-                    "1" => Some(V3000RadicalSyntax::Singlet),
-                    "2" => Some(V3000RadicalSyntax::Doublet),
-                    "3" => Some(V3000RadicalSyntax::Triplet),
-                    _ => {
-                        return Err(SdfParseError::new(
-                            record,
-                            line,
-                            "unsupported V3000 RAD code",
-                        ))
-                    }
+                    "1" => Some(MolfileRadical::Singlet),
+                    "2" => Some(MolfileRadical::Doublet),
+                    "3" => Some(MolfileRadical::Triplet),
+                    _ => return Err(invalid("RAD")),
                 };
             }
             "HCOUNT" => {
-                atom.hydrogen_count = parse_v3000_count_declaration(record, line, value, "HCOUNT")?;
+                atom.hydrogen_count = parse_v3000_count(value).ok_or_else(|| invalid("HCOUNT"))?;
             }
-            "VAL" => {
-                atom.valence = parse_v3000_count_declaration(record, line, value, "VAL")?;
-            }
-            _ => atom.unsupported_options.push((*key).to_owned()),
+            "VAL" => atom.valence = parse_v3000_count(value).ok_or_else(|| invalid("VAL"))?,
+            _ => unsupported.push(MolfileUnsupported {
+                content: MolfileUnsupportedContent::AtomOption {
+                    atom: position,
+                    key: key.to_owned(),
+                },
+                location: lines.location(row.index),
+            }),
         }
+    }
+    Ok((serial, atom))
+}
+
+/// Decodes `HCOUNT` and `VAL`: 0 is unspecified and -1 is an explicit zero.
+fn parse_v3000_count(value: &str) -> Option<Option<u8>> {
+    match value.parse::<i32>().ok()? {
+        -1 => Some(Some(0)),
+        0 => Some(None),
+        count => u8::try_from(count).ok().map(Some),
+    }
+}
+
+fn parse_v3000_bonds(
+    lines: MolfileLines<'_>,
+    rows: &[V3000Line],
+    atom_positions: &BTreeMap<usize, usize>,
+    ctab: &mut MolfileCtab,
+) -> std::result::Result<(), MolfileParseError> {
+    let mut serials = BTreeSet::new();
+    let mut endpoints = BTreeSet::new();
+    for row in rows {
+        let (serial, bond) = parse_v3000_bond(
+            lines,
+            row,
+            ctab.bonds.len(),
+            atom_positions,
+            &mut ctab.unsupported,
+        )?;
+        let inconsistent =
+            |message: &str| lines.error(row.index, DiagnosticKind::Inconsistent, message);
+        if !serials.insert(serial) {
+            return Err(inconsistent("duplicate V3000 bond index"));
+        }
+        let [a, b] = bond.atoms;
+        if !endpoints.insert((a.min(b), a.max(b))) {
+            return Err(inconsistent("duplicate bond endpoints"));
+        }
+        ctab.bonds.push(bond);
     }
     Ok(())
 }
 
-fn parse_v3000_count_declaration(
-    record: usize,
-    line: usize,
-    value: &str,
-    name: &str,
-) -> std::result::Result<Option<i32>, SdfParseError> {
-    let value = value
-        .parse::<i32>()
-        .map_err(|_| SdfParseError::new(record, line, format!("invalid V3000 {name} value")))?;
-    if value < -1 {
-        return Err(SdfParseError::new(
-            record,
-            line,
-            format!("invalid V3000 {name} value"),
+fn parse_v3000_bond(
+    lines: MolfileLines<'_>,
+    row: &V3000Line,
+    position: usize,
+    atom_positions: &BTreeMap<usize, usize>,
+    unsupported: &mut Vec<MolfileUnsupported>,
+) -> std::result::Result<(usize, MolfileBond), MolfileParseError> {
+    let syntax = || lines.error(row.index, DiagnosticKind::Syntax, "invalid V3000 bond line");
+    let fields = v3000_fields(&row.body).ok_or_else(syntax)?;
+    let [serial, order, a, b, options @ ..] = fields.as_slice() else {
+        return Err(syntax());
+    };
+    let serial = serial.parse::<usize>().map_err(|_| syntax())?;
+    if serial == 0 {
+        return Err(lines.error(
+            row.index,
+            DiagnosticKind::InvalidValue,
+            "V3000 bond indices must be positive",
         ));
     }
-    Ok((value != 0).then_some(value))
-}
-
-fn parse_v3000_bond(
-    record: usize,
-    line_number: usize,
-    line: &str,
-) -> std::result::Result<V3000Bond, SdfParseError> {
-    let invalid = || SdfParseError::new(record, line_number, "invalid V3000 bond line");
-    let mut fields = line.split_whitespace();
-    let index = fields
-        .next()
-        .ok_or_else(invalid)?
-        .parse::<usize>()
-        .map_err(|_| invalid())?;
-    let order_code = fields
-        .next()
-        .ok_or_else(invalid)?
-        .parse()
-        .map_err(|_| invalid())?;
-    let a = fields
-        .next()
-        .ok_or_else(invalid)?
-        .parse()
-        .map_err(|_| invalid())?;
-    let b = fields
-        .next()
-        .ok_or_else(invalid)?
-        .parse()
-        .map_err(|_| invalid())?;
-    let mut stereo_code = None;
-    let mut unsupported_options = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
-    for field in fields {
-        let (key, value) = split_v3000_option(field).ok_or_else(invalid)?;
+    let order_code = order.parse::<u8>().map_err(|_| syntax())?;
+    let order = match order_code {
+        0 => MolfileBondOrder::Zero,
+        1 => MolfileBondOrder::Single,
+        2 => MolfileBondOrder::Double,
+        3 => MolfileBondOrder::Triple,
+        4 => MolfileBondOrder::Aromatic,
+        9 => MolfileBondOrder::Dative,
+        5..=8 | 10 => {
+            return Err(lines.error(
+                row.index,
+                DiagnosticKind::Unsupported,
+                format!("unsupported V3000 bond order code {order_code}"),
+            ))
+        }
+        _ => {
+            return Err(lines.error(
+                row.index,
+                DiagnosticKind::InvalidValue,
+                format!("invalid V3000 bond order code {order_code}"),
+            ))
+        }
+    };
+    let endpoint = |serial: &str| {
+        let serial = serial.parse::<usize>().map_err(|_| syntax())?;
+        atom_positions.get(&serial).copied().ok_or_else(|| {
+            lines.error(
+                row.index,
+                DiagnosticKind::InvalidReference,
+                "bond endpoint outside atom block",
+            )
+        })
+    };
+    let atoms = [endpoint(a)?, endpoint(b)?];
+    if atoms[0] == atoms[1] {
+        return Err(lines.error(
+            row.index,
+            DiagnosticKind::InvalidValue,
+            "bond endpoints must be distinct",
+        ));
+    }
+    let mut stereo = None;
+    let mut seen = BTreeSet::new();
+    for field in options {
+        let (key, value) = split_v3000_option(field).ok_or_else(syntax)?;
         if !seen.insert(key) {
-            return Err(SdfParseError::new(
-                record,
-                line_number,
+            return Err(lines.error(
+                row.index,
+                DiagnosticKind::Syntax,
                 format!("duplicate V3000 bond option `{key}`"),
             ));
         }
-        if key == "CFG" {
-            stereo_code = Some(value.parse::<u8>().map_err(|_| invalid())?);
+        if key != "CFG" {
+            unsupported.push(MolfileUnsupported {
+                content: MolfileUnsupportedContent::BondOption {
+                    bond: position,
+                    key: key.to_owned(),
+                },
+                location: lines.location(row.index),
+            });
+            continue;
+        }
+        let cfg = value.parse::<u8>().map_err(|_| syntax())?;
+        stereo = match (order, cfg) {
+            (_, 0) => None,
+            (MolfileBondOrder::Aromatic, _) => {
+                return Err(lines.error(
+                    row.index,
+                    DiagnosticKind::Unsupported,
+                    format!("V3000 bond CFG value {cfg} is unsupported for an aromatic bond"),
+                ))
+            }
+            (MolfileBondOrder::Single, 1) => Some(MolfileBondStereo::Up),
+            (MolfileBondOrder::Single, 2) => Some(MolfileBondStereo::Either),
+            (MolfileBondOrder::Single, 3) => Some(MolfileBondStereo::Down),
+            (MolfileBondOrder::Double, 2) => Some(MolfileBondStereo::Either),
+            _ => {
+                return Err(lines.error(
+                    row.index,
+                    DiagnosticKind::InvalidValue,
+                    format!("V3000 bond CFG value {cfg} is invalid for bond order {order:?}"),
+                ))
+            }
+        };
+    }
+    Ok((
+        serial,
+        MolfileBond {
+            atoms,
+            order,
+            stereo,
+            location: lines.location(row.index),
+        },
+    ))
+}
+
+fn is_v3000_stereo_group(name: &str) -> bool {
+    name == "MDLV30/STEABS"
+        || name.starts_with("MDLV30/STEREL")
+        || name.starts_with("MDLV30/STERAC")
+}
+
+/// Reads enhanced stereo groups; every other collection is unsupported content.
+fn parse_v3000_collection(
+    lines: MolfileLines<'_>,
+    rows: &[V3000Line],
+    atom_positions: &BTreeMap<usize, usize>,
+    ctab: &mut MolfileCtab,
+) -> std::result::Result<(), MolfileParseError> {
+    for row in rows {
+        let error = |kind, message: &str| lines.error(row.index, kind, message);
+        let syntax = |message: &str| error(DiagnosticKind::Syntax, message);
+        let fields =
+            v3000_fields(&row.body).ok_or_else(|| syntax("invalid V3000 collection line"))?;
+        let Some((&name, lists)) = fields.split_first() else {
+            continue;
+        };
+        let number = |digits: &str| match digits.parse::<usize>() {
+            Ok(number) if number > 0 => Ok(number),
+            _ => Err(error(
+                DiagnosticKind::InvalidValue,
+                "invalid V3000 stereo group number",
+            )),
+        };
+        let kind = if name == "MDLV30/STEABS" {
+            MolfileStereoGroupKind::Absolute
+        } else if let Some(digits) = name.strip_prefix("MDLV30/STEREL") {
+            MolfileStereoGroupKind::Or(number(digits)?)
+        } else if let Some(digits) = name.strip_prefix("MDLV30/STERAC") {
+            MolfileStereoGroupKind::And(number(digits)?)
         } else {
-            unsupported_options.push(key.to_owned());
+            ctab.unsupported.push(MolfileUnsupported {
+                content: MolfileUnsupportedContent::Collection(name.to_owned()),
+                location: lines.location(row.index),
+            });
+            continue;
+        };
+        let mut atoms = None;
+        for field in lists {
+            let (key, value) = split_v3000_option(field)
+                .ok_or_else(|| syntax("invalid V3000 stereo group member list"))?;
+            if key != "ATOMS" {
+                return Err(error(
+                    DiagnosticKind::Unsupported,
+                    &format!("unsupported V3000 stereo group member list `{key}`"),
+                ));
+            }
+            if atoms.is_some() {
+                return Err(syntax("duplicate V3000 stereo group member list"));
+            }
+            let list = value
+                .strip_prefix('(')
+                .and_then(|list| list.strip_suffix(')'))
+                .ok_or_else(|| syntax("invalid V3000 stereo group member list"))?;
+            let mut values = list.split_whitespace();
+            let count = values
+                .next()
+                .and_then(|count| count.parse::<usize>().ok())
+                .ok_or_else(|| syntax("invalid V3000 stereo group member count"))?;
+            let members = values
+                .map(|serial| {
+                    let serial = serial
+                        .parse::<usize>()
+                        .map_err(|_| syntax("invalid V3000 stereo group member"))?;
+                    atom_positions.get(&serial).copied().ok_or_else(|| {
+                        error(
+                            DiagnosticKind::InvalidReference,
+                            "V3000 stereo group member is outside the atom block",
+                        )
+                    })
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            if members.len() != count {
+                return Err(error(
+                    DiagnosticKind::Inconsistent,
+                    "V3000 stereo group member count mismatch",
+                ));
+            }
+            atoms = Some(members);
+        }
+        let atoms = atoms.filter(|atoms| !atoms.is_empty()).ok_or_else(|| {
+            error(
+                DiagnosticKind::InvalidValue,
+                "V3000 stereo group must have members",
+            )
+        })?;
+        if let Some(group) = ctab
+            .stereo_groups
+            .iter_mut()
+            .find(|group| group.kind == kind)
+        {
+            group.atoms.extend(atoms);
+        } else {
+            ctab.stereo_groups.push(MolfileStereoGroup {
+                kind,
+                atoms,
+                location: lines.location(row.index),
+            });
         }
     }
-    Ok(V3000Bond {
-        index,
-        order_code,
-        a,
-        b,
-        stereo_code,
-        unsupported_options,
-    })
-}
-
-fn v3000_bond_order(code: u8) -> Option<BondOrder> {
-    match code {
-        0 => Some(BondOrder::Zero),
-        1 => Some(BondOrder::Single),
-        2 => Some(BondOrder::Double),
-        3 => Some(BondOrder::Triple),
-        9 => Some(BondOrder::Dative),
-        _ => None,
-    }
-}
-
-fn v3000_bond_stereo(order: BondOrder, value: &str) -> Option<Option<SourceStereoBondMarkKind>> {
-    match (order, value) {
-        (_, "0") => Some(None),
-        (BondOrder::Single, "1") => Some(Some(SourceStereoBondMarkKind::WedgeUp)),
-        (BondOrder::Single, "2") => Some(Some(SourceStereoBondMarkKind::WedgeEither)),
-        (BondOrder::Single, "3") => Some(Some(SourceStereoBondMarkKind::WedgeDown)),
-        (BondOrder::Double, "2") => Some(Some(SourceStereoBondMarkKind::DoubleBondEither)),
-        _ => None,
-    }
+    Ok(())
 }
 
 fn v3000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {

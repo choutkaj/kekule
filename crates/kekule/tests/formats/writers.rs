@@ -169,15 +169,24 @@ fn molfile_version_policy_promotes_counts_and_explicit_v2000_fails() {
     );
 }
 
+fn interpret_records(text: &str) -> Vec<SdfRecordInterpretation> {
+    sdf::parse_str(text)
+        .unwrap()
+        .records()
+        .iter()
+        .map(|record| record.interpret().unwrap())
+        .collect()
+}
+
 #[test]
 fn sdf_writes_independent_models_and_ensemble_members_in_order() {
     let first = model("C", &[[1.0, 0.0, 0.0]]);
     let second = model("O", &[[2.0, 0.0, 0.0]]);
     let text = sdf::write(&[first.clone(), second.clone()], SdfWriteOptions::default()).unwrap();
-    let interpreted = sdf::interpret(&sdf::parse_str(&text).unwrap()).unwrap();
-    assert_eq!(interpreted.records().len(), 2);
+    let interpreted = interpret_records(&text);
+    assert_eq!(interpreted.len(), 2);
     assert_eq!(
-        interpreted.records()[0]
+        interpreted[0]
             .model()
             .topology()
             .atoms()
@@ -188,7 +197,7 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
         "C"
     );
     assert_eq!(
-        interpreted.records()[1]
+        interpreted[1]
             .model()
             .topology()
             .atoms()
@@ -207,10 +216,10 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
     .unwrap();
     let ensemble = Ensemble::from_models([first, later]).unwrap();
     let ensemble_text = sdf::write(&ensemble, SdfWriteOptions::default()).unwrap();
-    let records = sdf::interpret(&sdf::parse_str(&ensemble_text).unwrap()).unwrap();
-    assert_eq!(records.records().len(), 2);
+    let records = interpret_records(&ensemble_text);
+    assert_eq!(records.len(), 2);
     assert!(
-        (records.records()[0]
+        (records[0]
             .model()
             .positions()
             .position_at(0)
@@ -223,7 +232,7 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
             <= 1e-9
     );
     assert!(
-        (records.records()[1]
+        (records[1]
             .model()
             .positions()
             .position_at(0)
@@ -245,11 +254,11 @@ fn sdf_explicit_records_preserve_title_and_data_fields() {
         vec![SdfDataField::new("SOURCE", "round trip")],
     );
     let text = sdf::write(&[record], SdfWriteOptions::default()).unwrap();
-    let records = sdf::interpret(&sdf::parse_str(&text).unwrap()).unwrap();
-    assert_eq!(records.records()[0].title(), "named record");
-    assert_eq!(records.records()[0].data_fields()[0].name(), "SOURCE");
-    assert_eq!(records.records()[0].data_fields()[0].value(), "round trip");
-    assert_eq!(records.records()[0].model().topology().instance_count(), 2);
+    let records = interpret_records(&text);
+    assert_eq!(records[0].title(), "named record");
+    assert_eq!(records[0].data_fields()[0].name(), "SOURCE");
+    assert_eq!(records[0].data_fields()[0].value(), "round trip");
+    assert_eq!(records[0].model().topology().instance_count(), 2);
 }
 
 #[test]
