@@ -2,11 +2,8 @@ use std::sync::Arc;
 use std::{io, io::Write};
 
 use kekule::geometry::Point3;
-use kekule::mmcif::{
-    self, MmcifEnsembleInterpretOptions, MmcifEntityClassifications, MmcifEntityKind,
-    MmcifWriteOptions,
-};
-use kekule::molfile::{self, MolWriteErrorKind, MolfileWriteOptions, MolfileWriteVersion};
+use kekule::mmcif::{self, MmcifEntityClassifications, MmcifEntityKind, MmcifWriteOptions};
+use kekule::molfile::{self, MoleculeWriteErrorKind, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
 use kekule::structure::{Ensemble, Model, Positions};
@@ -154,7 +151,10 @@ fn molfile_version_policy_promotes_counts_and_explicit_v2000_fails() {
         },
     )
     .unwrap_err();
-    assert_eq!(error.kind(), MolWriteErrorKind::UnsupportedRepresentation);
+    assert_eq!(
+        error.kind(),
+        MoleculeWriteErrorKind::UnsupportedRepresentation
+    );
 
     let promoted = molfile::write(&model, MolfileWriteOptions::default()).unwrap();
     assert!(promoted.contains("V3000"));
@@ -279,11 +279,7 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
     assert_eq!(independent_document.blocks().len(), 2);
     assert!(independent.starts_with("data_model_1\n"));
     assert!(independent.contains("data_model_2\n"));
-    assert!(mmcif::interpret_ensemble(
-        &independent_document,
-        MmcifEnsembleInterpretOptions::default(),
-    )
-    .is_err());
+    assert!(mmcif::interpret_ensemble(&independent_document).is_err());
 
     let shared = first.shared_topology();
     let second = Model::new(
@@ -304,9 +300,7 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
     .unwrap();
     let ensemble_document = mmcif::parse_str(&ensemble_text).unwrap();
     assert_eq!(ensemble_document.blocks().len(), 1);
-    let parsed =
-        mmcif::interpret_ensemble(&ensemble_document, MmcifEnsembleInterpretOptions::default())
-            .unwrap();
+    let parsed = mmcif::interpret_ensemble(&ensemble_document).unwrap();
     assert_eq!(parsed.ensemble().len(), 2);
     assert!(
         (parsed
@@ -340,11 +334,7 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
     );
 
     let round_trip = mmcif::write([&parsed], MmcifWriteOptions::default()).unwrap();
-    let reparsed = mmcif::interpret_ensemble(
-        &mmcif::parse_str(&round_trip).unwrap(),
-        MmcifEnsembleInterpretOptions::default(),
-    )
-    .unwrap();
+    let reparsed = mmcif::interpret_ensemble(&mmcif::parse_str(&round_trip).unwrap()).unwrap();
     assert_eq!(reparsed.ensemble().len(), 2);
 }
 
@@ -459,7 +449,7 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
             .unwrap(),
         4.0
     );
-    let reread = mmcif::interpret(&document, Default::default()).unwrap();
+    let reread = mmcif::interpret(&document).unwrap();
     assert_eq!(
         reread
             .model()
@@ -577,7 +567,7 @@ fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
         mmcif::parse_str(std::str::from_utf8(&streamed_ensemble.bytes).unwrap()).unwrap();
     assert_eq!(document.blocks().len(), 1);
     assert_eq!(
-        mmcif::interpret_ensemble(&document, MmcifEnsembleInterpretOptions::default())
+        mmcif::interpret_ensemble(&document)
             .unwrap()
             .ensemble()
             .len(),
@@ -649,7 +639,7 @@ fn streaming_writers_report_structured_io_failures() {
     let model = model("C", &[[0.0, 0.0, 0.0]]);
     assert!(matches!(
         molfile::write_to(&mut FailingWriter, &model, MolfileWriteOptions::default()),
-        Err(error) if error.kind() == MolWriteErrorKind::Io(io::ErrorKind::BrokenPipe)
+        Err(error) if error.kind() == MoleculeWriteErrorKind::Io(io::ErrorKind::BrokenPipe)
     ));
     assert!(matches!(
         sdf::write_to(&mut FailingWriter, [&model], SdfWriteOptions::default()),

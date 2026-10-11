@@ -54,9 +54,9 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         document,
         mmcif::parse_str_with_options(MINIMAL_MMCIF, mmcif::MmcifParseOptions::default())?
     );
-    let interpreted = mmcif::interpret(&document, MmcifInterpretOptions::default())?;
+    let interpreted = mmcif::interpret(&document)?;
     let block: &MmcifBlock = &document.blocks()[0];
-    let block_interpreted = mmcif::interpret_block(block, MmcifInterpretOptions::default())?;
+    let block_interpreted = block.interpret()?;
     let method_default = block.interpret()?;
     let method_explicit = block.interpret_with_options(MmcifInterpretOptions::default())?;
 
@@ -97,6 +97,39 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         .to_topology()?
         .same_layout(block.to_model()?.topology()));
     assert_eq!(block.to_molecules()?.len(), 1);
+    // Every format namespace pairs `interpret(document)` with
+    // `interpret_with_options`, and a single-block document projects like
+    // its block.
+    let explicit = mmcif::interpret_with_options(&document, MmcifInterpretOptions::default())?;
+    assert_eq!(explicit.report(), interpreted.report());
+    for from_document in [
+        document.to_model()?,
+        document.to_model_with_options(MmcifInterpretOptions::default())?,
+    ] {
+        let from_block = block.to_model()?;
+        assert!(from_document.topology().same_layout(from_block.topology()));
+        assert_eq!(from_document.positions(), from_block.positions());
+    }
+    assert_eq!(document.to_molecules()?, block.to_molecules()?);
+    assert!(document
+        .to_topology()?
+        .same_layout(block.to_model()?.topology()));
+    assert_eq!(
+        mmcif::interpret_ensemble(&document)?.reports(),
+        mmcif::interpret_ensemble_with_options(
+            &document,
+            mmcif::MmcifEnsembleInterpretOptions::default()
+        )?
+        .reports()
+    );
+    let two_blocks = mmcif::parse_str(&format!(
+        "{MINIMAL_MMCIF}{}",
+        MINIMAL_MMCIF.replace("demo", "other")
+    ))?;
+    assert_eq!(
+        two_blocks.to_model().unwrap_err(),
+        mmcif::interpret(&two_blocks).unwrap_err()
+    );
     assert_eq!(interpreted.report().selected_model(), Some("1"));
     assert_eq!(interpreted.report().instances().len(), 1);
     let provenance = &interpreted.report().instances()[0];
@@ -154,12 +187,12 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
 
 #[test]
 fn duplicate_agreeing_authoritative_bond_evidence_is_idempotent() {
-    use kekule::mmcif::{self, MmcifInterpretOptions};
+    use kekule::mmcif;
 
     let document = mmcif::parse_str(&with_struct_conn("sing"))
         .expect("duplicate agreeing connectivity parses");
-    let interpreted = mmcif::interpret(&document, MmcifInterpretOptions::default())
-        .expect("duplicate agreeing connectivity is accepted");
+    let interpreted =
+        mmcif::interpret(&document).expect("duplicate agreeing connectivity is accepted");
     let graph = interpreted
         .model()
         .topology()
@@ -173,11 +206,11 @@ fn duplicate_agreeing_authoritative_bond_evidence_is_idempotent() {
 
 #[test]
 fn duplicate_conflicting_authoritative_bond_evidence_is_rejected() {
-    use kekule::mmcif::{self, MmcifInterpretError, MmcifInterpretOptions};
+    use kekule::mmcif::{self, MmcifInterpretError};
 
     let document = mmcif::parse_str(&with_struct_conn("doub"))
         .expect("duplicate conflicting connectivity parses");
-    let error: MmcifInterpretError = mmcif::interpret(&document, MmcifInterpretOptions::default())
+    let error: MmcifInterpretError = mmcif::interpret(&document)
         .expect_err("conflicting authoritative bond orders must be rejected");
 
     assert_eq!(error.location(), None);

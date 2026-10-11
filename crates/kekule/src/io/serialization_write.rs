@@ -8,7 +8,7 @@ use super::molfile_write::MolfileRecord;
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
 use super::v2000::{render_mol_v2000, validate_sdf_data_field, validate_sdf_title};
 use super::v3000::render_mol_v3000;
-use super::{MolWriteError, MolfileVersion};
+use super::{MoleculeWriteError, MolfileVersion};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -32,7 +32,7 @@ pub struct SdfWriteOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SdfWriteError {
-    Molfile(MolWriteError),
+    Molfile(MoleculeWriteError),
     InvalidTitle(String),
     InvalidDataField {
         name: String,
@@ -66,8 +66,8 @@ impl std::error::Error for SdfWriteError {
     }
 }
 
-impl From<MolWriteError> for SdfWriteError {
-    fn from(error: MolWriteError) -> Self {
+impl From<MoleculeWriteError> for SdfWriteError {
+    fn from(error: MoleculeWriteError) -> Self {
         Self::Molfile(error)
     }
 }
@@ -76,7 +76,7 @@ fn render_molfile_record(
     record: &MolfileRecord<'_>,
     title: &str,
     version: MolfileWriteVersion,
-) -> Result<String, MolWriteError> {
+) -> Result<String, MoleculeWriteError> {
     match version {
         MolfileWriteVersion::V2000 => render_mol_v2000(record, title),
         MolfileWriteVersion::V3000 => render_mol_v3000(record, title),
@@ -90,7 +90,7 @@ fn render_molfile_model(
     model: ModelView<'_>,
     title: &str,
     version: MolfileWriteVersion,
-) -> Result<String, MolWriteError> {
+) -> Result<String, MoleculeWriteError> {
     match version {
         MolfileWriteVersion::V2000 => {
             render_mol_v2000(&MolfileRecord::model(model, MolfileVersion::V2000)?, title)
@@ -140,7 +140,7 @@ impl<'a> From<&'a Model> for MolfileSource<'a> {
 pub fn write_molfile<'a>(
     source: impl Into<MolfileSource<'a>>,
     options: MolfileWriteOptions,
-) -> Result<String, MolWriteError> {
+) -> Result<String, MoleculeWriteError> {
     match source.into() {
         MolfileSource::Molecule(molecule) => {
             render_molfile_record(&MolfileRecord::molecule(molecule)?, "", options.version)
@@ -153,10 +153,10 @@ pub fn write_molfile_to<'a>(
     writer: &mut impl Write,
     source: impl Into<MolfileSource<'a>>,
     options: MolfileWriteOptions,
-) -> Result<(), MolWriteError> {
+) -> Result<(), MoleculeWriteError> {
     writer
         .write_all(write_molfile(source, options)?.as_bytes())
-        .map_err(MolWriteError::io)
+        .map_err(MoleculeWriteError::io)
 }
 
 /// One SDF record: a model view with an optional title and data fields.

@@ -23,6 +23,9 @@ All notable changes to Kekule are documented in this file.
 - `molfile::parse_reader` and `sdf::parse_reader` (with `_with_options`
   variants) read from any `std::io::Read`, enforcing the byte limit while
   reading.
+- `MmcifDocument` gains `to_molecules`, `to_topology`, and `to_model`, with
+  `_with_options` variants, for documents with exactly one atom-site block,
+  like the existing `MmcifBlock` conveniences.
 - `smiles::records` and `records_with_options` stream multi-record SMILES
   input such as `.smi` files, one record per line. Blank lines are skipped,
   a malformed, oversized, or non-UTF-8 line yields one error located at its
@@ -98,6 +101,16 @@ All notable changes to Kekule are documented in this file.
   `SdfRecord::interpret`. Records are parsed from the input lines instead of
   re-joining each record's Molfile text. `MolfileInterpretation::into_parts`
   also returns the omitted content.
+- **Breaking:** Every format namespace pairs `interpret(document)` with
+  `interpret_with_options(document, options)`. `mmcif::interpret` and
+  `mmcif::interpret_ensemble` now take only the document; pass options to
+  the new `mmcif::interpret_with_options` and
+  `mmcif::interpret_ensemble_with_options`. `mmcif::interpret_block`,
+  `interpret_ensemble_block`, and `interpret_conformations_block` are removed;
+  call the same-named methods on `MmcifBlock` instead.
+- **Breaking:** `MolWriteError` and `MolWriteErrorKind`, returned by the
+  Molfile and SMILES writers, are renamed `MoleculeWriteError` and
+  `MoleculeWriteErrorKind`.
 - **Breaking:** SMILES records are parsed in one pass that produces both the
   document tokens and the parsed program, and CXSMILES fields are read while
   parsing instead of during interpretation. A malformed extension field, an

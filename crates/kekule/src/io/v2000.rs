@@ -494,7 +494,7 @@ where
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum MolWriteErrorKind {
+pub enum MoleculeWriteErrorKind {
     UnsupportedRepresentation,
     /// A bounded writer calculation could not complete within its work limit.
     ResourceLimit,
@@ -504,48 +504,48 @@ pub enum MolWriteErrorKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MolWriteError {
-    pub(crate) kind: MolWriteErrorKind,
+pub struct MoleculeWriteError {
+    pub(crate) kind: MoleculeWriteErrorKind,
     pub(crate) message: String,
 }
 
-impl MolWriteError {
+impl MoleculeWriteError {
     pub(crate) fn resource_limit(message: impl Into<String>) -> Self {
         Self {
-            kind: MolWriteErrorKind::ResourceLimit,
+            kind: MoleculeWriteErrorKind::ResourceLimit,
             message: message.into(),
         }
     }
 
     pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
-            kind: MolWriteErrorKind::UnsupportedRepresentation,
+            kind: MoleculeWriteErrorKind::UnsupportedRepresentation,
             message: message.into(),
         }
     }
 
     pub(crate) fn invalid_model(message: impl Into<String>) -> Self {
         Self {
-            kind: MolWriteErrorKind::InvalidModel,
+            kind: MoleculeWriteErrorKind::InvalidModel,
             message: message.into(),
         }
     }
 
     pub(crate) fn invalid_metadata(message: impl Into<String>) -> Self {
         Self {
-            kind: MolWriteErrorKind::InvalidMetadata,
+            kind: MoleculeWriteErrorKind::InvalidMetadata,
             message: message.into(),
         }
     }
 
     pub(crate) fn io(error: std::io::Error) -> Self {
         Self {
-            kind: MolWriteErrorKind::Io(error.kind()),
+            kind: MoleculeWriteErrorKind::Io(error.kind()),
             message: error.to_string(),
         }
     }
 
-    pub const fn kind(&self) -> MolWriteErrorKind {
+    pub const fn kind(&self) -> MoleculeWriteErrorKind {
         self.kind
     }
 
@@ -554,25 +554,25 @@ impl MolWriteError {
     }
 }
 
-impl fmt::Display for MolWriteError {
+impl fmt::Display for MoleculeWriteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.message)
     }
 }
 
-impl std::error::Error for MolWriteError {}
+impl std::error::Error for MoleculeWriteError {}
 
 pub(super) fn render_mol_v2000(
     record: &MolfileRecord<'_>,
     title: &str,
-) -> std::result::Result<String, MolWriteError> {
+) -> std::result::Result<String, MoleculeWriteError> {
     if !record.stereo_groups.is_empty() {
-        return Err(MolWriteError::new(
+        return Err(MoleculeWriteError::new(
             "V2000 cannot encode enhanced stereo groups; use V3000",
         ));
     }
     if record.atoms.len() > V2000_MAX_ATOMS || record.bonds.len() > V2000_MAX_BONDS {
-        return Err(MolWriteError::new(
+        return Err(MoleculeWriteError::new(
             "V2000 writer supports at most 999 atoms and 999 bonds",
         ));
     }
@@ -591,7 +591,7 @@ pub(super) fn render_mol_v2000(
         let atom = record_atom.atom;
         let point = record_atom.position;
         if atom.atom_map.is_some_and(|atom_map| atom_map > 999) {
-            return Err(MolWriteError::new(format!(
+            return Err(MoleculeWriteError::new(format!(
                 "V2000 cannot encode atom-map number {} above 999",
                 atom.atom_map.expect("atom map was checked")
             )));
@@ -600,7 +600,7 @@ pub(super) fn render_mol_v2000(
             .into_iter()
             .any(|coordinate| format!("{coordinate:.4}").len() > 10)
         {
-            return Err(MolWriteError::new(
+            return Err(MoleculeWriteError::new(
                 "V2000 cannot encode a coordinate in its fixed-width atom field",
             ));
         }
@@ -670,14 +670,14 @@ pub(super) fn render_mol_v2000(
     Ok(out)
 }
 
-pub(super) fn validate_sdf_title(title: &str) -> std::result::Result<(), MolWriteError> {
+pub(super) fn validate_sdf_title(title: &str) -> std::result::Result<(), MoleculeWriteError> {
     if title.contains(['\r', '\n']) {
-        return Err(MolWriteError::invalid_metadata(
+        return Err(MoleculeWriteError::invalid_metadata(
             "SDF record titles cannot contain line breaks",
         ));
     }
     if title.trim() == "$$$$" {
-        return Err(MolWriteError::invalid_metadata(
+        return Err(MoleculeWriteError::invalid_metadata(
             "SDF record titles cannot be a record delimiter",
         ));
     }
@@ -686,26 +686,26 @@ pub(super) fn validate_sdf_title(title: &str) -> std::result::Result<(), MolWrit
 
 pub(super) fn validate_sdf_data_field(
     field: &SdfDataField,
-) -> std::result::Result<(), MolWriteError> {
+) -> std::result::Result<(), MoleculeWriteError> {
     let name = field.name();
     if name.is_empty() || name.trim() != name || name.contains(['<', '>', '\r', '\n']) {
-        return Err(MolWriteError::invalid_metadata(
+        return Err(MoleculeWriteError::invalid_metadata(
             "SDF data field names must be nonempty, trimmed, and exclude angle brackets or line breaks",
         ));
     }
     let value = field.value();
     if value.contains('\r') {
-        return Err(MolWriteError::invalid_metadata(
+        return Err(MoleculeWriteError::invalid_metadata(
             "SDF data field values cannot contain carriage returns",
         ));
     }
     if !value.is_empty() && value.split('\n').any(str::is_empty) {
-        return Err(MolWriteError::invalid_metadata(
+        return Err(MoleculeWriteError::invalid_metadata(
             "SDF data field values cannot contain blank lines",
         ));
     }
     if value.lines().any(|line| line.trim() == "$$$$") {
-        return Err(MolWriteError::invalid_metadata(
+        return Err(MoleculeWriteError::invalid_metadata(
             "SDF data field values cannot contain a record delimiter line",
         ));
     }
@@ -728,7 +728,7 @@ fn v2000_valence_code(
     mol: &Molecule,
     atom_id: AtomId,
     atom: &Atom,
-) -> std::result::Result<u8, MolWriteError> {
+) -> std::result::Result<u8, MoleculeWriteError> {
     let fixed_hydrogens = match atom.hydrogens {
         ImplicitHydrogens::Inferred => return Ok(0),
         ImplicitHydrogens::Fixed(explicit) => explicit,
@@ -737,21 +737,21 @@ fn v2000_valence_code(
     match valence {
         0 => Ok(15),
         1..=14 => Ok(u8::try_from(valence).expect("range checked")),
-        _ => Err(MolWriteError::new(format!(
+        _ => Err(MoleculeWriteError::new(format!(
             "V2000 cannot encode explicit valence {valence} for atom {}",
             atom_id.index()
         ))),
     }
 }
 
-fn v2000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
+fn v2000_bond_code(order: BondOrder) -> std::result::Result<u8, MoleculeWriteError> {
     match order {
         BondOrder::Zero => Ok(0),
         BondOrder::Single => Ok(1),
         BondOrder::Double => Ok(2),
         BondOrder::Triple => Ok(3),
         BondOrder::Dative => Ok(9),
-        BondOrder::Quadruple => Err(MolWriteError::new(
+        BondOrder::Quadruple => Err(MoleculeWriteError::new(
             "V2000 writer does not support quadruple bonds",
         )),
     }
@@ -760,7 +760,7 @@ fn v2000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
 fn v2000_bond_stereo_code(
     order: BondOrder,
     stereo: Option<SourceStereoBondMarkKind>,
-) -> std::result::Result<u8, MolWriteError> {
+) -> std::result::Result<u8, MoleculeWriteError> {
     match (order, stereo) {
         (BondOrder::Double, Some(SourceStereoBondMarkKind::MolfileDoubleBondGeometry)) => Ok(0),
         (_, None) => Ok(0),
@@ -768,18 +768,18 @@ fn v2000_bond_stereo_code(
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeEither)) => Ok(4),
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeDown)) => Ok(6),
         (BondOrder::Double, Some(SourceStereoBondMarkKind::DoubleBondEither)) => Ok(3),
-        _ => Err(MolWriteError::new(
+        _ => Err(MoleculeWriteError::new(
             "V2000 bond stereo is incompatible with the bond order",
         )),
     }
 }
 
-fn v2000_radical_code(radical: AtomRadical) -> std::result::Result<i32, MolWriteError> {
+fn v2000_radical_code(radical: AtomRadical) -> std::result::Result<i32, MoleculeWriteError> {
     match (radical.electron_count(), radical.spin_multiplicity()) {
         (2, Some(1)) => Ok(1),
         (1, Some(2)) => Ok(2),
         (2, Some(3)) => Ok(3),
-        _ => Err(MolWriteError::new(
+        _ => Err(MoleculeWriteError::new(
             "V2000 writer requires an encodable radical electron count and explicit spin multiplicity",
         )),
     }

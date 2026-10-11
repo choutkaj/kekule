@@ -160,7 +160,7 @@ pub mod smiles {
 
     use crate::core::Molecule;
     pub use crate::io::{
-        MolWriteError, MolWriteErrorKind, SmilesAtomMapping, SmilesBondMapping,
+        MoleculeWriteError, MoleculeWriteErrorKind, SmilesAtomMapping, SmilesBondMapping,
         SmilesComponentCountError, SmilesComponentInterpretation, SmilesCxField, SmilesCxFieldKind,
         SmilesCxStereoGroupKind, SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind,
         SmilesInterpretError, SmilesInterpretOptions, SmilesInterpretation,
@@ -207,7 +207,7 @@ pub mod smiles {
         /// Serialization additionally bounds the input to 2,000,000 combined
         /// atom/bond slots and a complexity score `2*n*(n+2*m)` of at most
         /// 50,000,000 for `n` live atoms and `m` live bonds. Exceeding a bound
-        /// returns [`MolWriteErrorKind::ResourceLimit`] without a partial result.
+        /// returns [`MoleculeWriteErrorKind::ResourceLimit`] without a partial result.
         Canonical,
     }
 
@@ -420,7 +420,7 @@ pub mod smiles {
     pub fn write<'a>(
         source: impl Into<SmilesSource<'a>>,
         options: SmilesWriteOptions,
-    ) -> Result<String, MolWriteError> {
+    ) -> Result<String, MoleculeWriteError> {
         match source.into() {
             SmilesSource::Molecule(molecule) => match options.mode {
                 SmilesWriteMode::Ordinary => crate::io::write_smiles(molecule),
@@ -442,11 +442,11 @@ pub mod smiles {
 /// Molfile version cannot represent.
 pub mod molfile {
     pub use crate::io::{
-        MolWriteError, MolWriteErrorKind, MolfileAtom, MolfileAtomMapping, MolfileAtomParity,
-        MolfileBond, MolfileBondMapping, MolfileBondOrder, MolfileBondStereo, MolfileDocument,
-        MolfileHeader, MolfileInterpretError, MolfileInterpretOptions, MolfileInterpretation,
-        MolfileInterpretationReport, MolfileInterpretationWarning, MolfileParseError,
-        MolfileParseOptions, MolfileRadical, MolfileSource, MolfileStereoGroup,
+        MoleculeWriteError, MoleculeWriteErrorKind, MolfileAtom, MolfileAtomMapping,
+        MolfileAtomParity, MolfileBond, MolfileBondMapping, MolfileBondOrder, MolfileBondStereo,
+        MolfileDocument, MolfileHeader, MolfileInterpretError, MolfileInterpretOptions,
+        MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning,
+        MolfileParseError, MolfileParseOptions, MolfileRadical, MolfileSource, MolfileStereoGroup,
         MolfileStereoGroupKind, MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion,
         MolfileWriteOptions, MolfileWriteVersion,
     };
@@ -514,7 +514,7 @@ pub mod molfile {
     pub fn write<'a>(
         source: impl Into<MolfileSource<'a>>,
         options: MolfileWriteOptions,
-    ) -> Result<String, MolWriteError> {
+    ) -> Result<String, MoleculeWriteError> {
         crate::io::write_molfile(source, options)
     }
 
@@ -522,7 +522,7 @@ pub mod molfile {
         writer: &mut impl std::io::Write,
         source: impl Into<MolfileSource<'a>>,
         options: MolfileWriteOptions,
-    ) -> Result<(), MolWriteError> {
+    ) -> Result<(), MoleculeWriteError> {
         crate::io::write_molfile_to(writer, source, options)
     }
 }
@@ -536,9 +536,10 @@ pub mod molfile {
 /// merged into one model or reinterpreted as an ensemble.
 pub mod sdf {
     pub use crate::io::{
-        MolWriteError, MolfileInterpretOptions, MolfileWriteVersion, SdfDataField, SdfDocument,
-        SdfInterpretError, SdfParseError, SdfParseOptions, SdfRecord, SdfRecordInterpretation,
-        SdfRecordInterpretationReport, SdfRecordSource, SdfRecords, SdfWriteError, SdfWriteOptions,
+        MoleculeWriteError, MolfileInterpretOptions, MolfileWriteVersion, SdfDataField,
+        SdfDocument, SdfInterpretError, SdfParseError, SdfParseOptions, SdfRecord,
+        SdfRecordInterpretation, SdfRecordInterpretationReport, SdfRecordSource, SdfRecords,
+        SdfWriteError, SdfWriteOptions,
     };
 
     /// Streams the records of an SDF input from `reader`.
@@ -665,48 +666,45 @@ pub mod mmcif {
         crate::io::parse_mmcif_reader(reader, options)
     }
 
-    /// Interprets a document containing exactly one atom-site block.
+    /// Interprets a document containing exactly one atom-site block as one
+    /// selected coordinate model, using default policy.
     ///
-    /// Documents with multiple atom-site blocks require explicit selection via
-    /// [`interpret_block`].
-    pub fn interpret(
+    /// Interpret a block of a document with several atom-site blocks through
+    /// its own methods, such as [`MmcifBlock::interpret`]; sibling blocks are
+    /// independent interpretation scopes.
+    pub fn interpret(document: &MmcifDocument) -> Result<MmcifInterpretation, MmcifInterpretError> {
+        document.interpret()
+    }
+
+    /// Interprets the exactly one atom-site block with explicit model and
+    /// alternate-location policy.
+    pub fn interpret_with_options(
         document: &MmcifDocument,
         options: MmcifInterpretOptions,
     ) -> Result<MmcifInterpretation, MmcifInterpretError> {
         document.interpret_with_options(options)
     }
 
-    /// Interprets one CIF/mmCIF data block as one selected coordinate model.
-    ///
-    /// Coordinate-model selection applies only within `block`; sibling blocks
-    /// in the source document are independent interpretation scopes.
-    pub fn interpret_block(
-        block: &MmcifBlock,
-        options: MmcifInterpretOptions,
-    ) -> Result<MmcifInterpretation, MmcifInterpretError> {
-        block.interpret_with_options(options)
-    }
-
-    /// Interprets the exactly one atom-site block in a document as an ensemble.
+    /// Interprets every coordinate model of the exactly one atom-site block as
+    /// an ensemble.
     ///
     /// mmCIF carries no statistical model weights, so every coordinate model
     /// becomes an equally weighted member (weight `1.0`); occupancy is not
-    /// converted into a weight. Documents with multiple atom-site blocks
-    /// require explicit selection via [`interpret_ensemble_block`].
+    /// converted into a weight. Use [`MmcifBlock::interpret_ensemble`] for one
+    /// block of a document with several atom-site blocks.
     pub fn interpret_ensemble(
+        document: &MmcifDocument,
+    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+        document.interpret_ensemble()
+    }
+
+    /// Interprets selected coordinate models of the exactly one atom-site
+    /// block as an ensemble of equally weighted members.
+    pub fn interpret_ensemble_with_options(
         document: &MmcifDocument,
         options: MmcifEnsembleInterpretOptions,
     ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
         document.interpret_ensemble_with_options(options)
-    }
-
-    /// Interprets coordinate models in one block as a shared-topology ensemble
-    /// of equally weighted members.
-    pub fn interpret_ensemble_block(
-        block: &MmcifBlock,
-        options: MmcifEnsembleInterpretOptions,
-    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
-        block.interpret_ensemble_with_options(options)
     }
 
     /// Builds an unweighted ensemble from explicit coordinate-model and altloc
@@ -717,14 +715,6 @@ pub mod mmcif {
         selections: &[MmcifInterpretOptions],
     ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
         document.interpret_conformations(selections)
-    }
-
-    /// Builds an unweighted ensemble from explicit selections within one block.
-    pub fn interpret_conformations_block(
-        block: &MmcifBlock,
-        selections: &[MmcifInterpretOptions],
-    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
-        block.interpret_conformations(selections)
     }
 
     /// Writes one data block per source.

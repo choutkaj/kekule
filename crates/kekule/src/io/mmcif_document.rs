@@ -145,6 +145,42 @@ impl MmcifDocument {
         interpret_mmcif(self, options)
     }
 
+    /// Interprets the exactly one structural block as connected molecules.
+    pub fn to_molecules(&self) -> Result<Vec<Molecule>, MmcifInterpretError> {
+        Ok(self.interpret()?.into_molecules())
+    }
+
+    pub fn to_molecules_with_options(
+        &self,
+        options: MmcifInterpretOptions,
+    ) -> Result<Vec<Molecule>, MmcifInterpretError> {
+        Ok(self.interpret_with_options(options)?.into_molecules())
+    }
+
+    /// Interprets the exactly one structural block and projects its topology.
+    pub fn to_topology(&self) -> Result<Arc<Topology>, MmcifInterpretError> {
+        Ok(self.interpret()?.into_topology())
+    }
+
+    pub fn to_topology_with_options(
+        &self,
+        options: MmcifInterpretOptions,
+    ) -> Result<Arc<Topology>, MmcifInterpretError> {
+        Ok(self.interpret_with_options(options)?.into_topology())
+    }
+
+    /// Interprets the exactly one structural block as one selected model.
+    pub fn to_model(&self) -> Result<Model, MmcifInterpretError> {
+        Ok(self.interpret()?.into_model())
+    }
+
+    pub fn to_model_with_options(
+        &self,
+        options: MmcifInterpretOptions,
+    ) -> Result<Model, MmcifInterpretError> {
+        Ok(self.interpret_with_options(options)?.into_model())
+    }
+
     /// Interprets all coordinate models in the exactly one structural block.
     pub fn interpret_ensemble(
         &self,

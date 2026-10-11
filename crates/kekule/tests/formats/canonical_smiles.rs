@@ -1,5 +1,5 @@
 use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
-use kekule::smiles::{self, MolWriteErrorKind};
+use kekule::smiles::{self, MoleculeWriteErrorKind};
 
 use crate::support::renumbered;
 
@@ -376,7 +376,7 @@ fn canonical_input_complexity_is_bounded_before_export() {
     }
     let molecule = editor.finish().unwrap();
     let error = smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap_err();
-    assert_eq!(error.kind(), MolWriteErrorKind::ResourceLimit);
+    assert_eq!(error.kind(), MoleculeWriteErrorKind::ResourceLimit);
     assert!(error.to_string().contains("input complexity"));
 }
 
@@ -515,7 +515,7 @@ fn smiles_uses_all_one_hundred_ring_labels_and_bounds_live_labels() {
         smiles::SmilesWriteOptions::default(),
     )
     .unwrap_err();
-    assert_eq!(error.kind(), MolWriteErrorKind::ResourceLimit);
+    assert_eq!(error.kind(), MoleculeWriteErrorKind::ResourceLimit);
 }
 
 #[test]
