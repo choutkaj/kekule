@@ -394,12 +394,15 @@ reader -> record/block splitter -> format document (typed syntax + locations)
 ```
 
 The unit of parsing and interpretation is the independent record or block: one
-Molfile, one SDF record, one SMILES line, or one CIF data block. Readers split
-input into records by format framing alone (`$$$$`, line ends, `data_`), without
-reading record content, so a malformed record fails alone and record-oriented
-formats stream with memory bounded by one record. A file-level document is a
-convenience collection of parsed records; interpretation is always per record and
-never depends on a sibling record.
+Molfile, one SDF record, one SMILES line, or one CIF data block. SDF and SMILES
+readers split input into records by line framing alone (`$$$$` lines, line
+ends), without reading record content, so a malformed record fails alone and
+these formats stream with memory bounded by one record. CIF block boundaries are
+lexical instead: a semicolon-delimited text value may contain a line that looks
+like `data_`, so finding blocks requires tokenizing, and malformed framing such as
+an unterminated text value fails the rest of the input rather than one block. A
+file-level document is a convenience collection of parsed records; interpretation
+is always per record and never depends on a sibling record.
 
 A format document is the typed syntax of one record or block, with source
 locations: what the source states, before chemistry. Anything that requires
