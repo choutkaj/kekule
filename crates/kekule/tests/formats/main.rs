@@ -4,6 +4,7 @@
 mod support;
 
 mod canonical_smiles;
+mod components;
 mod documents;
 mod export;
 mod mmcif;

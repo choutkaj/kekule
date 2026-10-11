@@ -1,3 +1,4 @@
+mod components;
 mod lines;
 mod mmcif_category;
 mod mmcif_connectivity;
@@ -14,6 +15,10 @@ mod structure_documents;
 mod v2000;
 mod v3000;
 
+pub use components::{
+    Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentError, ComponentLibrary,
+    ComponentLinking,
+};
 pub use mmcif_document::*;
 pub use mmcif_interpret::{
     MmcifAltLocDecision, MmcifAltLocPolicy, MmcifAltLocPreference, MmcifAltLocResidue,

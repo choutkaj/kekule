@@ -1,0 +1,463 @@
+data_CLA
+# 
+_chem_comp.id                                    CLA 
+_chem_comp.name                                  "CHLOROPHYLL A" 
+_chem_comp.type                                  NON-POLYMER 
+_chem_comp.pdbx_type                             HETAIN 
+_chem_comp.formula                               "C55 H72 Mg N4 O5" 
+_chem_comp.mon_nstd_parent_comp_id               ? 
+_chem_comp.pdbx_synonyms                         ? 
+_chem_comp.pdbx_formal_charge                    0 
+_chem_comp.pdbx_initial_date                     1999-07-08 
+_chem_comp.pdbx_modified_date                    2026-09-16 
+_chem_comp.pdbx_ambiguous_flag                   Y 
+_chem_comp.pdbx_release_status                   REL 
+_chem_comp.pdbx_replaced_by                      ? 
+_chem_comp.pdbx_replaces                         ? 
+_chem_comp.formula_weight                        893.489 
+_chem_comp.one_letter_code                       ? 
+_chem_comp.three_letter_code                     CLA 
+_chem_comp.pdbx_model_coordinates_details        ? 
+_chem_comp.pdbx_model_coordinates_missing_flag   N 
+_chem_comp.pdbx_ideal_coordinates_details        MetalCoord 
+_chem_comp.pdbx_ideal_coordinates_missing_flag   N 
+_chem_comp.pdbx_model_coordinates_db_code        1JB0 
+_chem_comp.pdbx_subcomponent_list                ? 
+_chem_comp.pdbx_processing_site                  RCSB 
+_chem_comp.pdbx_pcm                              Y 
+_chem_comp.pdbx_comp_type                        "metal-containing ligand" 
+# 
+loop_
+_chem_comp_atom.comp_id 
+_chem_comp_atom.atom_id 
+_chem_comp_atom.alt_atom_id 
+_chem_comp_atom.type_symbol 
+_chem_comp_atom.charge 
+_chem_comp_atom.pdbx_align 
+_chem_comp_atom.pdbx_aromatic_flag 
+_chem_comp_atom.pdbx_leaving_atom_flag 
+_chem_comp_atom.pdbx_stereo_config 
+_chem_comp_atom.pdbx_n_terminal_atom_flag 
+_chem_comp_atom.pdbx_backbone_atom_flag 
+_chem_comp_atom.pdbx_c_terminal_atom_flag 
+_chem_comp_atom.model_Cartn_x 
+_chem_comp_atom.model_Cartn_y 
+_chem_comp_atom.model_Cartn_z 
+_chem_comp_atom.pdbx_model_Cartn_x_ideal 
+_chem_comp_atom.pdbx_model_Cartn_y_ideal 
+_chem_comp_atom.pdbx_model_Cartn_z_ideal 
+_chem_comp_atom.pdbx_component_atom_id 
+_chem_comp_atom.pdbx_component_comp_id 
+_chem_comp_atom.pdbx_ordinal 
+CLA MG   MG    MG 2  0 N N N N N N 72.794 131.018 77.144 5.489   0.263  -0.010 MG   CLA 1   
+CLA CHA  CHA   C  0  1 N N N N N N 73.260 130.256 73.757 4.149   1.412  -3.031 CHA  CLA 2   
+CLA CHB  CHB   C  0  1 N N N N N N 75.448 133.099 76.995 2.529   1.079  1.487  CHB  CLA 3   
+CLA CHC  CHC   C  0  1 N N N N N N 71.903 132.500 80.188 6.497   -1.480 2.733  CHC  CLA 4   
+CLA CHD  CHD   C  0  1 N N N N N N 69.718 129.450 76.997 8.248   -1.038 -1.770 CHD  CLA 5   
+CLA NA   "N A" N  0  1 N N N N N N 74.173 131.612 75.567 3.623   1.129  -0.699 NA   CLA 6   
+CLA C1A  C1A   C  0  1 N N N N N N 74.226 131.081 74.289 3.278   1.588  -1.960 C1A  CLA 7   
+CLA C2A  C2A   C  0  1 N N S N N N 75.451 131.585 73.569 1.910   2.251  -1.992 C2A  CLA 8   
+CLA C3A  C3A   C  0  1 N N S N N N 76.142 132.454 74.620 1.654   2.480  -0.468 C3A  CLA 9   
+CLA C4A  C4A   C  0  1 N N N N N N 75.224 132.392 75.813 2.640   1.494  0.151  C4A  CLA 10  
+CLA CMA  CMA   C  0  1 N N N N N N 77.504 131.851 74.982 1.879   3.927  -0.016 CMA  CLA 11  
+CLA CAA  CAA   C  0  1 N N N N N N 75.049 132.427 72.305 0.826   1.425  -2.720 CAA  CLA 12  
+CLA CBA  CBA   C  0  1 N N N N N N 75.008 133.895 72.462 -0.312  2.238  -3.342 CBA  CLA 13  
+CLA CGA  CGA   C  0  1 N N N N N N 73.928 134.544 71.716 -1.194  1.439  -4.255 CGA  CLA 14  
+CLA O1A  O1A   O  0  1 N N N N N N 72.827 134.606 72.213 -0.894  1.099  -5.378 O1A  CLA 15  
+CLA O2A  O2A   O  0  1 N N N N N N 74.133 135.091 70.509 -2.378  1.150  -3.666 O2A  CLA 16  
+CLA NB   "N B" N  -1 1 Y N N N N N 73.537 132.567 78.352 4.621   -0.160 1.852  NB   CLA 17  
+CLA C1B  C1B   C  0  1 Y N N N N N 74.701 133.205 78.103 3.419   0.275  2.300  C1B  CLA 18  
+CLA C2B  C2B   C  0  1 Y N N N N N 74.993 134.121 79.191 3.218   -0.170 3.605  C2B  CLA 19  
+CLA C3B  C3B   C  0  1 Y N N N N N 74.004 133.997 80.113 4.361   -0.932 3.984  C3B  CLA 20  
+CLA C4B  C4B   C  0  1 Y N N N N N 73.077 132.961 79.599 5.213   -0.885 2.880  C4B  CLA 21  
+CLA CMB  CMB   C  0  1 N N N N N N 76.165 135.065 79.200 2.001   0.084  4.453  CMB  CLA 22  
+CLA CAB  CAB   C  0  1 N N N N N N 74.035 134.977 81.249 4.684   -1.627 5.269  CAB  CLA 23  
+CLA CBB  CBB   C  0  1 N N N N N N 73.422 134.812 82.347 4.146   -1.665 6.470  CBB  CLA 24  
+CLA NC   "N C" N  0  1 N N N N N N 71.074 131.010 78.367 7.101   -1.086 0.399  NC   CLA 25  
+CLA C1C  C1C   C  0  1 N N N N N N 70.972 131.582 79.612 7.372   -1.594 1.632  C1C  CLA 26  
+CLA C2C  C2C   C  0  1 N N N N N N 69.756 131.098 80.250 8.606   -2.207 1.608  C2C  CLA 27  
+CLA C3C  C3C   C  0  1 N N N N N N 69.138 130.234 79.370 9.107   -2.077 0.340  C3C  CLA 28  
+CLA C4C  C4C   C  0  1 N N N N N N 69.979 130.187 78.167 8.168   -1.390 -0.404 C4C  CLA 29  
+CLA CMC  CMC   C  0  1 N N N N N N 69.263 131.521 81.612 9.297   -2.889 2.762  CMC  CLA 30  
+CLA CAC  CAC   C  0  1 N N N N N N 67.877 129.437 79.571 10.433  -2.593 -0.162 CAC  CLA 31  
+CLA CBC  CBC   C  0  1 N N N N N N 66.748 129.956 78.658 10.329  -3.983 -0.777 CBC  CLA 32  
+CLA ND   "N D" N  -1 1 N N N N N N 71.660 130.096 75.722 6.136   0.127  -1.968 ND   CLA 33  
+CLA C1D  C1D   C  0  1 N N N N N N 70.506 129.417 75.821 7.298   -0.363 -2.535 C1D  CLA 34  
+CLA C2D  C2D   C  0  1 N N N N N N 70.194 128.732 74.614 7.291   -0.073 -3.922 C2D  CLA 35  
+CLA C3D  C3D   C  0  1 N N N N N N 71.260 129.020 73.756 6.086   0.629  -4.174 C3D  CLA 36  
+CLA C4D  C4D   C  0  1 N N N N N N 72.137 129.847 74.465 5.417   0.727  -2.967 C4D  CLA 37  
+CLA CMD  CMD   C  0  1 N N N N N N 68.964 127.853 74.306 8.319   -0.399 -4.955 CMD  CLA 38  
+CLA CAD  CAD   C  0  1 N N N N N N 71.845 128.770 72.463 5.272   1.274  -5.207 CAD  CLA 39  
+CLA OBD  OBD   O  0  1 N N N N N N 71.435 128.110 71.493 5.451   1.377  -6.413 OBD  CLA 40  
+CLA CBD  CBD   C  0  1 N N R N N N 73.233 129.465 72.442 4.022   1.897  -4.468 CBD  CLA 41  
+CLA CGD  CGD   C  0  1 N N N N N N 74.312 128.363 72.426 4.111   3.409  -4.589 CGD  CLA 42  
+CLA O1D  O1D   O  0  1 N N N N N N 74.532 127.700 73.414 5.010   4.059  -4.126 O1D  CLA 43  
+CLA O2D  O2D   O  0  1 N N N N N N 74.970 128.145 71.305 3.066   3.911  -5.273 O2D  CLA 44  
+CLA CED  CED   C  0  1 N N N N N N 75.536 126.852 71.036 3.001   5.347  -5.475 CED  CLA 45  
+CLA C1   C1    C  0  1 N N N N N N 73.028 135.816 69.842 -3.458  0.415  -4.302 C1   CLA 46  
+CLA C2   C2    C  0  1 N N N N N N 72.239 134.795 69.017 -4.310  -0.225 -3.256 C2   CLA 47  
+CLA C3   C3    C  0  1 N N N N N N 72.651 133.940 68.062 -5.349  -1.060 -3.403 C3   CLA 48  
+CLA C4   C4    C  0  1 N N N N N N 74.104 133.887 67.566 -5.991  -1.498 -4.704 C4   CLA 49  
+CLA C5   C5    C  0  1 N N N N N N 71.735 132.948 67.319 -5.961  -1.676 -2.157 C5   CLA 50  
+CLA C6   C6    C  0  1 N N N N N N 70.419 132.608 68.026 -7.052  -0.832 -1.500 C6   CLA 51  
+CLA C7   C7    C  0  1 N N N N N N 70.617 131.890 69.338 -7.423  -1.223 -0.060 C7   CLA 52  
+CLA C8   C8    C  0  1 N N R N N N 69.463 132.155 70.320 -8.643  -0.462 0.540  C8   CLA 53  
+CLA C9   C9    C  0  1 N N N N N N 69.900 131.877 71.753 -8.223  0.881  1.196  C9   CLA 54  
+CLA C10  C10   C  0  1 N N N N N N 68.305 131.263 69.936 -9.553  -1.312 1.482  C10  CLA 55  
+CLA C11  C11   C  0  1 N N N N N N 66.894 131.816 70.018 -11.054 -0.973 1.417  C11  CLA 56  
+CLA C12  C12   C  0  1 N N N N N N 66.082 130.778 69.215 -11.953 -1.591 2.506  C12  CLA 57  
+CLA C13  C13   C  0  1 N N R N N N 64.762 130.213 69.787 -13.290 -0.828 2.774  C13  CLA 58  
+CLA C14  C14   C  0  1 N N N N N N 63.621 131.230 69.688 -13.105 0.325  3.792  C14  CLA 59  
+CLA C15  C15   C  0  1 N N N N N N 64.973 129.736 71.247 -14.517 -1.724 3.134  C15  CLA 60  
+CLA C16  C16   C  0  1 N N N N N N 65.922 128.565 71.486 -15.674 -1.674 2.118  C16  CLA 61  
+CLA C17  C17   C  0  1 N N N N N N 65.405 127.211 71.051 -16.898 -2.560 2.418  C17  CLA 62  
+CLA C18  C18   C  0  1 N N N N N N 65.636 126.115 72.098 -17.980 -1.969 3.365  C18  CLA 63  
+CLA C19  C19   C  0  1 N N N N N N 64.480 126.014 73.076 -19.339 -1.766 2.665  C19  CLA 64  
+CLA C20  C20   C  0  1 N N N N N N 65.840 124.785 71.406 -18.143 -2.778 4.667  C20  CLA 65  
+CLA HHB  HHB   H  0  1 N N N N N N 76.376 133.652 77.021 1.756   1.374  1.939  HHB  CLA 66  
+CLA HHC  HHC   H  0  1 N N N N N N 71.674 132.872 81.176 6.837   -1.846 3.535  HHC  CLA 67  
+CLA HHD  HHD   H  0  1 N N N N N N 68.823 128.846 76.996 9.036   -1.281 -2.235 HHD  CLA 68  
+CLA H2A  H2A   H  0  1 N N N N N N 76.101 130.749 73.272 2.004   3.118  -2.470 H2A  CLA 69  
+CLA H3A  H3A   H  0  1 N N N N N N 76.256 133.487 74.260 0.725   2.250  -0.197 H3A  CLA 70  
+CLA HMA1 HMA1  H  0  0 N N N N N N 77.995 132.481 75.738 1.706   4.004  0.940  HMA1 CLA 71  
+CLA HMA2 HMA2  H  0  0 N N N N N N 77.361 130.838 75.386 1.275   4.524  -0.498 HMA2 CLA 72  
+CLA HMA3 HMA3  H  0  0 N N N N N N 78.134 131.801 74.081 2.801   4.192  -0.194 HMA3 CLA 73  
+CLA HAA1 HAA1  H  0  0 N N N N N N 75.774 132.199 71.510 0.438   0.777  -2.086 HAA1 CLA 74  
+CLA HAA2 HAA2  H  0  0 N N N N N N 74.047 132.099 71.993 1.261   0.906  -3.435 HAA2 CLA 75  
+CLA HBA1 HBA1  H  0  0 N N N N N N 74.878 134.125 73.530 0.069   2.985  -3.853 HBA1 CLA 76  
+CLA HBA2 HBA2  H  0  0 N N N N N N 75.966 134.307 72.112 -0.856  2.623  -2.622 HBA2 CLA 77  
+CLA HMB1 HMB1  H  0  0 N N N N N N 75.877 136.013 78.721 1.824   -0.690 5.010  HMB1 CLA 78  
+CLA HMB2 HMB2  H  0  0 N N N N N N 76.473 135.258 80.238 1.228   0.244  3.889  HMB2 CLA 79  
+CLA HMB3 HMB3  H  0  0 N N N N N N 77.003 134.615 78.647 2.154   0.859  5.017  HMB3 CLA 80  
+CLA HAB  HAB   H  0  1 N N N N N N 74.616 135.879 81.124 5.438   -2.193 5.234  HAB  CLA 81  
+CLA HBB1 HBB1  H  0  0 N N N N N N 73.490 135.562 83.121 4.524   -2.219 7.132  HBB1 CLA 82  
+CLA HBB2 HBB2  H  0  0 N N N N N N 72.832 133.922 82.507 3.402   -1.127 6.679  HBB2 CLA 83  
+CLA HMC1 HMC1  H  0  0 N N N N N N 68.323 130.998 81.841 9.877   -3.595 2.435  HMC1 CLA 84  
+CLA HMC2 HMC2  H  0  0 N N N N N N 70.018 131.266 82.370 8.640   -3.282 3.357  HMC2 CLA 85  
+CLA HMC3 HMC3  H  0  0 N N N N N N 69.089 132.607 81.618 9.827   -2.240 3.253  HMC3 CLA 86  
+CLA HAC1 HAC1  H  0  0 N N N N N N 68.076 128.382 79.333 11.081  -2.619 0.578  HAC1 CLA 87  
+CLA HAC2 HAC2  H  0  0 N N N N N N 67.560 129.523 80.621 10.789  -1.973 -0.838 HAC2 CLA 88  
+CLA HBC1 HBC1  H  0  0 N N N N N N 65.839 129.359 78.823 11.209  -4.271 -1.082 HBC1 CLA 89  
+CLA HBC2 HBC2  H  0  0 N N N N N N 66.542 131.011 78.893 9.716   -3.959 -1.534 HBC2 CLA 90  
+CLA HBC3 HBC3  H  0  0 N N N N N N 67.058 129.869 77.606 9.996   -4.611 -0.109 HBC3 CLA 91  
+CLA HMD1 HMD1  H  0  0 N N N N N N 69.033 127.473 73.276 7.892   -0.481 -5.824 HMD1 CLA 92  
+CLA HMD2 HMD2  H  0  0 N N N N N N 68.934 127.006 75.007 8.754   -1.239 -4.728 HMD2 CLA 93  
+CLA HMD3 HMD3  H  0  0 N N N N N N 68.048 128.453 74.415 8.983   0.310  -4.987 HMD3 CLA 94  
+CLA HBD  HBD   H  0  1 N N N N N N 73.330 130.131 71.572 3.162   1.577  -4.853 HBD  CLA 95  
+CLA HED1 HED1  H  0  0 N N N N N N 76.041 126.868 70.059 2.974   5.794  -4.614 HED1 CLA 96  
+CLA HED2 HED2  H  0  0 N N N N N N 76.264 126.600 71.821 2.199   5.565  -5.979 HED2 CLA 97  
+CLA HED3 HED3  H  0  0 N N N N N N 74.736 126.097 71.022 3.784   5.640  -5.969 HED3 CLA 98  
+CLA H11  H11   H  0  1 N N N N N N 72.372 136.277 70.596 -3.086  -0.276 -4.892 H11  CLA 99  
+CLA H12  H12   H  0  1 N N N N N N 73.435 136.597 69.183 -3.999  1.031  -4.842 H12  CLA 100 
+CLA H2   H2    H  0  1 N N N N N N 71.182 134.754 69.237 -4.076  0.010  -2.371 H2   CLA 101 
+CLA H41  H41   H  0  1 N N N N N N 74.199 133.115 66.788 -5.595  -1.032 -5.453 H41  CLA 102 
+CLA H42  H42   H  0  1 N N N N N N 74.384 134.865 67.147 -6.941  -1.304 -4.681 H42  CLA 103 
+CLA H43  H43   H  0  1 N N N N N N 74.770 133.644 68.407 -5.864  -2.452 -4.824 H43  CLA 104 
+CLA H51  H51   H  0  1 N N N N N N 71.490 133.382 66.338 -5.253  -1.833 -1.501 H51  CLA 105 
+CLA H52  H52   H  0  1 N N N N N N 72.295 132.012 67.176 -6.344  -2.548 -2.382 H52  CLA 106 
+CLA H61  H61   H  0  1 N N N N N N 69.874 133.544 68.218 -7.856  -0.894 -2.063 H61  CLA 107 
+CLA H62  H62   H  0  1 N N N N N N 69.822 131.965 67.363 -6.761  0.107  -1.505 H62  CLA 108 
+CLA H71  H71   H  0  1 N N N N N N 70.678 130.809 69.145 -6.638  -1.073 0.512  H71  CLA 109 
+CLA H72  H72   H  0  1 N N N N N N 71.557 132.235 69.793 -7.609  -2.188 -0.047 H72  CLA 110 
+CLA H8   H8    H  0  1 N N N N N N 69.155 133.208 70.234 -9.220  -0.234 -0.238 H8   CLA 111 
+CLA H91  H91   H  0  1 N N N N N N 69.061 132.073 72.437 -9.012  1.359  1.505  H91  CLA 112 
+CLA H92  H92   H  0  1 N N N N N N 70.210 130.826 71.844 -7.752  1.432  0.546  H92  CLA 113 
+CLA H93  H93   H  0  1 N N N N N N 70.745 132.532 72.012 -7.638  0.707  1.952  H93  CLA 114 
+CLA H101 H101  H  0  0 N N N N N N 68.469 130.951 68.894 -9.246  -1.200 2.409  H101 CLA 115 
+CLA H102 H102  H  0  0 N N N N N N 68.345 130.382 70.593 -9.452  -2.262 1.256  H102 CLA 116 
+CLA H111 H111  H  0  0 N N N N N N 66.548 131.871 71.061 -11.394 -1.264 0.542  H111 CLA 117 
+CLA H112 H112  H  0  0 N N N N N N 66.830 132.813 69.558 -11.153 0.005  1.447  H112 CLA 118 
+CLA H121 H121  H  0  0 N N N N N N 65.835 131.246 68.251 -11.443 -1.643 3.345  H121 CLA 119 
+CLA H122 H122  H  0  0 N N N N N N 66.747 129.918 69.045 -12.160 -2.512 2.235  H122 CLA 120 
+CLA H13  H13   H  0  1 N N N N N N 64.485 129.335 69.185 -13.520 -0.403 1.905  H13  CLA 121 
+CLA H141 H141  H  0  0 N N N N N N 62.702 130.792 70.104 -13.939 0.817  3.889  H141 CLA 122 
+CLA H142 H142  H  0  0 N N N N N N 63.886 132.134 70.256 -12.412 0.931  3.479  H142 CLA 123 
+CLA H143 H143  H  0  0 N N N N N N 63.456 131.495 68.633 -12.846 -0.040 4.655  H143 CLA 124 
+CLA H151 H151  H  0  0 N N N N N N 65.359 130.593 71.819 -14.870 -1.455 4.011  H151 CLA 125 
+CLA H152 H152  H  0  0 N N N N N N 63.988 129.445 71.642 -14.224 -2.658 3.216  H152 CLA 126 
+CLA H161 H161  H  0  0 N N N N N N 66.853 128.765 70.936 -15.321 -1.935 1.239  H161 CLA 127 
+CLA H162 H162  H  0  0 N N N N N N 66.136 128.516 72.564 -15.973 -0.740 2.035  H162 CLA 128 
+CLA H171 H171  H  0  0 N N N N N N 64.324 127.293 70.862 -16.575 -3.407 2.796  H171 CLA 129 
+CLA H172 H172  H  0  0 N N N N N N 65.919 126.922 70.122 -17.320 -2.779 1.558  H172 CLA 130 
+CLA H18  H18   H  0  1 N N N N N N 66.549 126.361 72.660 -17.674 -1.065 3.640  H18  CLA 131 
+CLA H191 H191  H  0  0 N N N N N N 64.686 125.218 73.807 -19.972 -1.361 3.283  H191 CLA 132 
+CLA H192 H192  H  0  0 N N N N N N 64.360 126.973 73.602 -19.685 -2.625 2.366  H192 CLA 133 
+CLA H193 H193  H  0  0 N N N N N N 63.556 125.778 72.528 -19.225 -1.181 1.897  H193 CLA 134 
+CLA H201 H201  H  0  0 N N N N N N 66.005 124.001 72.159 -17.291 -2.816 5.135  H201 CLA 135 
+CLA H202 H202  H  0  0 N N N N N N 64.947 124.540 70.812 -18.435 -3.682 4.458  H202 CLA 136 
+CLA H203 H203  H  0  0 N N N N N N 66.716 124.847 70.743 -18.803 -2.351 5.241  H203 CLA 137 
+# 
+loop_
+_chem_comp_bond.comp_id 
+_chem_comp_bond.atom_id_1 
+_chem_comp_bond.atom_id_2 
+_chem_comp_bond.value_order 
+_chem_comp_bond.pdbx_aromatic_flag 
+_chem_comp_bond.pdbx_stereo_config 
+_chem_comp_bond.pdbx_ordinal 
+_chem_comp_bond.pdbx_metal_coordination_flag 
+_chem_comp_bond.pdbx_metal_pi_flag 
+CLA MG  NA   SING N N 1   Y N 
+CLA MG  NB   SING N N 2   Y N 
+CLA MG  NC   SING N N 3   Y N 
+CLA MG  ND   SING N N 4   Y N 
+CLA CHA C1A  SING N N 5   N N 
+CLA CHA C4D  DOUB N N 6   N N 
+CLA CHA CBD  SING N N 7   N N 
+CLA CHB C4A  DOUB N N 8   N N 
+CLA CHB C1B  SING N N 9   N N 
+CLA CHB HHB  SING N N 10  N N 
+CLA CHC C4B  SING N N 11  N N 
+CLA CHC C1C  DOUB N N 12  N N 
+CLA CHC HHC  SING N N 13  N N 
+CLA CHD C4C  SING N N 14  N N 
+CLA CHD C1D  DOUB N N 15  N N 
+CLA CHD HHD  SING N N 16  N N 
+CLA NA  C1A  DOUB N N 17  N N 
+CLA NA  C4A  SING N N 18  N N 
+CLA C1A C2A  SING N N 19  N N 
+CLA C2A C3A  SING N N 20  N N 
+CLA C2A CAA  SING N N 21  N N 
+CLA C2A H2A  SING N N 22  N N 
+CLA C3A C4A  SING N N 23  N N 
+CLA C3A CMA  SING N N 24  N N 
+CLA C3A H3A  SING N N 25  N N 
+CLA CMA HMA1 SING N N 26  N N 
+CLA CMA HMA2 SING N N 27  N N 
+CLA CMA HMA3 SING N N 28  N N 
+CLA CAA CBA  SING N N 29  N N 
+CLA CAA HAA1 SING N N 30  N N 
+CLA CAA HAA2 SING N N 31  N N 
+CLA CBA CGA  SING N N 32  N N 
+CLA CBA HBA1 SING N N 33  N N 
+CLA CBA HBA2 SING N N 34  N N 
+CLA CGA O1A  DOUB N N 35  N N 
+CLA CGA O2A  SING N N 36  N N 
+CLA O2A C1   SING N N 37  N N 
+CLA NB  C1B  SING Y N 38  N N 
+CLA NB  C4B  SING Y N 39  N N 
+CLA C1B C2B  DOUB Y N 40  N N 
+CLA C2B C3B  SING Y N 41  N N 
+CLA C2B CMB  SING N N 42  N N 
+CLA C3B C4B  DOUB Y N 43  N N 
+CLA C3B CAB  SING N N 44  N N 
+CLA CMB HMB1 SING N N 45  N N 
+CLA CMB HMB2 SING N N 46  N N 
+CLA CMB HMB3 SING N N 47  N N 
+CLA CAB CBB  DOUB N N 48  N N 
+CLA CAB HAB  SING N N 49  N N 
+CLA CBB HBB1 SING N N 50  N N 
+CLA CBB HBB2 SING N N 51  N N 
+CLA NC  C1C  SING N N 52  N N 
+CLA NC  C4C  DOUB N N 53  N N 
+CLA C1C C2C  SING N N 54  N N 
+CLA C2C C3C  DOUB N N 55  N N 
+CLA C2C CMC  SING N N 56  N N 
+CLA C3C C4C  SING N N 57  N N 
+CLA C3C CAC  SING N N 58  N N 
+CLA CMC HMC1 SING N N 59  N N 
+CLA CMC HMC2 SING N N 60  N N 
+CLA CMC HMC3 SING N N 61  N N 
+CLA CAC CBC  SING N N 62  N N 
+CLA CAC HAC1 SING N N 63  N N 
+CLA CAC HAC2 SING N N 64  N N 
+CLA CBC HBC1 SING N N 65  N N 
+CLA CBC HBC2 SING N N 66  N N 
+CLA CBC HBC3 SING N N 67  N N 
+CLA ND  C1D  SING N N 68  N N 
+CLA ND  C4D  SING N N 69  N N 
+CLA C1D C2D  SING N N 70  N N 
+CLA C2D C3D  DOUB N N 71  N N 
+CLA C2D CMD  SING N N 72  N N 
+CLA C3D C4D  SING N N 73  N N 
+CLA C3D CAD  SING N N 74  N N 
+CLA CMD HMD1 SING N N 75  N N 
+CLA CMD HMD2 SING N N 76  N N 
+CLA CMD HMD3 SING N N 77  N N 
+CLA CAD OBD  DOUB N N 78  N N 
+CLA CAD CBD  SING N N 79  N N 
+CLA CBD CGD  SING N N 80  N N 
+CLA CBD HBD  SING N N 81  N N 
+CLA CGD O1D  DOUB N N 82  N N 
+CLA CGD O2D  SING N N 83  N N 
+CLA O2D CED  SING N N 84  N N 
+CLA CED HED1 SING N N 85  N N 
+CLA CED HED2 SING N N 86  N N 
+CLA CED HED3 SING N N 87  N N 
+CLA C1  C2   SING N N 88  N N 
+CLA C1  H11  SING N N 89  N N 
+CLA C1  H12  SING N N 90  N N 
+CLA C2  C3   DOUB N E 91  N N 
+CLA C2  H2   SING N N 92  N N 
+CLA C3  C4   SING N N 93  N N 
+CLA C3  C5   SING N N 94  N N 
+CLA C4  H41  SING N N 95  N N 
+CLA C4  H42  SING N N 96  N N 
+CLA C4  H43  SING N N 97  N N 
+CLA C5  C6   SING N N 98  N N 
+CLA C5  H51  SING N N 99  N N 
+CLA C5  H52  SING N N 100 N N 
+CLA C6  C7   SING N N 101 N N 
+CLA C6  H61  SING N N 102 N N 
+CLA C6  H62  SING N N 103 N N 
+CLA C7  C8   SING N N 104 N N 
+CLA C7  H71  SING N N 105 N N 
+CLA C7  H72  SING N N 106 N N 
+CLA C8  C9   SING N N 107 N N 
+CLA C8  C10  SING N N 108 N N 
+CLA C8  H8   SING N N 109 N N 
+CLA C9  H91  SING N N 110 N N 
+CLA C9  H92  SING N N 111 N N 
+CLA C9  H93  SING N N 112 N N 
+CLA C10 C11  SING N N 113 N N 
+CLA C10 H101 SING N N 114 N N 
+CLA C10 H102 SING N N 115 N N 
+CLA C11 C12  SING N N 116 N N 
+CLA C11 H111 SING N N 117 N N 
+CLA C11 H112 SING N N 118 N N 
+CLA C12 C13  SING N N 119 N N 
+CLA C12 H121 SING N N 120 N N 
+CLA C12 H122 SING N N 121 N N 
+CLA C13 C14  SING N N 122 N N 
+CLA C13 C15  SING N N 123 N N 
+CLA C13 H13  SING N N 124 N N 
+CLA C14 H141 SING N N 125 N N 
+CLA C14 H142 SING N N 126 N N 
+CLA C14 H143 SING N N 127 N N 
+CLA C15 C16  SING N N 128 N N 
+CLA C15 H151 SING N N 129 N N 
+CLA C15 H152 SING N N 130 N N 
+CLA C16 C17  SING N N 131 N N 
+CLA C16 H161 SING N N 132 N N 
+CLA C16 H162 SING N N 133 N N 
+CLA C17 C18  SING N N 134 N N 
+CLA C17 H171 SING N N 135 N N 
+CLA C17 H172 SING N N 136 N N 
+CLA C18 C19  SING N N 137 N N 
+CLA C18 C20  SING N N 138 N N 
+CLA C18 H18  SING N N 139 N N 
+CLA C19 H191 SING N N 140 N N 
+CLA C19 H192 SING N N 141 N N 
+CLA C19 H193 SING N N 142 N N 
+CLA C20 H201 SING N N 143 N N 
+CLA C20 H202 SING N N 144 N N 
+CLA C20 H203 SING N N 145 N N 
+# 
+loop_
+_pdbx_chem_comp_descriptor.comp_id 
+_pdbx_chem_comp_descriptor.type 
+_pdbx_chem_comp_descriptor.program 
+_pdbx_chem_comp_descriptor.program_version 
+_pdbx_chem_comp_descriptor.descriptor 
+CLA SMILES           ACDLabs              14.52   "O=C(OC)C1C(=O)C2=C(C)C3=CC=4C(CC)=C(C)C5=Cc6c(C=C)c(C)c7C=C8C(C)C(CCC(=O)OC\C=C(/C)CCCC(C)CCCC(C)CCCC(C)C)C=9C1=C2N3[Mg](n76)(N5=4)N8=9"                                                                                                                                                                                                            
+CLA InChI            InChI                1.06    "InChI=1S/C55H73N4O5.Mg/c1-13-39-35(8)42-28-44-37(10)41(24-25-48(60)64-27-26-34(7)23-17-22-33(6)21-16-20-32(5)19-15-18-31(3)4)52(58-44)50-51(55(62)63-12)54(61)49-38(11)45(59-53(49)50)30-47-40(14-2)36(9)43(57-47)29-46(39)56-42;/h13,26,28-33,37,41,51H,1,14-25,27H2,2-12H3,(H-,56,57,58,59,61);/q-1;+2/p-1/b34-26+;/t32-,33-,37+,41+,51-;/m1./s1" 
+CLA InChIKey         InChI                1.06    ATNHDLDRLWWWCB-AENOIHSZSA-M                                                                                                                                                                                                                                                                                                                          
+CLA SMILES_CANONICAL CACTVS               3.385   "CCC1=C(C)C2=Cc3n4[Mg][N@@]5C(=CC1=N2)C(=C6C(=O)[C@H](C(=O)OC)C(=C56)C7=NC(=Cc4c(C)c3C=C)[C@@H](C)[C@@H]7CCC(=O)OC\C=C(/C)CCC[C@H](C)CCC[C@H](C)CCCC(C)C)C"                                                                                                                                                                                          
+CLA SMILES           CACTVS               3.385   "CCC1=C(C)C2=Cc3n4[Mg][N]5C(=CC1=N2)C(=C6C(=O)[CH](C(=O)OC)C(=C56)C7=NC(=Cc4c(C)c3C=C)[CH](C)[CH]7CCC(=O)OCC=C(C)CCC[CH](C)CCC[CH](C)CCCC(C)C)C"                                                                                                                                                                                                     
+CLA SMILES_CANONICAL "OpenEye OEToolkits" 3.1.0.0 "CCC1=C(C2=Cc3c(c(c4n3[Mg]56[N]2=C1C=C7N5C8=C([C@H](C(=O)C8=C7C)C(=O)OC)C9=[N]6C(=C4)[C@H]([C@@H]9CCC(=O)OC/C=C(\C)/CCC[C@H](C)CCC[C@H](C)CCCC(C)C)C)C)C=C)C"                                                                                                                                                                                        
+CLA SMILES           "OpenEye OEToolkits" 3.1.0.0 "CCC1=C(C2=Cc3c(c(c4n3[Mg]56[N]2=C1C=C7N5C8=C(C(C(=O)C8=C7C)C(=O)OC)C9=[N]6C(=C4)C(C9CCC(=O)OCC=C(C)CCCC(C)CCCC(C)CCCC(C)C)C)C)C=C)C"                                                                                                                                                                                                                
+# 
+loop_
+_pdbx_chem_comp_identifier.comp_id 
+_pdbx_chem_comp_identifier.type 
+_pdbx_chem_comp_identifier.program 
+_pdbx_chem_comp_identifier.program_version 
+_pdbx_chem_comp_identifier.identifier 
+CLA "SYSTEMATIC NAME" ACDLabs              14.52   "(T-4-S)-[(3S,4S,21R,23R,25R)-9-ethenyl-14-ethyl-21-(methoxycarbonyl)-4,8,13,18-tetramethyl-20-oxo-3-(3-oxo-3-{[(2E,7R,11R)-3,7,11,15-tetramethylhexadec-2-en-1-yl]oxy}propyl)-23,25-didehydrophorbine-23,25-diido-kappa~4~N~23~,N~24~,N~25~,N~26~]magnesium"                                                                                                                    
+CLA "SYSTEMATIC NAME" "OpenEye OEToolkits" 3.1.0.0 "methyl (5~{R},22~{S},23~{S})-17-ethenyl-12-ethyl-8,13,18,22-tetramethyl-6-oxidanylidene-23-[3-oxidanylidene-3-[(~{E},7~{R},11~{R})-3,7,11,15-tetramethylhexadec-2-enoxy]propyl]-2,25$l^{4},26$l^{4},27-tetraza-1$l^{4}-magnesanonacyclo[12.11.1.1^{1,16}.0^{2,9}.0^{3,7}.0^{4,24}.0^{11,26}.0^{21,25}.0^{19,27}]heptacosa-3,7,9,11(26),12,14,16,18,20,24-decaene-5-carboxylate" 
+# 
+loop_
+_pdbx_chem_comp_atom_coordination.geometry_id 
+_pdbx_chem_comp_atom_coordination.comp_id 
+_pdbx_chem_comp_atom_coordination.atom_id 
+_pdbx_chem_comp_atom_coordination.number 
+_pdbx_chem_comp_atom_coordination.geometry_calculated 
+_pdbx_chem_comp_atom_coordination.geometry_generic 
+_pdbx_chem_comp_atom_coordination.geometry_abbr 
+_pdbx_chem_comp_atom_coordination.provenance 
+1 CLA MG 5 square-pyramid   "square pyramidal" SQP MetalCoord 
+1 CLA MG 5 "square pyramid" "square pyramidal" SPY FindGeo    
+# 
+loop_
+_pdbx_chem_comp_atom_coordination_sphere.id 
+_pdbx_chem_comp_atom_coordination_sphere.geometry_id 
+_pdbx_chem_comp_atom_coordination_sphere.comp_id 
+_pdbx_chem_comp_atom_coordination_sphere.atom_id 
+_pdbx_chem_comp_atom_coordination_sphere.descriptor 
+_pdbx_chem_comp_atom_coordination_sphere.provenance 
+1 1 CLA MG "@SQP{Mg,N,N,N,N,O}" MetalCoord 
+2 1 CLA MG "@SQP{Mg,N,N,N,N,N}" MetalCoord 
+3 1 CLA MG "@SQP{Mg,N,N,N,N,C}" MetalCoord 
+4 1 CLA MG "@SQP{Mg,N,N,N,N,S}" MetalCoord 
+5 1 CLA MG "@SQP{Mg,C,N,N,N,N}" MetalCoord 
+6 1 CLA MG "@SQP{Mg,N,N,N,N,P}" MetalCoord 
+# 
+loop_
+_pdbx_chem_comp_pcm.pcm_id 
+_pdbx_chem_comp_pcm.comp_id 
+_pdbx_chem_comp_pcm.modified_residue_id 
+_pdbx_chem_comp_pcm.type 
+_pdbx_chem_comp_pcm.category 
+_pdbx_chem_comp_pcm.polypeptide_position 
+_pdbx_chem_comp_pcm.comp_id_linking_atom 
+_pdbx_chem_comp_pcm.modified_residue_id_linking_atom 
+_pdbx_chem_comp_pcm.uniprot_specific_ptm_accession 
+_pdbx_chem_comp_pcm.uniprot_generic_ptm_accession 
+_pdbx_chem_comp_pcm.position 
+1  CLA ALA None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+2  CLA ALA None "Metal coordination" "Any position" MG N   ? ? "Amino-acid backbone"   
+3  CLA ARG None "Metal coordination" "Any position" MG NH1 ? ? "Amino-acid side chain" 
+4  CLA ARG None "Metal coordination" "Any position" MG NH2 ? ? "Amino-acid side chain" 
+5  CLA ARG None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+6  CLA ARG None "Metal coordination" "Any position" MG NE  ? ? "Amino-acid side chain" 
+7  CLA ASN None "Metal coordination" "Any position" MG OD1 ? ? "Amino-acid side chain" 
+8  CLA ASN None "Metal coordination" "Any position" MG ND2 ? ? "Amino-acid side chain" 
+9  CLA ASN None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+10 CLA ASP None "Metal coordination" "Any position" MG OD2 ? ? "Amino-acid side chain" 
+11 CLA ASP None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+12 CLA ASP None "Metal coordination" "Any position" MG OD1 ? ? "Amino-acid side chain" 
+13 CLA CYS None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+14 CLA GLN None "Metal coordination" "Any position" MG OE1 ? ? "Amino-acid side chain" 
+15 CLA GLN None "Metal coordination" "Any position" MG NE2 ? ? "Amino-acid side chain" 
+16 CLA GLU None "Metal coordination" "Any position" MG OE2 ? ? "Amino-acid side chain" 
+17 CLA GLU None "Metal coordination" "Any position" MG OE1 ? ? "Amino-acid side chain" 
+18 CLA GLU None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+19 CLA GLY None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+20 CLA GLY None "Metal coordination" "Any position" MG N   ? ? "Amino-acid backbone"   
+21 CLA HIS None "Metal coordination" "Any position" MG NE2 ? ? "Amino-acid side chain" 
+22 CLA HIS None "Metal coordination" "Any position" MG ND1 ? ? "Amino-acid side chain" 
+23 CLA ILE None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+24 CLA LEU None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+25 CLA LEU None "Metal coordination" "Any position" MG N   ? ? "Amino-acid backbone"   
+26 CLA LYS None "Metal coordination" "Any position" MG NZ  ? ? "Amino-acid side chain" 
+27 CLA LYS None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+28 CLA MET None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+29 CLA MET None "Metal coordination" "Any position" MG SD  ? ? "Amino-acid side chain" 
+30 CLA PHE None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+31 CLA PHE None "Metal coordination" "Any position" MG N   ? ? "Amino-acid backbone"   
+32 CLA PRO None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+33 CLA SER None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+34 CLA SER None "Metal coordination" "Any position" MG OG  ? ? "Amino-acid side chain" 
+35 CLA THR None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+36 CLA THR None "Metal coordination" "Any position" MG OG1 ? ? "Amino-acid side chain" 
+37 CLA TRP None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+38 CLA TRP None "Metal coordination" "Any position" MG NE1 ? ? "Amino-acid side chain" 
+39 CLA TYR None "Metal coordination" "Any position" MG OH  ? ? "Amino-acid side chain" 
+40 CLA TYR None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+41 CLA UNK None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+42 CLA VAL None "Metal coordination" "Any position" MG O   ? ? "Amino-acid backbone"   
+# 
+loop_
+_pdbx_chem_comp_audit.comp_id 
+_pdbx_chem_comp_audit.action_type 
+_pdbx_chem_comp_audit.date 
+_pdbx_chem_comp_audit.processing_site 
+CLA "Create component"     1999-07-08 ?    
+CLA "Other modification"   2012-07-18 RCSB 
+CLA "Other modification"   2021-06-25 RCSB 
+CLA "Modify aromatic_flag" 2026-05-08 RCSB 
+CLA "Other modification"   2026-07-17 RCSB 
+CLA "Other modification"   2026-07-31 RCSB 
+CLA "Other modification"   2026-09-01 RCSB 
+CLA "Other modification"   2026-09-16 RCSB 
+# 

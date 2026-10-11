@@ -14,3 +14,5 @@ crates/kekule/tests/fixtures/cip/*.sdf binary
 crates/kekule/tests/fixtures/perception/*.sdf binary
 crates/kekule/src/structure/solvation/data/*.bin binary
 crates/kekule-openff-ash/data/** binary
+# Bundled Chemical Component Dictionary entries keep their exact bytes.
+crates/kekule/data/components/*.cif -text
