@@ -693,7 +693,7 @@ fn trajectories_reinterpret_as_ensembles_without_copying_positions() {
 }
 
 #[test]
-fn site_parameters_follow_models_and_members_but_never_frames() {
+fn occupancies_and_b_factors_follow_models_and_members_but_never_frames() {
     let (mut model, _, _) = model_fixture();
     model.set_occupancy(ATOM0, Some(0.5)).unwrap();
     model
@@ -701,7 +701,7 @@ fn site_parameters_follow_models_and_members_but_never_frames() {
         .unwrap();
     model.set_cell(Some(cell()));
 
-    // Models become members with their site parameters, cell, and rows.
+    // Models become members with their occupancies, B-factors, cell, and rows.
     let ensemble = Ensemble::from_models([model.clone()]).unwrap();
     let member = ensemble.get(0).unwrap();
     assert_eq!(member.occupancies(), Some([Some(0.5), None].as_slice()));
@@ -713,7 +713,7 @@ fn site_parameters_follow_models_and_members_but_never_frames() {
     assert_eq!(member.as_model_view().occupancy(ATOM0), Ok(Some(0.5)));
     assert_eq!(member.to_model(), model);
 
-    // Frame views report no site parameters but still check atom indices.
+    // Frame views report no occupancies or B-factors but still check indices.
     let mut frame = TrajectoryFrame::new(model.positions().clone()).with_cell(cell());
     frame
         .properties_mut()
@@ -732,7 +732,7 @@ fn site_parameters_follow_models_and_members_but_never_frames() {
     );
     assert_eq!(view.to_model().occupancies(), None);
 
-    // Frames reinterpreted as members keep their cell and rows, without sites.
+    // Frames reinterpreted as members keep their cell and rows only.
     let ensemble = trajectory.into_ensemble();
     let member = ensemble.get(0).unwrap();
     assert_eq!(member.occupancies(), None);

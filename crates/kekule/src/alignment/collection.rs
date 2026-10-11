@@ -1,10 +1,9 @@
 //! Superposition and RMSD over every member of an [`Ensemble`] or frame of a
 //! [`Trajectory`].
 
-use crate::structure::{
-    AsModelView, Ensemble, ModelView, Realization, RealizationStore, Trajectory,
-};
-use crate::topology::TopologyAtomIndex;
+use crate::geometry::RigidTransform;
+use crate::structure::{AsModelView, Ensemble, ModelView, Trajectory};
+use crate::topology::{Topology, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 use super::{
@@ -80,267 +79,376 @@ impl SuperpositionReport {
 
 type Pairs = Vec<(TopologyAtomIndex, TopologyAtomIndex)>;
 
-impl<P: Realization> RealizationStore<P> {
+/// Fits every item onto the reference without changing anything.
+///
+/// `items` are the borrowed views of one collection over `topology`, in
+/// collection order. The caller applies the returned alignments.
+fn fit_items<'a>(
+    topology: &Topology,
+    items: &[ModelView<'a>],
+    reference: Reference<'a>,
+    atoms: FitAtoms<'a>,
+    options: AlignmentOptions<'_>,
+) -> Result<SuperpositionReport, AlignmentError> {
+    let reference_index = match reference {
+        Reference::Index(index) => Some(index),
+        Reference::View(_) => None,
+    };
+    let reference = reference_view(items, reference)?;
+    let pairs = item_pairs(topology, items, reference, atoms)?;
+    check_fit_count(pairs.len())?;
+    let weights = NormalizedWeights::new(options.weighting, pairs.len())?;
+    let alignments = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            kabsch_pairs(*item, reference, &pairs, weights, options.periodic_policy)
+                .map_err(|source| item_error(index, source))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(SuperpositionReport {
+        reference: reference_index,
+        alignments,
+    })
+}
+
+/// Direct RMSD from every item to the reference.
+fn item_rmsd<'a>(
+    topology: &Topology,
+    items: &[ModelView<'a>],
+    reference: Reference<'a>,
+    atoms: FitAtoms<'a>,
+    options: AlignmentOptions<'_>,
+) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+    let reference = reference_view(items, reference)?;
+    let pairs = item_pairs(topology, items, reference, atoms)?;
+    check_measurement_count(pairs.len())?;
+    let weights = NormalizedWeights::new(options.weighting, pairs.len())?;
+    let values = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            measure_pairs(
+                *item,
+                reference,
+                &pairs,
+                weights,
+                options.periodic_policy,
+                None,
+            )
+            .map_err(|source| item_error(index, source))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
+}
+
+/// RMSD over `measurement` pairs of every item after fitting it on `fit`.
+fn item_aligned_rmsd<'a>(
+    topology: &Topology,
+    items: &[ModelView<'a>],
+    reference: Reference<'a>,
+    fit: FitAtoms<'a>,
+    measurement: FitAtoms<'a>,
+    options: AlignedRmsdOptions<'_>,
+) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+    let reference = reference_view(items, reference)?;
+    let fit = item_pairs(topology, items, reference, fit)?;
+    let measurement = item_pairs(topology, items, reference, measurement)?;
+    check_fit_count(fit.len())?;
+    check_measurement_count(measurement.len())?;
+    let fit_weights = NormalizedWeights::new(options.fit.weighting, fit.len())?;
+    let measurement_weights =
+        NormalizedWeights::new(options.measurement_weighting, measurement.len())?;
+    let policy = options.fit.periodic_policy;
+    let measure = |moving: ModelView<'_>| {
+        let alignment = kabsch_pairs(moving, reference, &fit, fit_weights, policy)?;
+        measure_pairs(
+            moving,
+            reference,
+            &measurement,
+            measurement_weights,
+            policy,
+            Some(alignment.transform()),
+        )
+    };
+    let values = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| measure(*item).map_err(|source| item_error(index, source)))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
+}
+
+fn reference_view<'a>(
+    items: &[ModelView<'a>],
+    reference: Reference<'a>,
+) -> Result<ModelView<'a>, AlignmentError> {
+    match reference {
+        Reference::Index(index) => {
+            items
+                .get(index)
+                .copied()
+                .ok_or(AlignmentError::ReferenceOutOfRange {
+                    index,
+                    len: items.len(),
+                })
+        }
+        Reference::View(view) => Ok(view),
+    }
+}
+
+/// Validates the pairing once against the collection topology.
+fn item_pairs(
+    topology: &Topology,
+    items: &[ModelView<'_>],
+    reference: ModelView<'_>,
+    atoms: FitAtoms<'_>,
+) -> Result<Pairs, AlignmentError> {
+    match items.first() {
+        Some(item) => atoms.pairs(*item, reference),
+        // Without items, validate against the collection topology itself.
+        None => match atoms {
+            FitAtoms::Selection(selection) => {
+                if !topology.shares_layout(reference.topology()) {
+                    return Err(AlignmentError::TopologyMismatch);
+                }
+                if !selection.topology().shares_layout(topology) {
+                    return Err(AlignmentError::SelectionTopologyMismatch);
+                }
+                Ok(selection
+                    .indices()
+                    .iter()
+                    .map(|index| (*index, *index))
+                    .collect())
+            }
+            FitAtoms::Correspondence(correspondence) => {
+                correspondence
+                    .ensure_compatible(topology, reference.topology())
+                    .map_err(AlignmentError::Correspondence)?;
+                Ok(correspondence.index_pairs().to_vec())
+            }
+        },
+    }
+}
+
+fn transforms(report: &SuperpositionReport) -> Vec<RigidTransform> {
+    report
+        .alignments
+        .iter()
+        .map(RigidAlignment::transform)
+        .collect()
+}
+
+fn item_error(index: usize, source: AlignmentError) -> AlignmentError {
+    AlignmentError::Item {
+        index,
+        source: Box::new(source),
+    }
+}
+
+impl Ensemble {
+    /// Fits every member onto `reference` and applies each transform in place.
+    ///
+    /// `reference` is an index into this ensemble or any borrowed view
+    /// (`&model`, `&other.get(0).unwrap()`, ...); `atoms` is an
+    /// [`AtomSelection`](crate::topology::AtomSelection) of this layout or an
+    /// [`AtomCorrespondence`](super::AtomCorrespondence) to an independent
+    /// reference. Positions move and cells rotate; all other state is kept.
+    /// The fit is transactional: on failure nothing changes. Coordinates are
+    /// fitted as stored; no imaging or unwrapping is performed. Clone first to
+    /// keep the original.
+    pub fn superpose<'a>(
+        &mut self,
+        reference: impl Into<Reference<'a>>,
+        atoms: impl Into<FitAtoms<'a>>,
+    ) -> Result<SuperpositionReport, AlignmentError> {
+        self.superpose_with_options(reference, atoms, AlignmentOptions::default())
+    }
+
     /// [`Self::superpose`] with explicit fit weights and periodic policy.
-    pub(crate) fn superpose_with_options<'a>(
+    pub fn superpose_with_options<'a>(
         &mut self,
         reference: impl Into<Reference<'a>>,
         atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'_>,
     ) -> Result<SuperpositionReport, AlignmentError> {
-        let reference = reference.into();
-        let reference_index = match reference {
-            Reference::Index(index) => Some(index),
-            Reference::View(_) => None,
+        let report = {
+            let items = self.iter().map(|m| m.as_model_view()).collect::<Vec<_>>();
+            fit_items(
+                self.topology(),
+                &items,
+                reference.into(),
+                atoms.into(),
+                options,
+            )?
         };
-        let alignments = {
-            let reference = self.reference_view(reference)?;
-            let atoms = atoms.into();
-            let pairs = self.pairs(reference, atoms)?;
-            check_fit_count(pairs.len())?;
-            let weights = NormalizedWeights::new(options.weighting, pairs.len())?;
-            self.iter()
-                .enumerate()
-                .map(|(index, item)| {
-                    kabsch_pairs(
-                        item.as_model_view(),
-                        reference,
-                        &pairs,
-                        weights,
-                        options.periodic_policy,
-                    )
-                    .map_err(|source| item_error(index, source))
-                })
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        let transforms = alignments
-            .iter()
-            .map(RigidAlignment::transform)
-            .collect::<Vec<_>>();
-        self.transform_items(&transforms)
+        self.transform_members(&transforms(&report))
             .map_err(AlignmentError::Transform)?;
-        Ok(SuperpositionReport {
-            reference: reference_index,
-            alignments,
-        })
+        Ok(report)
+    }
+
+    /// Direct RMSD from every member to `reference`, measured as stored.
+    ///
+    /// Never fits or changes the ensemble. Values are in
+    /// [`CANONICAL_LENGTH_UNIT`], one per member in order; weight them by the
+    /// member weights for ensemble statistics.
+    pub fn rmsd<'a>(
+        &self,
+        reference: impl Into<Reference<'a>>,
+        atoms: impl Into<FitAtoms<'a>>,
+    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+        self.rmsd_with_options(reference, atoms, AlignmentOptions::default())
     }
 
     /// [`Self::rmsd`] with explicit weights and periodic policy.
-    pub(crate) fn rmsd_with_options<'a>(
+    pub fn rmsd_with_options<'a>(
         &self,
         reference: impl Into<Reference<'a>>,
         atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'_>,
     ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-        let reference = self.reference_view(reference.into())?;
-        let pairs = self.pairs(reference, atoms.into())?;
-        check_measurement_count(pairs.len())?;
-        let weights = NormalizedWeights::new(options.weighting, pairs.len())?;
-        let values = self
-            .iter()
-            .enumerate()
-            .map(|(index, item)| {
-                measure_pairs(
-                    item.as_model_view(),
-                    reference,
-                    &pairs,
-                    weights,
-                    options.periodic_policy,
-                    None,
-                )
-                .map_err(|source| item_error(index, source))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
+        let items = self.iter().map(|m| m.as_model_view()).collect::<Vec<_>>();
+        item_rmsd(
+            self.topology(),
+            &items,
+            reference.into(),
+            atoms.into(),
+            options,
+        )
+    }
+
+    /// Fits every member on `fit` pairs and measures RMSD over `measurement`
+    /// pairs, without changing the ensemble or copying coordinates.
+    ///
+    /// For example, fit a protein backbone and measure ligand motion.
+    pub fn aligned_rmsd<'a>(
+        &self,
+        reference: impl Into<Reference<'a>>,
+        fit: impl Into<FitAtoms<'a>>,
+        measurement: impl Into<FitAtoms<'a>>,
+    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+        self.aligned_rmsd_with_options(reference, fit, measurement, AlignedRmsdOptions::default())
     }
 
     /// [`Self::aligned_rmsd`] with separate fit and measurement weights.
-    pub(crate) fn aligned_rmsd_with_options<'a>(
+    pub fn aligned_rmsd_with_options<'a>(
         &self,
         reference: impl Into<Reference<'a>>,
         fit: impl Into<FitAtoms<'a>>,
         measurement: impl Into<FitAtoms<'a>>,
         options: AlignedRmsdOptions<'_>,
     ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-        let reference = self.reference_view(reference.into())?;
-        let fit = self.pairs(reference, fit.into())?;
-        let measurement = self.pairs(reference, measurement.into())?;
-        check_fit_count(fit.len())?;
-        check_measurement_count(measurement.len())?;
-        let fit_weights = NormalizedWeights::new(options.fit.weighting, fit.len())?;
-        let measurement_weights =
-            NormalizedWeights::new(options.measurement_weighting, measurement.len())?;
-        let policy = options.fit.periodic_policy;
-        let measure = |moving: ModelView<'_>| {
-            let alignment = kabsch_pairs(moving, reference, &fit, fit_weights, policy)?;
-            measure_pairs(
-                moving,
-                reference,
-                &measurement,
-                measurement_weights,
-                policy,
-                Some(alignment.transform()),
-            )
+        let items = self.iter().map(|m| m.as_model_view()).collect::<Vec<_>>();
+        item_aligned_rmsd(
+            self.topology(),
+            &items,
+            reference.into(),
+            fit.into(),
+            measurement.into(),
+            options,
+        )
+    }
+}
+
+impl Trajectory {
+    /// Fits every frame onto `reference` and applies each transform in place.
+    ///
+    /// `reference` is an index into this trajectory or any borrowed view
+    /// (`&model`, `&other.get(0).unwrap()`, ...); `atoms` is an
+    /// [`AtomSelection`](crate::topology::AtomSelection) of this layout or an
+    /// [`AtomCorrespondence`](super::AtomCorrespondence) to an independent
+    /// reference. Positions move; cells, velocities, and forces rotate; all
+    /// other state is kept. The fit is transactional: on failure nothing
+    /// changes. Coordinates are fitted as stored; no imaging or unwrapping is
+    /// performed. Clone first to keep the original.
+    pub fn superpose<'a>(
+        &mut self,
+        reference: impl Into<Reference<'a>>,
+        atoms: impl Into<FitAtoms<'a>>,
+    ) -> Result<SuperpositionReport, AlignmentError> {
+        self.superpose_with_options(reference, atoms, AlignmentOptions::default())
+    }
+
+    /// [`Self::superpose`] with explicit fit weights and periodic policy.
+    pub fn superpose_with_options<'a>(
+        &mut self,
+        reference: impl Into<Reference<'a>>,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: AlignmentOptions<'_>,
+    ) -> Result<SuperpositionReport, AlignmentError> {
+        let report = {
+            let items = self.iter().map(|f| f.as_model_view()).collect::<Vec<_>>();
+            fit_items(
+                self.topology(),
+                &items,
+                reference.into(),
+                atoms.into(),
+                options,
+            )?
         };
-        let values = self
-            .iter()
-            .enumerate()
-            .map(|(index, item)| {
-                measure(item.as_model_view()).map_err(|source| item_error(index, source))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
+        self.transform_frames(&transforms(&report))
+            .map_err(AlignmentError::Transform)?;
+        Ok(report)
     }
 
-    fn reference_view<'s>(
-        &'s self,
-        reference: Reference<'s>,
-    ) -> Result<ModelView<'s>, AlignmentError> {
-        match reference {
-            Reference::Index(index) => self.get(index).map(|item| item.as_model_view()).ok_or(
-                AlignmentError::ReferenceOutOfRange {
-                    index,
-                    len: self.len(),
-                },
-            ),
-            Reference::View(view) => Ok(view),
-        }
-    }
-
-    /// Validates the pairing once against the collection topology.
-    fn pairs(
+    /// Direct RMSD from every frame to `reference`, measured as stored.
+    ///
+    /// Never fits or changes the trajectory. Values are in
+    /// [`CANONICAL_LENGTH_UNIT`], one per frame in temporal order.
+    pub fn rmsd<'a>(
         &self,
-        reference: ModelView<'_>,
-        atoms: FitAtoms<'_>,
-    ) -> Result<Pairs, AlignmentError> {
-        match self.iter().next() {
-            Some(item) => atoms.pairs(item.as_model_view(), reference),
-            // Without items, validate against the collection topology itself.
-            None => match atoms {
-                FitAtoms::Selection(selection) => {
-                    if !self.topology().shares_layout(reference.topology()) {
-                        return Err(AlignmentError::TopologyMismatch);
-                    }
-                    if !selection.topology().shares_layout(self.topology()) {
-                        return Err(AlignmentError::SelectionTopologyMismatch);
-                    }
-                    Ok(selection
-                        .indices()
-                        .iter()
-                        .map(|index| (*index, *index))
-                        .collect())
-                }
-                FitAtoms::Correspondence(correspondence) => {
-                    correspondence
-                        .ensure_compatible(self.topology(), reference.topology())
-                        .map_err(AlignmentError::Correspondence)?;
-                    Ok(correspondence.index_pairs().to_vec())
-                }
-            },
-        }
+        reference: impl Into<Reference<'a>>,
+        atoms: impl Into<FitAtoms<'a>>,
+    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+        self.rmsd_with_options(reference, atoms, AlignmentOptions::default())
     }
-}
 
-/// Public superposition and RMSD for one collection type, documented with
-/// that type's item name.
-macro_rules! collection_alignment {
-    ($collection:ident, $item:literal) => {
-        impl $collection {
-            #[doc = concat!(
-                "Fits every ", $item, " onto `reference` and applies each transform in place.\n\n",
-                "`reference` is an index into this collection or any borrowed view ",
-                "(`&model`, `&other.get(0).unwrap()`, ...); `atoms` is an ",
-                "[`AtomSelection`](crate::topology::AtomSelection) of this layout or an ",
-                "[`AtomCorrespondence`](super::AtomCorrespondence) to an independent reference. ",
-                "Positions move and cells rotate, as do trajectory velocities and forces; ",
-                "all other state is kept. The fit is transactional: on failure nothing ",
-                "changes. Coordinates are fitted as stored; no imaging or unwrapping is ",
-                "performed. Clone first to keep the original."
-            )]
-            pub fn superpose<'a>(
-                &mut self,
-                reference: impl Into<Reference<'a>>,
-                atoms: impl Into<FitAtoms<'a>>,
-            ) -> Result<SuperpositionReport, AlignmentError> {
-                self.store_mut()
-                    .superpose_with_options(reference, atoms, AlignmentOptions::default())
-            }
+    /// [`Self::rmsd`] with explicit weights and periodic policy.
+    pub fn rmsd_with_options<'a>(
+        &self,
+        reference: impl Into<Reference<'a>>,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: AlignmentOptions<'_>,
+    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+        let items = self.iter().map(|f| f.as_model_view()).collect::<Vec<_>>();
+        item_rmsd(
+            self.topology(),
+            &items,
+            reference.into(),
+            atoms.into(),
+            options,
+        )
+    }
 
-            /// [`Self::superpose`] with explicit fit weights and periodic policy.
-            pub fn superpose_with_options<'a>(
-                &mut self,
-                reference: impl Into<Reference<'a>>,
-                atoms: impl Into<FitAtoms<'a>>,
-                options: AlignmentOptions<'_>,
-            ) -> Result<SuperpositionReport, AlignmentError> {
-                self.store_mut()
-                    .superpose_with_options(reference, atoms, options)
-            }
+    /// Fits every frame on `fit` pairs and measures RMSD over `measurement`
+    /// pairs, without changing the trajectory or copying coordinates.
+    ///
+    /// For example, fit a protein backbone and measure ligand motion.
+    pub fn aligned_rmsd<'a>(
+        &self,
+        reference: impl Into<Reference<'a>>,
+        fit: impl Into<FitAtoms<'a>>,
+        measurement: impl Into<FitAtoms<'a>>,
+    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+        self.aligned_rmsd_with_options(reference, fit, measurement, AlignedRmsdOptions::default())
+    }
 
-            #[doc = concat!(
-                "Direct RMSD from every ", $item, " to `reference`, measured as stored.\n\n",
-                "Never fits or changes the collection. Values are in ",
-                "[`CANONICAL_LENGTH_UNIT`], one per ", $item, " in order."
-            )]
-            pub fn rmsd<'a>(
-                &self,
-                reference: impl Into<Reference<'a>>,
-                atoms: impl Into<FitAtoms<'a>>,
-            ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-                self.store()
-                    .rmsd_with_options(reference, atoms, AlignmentOptions::default())
-            }
-
-            /// [`Self::rmsd`] with explicit weights and periodic policy.
-            pub fn rmsd_with_options<'a>(
-                &self,
-                reference: impl Into<Reference<'a>>,
-                atoms: impl Into<FitAtoms<'a>>,
-                options: AlignmentOptions<'_>,
-            ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-                self.store().rmsd_with_options(reference, atoms, options)
-            }
-
-            #[doc = concat!(
-                "Fits every ", $item, " on `fit` pairs and measures RMSD over `measurement` ",
-                "pairs, without changing the collection or copying coordinates.\n\n",
-                "For example, fit a protein backbone and measure ligand motion."
-            )]
-            pub fn aligned_rmsd<'a>(
-                &self,
-                reference: impl Into<Reference<'a>>,
-                fit: impl Into<FitAtoms<'a>>,
-                measurement: impl Into<FitAtoms<'a>>,
-            ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-                self.store().aligned_rmsd_with_options(
-                    reference,
-                    fit,
-                    measurement,
-                    AlignedRmsdOptions::default(),
-                )
-            }
-
-            /// [`Self::aligned_rmsd`] with separate fit and measurement weights.
-            pub fn aligned_rmsd_with_options<'a>(
-                &self,
-                reference: impl Into<Reference<'a>>,
-                fit: impl Into<FitAtoms<'a>>,
-                measurement: impl Into<FitAtoms<'a>>,
-                options: AlignedRmsdOptions<'_>,
-            ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-                self.store()
-                    .aligned_rmsd_with_options(reference, fit, measurement, options)
-            }
-        }
-    };
-}
-
-collection_alignment!(Ensemble, "member");
-collection_alignment!(Trajectory, "frame");
-
-fn item_error(index: usize, source: AlignmentError) -> AlignmentError {
-    AlignmentError::Item {
-        index,
-        source: Box::new(source),
+    /// [`Self::aligned_rmsd`] with separate fit and measurement weights.
+    pub fn aligned_rmsd_with_options<'a>(
+        &self,
+        reference: impl Into<Reference<'a>>,
+        fit: impl Into<FitAtoms<'a>>,
+        measurement: impl Into<FitAtoms<'a>>,
+        options: AlignedRmsdOptions<'_>,
+    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+        let items = self.iter().map(|f| f.as_model_view()).collect::<Vec<_>>();
+        item_aligned_rmsd(
+            self.topology(),
+            &items,
+            reference.into(),
+            fit.into(),
+            measurement.into(),
+            options,
+        )
     }
 }

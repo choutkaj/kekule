@@ -12,8 +12,7 @@ use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::geometry::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    Ensemble, EnsembleMember, Forces, Model, Positions, Realization, RealizationView, Trajectory,
-    TrajectoryFrame, Velocities,
+    Ensemble, EnsembleMember, Forces, Model, Positions, Trajectory, TrajectoryFrame, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex};
 use kekule::units::{
@@ -85,12 +84,10 @@ fn collinear() -> [Point3; 4] {
     ]
 }
 
-fn payloads<'a, P: Realization + 'a>(
-    collection: impl IntoIterator<Item = RealizationView<'a, P>>,
-) -> Vec<P> {
-    collection
-        .into_iter()
-        .map(|item| item.payload().clone())
+fn payloads(trajectory: &Trajectory) -> Vec<TrajectoryFrame> {
+    trajectory
+        .iter()
+        .map(|frame| frame.payload().clone())
         .collect()
 }
 

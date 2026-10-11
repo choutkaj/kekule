@@ -65,7 +65,7 @@ mod model_editor;
 mod model_state;
 mod positions;
 mod realizations;
-mod sites;
+mod scalars;
 mod solvation;
 mod state;
 mod trajectory;
@@ -77,10 +77,7 @@ pub use geometry_edit::*;
 pub use model::*;
 pub use model_editor::*;
 pub use positions::*;
-pub(crate) use realizations::RealizationStore;
-pub use realizations::{
-    Realization, RealizationError, RealizationIter, RealizationMut, RealizationView,
-};
+pub use realizations::RealizationError;
 pub use state::ConformationError;
 pub use trajectory::*;
 

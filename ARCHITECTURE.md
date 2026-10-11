@@ -23,16 +23,20 @@ no meaning, every member has a weight, and its statistics must be weighted. A
 trajectory is a path produced by dynamics: frame order and spacing are
 physical. A trajectory samples an ensemble only under ergodicity, so
 `Trajectory::into_ensemble` is an explicit, lossy projection with equal
-weights, and nothing converts the other way. Operations whose meaning is the
-same for both, such as item access, selection, subsetting, perception,
-superposition, and RMSD, are inherent methods of each type over one
-crate-private store. Weight- or time-dependent behavior belongs to one type
-only; do not add a public abstraction that erases the difference.
+weights, and nothing converts the other way. Each type owns its topology,
+collection properties, and items and implements its own operations, including
+those whose meaning is currently the same for both, such as item access,
+selection, subsetting, perception, superposition, and RMSD; the two types are
+expected to diverge. They may share private per-item helpers, such as row
+validation and rigid transforms, and the borrowed `ModelView` kernels, but no
+collection storage or generic collection type. Weight- or time-dependent
+behavior belongs to one type only; do not add a public abstraction that erases
+the difference.
 
 Realizations are flat. `Model`, `EnsembleMember`, and `TrajectoryFrame` each
 own exactly the fields that are meaningful for them; there is no shared
 conformation payload. Positions, cell, and realization properties are common
-to all three. Occupancies and B factors are crystallographic site parameters of
+to all three. Occupancies and B factors are crystallographic per-atom fields of
 a model or ensemble member and never belong to a trajectory frame. Velocities,
 forces, time, and step belong only to frames, and a weight only to an ensemble
 member. Coordinate kernels share code through the borrowed `ModelView`, not

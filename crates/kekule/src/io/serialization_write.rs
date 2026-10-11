@@ -2,7 +2,7 @@ use std::fmt;
 use std::io::Write;
 
 use crate::core::Molecule;
-use crate::structure::{AsModelView, Model, ModelView, Realization, RealizationView};
+use crate::structure::{AsModelView, EnsembleMemberView, Model, ModelView, TrajectoryFrameView};
 
 use super::molfile_write::MolfileRecord;
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
@@ -198,10 +198,20 @@ impl<'a> From<&'a Model> for SdfRecordSource<'a> {
     }
 }
 
-impl<'a, P: Realization> From<RealizationView<'a, P>> for SdfRecordSource<'a> {
-    fn from(item: RealizationView<'a, P>) -> Self {
+impl<'a> From<EnsembleMemberView<'a>> for SdfRecordSource<'a> {
+    fn from(member: EnsembleMemberView<'a>) -> Self {
         Self {
-            model: item.as_model_view(),
+            model: member.as_model_view(),
+            title: "",
+            data_fields: &[],
+        }
+    }
+}
+
+impl<'a> From<TrajectoryFrameView<'a>> for SdfRecordSource<'a> {
+    fn from(frame: TrajectoryFrameView<'a>) -> Self {
+        Self {
+            model: frame.as_model_view(),
             title: "",
             data_fields: &[],
         }

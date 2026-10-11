@@ -13,9 +13,9 @@ use crate::topology::{
 use crate::units::Quantity;
 
 use super::model_state::ModelState;
-use super::sites::SiteParameters;
+use super::scalars::{b_factor_quantities, b_factor_quantity, AtomScalars};
 use super::state::{
-    atom_row, is_bound, realization_mutators, realization_readers, site_mutators, site_readers,
+    is_bound, realization_mutators, realization_readers, site_mutators, site_readers, subset_rows,
     validate_binding,
 };
 use super::{ConformationError, PositionError, Positions};
@@ -42,7 +42,8 @@ pub struct Model {
     pub(super) topology: Arc<Topology>,
     pub(super) positions: Positions,
     pub(super) cell: Option<PeriodicCell>,
-    pub(super) sites: SiteParameters,
+    pub(super) occupancies: AtomScalars,
+    pub(super) b_factors: AtomScalars,
     pub(super) properties: RealizationProperties,
 }
 
@@ -51,14 +52,15 @@ impl PartialEq for Model {
         Arc::ptr_eq(&self.topology, &other.topology)
             && self.positions == other.positions
             && self.cell == other.cell
-            && self.sites == other.sites
+            && self.occupancies == other.occupancies
+            && self.b_factors == other.b_factors
             && self.properties == other.properties
     }
 }
 
 impl Model {
-    /// Binds dense positions to a topology, without a cell, site parameters,
-    /// or properties.
+    /// Binds dense positions to a topology, without a cell, occupancies,
+    /// B-factors, or properties.
     ///
     /// Positions must follow the topology's dense atom order.
     pub fn new(
@@ -71,7 +73,8 @@ impl Model {
             ModelState {
                 positions,
                 cell: None,
-                sites: SiteParameters::default(),
+                occupancies: AtomScalars::default(),
+                b_factors: AtomScalars::default(),
                 properties,
             },
         )
@@ -86,7 +89,8 @@ impl Model {
         let ModelState {
             positions,
             cell,
-            sites,
+            occupancies,
+            b_factors,
             mut properties,
         } = state;
         properties.bind_bond_rows(topology.bond_count());
@@ -94,7 +98,8 @@ impl Model {
             topology,
             positions,
             cell,
-            sites,
+            occupancies,
+            b_factors,
             properties,
         })
     }
@@ -106,7 +111,8 @@ impl Model {
             ModelState {
                 positions: self.positions,
                 cell: self.cell,
-                sites: self.sites,
+                occupancies: self.occupancies,
+                b_factors: self.b_factors,
                 properties: self.properties,
             },
         )
@@ -165,7 +171,8 @@ impl Model {
             &self.topology,
             &self.positions,
             self.cell.as_ref(),
-            Some(&self.sites),
+            &self.occupancies,
+            &self.b_factors,
             &self.properties,
         )
     }
@@ -205,21 +212,12 @@ impl Model {
     /// onto it. Realization owner properties are dropped.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, ModelError> {
         let subset = self.topology.subset(selection)?;
-        let correspondence = subset.correspondence();
-        let atoms = correspondence
-            .source_atom_indices()
-            .iter()
-            .map(|index| index.index())
-            .collect::<Vec<_>>();
-        let bonds = correspondence
-            .source_bond_indices()
-            .iter()
-            .map(|index| index.index())
-            .collect::<Vec<_>>();
+        let (atoms, bonds) = subset_rows(&subset);
         let state = ModelState {
             positions: self.positions.select_indices(&atoms)?,
             cell: self.cell,
-            sites: self.sites.select(&atoms),
+            occupancies: self.occupancies.select(&atoms),
+            b_factors: self.b_factors.select(&atoms),
             properties: self
                 .properties
                 .project(&atoms, &bonds)
@@ -342,7 +340,8 @@ pub struct ModelView<'a> {
     topology: &'a Arc<Topology>,
     positions: &'a Positions,
     cell: Option<&'a PeriodicCell>,
-    sites: Option<&'a SiteParameters>,
+    occupancies: &'a AtomScalars,
+    b_factors: &'a AtomScalars,
     properties: &'a RealizationProperties,
 }
 
@@ -352,7 +351,8 @@ impl<'a> ModelView<'a> {
         topology: &'a Arc<Topology>,
         positions: &'a Positions,
         cell: Option<&'a PeriodicCell>,
-        sites: Option<&'a SiteParameters>,
+        occupancies: &'a AtomScalars,
+        b_factors: &'a AtomScalars,
         properties: &'a RealizationProperties,
     ) -> Self {
         debug_assert!(is_bound(positions.len(), properties, topology));
@@ -360,7 +360,8 @@ impl<'a> ModelView<'a> {
             topology,
             positions,
             cell,
-            sites,
+            occupancies,
+            b_factors,
             properties,
         }
     }
@@ -393,40 +394,40 @@ impl<'a> ModelView<'a> {
         self.properties
     }
 
-    /// Occupancy of one atom; `None` when it was never recorded or the
-    /// realization has no site parameters.
+    /// Occupancy of one atom; `None` when it was never recorded, which is
+    /// always the case for a trajectory frame.
     pub fn occupancy(self, atom: TopologyAtomIndex) -> Result<Option<f64>, ConformationError> {
-        match self.sites {
-            Some(sites) => sites.occupancy(atom, self.positions.len()),
-            None => atom_row(self.positions.len(), atom).map(|_| None),
-        }
+        self.occupancies.get(atom, self.positions.len())
     }
 
     /// Every occupancy in dense atom order, or `None` when none was recorded.
     pub fn occupancies(self) -> Option<&'a [Option<f64>]> {
-        self.sites.and_then(SiteParameters::occupancies)
+        self.occupancies.values()
     }
 
-    /// Isotropic B-factor of one atom; `None` when it was never recorded or
-    /// the realization has no site parameters.
+    /// Isotropic B-factor of one atom; `None` when it was never recorded,
+    /// which is always the case for a trajectory frame.
     pub fn b_factor(
         self,
         atom: TopologyAtomIndex,
     ) -> Result<Option<Quantity<f64>>, ConformationError> {
-        match self.sites {
-            Some(sites) => sites.b_factor(atom, self.positions.len()),
-            None => atom_row(self.positions.len(), atom).map(|_| None),
-        }
+        Ok(b_factor_quantity(
+            self.b_factors.get(atom, self.positions.len())?,
+        ))
     }
 
     /// Every B-factor in dense atom order and square nanometres, or `None`
     /// when none was recorded.
     pub fn b_factors(self) -> Option<Quantity<&'a [Option<f64>]>> {
-        self.sites.and_then(SiteParameters::b_factors)
+        b_factor_quantities(self.b_factors)
     }
 
-    pub(crate) fn sites(self) -> Option<&'a SiteParameters> {
-        self.sites
+    pub(crate) fn occupancy_column(self) -> &'a AtomScalars {
+        self.occupancies
+    }
+
+    pub(crate) fn b_factor_column(self) -> &'a AtomScalars {
+        self.b_factors
     }
 
     pub fn position(self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelError> {
@@ -454,13 +455,14 @@ impl<'a> ModelView<'a> {
     }
 
     /// Materializes this borrowed realization as an owned model. A view of a
-    /// trajectory frame yields a model without site parameters.
+    /// trajectory frame yields a model without occupancies or B-factors.
     pub fn to_model(self) -> Model {
         Model {
             topology: Arc::clone(self.topology),
             positions: self.positions.clone(),
             cell: self.cell.copied(),
-            sites: self.sites.cloned().unwrap_or_default(),
+            occupancies: self.occupancies.clone(),
+            b_factors: self.b_factors.clone(),
             properties: self.properties.clone(),
         }
     }

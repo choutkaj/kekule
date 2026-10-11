@@ -5,7 +5,7 @@ use crate::properties::{RealizationProperties, RealizationPropertiesMut};
 use crate::topology::TopologyAtomIndex;
 use crate::units::Quantity;
 
-use super::sites::SiteParameters;
+use super::scalars::{b_factor_quantity, canonical_b_factor, AtomScalars};
 use super::{ConformationError, ModelView, Positions};
 
 /// Realization state staged by [`super::ModelBuilder`] and
@@ -18,7 +18,8 @@ use super::{ConformationError, ModelView, Positions};
 pub(crate) struct ModelState {
     pub(crate) positions: Positions,
     pub(crate) cell: Option<PeriodicCell>,
-    pub(crate) sites: SiteParameters,
+    pub(crate) occupancies: AtomScalars,
+    pub(crate) b_factors: AtomScalars,
     pub(crate) properties: RealizationProperties,
 }
 
@@ -27,7 +28,8 @@ impl Default for ModelState {
         Self {
             positions: Positions::default(),
             cell: None,
-            sites: SiteParameters::default(),
+            occupancies: AtomScalars::default(),
+            b_factors: AtomScalars::default(),
             properties: RealizationProperties::new(0),
         }
     }
@@ -50,7 +52,7 @@ impl ModelState {
         &self,
         atom: TopologyAtomIndex,
     ) -> Result<Option<f64>, ConformationError> {
-        self.sites.occupancy(atom, self.positions.len())
+        self.occupancies.get(atom, self.positions.len())
     }
 
     pub(crate) fn set_occupancy(
@@ -59,14 +61,16 @@ impl ModelState {
         value: Option<f64>,
     ) -> Result<(), ConformationError> {
         let len = self.positions.len();
-        self.sites.set_occupancy(atom, len, value)
+        self.occupancies.set(atom, len, value)
     }
 
     pub(crate) fn b_factor(
         &self,
         atom: TopologyAtomIndex,
     ) -> Result<Option<Quantity<f64>>, ConformationError> {
-        self.sites.b_factor(atom, self.positions.len())
+        Ok(b_factor_quantity(
+            self.b_factors.get(atom, self.positions.len())?,
+        ))
     }
 
     pub(crate) fn set_b_factor(
@@ -74,8 +78,9 @@ impl ModelState {
         atom: TopologyAtomIndex,
         value: Option<Quantity<f64>>,
     ) -> Result<(), ConformationError> {
+        let value = canonical_b_factor(value)?;
         let len = self.positions.len();
-        self.sites.set_b_factor(atom, len, value)
+        self.b_factors.set(atom, len, value)
     }
 
     pub(crate) fn try_reserve_atoms(&mut self, additional: usize) -> Result<(), ConformationError> {
@@ -89,7 +94,8 @@ impl ModelState {
     pub(crate) fn extend(&mut self, positions: &Positions, added_bonds: usize) {
         self.positions.extend_canonical(positions);
         let atoms = self.positions.len();
-        self.sites.resize(atoms);
+        self.occupancies.resize(atoms);
+        self.b_factors.resize(atoms);
         let bonds = self.properties.bonds().len() + added_bonds;
         self.properties.resize(atoms, bonds);
     }
@@ -99,7 +105,8 @@ impl ModelState {
     pub(crate) fn resize_slots(&mut self, atoms: usize, bonds: usize) {
         debug_assert!(atoms >= self.positions.len());
         self.positions.resize_canonical(atoms);
-        self.sites.resize(atoms);
+        self.occupancies.resize(atoms);
+        self.b_factors.resize(atoms);
         self.properties.resize(atoms, bonds);
     }
 
@@ -107,7 +114,8 @@ impl ModelState {
     pub(crate) fn clear_dead_atom_rows(&mut self, live: &[usize]) {
         let live = live.iter().copied().collect::<BTreeSet<_>>();
         for slot in (0..self.positions.len()).filter(|slot| !live.contains(slot)) {
-            self.sites.clear_row(slot);
+            self.occupancies.clear(slot);
+            self.b_factors.clear(slot);
             self.properties.atoms_raw_mut().clear_index(slot);
         }
     }
@@ -132,10 +140,11 @@ impl ModelState {
         self.positions
             .set_canonical_batch(&staged)
             .expect("source positions are finite and rows are allocated");
-        if let Some(sites) = source.sites() {
-            let len = self.positions.len();
-            self.sites.copy_rows_from(sites, rows, len);
-        }
+        let len = self.positions.len();
+        self.occupancies
+            .copy_rows_from(source.occupancy_column(), rows, len);
+        self.b_factors
+            .copy_rows_from(source.b_factor_column(), rows, len);
     }
 
     /// Reorders atom rows; `previous[new]` is the old dense index.
@@ -144,7 +153,8 @@ impl ModelState {
             .positions
             .select_indices(previous)
             .expect("staged positions follow staged atoms");
-        self.sites = self.sites.select(previous);
+        self.occupancies = self.occupancies.select(previous);
+        self.b_factors = self.b_factors.select(previous);
         self.properties
             .reorder_atoms(previous)
             .expect("staged realization atom rows follow staged atoms");
@@ -160,7 +170,8 @@ impl ModelState {
         Ok(Self {
             positions: self.positions.select_indices(atoms)?,
             cell: self.cell,
-            sites: self.sites.select(atoms),
+            occupancies: self.occupancies.select(atoms),
+            b_factors: self.b_factors.select(atoms),
             properties: self.properties.project(atoms, bonds)?,
         })
     }

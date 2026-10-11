@@ -3,7 +3,7 @@ use std::sync::Arc;
 use kekule::core::Molecule;
 use kekule::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
 use kekule::structure::{
-    ConformationError, Ensemble, EnsembleMember, Model, Positions, RealizationView, Trajectory,
+    ConformationError, Ensemble, EnsembleMember, EnsembleMemberView, Model, Positions, Trajectory,
     TrajectoryFrame,
 };
 use kekule::topology::{
@@ -177,7 +177,7 @@ fn realizations_reject_mismatched_property_rows_transactionally() {
         })
     );
     assert_eq!(member.properties(), &detached);
-    assert!(RealizationView::new(&ethane, &member).is_err());
+    assert!(EnsembleMemberView::new(&ethane, &member).is_err());
 
     let mut ensemble = Ensemble::from_items(Arc::clone(&ethane), [member]).unwrap();
     assert_eq!(ensemble.get(0).unwrap().properties().bonds().len(), 1);
@@ -193,7 +193,7 @@ fn realizations_reject_mismatched_property_rows_transactionally() {
         .set_properties(original)
         .is_err());
     assert_eq!(ensemble.get(0).unwrap().properties(), &bound);
-    assert!(RealizationView::new(&ethane, ensemble.get(0).unwrap().payload()).is_ok());
+    assert!(EnsembleMemberView::new(&ethane, ensemble.get(0).unwrap().payload()).is_ok());
 }
 
 #[test]
