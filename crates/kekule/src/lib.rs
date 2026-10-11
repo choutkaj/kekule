@@ -630,8 +630,8 @@ pub mod components {
 ///
 /// Macromolecular formats interpret atom sites, alternate locations, coordinate
 /// models, and connectivity through one pipeline. Its options, reports, issues,
-/// and source provenance live here; each format namespace, such as
-/// [`mmcif`], re-exports them.
+/// and source provenance live here; each format namespace, [`mmcif`] and
+/// [`pdb`], re-exports them.
 pub mod macromolecular {
     pub use crate::io::{
         AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
@@ -784,6 +784,113 @@ pub mod mmcif {
         options: MmcifWriteOptions,
     ) -> Result<(), MmcifWriteError> {
         crate::io::write_mmcif_to(writer, blocks, options)
+    }
+}
+
+/// PDB-format parsing and interpretation.
+///
+/// A PDB file holds one entry, whose coordinate models share one
+/// interpretation scope. Parsing types the coordinate, chain-termination,
+/// model, and connection records and keeps every other record verbatim;
+/// interpretation runs the pipeline [`mmcif`] uses and returns the same
+/// [`macromolecular`] reports.
+///
+/// The format has no entity or label records. A chain's polymer is the run of
+/// residues its `TER` record ends, or, without one, the residues from its first
+/// to its last `ATOM` record; water and single residues are never polymer.
+/// Residues in such a run are adjacent in sequence. `LINK` and `SSBOND`
+/// records are covalent connections; a `LINK` to a metal is coordination and
+/// becomes a dative bond. `CONECT` records list connectivity without bond
+/// types: within a residue they supplement its template and stand in for
+/// distance inference, a partner listed two or three times has a double or
+/// triple bond, and a bond between a metal and a non-metal is dative. Atoms
+/// without an element symbol take the one their name's alignment implies,
+/// and the report lists them.
+///
+/// Interpretation keeps coordinate records in source order as dense atom order.
+pub mod pdb {
+    pub use crate::io::{
+        AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
+        AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance,
+        ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
+        ModelSelection, PdbAtom, PdbAtomKind, PdbConect, PdbDocument, PdbLink, PdbModel,
+        PdbParseError, PdbParseOptions, PdbPartner, PdbRecord, PdbSsbond, PdbTer, SourceResidueId,
+        SourceResiduePosition, StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
+        StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretIssue,
+        StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
+    };
+
+    /// Parses a PDB entry into typed records without assigning molecular meaning.
+    pub fn parse_str(input: &str) -> Result<PdbDocument, PdbParseError> {
+        parse_str_with_options(input, PdbParseOptions::default())
+    }
+
+    /// Parses a PDB entry with explicit resource limits.
+    pub fn parse_str_with_options(
+        input: &str,
+        options: PdbParseOptions,
+    ) -> Result<PdbDocument, PdbParseError> {
+        crate::io::parse_pdb_str(input, options)
+    }
+
+    /// Reads and parses a PDB entry from `reader`.
+    ///
+    /// The configured byte limit is enforced while reading, before the input
+    /// is held in memory; non-UTF-8 input fails with
+    /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
+    pub fn parse_reader(reader: impl std::io::Read) -> Result<PdbDocument, PdbParseError> {
+        parse_reader_with_options(reader, PdbParseOptions::default())
+    }
+
+    /// Reads and parses a PDB entry with explicit resource limits.
+    pub fn parse_reader_with_options(
+        reader: impl std::io::Read,
+        options: PdbParseOptions,
+    ) -> Result<PdbDocument, PdbParseError> {
+        crate::io::parse_pdb_reader(reader, options)
+    }
+
+    /// Interprets one selected coordinate model using default policy.
+    pub fn interpret(
+        document: &PdbDocument,
+    ) -> Result<StructureInterpretation, StructureInterpretError> {
+        document.interpret()
+    }
+
+    /// Interprets one coordinate model with explicit model, alternate-location,
+    /// and connectivity policy.
+    pub fn interpret_with_options(
+        document: &PdbDocument,
+        options: StructureInterpretOptions,
+    ) -> Result<StructureInterpretation, StructureInterpretError> {
+        document.interpret_with_options(options)
+    }
+
+    /// Interprets every coordinate model as an ensemble of equally weighted
+    /// members (weight `1.0`); occupancy is not converted into a weight.
+    pub fn interpret_ensemble(
+        document: &PdbDocument,
+    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
+        document.interpret_ensemble()
+    }
+
+    /// Interprets selected coordinate models as an ensemble of equally
+    /// weighted members.
+    pub fn interpret_ensemble_with_options(
+        document: &PdbDocument,
+        options: StructureEnsembleInterpretOptions,
+    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
+        document.interpret_ensemble_with_options(options)
+    }
+
+    /// Builds an unweighted ensemble from explicit coordinate-model and altloc
+    /// selections. No alternate configurations are enumerated automatically.
+    /// Selections must produce identical atom identities and compatible topology.
+    pub fn interpret_conformations(
+        document: &PdbDocument,
+        selections: &[StructureInterpretOptions],
+    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
+        document.interpret_conformations(selections)
     }
 }
 

@@ -1,6 +1,6 @@
 //! Connection records are typed once per source and resolve against the atoms
 //! of each selected coordinate model.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::core::{BondOrder, Element};
 
@@ -16,7 +16,7 @@ pub(super) enum ConnectionRecord {
     Ignored {
         connection_type: String,
     },
-    Bond(DeclaredBond),
+    Bond(Box<DeclaredBond>),
 }
 
 /// A covalent connection record and the selectors of its two partners.
@@ -70,6 +70,16 @@ pub(super) fn resolve_connections(
     union: &mut InstanceUnion,
     report: &mut StructureInterpretationReport,
 ) -> Vec<DeclaredConnection> {
+    let sites = records
+        .iter()
+        .any(|record| {
+            matches!(
+                record,
+                ConnectionRecord::Bond(bond)
+                    if bond.partners.iter().flatten().any(|selector| selector.site_id.is_some())
+            )
+        })
+        .then(|| SiteIndex::new(rows, all_rows, selected_model));
     let mut connections = Vec::new();
     let mut declared = BTreeSet::new();
     for record in records {
@@ -86,7 +96,9 @@ pub(super) fn resolve_connections(
         };
         let mut resolve = |partner: u8| {
             let resolution = match &bond.partners[usize::from(partner - 1)] {
-                Ok(selector) => resolve_partner(selector, rows, all_rows, selected_model),
+                Ok(selector) => {
+                    resolve_partner(selector, rows, all_rows, selected_model, sites.as_ref())
+                }
                 Err(reason) => ConnectionPartnerResolution::Unresolved(reason.clone()),
             };
             report_connection_partner_resolution(resolution, bond, partner, report)
@@ -306,16 +318,52 @@ enum ConnectionPartnerResolution<'a> {
     },
 }
 
+/// Rows of the selected model by record identifier, for selectors that name
+/// one record, such as PDB `CONECT` serial numbers.
+struct SiteIndex<'a> {
+    selected: HashMap<&'a str, Vec<&'a AtomRow>>,
+    model: HashMap<&'a str, Vec<&'a AtomRow>>,
+}
+
+impl<'a> SiteIndex<'a> {
+    fn new(selected_rows: &'a [AtomRow], all_rows: &'a [AtomRow], selected_model: &str) -> Self {
+        let index = |rows: &mut dyn Iterator<Item = &'a AtomRow>| {
+            let mut index = HashMap::<&str, Vec<&AtomRow>>::new();
+            for row in rows {
+                if let Some(site) = row.atom_site_id.as_deref() {
+                    index.entry(site).or_default().push(row);
+                }
+            }
+            index
+        };
+        Self {
+            selected: index(&mut selected_rows.iter()),
+            model: index(&mut all_rows.iter().filter(|row| row.model_id == selected_model)),
+        }
+    }
+}
+
 fn resolve_partner<'a>(
     selector: &ConnectionPartnerSelector,
     selected_rows: &'a [AtomRow],
     all_rows: &[AtomRow],
     selected_model: &str,
+    sites: Option<&SiteIndex<'a>>,
 ) -> ConnectionPartnerResolution<'a> {
-    let candidates = selected_rows
-        .iter()
-        .filter(|candidate| selector.matches(candidate))
-        .collect::<Vec<_>>();
+    let candidates = match (selector.site_id.as_deref(), sites) {
+        (Some(site), Some(sites)) => sites
+            .selected
+            .get(site)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|candidate| selector.matches(candidate))
+            .collect::<Vec<_>>(),
+        _ => selected_rows
+            .iter()
+            .filter(|candidate| selector.matches(candidate))
+            .collect(),
+    };
     match candidates.as_slice() {
         [candidate] => ConnectionPartnerResolution::Resolved(candidate),
         [] => {
@@ -335,10 +383,12 @@ fn resolve_partner<'a>(
             }
             // A record identifier names one source row, and so its alternate
             // location, without stating it.
-            if selector.site_id.is_some() {
-                if let Some(alternate_location) = all_rows
-                    .iter()
-                    .filter(|candidate| candidate.model_id == selected_model)
+            if let (Some(site), Some(sites)) = (selector.site_id.as_deref(), sites) {
+                if let Some(alternate_location) = sites
+                    .model
+                    .get(site)
+                    .into_iter()
+                    .flatten()
                     .filter(|candidate| selector.matches(candidate))
                     .find_map(|candidate| candidate.alt_id.as_deref())
                 {

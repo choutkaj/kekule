@@ -486,8 +486,15 @@ impl<'r> Resolver<'r, '_> {
                 });
             } else if !listed.is_empty() {
                 // The source lists this residue's bonds; inference would only
-                // guess at them.
+                // guess at them. Hydrogens the listing leaves out are strays.
                 self.add_listed_bonds(&listed)?;
+                stray_hydrogens.extend(
+                    residue
+                        .sites
+                        .iter()
+                        .filter(|site| is_hydrogen(site.element))
+                        .map(|site| (residue.key.clone(), site.atom)),
+                );
             } else if residue.sites.len() > 1 {
                 self.infer_residue_bonds(residue)?;
             }
@@ -666,7 +673,7 @@ impl<'r> Resolver<'r, '_> {
 
     /// Links residues adjacent in sequence within one chain: peptide `C`-`N`
     /// or nucleotide `O3'`-`P`, accepted only within bonding distance. The
-    /// polymer type comes from `_entity_poly`, or from both residues'
+    /// polymer type comes from `_entity_poly`, or from the residues'
     /// templates when the source does not describe the entity.
     fn apply_polymer_links(
         &mut self,
@@ -710,27 +717,40 @@ impl<'r> Resolver<'r, '_> {
                 if right_seq != left_seq.saturating_add(1) {
                     continue;
                 }
-                let linking = match declared {
-                    Some(kind) if is_polypeptide(kind) => ComponentLinking::Peptide,
-                    Some(kind) if is_nucleic_acid(kind) => ComponentLinking::Nucleotide,
-                    Some(_) => ComponentLinking::None,
-                    None => {
-                        let left_linking = self.catalog.linking(&left.key.component_id);
-                        if left_linking == self.catalog.linking(&right.key.component_id) {
-                            left_linking
-                        } else {
-                            ComponentLinking::None
-                        }
-                    }
-                };
-                let pair = match linking {
-                    ComponentLinking::Peptide => left.atoms.get("C").zip(right.atoms.get("N")),
-                    ComponentLinking::Nucleotide => left
-                        .atoms
+                let peptide = || left.atoms.get("C").zip(right.atoms.get("N"));
+                let nucleotide = || {
+                    left.atoms
                         .get("O3'")
                         .or_else(|| left.atoms.get("O3*"))
-                        .zip(right.atoms.get("P")),
-                    _ => None,
+                        .zip(right.atoms.get("P"))
+                };
+                let pair = match declared {
+                    Some(kind) if is_polypeptide(kind) => peptide(),
+                    Some(kind) if is_nucleic_acid(kind) => nucleotide(),
+                    Some(_) => None,
+                    // Without a declared polymer type, the residues' templates
+                    // name the linkage. A residue without a polymer template
+                    // defers to its neighbour, and two such residues link by
+                    // atom names; bonding distance decides either way.
+                    None => {
+                        let polymer = |linking| {
+                            matches!(
+                                linking,
+                                ComponentLinking::Peptide | ComponentLinking::Nucleotide
+                            )
+                            .then_some(linking)
+                        };
+                        match (
+                            polymer(self.catalog.linking(&left.key.component_id)),
+                            polymer(self.catalog.linking(&right.key.component_id)),
+                        ) {
+                            (Some(first), Some(second)) if first != second => None,
+                            (Some(ComponentLinking::Peptide), _)
+                            | (_, Some(ComponentLinking::Peptide)) => peptide(),
+                            (Some(_), _) | (_, Some(_)) => nucleotide(),
+                            (None, None) => peptide().or_else(nucleotide),
+                        }
+                    }
                 };
                 let Some((&left_atom, &right_atom)) = pair else {
                     continue;
@@ -763,8 +783,8 @@ impl<'r> Resolver<'r, '_> {
         Ok(())
     }
 
-    /// Bonds each hydrogen its template does not name to the nearest heavy
-    /// atom of its residue within bonding distance.
+    /// Bonds each unbonded hydrogen that its template or listed bonds do not
+    /// cover to the nearest heavy atom of its residue within bonding distance.
     fn attach_stray_hydrogens(
         &mut self,
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
@@ -1995,6 +2015,35 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
                 next: residue("A", 2),
             }]
         );
+    }
+
+    #[test]
+    fn untemplated_polymer_residues_link_by_their_neighbours_linkage_or_atom_names() {
+        let inferred = |sequence, component: &str| StructureInterpretIssue::ResidueBondsInferred {
+            residue: residue("A", sequence),
+            component_id: component.to_owned(),
+            bonds: 3,
+        };
+        // Without _entity_poly, a residue without a template defers to its
+        // templated neighbour, and two such residues link by atom names.
+        for (first, second, expected) in [
+            ("GLY", "XGL", vec![inferred(2, "XGL")]),
+            ("XGL", "GLY", vec![inferred(1, "XGL")]),
+            ("XGL", "YGL", vec![inferred(1, "XGL"), inferred(2, "YGL")]),
+        ] {
+            let rows = DIGLYCINE
+                .replace("GLY A 1", &format!("{first} A 1"))
+                .replace("GLY A 2", &format!("{second} A 2"));
+            let linked = interpret(&records("ATOM", &rows, ""));
+            let polymer_links = bonds(&linked)
+                .iter()
+                .filter(|(_, _, _, evidence)| *evidence == BondEvidence::PolymerLink)
+                .map(|(a, b, _, _)| (a.clone(), b.clone()))
+                .collect::<Vec<_>>();
+            assert_eq!(polymer_links, [("C".to_owned(), "N".to_owned())]);
+            assert_eq!(linked.topology().instance_count(), 1);
+            assert_eq!(issues(&linked), expected);
+        }
     }
 
     #[test]

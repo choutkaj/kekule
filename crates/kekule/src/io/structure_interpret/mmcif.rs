@@ -227,14 +227,14 @@ fn read_struct_conn(block: &MmcifBlock) -> Result<Vec<ConnectionRecord>, Structu
             connection_partner(table, row, 1)?,
             connection_partner(table, row, 2)?,
         ];
-        records.push(ConnectionRecord::Bond(DeclaredBond {
+        records.push(ConnectionRecord::Bond(Box::new(DeclaredBond {
             connection_id: optional(table, row, "_struct_conn.id").map(str::to_owned),
             connection_type: kind,
             line: table.row_line(row),
             order: DeclaredOrder::Stated(order),
             partners,
             connectivity_only: false,
-        }));
+        })));
     }
     Ok(records)
 }

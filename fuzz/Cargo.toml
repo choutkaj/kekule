@@ -59,6 +59,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "pdb"
+path = "fuzz_targets/pdb.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "trajectory_detection"
 path = "fuzz_targets/trajectory_detection.rs"
 test = false

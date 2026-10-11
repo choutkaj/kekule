@@ -7,6 +7,7 @@ mod build;
 mod connections;
 mod ensemble;
 mod mmcif;
+mod pdb;
 mod types;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,6 +30,9 @@ pub(crate) use mmcif::{
     alternate_location_inventory, interpret_mmcif, interpret_mmcif_block,
     interpret_mmcif_conformations, interpret_mmcif_conformations_block, interpret_mmcif_ensemble,
     interpret_mmcif_ensemble_block,
+};
+pub(crate) use pdb::{
+    interpret_pdb, interpret_pdb_conformations, interpret_pdb_ensemble, pdb_alternate_locations,
 };
 pub use types::{
     AtomProvenance, BondEvidence, BondProvenance, ConnectionResolutionReason, ConnectivityOptions,

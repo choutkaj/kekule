@@ -5,6 +5,7 @@ mod mmcif_document;
 mod mmcif_write;
 mod molfile_document;
 mod molfile_write;
+mod pdb_document;
 mod sdf_document;
 mod serialization_write;
 pub(crate) mod smiles;
@@ -27,6 +28,7 @@ pub use molfile_document::{
     MolfileHeader, MolfileParseError, MolfileParseOptions, MolfileRadical, MolfileStereoGroup,
     MolfileStereoGroupKind, MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion,
 };
+pub use pdb_document::*;
 pub use sdf_document::*;
 pub use serialization_write::*;
 pub use smiles::{
