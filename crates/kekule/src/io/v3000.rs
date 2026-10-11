@@ -213,6 +213,11 @@ pub(super) fn parse_v3000_ctab(
                     if bonds_read {
                         return Err(syntax("V3000 must contain exactly one BOND section"));
                     }
+                    if collection_read {
+                        return Err(syntax(
+                            "V3000 BOND section must precede the COLLECTION section",
+                        ));
+                    }
                     if rows.len() != counts.bonds {
                         return Err(lines.error(
                             counts_index,
@@ -224,7 +229,7 @@ pub(super) fn parse_v3000_ctab(
                     bonds_read = true;
                 }
                 "COLLECTION" => {
-                    if !bonds_read {
+                    if !bonds_read && !bond_block_optional(counts, atoms_read) {
                         return Err(syntax(
                             "V3000 COLLECTION section must follow the BOND section",
                         ));
@@ -282,10 +287,15 @@ pub(super) fn parse_v3000_ctab(
     if !atoms_read {
         return Err(lines.error(end, DiagnosticKind::Syntax, "missing V3000 ATOM section"));
     }
-    if !bonds_read {
+    if !bonds_read && !bond_block_optional(counts, atoms_read) {
         return Err(lines.error(end, DiagnosticKind::Syntax, "missing V3000 BOND section"));
     }
     Ok((ctab, end))
+}
+
+/// Writers such as RDKit omit the BOND section of a CTAB without bonds.
+fn bond_block_optional(counts: Option<(V3000Counts, usize)>, atoms_read: bool) -> bool {
+    atoms_read && counts.is_some_and(|(counts, _)| counts.bonds == 0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
