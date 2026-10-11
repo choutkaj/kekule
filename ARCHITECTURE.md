@@ -459,6 +459,40 @@ labels; caller-supplied conformation selections must pass the same identity and
 topology checks. mmCIF carries no model weights, so every coordinate model
 becomes an equally weighted member; occupancy is never converted into a weight.
 
+Macromolecular formats (mmCIF and PDB) do not carry complete bonds, and molecule
+boundaries follow bonds, so one resolver shared by these formats derives connectivity
+from ranked evidence:
+
+1. Explicit source bonds: component bond tables in the source, and covalent,
+   disulfide, and metal-coordination links between residues.
+2. Component templates supplied as interpretation context, keyed by component
+   identifier and matched to source atoms by atom name and element.
+3. Polymer linkage between residues adjacent in sequence, accepted only within
+   bonding distance; a longer gap is a reported chain break.
+4. Distance inference from covalent radii for residues that no template or
+   explicit bond table covers. It is on by default, can be disabled, and yields
+   single bonds that the report identifies as inferred.
+
+Coordination is covalent: metal-ligand links become `Dative` bonds, so a metal
+complex or a metalloprotein site is one connected molecule. Hydrogen bonds, salt
+bridges, and links to symmetry mates are never bonds; unresolvable links are
+reported. A heavy atom whose name does not match its residue template is an error,
+not a silently separate molecule. The report records the evidence for every bond
+and names residues whose resolved atoms split into several molecules.
+
+Formal charges come from the source when stated, otherwise from the template.
+Hydrogens present in the model are atoms; remaining hydrogens follow from valence,
+so a template's protonation is never asserted as a fixed hydrogen count. When the
+model's hydrogens differ from the template, each added or removed hydrogen on an
+atom whose template bonds are all single changes its charge by one, and any other
+difference must select a bundled variant template, such as a histidine tautomer,
+or fail.
+
+Kekule bundles templates for standard polymer residues, their common protonation
+variants, water, common ions, and common cofactors, taken from the Chemical
+Component Dictionary. Callers supply further components, up to the complete
+dictionary, as interpretation context.
+
 Interpretations own format reports, metadata, and source correspondence. Borrowed
 projections reuse canonical owners; consuming projections explicitly discard richer
 information. Document-level reports borrow record reports instead of duplicating
