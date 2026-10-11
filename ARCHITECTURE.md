@@ -386,22 +386,57 @@ streaming sequence/reset contracts, see
 The authoritative input pipeline is:
 
 ```text
-source -> syntax Document -> independent Record/Block -> richest Interpretation
-                                                       -> borrowed/owned projections
+reader -> record/block splitter -> format document (typed syntax + locations)
+                                            |
+                         options + context -+
+                                            v
+                         interpretation { canonical owner, report } -> projections
 ```
 
-Parsing preserves syntax and source metadata. Interpretation constructs represented
-chemistry, hierarchy, classification, and available geometry once; it does not run
-general perception, standardization, tautomerization, or protonation. Geometry may
-inform source stereo even when the caller ultimately requests topology only.
-Format convenience functions compose this pipeline without reimplementing it.
+The unit of parsing and interpretation is the independent record or block: one
+Molfile, one SDF record, one SMILES line, or one CIF data block. Readers split
+input into records by format framing alone (`$$$$`, line ends, `data_`), without
+reading record content, so a malformed record fails alone and record-oriented
+formats stream with memory bounded by one record. A file-level document is a
+convenience collection of parsed records; interpretation is always per record and
+never depends on a sibling record.
+
+A format document is the typed syntax of one record or block, with source
+locations: what the source states, before chemistry. Anything that requires
+reading source text, including CXSMILES extension fields and Molfile property
+records, belongs to parsing; interpretation consumes typed syntax and never
+re-reads text. Documents keep source locations rather than byte-exact formatting.
+CIF documents stay generic data trees because most categories lie outside
+Kekule's interpretation.
+
+Interpretation takes a document, explicit options, and optional context: external
+resources a format needs but does not carry. It constructs represented chemistry,
+hierarchy, classification, and available geometry once into the richest canonical
+owner plus a report; it does not run general perception, standardization,
+tautomerization, or protonation. Geometry may inform source stereo even when the
+caller ultimately requests topology only. Format convenience functions compose
+this pipeline without reimplementing it.
+
+Interpretation never silently discards source content. Content the interpreter
+does not support is rejected by default; an explicit option downgrades it to typed
+report entries that name the record and the kind of content omitted. A deliberately
+lossy projection, such as base-only SMILES, says so in its name.
+
+Every stage reports through one diagnostics model. Parse errors, interpretation
+errors, and non-fatal report issues carry a structured kind and a source location
+relative to the original input, so callers can match on failures and map them to
+the source without format-specific arithmetic.
+
+Coordinate-only trajectory formats are the deliberate exception: they carry no
+chemistry to interpret, so streaming codecs decode frames directly against a
+caller-supplied topology (see Trajectories and streaming).
 
 | Format scope | Interpretation and projection |
 | --- | --- |
-| SMILES document | All connected components, with topology projection |
-| Molfile document | One model with topology and molecule projections |
+| SMILES record | All connected components, with topology projection |
+| Molfile | One model with topology and molecule projections |
 | SDF record | Model, title, fields, and reports; each record independent |
-| mmCIF block | One model or compatible coordinate models as an ensemble |
+| CIF data block | One model or compatible coordinate models as an ensemble |
 
 Sibling SDF records and mmCIF blocks never merge implicitly. Singular projections
 check cardinality; plural molecule projections retain every connected component
