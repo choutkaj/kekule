@@ -10,11 +10,10 @@ use crate::topology::{AtomSiteMetadata, Hierarchy};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::{Quantity, ANGSTROM};
 
-use super::super::mmcif_connectivity::{record_evidence, BondEvidenceMap};
 use super::super::staged_coordinates::StagedCoordinates;
-use super::super::MmcifBlock;
-use super::atom_site::{required, AtomRow};
-use super::struct_conn::{DeclaredConnection, InstanceUnion};
+use super::super::structure_connectivity::{record_evidence, BondEvidenceMap, ListedBond};
+use super::atom_site::AtomRow;
+use super::connections::{DeclaredConnection, InstanceUnion};
 use super::types::{
     AtomProvenance, BondEvidence, BondProvenance, EntityKind, InstanceProvenance,
     StructureInterpretError, StructureInterpretIssue, StructureInterpretationReport,
@@ -22,24 +21,17 @@ use super::types::{
 
 #[derive(Debug)]
 pub(super) struct MoleculeGroup {
+    /// The instance union root shared by every row.
+    root: String,
     rows: Vec<AtomRow>,
     kinds: BTreeSet<EntityKind>,
     instance_keys: BTreeSet<String>,
 }
 
-pub(super) fn polymer_asym_order(
-    block: &MmcifBlock,
-) -> Result<BTreeMap<String, usize>, StructureInterpretError> {
-    let mut order = BTreeMap::new();
-    let Some(table) = block.category("_pdbx_poly_seq_scheme")? else {
-        return Ok(order);
-    };
-    for row in 0..table.row_count() {
-        let asym_id = required(&table, row, "_pdbx_poly_seq_scheme.asym_id")?;
-        let next = order.len();
-        order.entry(asym_id.to_owned()).or_insert(next);
+impl MoleculeGroup {
+    pub(super) fn root(&self) -> &str {
+        &self.root
     }
-    Ok(order)
 }
 
 pub(super) fn group_rows(
@@ -51,8 +43,9 @@ pub(super) fn group_rows(
     let mut groups = Vec::new();
     for row in rows {
         let root = union.find(&row.instance_key);
-        let index = *group_indices.entry(root).or_insert_with(|| {
+        let index = *group_indices.entry(root.clone()).or_insert_with(|| {
             groups.push(MoleculeGroup {
+                root,
                 rows: Vec::new(),
                 kinds: BTreeSet::new(),
                 instance_keys: BTreeSet::new(),
@@ -88,6 +81,9 @@ pub(super) struct BuiltMolecule {
     pub(super) coordinates: StagedCoordinates,
     pub(super) provenance: BuiltMoleculeProvenance,
     evidence: BondEvidenceMap,
+    /// Bonds connectivity-only records list within one residue, for the
+    /// connectivity resolver.
+    listed: Vec<ListedBond>,
 }
 
 pub(super) struct PublishedMolecule {
@@ -129,6 +125,7 @@ struct BuiltAtomProvenance {
     entity_kind: EntityKind,
     residue_key: String,
     label_sequence_id: Option<i32>,
+    polymer_position: Option<i32>,
     author_sequence_id: Option<String>,
     insertion_code: Option<String>,
     occurrence: Option<usize>,
@@ -202,23 +199,25 @@ impl BuiltMoleculeProvenance {
 impl BuiltMolecule {
     pub(super) fn complete_connectivity(
         &mut self,
-        catalog: &super::super::mmcif_connectivity::ConnectivityCatalog,
+        catalog: &super::super::structure_connectivity::ConnectivityCatalog,
         report: &mut StructureInterpretationReport,
     ) -> Result<(), StructureInterpretError> {
         let Self {
             editor,
             provenance,
             evidence,
+            listed,
             ..
         } = self;
         let atoms = provenance.atoms.iter().map(|atom| {
-            super::super::mmcif_connectivity::StagedAtomProvenance {
+            super::super::structure_connectivity::StagedAtomProvenance {
                 atom: atom.atom,
                 atom_name: &atom.atom_name,
                 component_id: &atom.component_id,
                 asym_id: &atom.asym_id,
                 entity_id: atom.entity_id.as_deref(),
                 label_sequence_id: atom.label_sequence_id,
+                polymer_position: atom.polymer_position,
                 author_sequence_id: atom.author_sequence_id.as_deref(),
                 insertion_code: atom.insertion_code.as_deref(),
                 occurrence: atom.occurrence,
@@ -228,10 +227,11 @@ impl BuiltMolecule {
                 stated_charge: atom.stated_charge,
             }
         });
-        super::super::mmcif_connectivity::complete_editor_connectivity(
+        super::super::structure_connectivity::complete_editor_connectivity(
             catalog,
             editor,
             atoms,
+            listed,
             &provenance.coordinate_model_id,
             evidence,
             &mut report.issues,
@@ -353,7 +353,7 @@ impl BuiltMolecule {
 
 pub(super) fn build_molecule(
     group: MoleculeGroup,
-    connections: &[DeclaredConnection],
+    connections: &[&DeclaredConnection],
 ) -> Result<BuiltMolecule, StructureInterpretError> {
     let mut editor = crate::core::MoleculeEditor::new();
     let mut atoms = BTreeMap::new();
@@ -412,6 +412,7 @@ pub(super) fn build_molecule(
             .map_err(graph_error)?;
     }
     let mut evidence = BondEvidenceMap::new();
+    let mut listed = Vec::new();
     for connection in connections {
         let Some(&left) = atoms.get(&connection.left_atom) else {
             continue;
@@ -419,15 +420,19 @@ pub(super) fn build_molecule(
         let Some(&right) = atoms.get(&connection.right_atom) else {
             continue;
         };
-        record_evidence(
-            &mut evidence,
-            left,
-            right,
-            BondEvidence::Connection {
-                connection_id: connection.connection_id.clone(),
-                connection_type: connection.connection_type.clone(),
-            },
-        );
+        let source = BondEvidence::Connection {
+            connection_id: connection.connection_id.clone(),
+            connection_type: connection.connection_type.clone(),
+        };
+        if connection.supplements_template {
+            listed.push(ListedBond {
+                atoms: [left, right],
+                order: connection.order,
+                evidence: source,
+            });
+            continue;
+        }
+        record_evidence(&mut evidence, left, right, source);
         if editor
             .working()
             .bond_between(left, right)
@@ -447,7 +452,7 @@ pub(super) fn build_molecule(
                 return Err(StructureInterpretError::new(
                     DiagnosticKind::Inconsistent,
                     None,
-                    "duplicate struct_conn records assign conflicting bond orders",
+                    "duplicate connection records assign conflicting bond orders",
                 ));
             }
         }
@@ -493,6 +498,7 @@ pub(super) fn build_molecule(
             entity_kind: row.kind.clone(),
             residue_key: row.residue_key.clone(),
             label_sequence_id: row.label_seq_id,
+            polymer_position: row.polymer_position,
             author_sequence_id: row.auth_seq_id.clone(),
             insertion_code: row.insertion_code.clone(),
             occurrence: row.occurrence,
@@ -514,6 +520,7 @@ pub(super) fn build_molecule(
         coordinates,
         provenance,
         evidence,
+        listed,
     })
 }
 
@@ -819,22 +826,4 @@ pub(super) fn graph_error(error: impl fmt::Display) -> StructureInterpretError {
 
 fn hierarchy_error(error: impl fmt::Display) -> StructureInterpretError {
     StructureInterpretError::new(DiagnosticKind::Inconsistent, None, error.to_string())
-}
-
-#[cfg(test)]
-mod syntax_tests {
-    #[test]
-    fn singleton_polymer_scheme_retains_declared_chain_order() {
-        let looped =
-            "data_x\nloop_\n_pdbx_poly_seq_scheme.asym_id\n_pdbx_poly_seq_scheme.seq_id\nZ 1\n";
-        for input in [
-            looped.to_owned(),
-            crate::tests::mmcif_syntax::singleton_loops_as_scalars(looped),
-        ] {
-            let doc = crate::mmcif::parse_str(&input).unwrap();
-            let order = super::polymer_asym_order(&doc.blocks()[0]).unwrap();
-            assert_eq!(order.len(), 1);
-            assert_eq!(order["Z"], 0);
-        }
-    }
 }

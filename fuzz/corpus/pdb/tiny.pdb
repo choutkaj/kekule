@@ -1,0 +1,10 @@
+ATOM      1  N   GLY A   1       0.000   0.000   0.000  1.00 20.00           N  
+ATOM      2  CA  GLY A   1       1.458   0.000   0.000  1.00 20.00           C  
+ATOM      3  C   GLY A   1       2.009   1.420   0.000  1.00 20.00           C  
+ATOM      4  O   GLY A   1       1.251   2.390   0.000  1.00 20.00           O  
+ATOM      5  N   GLY A   2       3.332   1.536   0.000  1.00 20.00           N  
+TER       6      GLY A   2
+HETATM    7 ZN    ZN A 101       5.000   5.000   0.000  1.00 20.00          ZN  
+LINK         N   GLY A   2                ZN    ZN A 101     1555   1555  2.10  
+CONECT    5    7
+END

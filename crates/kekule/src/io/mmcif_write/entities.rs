@@ -1,7 +1,7 @@
 //! Entity classification and source-provenance planning before row preparation.
 use super::one_based_serial;
 use super::{MmcifEntityClassifications, MmcifWriteError};
-use crate::io::mmcif_interpret::{EntityKind, StructureInterpretationReport};
+use crate::io::structure_interpret::{EntityKind, StructureInterpretationReport};
 use crate::structure::ModelView;
 use crate::topology::{
     InstanceAtomId, MoleculeClass, MoleculeInstance, MoleculeInstanceId, ResidueClass, Topology,

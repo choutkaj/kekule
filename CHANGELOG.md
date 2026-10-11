@@ -6,6 +6,18 @@ All notable changes to Kekule are documented in this file.
 
 ### Added
 
+- `kekule::pdb` reads PDB-format entries. `pdb::parse_str` and `parse_reader`
+  type the coordinate (`ATOM`, `HETATM`), `TER`, `MODEL`, `CONECT`, `LINK`,
+  and `SSBOND` records, decoding hybrid-36 numbers, and keep every other
+  record verbatim. `PdbDocument` interprets one coordinate model, an ensemble
+  of models, or explicit conformations through the mmCIF pipeline and reports.
+  A chain's polymer ends at its `TER` record. `LINK` and `SSBOND` records are
+  covalent bonds, and a `LINK` to a metal is dative. `CONECT` records
+  supplement residue templates, stand in for distance inference, and state a
+  double or triple bond by listing a partner repeatedly. Atoms without an
+  element symbol take the element their name's alignment implies, reported as
+  `ElementsInferredFromAtomNames`, and a residue number that recurs after
+  other residues names a new residue, `SourceResiduePosition::RepeatedAuthor`.
 - mmCIF interpretation resolves bonds the file does not state from component
   templates, as described in ARCHITECTURE.md. `ConnectivityOptions`
   (field `connectivity` of `StructureInterpretOptions` and
@@ -102,8 +114,12 @@ All notable changes to Kekule are documented in this file.
   atoms `O`, `H1`, `H2`.
 - Polymer links between residues adjacent in sequence require their linking
   atoms to lie within bonding distance; longer gaps are reported as chain
-  breaks. Without `_entity_poly`, both residues' templates decide the polymer
-  type.
+  breaks. Without `_entity_poly`, the residues' templates decide the polymer
+  type: a residue without a polymer template takes its neighbour's linkage,
+  and two such residues link by atom names.
+- **Breaking:** `SourceResiduePosition` gains `RepeatedAuthor` for residue
+  numbers that recur within a chain, and interpretation errors no longer name
+  mmCIF in their messages.
 - **Breaking:** mmCIF documents keep one line-normalized copy of the source
   and store every tag and value as a compact span into it, instead of one
   owned string per value. `MmcifEntry`, `MmcifItem`, `MmcifLoopTable`, and

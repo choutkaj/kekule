@@ -394,15 +394,16 @@ reader -> record/block splitter -> format document (typed syntax + locations)
 ```
 
 The unit of parsing and interpretation is the independent record or block: one
-Molfile, one SDF record, one SMILES line, or one CIF data block. SDF and SMILES
-readers split input into records by line framing alone (`$$$$` lines, line
-ends), without reading record content, so a malformed record fails alone and
-these formats stream with memory bounded by one record. CIF block boundaries are
-lexical instead: a semicolon-delimited text value may contain a line that looks
-like `data_`, so finding blocks requires tokenizing, and malformed framing such as
-an unterminated text value fails the rest of the input rather than one block. A
-file-level document is a convenience collection of parsed records; interpretation
-is always per record and never depends on a sibling record.
+Molfile, one SDF record, one SMILES line, one CIF data block, or one PDB entry.
+SDF and SMILES readers split input into records by line framing alone (`$$$$`
+lines, line ends), without reading record content, so a malformed record fails
+alone and these formats stream with memory bounded by one record. CIF block
+boundaries are lexical instead: a semicolon-delimited text value may contain a
+line that looks like `data_`, so finding blocks requires tokenizing, and
+malformed framing such as an unterminated text value fails the rest of the input
+rather than one block. A file-level document is a convenience collection of
+parsed records; interpretation is always per record and never depends on a
+sibling record.
 
 A format document is the typed syntax of one record or block, with source
 locations: what the source states, before chemistry. Anything that requires
@@ -441,15 +442,18 @@ caller-supplied topology (see Trajectories and streaming).
 | Molfile | One model with topology and molecule projections |
 | SDF record | Model, title, fields, and reports; each record independent |
 | CIF data block | One model or compatible coordinate models as an ensemble |
+| PDB entry | One model or compatible coordinate models as an ensemble |
 
 Sibling SDF records and mmCIF blocks never merge implicitly. Singular projections
 check cardinality; plural molecule projections retain every connected component
 in source order. MOL/SDF interpretation supplies deterministic synthetic hierarchy
 at topology scope. mmCIF preserves label/author hierarchy identities and interprets
 all coordinate-model candidates against the same identity, chemistry, and dense
-layout. Malformed rows in unselected models still fail validation. Ensemble
-assembly releases redundant topologies while transferring structure payloads;
-multiple coordinate models do not imply temporal trajectory semantics.
+layout. PDB carries author identities only: a residue is a run of consecutive
+records, and a number that recurs after other residues names a new residue.
+Malformed rows in unselected models still fail validation. Ensemble assembly
+releases redundant topologies while transferring structure payloads; multiple
+coordinate models do not imply temporal trajectory semantics.
 
 mmCIF alternate rows remain in the source document. Interpretation selects whole
 residue alternatives or explicitly constrained groups and records its choices in
@@ -464,7 +468,9 @@ boundaries follow bonds, so one resolver shared by these formats derives connect
 from ranked evidence:
 
 1. Explicit source bonds: component bond tables in the source, and covalent,
-   disulfide, and metal-coordination links between residues.
+   disulfide, and metal-coordination links between residues. Records that list
+   connectivity without bond types, such as PDB `CONECT`, supplement a
+   residue's template and replace distance inference for residues without one.
 2. Component templates supplied as interpretation context, keyed by component
    identifier and matched to source atoms by atom name and element.
 3. Polymer linkage between residues adjacent in sequence, accepted only within
@@ -473,17 +479,23 @@ from ranked evidence:
    explicit bond table covers. It is on by default, can be disabled, and yields
    single bonds that the report identifies as inferred.
 
+Without entity records, as in PDB, chain termination records delimit the
+polymer, and a residue without a polymer template takes its linkage from its
+neighbour or its atom names.
+
 Explicit bonds outrank the levels below them. A residue whose internal bonds the
 source enumerates, as files that write complete connectivity do, takes exactly
 those bonds; templates and inference only fill residues the source leaves without
 them. Close contacts that no evidence bonds are counted, never bonded.
 
 Coordination is covalent: metal-ligand links become `Dative` bonds, so a metal
-complex or a metalloprotein site is one connected molecule. Hydrogen bonds, salt
-bridges, and links to symmetry mates are never bonds; unresolvable links are
-reported. A heavy atom whose name does not match its residue template is an error,
-not a silently separate molecule. The report records the evidence for every bond
-and names residues whose resolved atoms split into several molecules.
+complex or a metalloprotein site is one connected molecule. Links whose records
+state no type, such as PDB `LINK`, are coordination between a metal and a
+non-metal. Hydrogen bonds, salt bridges, and links to symmetry mates are never
+bonds; unresolvable links are reported. A heavy atom whose name does not match
+its residue template is an error, not a silently separate molecule. The report
+records the evidence for every bond and names residues whose resolved atoms
+split into several molecules.
 
 Formal charges come from the source when stated, otherwise from the template,
 including when the source's own bond table supplies the bonds. Hydrogens present
@@ -506,8 +518,9 @@ information. Document-level reports borrow record reports instead of duplicating
 them. Format-specific constructors and save methods do not belong on canonical
 owners. See the [public format namespaces](crates/kekule/src/lib.rs),
 [MOL interpretation](crates/kekule/src/io/structure_documents.rs),
-[SDF records](crates/kekule/src/io/sdf_document.rs), and
-[mmCIF interpretation](crates/kekule/src/io/mmcif_interpret/mod.rs).
+[SDF records](crates/kekule/src/io/sdf_document.rs),
+[PDB records](crates/kekule/src/io/pdb_document.rs), and
+[structure interpretation](crates/kekule/src/io/structure_interpret/mod.rs).
 
 Writers live in format namespaces as one `write(source, options)` returning a
 string and one `write_to(writer, source, options)` sink writer per format. Each

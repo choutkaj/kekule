@@ -1,0 +1,10 @@
+MODEL        1
+HETATM    1  O   HOH W   1       0.000   0.000   0.000  1.00 20.00           O  
+HETATM    2  H1  HOH W   1       0.960   0.000   0.000  1.00 20.00           H  
+ENDMDL
+MODEL        2
+HETATM    1  O   HOH W   1       0.100   0.000   0.000  1.00 20.00           O  
+HETATM    2  H1  HOH W   1       1.060   0.000   0.000  1.00 20.00           H  
+ENDMDL
+CONECT    1    2
+END

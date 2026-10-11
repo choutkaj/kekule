@@ -200,6 +200,9 @@ pub(super) struct AtomRow {
     pub(super) auth_asym_id: Option<String>,
     pub(super) residue_key: String,
     pub(super) label_seq_id: Option<i32>,
+    /// The residue's position along its polymer chain: `label_seq_id` for
+    /// mmCIF, the residue's order within its chain for PDB.
+    pub(super) polymer_position: Option<i32>,
     pub(super) auth_seq_id: Option<String>,
     pub(super) insertion_code: Option<String>,
     pub(super) occurrence: Option<usize>,
@@ -389,6 +392,7 @@ pub(super) fn read_atom_rows(
             auth_asym_id,
             residue_key,
             label_seq_id,
+            polymer_position: label_seq_id,
             auth_seq_id,
             insertion_code,
             occurrence,
@@ -410,11 +414,14 @@ pub(super) fn read_atom_rows(
     Ok(rows)
 }
 
-fn infer_entity_kind(group_pdb: Option<&str>, comp_id: &str) -> EntityKind {
-    if ["HOH", "WAT", "DOD"]
+pub(super) fn is_water(comp_id: &str) -> bool {
+    ["HOH", "WAT", "DOD"]
         .iter()
         .any(|water| comp_id.eq_ignore_ascii_case(water))
-    {
+}
+
+fn infer_entity_kind(group_pdb: Option<&str>, comp_id: &str) -> EntityKind {
+    if is_water(comp_id) {
         EntityKind::Water
     } else if group_pdb.is_some_and(|group| group.eq_ignore_ascii_case("ATOM")) {
         EntityKind::Polymer
@@ -423,7 +430,7 @@ fn infer_entity_kind(group_pdb: Option<&str>, comp_id: &str) -> EntityKind {
     }
 }
 
-fn canonical_mmcif_element_symbol(symbol: &str) -> String {
+pub(super) fn canonical_mmcif_element_symbol(symbol: &str) -> String {
     let mut chars = symbol.chars();
     let Some(first) = chars.next() else {
         return String::new();

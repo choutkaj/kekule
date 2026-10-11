@@ -5,14 +5,13 @@
 //! not a joint probability or a guarantee of compatibility between unrelated groups.
 
 mod select;
-mod source;
+pub(super) mod source;
 
 use std::collections::BTreeMap;
 
 use super::atom_site::AtomRow;
 
-pub(crate) use select::inventory;
-pub(super) use select::select_alt_locations;
+pub(super) use select::{inventory, select_alt_locations};
 
 /// Policy for reducing source alternate locations to one coordinate set.
 ///
@@ -89,11 +88,12 @@ pub struct AltLocSelection {
     pub source_conformation: Option<String>,
 }
 
-/// A block-scoped residue identity, independent of selected chemistry and rows.
+/// A source-scoped residue identity, independent of selected chemistry and rows.
 ///
-/// `asym_id` uses the label namespace, falling back to author only when absent.
-/// Position similarly prefers label sequence, then author sequence, then source
-/// occurrence. Insertion codes and source coordinate models remain significant.
+/// `asym_id` uses the label namespace, falling back to author only when absent;
+/// a PDB entry has only the author namespace. Position similarly prefers label
+/// sequence, then author sequence, then source occurrence. Insertion codes and
+/// source coordinate models remain significant.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SourceResidueId {
     pub model_id: String,
@@ -106,6 +106,13 @@ pub struct SourceResidueId {
 pub enum SourceResiduePosition {
     Label(i32),
     Author(String),
+    /// An author sequence number that an earlier, separate residue of the same
+    /// chain already uses, as in PDB files whose numbering wraps around;
+    /// `repeat` counts the earlier residues with this number.
+    RepeatedAuthor {
+        sequence: String,
+        repeat: usize,
+    },
     /// Zero-based source occurrence when neither sequence namespace is available.
     Occurrence {
         component_id: String,
@@ -115,22 +122,45 @@ pub enum SourceResiduePosition {
 
 impl SourceResidueId {
     pub(super) fn of(row: &AtomRow) -> Self {
-        Self {
-            model_id: row.model_id.clone(),
-            asym_id: row.asym_id.clone(),
-            position: if let Some(sequence) = row.label_seq_id {
-                SourceResiduePosition::Label(sequence)
-            } else if let Some(sequence) = &row.auth_seq_id {
-                SourceResiduePosition::Author(sequence.clone())
-            } else {
-                SourceResiduePosition::Occurrence {
-                    component_id: row.comp_id.clone(),
-                    index: row
-                        .occurrence
-                        .expect("unsequenced residue has an occurrence"),
-                }
+        Self::new(
+            &row.model_id,
+            &row.asym_id,
+            row.label_seq_id,
+            row.auth_seq_id.as_deref(),
+            row.insertion_code.as_deref(),
+            row.occurrence,
+            &row.comp_id,
+        )
+    }
+
+    /// The identity of a residue from its source fields. An occurrence counts
+    /// repeats of an author number, or residues when no number is available.
+    pub(in crate::io) fn new(
+        model_id: &str,
+        asym_id: &str,
+        label_sequence_id: Option<i32>,
+        author_sequence_id: Option<&str>,
+        insertion_code: Option<&str>,
+        occurrence: Option<usize>,
+        component_id: &str,
+    ) -> Self {
+        let position = match (label_sequence_id, author_sequence_id, occurrence) {
+            (Some(sequence), _, _) => SourceResiduePosition::Label(sequence),
+            (None, Some(sequence), None) => SourceResiduePosition::Author(sequence.to_owned()),
+            (None, Some(sequence), Some(repeat)) => SourceResiduePosition::RepeatedAuthor {
+                sequence: sequence.to_owned(),
+                repeat,
             },
-            insertion_code: row.insertion_code.clone(),
+            (None, None, occurrence) => SourceResiduePosition::Occurrence {
+                component_id: component_id.to_owned(),
+                index: occurrence.unwrap_or_default(),
+            },
+        };
+        Self {
+            model_id: model_id.to_owned(),
+            asym_id: asym_id.to_owned(),
+            position,
+            insertion_code: insertion_code.map(str::to_owned),
         }
     }
 }

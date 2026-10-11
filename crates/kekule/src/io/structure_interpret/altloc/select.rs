@@ -1,7 +1,7 @@
 use crate::diagnostics::DiagnosticKind;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::super::atom_site::{read_asym_entities, read_atom_rows, read_entity_types, AtomRow};
+use super::super::atom_site::AtomRow;
 use super::super::{
     StructureInterpretError, StructureInterpretIssue, StructureInterpretationReport,
 };
@@ -9,7 +9,6 @@ use super::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
     AltLocSelectionReason, SourceResidueId,
 };
-use crate::io::MmcifBlock;
 
 struct Residue<'a> {
     id: SourceResidueId,
@@ -47,25 +46,11 @@ fn residues(rows: &[AtomRow]) -> Result<Vec<Residue<'_>>, StructureInterpretErro
         .collect()
 }
 
-pub(crate) fn inventory(block: &MmcifBlock) -> Result<Vec<AltLocResidue>, StructureInterpretError> {
-    let entities = read_entity_types(block)?;
-    let asym = read_asym_entities(block)?;
-    let table = block.category("_atom_site")?.ok_or_else(|| {
-        StructureInterpretError::new(
-            DiagnosticKind::Inconsistent,
-            None,
-            "block has no atom-site category",
-        )
-    })?;
-    let rows = read_atom_rows(
-        &table,
-        &entities,
-        &asym,
-        false,
-        &mut StructureInterpretationReport::default(),
-    )?;
-    super::source::conformations(block, &rows)?;
-    Ok(residues(&rows)?
+/// The residues of a source that have alternate locations.
+pub(in crate::io::structure_interpret) fn inventory(
+    rows: &[AtomRow],
+) -> Result<Vec<AltLocResidue>, StructureInterpretError> {
+    Ok(residues(rows)?
         .into_iter()
         .filter(|residue| !residue.labels.is_empty())
         .map(|residue| AltLocResidue {
@@ -281,15 +266,14 @@ struct Candidate<'a> {
     preferred: usize,
 }
 
-pub(in crate::io::mmcif_interpret) fn select_alt_locations(
-    block: &MmcifBlock,
+pub(in crate::io::structure_interpret) fn select_alt_locations(
     rows: &[AtomRow],
+    conformations: &BTreeMap<String, BTreeSet<String>>,
     policy: &AltLocPolicy,
     report: &mut StructureInterpretationReport,
 ) -> Result<Vec<AtomRow>, StructureInterpretError> {
     let residues = residues(rows)?;
     let selection = configuration(policy);
-    let conformations = super::source::conformations(block, rows)?;
     if let Some(id) = &selection.source_conformation {
         if !conformations.contains_key(id) {
             return Err(StructureInterpretError::new(

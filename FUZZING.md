@@ -12,7 +12,7 @@ cargo +nightly fuzz run <target> -- -runs=256 -max_len=4096 -seed=1
 ```
 
 The input-parser targets are `mol_v2000`, `mol_v3000`, `sdf_v2000`, `smiles`,
-and `mmcif`. The trajectory targets are `trajectory_detection`,
+`mmcif`, and `pdb`. The trajectory targets are `trajectory_detection`,
 `trajectory_xyz`, `trajectory_dcd`, `trajectory_trr`, and `trajectory_xtc`.
 `smarts` checks query parsing; `smarts_match` compares complete collection and
 streaming match results under shared resource bounds.
@@ -47,5 +47,5 @@ unreviewed third-party data.
 
 Fuzzing demonstrates the explored executions, not parser correctness or
 unbounded-input safety. The targets cap generated input length; the public
-Molfile, SDF, SMILES, mmCIF, and trajectory readers also enforce their
+Molfile, SDF, SMILES, mmCIF, PDB, and trajectory readers also enforce their
 documented runtime limits.

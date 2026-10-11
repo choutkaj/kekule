@@ -86,7 +86,7 @@ impl EntityKind {
     }
 }
 
-/// Non-fatal scientific interpretation issues retained in the mmCIF report.
+/// Non-fatal scientific interpretation issues retained in the report.
 ///
 /// Connection issues preserve source identity and distinguish unresolved
 /// selectors from ambiguous selectors. Neither case creates a topology bond.
@@ -96,6 +96,11 @@ pub enum StructureInterpretIssue {
     EntityTypeInferred {
         asym_id: String,
         kind: EntityKind,
+    },
+    /// Atom records without an element symbol had their elements inferred
+    /// from the alignment of their atom names, as PDB convention places them.
+    ElementsInferredFromAtomNames {
+        source_lines: Vec<usize>,
     },
     ConnectionIgnored {
         connection_type: String,
@@ -209,7 +214,9 @@ pub enum BondEvidence {
     PolymerLink,
     /// A `_pdbx_entity_branch_link` row.
     BranchLink,
-    /// A `_struct_conn` record; metal coordination yields a dative bond.
+    /// A connection record: an mmCIF `_struct_conn` row, whose type
+    /// `connection_type` names, or a PDB `LINK`, `SSBOND`, or `CONECT` record,
+    /// named by its record type. Metal coordination yields a dative bond.
     Connection {
         connection_id: Option<String>,
         connection_type: String,
@@ -237,7 +244,7 @@ impl BondProvenance {
     }
 }
 
-/// Why a `_struct_conn` partner could not be resolved uniquely.
+/// Why a connection record's partner could not be resolved uniquely.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectionResolutionReason {
@@ -282,7 +289,7 @@ impl fmt::Display for ConnectionResolutionReason {
     }
 }
 
-/// Stable source correspondence for one interpreted mmCIF atom.
+/// Stable source correspondence for one interpreted atom.
 ///
 /// Residue, occurrence, asymmetry, and selected alternate-location fields are
 /// retained independently of derived molecule-instance and dense ordering.
@@ -454,7 +461,7 @@ impl InstanceProvenance {
     }
 }
 
-/// Structured record of one mmCIF interpretation.
+/// Structured record of one structure interpretation.
 ///
 /// Applied connection counts include only uniquely resolved local covalent and
 /// metal-coordination records. [`Self::issues`] retains source-aware unresolved and ambiguous
@@ -477,6 +484,8 @@ pub struct StructureInterpretationReport {
 }
 
 impl StructureInterpretationReport {
+    /// The interpreted mmCIF data block's name, or the PDB entry's ID code
+    /// from its `HEADER` record (empty without one).
     pub fn block_name(&self) -> &str {
         &self.block_name
     }
@@ -530,7 +539,7 @@ impl StructureInterpretationReport {
 
     /// Returns source-aware non-fatal interpretation issues.
     ///
-    /// Unresolved and ambiguous `_struct_conn` partners are reported here and
+    /// Unresolved and ambiguous connection partners are reported here and
     /// never create molecule merges or topology bonds.
     pub fn issues(&self) -> &[StructureInterpretIssue] {
         &self.issues
@@ -538,7 +547,7 @@ impl StructureInterpretationReport {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-/// One final canonical model and its format-specific mmCIF interpretation report.
+/// One final canonical model and its interpretation report.
 pub struct StructureInterpretation {
     pub(super) model: Model,
     pub(super) report: StructureInterpretationReport,
@@ -627,10 +636,10 @@ impl fmt::Display for StructureInterpretError {
         match self.location {
             Some(location) => write!(
                 f,
-                "mmCIF interpretation error at {location}: {}",
+                "structure interpretation error at {location}: {}",
                 self.message
             ),
-            None => write!(f, "mmCIF interpretation error: {}", self.message),
+            None => write!(f, "structure interpretation error: {}", self.message),
         }
     }
 }
@@ -662,7 +671,7 @@ impl Default for StructureEnsembleInterpretOptions {
 }
 
 #[derive(Debug, Clone)]
-/// One shared-topology ensemble and one mmCIF report per selected conformation.
+/// One shared-topology ensemble and one report per selected conformation.
 pub struct StructureEnsembleInterpretation {
     pub(super) ensemble: Ensemble,
     pub(super) reports: Vec<StructureInterpretationReport>,
@@ -724,13 +733,13 @@ pub enum StructureEnsembleInterpretError {
 impl fmt::Display for StructureEnsembleInterpretError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyConformationSelection => formatter.write_str("explicit mmCIF conformation selection is empty"),
+            Self::EmptyConformationSelection => formatter.write_str("explicit conformation selection is empty"),
             Self::Conformation { selection, error } => write!(formatter, "cannot interpret conformation selection {selection}: {error}"),
             Self::NoCoordinateModels => {
-                formatter.write_str("mmCIF input contains no coordinate models")
+                formatter.write_str("input contains no coordinate models")
             }
             Self::EmptyModelSelection => {
-                formatter.write_str("explicit mmCIF coordinate model selection is empty")
+                formatter.write_str("explicit coordinate model selection is empty")
             }
             Self::MultipleAtomSiteBlocks => formatter
                 .write_str("mmCIF document has atom-site data in more than one data block"),
@@ -755,7 +764,7 @@ impl fmt::Display for StructureEnsembleInterpretError {
                 formatter,
                 "coordinate model `{model_id}` has an inconsistent dense atom identity order"
             ),
-            Self::Ensemble(error) => write!(formatter, "cannot assemble mmCIF ensemble: {error}"),
+            Self::Ensemble(error) => write!(formatter, "cannot assemble ensemble: {error}"),
         }
     }
 }

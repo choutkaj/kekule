@@ -82,5 +82,5 @@ Dense atom and hierarchy order follow the first source occurrence of each site,
 so selecting another alternative does not itself reorder identities. True source
 model ordering differences remain subject to the existing ensemble checks.
 
-The API contract lives beside [alternate-location types](../crates/kekule/src/io/mmcif_interpret/altloc.rs)
-and [ensemble interpretation](../crates/kekule/src/io/mmcif_interpret/ensemble.rs).
+The API contract lives beside [alternate-location types](../crates/kekule/src/io/structure_interpret/altloc.rs)
+and [ensemble interpretation](../crates/kekule/src/io/structure_interpret/ensemble.rs).

@@ -1,17 +1,18 @@
 mod components;
 mod lines;
 mod mmcif_category;
-mod mmcif_connectivity;
 mod mmcif_document;
-mod mmcif_interpret;
 mod mmcif_write;
 mod molfile_document;
 mod molfile_write;
+mod pdb_document;
 mod sdf_document;
 mod serialization_write;
 pub(crate) mod smiles;
 mod staged_coordinates;
+mod structure_connectivity;
 mod structure_documents;
+mod structure_interpret;
 mod v2000;
 mod v3000;
 
@@ -20,15 +21,6 @@ pub use components::{
     ComponentLinking,
 };
 pub use mmcif_document::*;
-pub use mmcif_interpret::{
-    AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
-    AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance,
-    ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
-    ModelSelection, SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretError,
-    StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretError,
-    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
-    StructureInterpretationReport,
-};
 pub use mmcif_write::*;
 pub use molfile_document::{
     parse_molfile_document, parse_molfile_document_with_options, parse_molfile_reader, MolfileAtom,
@@ -36,6 +28,7 @@ pub use molfile_document::{
     MolfileHeader, MolfileParseError, MolfileParseOptions, MolfileRadical, MolfileStereoGroup,
     MolfileStereoGroupKind, MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion,
 };
+pub use pdb_document::*;
 pub use sdf_document::*;
 pub use serialization_write::*;
 pub use smiles::{
@@ -49,5 +42,14 @@ pub use smiles::{
 pub use structure_documents::{
     MolfileAtomMapping, MolfileBondMapping, MolfileInterpretError, MolfileInterpretOptions,
     MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning,
+};
+pub use structure_interpret::{
+    AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
+    AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance,
+    ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
+    ModelSelection, SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretError,
+    StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretError,
+    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+    StructureInterpretationReport,
 };
 pub use v2000::*;

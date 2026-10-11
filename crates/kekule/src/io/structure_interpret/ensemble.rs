@@ -3,61 +3,32 @@ use std::sync::Arc;
 
 use crate::structure::{Ensemble, EnsembleMember};
 
-use super::super::{MmcifBlock, MmcifDocument};
-use super::atom_site::coordinate_model_ids;
 use super::types::{
     StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
-    StructureEnsembleInterpretation, StructureInterpretOptions, StructureInterpretation,
-    StructureInterpretationReport,
+    StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretOptions,
+    StructureInterpretation, StructureInterpretationReport,
 };
-use super::PreparedBlock;
+use super::{PreparedSource, StructureSource};
 
-/// Interprets explicitly selected or all coordinate models as one
-/// shared-topology non-temporal ensemble.
-pub(crate) fn interpret_mmcif_ensemble(
-    document: &MmcifDocument,
+/// Interprets explicitly selected or all of the `available` coordinate models
+/// of one source as one shared-topology non-temporal ensemble.
+pub(super) fn interpret_ensemble(
+    available: Vec<String>,
     options: StructureEnsembleInterpretOptions,
-) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
-    interpret_mmcif_ensemble_block(atom_site_block(document)?, options)
-}
-
-fn atom_site_block(
-    document: &MmcifDocument,
-) -> Result<&MmcifBlock, StructureEnsembleInterpretError> {
-    let mut blocks = document
-        .blocks()
-        .iter()
-        .filter(|block| block.has_category("_atom_site"));
-    let block = blocks
-        .next()
-        .ok_or(StructureEnsembleInterpretError::NoCoordinateModels)?;
-    if blocks.next().is_some() {
-        return Err(StructureEnsembleInterpretError::MultipleAtomSiteBlocks);
-    }
-    Ok(block)
-}
-
-/// Interprets explicitly selected or all coordinate models in one block as
-/// one shared-topology non-temporal ensemble.
-pub(crate) fn interpret_mmcif_ensemble_block(
-    block: &MmcifBlock,
-    options: StructureEnsembleInterpretOptions,
+    source: impl FnOnce(
+        &StructureEnsembleInterpretOptions,
+    ) -> Result<StructureSource, StructureInterpretError>,
 ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
     if options.model_ids.as_ref().is_some_and(Vec::is_empty) {
         return Err(StructureEnsembleInterpretError::EmptyModelSelection);
     }
-    if !block.has_category("_atom_site") {
-        return Err(StructureEnsembleInterpretError::NoCoordinateModels);
-    }
-    let available =
-        coordinate_model_ids(block).map_err(|error| StructureEnsembleInterpretError::Model {
-            model_id: "<model inventory>".to_owned(),
-            error,
-        })?;
     if available.is_empty() {
         return Err(StructureEnsembleInterpretError::NoCoordinateModels);
     }
-    let selected = options.model_ids.unwrap_or_else(|| available.clone());
+    let selected = options
+        .model_ids
+        .clone()
+        .unwrap_or_else(|| available.clone());
     let mut seen = BTreeSet::new();
     for model in &selected {
         if !seen.insert(model.clone()) {
@@ -72,16 +43,12 @@ pub(crate) fn interpret_mmcif_ensemble_block(
         }
     }
 
-    let mut prepared = PreparedBlock::new(
-        block,
-        options.strict_entity_metadata,
-        &options.altloc_policy,
-        &options.connectivity,
-    )
-    .map_err(|error| StructureEnsembleInterpretError::Model {
-        model_id: selected[0].clone(),
-        error,
-    })?;
+    let mut prepared = source(&options)
+        .and_then(|source| PreparedSource::new(source, &options.altloc_policy))
+        .map_err(|error| StructureEnsembleInterpretError::Model {
+            model_id: selected[0].clone(),
+            error,
+        })?;
     let mut selected = selected.into_iter();
     let first_id = selected.next().expect("validated nonempty model selection");
     let first = prepared.interpret_model(&first_id).map_err(|error| {
@@ -100,22 +67,17 @@ pub(crate) fn interpret_mmcif_ensemble_block(
 
 /// Explicit caller-selected alternate conformations, never automatic altloc
 /// enumeration.
-pub(crate) fn interpret_mmcif_conformations(
-    document: &MmcifDocument,
+pub(super) fn interpret_conformations(
     selections: &[StructureInterpretOptions],
-) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
-    interpret_mmcif_conformations_block(atom_site_block(document)?, selections)
-}
-
-pub(crate) fn interpret_mmcif_conformations_block(
-    block: &MmcifBlock,
-    selections: &[StructureInterpretOptions],
+    interpret: impl Fn(
+        &StructureInterpretOptions,
+    ) -> Result<StructureInterpretation, StructureInterpretError>,
 ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
     if selections.is_empty() {
         return Err(StructureEnsembleInterpretError::EmptyConformationSelection);
     }
     let mut interpreted = selections.iter().enumerate().map(|(selection, options)| {
-        super::interpret_mmcif_block(block, options.clone())
+        interpret(options)
             .map_err(|error| StructureEnsembleInterpretError::Conformation { selection, error })
     });
     let first = interpreted.next().expect("validated nonempty selections")?;

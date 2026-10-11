@@ -216,7 +216,7 @@ fn duplicate_conflicting_authoritative_bond_evidence_is_rejected() {
     assert_eq!(error.location(), None);
     assert_eq!(
         error.message(),
-        "conflicting authoritative mmCIF bond evidence for one atom pair: Double versus Single"
+        "conflicting authoritative bond evidence for one atom pair: Double versus Single"
     );
 }
 

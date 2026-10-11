@@ -1,30 +1,38 @@
+//! Interpretation of macromolecular structure sources, mmCIF data blocks and
+//! PDB entries, through one pipeline: atom sites, alternate locations,
+//! coordinate models, connection records, and connectivity resolution.
 mod altloc;
 mod atom_site;
 mod build;
+mod connections;
 mod ensemble;
-mod struct_conn;
+mod mmcif;
+mod pdb;
 mod types;
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostics::DiagnosticKind;
 use crate::structure::ModelBuilder;
 use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};
 
-use super::{MmcifBlock, MmcifDocument};
+use super::structure_connectivity::ConnectivityCatalog;
 use altloc::select_alt_locations;
-use atom_site::{read_asym_entities, read_atom_rows, read_entity_types};
-use build::{
-    build_molecule, build_topology_hierarchy, graph_error, group_rows, polymer_asym_order,
-};
-use struct_conn::{read_connections, InstanceUnion};
+use atom_site::AtomRow;
+use build::{build_molecule, build_topology_hierarchy, graph_error, group_rows};
+use connections::{resolve_connections, ConnectionRecord, DeclaredConnection, InstanceUnion};
 
-pub(crate) use altloc::inventory as alternate_location_inventory;
 pub use altloc::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
     AltLocSelectionReason, SourceResidueId, SourceResiduePosition,
 };
-pub(crate) use ensemble::{
+pub(crate) use mmcif::{
+    alternate_location_inventory, interpret_mmcif, interpret_mmcif_block,
     interpret_mmcif_conformations, interpret_mmcif_conformations_block, interpret_mmcif_ensemble,
     interpret_mmcif_ensemble_block,
+};
+pub(crate) use pdb::{
+    interpret_pdb, interpret_pdb_conformations, interpret_pdb_ensemble, pdb_alternate_locations,
 };
 pub use types::{
     AtomProvenance, BondEvidence, BondProvenance, ConnectionResolutionReason, ConnectivityOptions,
@@ -34,42 +42,28 @@ pub use types::{
     StructureInterpretationReport,
 };
 
-pub(crate) fn interpret_mmcif(
-    document: &MmcifDocument,
-    options: StructureInterpretOptions,
-) -> Result<StructureInterpretation, StructureInterpretError> {
-    let blocks = document
-        .blocks()
-        .iter()
-        .filter(|block| block.has_category("_atom_site"))
-        .collect::<Vec<_>>();
-    if blocks.is_empty() {
-        return Err(StructureInterpretError::new(
-            DiagnosticKind::Inconsistent,
-            None,
-            "document has no atom-site category",
-        ));
-    }
-    if blocks.len() > 1 {
-        return Err(StructureInterpretError::new(
-            DiagnosticKind::Inconsistent,
-            None,
-            "document has atom-site data in more than one data block",
-        ));
-    }
-    interpret_mmcif_block(blocks[0], options)
+/// Everything interpretation reads from one source, an mmCIF data block or a
+/// PDB entry, typed once before any coordinate model or alternative is chosen.
+struct StructureSource {
+    /// The data block name or PDB entry code, for the report.
+    name: String,
+    entity_definitions: usize,
+    rows: Vec<AtomRow>,
+    /// Source-declared alternate-location combinations.
+    conformations: BTreeMap<String, BTreeSet<String>>,
+    /// Polymer chains in declared order.
+    polymer_order: BTreeMap<String, usize>,
+    connections: Vec<ConnectionRecord>,
+    catalog: ConnectivityCatalog,
+    /// Issues found while reading the source.
+    issues: Vec<StructureInterpretIssue>,
 }
 
-pub(crate) fn interpret_mmcif_block(
-    block: &MmcifBlock,
-    options: StructureInterpretOptions,
+fn interpret_source(
+    source: StructureSource,
+    options: &StructureInterpretOptions,
 ) -> Result<StructureInterpretation, StructureInterpretError> {
-    let mut prepared = PreparedBlock::new(
-        block,
-        options.strict_entity_metadata,
-        &options.altloc_policy,
-        &options.connectivity,
-    )?;
+    let mut prepared = PreparedSource::new(source, &options.altloc_policy)?;
     let model_id = match &options.model_selection {
         ModelSelection::RequireSingle if prepared.model_sizes.len() == 1 => {
             prepared.model_sizes[0].0.clone()
@@ -92,59 +86,45 @@ pub(crate) fn interpret_mmcif_block(
 
 #[derive(Default)]
 struct ModelRows {
-    all: Vec<atom_site::AtomRow>,
-    selected: Vec<atom_site::AtomRow>,
+    all: Vec<AtomRow>,
+    selected: Vec<AtomRow>,
 }
 
-/// Shared source interpretation for a block; each model's rows are consumed once.
-struct PreparedBlock<'a> {
-    block: &'a MmcifBlock,
-    models: std::collections::BTreeMap<String, ModelRows>,
+/// Shared interpretation of one source; each model's rows are consumed once.
+struct PreparedSource {
+    models: BTreeMap<String, ModelRows>,
     model_sizes: Vec<(String, usize)>,
     report: StructureInterpretationReport,
-    polymer_order: std::collections::BTreeMap<String, usize>,
-    connectivity: super::mmcif_connectivity::ConnectivityCatalog,
+    polymer_order: BTreeMap<String, usize>,
+    connections: Vec<ConnectionRecord>,
+    catalog: ConnectivityCatalog,
 }
 
-impl<'a> PreparedBlock<'a> {
+impl PreparedSource {
     fn new(
-        block: &'a MmcifBlock,
-        strict_entity_metadata: bool,
+        source: StructureSource,
         altloc_policy: &AltLocPolicy,
-        connectivity: &ConnectivityOptions,
     ) -> Result<Self, StructureInterpretError> {
-        let entities = read_entity_types(block)?;
-        let asym_entities = read_asym_entities(block)?;
-        let atom_table = block.category("_atom_site")?.ok_or_else(|| {
-            StructureInterpretError::new(
-                DiagnosticKind::Inconsistent,
-                None,
-                "block has no atom-site category",
-            )
-        })?;
-        if atom_table.row_count() == 0 {
-            return Err(StructureInterpretError::new(
-                DiagnosticKind::Inconsistent,
-                None,
-                "atom-site category contains no rows",
-            ));
-        }
+        let StructureSource {
+            name,
+            entity_definitions,
+            rows,
+            conformations,
+            polymer_order,
+            connections,
+            catalog,
+            issues,
+        } = source;
         let mut report = StructureInterpretationReport {
-            block_name: block.name().to_owned(),
-            entity_definitions: entities.len(),
+            block_name: name,
+            entity_definitions,
+            issues,
             ..StructureInterpretationReport::default()
         };
-        let rows = read_atom_rows(
-            &atom_table,
-            &entities,
-            &asym_entities,
-            strict_entity_metadata,
-            &mut report,
-        )?;
-        // Alternate-location validation still covers the complete source block,
+        // Alternate-location validation still covers the complete source,
         // including models omitted from the eventual projection.
-        let selected = select_alt_locations(block, &rows, altloc_policy, &mut report)?;
-        let mut models = std::collections::BTreeMap::<String, ModelRows>::new();
+        let selected = select_alt_locations(&rows, &conformations, altloc_policy, &mut report)?;
+        let mut models = BTreeMap::<String, ModelRows>::new();
         let mut model_ids = Vec::new();
         for row in rows {
             let model = models.entry(row.model_id.clone()).or_default();
@@ -168,15 +148,12 @@ impl<'a> PreparedBlock<'a> {
             .collect::<Vec<_>>();
         report.coordinate_models = model_sizes.len();
         Ok(Self {
-            block,
             models,
             model_sizes,
             report,
-            polymer_order: polymer_asym_order(block)?,
-            connectivity: super::mmcif_connectivity::ConnectivityCatalog::from_block(
-                block,
-                connectivity,
-            )?,
+            polymer_order,
+            connections,
+            catalog,
         })
     }
 
@@ -230,20 +207,20 @@ impl<'a> PreparedBlock<'a> {
             }
         }
         publish_model(
-            self.block,
+            &self.connections,
             rows,
             &self.polymer_order,
-            &self.connectivity,
+            &self.catalog,
             report,
         )
     }
 }
 
 fn publish_model(
-    block: &MmcifBlock,
+    connections: &[ConnectionRecord],
     rows: ModelRows,
-    polymer_asym_order: &std::collections::BTreeMap<String, usize>,
-    connectivity: &super::mmcif_connectivity::ConnectivityCatalog,
+    polymer_asym_order: &BTreeMap<String, usize>,
+    catalog: &ConnectivityCatalog,
     mut report: StructureInterpretationReport,
 ) -> Result<StructureInterpretation, StructureInterpretError> {
     let ModelRows {
@@ -256,20 +233,28 @@ fn publish_model(
         .expect("selected model is recorded")
         .to_owned();
     let mut union = InstanceUnion::new(selected.iter().map(|row| row.instance_key.clone()));
-    let connections = read_connections(
-        block,
+    let connections = resolve_connections(
+        connections,
         &selected,
         &rows,
         &selected_model,
         &mut union,
         &mut report,
-    )?;
+    );
     let groups = group_rows(selected, &mut union, polymer_asym_order);
+    let mut group_connections = BTreeMap::<String, Vec<&DeclaredConnection>>::new();
+    for connection in &connections {
+        group_connections
+            .entry(union.find(&connection.instance_key))
+            .or_default()
+            .push(connection);
+    }
     let mut builder = ModelBuilder::new();
     let mut qualified_atom_data = Vec::new();
     for group in groups {
-        let mut built = build_molecule(group, &connections)?;
-        built.complete_connectivity(connectivity, &mut report)?;
+        let declared = group_connections.remove(group.root()).unwrap_or_default();
+        let mut built = build_molecule(group, &declared)?;
+        built.complete_connectivity(catalog, &mut report)?;
         for built in built.publish_components()? {
             let id = builder
                 .add_molecule(built.molecule, &built.positions)
