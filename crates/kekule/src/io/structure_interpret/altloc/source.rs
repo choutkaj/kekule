@@ -6,7 +6,7 @@ use super::super::atom_site::{required, row_error, AtomRow};
 use super::super::StructureInterpretError;
 use crate::io::MmcifBlock;
 
-pub(super) fn conformations(
+pub(in crate::io::structure_interpret) fn conformations(
     block: &MmcifBlock,
     rows: &[AtomRow],
 ) -> Result<BTreeMap<String, BTreeSet<String>>, StructureInterpretError> {
