@@ -647,6 +647,120 @@ fn topology_properties_cover_every_domain_and_do_not_change_layout_identity() {
 }
 
 #[test]
+fn hierarchy_publication_rejects_each_inconsistent_listing() {
+    let [a, b] = [ChainId::new(0), ChainId::new(1)];
+    let [r0, r1] = [ResidueId::new(0), ResidueId::new(1)];
+    let [s0, s1] = [AtomSiteId::new(0), AtomSiteId::new(1)];
+    let staged = || {
+        let mut builder = TopologyBuilder::new();
+        let water = builder
+            .add_molecule_definition(perceived_molecule("O"))
+            .unwrap();
+        let instances = [water, water].map(|definition| builder.add_instance(definition).unwrap());
+        let hierarchy = builder.hierarchy_mut();
+        for (label, instance) in ["A", "B"].into_iter().zip(instances) {
+            let chain = hierarchy.add_chain(label, None).unwrap();
+            let residue = hierarchy
+                .add_residue(chain, "HOH", Some(1), None, None)
+                .unwrap();
+            hierarchy
+                .add_atom_site(
+                    residue,
+                    InstanceAtomId::new(instance, AtomId::new(0)),
+                    AtomSiteMetadata::default(),
+                )
+                .unwrap();
+        }
+        builder
+    };
+    type Corruption = fn(&mut Hierarchy);
+    let cases: [(&str, Corruption, TopologyHierarchyError); 8] = [
+        (
+            "chain lists a residue twice",
+            |hierarchy| {
+                hierarchy
+                    .chain_residues_mut(ChainId::new(0))
+                    .push(ResidueId::new(0))
+            },
+            TopologyHierarchyError::InconsistentChainResidue {
+                chain: a,
+                residue: r0,
+            },
+        ),
+        (
+            "listed residue names another chain",
+            |hierarchy| hierarchy.residues[0].chain = ChainId::new(1),
+            TopologyHierarchyError::InconsistentChainResidue {
+                chain: a,
+                residue: r0,
+            },
+        ),
+        (
+            "chain omits its residue",
+            |hierarchy| hierarchy.chain_residues_mut(ChainId::new(1)).clear(),
+            TopologyHierarchyError::InconsistentChainResidue {
+                chain: b,
+                residue: r1,
+            },
+        ),
+        (
+            "chain lists an unknown residue",
+            |hierarchy| {
+                hierarchy
+                    .chain_residues_mut(ChainId::new(0))
+                    .push(ResidueId::new(9))
+            },
+            TopologyHierarchyError::InvalidChainResidue {
+                chain: a,
+                residue: ResidueId::new(9),
+            },
+        ),
+        (
+            "residue lists a site twice",
+            |hierarchy| hierarchy.residues[0].atom_sites.push(AtomSiteId::new(0)),
+            TopologyHierarchyError::InconsistentResidueAtomSite {
+                residue: r0,
+                site: s0,
+            },
+        ),
+        (
+            "residue lists another residue's site",
+            |hierarchy| hierarchy.residues[0].atom_sites.push(AtomSiteId::new(1)),
+            TopologyHierarchyError::InconsistentResidueAtomSite {
+                residue: r0,
+                site: s1,
+            },
+        ),
+        (
+            "residue omits its site",
+            |hierarchy| hierarchy.residues[1].atom_sites.clear(),
+            TopologyHierarchyError::InconsistentResidueAtomSite {
+                residue: r1,
+                site: s1,
+            },
+        ),
+        (
+            "residue lists an unknown site",
+            |hierarchy| hierarchy.residues[0].atom_sites.push(AtomSiteId::new(9)),
+            TopologyHierarchyError::InvalidResidueAtomSite {
+                residue: r0,
+                site: AtomSiteId::new(9),
+            },
+        ),
+    ];
+    assert_eq!(staged().build().unwrap().hierarchy().residues().count(), 2);
+    for (case, corrupt, expected) in cases {
+        let mut builder = staged();
+        corrupt(builder.hierarchy_mut());
+        assert_eq!(
+            builder.build().unwrap_err(),
+            TopologyBuildError::InvalidHierarchy(expected),
+            "{case}"
+        );
+    }
+}
+
+#[test]
 fn builder_is_transactional_and_does_not_intern_equal_definitions() {
     let (molecule, ..) = edited_molecule();
     let mut builder = TopologyBuilder::new();
