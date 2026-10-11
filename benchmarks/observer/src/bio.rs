@@ -6,7 +6,7 @@ use std::sync::Arc;
 use kekule::core::BondOrder;
 use kekule::dssp::{self, DsspHydrogenBond, DsspOptions};
 use kekule::mmcif::{
-    self, MmcifDocument, MmcifEntry, MmcifInterpretOptions, MmcifModelSelection, MmcifValue,
+    self, MmcifDocument, MmcifEntry, MmcifValue, ModelSelection, StructureInterpretOptions,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, ResidueClass, ResidueId};
 use kekule::units::{ANGSTROM, SQUARE_ANGSTROM};
@@ -87,11 +87,11 @@ fn syntax(document: &MmcifDocument) -> Result<Facts, Failure> {
     Ok(facts)
 }
 
-fn first_model(document: &MmcifDocument) -> Result<mmcif::MmcifInterpretation, Failure> {
+fn first_model(document: &MmcifDocument) -> Result<mmcif::StructureInterpretation, Failure> {
     mmcif::interpret_with_options(
         document,
-        MmcifInterpretOptions {
-            model_selection: MmcifModelSelection::First,
+        StructureInterpretOptions {
+            model_selection: ModelSelection::First,
             ..Default::default()
         },
     )
@@ -99,7 +99,7 @@ fn first_model(document: &MmcifDocument) -> Result<mmcif::MmcifInterpretation, F
 }
 
 /// Site identity for every atom an interpretation kept.
-fn site_ids(interpretation: &mmcif::MmcifInterpretation) -> BTreeMap<InstanceAtomId, String> {
+fn site_ids(interpretation: &mmcif::StructureInterpretation) -> BTreeMap<InstanceAtomId, String> {
     interpretation
         .report()
         .instances()

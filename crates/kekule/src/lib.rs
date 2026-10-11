@@ -626,6 +626,24 @@ pub mod components {
     };
 }
 
+/// Interpretation types shared by the macromolecular structure formats.
+///
+/// Macromolecular formats interpret atom sites, alternate locations, coordinate
+/// models, and connectivity through one pipeline. Its options, reports, issues,
+/// and source provenance live here; each format namespace, such as
+/// [`mmcif`], re-exports them.
+pub mod macromolecular {
+    pub use crate::io::{
+        AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
+        AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance,
+        ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
+        ModelSelection, SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretError,
+        StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
+        StructureInterpretError, StructureInterpretIssue, StructureInterpretOptions,
+        StructureInterpretation, StructureInterpretationReport,
+    };
+}
+
 /// Structural mmCIF parsing, interpretation, and writing.
 ///
 /// Data blocks are independent interpretation scopes. One selected coordinate
@@ -641,15 +659,15 @@ pub mod components {
 /// files in the same order address the same atoms after a round trip.
 pub mod mmcif {
     pub use crate::io::{
-        MmcifAltLocDecision, MmcifAltLocPolicy, MmcifAltLocPreference, MmcifAltLocResidue,
-        MmcifAltLocSelection, MmcifAltLocSelectionReason, MmcifAtomProvenance, MmcifBlock,
-        MmcifBlockSource, MmcifBondEvidence, MmcifBondProvenance, MmcifConnectionResolutionReason,
-        MmcifConnectivityOptions, MmcifDocument, MmcifEnsembleInterpretError,
-        MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation, MmcifEntityClassifications,
-        MmcifEntityKind, MmcifEntry, MmcifInstanceProvenance, MmcifInterpretError,
-        MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport,
-        MmcifItem, MmcifLoopTable, MmcifModelSelection, MmcifParseError, MmcifParseOptions,
-        MmcifResidueId, MmcifResiduePosition, MmcifValue, MmcifWriteError, MmcifWriteOptions,
+        AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
+        AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance,
+        ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
+        MmcifBlock, MmcifBlockSource, MmcifDocument, MmcifEntityClassifications, MmcifEntry,
+        MmcifItem, MmcifLoopTable, MmcifParseError, MmcifParseOptions, MmcifValue, MmcifWriteError,
+        MmcifWriteOptions, ModelSelection, SourceResidueId, SourceResiduePosition,
+        StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
+        StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretIssue,
+        StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular meaning.
@@ -688,7 +706,9 @@ pub mod mmcif {
     /// Interpret a block of a document with several atom-site blocks through
     /// its own methods, such as [`MmcifBlock::interpret`]; sibling blocks are
     /// independent interpretation scopes.
-    pub fn interpret(document: &MmcifDocument) -> Result<MmcifInterpretation, MmcifInterpretError> {
+    pub fn interpret(
+        document: &MmcifDocument,
+    ) -> Result<StructureInterpretation, StructureInterpretError> {
         document.interpret()
     }
 
@@ -696,8 +716,8 @@ pub mod mmcif {
     /// alternate-location policy.
     pub fn interpret_with_options(
         document: &MmcifDocument,
-        options: MmcifInterpretOptions,
-    ) -> Result<MmcifInterpretation, MmcifInterpretError> {
+        options: StructureInterpretOptions,
+    ) -> Result<StructureInterpretation, StructureInterpretError> {
         document.interpret_with_options(options)
     }
 
@@ -710,7 +730,7 @@ pub mod mmcif {
     /// block of a document with several atom-site blocks.
     pub fn interpret_ensemble(
         document: &MmcifDocument,
-    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
         document.interpret_ensemble()
     }
 
@@ -718,8 +738,8 @@ pub mod mmcif {
     /// block as an ensemble of equally weighted members.
     pub fn interpret_ensemble_with_options(
         document: &MmcifDocument,
-        options: MmcifEnsembleInterpretOptions,
-    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+        options: StructureEnsembleInterpretOptions,
+    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
         document.interpret_ensemble_with_options(options)
     }
 
@@ -728,8 +748,8 @@ pub mod mmcif {
     /// Selections must produce identical atom identities and compatible topology.
     pub fn interpret_conformations(
         document: &MmcifDocument,
-        selections: &[MmcifInterpretOptions],
-    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+        selections: &[StructureInterpretOptions],
+    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
         document.interpret_conformations(selections)
     }
 
@@ -743,7 +763,7 @@ pub mod mmcif {
     /// ```no_run
     /// use kekule::mmcif::{self, MmcifBlockSource, MmcifWriteOptions};
     /// # fn example(model: &kekule::structure::Model, other: &kekule::structure::Model,
-    /// #     interpretation: &mmcif::MmcifInterpretation) -> Result<(), mmcif::MmcifWriteError> {
+    /// #     interpretation: &mmcif::StructureInterpretation) -> Result<(), mmcif::MmcifWriteError> {
     /// let one = mmcif::write([model], MmcifWriteOptions::default())?;
     /// let two = mmcif::write([model, other], MmcifWriteOptions::default())?;
     /// let faithful = mmcif::write([interpretation], MmcifWriteOptions::default())?;

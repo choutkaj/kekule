@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use super::altloc::{MmcifAltLocDecision, MmcifAltLocPolicy, MmcifResidueId};
+use super::altloc::{AltLocDecision, AltLocPolicy, SourceResidueId};
 use crate::components::ComponentLibrary;
 use crate::core::Molecule;
 use crate::diagnostics::{DiagnosticKind, SourceLocation};
@@ -9,7 +9,7 @@ use crate::structure::{Ensemble, EnsembleError, Model};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MmcifModelSelection {
+pub enum ModelSelection {
     RequireSingle,
     Select(String),
     First,
@@ -25,7 +25,7 @@ pub enum MmcifModelSelection {
 /// [`infer_bonds_from_distance`](Self::infer_bonds_from_distance) is set, and
 /// fails otherwise.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcifConnectivityOptions {
+pub struct ConnectivityOptions {
     /// Templates consulted before the bundled ones.
     pub components: Option<Arc<ComponentLibrary>>,
     /// Infer the bonds of residues without a template or bond table from
@@ -33,7 +33,7 @@ pub struct MmcifConnectivityOptions {
     pub infer_bonds_from_distance: bool,
 }
 
-impl Default for MmcifConnectivityOptions {
+impl Default for ConnectivityOptions {
     fn default() -> Self {
         Self {
             components: None,
@@ -43,26 +43,26 @@ impl Default for MmcifConnectivityOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcifInterpretOptions {
+pub struct StructureInterpretOptions {
     pub strict_entity_metadata: bool,
-    pub altloc_policy: MmcifAltLocPolicy,
-    pub model_selection: MmcifModelSelection,
-    pub connectivity: MmcifConnectivityOptions,
+    pub altloc_policy: AltLocPolicy,
+    pub model_selection: ModelSelection,
+    pub connectivity: ConnectivityOptions,
 }
 
-impl Default for MmcifInterpretOptions {
+impl Default for StructureInterpretOptions {
     fn default() -> Self {
         Self {
             strict_entity_metadata: false,
-            altloc_policy: MmcifAltLocPolicy::HighestOccupancy,
-            model_selection: MmcifModelSelection::RequireSingle,
-            connectivity: MmcifConnectivityOptions::default(),
+            altloc_policy: AltLocPolicy::HighestOccupancy,
+            model_selection: ModelSelection::RequireSingle,
+            connectivity: ConnectivityOptions::default(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum MmcifEntityKind {
+pub enum EntityKind {
     Polymer,
     Branched,
     NonPolymer,
@@ -70,7 +70,7 @@ pub enum MmcifEntityKind {
     Other(String),
 }
 
-impl MmcifEntityKind {
+impl EntityKind {
     pub(super) fn from_mmcif(value: &str) -> Self {
         match value.to_ascii_lowercase().as_str() {
             "polymer" => Self::Polymer,
@@ -92,10 +92,10 @@ impl MmcifEntityKind {
 /// selectors from ambiguous selectors. Neither case creates a topology bond.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MmcifInterpretIssue {
+pub enum StructureInterpretIssue {
     EntityTypeInferred {
         asym_id: String,
-        kind: MmcifEntityKind,
+        kind: EntityKind,
     },
     ConnectionIgnored {
         connection_type: String,
@@ -106,7 +106,7 @@ pub enum MmcifInterpretIssue {
         connection_type: String,
         partner: u8,
         source_line: Option<usize>,
-        reason: MmcifConnectionResolutionReason,
+        reason: ConnectionResolutionReason,
     },
     /// One declared connection partner matched more than one selected-model atom.
     ConnectionAmbiguous {
@@ -115,7 +115,7 @@ pub enum MmcifInterpretIssue {
         partner: u8,
         source_line: Option<usize>,
         candidates: usize,
-        reason: MmcifConnectionResolutionReason,
+        reason: ConnectionResolutionReason,
     },
     CoordinateModelIgnored {
         model_id: String,
@@ -124,31 +124,31 @@ pub enum MmcifInterpretIssue {
     AlternateLocationOmitted {
         atom_name: String,
         alt_id: Option<String>,
-        residue: MmcifResidueId,
+        residue: SourceResidueId,
         source_line: usize,
     },
     /// An alternative lacks sites present in another alternative of the same
     /// chemical component. It is excluded rather than completed from other labels.
     AlternateLocationIncomplete {
-        residue: MmcifResidueId,
+        residue: SourceResidueId,
         alternative: String,
         missing_atoms: Vec<String>,
     },
     AlternateLocationOccupancyMissing {
-        residue: MmcifResidueId,
+        residue: SourceResidueId,
         source_lines: Vec<usize>,
     },
     /// A source-declared combination cannot represent this residue (for example,
     /// it omits every label or includes overlapping sites). Other declared
     /// combinations can still be considered; the rejected one is never repaired.
     AlternateLocationCombinationRejected {
-        residue: MmcifResidueId,
+        residue: SourceResidueId,
         alternative: String,
         reason: String,
     },
     /// Equal heuristic scores, resolved by lexical alternative identifier.
     AlternateLocationOccupancyTie {
-        residues: Vec<MmcifResidueId>,
+        residues: Vec<SourceResidueId>,
         alternatives: Vec<String>,
     },
     /// Atom pairs within covalent bonding distance that no evidence bonds,
@@ -160,28 +160,28 @@ pub enum MmcifInterpretIssue {
     /// A residue without template or bond table had its bonds inferred from
     /// covalent radii; inferred bonds are single.
     ResidueBondsInferred {
-        residue: MmcifResidueId,
+        residue: SourceResidueId,
         component_id: String,
         bonds: usize,
     },
     /// A hydrogen absent from its residue template was bonded to the nearest
     /// heavy atom of its residue.
     HydrogenAttachedByDistance {
-        residue: MmcifResidueId,
+        residue: SourceResidueId,
         atom_name: String,
         heavy_atom_name: String,
     },
     /// Residues adjacent in sequence whose linking atoms lie beyond bonding
     /// distance are not bonded.
     ChainBreak {
-        residue: MmcifResidueId,
-        next: MmcifResidueId,
+        residue: SourceResidueId,
+        next: SourceResidueId,
     },
     /// The model's hydrogens differ from the reference template: a protonation
     /// variant was selected, or heteroatom charges were adjusted by one per
     /// added or removed hydrogen.
     ProtonationFromHydrogens {
-        residue: MmcifResidueId,
+        residue: SourceResidueId,
         component_id: String,
         variant: Option<String>,
         charged_atoms: Vec<(String, i8)>,
@@ -189,7 +189,7 @@ pub enum MmcifInterpretIssue {
     /// The resolved atoms of one residue lie in more than one molecule, for
     /// example because a bridging atom is missing from the model.
     ResidueFragmented {
-        residue: MmcifResidueId,
+        residue: SourceResidueId,
         fragments: usize,
     },
 }
@@ -197,7 +197,7 @@ pub enum MmcifInterpretIssue {
 /// The evidence a bond was resolved from.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MmcifBondEvidence {
+pub enum BondEvidence {
     /// A `_chem_comp_bond` row of the interpreted block.
     ComponentTable,
     /// A component template; `variant` names a protonation variant.
@@ -222,17 +222,17 @@ pub enum MmcifBondEvidence {
 
 /// The evidence for one interpreted bond.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcifBondProvenance {
+pub struct BondProvenance {
     pub(crate) atoms: [InstanceAtomId; 2],
-    pub(crate) evidence: MmcifBondEvidence,
+    pub(crate) evidence: BondEvidence,
 }
 
-impl MmcifBondProvenance {
+impl BondProvenance {
     pub const fn atoms(&self) -> [InstanceAtomId; 2] {
         self.atoms
     }
 
-    pub fn evidence(&self) -> &MmcifBondEvidence {
+    pub fn evidence(&self) -> &BondEvidence {
         &self.evidence
     }
 }
@@ -240,7 +240,7 @@ impl MmcifBondProvenance {
 /// Why a `_struct_conn` partner could not be resolved uniquely.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MmcifConnectionResolutionReason {
+pub enum ConnectionResolutionReason {
     /// The record requests a symmetry mate outside the asymmetric unit.
     UnsupportedSymmetry { symmetry: String },
     /// No label or author atom-identity selector was supplied.
@@ -257,7 +257,7 @@ pub enum MmcifConnectionResolutionReason {
     MultipleMatchingAtoms,
 }
 
-impl fmt::Display for MmcifConnectionResolutionReason {
+impl fmt::Display for ConnectionResolutionReason {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsupportedSymmetry { symmetry } => {
@@ -287,7 +287,7 @@ impl fmt::Display for MmcifConnectionResolutionReason {
 /// Residue, occurrence, asymmetry, and selected alternate-location fields are
 /// retained independently of derived molecule-instance and dense ordering.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcifAtomProvenance {
+pub struct AtomProvenance {
     pub(crate) atom: InstanceAtomId,
     pub(crate) type_symbol: String,
     pub(crate) source_line: usize,
@@ -303,7 +303,7 @@ pub struct MmcifAtomProvenance {
     pub(crate) asym_id: String,
     pub(crate) auth_asym_id: Option<String>,
     pub(crate) entity_id: Option<String>,
-    pub(crate) entity_kind: MmcifEntityKind,
+    pub(crate) entity_kind: EntityKind,
     pub(crate) residue_key: String,
     pub(crate) label_sequence_id: Option<i32>,
     pub(crate) author_sequence_id: Option<String>,
@@ -312,7 +312,7 @@ pub struct MmcifAtomProvenance {
     pub(crate) selected_alternate_location: Option<String>,
 }
 
-impl MmcifAtomProvenance {
+impl AtomProvenance {
     pub const fn atom(&self) -> InstanceAtomId {
         self.atom
     }
@@ -379,7 +379,7 @@ impl MmcifAtomProvenance {
     }
 
     /// Returns the source or explicitly inferred entity kind for this atom.
-    pub const fn entity_kind(&self) -> &MmcifEntityKind {
+    pub const fn entity_kind(&self) -> &EntityKind {
         &self.entity_kind
     }
 
@@ -413,17 +413,17 @@ impl MmcifAtomProvenance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcifInstanceProvenance {
+pub struct InstanceProvenance {
     pub(crate) molecule: MoleculeInstanceId,
     pub(crate) coordinate_model_id: String,
     pub(crate) asym_ids: Vec<String>,
     pub(crate) entity_ids: Vec<String>,
-    pub(crate) entity_kinds: Vec<MmcifEntityKind>,
-    pub(crate) atoms: Vec<MmcifAtomProvenance>,
-    pub(crate) bonds: Vec<MmcifBondProvenance>,
+    pub(crate) entity_kinds: Vec<EntityKind>,
+    pub(crate) atoms: Vec<AtomProvenance>,
+    pub(crate) bonds: Vec<BondProvenance>,
 }
 
-impl MmcifInstanceProvenance {
+impl InstanceProvenance {
     pub const fn molecule(&self) -> MoleculeInstanceId {
         self.molecule
     }
@@ -440,16 +440,16 @@ impl MmcifInstanceProvenance {
         &self.entity_ids
     }
 
-    pub fn entity_kinds(&self) -> &[MmcifEntityKind] {
+    pub fn entity_kinds(&self) -> &[EntityKind] {
         &self.entity_kinds
     }
 
-    pub fn atoms(&self) -> &[MmcifAtomProvenance] {
+    pub fn atoms(&self) -> &[AtomProvenance] {
         &self.atoms
     }
 
     /// The evidence for every bond of the molecule, in bond order.
-    pub fn bonds(&self) -> &[MmcifBondProvenance] {
+    pub fn bonds(&self) -> &[BondProvenance] {
         &self.bonds
     }
 }
@@ -460,7 +460,7 @@ impl MmcifInstanceProvenance {
 /// metal-coordination records. [`Self::issues`] retains source-aware unresolved and ambiguous
 /// partner diagnostics.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct MmcifInterpretationReport {
+pub struct StructureInterpretationReport {
     pub(crate) block_name: String,
     pub(crate) entity_definitions: usize,
     pub(crate) coordinate_models: usize,
@@ -471,12 +471,12 @@ pub struct MmcifInterpretationReport {
     pub(crate) solvent_molecules: usize,
     pub(crate) applied_connections: usize,
     pub(crate) connectivity_candidates: usize,
-    pub(crate) instances: Vec<MmcifInstanceProvenance>,
-    pub(crate) alternate_locations: Vec<MmcifAltLocDecision>,
-    pub(crate) issues: Vec<MmcifInterpretIssue>,
+    pub(crate) instances: Vec<InstanceProvenance>,
+    pub(crate) alternate_locations: Vec<AltLocDecision>,
+    pub(crate) issues: Vec<StructureInterpretIssue>,
 }
 
-impl MmcifInterpretationReport {
+impl StructureInterpretationReport {
     pub fn block_name(&self) -> &str {
         &self.block_name
     }
@@ -518,13 +518,13 @@ impl MmcifInterpretationReport {
         self.connectivity_candidates
     }
 
-    pub fn instances(&self) -> &[MmcifInstanceProvenance] {
+    pub fn instances(&self) -> &[InstanceProvenance] {
         &self.instances
     }
 
     /// Decisions for the selected source coordinate model only. The source
     /// document retains every alternative, including omitted rows and metadata.
-    pub fn alternate_locations(&self) -> &[MmcifAltLocDecision] {
+    pub fn alternate_locations(&self) -> &[AltLocDecision] {
         &self.alternate_locations
     }
 
@@ -532,24 +532,24 @@ impl MmcifInterpretationReport {
     ///
     /// Unresolved and ambiguous `_struct_conn` partners are reported here and
     /// never create molecule merges or topology bonds.
-    pub fn issues(&self) -> &[MmcifInterpretIssue] {
+    pub fn issues(&self) -> &[StructureInterpretIssue] {
         &self.issues
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 /// One final canonical model and its format-specific mmCIF interpretation report.
-pub struct MmcifInterpretation {
+pub struct StructureInterpretation {
     pub(super) model: Model,
-    pub(super) report: MmcifInterpretationReport,
+    pub(super) report: StructureInterpretationReport,
 }
 
-impl MmcifInterpretation {
+impl StructureInterpretation {
     pub fn model(&self) -> &Model {
         &self.model
     }
 
-    pub fn report(&self) -> &MmcifInterpretationReport {
+    pub fn report(&self) -> &StructureInterpretationReport {
         &self.report
     }
 
@@ -583,19 +583,19 @@ impl MmcifInterpretation {
         self.model
     }
 
-    pub fn into_parts(self) -> (Model, MmcifInterpretationReport) {
+    pub fn into_parts(self) -> (Model, StructureInterpretationReport) {
         (self.model, self.report)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcifInterpretError {
+pub struct StructureInterpretError {
     kind: DiagnosticKind,
     location: Option<SourceLocation>,
     message: String,
 }
 
-impl MmcifInterpretError {
+impl StructureInterpretError {
     pub(in crate::io) fn new(
         kind: DiagnosticKind,
         line: Option<usize>,
@@ -622,7 +622,7 @@ impl MmcifInterpretError {
     }
 }
 
-impl fmt::Display for MmcifInterpretError {
+impl fmt::Display for StructureInterpretError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.location {
             Some(location) => write!(
@@ -635,27 +635,27 @@ impl fmt::Display for MmcifInterpretError {
     }
 }
 
-impl std::error::Error for MmcifInterpretError {}
+impl std::error::Error for StructureInterpretError {}
 
 /// Converts deposited coordinate models to members, applying `altloc_policy`
 /// within each model. Alternate locations never generate additional members or
 /// statistical weights. A single coordinate model yields a single member.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcifEnsembleInterpretOptions {
+pub struct StructureEnsembleInterpretOptions {
     pub strict_entity_metadata: bool,
-    pub altloc_policy: MmcifAltLocPolicy,
-    pub connectivity: MmcifConnectivityOptions,
+    pub altloc_policy: AltLocPolicy,
+    pub connectivity: ConnectivityOptions,
     /// `None` selects all coordinate models in source order. `Some` must
     /// contain at least one model ID.
     pub model_ids: Option<Vec<String>>,
 }
 
-impl Default for MmcifEnsembleInterpretOptions {
+impl Default for StructureEnsembleInterpretOptions {
     fn default() -> Self {
         Self {
             strict_entity_metadata: false,
-            altloc_policy: MmcifAltLocPolicy::HighestOccupancy,
-            connectivity: MmcifConnectivityOptions::default(),
+            altloc_policy: AltLocPolicy::HighestOccupancy,
+            connectivity: ConnectivityOptions::default(),
             model_ids: None,
         }
     }
@@ -663,17 +663,17 @@ impl Default for MmcifEnsembleInterpretOptions {
 
 #[derive(Debug, Clone)]
 /// One shared-topology ensemble and one mmCIF report per selected conformation.
-pub struct MmcifEnsembleInterpretation {
+pub struct StructureEnsembleInterpretation {
     pub(super) ensemble: Ensemble,
-    pub(super) reports: Vec<MmcifInterpretationReport>,
+    pub(super) reports: Vec<StructureInterpretationReport>,
 }
 
-impl MmcifEnsembleInterpretation {
+impl StructureEnsembleInterpretation {
     pub fn ensemble(&self) -> &Ensemble {
         &self.ensemble
     }
 
-    pub fn reports(&self) -> &[MmcifInterpretationReport] {
+    pub fn reports(&self) -> &[StructureInterpretationReport] {
         &self.reports
     }
 
@@ -685,21 +685,21 @@ impl MmcifEnsembleInterpretation {
         self.ensemble
     }
 
-    pub fn into_parts(self) -> (Ensemble, Vec<MmcifInterpretationReport>) {
+    pub fn into_parts(self) -> (Ensemble, Vec<StructureInterpretationReport>) {
         (self.ensemble, self.reports)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum MmcifEnsembleInterpretError {
+pub enum StructureEnsembleInterpretError {
     NoCoordinateModels,
     EmptyModelSelection,
     EmptyConformationSelection,
     /// A zero-based caller-supplied conformation selection failed.
     Conformation {
         selection: usize,
-        error: MmcifInterpretError,
+        error: StructureInterpretError,
     },
     /// Document-level interpretation found more than one atom-site block.
     MultipleAtomSiteBlocks,
@@ -707,7 +707,7 @@ pub enum MmcifEnsembleInterpretError {
     UnknownRequestedModel(String),
     Model {
         model_id: String,
-        error: MmcifInterpretError,
+        error: StructureInterpretError,
     },
     InconsistentTopology {
         model_id: String,
@@ -721,7 +721,7 @@ pub enum MmcifEnsembleInterpretError {
     Ensemble(Box<EnsembleError>),
 }
 
-impl fmt::Display for MmcifEnsembleInterpretError {
+impl fmt::Display for StructureEnsembleInterpretError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyConformationSelection => formatter.write_str("explicit mmCIF conformation selection is empty"),
@@ -760,7 +760,7 @@ impl fmt::Display for MmcifEnsembleInterpretError {
     }
 }
 
-impl MmcifEnsembleInterpretError {
+impl StructureEnsembleInterpretError {
     pub fn kind(&self) -> DiagnosticKind {
         match self {
             Self::Conformation { error, .. } | Self::Model { error, .. } => error.kind(),
@@ -786,7 +786,7 @@ impl MmcifEnsembleInterpretError {
     }
 }
 
-impl std::error::Error for MmcifEnsembleInterpretError {
+impl std::error::Error for StructureEnsembleInterpretError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Conformation { error, .. } | Self::Model { error, .. } => Some(error),

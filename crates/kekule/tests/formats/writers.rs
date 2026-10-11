@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::{io, io::Write};
 
 use kekule::geometry::Point3;
-use kekule::mmcif::{self, MmcifEntityClassifications, MmcifEntityKind, MmcifWriteOptions};
+use kekule::mmcif::{self, EntityKind, MmcifEntityClassifications, MmcifWriteOptions};
 use kekule::molfile::{self, MoleculeWriteErrorKind, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
@@ -33,7 +33,7 @@ fn classifications(model: &Model) -> MmcifEntityClassifications {
     let mut classifications = MmcifEntityClassifications::new();
     for instance in model.topology().molecules().map(|molecule| molecule.id()) {
         classifications
-            .insert(instance, MmcifEntityKind::NonPolymer)
+            .insert(instance, EntityKind::NonPolymer)
             .unwrap();
     }
     classifications

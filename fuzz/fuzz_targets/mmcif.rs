@@ -2,8 +2,8 @@
 
 use kekule::mmcif::{
     interpret_ensemble, interpret_ensemble_with_options, interpret_with_options,
-    parse_str_with_options, MmcifEnsembleInterpretOptions, MmcifEntry, MmcifInterpretOptions,
-    MmcifModelSelection, MmcifParseOptions,
+    parse_str_with_options, StructureEnsembleInterpretOptions, MmcifEntry, StructureInterpretOptions,
+    ModelSelection, MmcifParseOptions,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -41,9 +41,9 @@ fuzz_target!(|data: &[u8]| {
             }
         }
 
-        let options = MmcifInterpretOptions {
-            model_selection: MmcifModelSelection::First,
-            ..MmcifInterpretOptions::default()
+        let options = StructureInterpretOptions {
+            model_selection: ModelSelection::First,
+            ..StructureInterpretOptions::default()
         };
         if let Ok(interpreted) = interpret_with_options(&document, options) {
             for atom in interpreted.model().topology().atom_ids() {
@@ -65,9 +65,9 @@ fuzz_target!(|data: &[u8]| {
         }
         let _ = interpret_ensemble_with_options(
             &document,
-            MmcifEnsembleInterpretOptions {
+            StructureEnsembleInterpretOptions {
                 model_ids: Some(Vec::new()),
-                ..MmcifEnsembleInterpretOptions::default()
+                ..StructureEnsembleInterpretOptions::default()
             },
         );
     }

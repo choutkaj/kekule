@@ -7,12 +7,12 @@ All notable changes to Kekule are documented in this file.
 ### Added
 
 - mmCIF interpretation resolves bonds the file does not state from component
-  templates, as described in ARCHITECTURE.md. `MmcifConnectivityOptions`
-  (field `connectivity` of `MmcifInterpretOptions` and
-  `MmcifEnsembleInterpretOptions`) adds caller templates ahead of the bundled
+  templates, as described in ARCHITECTURE.md. `ConnectivityOptions`
+  (field `connectivity` of `StructureInterpretOptions` and
+  `StructureEnsembleInterpretOptions`) adds caller templates ahead of the bundled
   ones and switches distance inference for residues without templates, which
   is on by default. Every published bond records its evidence in
-  `MmcifInstanceProvenance::bonds` (`MmcifBondEvidence`), and the report adds
+  `InstanceProvenance::bonds` (`BondEvidence`), and the report adds
   `ResidueBondsInferred`, `HydrogenAttachedByDistance`, `ChainBreak`,
   `ProtonationFromHydrogens`, and `ResidueFragmented` issues.
 - `kekule::components` holds chemical component templates in the model of the
@@ -71,6 +71,22 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** The interpretation types shared by macromolecular formats have
+  format-neutral names and a namespace of their own, `kekule::macromolecular`;
+  `kekule::mmcif` still re-exports them. `MmcifInterpretOptions`,
+  `MmcifInterpretation`, `MmcifInterpretationReport`, `MmcifInterpretIssue`,
+  and `MmcifInterpretError` are now `StructureInterpretOptions`,
+  `StructureInterpretation`, `StructureInterpretationReport`,
+  `StructureInterpretIssue`, and `StructureInterpretError`, and the ensemble
+  types `MmcifEnsembleInterpret{Options,ation,Error}` are now
+  `StructureEnsembleInterpret{Options,ation,Error}`. The `Mmcif` prefix is
+  dropped from `AltLocPolicy`, `AltLocPreference`, `AltLocSelection`,
+  `AltLocSelectionReason`, `AltLocDecision`, `AltLocResidue`, `ModelSelection`,
+  `ConnectivityOptions`, `AtomProvenance`, `InstanceProvenance`,
+  `BondEvidence`, `BondProvenance`, `ConnectionResolutionReason`, and
+  `EntityKind`, and `MmcifResidueId` and `MmcifResiduePosition` are now
+  `SourceResidueId` and `SourceResiduePosition`. Types specific to mmCIF
+  documents and writing keep their prefix.
 - **Breaking:** mmCIF files without `_chem_comp_bond` rows, such as wwPDB
   archive entries, no longer fall apart into one molecule per unbonded atom:
   residue bonds come from the bundled or caller templates, and residues no
@@ -96,8 +112,8 @@ All notable changes to Kekule are documented in this file.
   and `MmcifLoopTable::value_at` reads a cell by a column resolved once with
   `column_index`. Parsing a 400,000-row atom-site table is about four times
   faster.
-- **Breaking:** `MmcifParseError` and `MmcifInterpretError` report `kind()` and
-  `location()` instead of `line()`. `MmcifEnsembleInterpretError` gains
+- **Breaking:** `MmcifParseError` and `StructureInterpretError` report `kind()` and
+  `location()` instead of `line()`. `StructureEnsembleInterpretError` gains
   `kind()`, `location()`, and an error `source()`.
 - **Breaking:** Molfile and SDF record interpretation rejects unsupported
   content by default instead of ignoring it: V2000 property records other

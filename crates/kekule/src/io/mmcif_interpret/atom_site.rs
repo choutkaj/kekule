@@ -7,7 +7,7 @@ use crate::geometry::Point3;
 use super::super::mmcif_category::MmcifCategory;
 use super::super::{MmcifBlock, MmcifValue};
 use super::types::{
-    MmcifEntityKind, MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretationReport,
+    EntityKind, StructureInterpretError, StructureInterpretIssue, StructureInterpretationReport,
 };
 
 /// A tag whose column is resolved once per table, for reads in row loops.
@@ -116,9 +116,11 @@ impl AtomSiteFields {
     }
 }
 
-pub(super) fn coordinate_model_ids(block: &MmcifBlock) -> Result<Vec<String>, MmcifInterpretError> {
+pub(super) fn coordinate_model_ids(
+    block: &MmcifBlock,
+) -> Result<Vec<String>, StructureInterpretError> {
     let table = block.category("_atom_site")?.ok_or_else(|| {
-        MmcifInterpretError::new(
+        StructureInterpretError::new(
             DiagnosticKind::Inconsistent,
             None,
             "data block has no atom-site category",
@@ -139,7 +141,7 @@ pub(super) fn coordinate_model_ids(block: &MmcifBlock) -> Result<Vec<String>, Mm
 
 pub(super) fn read_entity_types(
     block: &MmcifBlock,
-) -> Result<BTreeMap<String, MmcifEntityKind>, MmcifInterpretError> {
+) -> Result<BTreeMap<String, EntityKind>, StructureInterpretError> {
     let mut entities = BTreeMap::new();
     if let Some(table) = block.category("_entity")? {
         let table = &table;
@@ -147,7 +149,7 @@ pub(super) fn read_entity_types(
             let id = required(table, row, "_entity.id")?;
             let kind = required(table, row, "_entity.type")?;
             if entities
-                .insert(id.to_owned(), MmcifEntityKind::from_mmcif(kind))
+                .insert(id.to_owned(), EntityKind::from_mmcif(kind))
                 .is_some()
             {
                 return Err(row_error(
@@ -164,7 +166,7 @@ pub(super) fn read_entity_types(
 
 pub(super) fn read_asym_entities(
     block: &MmcifBlock,
-) -> Result<BTreeMap<String, String>, MmcifInterpretError> {
+) -> Result<BTreeMap<String, String>, StructureInterpretError> {
     let mut instances = BTreeMap::new();
     if let Some(table) = block.category("_struct_asym")? {
         let table = &table;
@@ -191,7 +193,7 @@ pub(super) struct AtomRow {
     pub(super) site_order: usize,
     pub(super) model_id: String,
     pub(super) entity_id: Option<String>,
-    pub(super) kind: MmcifEntityKind,
+    pub(super) kind: EntityKind,
     pub(super) instance_key: String,
     pub(super) label_asym_id: Option<String>,
     pub(super) asym_id: String,
@@ -231,11 +233,11 @@ struct OccurrenceState {
 
 pub(super) fn read_atom_rows(
     table: &MmcifCategory<'_>,
-    entities: &BTreeMap<String, MmcifEntityKind>,
+    entities: &BTreeMap<String, EntityKind>,
     asym_entities: &BTreeMap<String, String>,
     strict_entity_metadata: bool,
-    report: &mut MmcifInterpretationReport,
-) -> Result<Vec<AtomRow>, MmcifInterpretError> {
+    report: &mut StructureInterpretationReport,
+) -> Result<Vec<AtomRow>, StructureInterpretError> {
     let mut rows = Vec::with_capacity(table.row_count());
     let mut occurrences = BTreeMap::<(String, String, String), OccurrenceState>::new();
     let mut inferred = BTreeSet::new();
@@ -245,7 +247,7 @@ pub(super) fn read_atom_rows(
         let type_value = fields.type_symbol.lookup(table, row).expect("required");
         let element = Element::from_symbol(&canonical_mmcif_element_symbol(type_symbol))
             .ok_or_else(|| {
-                MmcifInterpretError::new(
+                StructureInterpretError::new(
                     DiagnosticKind::InvalidValue,
                     Some(type_value.line()),
                     format!("unknown atom-site element `{type_symbol}`"),
@@ -317,10 +319,12 @@ pub(super) fn read_atom_rows(
                 ));
             }
             if inferred.insert(asym_id.clone()) {
-                report.issues.push(MmcifInterpretIssue::EntityTypeInferred {
-                    asym_id: asym_id.clone(),
-                    kind: kind.clone(),
-                });
+                report
+                    .issues
+                    .push(StructureInterpretIssue::EntityTypeInferred {
+                        asym_id: asym_id.clone(),
+                        kind: kind.clone(),
+                    });
             }
         }
         let label_seq_id = optional_i32(table, row, fields.label_seq_id)?;
@@ -406,16 +410,16 @@ pub(super) fn read_atom_rows(
     Ok(rows)
 }
 
-fn infer_entity_kind(group_pdb: Option<&str>, comp_id: &str) -> MmcifEntityKind {
+fn infer_entity_kind(group_pdb: Option<&str>, comp_id: &str) -> EntityKind {
     if ["HOH", "WAT", "DOD"]
         .iter()
         .any(|water| comp_id.eq_ignore_ascii_case(water))
     {
-        MmcifEntityKind::Water
+        EntityKind::Water
     } else if group_pdb.is_some_and(|group| group.eq_ignore_ascii_case("ATOM")) {
-        MmcifEntityKind::Polymer
+        EntityKind::Polymer
     } else {
-        MmcifEntityKind::NonPolymer
+        EntityKind::NonPolymer
     }
 }
 
@@ -433,7 +437,7 @@ pub(super) fn required<'a>(
     table: &'a MmcifCategory<'_>,
     row: usize,
     key: impl FieldKey,
-) -> Result<&'a str, MmcifInterpretError> {
+) -> Result<&'a str, StructureInterpretError> {
     let tag = key.tag();
     let value = key.lookup(table, row).ok_or_else(|| {
         row_error(
@@ -444,7 +448,7 @@ pub(super) fn required<'a>(
         )
     })?;
     value.optional_text().ok_or_else(|| {
-        MmcifInterpretError::new(
+        StructureInterpretError::new(
             DiagnosticKind::InvalidValue,
             Some(value.line()),
             format!("missing required {tag}"),
@@ -465,7 +469,7 @@ fn optional_f64(
     table: &MmcifCategory<'_>,
     row: usize,
     key: impl FieldKey,
-) -> Result<Option<f64>, MmcifInterpretError> {
+) -> Result<Option<f64>, StructureInterpretError> {
     let tag = key.tag();
     optional(table, row, key)
         .map(|value| {
@@ -494,7 +498,7 @@ pub(super) fn optional_i32(
     table: &MmcifCategory<'_>,
     row: usize,
     key: impl FieldKey,
-) -> Result<Option<i32>, MmcifInterpretError> {
+) -> Result<Option<i32>, StructureInterpretError> {
     let tag = key.tag();
     optional(table, row, key)
         .map(|value| {
@@ -514,7 +518,7 @@ fn optional_i8(
     table: &MmcifCategory<'_>,
     row: usize,
     key: impl FieldKey,
-) -> Result<Option<i8>, MmcifInterpretError> {
+) -> Result<Option<i8>, StructureInterpretError> {
     let tag = key.tag();
     optional(table, row, key)
         .map(|value| {
@@ -534,7 +538,7 @@ fn optional_point(
     table: &MmcifCategory<'_>,
     row: usize,
     [x, y, z]: [Field; 3],
-) -> Result<Option<Point3>, MmcifInterpretError> {
+) -> Result<Option<Point3>, StructureInterpretError> {
     let x = optional_f64(table, row, x)?;
     let y = optional_f64(table, row, y)?;
     let z = optional_f64(table, row, z)?;
@@ -555,6 +559,6 @@ pub(super) fn row_error(
     row: usize,
     kind: DiagnosticKind,
     message: impl Into<String>,
-) -> MmcifInterpretError {
-    MmcifInterpretError::new(kind, table.row_line(row), message)
+) -> StructureInterpretError {
+    StructureInterpretError::new(kind, table.row_line(row), message)
 }

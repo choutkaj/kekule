@@ -1,7 +1,8 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
 use crate::core::BondOrder;
 use crate::io::mmcif_interpret::{
-    MmcifEnsembleInterpretation, MmcifEntityKind, MmcifInterpretation, MmcifInterpretationReport,
+    EntityKind, StructureEnsembleInterpretation, StructureInterpretation,
+    StructureInterpretationReport,
 };
 use crate::structure::{AsModelView, Ensemble, Model, ModelView};
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId};
@@ -49,7 +50,7 @@ pub enum MmcifWriteError {
     DuplicateEntityClassification(MoleculeInstanceId),
     ConflictingEntityClassifications {
         molecule: MoleculeInstanceId,
-        classifications: Vec<MmcifEntityKind>,
+        classifications: Vec<EntityKind>,
     },
     UnsupportedEntityClassification {
         molecule: MoleculeInstanceId,
@@ -65,11 +66,11 @@ pub enum MmcifWriteError {
     },
     ConflictingAsymEntityClassifications {
         asym_id: String,
-        classifications: Vec<MmcifEntityKind>,
+        classifications: Vec<EntityKind>,
     },
     ConflictingSourceEntityClassifications {
         entity_id: String,
-        classifications: Vec<MmcifEntityKind>,
+        classifications: Vec<EntityKind>,
     },
     UnknownClassifiedMolecule(MoleculeInstanceId),
     DuplicateAsymId(String),
@@ -267,7 +268,7 @@ impl std::error::Error for MmcifWriteError {}
 /// or an expert format-specific choice is required.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MmcifEntityClassifications {
-    kinds: BTreeMap<MoleculeInstanceId, MmcifEntityKind>,
+    kinds: BTreeMap<MoleculeInstanceId, EntityKind>,
 }
 
 impl MmcifEntityClassifications {
@@ -281,7 +282,7 @@ impl MmcifEntityClassifications {
     pub fn insert(
         &mut self,
         molecule: MoleculeInstanceId,
-        kind: MmcifEntityKind,
+        kind: EntityKind,
     ) -> Result<(), MmcifWriteError> {
         if self.kinds.contains_key(&molecule) {
             return Err(MmcifWriteError::DuplicateEntityClassification(molecule));
@@ -291,12 +292,12 @@ impl MmcifEntityClassifications {
     }
 
     /// Returns the assigned kind for one molecule instance.
-    pub fn get(&self, molecule: MoleculeInstanceId) -> Option<&MmcifEntityKind> {
+    pub fn get(&self, molecule: MoleculeInstanceId) -> Option<&EntityKind> {
         self.kinds.get(&molecule)
     }
 
     /// Iterates over explicitly classified molecule instances in ID order.
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &MmcifEntityKind)> {
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &EntityKind)> {
         self.kinds.iter().map(|(&molecule, kind)| (molecule, kind))
     }
 
@@ -314,8 +315,8 @@ impl MmcifEntityClassifications {
 /// One mmCIF data block to write: a model or an ensemble, plus the entity
 /// semantics used for its `_entity` and asymmetry assignments.
 ///
-/// Convert from `&Model`, `&Ensemble`, `&MmcifInterpretation`, or
-/// `&MmcifEnsembleInterpretation`; interpretations keep their source reports.
+/// Convert from `&Model`, `&Ensemble`, `&StructureInterpretation`, or
+/// `&StructureEnsembleInterpretation`; interpretations keep their source reports.
 /// [`Self::model`] accepts any borrowed model view, such as an ensemble member.
 #[derive(Debug, Clone, Copy)]
 pub struct MmcifBlockSource<'a> {
@@ -333,7 +334,7 @@ enum BlockContent<'a> {
 enum EntitySemantics<'a> {
     Canonical,
     Classifications(&'a MmcifEntityClassifications),
-    Reports(&'a [MmcifInterpretationReport]),
+    Reports(&'a [StructureInterpretationReport]),
 }
 
 impl<'a> MmcifBlockSource<'a> {
@@ -374,7 +375,7 @@ impl<'a> MmcifBlockSource<'a> {
     /// source identity is rejected. An auth-only source is normalized by
     /// copying author identifiers into the required label fields.
     #[must_use]
-    pub fn with_reports(mut self, reports: &'a [MmcifInterpretationReport]) -> Self {
+    pub fn with_reports(mut self, reports: &'a [StructureInterpretationReport]) -> Self {
         self.entities = EntitySemantics::Reports(reports);
         self
     }
@@ -392,15 +393,15 @@ impl<'a> From<&'a Ensemble> for MmcifBlockSource<'a> {
     }
 }
 
-impl<'a> From<&'a MmcifInterpretation> for MmcifBlockSource<'a> {
-    fn from(interpretation: &'a MmcifInterpretation) -> Self {
+impl<'a> From<&'a StructureInterpretation> for MmcifBlockSource<'a> {
+    fn from(interpretation: &'a StructureInterpretation) -> Self {
         Self::model(interpretation.model())
             .with_reports(std::slice::from_ref(interpretation.report()))
     }
 }
 
-impl<'a> From<&'a MmcifEnsembleInterpretation> for MmcifBlockSource<'a> {
-    fn from(interpretation: &'a MmcifEnsembleInterpretation) -> Self {
+impl<'a> From<&'a StructureEnsembleInterpretation> for MmcifBlockSource<'a> {
+    fn from(interpretation: &'a StructureEnsembleInterpretation) -> Self {
         Self::ensemble(interpretation.ensemble()).with_reports(interpretation.reports())
     }
 }

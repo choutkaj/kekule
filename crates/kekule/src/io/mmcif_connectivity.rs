@@ -36,13 +36,13 @@ pub(crate) struct StagedAtomProvenance<'a> {
 
 /// The evidence of each staged bond, keyed by its ordered atom pair. The first
 /// evidence recorded for a pair is kept.
-pub(crate) type BondEvidence = BTreeMap<(AtomId, AtomId), raw::MmcifBondEvidence>;
+pub(crate) type BondEvidenceMap = BTreeMap<(AtomId, AtomId), raw::BondEvidence>;
 
 pub(crate) fn record_evidence(
-    evidence: &mut BondEvidence,
+    evidence: &mut BondEvidenceMap,
     a: AtomId,
     b: AtomId,
-    source: raw::MmcifBondEvidence,
+    source: raw::BondEvidence,
 ) {
     evidence.entry((a.min(b), a.max(b))).or_insert(source);
 }
@@ -54,9 +54,9 @@ pub(crate) fn complete_editor_connectivity<'a>(
     editor: &mut MoleculeEditor,
     atoms: impl IntoIterator<Item = StagedAtomProvenance<'a>>,
     model_id: &str,
-    evidence: &mut BondEvidence,
-    issues: &mut Vec<raw::MmcifInterpretIssue>,
-) -> Result<(), raw::MmcifInterpretError> {
+    evidence: &mut BondEvidenceMap,
+    issues: &mut Vec<raw::StructureInterpretIssue>,
+) -> Result<(), raw::StructureInterpretError> {
     let mut source_aromatic_bonds = BTreeSet::new();
     let mut resolver = Resolver {
         catalog,
@@ -143,8 +143,8 @@ pub(crate) struct ConnectivityCatalog {
 impl ConnectivityCatalog {
     pub(crate) fn from_block(
         block: &MmcifBlock,
-        options: &raw::MmcifConnectivityOptions,
-    ) -> Result<Self, raw::MmcifInterpretError> {
+        options: &raw::ConnectivityOptions,
+    ) -> Result<Self, raw::StructureInterpretError> {
         let mut catalog = Self {
             components: options.components.clone(),
             infer_bonds_from_distance: options.infer_bonds_from_distance,
@@ -275,14 +275,14 @@ struct ResidueKey {
 }
 
 impl ResidueKey {
-    fn id(&self, model_id: &str) -> raw::MmcifResidueId {
-        raw::MmcifResidueId {
+    fn id(&self, model_id: &str) -> raw::SourceResidueId {
+        raw::SourceResidueId {
             model_id: model_id.to_owned(),
             asym_id: self.asym_id.clone(),
             position: match (self.label_sequence_id, &self.author_sequence_id) {
-                (Some(sequence), _) => raw::MmcifResiduePosition::Label(sequence),
-                (None, Some(sequence)) => raw::MmcifResiduePosition::Author(sequence.clone()),
-                (None, None) => raw::MmcifResiduePosition::Occurrence {
+                (Some(sequence), _) => raw::SourceResiduePosition::Label(sequence),
+                (None, Some(sequence)) => raw::SourceResiduePosition::Author(sequence.clone()),
+                (None, None) => raw::SourceResiduePosition::Occurrence {
                     component_id: self.component_id.clone(),
                     index: self.occurrence.unwrap_or_default(),
                 },
@@ -390,8 +390,8 @@ struct Resolver<'r, 'g> {
     catalog: &'r ConnectivityCatalog,
     graph: &'g mut Molecule,
     source_aromatic_bonds: &'g mut BTreeSet<crate::core::BondId>,
-    evidence: &'g mut BondEvidence,
-    issues: &'g mut Vec<raw::MmcifInterpretIssue>,
+    evidence: &'g mut BondEvidenceMap,
+    issues: &'g mut Vec<raw::StructureInterpretIssue>,
     model_id: &'r str,
 }
 
@@ -399,7 +399,7 @@ impl<'r> Resolver<'r, '_> {
     fn resolve(
         &mut self,
         residues: BTreeMap<ResidueKey, ResidueAtoms>,
-    ) -> Result<(), raw::MmcifInterpretError> {
+    ) -> Result<(), raw::StructureInterpretError> {
         let mut templated = Vec::new();
         let mut stray_hydrogens = Vec::new();
         for residue in residues.values() {
@@ -413,12 +413,7 @@ impl<'r> Resolver<'r, '_> {
                     ) else {
                         continue;
                     };
-                    self.add_bond(
-                        left,
-                        right,
-                        bond.order,
-                        raw::MmcifBondEvidence::ComponentTable,
-                    )?;
+                    self.add_bond(left, right, bond.order, raw::BondEvidence::ComponentTable)?;
                 }
                 // The block's own table supplies the bonds; a template whose
                 // atoms the residue matches still supplies charges.
@@ -465,7 +460,7 @@ impl<'r> Resolver<'r, '_> {
     fn has_stated_internal_bond(
         &self,
         residue: &ResidueAtoms,
-    ) -> Result<bool, raw::MmcifInterpretError> {
+    ) -> Result<bool, raw::StructureInterpretError> {
         for site in &residue.sites {
             if self
                 .graph
@@ -484,8 +479,8 @@ impl<'r> Resolver<'r, '_> {
         left: AtomId,
         right: AtomId,
         order: SourceBondOrder,
-        source: raw::MmcifBondEvidence,
-    ) -> Result<(), raw::MmcifInterpretError> {
+        source: raw::BondEvidence,
+    ) -> Result<(), raw::StructureInterpretError> {
         add_bond_if_missing(self.graph, left, right, order, self.source_aromatic_bonds)?;
         record_evidence(self.evidence, left, right, source);
         Ok(())
@@ -497,7 +492,7 @@ impl<'r> Resolver<'r, '_> {
         &mut self,
         component: &Component,
         matched: &BTreeMap<usize, AtomId>,
-    ) -> Result<(), raw::MmcifInterpretError> {
+    ) -> Result<(), raw::StructureInterpretError> {
         for bond in component.bonds() {
             let [a, b] = bond.atoms();
             let (Some(&left), Some(&right)) = (matched.get(&a), matched.get(&b)) else {
@@ -515,7 +510,7 @@ impl<'r> Resolver<'r, '_> {
                 left,
                 right,
                 SourceBondOrder::of_template(bond),
-                raw::MmcifBondEvidence::Template {
+                raw::BondEvidence::Template {
                     component_id: component.id().to_owned(),
                     variant: None,
                 },
@@ -529,9 +524,9 @@ impl<'r> Resolver<'r, '_> {
     fn infer_residue_bonds(
         &mut self,
         residue: &ResidueAtoms,
-    ) -> Result<(), raw::MmcifInterpretError> {
+    ) -> Result<(), raw::StructureInterpretError> {
         if !self.catalog.infer_bonds_from_distance {
-            return Err(raw::MmcifInterpretError::new(
+            return Err(raw::StructureInterpretError::new(
                 DiagnosticKind::Unsupported,
                 residue.sites.first().map(|site| site.line),
                 format!(
@@ -554,14 +549,14 @@ impl<'r> Resolver<'r, '_> {
                         left.atom,
                         right.atom,
                         SourceBondOrder::Localized(BondOrder::Single),
-                        raw::MmcifBondEvidence::Distance,
+                        raw::BondEvidence::Distance,
                     )?;
                     bonds += 1;
                 }
             }
         }
         self.issues
-            .push(raw::MmcifInterpretIssue::ResidueBondsInferred {
+            .push(raw::StructureInterpretIssue::ResidueBondsInferred {
                 residue: residue.key.id(self.model_id),
                 component_id: residue.key.component_id.clone(),
                 bonds,
@@ -572,7 +567,7 @@ impl<'r> Resolver<'r, '_> {
     fn apply_branch_links(
         &mut self,
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
-    ) -> Result<(), raw::MmcifInterpretError> {
+    ) -> Result<(), raw::StructureInterpretError> {
         for link in &self.catalog.branch_links {
             let left =
                 resolve_branch_residue(residues, self.catalog, &link.entity_id, link.number_1);
@@ -590,7 +585,7 @@ impl<'r> Resolver<'r, '_> {
                 left_atom,
                 right_atom,
                 link.order,
-                raw::MmcifBondEvidence::BranchLink,
+                raw::BondEvidence::BranchLink,
             )?;
         }
         Ok(())
@@ -603,7 +598,7 @@ impl<'r> Resolver<'r, '_> {
     fn apply_polymer_links(
         &mut self,
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
-    ) -> Result<(), raw::MmcifInterpretError> {
+    ) -> Result<(), raw::StructureInterpretError> {
         let mut chains = BTreeMap::<(String, Option<String>), Vec<&ResidueAtoms>>::new();
         for residue in residues.values() {
             if residue.key.label_sequence_id.is_none() {
@@ -681,10 +676,10 @@ impl<'r> Resolver<'r, '_> {
                         left_atom,
                         right_atom,
                         SourceBondOrder::Localized(BondOrder::Single),
-                        raw::MmcifBondEvidence::PolymerLink,
+                        raw::BondEvidence::PolymerLink,
                     )?;
                 } else {
-                    self.issues.push(raw::MmcifInterpretIssue::ChainBreak {
+                    self.issues.push(raw::StructureInterpretIssue::ChainBreak {
                         residue: left.key.id(self.model_id),
                         next: right.key.id(self.model_id),
                     });
@@ -700,7 +695,7 @@ impl<'r> Resolver<'r, '_> {
         &mut self,
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
         stray_hydrogens: Vec<(ResidueKey, AtomId)>,
-    ) -> Result<(), raw::MmcifInterpretError> {
+    ) -> Result<(), raw::StructureInterpretError> {
         for (key, hydrogen) in stray_hydrogens {
             let residue = &residues[&key];
             let site = residue
@@ -738,10 +733,10 @@ impl<'r> Resolver<'r, '_> {
                 hydrogen,
                 heavy.atom,
                 SourceBondOrder::Localized(BondOrder::Single),
-                raw::MmcifBondEvidence::HydrogenDistance,
+                raw::BondEvidence::HydrogenDistance,
             )?;
             self.issues
-                .push(raw::MmcifInterpretIssue::HydrogenAttachedByDistance {
+                .push(raw::StructureInterpretIssue::HydrogenAttachedByDistance {
                     residue: key.id(self.model_id),
                     atom_name: site.name.clone(),
                     heavy_atom_name: heavy.name.clone(),
@@ -760,7 +755,7 @@ impl<'r> Resolver<'r, '_> {
         &mut self,
         templated: &TemplatedResidue<'_>,
         residue: &ResidueAtoms,
-    ) -> Result<(), raw::MmcifInterpretError> {
+    ) -> Result<(), raw::StructureInterpretError> {
         let named = templated
             .matched
             .iter()
@@ -782,7 +777,7 @@ impl<'r> Resolver<'r, '_> {
             .find(|(_, charges)| charges.iter().all(|charge| charge.delta == 0))
             .or_else(|| evaluated.first())
             .ok_or_else(|| {
-                raw::MmcifInterpretError::new(
+                raw::StructureInterpretError::new(
                     DiagnosticKind::Inconsistent,
                     residue.sites.first().map(|site| site.line),
                     format!(
@@ -811,7 +806,7 @@ impl<'r> Resolver<'r, '_> {
         }
         if candidate.variant().is_some() || !charged_atoms.is_empty() {
             self.issues
-                .push(raw::MmcifInterpretIssue::ProtonationFromHydrogens {
+                .push(raw::StructureInterpretIssue::ProtonationFromHydrogens {
                     residue: templated.key.id(self.model_id),
                     component_id: templated.component.id().to_owned(),
                     variant: candidate.variant().map(str::to_owned),
@@ -829,7 +824,7 @@ impl<'r> Resolver<'r, '_> {
         named: &[(&str, AtomId)],
         residue: &ResidueAtoms,
         has_hydrogens: bool,
-    ) -> Result<Option<Vec<TemplateCharge>>, raw::MmcifInterpretError> {
+    ) -> Result<Option<Vec<TemplateCharge>>, raw::StructureInterpretError> {
         let mut charges = Vec::new();
         for &(name, atom) in named {
             let Some((index, template_atom)) = candidate.atom(name) else {
@@ -888,7 +883,7 @@ impl<'r> Resolver<'r, '_> {
         &self,
         atom: AtomId,
         residue: &ResidueAtoms,
-    ) -> Result<bool, raw::MmcifInterpretError> {
+    ) -> Result<bool, raw::StructureInterpretError> {
         Ok(self
             .graph
             .neighbors(atom)
@@ -901,7 +896,7 @@ impl<'r> Resolver<'r, '_> {
         &mut self,
         variant: &Component,
         named: &[(&str, AtomId)],
-    ) -> Result<(), raw::MmcifInterpretError> {
+    ) -> Result<(), raw::StructureInterpretError> {
         let atom_of = |index: usize| {
             let name = variant.atoms()[index].name();
             named
@@ -927,7 +922,7 @@ impl<'r> Resolver<'r, '_> {
                 .set_order(SourceBondOrder::of_template(bond).staged_order());
             self.evidence.insert(
                 (left.min(right), left.max(right)),
-                raw::MmcifBondEvidence::Template {
+                raw::BondEvidence::Template {
                     component_id: variant.id().to_owned(),
                     variant: variant.variant().map(str::to_owned),
                 },
@@ -953,7 +948,7 @@ impl<'r> Resolver<'r, '_> {
                 .len();
             if fragments > 1 {
                 self.issues
-                    .push(raw::MmcifInterpretIssue::ResidueFragmented {
+                    .push(raw::StructureInterpretIssue::ResidueFragmented {
                         residue: residue.key.id(self.model_id),
                         fragments,
                     });
@@ -972,13 +967,13 @@ fn match_template(
     residue: &ResidueAtoms,
     component: &Component,
     strict: bool,
-) -> Result<Option<TemplateMatch>, raw::MmcifInterpretError> {
+) -> Result<Option<TemplateMatch>, raw::StructureInterpretError> {
     let mut matched = BTreeMap::new();
     let mut strays = Vec::new();
     for site in &residue.sites {
         let failure = |message: String| {
             if strict {
-                Err(raw::MmcifInterpretError::new(
+                Err(raw::StructureInterpretError::new(
                     DiagnosticKind::Inconsistent,
                     Some(site.line),
                     message,
@@ -1075,7 +1070,7 @@ fn add_bond_if_missing(
     right: AtomId,
     source_order: SourceBondOrder,
     source_aromatic_bonds: &mut BTreeSet<crate::core::BondId>,
-) -> Result<(), raw::MmcifInterpretError> {
+) -> Result<(), raw::StructureInterpretError> {
     let existing = graph.bond_between(left, right).map_err(interpret_error)?;
     let Some(existing) = existing else {
         let bond = graph
@@ -1109,7 +1104,7 @@ fn component_bond_order(
     value: &str,
     table: &MmcifCategory<'_>,
     row: usize,
-) -> Result<SourceBondOrder, raw::MmcifInterpretError> {
+) -> Result<SourceBondOrder, raw::StructureInterpretError> {
     match value.to_ascii_lowercase().as_str() {
         "sing" | "poly" => Ok(SourceBondOrder::Localized(BondOrder::Single)),
         "doub" | "pi" => Ok(SourceBondOrder::Localized(BondOrder::Double)),
@@ -1146,7 +1141,7 @@ fn required<'a>(
     table: &'a MmcifCategory<'_>,
     row: usize,
     tag: &str,
-) -> Result<&'a str, raw::MmcifInterpretError> {
+) -> Result<&'a str, raw::StructureInterpretError> {
     let value = table.value(row, tag).ok_or_else(|| {
         row_error(
             table,
@@ -1169,7 +1164,7 @@ fn required_i32(
     table: &MmcifCategory<'_>,
     row: usize,
     tag: &str,
-) -> Result<i32, raw::MmcifInterpretError> {
+) -> Result<i32, raw::StructureInterpretError> {
     required(table, row, tag)?.parse::<i32>().map_err(|_| {
         row_error(
             table,
@@ -1191,12 +1186,12 @@ fn row_error(
     row: usize,
     kind: DiagnosticKind,
     message: impl Into<String>,
-) -> raw::MmcifInterpretError {
-    raw::MmcifInterpretError::new(kind, table.row_line(row), message)
+) -> raw::StructureInterpretError {
+    raw::StructureInterpretError::new(kind, table.row_line(row), message)
 }
 
-fn interpret_error(error: impl std::fmt::Display) -> raw::MmcifInterpretError {
-    raw::MmcifInterpretError::new(DiagnosticKind::Chemistry, None, error.to_string())
+fn interpret_error(error: impl std::fmt::Display) -> raw::StructureInterpretError {
+    raw::StructureInterpretError::new(DiagnosticKind::Chemistry, None, error.to_string())
 }
 
 #[cfg(test)]
@@ -1344,7 +1339,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             let doc = crate::mmcif::parse_str(&input).unwrap();
             let catalog = ConnectivityCatalog::from_block(
                 &doc.blocks()[0],
-                &raw::MmcifConnectivityOptions::default(),
+                &raw::ConnectivityOptions::default(),
             )
             .unwrap();
             let bond = &catalog.component_bonds["GLY"][0];
@@ -1375,8 +1370,9 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             super::super::mmcif_document::MmcifParseOptions::default(),
         )
         .expect("parse peptide");
-        let interpretation = raw::interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
-            .expect("interpret peptide");
+        let interpretation =
+            raw::interpret_mmcif(&document, raw::StructureInterpretOptions::default())
+                .expect("interpret peptide");
         let graph = interpretation
             .topology()
             .molecule(MoleculeInstanceId::new(0))
@@ -1413,8 +1409,9 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             super::super::mmcif_document::MmcifParseOptions::default(),
         )
         .expect("parse gapped peptide");
-        let interpretation = raw::interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
-            .expect("interpret gapped peptide");
+        let interpretation =
+            raw::interpret_mmcif(&document, raw::StructureInterpretOptions::default())
+                .expect("interpret gapped peptide");
         assert_eq!(interpretation.topology().instance_count(), 2);
         assert!(interpretation
             .topology()
@@ -1434,8 +1431,9 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             super::super::mmcif_document::MmcifParseOptions::default(),
         )
         .expect("parse branch");
-        let interpretation = raw::interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
-            .expect("interpret branch");
+        let interpretation =
+            raw::interpret_mmcif(&document, raw::StructureInterpretOptions::default())
+                .expect("interpret branch");
         let graph = interpretation
             .topology()
             .molecule(MoleculeInstanceId::new(0))
@@ -1450,8 +1448,8 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
 
     use crate::components::ComponentLibrary;
     use crate::mmcif::{
-        MmcifBondEvidence, MmcifConnectivityOptions, MmcifInterpretIssue, MmcifInterpretOptions,
-        MmcifInterpretation, MmcifResidueId, MmcifResiduePosition,
+        BondEvidence, ConnectivityOptions, SourceResidueId, SourceResiduePosition,
+        StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
     };
 
     /// A minimal block whose `rows` are `type name component asym seq x y z`.
@@ -1476,17 +1474,17 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         text
     }
 
-    fn interpret(text: &str) -> MmcifInterpretation {
+    fn interpret(text: &str) -> StructureInterpretation {
         crate::mmcif::parse_str(text).unwrap().interpret().unwrap()
     }
 
     /// Report issues other than the entity kinds these minimal blocks omit.
-    fn issues(result: &MmcifInterpretation) -> Vec<MmcifInterpretIssue> {
+    fn issues(result: &StructureInterpretation) -> Vec<StructureInterpretIssue> {
         result
             .report()
             .issues()
             .iter()
-            .filter(|issue| !matches!(issue, MmcifInterpretIssue::EntityTypeInferred { .. }))
+            .filter(|issue| !matches!(issue, StructureInterpretIssue::EntityTypeInferred { .. }))
             .cloned()
             .collect()
     }
@@ -1496,7 +1494,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
     }
 
     /// Bonds by atom names, order, and evidence.
-    fn bonds(result: &MmcifInterpretation) -> Vec<(String, String, BondOrder, MmcifBondEvidence)> {
+    fn bonds(result: &StructureInterpretation) -> Vec<(String, String, BondOrder, BondEvidence)> {
         let name = |atom| {
             result
                 .report()
@@ -1538,7 +1536,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .collect()
     }
 
-    fn order_between(result: &MmcifInterpretation, a: &str, b: &str) -> BondOrder {
+    fn order_between(result: &StructureInterpretation, a: &str, b: &str) -> BondOrder {
         bonds(result)
             .into_iter()
             .find(|(left, right, _, _)| (left == a && right == b) || (left == b && right == a))
@@ -1547,7 +1545,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
     }
 
     /// Nonzero formal charges by atom name.
-    fn charges(result: &MmcifInterpretation) -> Vec<(String, i8)> {
+    fn charges(result: &StructureInterpretation) -> Vec<(String, i8)> {
         result
             .report()
             .instances()
@@ -1567,17 +1565,17 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .collect()
     }
 
-    fn residue(asym: &str, sequence: i32) -> MmcifResidueId {
-        MmcifResidueId {
+    fn residue(asym: &str, sequence: i32) -> SourceResidueId {
+        SourceResidueId {
             model_id: "1".to_owned(),
             asym_id: asym.to_owned(),
-            position: MmcifResiduePosition::Label(sequence),
+            position: SourceResiduePosition::Label(sequence),
             insertion_code: None,
         }
     }
 
-    fn template(component: &str, variant: Option<&str>) -> MmcifBondEvidence {
-        MmcifBondEvidence::Template {
+    fn template(component: &str, variant: Option<&str>) -> BondEvidence {
+        BondEvidence::Template {
             component_id: component.to_owned(),
             variant: variant.map(str::to_owned),
         }
@@ -1677,7 +1675,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         ));
         assert_eq!(zinc.topology().instance_count(), 1);
         let cysteine = template("CYS", None);
-        let as_strings = |rows: &[(&str, &str, BondOrder, MmcifBondEvidence)]| {
+        let as_strings = |rows: &[(&str, &str, BondOrder, BondEvidence)]| {
             rows.iter()
                 .map(|(a, b, order, evidence)| {
                     ((*a).to_owned(), (*b).to_owned(), *order, evidence.clone())
@@ -1691,7 +1689,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
                     "SG",
                     "ZN",
                     BondOrder::Dative,
-                    MmcifBondEvidence::Connection {
+                    BondEvidence::Connection {
                         connection_id: Some("metalc1".to_owned()),
                         connection_type: "metalc".to_owned(),
                     },
@@ -1738,12 +1736,12 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         assert_eq!(
             issues(&zwitterion),
             [
-                MmcifInterpretIssue::HydrogenAttachedByDistance {
+                StructureInterpretIssue::HydrogenAttachedByDistance {
                     residue: residue("A", 1),
                     atom_name: "H3".to_owned(),
                     heavy_atom_name: "N".to_owned(),
                 },
-                MmcifInterpretIssue::ProtonationFromHydrogens {
+                StructureInterpretIssue::ProtonationFromHydrogens {
                     residue: residue("A", 1),
                     component_id: "ASP".to_owned(),
                     variant: None,
@@ -1776,7 +1774,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             assert_eq!(charges(&tautomer), [], "{variant}");
             assert_eq!(
                 issues(&tautomer),
-                [MmcifInterpretIssue::ProtonationFromHydrogens {
+                [StructureInterpretIssue::ProtonationFromHydrogens {
                     residue: residue("A", 1),
                     component_id: "HIS".to_owned(),
                     variant: Some(variant.to_owned()),
@@ -1800,8 +1798,8 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         assert_eq!(
             bonds(&inferred),
             [
-                ("C1", "C2", BondOrder::Single, MmcifBondEvidence::Distance),
-                ("C2", "O1", BondOrder::Single, MmcifBondEvidence::Distance),
+                ("C1", "C2", BondOrder::Single, BondEvidence::Distance),
+                ("C2", "O1", BondOrder::Single, BondEvidence::Distance),
             ]
             .map(|(a, b, order, evidence)| (
                 a.to_owned(),
@@ -1812,15 +1810,15 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         );
         assert_eq!(
             issues(&inferred),
-            [MmcifInterpretIssue::ResidueBondsInferred {
+            [StructureInterpretIssue::ResidueBondsInferred {
                 residue: residue("A", 1),
                 component_id: "XYZ".to_owned(),
                 bonds: 2,
             }]
         );
 
-        let strict = MmcifInterpretOptions {
-            connectivity: MmcifConnectivityOptions {
+        let strict = StructureInterpretOptions {
+            connectivity: ConnectivityOptions {
                 infer_bonds_from_distance: false,
                 ..Default::default()
             },
@@ -1844,8 +1842,8 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .unwrap(),
         )
         .unwrap();
-        let with_library = MmcifInterpretOptions {
-            connectivity: MmcifConnectivityOptions {
+        let with_library = StructureInterpretOptions {
+            connectivity: ConnectivityOptions {
                 components: Some(std::sync::Arc::new(library)),
                 ..strict.connectivity
             },
@@ -1889,7 +1887,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         assert_eq!(
             bonds(&linked)
                 .iter()
-                .filter(|(_, _, _, evidence)| *evidence == MmcifBondEvidence::PolymerLink)
+                .filter(|(_, _, _, evidence)| *evidence == BondEvidence::PolymerLink)
                 .map(|(a, b, _, _)| (a.clone(), b.clone()))
                 .collect::<Vec<_>>(),
             [("C".to_owned(), "N".to_owned())]
@@ -1918,7 +1916,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         assert_eq!(broken.topology().bond_count(), 6);
         assert_eq!(
             issues(&broken),
-            [MmcifInterpretIssue::ChainBreak {
+            [StructureInterpretIssue::ChainBreak {
                 residue: residue("A", 1),
                 next: residue("A", 2),
             }]
@@ -1954,7 +1952,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         assert_eq!(split.topology().instance_count(), 2);
         assert_eq!(
             issues(&split),
-            [MmcifInterpretIssue::ResidueFragmented {
+            [StructureInterpretIssue::ResidueFragmented {
                 residue: residue("A", 1),
                 fragments: 2,
             }]
@@ -1976,7 +1974,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
                 "N".to_owned(),
                 "CA".to_owned(),
                 BondOrder::Single,
-                MmcifBondEvidence::Connection {
+                BondEvidence::Connection {
                     connection_id: Some("c1".to_owned()),
                     connection_type: "covale".to_owned(),
                 },

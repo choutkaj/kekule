@@ -2,9 +2,9 @@ use super::{deterministic_text_mutations, test_positions};
 use crate::core::{Atom, AtomId, BondOrder, Element};
 use crate::geometry::Point3;
 use crate::mmcif::{
-    self, MmcifAltLocPolicy, MmcifEntityClassifications, MmcifEntityKind, MmcifInstanceProvenance,
-    MmcifInterpretOptions, MmcifInterpretationReport, MmcifModelSelection, MmcifParseOptions,
-    MmcifWriteError, MmcifWriteOptions,
+    self, AltLocPolicy, EntityKind, InstanceProvenance, MmcifEntityClassifications,
+    MmcifParseOptions, MmcifWriteError, MmcifWriteOptions, ModelSelection,
+    StructureInterpretOptions, StructureInterpretationReport,
 };
 use crate::properties::{PropertyColumn, PropertyKey};
 use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
@@ -370,7 +370,7 @@ fn connection_input(atom_sites: &str, tags: &str, values: &str) -> String {
 }
 
 fn connection_atom(
-    interpretation: &mmcif::MmcifInterpretation,
+    interpretation: &mmcif::StructureInterpretation,
     atom_name: &str,
     label_sequence_id: Option<i32>,
     insertion_code: Option<&str>,
@@ -394,7 +394,7 @@ fn connection_atom(
 }
 
 fn assert_declared_bond(
-    interpretation: &mmcif::MmcifInterpretation,
+    interpretation: &mmcif::StructureInterpretation,
     left: crate::topology::InstanceAtomId,
     right: crate::topology::InstanceAtomId,
     order: BondOrder,
@@ -445,17 +445,17 @@ fn deterministic_mmcif_parser_and_interpreters_fuzz_smoke_are_panic_free() {
                 };
                 let _ = mmcif::interpret_with_options(
                     &document,
-                    MmcifInterpretOptions {
-                        model_selection: MmcifModelSelection::First,
-                        ..MmcifInterpretOptions::default()
+                    StructureInterpretOptions {
+                        model_selection: ModelSelection::First,
+                        ..StructureInterpretOptions::default()
                     },
                 );
                 let _ = mmcif::interpret_ensemble(&document);
                 let _ = mmcif::interpret_ensemble_with_options(
                     &document,
-                    mmcif::MmcifEnsembleInterpretOptions {
+                    mmcif::StructureEnsembleInterpretOptions {
                         model_ids: Some(Vec::new()),
-                        ..mmcif::MmcifEnsembleInterpretOptions::default()
+                        ..mmcif::StructureEnsembleInterpretOptions::default()
                     },
                 );
             })
@@ -528,7 +528,7 @@ fn block_interpreters_reject_a_block_without_atom_site_data() {
     assert!(model_error.message().contains("no atom-site category"));
     assert!(matches!(
         block.interpret_ensemble(),
-        Err(mmcif::MmcifEnsembleInterpretError::NoCoordinateModels)
+        Err(mmcif::StructureEnsembleInterpretError::NoCoordinateModels)
     ));
 }
 
@@ -725,13 +725,13 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
     );
     assert!(interpreted.report().instances[0]
         .entity_kinds()
-        .contains(&MmcifEntityKind::Polymer));
+        .contains(&EntityKind::Polymer));
     assert!(interpreted.report().instances[1]
         .entity_kinds()
-        .contains(&MmcifEntityKind::NonPolymer));
+        .contains(&EntityKind::NonPolymer));
     assert!(interpreted.report().instances[2]
         .entity_kinds()
-        .contains(&MmcifEntityKind::Water));
+        .contains(&EntityKind::Water));
     for definition in model.topology().definitions() {
         assert!(definition.molecule().properties().is_empty());
         assert!(definition
@@ -750,7 +750,7 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
     assert_eq!(model.topology().bonds().count(), 1);
     assert_eq!(
         first_provenance.bonds()[0].evidence(),
-        &mmcif::MmcifBondEvidence::Template {
+        &mmcif::BondEvidence::Template {
             component_id: "GLY".to_owned(),
             variant: None,
         }
@@ -1061,7 +1061,7 @@ HETATM 2 O O HOH W 1 5.0 0.0 0.0
         .report()
         .instances()
         .iter()
-        .all(|instance| instance.entity_kinds() == [MmcifEntityKind::Water]));
+        .all(|instance| instance.entity_kinds() == [EntityKind::Water]));
 }
 
 #[test]
@@ -1131,9 +1131,9 @@ fn multiple_coordinate_models_require_explicit_selection() {
 
     let selected = mmcif::interpret_with_options(
         &document,
-        MmcifInterpretOptions {
-            model_selection: MmcifModelSelection::Select("2".into()),
-            ..MmcifInterpretOptions::default()
+        StructureInterpretOptions {
+            model_selection: ModelSelection::Select("2".into()),
+            ..StructureInterpretOptions::default()
         },
     )
     .unwrap();
@@ -1144,9 +1144,9 @@ fn multiple_coordinate_models_require_explicit_selection() {
 
     let first = mmcif::interpret_with_options(
         &document,
-        MmcifInterpretOptions {
-            model_selection: MmcifModelSelection::First,
-            ..MmcifInterpretOptions::default()
+        StructureInterpretOptions {
+            model_selection: ModelSelection::First,
+            ..StructureInterpretOptions::default()
         },
     )
     .unwrap();
@@ -1159,15 +1159,17 @@ fn ensemble_interpretation_rejects_empty_explicit_model_selection_without_panick
     let result = std::panic::catch_unwind(|| {
         mmcif::interpret_ensemble_with_options(
             &document,
-            mmcif::MmcifEnsembleInterpretOptions {
+            mmcif::StructureEnsembleInterpretOptions {
                 model_ids: Some(Vec::new()),
-                ..mmcif::MmcifEnsembleInterpretOptions::default()
+                ..mmcif::StructureEnsembleInterpretOptions::default()
             },
         )
     });
     assert!(matches!(
         result,
-        Ok(Err(mmcif::MmcifEnsembleInterpretError::EmptyModelSelection))
+        Ok(Err(
+            mmcif::StructureEnsembleInterpretError::EmptyModelSelection
+        ))
     ));
 }
 
@@ -1180,7 +1182,7 @@ fn document_interpreters_reject_multiple_atom_site_blocks() {
         .contains("atom-site data in more than one data block"));
     assert!(matches!(
         mmcif::interpret_ensemble(&document),
-        Err(mmcif::MmcifEnsembleInterpretError::MultipleAtomSiteBlocks)
+        Err(mmcif::StructureEnsembleInterpretError::MultipleAtomSiteBlocks)
     ));
 }
 
@@ -1195,7 +1197,7 @@ fn ensemble_block_interpretation_matches_exactly_one_document_helper() {
         .interpret_ensemble()
         .expect("default block method interprets");
     let method_explicit = document.blocks()[0]
-        .interpret_ensemble_with_options(mmcif::MmcifEnsembleInterpretOptions::default())
+        .interpret_ensemble_with_options(mmcif::StructureEnsembleInterpretOptions::default())
         .expect("explicit block method interprets");
     let document_method = document
         .interpret_ensemble()
@@ -1274,9 +1276,9 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
     for model_ids in [vec!["2", "1"], vec!["2"]] {
         let interpreted = mmcif::interpret_ensemble_with_options(
             &document,
-            mmcif::MmcifEnsembleInterpretOptions {
+            mmcif::StructureEnsembleInterpretOptions {
                 model_ids: Some(model_ids.iter().map(|id| (*id).to_owned()).collect()),
-                ..mmcif::MmcifEnsembleInterpretOptions::default()
+                ..mmcif::StructureEnsembleInterpretOptions::default()
             },
         )
         .unwrap();
@@ -1304,9 +1306,9 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
         {
             let single = mmcif::interpret_with_options(
                 &document,
-                MmcifInterpretOptions {
-                    model_selection: MmcifModelSelection::Select(model_id.to_owned()),
-                    ..MmcifInterpretOptions::default()
+                StructureInterpretOptions {
+                    model_selection: ModelSelection::Select(model_id.to_owned()),
+                    ..StructureInterpretOptions::default()
                 },
             )
             .unwrap();
@@ -1323,18 +1325,18 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
 fn ensemble_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
     let changed = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 N C1");
     assert!(matches!(mmcif::interpret_ensemble(&parse(&changed)),
-        Err(mmcif::MmcifEnsembleInterpretError::InconsistentTopology { model_id }) if model_id == "2"));
+        Err(mmcif::StructureEnsembleInterpretError::InconsistentTopology { model_id }) if model_id == "2"));
     let invalid = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 Xx C1");
     let error = mmcif::interpret_ensemble_with_options(
         &parse(&invalid),
-        mmcif::MmcifEnsembleInterpretOptions {
+        mmcif::StructureEnsembleInterpretOptions {
             model_ids: Some(vec!["1".into()]),
-            ..mmcif::MmcifEnsembleInterpretOptions::default()
+            ..mmcif::StructureEnsembleInterpretOptions::default()
         },
     )
     .unwrap_err();
     assert!(
-        matches!(error, mmcif::MmcifEnsembleInterpretError::Model { model_id, error } if model_id == "1" && error.message().contains("unknown atom-site element"))
+        matches!(error, mmcif::StructureEnsembleInterpretError::Model { model_id, error } if model_id == "1" && error.message().contains("unknown atom-site element"))
     );
 }
 
@@ -1343,7 +1345,7 @@ fn multimodel_interpretation_rejects_inconsistent_atom_sets() {
     let inconsistent = MULTI_MODEL.replace("HETATM 4 O O1 LIG A 1 6.2 0.0 0.0 0.90 21.0 2\n", "");
     assert!(matches!(
         mmcif::interpret_ensemble(&parse(&inconsistent)),
-        Err(mmcif::MmcifEnsembleInterpretError::InconsistentAtomSet { model_id })
+        Err(mmcif::StructureEnsembleInterpretError::InconsistentAtomSet { model_id })
             if model_id == "2"
     ));
 }
@@ -1422,7 +1424,7 @@ HETATM 4 C C1 LIG A XA 1 10.0 0.0 0.0 2
 "#;
     assert!(matches!(
         mmcif::interpret_ensemble(&parse(reordered)),
-        Err(mmcif::MmcifEnsembleInterpretError::InconsistentDenseAtomOrder { model_id })
+        Err(mmcif::StructureEnsembleInterpretError::InconsistentDenseAtomOrder { model_id })
             if model_id == "2"
     ));
 }
@@ -1435,7 +1437,7 @@ fn ensemble_identity_detects_true_repeated_atom_set_mismatch() {
     );
     assert!(matches!(
         mmcif::interpret_ensemble(&parse(&mismatched)),
-        Err(mmcif::MmcifEnsembleInterpretError::InconsistentAtomSet { model_id })
+        Err(mmcif::StructureEnsembleInterpretError::InconsistentAtomSet { model_id })
             if model_id == "2"
     ));
 }
@@ -1530,13 +1532,13 @@ fn alternate_location_policy_is_explicit_and_reported() {
     assert!((result.model().positions().values().value()[0].x - 0.5).abs() < 1.0e-15);
     assert!(result.report().issues.iter().any(|issue| matches!(
         issue,
-        mmcif::MmcifInterpretIssue::AlternateLocationOmitted { alt_id: Some(id), .. } if id == "A"
+        mmcif::StructureInterpretIssue::AlternateLocationOmitted { alt_id: Some(id), .. } if id == "A"
     )));
     assert!(mmcif::interpret_with_options(
         &document,
-        MmcifInterpretOptions {
-            altloc_policy: MmcifAltLocPolicy::ErrorOnAlternateLocations,
-            ..MmcifInterpretOptions::default()
+        StructureInterpretOptions {
+            altloc_policy: AltLocPolicy::ErrorOnAlternateLocations,
+            ..StructureInterpretOptions::default()
         }
     )
     .is_err());
@@ -1678,13 +1680,13 @@ _struct_conn.ptnr2_label_atom_id"#,
     assert_eq!(result.report().applied_connections(), 0);
     assert!(result.report().issues().iter().any(|issue| matches!(
         issue,
-        mmcif::MmcifInterpretIssue::ConnectionUnresolved {
+        mmcif::StructureInterpretIssue::ConnectionUnresolved {
             connection_id: Some(id),
             connection_type,
             partner: 1,
             source_line: Some(_),
             reason:
-                mmcif::MmcifConnectionResolutionReason::ConflictingLabelAndAuthorSelectors,
+                mmcif::ConnectionResolutionReason::ConflictingLabelAndAuthorSelectors,
         } if id == "conflict" && connection_type == "covale"
     )));
 }
@@ -1705,13 +1707,13 @@ _struct_conn.ptnr2_label_atom_id"#,
     assert_eq!(result.report().applied_connections(), 0);
     assert!(result.report().issues().iter().any(|issue| matches!(
         issue,
-        mmcif::MmcifInterpretIssue::ConnectionAmbiguous {
+        mmcif::StructureInterpretIssue::ConnectionAmbiguous {
             connection_id: Some(id),
             connection_type,
             partner: 1,
             source_line: Some(_),
             candidates: 2,
-            reason: mmcif::MmcifConnectionResolutionReason::MultipleMatchingAtoms,
+            reason: mmcif::ConnectionResolutionReason::MultipleMatchingAtoms,
         } if id == "ambiguous" && connection_type == "covale"
     )));
 }
@@ -1732,10 +1734,10 @@ _struct_conn.ptnr2_label_atom_id"#,
     assert_eq!(result.report().applied_connections(), 0);
     assert!(result.report().issues().iter().any(|issue| matches!(
         issue,
-        mmcif::MmcifInterpretIssue::ConnectionUnresolved {
+        mmcif::StructureInterpretIssue::ConnectionUnresolved {
             connection_id: Some(id),
             partner: 1,
-            reason: mmcif::MmcifConnectionResolutionReason::NoMatchingAtom,
+            reason: mmcif::ConnectionResolutionReason::NoMatchingAtom,
             ..
         } if id == "missing"
     )));
@@ -1766,11 +1768,11 @@ _struct_conn.ptnr2_label_atom_id"#,
     assert_eq!(result.report().applied_connections(), 0);
     assert!(result.report().issues().iter().any(|issue| matches!(
         issue,
-        mmcif::MmcifInterpretIssue::ConnectionUnresolved {
+        mmcif::StructureInterpretIssue::ConnectionUnresolved {
             connection_id: Some(id),
             partner: 1,
             reason:
-                mmcif::MmcifConnectionResolutionReason::AlternateLocationOmitted {
+                mmcif::ConnectionResolutionReason::AlternateLocationOmitted {
                     alternate_location
                 },
             ..
@@ -1878,10 +1880,8 @@ hydrog A N 1 W O .
         .instances()
         .iter()
         .find(|instance| {
-            instance.entity_kinds().contains(&MmcifEntityKind::Polymer)
-                && instance
-                    .entity_kinds()
-                    .contains(&MmcifEntityKind::NonPolymer)
+            instance.entity_kinds().contains(&EntityKind::Polymer)
+                && instance.entity_kinds().contains(&EntityKind::NonPolymer)
         })
         .expect("covalently linked entities should share one instance");
     let merged_id = merged.molecule();
@@ -1903,10 +1903,8 @@ hydrog A N 1 W O .
     .expect("one connected molecule may span distinct source entities and asymmetries");
     let round_trip = mmcif::interpret(&parse(&written)).unwrap();
     assert!(round_trip.report().instances().iter().any(|instance| {
-        instance.entity_kinds().contains(&MmcifEntityKind::Polymer)
-            && instance
-                .entity_kinds()
-                .contains(&MmcifEntityKind::NonPolymer)
+        instance.entity_kinds().contains(&EntityKind::Polymer)
+            && instance.entity_kinds().contains(&EntityKind::NonPolymer)
     }));
     assert_eq!(round_trip.report().applied_connections(), 2);
 }
@@ -1932,12 +1930,12 @@ symmetry-link disulf A N 1 1_555 A N 1 15_545
     assert_eq!(result.report().applied_connections, 0);
     assert!(result.report().issues.iter().any(|issue| matches!(
         issue,
-        mmcif::MmcifInterpretIssue::ConnectionUnresolved {
+        mmcif::StructureInterpretIssue::ConnectionUnresolved {
             connection_id: Some(id),
             connection_type,
             partner: 2,
             source_line: Some(_),
-            reason: mmcif::MmcifConnectionResolutionReason::UnsupportedSymmetry {
+            reason: mmcif::ConnectionResolutionReason::UnsupportedSymmetry {
                 symmetry
             },
         } if id == "symmetry-link" && connection_type == "disulf" && symmetry == "15_545"
@@ -2052,7 +2050,7 @@ covale A N 1 A CA 1 doub
         .definition();
     assert!(round_trip.report().instances()[0]
         .entity_kinds()
-        .contains(&MmcifEntityKind::Polymer));
+        .contains(&EntityKind::Polymer));
     assert_eq!(
         first
             .molecule()
@@ -2076,7 +2074,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
         .iter()
         .flat_map(|instance| instance.atoms())
         .all(|atom| {
-            atom.entity_id() == Some("7") && atom.entity_kind() == &MmcifEntityKind::Polymer
+            atom.entity_id() == Some("7") && atom.entity_kind() == &EntityKind::Polymer
         }));
 
     let written = mmcif::write(
@@ -2114,7 +2112,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
         .report()
         .instances()
         .iter()
-        .all(|instance| { instance.entity_kinds() == [MmcifEntityKind::Polymer] }));
+        .all(|instance| { instance.entity_kinds() == [EntityKind::Polymer] }));
 
     let mut generic = MmcifEntityClassifications::new();
     for molecule in interpreted
@@ -2122,7 +2120,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
         .molecules()
         .map(|molecule| molecule.id())
     {
-        generic.insert(molecule, MmcifEntityKind::Polymer).unwrap();
+        generic.insert(molecule, EntityKind::Polymer).unwrap();
     }
     let generic_written = mmcif::write(
         [mmcif::MmcifBlockSource::model(interpreted.model()).with_classifications(&generic)],
@@ -2143,10 +2141,10 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
         .map(|(molecule, _)| molecule)
         .collect::<Vec<_>>();
     conflicting
-        .insert(molecules[0], MmcifEntityKind::Polymer)
+        .insert(molecules[0], EntityKind::Polymer)
         .unwrap();
     conflicting
-        .insert(molecules[1], MmcifEntityKind::NonPolymer)
+        .insert(molecules[1], EntityKind::NonPolymer)
         .unwrap();
     assert!(matches!(
         mmcif::write([mmcif::MmcifBlockSource::model(interpreted.model()).with_classifications(&conflicting)], MmcifWriteOptions::default()),
@@ -2168,7 +2166,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
 #[test]
 fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hierarchy() {
     let zero = small_model_with_bond(BondOrder::Zero);
-    let classifications = classifications_for(&zero, MmcifEntityKind::NonPolymer);
+    let classifications = classifications_for(&zero, EntityKind::NonPolymer);
     assert!(matches!(
         mmcif::write(
             [mmcif::MmcifBlockSource::model(&zero).with_classifications(&classifications)],
@@ -2182,7 +2180,7 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hiera
 
     // Dative bonds are metal coordination and survive a round trip as such.
     let dative = small_model_with_bond(BondOrder::Dative);
-    let classifications = classifications_for(&dative, MmcifEntityKind::NonPolymer);
+    let classifications = classifications_for(&dative, EntityKind::NonPolymer);
     let written = mmcif::write(
         [mmcif::MmcifBlockSource::model(&dative).with_classifications(&classifications)],
         MmcifWriteOptions::default(),
@@ -2255,7 +2253,7 @@ fn mmcif_writer_preserves_supported_bond_orders() {
         BondOrder::Quadruple,
     ] {
         let model = small_model_with_bond(order);
-        let classifications = classifications_for(&model, MmcifEntityKind::NonPolymer);
+        let classifications = classifications_for(&model, EntityKind::NonPolymer);
         let written = mmcif::write(
             [mmcif::MmcifBlockSource::model(&model).with_classifications(&classifications)],
             MmcifWriteOptions::default(),
@@ -2322,7 +2320,7 @@ fn mmcif_writer_rejects_ambiguous_atom_identity() {
             .unwrap();
     }
     let model = builder.build().unwrap();
-    let report = report_with_entity_kinds(&model, &[MmcifEntityKind::NonPolymer]);
+    let report = report_with_entity_kinds(&model, &[EntityKind::NonPolymer]);
     assert!(matches!(
         mmcif::write(
             [mmcif::MmcifBlockSource::model(&model).with_reports(std::slice::from_ref(&report))],
@@ -2336,10 +2334,10 @@ fn mmcif_writer_rejects_ambiguous_atom_identity() {
 fn mmcif_writer_entity_types_follow_inference_reports_and_explicit_classes() {
     enum Source {
         Inferred,
-        Report(MmcifEntityKind),
-        Explicit(MmcifEntityKind),
+        Report(EntityKind),
+        Explicit(EntityKind),
     }
-    use MmcifEntityKind::{Branched, NonPolymer, Polymer, Water};
+    use EntityKind::{Branched, NonPolymer, Polymer, Water};
     let ligand = hierarchical_single_atom_model("LIG", "C1", "C");
     let glycine = hierarchical_single_atom_model("GLY", "CA", "C");
     let sugar_atom = hierarchical_single_atom_model("NAG", "C1", "C");
@@ -2490,10 +2488,7 @@ fn mmcif_writer_preserves_source_branched_carbohydrate_semantics() {
 fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classifications() {
     let model = hierarchical_single_atom_model("NAG", "C1", "C");
     let molecule = model.topology().instances().next().unwrap().0;
-    let report = report_with_entity_kinds(
-        &model,
-        &[MmcifEntityKind::Polymer, MmcifEntityKind::Branched],
-    );
+    let report = report_with_entity_kinds(&model, &[EntityKind::Polymer, EntityKind::Branched]);
     assert!(matches!(
         mmcif::write([mmcif::MmcifBlockSource::model(&model).with_reports(std::slice::from_ref(&report))], MmcifWriteOptions::default()),
         Err(MmcifWriteError::ConflictingEntityClassifications {
@@ -2511,10 +2506,8 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
         Err(MmcifWriteError::MissingEntityClassification(molecule))
     );
 
-    let report = report_with_entity_kinds(
-        &model,
-        &[MmcifEntityKind::Other("unsupported-kind".to_owned())],
-    );
+    let report =
+        report_with_entity_kinds(&model, &[EntityKind::Other("unsupported-kind".to_owned())]);
     assert_eq!(
         mmcif::write(
             [mmcif::MmcifBlockSource::model(&model).with_reports(std::slice::from_ref(&report))],
@@ -2526,7 +2519,7 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
         })
     );
 
-    let mut report = report_with_entity_kinds(&model, &[MmcifEntityKind::Branched]);
+    let mut report = report_with_entity_kinds(&model, &[EntityKind::Branched]);
     report.instances.push(report.instances[0].clone());
     assert_eq!(
         mmcif::write(
@@ -2537,18 +2530,16 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
     );
 
     let mut duplicate = MmcifEntityClassifications::new();
-    duplicate
-        .insert(molecule, MmcifEntityKind::Branched)
-        .unwrap();
+    duplicate.insert(molecule, EntityKind::Branched).unwrap();
     assert_eq!(
-        duplicate.insert(molecule, MmcifEntityKind::Polymer),
+        duplicate.insert(molecule, EntityKind::Polymer),
         Err(MmcifWriteError::DuplicateEntityClassification(molecule))
     );
 
     let unknown = MoleculeInstanceId::new(u32::MAX);
     let mut classifications = MmcifEntityClassifications::new();
     classifications
-        .insert(unknown, MmcifEntityKind::NonPolymer)
+        .insert(unknown, EntityKind::NonPolymer)
         .unwrap();
     assert_eq!(
         mmcif::write(
@@ -2572,7 +2563,7 @@ fn mmcif_writer_partial_overrides_still_validate_shared_asymmetry_semantics() {
     instances.next().unwrap();
     let mut classifications = MmcifEntityClassifications::new();
     classifications
-        .insert(classified, MmcifEntityKind::Polymer)
+        .insert(classified, EntityKind::Polymer)
         .unwrap();
     assert!(matches!(
         mmcif::write(
@@ -2595,7 +2586,7 @@ fn written_entity_types(text: &str) -> Vec<String> {
     }
 }
 
-fn classifications_for(model: &Model, kind: MmcifEntityKind) -> MmcifEntityClassifications {
+fn classifications_for(model: &Model, kind: EntityKind) -> MmcifEntityClassifications {
     let mut classifications = MmcifEntityClassifications::new();
     for molecule in model.topology().molecules().map(|molecule| molecule.id()) {
         classifications.insert(molecule, kind.clone()).unwrap();
@@ -2603,12 +2594,12 @@ fn classifications_for(model: &Model, kind: MmcifEntityKind) -> MmcifEntityClass
     classifications
 }
 
-fn report_with_entity_kinds(model: &Model, kinds: &[MmcifEntityKind]) -> MmcifInterpretationReport {
-    MmcifInterpretationReport {
+fn report_with_entity_kinds(model: &Model, kinds: &[EntityKind]) -> StructureInterpretationReport {
+    StructureInterpretationReport {
         instances: model
             .topology()
             .instances()
-            .map(|(molecule, _)| MmcifInstanceProvenance {
+            .map(|(molecule, _)| InstanceProvenance {
                 molecule,
                 coordinate_model_id: "1".to_owned(),
                 asym_ids: Vec::new(),
@@ -2618,7 +2609,7 @@ fn report_with_entity_kinds(model: &Model, kinds: &[MmcifEntityKind]) -> MmcifIn
                 bonds: Vec::new(),
             })
             .collect(),
-        ..MmcifInterpretationReport::default()
+        ..StructureInterpretationReport::default()
     }
 }
 

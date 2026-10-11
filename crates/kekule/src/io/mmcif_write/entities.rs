@@ -1,7 +1,7 @@
 //! Entity classification and source-provenance planning before row preparation.
 use super::one_based_serial;
 use super::{MmcifEntityClassifications, MmcifWriteError};
-use crate::io::mmcif_interpret::{MmcifEntityKind, MmcifInterpretationReport};
+use crate::io::mmcif_interpret::{EntityKind, StructureInterpretationReport};
 use crate::structure::ModelView;
 use crate::topology::{
     InstanceAtomId, MoleculeClass, MoleculeInstance, MoleculeInstanceId, ResidueClass, Topology,
@@ -9,14 +9,14 @@ use crate::topology::{
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum EntityKind {
+pub(super) enum AssignedEntityKind {
     Polymer,
     Branched,
     NonPolymer,
     Water,
 }
 
-impl EntityKind {
+impl AssignedEntityKind {
     pub(super) const fn as_mmcif(self) -> &'static str {
         match self {
             Self::Polymer => "polymer",
@@ -33,12 +33,12 @@ impl EntityKind {
         }
     }
 
-    fn as_source(self) -> MmcifEntityKind {
+    fn as_source(self) -> EntityKind {
         match self {
-            Self::Polymer => MmcifEntityKind::Polymer,
-            Self::Branched => MmcifEntityKind::Branched,
-            Self::NonPolymer => MmcifEntityKind::NonPolymer,
-            Self::Water => MmcifEntityKind::Water,
+            Self::Polymer => EntityKind::Polymer,
+            Self::Branched => EntityKind::Branched,
+            Self::NonPolymer => EntityKind::NonPolymer,
+            Self::Water => EntityKind::Water,
         }
     }
 }
@@ -46,7 +46,7 @@ impl EntityKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct EntityRow {
     pub(super) id: String,
-    pub(super) kind: EntityKind,
+    pub(super) kind: AssignedEntityKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +59,7 @@ pub(super) struct AsymRow {
 pub(super) struct AtomEntityAssignment {
     pub(super) entity_id: String,
     pub(super) asym_id: String,
-    pub(super) kind: EntityKind,
+    pub(super) kind: AssignedEntityKind,
 }
 
 #[derive(Debug, Clone)]
@@ -72,7 +72,7 @@ pub(super) struct EntityPlan {
 pub(super) fn ensemble_entity_plan(
     model: ModelView<'_>,
     classifications: Option<&MmcifEntityClassifications>,
-    report: Option<&MmcifInterpretationReport>,
+    report: Option<&StructureInterpretationReport>,
 ) -> Result<EntityPlan, MmcifWriteError> {
     if let Some(report) = report {
         entity_plan_from_report(model, report)
@@ -89,7 +89,7 @@ pub(super) fn ensemble_entity_plan(
 
 pub(super) fn entity_plan_from_report(
     model: ModelView<'_>,
-    report: &MmcifInterpretationReport,
+    report: &StructureInterpretationReport,
 ) -> Result<EntityPlan, MmcifWriteError> {
     if report
         .instances()
@@ -128,7 +128,7 @@ fn hierarchy_asym_ids(model: ModelView<'_>) -> Result<BTreeSet<String>, MmcifWri
 
 pub(super) fn generic_entity_plan(
     model: ModelView<'_>,
-    classifications: &BTreeMap<MoleculeInstanceId, EntityKind>,
+    classifications: &BTreeMap<MoleculeInstanceId, AssignedEntityKind>,
 ) -> Result<EntityPlan, MmcifWriteError> {
     let hierarchy = model.topology().hierarchy();
     let mut reserved_asym_ids = hierarchy_asym_ids(model)?;
@@ -160,7 +160,7 @@ pub(super) fn generic_entity_plan(
         let source_kinds = sites
             .iter()
             .filter_map(|site| classifications.get(&site.atom().molecule()).copied())
-            .map(EntityKind::as_source)
+            .map(AssignedEntityKind::as_source)
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
@@ -264,7 +264,7 @@ pub(super) fn generic_entity_plan(
 
 fn report_entity_plan(
     model: ModelView<'_>,
-    report: &MmcifInterpretationReport,
+    report: &StructureInterpretationReport,
 ) -> Result<EntityPlan, MmcifWriteError> {
     let _ = hierarchy_asym_ids(model)?;
     let mut seen_instances = BTreeSet::new();
@@ -298,7 +298,7 @@ fn report_entity_plan(
 
     let hierarchy = model.topology().hierarchy();
     let mut entities = Vec::new();
-    let mut entity_kinds = BTreeMap::<String, EntityKind>::new();
+    let mut entity_kinds = BTreeMap::<String, AssignedEntityKind>::new();
     let mut asyms = Vec::new();
     let mut atoms = BTreeMap::new();
     let mut generated_serial = 1usize;
@@ -434,8 +434,8 @@ fn report_entity_plan(
 
 fn entity_kind(
     molecule: &MoleculeInstance,
-    classifications: &BTreeMap<MoleculeInstanceId, EntityKind>,
-) -> Result<EntityKind, MmcifWriteError> {
+    classifications: &BTreeMap<MoleculeInstanceId, AssignedEntityKind>,
+) -> Result<AssignedEntityKind, MmcifWriteError> {
     classifications
         .get(&molecule.id())
         .copied()
@@ -444,14 +444,14 @@ fn entity_kind(
 
 fn entity_kind_from_source(
     molecule: MoleculeInstanceId,
-    kind: &MmcifEntityKind,
-) -> Result<EntityKind, MmcifWriteError> {
+    kind: &EntityKind,
+) -> Result<AssignedEntityKind, MmcifWriteError> {
     match kind {
-        MmcifEntityKind::Polymer => Ok(EntityKind::Polymer),
-        MmcifEntityKind::Branched => Ok(EntityKind::Branched),
-        MmcifEntityKind::NonPolymer => Ok(EntityKind::NonPolymer),
-        MmcifEntityKind::Water => Ok(EntityKind::Water),
-        MmcifEntityKind::Other(classification) => {
+        EntityKind::Polymer => Ok(AssignedEntityKind::Polymer),
+        EntityKind::Branched => Ok(AssignedEntityKind::Branched),
+        EntityKind::NonPolymer => Ok(AssignedEntityKind::NonPolymer),
+        EntityKind::Water => Ok(AssignedEntityKind::Water),
+        EntityKind::Other(classification) => {
             Err(MmcifWriteError::UnsupportedEntityClassification {
                 molecule,
                 classification: classification.clone(),
@@ -462,8 +462,8 @@ fn entity_kind_from_source(
 
 pub(super) fn normalize_entity_classifications(
     model: ModelView<'_>,
-    entries: impl IntoIterator<Item = (MoleculeInstanceId, Vec<MmcifEntityKind>)>,
-) -> Result<BTreeMap<MoleculeInstanceId, EntityKind>, MmcifWriteError> {
+    entries: impl IntoIterator<Item = (MoleculeInstanceId, Vec<EntityKind>)>,
+) -> Result<BTreeMap<MoleculeInstanceId, AssignedEntityKind>, MmcifWriteError> {
     let mut explicit = BTreeMap::new();
     for (molecule, source_kinds) in entries {
         if model.topology().molecule(molecule).is_none() {
@@ -506,15 +506,17 @@ pub(super) fn normalize_entity_classifications(
 fn canonical_entity_kind(
     topology: &Topology,
     molecule: MoleculeInstanceId,
-) -> Result<EntityKind, MmcifWriteError> {
+) -> Result<AssignedEntityKind, MmcifWriteError> {
     let class = topology
         .molecule(molecule)
         .ok_or_else(|| invalid_molecule(molecule))?
         .class();
     match class {
-        MoleculeClass::Protein | MoleculeClass::Dna | MoleculeClass::Rna => Ok(EntityKind::Polymer),
-        MoleculeClass::Water => Ok(EntityKind::Water),
-        MoleculeClass::Ion | MoleculeClass::SmallMolecule => Ok(EntityKind::NonPolymer),
+        MoleculeClass::Protein | MoleculeClass::Dna | MoleculeClass::Rna => {
+            Ok(AssignedEntityKind::Polymer)
+        }
+        MoleculeClass::Water => Ok(AssignedEntityKind::Water),
+        MoleculeClass::Ion | MoleculeClass::SmallMolecule => Ok(AssignedEntityKind::NonPolymer),
         MoleculeClass::Carbohydrate => carbohydrate_entity_kind(topology, molecule),
         MoleculeClass::Other => Err(MmcifWriteError::UnresolvedCanonicalEntityClassification {
             molecule,
@@ -526,7 +528,7 @@ fn canonical_entity_kind(
 fn carbohydrate_entity_kind(
     topology: &Topology,
     molecule: MoleculeInstanceId,
-) -> Result<EntityKind, MmcifWriteError> {
+) -> Result<AssignedEntityKind, MmcifWriteError> {
     let view = topology
         .molecule(molecule)
         .ok_or_else(|| invalid_molecule(molecule))?;
@@ -536,7 +538,7 @@ fn carbohydrate_entity_kind(
         .is_some_and(|residue| residue.class() == ResidueClass::Carbohydrate)
         && residues.next().is_none()
     {
-        return Ok(EntityKind::NonPolymer);
+        return Ok(AssignedEntityKind::NonPolymer);
     }
     Err(MmcifWriteError::UnresolvedCanonicalEntityClassification {
         molecule,

@@ -1,5 +1,5 @@
 //! Validate represented chemistry and prepare ordered atom/connection rows.
-use super::entities::{AsymRow, AtomEntityAssignment, EntityKind, EntityPlan, EntityRow};
+use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
 use super::one_based_serial;
 use super::MmcifWriteError;
 use crate::core::{AtomId, BondOrder, ImplicitHydrogens};
@@ -281,12 +281,12 @@ fn collect_small_rows(
         let assignment = assignments
             .get(&qualified)
             .ok_or(MmcifWriteError::MissingAtomSite(qualified))?;
-        let component_id = if assignment.kind == EntityKind::Water {
+        let component_id = if assignment.kind == AssignedEntityKind::Water {
             "HOH"
         } else {
             "MOL"
         };
-        let atom_name = if assignment.kind == EntityKind::Water {
+        let atom_name = if assignment.kind == AssignedEntityKind::Water {
             water_atom_name(definition.molecule(), atom_id)
         } else {
             generated_atom_name(atom.element.symbol(), atom_id)

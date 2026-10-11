@@ -21,13 +21,13 @@ pub use components::{
 };
 pub use mmcif_document::*;
 pub use mmcif_interpret::{
-    MmcifAltLocDecision, MmcifAltLocPolicy, MmcifAltLocPreference, MmcifAltLocResidue,
-    MmcifAltLocSelection, MmcifAltLocSelectionReason, MmcifAtomProvenance, MmcifBondEvidence,
-    MmcifBondProvenance, MmcifConnectionResolutionReason, MmcifConnectivityOptions,
-    MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
-    MmcifEntityKind, MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue,
-    MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport, MmcifModelSelection,
-    MmcifResidueId, MmcifResiduePosition,
+    AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
+    AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance,
+    ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
+    ModelSelection, SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretError,
+    StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretError,
+    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+    StructureInterpretationReport,
 };
 pub use mmcif_write::*;
 pub use molfile_document::{
