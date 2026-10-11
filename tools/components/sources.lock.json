@@ -1,0 +1,760 @@
+{
+  "schema": 1,
+  "source": "wwPDB Chemical Component Dictionary entries served by RCSB",
+  "license": "CC0 1.0 (wwPDB archive data)",
+  "retrieved": "2026-10-11",
+  "groups": {
+    "amino acids": [
+      "ALA",
+      "ARG",
+      "ASN",
+      "ASP",
+      "CYS",
+      "GLN",
+      "GLU",
+      "GLY",
+      "HIS",
+      "ILE",
+      "LEU",
+      "LYS",
+      "MET",
+      "PHE",
+      "PRO",
+      "SER",
+      "THR",
+      "TRP",
+      "TYR",
+      "VAL",
+      "SEC",
+      "PYL",
+      "MSE"
+    ],
+    "nucleotides": [
+      "A",
+      "C",
+      "G",
+      "U",
+      "DA",
+      "DC",
+      "DG",
+      "DT"
+    ],
+    "water": [
+      "HOH",
+      "DOD"
+    ],
+    "ions": [
+      "ZN",
+      "MG",
+      "CA",
+      "NA",
+      "K",
+      "CL",
+      "MN",
+      "FE",
+      "FE2",
+      "CU",
+      "CU1",
+      "NI",
+      "CO",
+      "CD",
+      "HG",
+      "IOD",
+      "BR"
+    ],
+    "cofactors": [
+      "HEM",
+      "HEC",
+      "FAD",
+      "FMN",
+      "NAD",
+      "NAI",
+      "NAP",
+      "NDP",
+      "ATP",
+      "ADP",
+      "AMP",
+      "GTP",
+      "GDP",
+      "SAM",
+      "SAH",
+      "COA",
+      "ACO",
+      "PLP",
+      "TPP",
+      "BTN",
+      "SF4",
+      "FES",
+      "F3S",
+      "CLA"
+    ],
+    "additives": [
+      "SO4",
+      "PO4",
+      "GOL",
+      "EDO",
+      "ACT",
+      "PEG",
+      "DMS",
+      "MPD"
+    ]
+  },
+  "components": [
+    {
+      "id": "ALA",
+      "path": "crates/kekule/data/components/ALA.cif",
+      "url": "https://files.rcsb.org/ligands/view/ALA.cif",
+      "bytes": 6071,
+      "sha256": "6d32b34d4f7b3ddf0cd3dff3f98ddaf7649bc5303ff9a8bd95ba62283f47a1ca",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "ARG",
+      "path": "crates/kekule/data/components/ARG.cif",
+      "url": "https://files.rcsb.org/ligands/view/ARG.cif",
+      "bytes": 7937,
+      "sha256": "191c437cfa501e0a87d275ca3d39974a1a9c8dc704df61bfc442a4c314e196ac",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "ASN",
+      "path": "crates/kekule/data/components/ASN.cif",
+      "url": "https://files.rcsb.org/ligands/view/ASN.cif",
+      "bytes": 6806,
+      "sha256": "81491bbdb49f96e2945192c07510324d206298d3479029b76defba2ed6ab2dc7",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "ASP",
+      "path": "crates/kekule/data/components/ASP.cif",
+      "url": "https://files.rcsb.org/ligands/view/ASP.cif",
+      "bytes": 6574,
+      "sha256": "82c4a2d0b5eda0a32c36f106f0bb00edbc5bc51172db414fdc494025b7b8c858",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "CYS",
+      "path": "crates/kekule/data/components/CYS.cif",
+      "url": "https://files.rcsb.org/ligands/view/CYS.cif",
+      "bytes": 6155,
+      "sha256": "b28c79381f9f41fe57a9e97468fc8101d5fd1064272a22da1eed6d05d27a24cc",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "GLN",
+      "path": "crates/kekule/data/components/GLN.cif",
+      "url": "https://files.rcsb.org/ligands/view/GLN.cif",
+      "bytes": 7124,
+      "sha256": "b542ea5c013fbe0c7acee8e3f42d5dc4e392bd16c0aa545edbf6cb3c335ca30f",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "GLU",
+      "path": "crates/kekule/data/components/GLU.cif",
+      "url": "https://files.rcsb.org/ligands/view/GLU.cif",
+      "bytes": 7120,
+      "sha256": "99fa19054d31b07e7101b33ad9cc847cc6a209da60de279aed5e6a9236bb6da4",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "GLY",
+      "path": "crates/kekule/data/components/GLY.cif",
+      "url": "https://files.rcsb.org/ligands/view/GLY.cif",
+      "bytes": 5615,
+      "sha256": "c49458946b0ebc057db6ad0a4e1557a1caaed4c80a203accd458efddccbf92ff",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "HIS",
+      "path": "crates/kekule/data/components/HIS.cif",
+      "url": "https://files.rcsb.org/ligands/view/HIS.cif",
+      "bytes": 6467,
+      "sha256": "89355e09d9c622dd514738e559d7a75ab0a1659df9a179978e88e1a44704a46f",
+      "modified": "2023-11-03"
+    },
+    {
+      "id": "ILE",
+      "path": "crates/kekule/data/components/ILE.cif",
+      "url": "https://files.rcsb.org/ligands/view/ILE.cif",
+      "bytes": 6487,
+      "sha256": "8166adcc6acb4661f4a167b0a4295879612dfad3f1a6b6f1b7bd0589c5bded93",
+      "modified": "2023-11-03"
+    },
+    {
+      "id": "LEU",
+      "path": "crates/kekule/data/components/LEU.cif",
+      "url": "https://files.rcsb.org/ligands/view/LEU.cif",
+      "bytes": 7251,
+      "sha256": "fc56e022bc8baa25dc6e543b2c46664e365779aa1dda9831576fdf10b30ab84b",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "LYS",
+      "path": "crates/kekule/data/components/LYS.cif",
+      "url": "https://files.rcsb.org/ligands/view/LYS.cif",
+      "bytes": 7549,
+      "sha256": "318a0f6fa8f98682b35e1793517d5b683b9045c1e6174bc564b7d43e07e4c07c",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "MET",
+      "path": "crates/kekule/data/components/MET.cif",
+      "url": "https://files.rcsb.org/ligands/view/MET.cif",
+      "bytes": 6961,
+      "sha256": "a89adea8738d069b0a7bb0c3efc26b362dcc624ef9abd3b3f4bfaedd785f3afd",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "PHE",
+      "path": "crates/kekule/data/components/PHE.cif",
+      "url": "https://files.rcsb.org/ligands/view/PHE.cif",
+      "bytes": 7335,
+      "sha256": "002c626d24aec78fd622459d4f4470c682c7c3f9f97d32414fec4313d780496e",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "PRO",
+      "path": "crates/kekule/data/components/PRO.cif",
+      "url": "https://files.rcsb.org/ligands/view/PRO.cif",
+      "bytes": 6591,
+      "sha256": "08674e4d60bc40ad5702b8de6e5e4abb66c2bbb603832c021c31194f4b4e593c",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "SER",
+      "path": "crates/kekule/data/components/SER.cif",
+      "url": "https://files.rcsb.org/ligands/view/SER.cif",
+      "bytes": 6234,
+      "sha256": "46db0296a07732854d2c3ca67ed0f74f4c82ddc5698d0e59f433039a5d7c88a0",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "THR",
+      "path": "crates/kekule/data/components/THR.cif",
+      "url": "https://files.rcsb.org/ligands/view/THR.cif",
+      "bytes": 5884,
+      "sha256": "feb75dfac5bfcc7045de7a75a31575f3bf3e5b411716a06e92712924759dd554",
+      "modified": "2023-11-03"
+    },
+    {
+      "id": "TRP",
+      "path": "crates/kekule/data/components/TRP.cif",
+      "url": "https://files.rcsb.org/ligands/view/TRP.cif",
+      "bytes": 7190,
+      "sha256": "4cea7e281ee404f3e72fc20d3ba98064373cdd9309a7f5c75479a04c4b6e36d6",
+      "modified": "2023-11-03"
+    },
+    {
+      "id": "TYR",
+      "path": "crates/kekule/data/components/TYR.cif",
+      "url": "https://files.rcsb.org/ligands/view/TYR.cif",
+      "bytes": 7493,
+      "sha256": "fa0ef32f9d623e087a527b0a146c0494a5a656037c6448d956072dd2406fa554",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "VAL",
+      "path": "crates/kekule/data/components/VAL.cif",
+      "url": "https://files.rcsb.org/ligands/view/VAL.cif",
+      "bytes": 6068,
+      "sha256": "9c3c807970c817b1e1a4b43164db91a5bf1e7bf438b3269c5649f6ce84d4c0ed",
+      "modified": "2023-11-03"
+    },
+    {
+      "id": "SEC",
+      "path": "crates/kekule/data/components/SEC.cif",
+      "url": "https://files.rcsb.org/ligands/view/SEC.cif",
+      "bytes": 6388,
+      "sha256": "41fcfb3418235a5b4fafd3e73a3f8ba848063fcb3b21d277b17f29d4413ab9ae",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "PYL",
+      "path": "crates/kekule/data/components/PYL.cif",
+      "url": "https://files.rcsb.org/ligands/view/PYL.cif",
+      "bytes": 8946,
+      "sha256": "b7fe47ed38422c5833f58bdaaffcf5ed5fcbe33a8077657339c91c663ebf04e0",
+      "modified": "2024-02-07"
+    },
+    {
+      "id": "MSE",
+      "path": "crates/kekule/data/components/MSE.cif",
+      "url": "https://files.rcsb.org/ligands/view/MSE.cif",
+      "bytes": 7035,
+      "sha256": "2f8373207105fd6e18aa25ec22cfb229987da61cc79a3980e64d7ee31fb4d31c",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "A",
+      "path": "crates/kekule/data/components/A.cif",
+      "url": "https://files.rcsb.org/ligands/view/A.cif",
+      "bytes": 11501,
+      "sha256": "46db841d33a8147dcd5a3802123e362d708c875f9ba7db457525f094ab55179a",
+      "modified": "2026-07-17"
+    },
+    {
+      "id": "C",
+      "path": "crates/kekule/data/components/C.cif",
+      "url": "https://files.rcsb.org/ligands/view/C.cif",
+      "bytes": 8261,
+      "sha256": "4937647bc2142b3a67fedb3db7e4f24c0ecad844ca5330356f2e95a981e9544e",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "G",
+      "path": "crates/kekule/data/components/G.cif",
+      "url": "https://files.rcsb.org/ligands/view/G.cif",
+      "bytes": 9786,
+      "sha256": "4fbcf5b5222d7c7f0a761676cffa9bb997daa8f76d41fdb7657aa59e969b85fa",
+      "modified": "2026-06-18"
+    },
+    {
+      "id": "U",
+      "path": "crates/kekule/data/components/U.cif",
+      "url": "https://files.rcsb.org/ligands/view/U.cif",
+      "bytes": 8103,
+      "sha256": "de78a1e4a9860baaefc17c5e509fad96b0b25e0b62f90352976f9079cd4b051b",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "DA",
+      "path": "crates/kekule/data/components/DA.cif",
+      "url": "https://files.rcsb.org/ligands/view/DA.cif",
+      "bytes": 9797,
+      "sha256": "57f7122cec3b98b35d1ab6428b6e0ed84898d37857d048079e1455804f4fa225",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "DC",
+      "path": "crates/kekule/data/components/DC.cif",
+      "url": "https://files.rcsb.org/ligands/view/DC.cif",
+      "bytes": 9563,
+      "sha256": "898169cacb03d9375cabe76813110e69e3892609ef3afb9f8e48576541179ea4",
+      "modified": "2025-06-10"
+    },
+    {
+      "id": "DG",
+      "path": "crates/kekule/data/components/DG.cif",
+      "url": "https://files.rcsb.org/ligands/view/DG.cif",
+      "bytes": 10126,
+      "sha256": "87b9c4eddf89edcbc7aba4f77ed2159bb572e9c8092409d893998be426d872f2",
+      "modified": "2026-07-29"
+    },
+    {
+      "id": "DT",
+      "path": "crates/kekule/data/components/DT.cif",
+      "url": "https://files.rcsb.org/ligands/view/DT.cif",
+      "bytes": 9826,
+      "sha256": "6fda70602012a9fbed3529298e850cd34fef2c3074856ee7fb5d6007fe02a4f6",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "HOH",
+      "path": "crates/kekule/data/components/HOH.cif",
+      "url": "https://files.rcsb.org/ligands/view/HOH.cif",
+      "bytes": 3741,
+      "sha256": "fba49260366ebecbde618cc380f3557016d6fdef5c1836337be8f89ed62750b5",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "DOD",
+      "path": "crates/kekule/data/components/DOD.cif",
+      "url": "https://files.rcsb.org/ligands/view/DOD.cif",
+      "bytes": 4104,
+      "sha256": "aecf90255812bbe3e140e6b7508cf570199f6be38f681a136b82ddb9b09c034c",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "ZN",
+      "path": "crates/kekule/data/components/ZN.cif",
+      "url": "https://files.rcsb.org/ligands/view/ZN.cif",
+      "bytes": 3409,
+      "sha256": "dfd90cb88732a63f688150e3768c67b26dc9e9dfcd43037e125781a7e9cd9667",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "MG",
+      "path": "crates/kekule/data/components/MG.cif",
+      "url": "https://files.rcsb.org/ligands/view/MG.cif",
+      "bytes": 3424,
+      "sha256": "b7d9dd418bc6c6faad45284c27a54c9bee13b2d9a249db31f78284b9a61b2296",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "CA",
+      "path": "crates/kekule/data/components/CA.cif",
+      "url": "https://files.rcsb.org/ligands/view/CA.cif",
+      "bytes": 3418,
+      "sha256": "5713e078d7604837c4169d281dd40da4dfa21e96340f239776cf32bd3946d65d",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "NA",
+      "path": "crates/kekule/data/components/NA.cif",
+      "url": "https://files.rcsb.org/ligands/view/NA.cif",
+      "bytes": 3415,
+      "sha256": "325116dae44c0d864aec19f5a44e1236ef309cc2b54e564d8189ee4c024a20ea",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "K",
+      "path": "crates/kekule/data/components/K.cif",
+      "url": "https://files.rcsb.org/ligands/view/K.cif",
+      "bytes": 3403,
+      "sha256": "3b918af6f7214439c3744ac66f8fb4b3bc4416ba960df6d9579aa51e29a5c7f5",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "CL",
+      "path": "crates/kekule/data/components/CL.cif",
+      "url": "https://files.rcsb.org/ligands/view/CL.cif",
+      "bytes": 3700,
+      "sha256": "0ebfed36965cba75818c63b979fe2ff85160fb45d0d8e6b5096ccba917cd452d",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "MN",
+      "path": "crates/kekule/data/components/MN.cif",
+      "url": "https://files.rcsb.org/ligands/view/MN.cif",
+      "bytes": 3435,
+      "sha256": "34069721472535643756eb140039ced4053cec1f4814f69658e7b244ee2bebc6",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "FE",
+      "path": "crates/kekule/data/components/FE.cif",
+      "url": "https://files.rcsb.org/ligands/view/FE.cif",
+      "bytes": 3419,
+      "sha256": "448167ce70b1e6265de6f68f9ece64f3bd78f01bfaea31c6d4c378f74f1f441a",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "FE2",
+      "path": "crates/kekule/data/components/FE2.cif",
+      "url": "https://files.rcsb.org/ligands/view/FE2.cif",
+      "bytes": 3434,
+      "sha256": "5ab972e496587856f6b121f3e26121ddb5a254d418cacdca6f06c49a4f044cb6",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "CU",
+      "path": "crates/kekule/data/components/CU.cif",
+      "url": "https://files.rcsb.org/ligands/view/CU.cif",
+      "bytes": 3470,
+      "sha256": "d323810c8e522c79c00d55cbbd2a7463ee1567ea79be1d4f3b1984eab92d81e3",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "CU1",
+      "path": "crates/kekule/data/components/CU1.cif",
+      "url": "https://files.rcsb.org/ligands/view/CU1.cif",
+      "bytes": 3485,
+      "sha256": "ec48f5f993c3db99f3dc68c2f29264cca3c864ac307269496267a4ed95c92797",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "NI",
+      "path": "crates/kekule/data/components/NI.cif",
+      "url": "https://files.rcsb.org/ligands/view/NI.cif",
+      "bytes": 3470,
+      "sha256": "cdd8b5beaa09784daf2a74e7ae55d348000e159f831a1a42f4dfafce5c836f89",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "CO",
+      "path": "crates/kekule/data/components/CO.cif",
+      "url": "https://files.rcsb.org/ligands/view/CO.cif",
+      "bytes": 3426,
+      "sha256": "0e3f453c6d6a71b53f02ddd2778842af181174594a465303dc2fdda75b6a362c",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "CD",
+      "path": "crates/kekule/data/components/CD.cif",
+      "url": "https://files.rcsb.org/ligands/view/CD.cif",
+      "bytes": 3418,
+      "sha256": "c83b7b314eda45049267ded7a4575a2a151b45c8c7d3451269ab0de10045272c",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "HG",
+      "path": "crates/kekule/data/components/HG.cif",
+      "url": "https://files.rcsb.org/ligands/view/HG.cif",
+      "bytes": 3423,
+      "sha256": "d28d19d5d99fcd648e224904e6f17be91b118523c2d3f206029974e39c8a40bf",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "IOD",
+      "path": "crates/kekule/data/components/IOD.cif",
+      "url": "https://files.rcsb.org/ligands/view/IOD.cif",
+      "bytes": 3713,
+      "sha256": "7d5157596ccef504d1493d282c16a8d7a8bbcdb5c11b3310d2682aca5bf94175",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "BR",
+      "path": "crates/kekule/data/components/BR.cif",
+      "url": "https://files.rcsb.org/ligands/view/BR.cif",
+      "bytes": 3697,
+      "sha256": "251c2a100e29c2eec983a8fc6024c928851f1021074bdb1f00e764a1c5d7789a",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "HEM",
+      "path": "crates/kekule/data/components/HEM.cif",
+      "url": "https://files.rcsb.org/ligands/view/HEM.cif",
+      "bytes": 20740,
+      "sha256": "80f4134bdc5b18dff8c31477ad8aabad7553a84fa4a5a1960677c733939d1429",
+      "modified": "2026-09-16"
+    },
+    {
+      "id": "HEC",
+      "path": "crates/kekule/data/components/HEC.cif",
+      "url": "https://files.rcsb.org/ligands/view/HEC.cif",
+      "bytes": 20299,
+      "sha256": "4390d73b81e9468656b7594f4620d533a0a408f1a2fc1249443443ad5ac9d046",
+      "modified": "2026-09-16"
+    },
+    {
+      "id": "FAD",
+      "path": "crates/kekule/data/components/FAD.cif",
+      "url": "https://files.rcsb.org/ligands/view/FAD.cif",
+      "bytes": 18260,
+      "sha256": "85fc5af9d315a3cdbfb0efe1c30dc1aa7d227ddc8fa9b3054de81f1ffe4d0851",
+      "modified": "2026-04-09"
+    },
+    {
+      "id": "FMN",
+      "path": "crates/kekule/data/components/FMN.cif",
+      "url": "https://files.rcsb.org/ligands/view/FMN.cif",
+      "bytes": 12926,
+      "sha256": "f9033e720b9347d244aeb910ded984d2cc6de144384c1d935fe81fa0c6b37f6a",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "NAD",
+      "path": "crates/kekule/data/components/NAD.cif",
+      "url": "https://files.rcsb.org/ligands/view/NAD.cif",
+      "bytes": 14230,
+      "sha256": "f202c206d06c8aafa01516df17e91d21a6c60ed1a02f815e60bca00d12a62439",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "NAI",
+      "path": "crates/kekule/data/components/NAI.cif",
+      "url": "https://files.rcsb.org/ligands/view/NAI.cif",
+      "bytes": 14754,
+      "sha256": "87c4920502cf06aaaf85204e6cceb7f9d8ad5365a724f594b7a7c1a3c09d5539",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "NAP",
+      "path": "crates/kekule/data/components/NAP.cif",
+      "url": "https://files.rcsb.org/ligands/view/NAP.cif",
+      "bytes": 14848,
+      "sha256": "6a1240250770b1d2159caf10db477454f2c4d654d77a25346d6a7a68ff8fbbc4",
+      "modified": "2020-06-17"
+    },
+    {
+      "id": "NDP",
+      "path": "crates/kekule/data/components/NDP.cif",
+      "url": "https://files.rcsb.org/ligands/view/NDP.cif",
+      "bytes": 15158,
+      "sha256": "2eb9f420ab51c741951f1317209b3ecdac1aee70d5c478b688efce925fd91619",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "ATP",
+      "path": "crates/kekule/data/components/ATP.cif",
+      "url": "https://files.rcsb.org/ligands/view/ATP.cif",
+      "bytes": 10669,
+      "sha256": "06d876e9fe28b6981725288cd03943818ef6faf4839782c2a0a8929d65c85336",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "ADP",
+      "path": "crates/kekule/data/components/ADP.cif",
+      "url": "https://files.rcsb.org/ligands/view/ADP.cif",
+      "bytes": 10039,
+      "sha256": "fa9eabb464c85c7c5a44146d492b907acd3151a250a4598001cc6abba8da84af",
+      "modified": "2025-10-10"
+    },
+    {
+      "id": "AMP",
+      "path": "crates/kekule/data/components/AMP.cif",
+      "url": "https://files.rcsb.org/ligands/view/AMP.cif",
+      "bytes": 11596,
+      "sha256": "50778509f49ff4f4086f3904e7b7fe7a22592e06720a429d6b6f5a65db0cc3db",
+      "modified": "2025-04-15"
+    },
+    {
+      "id": "GTP",
+      "path": "crates/kekule/data/components/GTP.cif",
+      "url": "https://files.rcsb.org/ligands/view/GTP.cif",
+      "bytes": 11001,
+      "sha256": "37b55073b68054771b2df443f8e1f721795fac4db9933aa2176aea0aed57043f",
+      "modified": "2013-03-22"
+    },
+    {
+      "id": "GDP",
+      "path": "crates/kekule/data/components/GDP.cif",
+      "url": "https://files.rcsb.org/ligands/view/GDP.cif",
+      "bytes": 11090,
+      "sha256": "aea95821c9e8b2b302640f6356e183623cb068537bed3c68f867d1d685d439b3",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "SAM",
+      "path": "crates/kekule/data/components/SAM.cif",
+      "url": "https://files.rcsb.org/ligands/view/SAM.cif",
+      "bytes": 10638,
+      "sha256": "8ef08157d1d0b20a6b109feef005c2a5d6398d8592b3c6bd6c106f463f8b5626",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "SAH",
+      "path": "crates/kekule/data/components/SAH.cif",
+      "url": "https://files.rcsb.org/ligands/view/SAH.cif",
+      "bytes": 10563,
+      "sha256": "d9994054ea59729c78aeca9188fb9783074de2189591cb4c2b8722234278c1f0",
+      "modified": "2024-09-16"
+    },
+    {
+      "id": "COA",
+      "path": "crates/kekule/data/components/COA.cif",
+      "url": "https://files.rcsb.org/ligands/view/COA.cif",
+      "bytes": 16745,
+      "sha256": "cf6001dfe1c58b7246a26234373c2615da0b09cef0b66aace6da1845b3c13163",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "ACO",
+      "path": "crates/kekule/data/components/ACO.cif",
+      "url": "https://files.rcsb.org/ligands/view/ACO.cif",
+      "bytes": 17097,
+      "sha256": "c88c9ad90fa7156e8ce8deb770a6ccc0e42d607cfcffa1596842b463972808da",
+      "modified": "2025-06-26"
+    },
+    {
+      "id": "PLP",
+      "path": "crates/kekule/data/components/PLP.cif",
+      "url": "https://files.rcsb.org/ligands/view/PLP.cif",
+      "bytes": 7526,
+      "sha256": "51f6577d9a5a5cf987490584eb62084b6bb5d7a8729887bd612af41bc289b2b0",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "TPP",
+      "path": "crates/kekule/data/components/TPP.cif",
+      "url": "https://files.rcsb.org/ligands/view/TPP.cif",
+      "bytes": 9918,
+      "sha256": "4ca05541af48765e48b6e5686a871f8c14ea41747d2220eb977ceb5ade78681e",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "BTN",
+      "path": "crates/kekule/data/components/BTN.cif",
+      "url": "https://files.rcsb.org/ligands/view/BTN.cif",
+      "bytes": 9167,
+      "sha256": "9fff069dc9e0387d49c3ef62cab0867a10dae56274931a779fb87f377b9c11ea",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "SF4",
+      "path": "crates/kekule/data/components/SF4.cif",
+      "url": "https://files.rcsb.org/ligands/view/SF4.cif",
+      "bytes": 17228,
+      "sha256": "e9447eba0a4ef05710e4df6dc2738643722a8feaa0bf82a49bd862d1f6bdd902",
+      "modified": "2026-09-16"
+    },
+    {
+      "id": "FES",
+      "path": "crates/kekule/data/components/FES.cif",
+      "url": "https://files.rcsb.org/ligands/view/FES.cif",
+      "bytes": 10448,
+      "sha256": "e899d808004e9b5d791b0448ae0052a8ff0701f2d27d95663357d3b486a194d6",
+      "modified": "2026-09-23"
+    },
+    {
+      "id": "F3S",
+      "path": "crates/kekule/data/components/F3S.cif",
+      "url": "https://files.rcsb.org/ligands/view/F3S.cif",
+      "bytes": 6820,
+      "sha256": "587fdd7350a520ddfab415fdbd80145284a903a4404d6b27a7f2aa5408f12036",
+      "modified": "2026-09-16"
+    },
+    {
+      "id": "CLA",
+      "path": "crates/kekule/data/components/CLA.cif",
+      "url": "https://files.rcsb.org/ligands/view/CLA.cif",
+      "bytes": 29450,
+      "sha256": "ab6295058784799ea8c5f2376f456b3342c2096e1ff95133aa90e1d911f9f6f7",
+      "modified": "2026-09-16"
+    },
+    {
+      "id": "SO4",
+      "path": "crates/kekule/data/components/SO4.cif",
+      "url": "https://files.rcsb.org/ligands/view/SO4.cif",
+      "bytes": 3969,
+      "sha256": "89409c769690c31746c8c43e5f02fb212ecf65542ea5b26f58d18532677fa893",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "PO4",
+      "path": "crates/kekule/data/components/PO4.cif",
+      "url": "https://files.rcsb.org/ligands/view/PO4.cif",
+      "bytes": 3989,
+      "sha256": "57d988e2ed80b9b6d9fb0b7384c3e0874ea186dfeb8a89c781d2c78ee05686e5",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "GOL",
+      "path": "crates/kekule/data/components/GOL.cif",
+      "url": "https://files.rcsb.org/ligands/view/GOL.cif",
+      "bytes": 6597,
+      "sha256": "e25f59c6c2f702dcf46285dcdd24c18fd33bc8bb664acdf53bc97496dbc253cc",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "EDO",
+      "path": "crates/kekule/data/components/EDO.cif",
+      "url": "https://files.rcsb.org/ligands/view/EDO.cif",
+      "bytes": 4927,
+      "sha256": "3831cc674f6ae6afc23bd0d0281bea38af84fbe2ee8d684260a0c49f3cb11e48",
+      "modified": "2021-03-01"
+    },
+    {
+      "id": "ACT",
+      "path": "crates/kekule/data/components/ACT.cif",
+      "url": "https://files.rcsb.org/ligands/view/ACT.cif",
+      "bytes": 5218,
+      "sha256": "84496b5575ab0672cfc921426995c80ae04968435ad9581c3b47d07ea1e0839d",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "PEG",
+      "path": "crates/kekule/data/components/PEG.cif",
+      "url": "https://files.rcsb.org/ligands/view/PEG.cif",
+      "bytes": 6428,
+      "sha256": "519f40c7d84ffa58b1270f0403500237b7658f5a9dd26121f795b0479df768c0",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "DMS",
+      "path": "crates/kekule/data/components/DMS.cif",
+      "url": "https://files.rcsb.org/ligands/view/DMS.cif",
+      "bytes": 4791,
+      "sha256": "1441b3e337d228f42bd1b6d1467251ffea114073b42443259a9264b552ebc34b",
+      "modified": "2024-09-27"
+    },
+    {
+      "id": "MPD",
+      "path": "crates/kekule/data/components/MPD.cif",
+      "url": "https://files.rcsb.org/ligands/view/MPD.cif",
+      "bytes": 6243,
+      "sha256": "dbc4ba4cb556ca5e7480e5c2c7a7bab3a0277ab5d0248969741badac05a55ba3",
+      "modified": "2011-06-04"
+    }
+  ]
+}

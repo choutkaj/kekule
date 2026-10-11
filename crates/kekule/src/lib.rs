@@ -610,6 +610,22 @@ pub mod sdf {
     }
 }
 
+/// Chemical component templates: residue and ligand definitions in the model of
+/// the wwPDB Chemical Component Dictionary.
+///
+/// Structural formats name each residue's component but rarely carry its bonds.
+/// [`ComponentLibrary::bundled`](components::ComponentLibrary::bundled) holds
+/// the standard amino acids and nucleotides, water, common ions, cofactors, and
+/// crystallization additives; read further definitions, up to the complete
+/// dictionary, with
+/// [`ComponentLibrary::from_mmcif`](components::ComponentLibrary::from_mmcif).
+pub mod components {
+    pub use crate::io::{
+        Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentError,
+        ComponentLibrary, ComponentLinking,
+    };
+}
+
 /// Structural mmCIF parsing, interpretation, and writing.
 ///
 /// Data blocks are independent interpretation scopes. One selected coordinate

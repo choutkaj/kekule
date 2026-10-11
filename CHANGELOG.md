@@ -6,6 +6,15 @@ All notable changes to Kekule are documented in this file.
 
 ### Added
 
+- `kekule::components` holds chemical component templates in the model of the
+  wwPDB Chemical Component Dictionary: named atoms with elements, formal
+  charges, aromatic and leaving-atom flags, and bonds with orders and
+  metal-coordination flags. `ComponentLibrary::bundled` embeds 82 unmodified
+  dictionary entries (standard amino acids and nucleotides, water, common
+  ions, cofactors, and crystallization additives) plus the two neutral
+  histidine tautomers, and `ComponentLibrary::from_mmcif` reads further
+  definitions, up to the complete dictionary. Structural interpretation will
+  use these templates to resolve connectivity.
 - `kekule::diagnostics` provides the shared parse and interpretation
   vocabulary: `SourceLocation` (line and optional column in the original
   input), `DiagnosticKind` (I/O, limit, syntax, invalid value, invalid
