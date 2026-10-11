@@ -7,7 +7,7 @@ use crate::diagnostics::{normalize_line_endings, read_bounded, DiagnosticKind, S
 use crate::structure::Model;
 use crate::topology::Topology;
 
-use super::mmcif_interpret::{
+use super::structure_interpret::{
     interpret_mmcif, interpret_mmcif_block, interpret_mmcif_conformations,
     interpret_mmcif_conformations_block, interpret_mmcif_ensemble, interpret_mmcif_ensemble_block,
     StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
@@ -271,7 +271,7 @@ impl MmcifBlock {
     pub fn alternate_locations(
         &self,
     ) -> Result<Vec<super::AltLocResidue>, StructureInterpretError> {
-        super::mmcif_interpret::alternate_location_inventory(self)
+        super::structure_interpret::alternate_location_inventory(self)
     }
 
     /// The value of one scalar item, matching the tag case-insensitively.

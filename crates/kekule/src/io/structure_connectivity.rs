@@ -14,7 +14,7 @@ use crate::core::{AtomId, BondOrder, Element, Molecule, MoleculeEditor};
 use crate::geometry::Point3;
 
 use super::mmcif_category::MmcifCategory;
-use super::mmcif_interpret as raw;
+use super::structure_interpret as raw;
 use super::MmcifBlock;
 
 /// One staged atom with the source fields connectivity resolution reads.

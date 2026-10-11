@@ -507,7 +507,7 @@ them. Format-specific constructors and save methods do not belong on canonical
 owners. See the [public format namespaces](crates/kekule/src/lib.rs),
 [MOL interpretation](crates/kekule/src/io/structure_documents.rs),
 [SDF records](crates/kekule/src/io/sdf_document.rs), and
-[mmCIF interpretation](crates/kekule/src/io/mmcif_interpret/mod.rs).
+[mmCIF interpretation](crates/kekule/src/io/structure_interpret/mod.rs).
 
 Writers live in format namespaces as one `write(source, options)` returning a
 string and one `write_to(writer, source, options)` sink writer per format. Each

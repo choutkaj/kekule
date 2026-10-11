@@ -103,7 +103,7 @@ struct PreparedBlock<'a> {
     model_sizes: Vec<(String, usize)>,
     report: StructureInterpretationReport,
     polymer_order: std::collections::BTreeMap<String, usize>,
-    connectivity: super::mmcif_connectivity::ConnectivityCatalog,
+    connectivity: super::structure_connectivity::ConnectivityCatalog,
 }
 
 impl<'a> PreparedBlock<'a> {
@@ -173,7 +173,7 @@ impl<'a> PreparedBlock<'a> {
             model_sizes,
             report,
             polymer_order: polymer_asym_order(block)?,
-            connectivity: super::mmcif_connectivity::ConnectivityCatalog::from_block(
+            connectivity: super::structure_connectivity::ConnectivityCatalog::from_block(
                 block,
                 connectivity,
             )?,
@@ -243,7 +243,7 @@ fn publish_model(
     block: &MmcifBlock,
     rows: ModelRows,
     polymer_asym_order: &std::collections::BTreeMap<String, usize>,
-    connectivity: &super::mmcif_connectivity::ConnectivityCatalog,
+    connectivity: &super::structure_connectivity::ConnectivityCatalog,
     mut report: StructureInterpretationReport,
 ) -> Result<StructureInterpretation, StructureInterpretError> {
     let ModelRows {

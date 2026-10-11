@@ -10,8 +10,8 @@ use crate::topology::{AtomSiteMetadata, Hierarchy};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::{Quantity, ANGSTROM};
 
-use super::super::mmcif_connectivity::{record_evidence, BondEvidenceMap};
 use super::super::staged_coordinates::StagedCoordinates;
+use super::super::structure_connectivity::{record_evidence, BondEvidenceMap};
 use super::super::MmcifBlock;
 use super::atom_site::{required, AtomRow};
 use super::struct_conn::{DeclaredConnection, InstanceUnion};
@@ -202,7 +202,7 @@ impl BuiltMoleculeProvenance {
 impl BuiltMolecule {
     pub(super) fn complete_connectivity(
         &mut self,
-        catalog: &super::super::mmcif_connectivity::ConnectivityCatalog,
+        catalog: &super::super::structure_connectivity::ConnectivityCatalog,
         report: &mut StructureInterpretationReport,
     ) -> Result<(), StructureInterpretError> {
         let Self {
@@ -212,7 +212,7 @@ impl BuiltMolecule {
             ..
         } = self;
         let atoms = provenance.atoms.iter().map(|atom| {
-            super::super::mmcif_connectivity::StagedAtomProvenance {
+            super::super::structure_connectivity::StagedAtomProvenance {
                 atom: atom.atom,
                 atom_name: &atom.atom_name,
                 component_id: &atom.component_id,
@@ -228,7 +228,7 @@ impl BuiltMolecule {
                 stated_charge: atom.stated_charge,
             }
         });
-        super::super::mmcif_connectivity::complete_editor_connectivity(
+        super::super::structure_connectivity::complete_editor_connectivity(
             catalog,
             editor,
             atoms,

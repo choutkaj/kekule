@@ -281,7 +281,7 @@ struct Candidate<'a> {
     preferred: usize,
 }
 
-pub(in crate::io::mmcif_interpret) fn select_alt_locations(
+pub(in crate::io::structure_interpret) fn select_alt_locations(
     block: &MmcifBlock,
     rows: &[AtomRow],
     policy: &AltLocPolicy,

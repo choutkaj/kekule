@@ -1,6 +1,6 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
 use crate::core::BondOrder;
-use crate::io::mmcif_interpret::{
+use crate::io::structure_interpret::{
     EntityKind, StructureEnsembleInterpretation, StructureInterpretation,
     StructureInterpretationReport,
 };

@@ -2,7 +2,7 @@
 //! retains scalar items and loops exactly as parsed; no coordinate table is copied.
 use crate::diagnostics::DiagnosticKind;
 
-use super::mmcif_interpret::StructureInterpretError;
+use super::structure_interpret::StructureInterpretError;
 use super::{MmcifBlock, MmcifEntry, MmcifItem, MmcifLoopTable, MmcifValue};
 
 pub(crate) enum MmcifCategory<'a> {
