@@ -69,6 +69,10 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Publishing a topology no longer takes time quadratic in the residues of one
+  chain or the atom sites of one residue. A 200,000-residue chain now validates
+  in about 0.1 s instead of 14 s, which also dominated mmCIF interpretation of
+  large structures.
 - `TopologyEditor` and `ModelEditor` can bond fragments of two occurrences
   that were both edited in the same draft, for example after deleting a bond
   in each. Merging copied the second occurrence's atom and bond annotations

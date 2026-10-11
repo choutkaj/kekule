@@ -118,6 +118,12 @@ impl Hierarchy {
         Ok(id)
     }
 
+    /// Mutable residue list of one chain, for corrupting hierarchies in tests.
+    #[cfg(test)]
+    pub(crate) fn chain_residues_mut(&mut self, chain: ChainId) -> &mut Vec<ResidueId> {
+        &mut self.chains[chain.index()].residues
+    }
+
     pub fn chain(&self, id: ChainId) -> std::result::Result<&Chain, HierarchyError> {
         self.chains
             .get(id.index())
