@@ -3,13 +3,13 @@ use crate::diagnostics::DiagnosticKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::atom_site::{required, row_error, AtomRow};
-use super::super::MmcifInterpretError;
+use super::super::StructureInterpretError;
 use crate::io::MmcifBlock;
 
 pub(super) fn conformations(
     block: &MmcifBlock,
     rows: &[AtomRow],
-) -> Result<BTreeMap<String, BTreeSet<String>>, MmcifInterpretError> {
+) -> Result<BTreeMap<String, BTreeSet<String>>, StructureInterpretError> {
     let mut conformations = BTreeMap::<String, BTreeSet<String>>::new();
     let Some(table) = block.category("_atom_sites_alt_gen")? else {
         return Ok(conformations);

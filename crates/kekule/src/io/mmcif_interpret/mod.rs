@@ -19,39 +19,39 @@ use struct_conn::{read_connections, InstanceUnion};
 
 pub(crate) use altloc::inventory as alternate_location_inventory;
 pub use altloc::{
-    MmcifAltLocDecision, MmcifAltLocPolicy, MmcifAltLocPreference, MmcifAltLocResidue,
-    MmcifAltLocSelection, MmcifAltLocSelectionReason, MmcifResidueId, MmcifResiduePosition,
+    AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
+    AltLocSelectionReason, SourceResidueId, SourceResiduePosition,
 };
 pub(crate) use ensemble::{
     interpret_mmcif_conformations, interpret_mmcif_conformations_block, interpret_mmcif_ensemble,
     interpret_mmcif_ensemble_block,
 };
 pub use types::{
-    MmcifAtomProvenance, MmcifBondEvidence, MmcifBondProvenance, MmcifConnectionResolutionReason,
-    MmcifConnectivityOptions, MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions,
-    MmcifEnsembleInterpretation, MmcifEntityKind, MmcifInstanceProvenance, MmcifInterpretError,
-    MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport,
-    MmcifModelSelection,
+    AtomProvenance, BondEvidence, BondProvenance, ConnectionResolutionReason, ConnectivityOptions,
+    EntityKind, InstanceProvenance, ModelSelection, StructureEnsembleInterpretError,
+    StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretError,
+    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+    StructureInterpretationReport,
 };
 
 pub(crate) fn interpret_mmcif(
     document: &MmcifDocument,
-    options: MmcifInterpretOptions,
-) -> Result<MmcifInterpretation, MmcifInterpretError> {
+    options: StructureInterpretOptions,
+) -> Result<StructureInterpretation, StructureInterpretError> {
     let blocks = document
         .blocks()
         .iter()
         .filter(|block| block.has_category("_atom_site"))
         .collect::<Vec<_>>();
     if blocks.is_empty() {
-        return Err(MmcifInterpretError::new(
+        return Err(StructureInterpretError::new(
             DiagnosticKind::Inconsistent,
             None,
             "document has no atom-site category",
         ));
     }
     if blocks.len() > 1 {
-        return Err(MmcifInterpretError::new(
+        return Err(StructureInterpretError::new(
             DiagnosticKind::Inconsistent,
             None,
             "document has atom-site data in more than one data block",
@@ -62,8 +62,8 @@ pub(crate) fn interpret_mmcif(
 
 pub(crate) fn interpret_mmcif_block(
     block: &MmcifBlock,
-    options: MmcifInterpretOptions,
-) -> Result<MmcifInterpretation, MmcifInterpretError> {
+    options: StructureInterpretOptions,
+) -> Result<StructureInterpretation, StructureInterpretError> {
     let mut prepared = PreparedBlock::new(
         block,
         options.strict_entity_metadata,
@@ -71,11 +71,11 @@ pub(crate) fn interpret_mmcif_block(
         &options.connectivity,
     )?;
     let model_id = match &options.model_selection {
-        MmcifModelSelection::RequireSingle if prepared.model_sizes.len() == 1 => {
+        ModelSelection::RequireSingle if prepared.model_sizes.len() == 1 => {
             prepared.model_sizes[0].0.clone()
         }
-        MmcifModelSelection::RequireSingle => {
-            return Err(MmcifInterpretError::new(
+        ModelSelection::RequireSingle => {
+            return Err(StructureInterpretError::new(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!(
@@ -84,8 +84,8 @@ pub(crate) fn interpret_mmcif_block(
                 ),
             ))
         }
-        MmcifModelSelection::First => prepared.model_sizes[0].0.clone(),
-        MmcifModelSelection::Select(id) => id.clone(),
+        ModelSelection::First => prepared.model_sizes[0].0.clone(),
+        ModelSelection::Select(id) => id.clone(),
     };
     prepared.interpret_model(&model_id)
 }
@@ -101,7 +101,7 @@ struct PreparedBlock<'a> {
     block: &'a MmcifBlock,
     models: std::collections::BTreeMap<String, ModelRows>,
     model_sizes: Vec<(String, usize)>,
-    report: MmcifInterpretationReport,
+    report: StructureInterpretationReport,
     polymer_order: std::collections::BTreeMap<String, usize>,
     connectivity: super::mmcif_connectivity::ConnectivityCatalog,
 }
@@ -110,29 +110,29 @@ impl<'a> PreparedBlock<'a> {
     fn new(
         block: &'a MmcifBlock,
         strict_entity_metadata: bool,
-        altloc_policy: &MmcifAltLocPolicy,
-        connectivity: &MmcifConnectivityOptions,
-    ) -> Result<Self, MmcifInterpretError> {
+        altloc_policy: &AltLocPolicy,
+        connectivity: &ConnectivityOptions,
+    ) -> Result<Self, StructureInterpretError> {
         let entities = read_entity_types(block)?;
         let asym_entities = read_asym_entities(block)?;
         let atom_table = block.category("_atom_site")?.ok_or_else(|| {
-            MmcifInterpretError::new(
+            StructureInterpretError::new(
                 DiagnosticKind::Inconsistent,
                 None,
                 "block has no atom-site category",
             )
         })?;
         if atom_table.row_count() == 0 {
-            return Err(MmcifInterpretError::new(
+            return Err(StructureInterpretError::new(
                 DiagnosticKind::Inconsistent,
                 None,
                 "atom-site category contains no rows",
             ));
         }
-        let mut report = MmcifInterpretationReport {
+        let mut report = StructureInterpretationReport {
             block_name: block.name().to_owned(),
             entity_definitions: entities.len(),
-            ..MmcifInterpretationReport::default()
+            ..StructureInterpretationReport::default()
         };
         let rows = read_atom_rows(
             &atom_table,
@@ -183,16 +183,16 @@ impl<'a> PreparedBlock<'a> {
     fn interpret_model(
         &mut self,
         model_id: &str,
-    ) -> Result<MmcifInterpretation, MmcifInterpretError> {
+    ) -> Result<StructureInterpretation, StructureInterpretError> {
         let rows = self.models.remove(model_id).ok_or_else(|| {
-            MmcifInterpretError::new(
+            StructureInterpretError::new(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!("coordinate model `{model_id}` is unavailable"),
             )
         })?;
         if let Some(row) = rows.selected.iter().find(|row| row.point.is_none()) {
-            return Err(MmcifInterpretError::new(
+            return Err(StructureInterpretError::new(
                 DiagnosticKind::InvalidValue,
                 Some(row.line),
                 format!(
@@ -207,13 +207,13 @@ impl<'a> PreparedBlock<'a> {
             .alternate_locations
             .retain(|choice| choice.residue.model_id == model_id);
         report.issues.retain(|issue| match issue {
-            MmcifInterpretIssue::AlternateLocationOmitted { residue, .. }
-            | MmcifInterpretIssue::AlternateLocationIncomplete { residue, .. }
-            | MmcifInterpretIssue::AlternateLocationCombinationRejected { residue, .. }
-            | MmcifInterpretIssue::AlternateLocationOccupancyMissing { residue, .. } => {
+            StructureInterpretIssue::AlternateLocationOmitted { residue, .. }
+            | StructureInterpretIssue::AlternateLocationIncomplete { residue, .. }
+            | StructureInterpretIssue::AlternateLocationCombinationRejected { residue, .. }
+            | StructureInterpretIssue::AlternateLocationOccupancyMissing { residue, .. } => {
                 residue.model_id == model_id
             }
-            MmcifInterpretIssue::AlternateLocationOccupancyTie { residues, .. } => {
+            StructureInterpretIssue::AlternateLocationOccupancyTie { residues, .. } => {
                 residues.iter().any(|residue| residue.model_id == model_id)
             }
             _ => true,
@@ -223,7 +223,7 @@ impl<'a> PreparedBlock<'a> {
                 report.ignored_coordinate_models.push(ignored.clone());
                 report
                     .issues
-                    .push(MmcifInterpretIssue::CoordinateModelIgnored {
+                    .push(StructureInterpretIssue::CoordinateModelIgnored {
                         model_id: ignored.clone(),
                         atom_site_rows: *count,
                     });
@@ -244,8 +244,8 @@ fn publish_model(
     rows: ModelRows,
     polymer_asym_order: &std::collections::BTreeMap<String, usize>,
     connectivity: &super::mmcif_connectivity::ConnectivityCatalog,
-    mut report: MmcifInterpretationReport,
-) -> Result<MmcifInterpretation, MmcifInterpretError> {
+    mut report: StructureInterpretationReport,
+) -> Result<StructureInterpretation, StructureInterpretError> {
     let ModelRows {
         all: rows,
         selected,
@@ -319,18 +319,13 @@ fn publish_model(
     report.macromolecules = report
         .instances
         .iter()
-        .filter(|instance| {
-            instance
-                .entity_kinds()
-                .iter()
-                .any(MmcifEntityKind::is_macro)
-        })
+        .filter(|instance| instance.entity_kinds().iter().any(EntityKind::is_macro))
         .count();
     report.small_molecules = report.instances.len() - report.macromolecules;
     report.solvent_molecules = report
         .instances
         .iter()
-        .filter(|instance| instance.entity_kinds().contains(&MmcifEntityKind::Water))
+        .filter(|instance| instance.entity_kinds().contains(&EntityKind::Water))
         .count();
-    Ok(MmcifInterpretation { model, report })
+    Ok(StructureInterpretation { model, report })
 }

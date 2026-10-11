@@ -6,8 +6,9 @@ use crate::structure::{Ensemble, EnsembleMember};
 use super::super::{MmcifBlock, MmcifDocument};
 use super::atom_site::coordinate_model_ids;
 use super::types::{
-    MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
-    MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport,
+    StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
+    StructureEnsembleInterpretation, StructureInterpretOptions, StructureInterpretation,
+    StructureInterpretationReport,
 };
 use super::PreparedBlock;
 
@@ -15,21 +16,23 @@ use super::PreparedBlock;
 /// shared-topology non-temporal ensemble.
 pub(crate) fn interpret_mmcif_ensemble(
     document: &MmcifDocument,
-    options: MmcifEnsembleInterpretOptions,
-) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+    options: StructureEnsembleInterpretOptions,
+) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
     interpret_mmcif_ensemble_block(atom_site_block(document)?, options)
 }
 
-fn atom_site_block(document: &MmcifDocument) -> Result<&MmcifBlock, MmcifEnsembleInterpretError> {
+fn atom_site_block(
+    document: &MmcifDocument,
+) -> Result<&MmcifBlock, StructureEnsembleInterpretError> {
     let mut blocks = document
         .blocks()
         .iter()
         .filter(|block| block.has_category("_atom_site"));
     let block = blocks
         .next()
-        .ok_or(MmcifEnsembleInterpretError::NoCoordinateModels)?;
+        .ok_or(StructureEnsembleInterpretError::NoCoordinateModels)?;
     if blocks.next().is_some() {
-        return Err(MmcifEnsembleInterpretError::MultipleAtomSiteBlocks);
+        return Err(StructureEnsembleInterpretError::MultipleAtomSiteBlocks);
     }
     Ok(block)
 }
@@ -38,32 +41,32 @@ fn atom_site_block(document: &MmcifDocument) -> Result<&MmcifBlock, MmcifEnsembl
 /// one shared-topology non-temporal ensemble.
 pub(crate) fn interpret_mmcif_ensemble_block(
     block: &MmcifBlock,
-    options: MmcifEnsembleInterpretOptions,
-) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+    options: StructureEnsembleInterpretOptions,
+) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
     if options.model_ids.as_ref().is_some_and(Vec::is_empty) {
-        return Err(MmcifEnsembleInterpretError::EmptyModelSelection);
+        return Err(StructureEnsembleInterpretError::EmptyModelSelection);
     }
     if !block.has_category("_atom_site") {
-        return Err(MmcifEnsembleInterpretError::NoCoordinateModels);
+        return Err(StructureEnsembleInterpretError::NoCoordinateModels);
     }
     let available =
-        coordinate_model_ids(block).map_err(|error| MmcifEnsembleInterpretError::Model {
+        coordinate_model_ids(block).map_err(|error| StructureEnsembleInterpretError::Model {
             model_id: "<model inventory>".to_owned(),
             error,
         })?;
     if available.is_empty() {
-        return Err(MmcifEnsembleInterpretError::NoCoordinateModels);
+        return Err(StructureEnsembleInterpretError::NoCoordinateModels);
     }
     let selected = options.model_ids.unwrap_or_else(|| available.clone());
     let mut seen = BTreeSet::new();
     for model in &selected {
         if !seen.insert(model.clone()) {
-            return Err(MmcifEnsembleInterpretError::DuplicateRequestedModel(
+            return Err(StructureEnsembleInterpretError::DuplicateRequestedModel(
                 model.clone(),
             ));
         }
         if !available.contains(model) {
-            return Err(MmcifEnsembleInterpretError::UnknownRequestedModel(
+            return Err(StructureEnsembleInterpretError::UnknownRequestedModel(
                 model.clone(),
             ));
         }
@@ -75,14 +78,14 @@ pub(crate) fn interpret_mmcif_ensemble_block(
         &options.altloc_policy,
         &options.connectivity,
     )
-    .map_err(|error| MmcifEnsembleInterpretError::Model {
+    .map_err(|error| StructureEnsembleInterpretError::Model {
         model_id: selected[0].clone(),
         error,
     })?;
     let mut selected = selected.into_iter();
     let first_id = selected.next().expect("validated nonempty model selection");
     let first = prepared.interpret_model(&first_id).map_err(|error| {
-        MmcifEnsembleInterpretError::Model {
+        StructureEnsembleInterpretError::Model {
             model_id: first_id,
             error,
         }
@@ -90,7 +93,7 @@ pub(crate) fn interpret_mmcif_ensemble_block(
     let remaining = selected.map(|model_id| {
         prepared
             .interpret_model(&model_id)
-            .map_err(|error| MmcifEnsembleInterpretError::Model { model_id, error })
+            .map_err(|error| StructureEnsembleInterpretError::Model { model_id, error })
     });
     assemble(first, remaining)
 }
@@ -99,37 +102,37 @@ pub(crate) fn interpret_mmcif_ensemble_block(
 /// enumeration.
 pub(crate) fn interpret_mmcif_conformations(
     document: &MmcifDocument,
-    selections: &[MmcifInterpretOptions],
-) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+    selections: &[StructureInterpretOptions],
+) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
     interpret_mmcif_conformations_block(atom_site_block(document)?, selections)
 }
 
 pub(crate) fn interpret_mmcif_conformations_block(
     block: &MmcifBlock,
-    selections: &[MmcifInterpretOptions],
-) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+    selections: &[StructureInterpretOptions],
+) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
     if selections.is_empty() {
-        return Err(MmcifEnsembleInterpretError::EmptyConformationSelection);
+        return Err(StructureEnsembleInterpretError::EmptyConformationSelection);
     }
     let mut interpreted = selections.iter().enumerate().map(|(selection, options)| {
         super::interpret_mmcif_block(block, options.clone())
-            .map_err(|error| MmcifEnsembleInterpretError::Conformation { selection, error })
+            .map_err(|error| StructureEnsembleInterpretError::Conformation { selection, error })
     });
     let first = interpreted.next().expect("validated nonempty selections")?;
     assemble(first, interpreted)
 }
 
 fn assemble(
-    first: MmcifInterpretation,
-    remaining: impl Iterator<Item = Result<MmcifInterpretation, MmcifEnsembleInterpretError>>,
-) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+    first: StructureInterpretation,
+    remaining: impl Iterator<Item = Result<StructureInterpretation, StructureEnsembleInterpretError>>,
+) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
     let shared_topology = first.model.shared_topology();
     let shared_atom_identity = provenance_identity(&first.report);
     let mut ensemble = Ensemble::new(Arc::clone(&shared_topology));
     let (first_model, first_report) = first.into_parts();
     ensemble
         .push(EnsembleMember::from_model(first_model))
-        .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
+        .map_err(|error| StructureEnsembleInterpretError::Ensemble(Box::new(error)))?;
     let mut reports = vec![first_report];
     for interpreted in remaining {
         let (model, report) = interpreted?.into_parts();
@@ -140,26 +143,26 @@ fn assemble(
         let atom_identity = provenance_identity(&report);
         if atom_identity != shared_atom_identity {
             let error = if atom_identity.sorted_atoms() != shared_atom_identity.sorted_atoms() {
-                MmcifEnsembleInterpretError::InconsistentAtomSet { model_id }
+                StructureEnsembleInterpretError::InconsistentAtomSet { model_id }
             } else {
-                MmcifEnsembleInterpretError::InconsistentDenseAtomOrder { model_id }
+                StructureEnsembleInterpretError::InconsistentDenseAtomOrder { model_id }
             };
             return Err(error);
         }
         if !shared_topology.same_layout(model.topology()) {
-            return Err(MmcifEnsembleInterpretError::InconsistentTopology { model_id });
+            return Err(StructureEnsembleInterpretError::InconsistentTopology { model_id });
         }
         if shared_topology.atom_ids() != model.topology().atom_ids()
             || shared_topology.bond_ids() != model.topology().bond_ids()
         {
-            return Err(MmcifEnsembleInterpretError::InconsistentDenseAtomOrder { model_id });
+            return Err(StructureEnsembleInterpretError::InconsistentDenseAtomOrder { model_id });
         }
         ensemble
             .push(EnsembleMember::from_model(model))
-            .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
+            .map_err(|error| StructureEnsembleInterpretError::Ensemble(Box::new(error)))?;
         reports.push(report);
     }
-    Ok(MmcifEnsembleInterpretation { ensemble, reports })
+    Ok(StructureEnsembleInterpretation { ensemble, reports })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -188,7 +191,7 @@ impl ProvenanceIdentity {
     }
 }
 
-fn provenance_identity(report: &MmcifInterpretationReport) -> ProvenanceIdentity {
+fn provenance_identity(report: &StructureInterpretationReport) -> ProvenanceIdentity {
     ProvenanceIdentity {
         atoms: report
             .instances

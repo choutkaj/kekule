@@ -2,18 +2,18 @@
 
 use kekule::dssp::{self, DsspOptions};
 use kekule::mmcif::{
-    self, MmcifBlockSource, MmcifInterpretOptions, MmcifModelSelection, MmcifWriteOptions,
+    self, MmcifBlockSource, MmcifWriteOptions, ModelSelection, StructureInterpretOptions,
 };
 use kekule::structure::Model;
 
 use crate::support::fixture;
 
-fn interpret(text: &str) -> (Model, mmcif::MmcifInterpretationReport) {
+fn interpret(text: &str) -> (Model, mmcif::StructureInterpretationReport) {
     mmcif::interpret_with_options(
         &mmcif::parse_str(text).unwrap(),
-        MmcifInterpretOptions {
-            model_selection: MmcifModelSelection::First,
-            ..MmcifInterpretOptions::default()
+        StructureInterpretOptions {
+            model_selection: ModelSelection::First,
+            ..StructureInterpretOptions::default()
         },
     )
     .unwrap()

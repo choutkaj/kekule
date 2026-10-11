@@ -2,24 +2,26 @@ use crate::diagnostics::DiagnosticKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::atom_site::{read_asym_entities, read_atom_rows, read_entity_types, AtomRow};
-use super::super::{MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretationReport};
+use super::super::{
+    StructureInterpretError, StructureInterpretIssue, StructureInterpretationReport,
+};
 use super::{
-    MmcifAltLocDecision, MmcifAltLocPolicy, MmcifAltLocPreference, MmcifAltLocResidue,
-    MmcifAltLocSelection, MmcifAltLocSelectionReason, MmcifResidueId,
+    AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
+    AltLocSelectionReason, SourceResidueId,
 };
 use crate::io::MmcifBlock;
 
 struct Residue<'a> {
-    id: MmcifResidueId,
+    id: SourceResidueId,
     rows: Vec<&'a AtomRow>,
     labels: BTreeSet<String>,
 }
 
-fn residues(rows: &[AtomRow]) -> Result<Vec<Residue<'_>>, MmcifInterpretError> {
-    let mut grouped = BTreeMap::<MmcifResidueId, Vec<&AtomRow>>::new();
+fn residues(rows: &[AtomRow]) -> Result<Vec<Residue<'_>>, StructureInterpretError> {
+    let mut grouped = BTreeMap::<SourceResidueId, Vec<&AtomRow>>::new();
     for row in rows {
         grouped
-            .entry(MmcifResidueId::of(row))
+            .entry(SourceResidueId::of(row))
             .or_default()
             .push(row);
     }
@@ -29,7 +31,7 @@ fn residues(rows: &[AtomRow]) -> Result<Vec<Residue<'_>>, MmcifInterpretError> {
             let mut identities = BTreeSet::new();
             for row in &rows {
                 if !identities.insert((&row.comp_id, &row.atom_name, &row.alt_id)) {
-                    return Err(MmcifInterpretError::new(
+                    return Err(StructureInterpretError::new(
                         DiagnosticKind::Inconsistent,
                         Some(row.line),
                         format!(
@@ -45,13 +47,11 @@ fn residues(rows: &[AtomRow]) -> Result<Vec<Residue<'_>>, MmcifInterpretError> {
         .collect()
 }
 
-pub(crate) fn inventory(
-    block: &MmcifBlock,
-) -> Result<Vec<MmcifAltLocResidue>, MmcifInterpretError> {
+pub(crate) fn inventory(block: &MmcifBlock) -> Result<Vec<AltLocResidue>, StructureInterpretError> {
     let entities = read_entity_types(block)?;
     let asym = read_asym_entities(block)?;
     let table = block.category("_atom_site")?.ok_or_else(|| {
-        MmcifInterpretError::new(
+        StructureInterpretError::new(
             DiagnosticKind::Inconsistent,
             None,
             "block has no atom-site category",
@@ -62,30 +62,28 @@ pub(crate) fn inventory(
         &entities,
         &asym,
         false,
-        &mut MmcifInterpretationReport::default(),
+        &mut StructureInterpretationReport::default(),
     )?;
     super::source::conformations(block, &rows)?;
     Ok(residues(&rows)?
         .into_iter()
         .filter(|residue| !residue.labels.is_empty())
-        .map(|residue| MmcifAltLocResidue {
+        .map(|residue| AltLocResidue {
             residue: residue.id,
             labels: residue.labels.into_iter().collect(),
         })
         .collect())
 }
 
-fn configuration(policy: &MmcifAltLocPolicy) -> MmcifAltLocSelection {
+fn configuration(policy: &AltLocPolicy) -> AltLocSelection {
     let default = match policy {
-        MmcifAltLocPolicy::HighestOccupancy => MmcifAltLocPreference::HighestOccupancy,
-        MmcifAltLocPolicy::SelectLabel(label) => MmcifAltLocPreference::SelectLabel(label.clone()),
-        MmcifAltLocPolicy::PreferLabel(label) => MmcifAltLocPreference::PreferLabel(label.clone()),
-        MmcifAltLocPolicy::ErrorOnAlternateLocations => {
-            MmcifAltLocPreference::ErrorOnAlternateLocations
-        }
-        MmcifAltLocPolicy::Configured(selection) => return selection.clone(),
+        AltLocPolicy::HighestOccupancy => AltLocPreference::HighestOccupancy,
+        AltLocPolicy::SelectLabel(label) => AltLocPreference::SelectLabel(label.clone()),
+        AltLocPolicy::PreferLabel(label) => AltLocPreference::PreferLabel(label.clone()),
+        AltLocPolicy::ErrorOnAlternateLocations => AltLocPreference::ErrorOnAlternateLocations,
+        AltLocPolicy::Configured(selection) => return selection.clone(),
     };
-    MmcifAltLocSelection {
+    AltLocSelection {
         default,
         ..Default::default()
     }
@@ -95,8 +93,8 @@ fn selection_error(
     residue: &Residue<'_>,
     kind: DiagnosticKind,
     message: impl std::fmt::Display,
-) -> MmcifInterpretError {
-    MmcifInterpretError::new(
+) -> StructureInterpretError {
+    StructureInterpretError::new(
         kind,
         Some(residue.rows[0].line),
         format!("{message} at {:?}", residue.id),
@@ -108,7 +106,7 @@ fn selection_error(
 fn candidate_rows<'a>(
     residue: &Residue<'a>,
     labels: &BTreeSet<String>,
-) -> Result<Vec<&'a AtomRow>, MmcifInterpretError> {
+) -> Result<Vec<&'a AtomRow>, StructureInterpretError> {
     let labelled = residue
         .rows
         .iter()
@@ -208,9 +206,9 @@ fn root(parents: &[usize], mut index: usize) -> usize {
 
 fn groups(
     residues: &[Residue<'_>],
-    selection: &MmcifAltLocSelection,
+    selection: &AltLocSelection,
     source_declared: bool,
-) -> Result<Vec<Vec<usize>>, MmcifInterpretError> {
+) -> Result<Vec<Vec<usize>>, StructureInterpretError> {
     let indices = residues
         .iter()
         .enumerate()
@@ -223,7 +221,7 @@ fn groups(
         .chain(selection.groups.iter().flatten())
     {
         if !indices.contains_key(id) || residues[indices[id]].labels.is_empty() {
-            return Err(MmcifInterpretError::new(
+            return Err(StructureInterpretError::new(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!(
@@ -234,14 +232,14 @@ fn groups(
     }
     for group in &selection.groups {
         if group.len() < 2 || group.iter().collect::<BTreeSet<_>>().len() != group.len() {
-            return Err(MmcifInterpretError::new(
+            return Err(StructureInterpretError::new(
                 DiagnosticKind::Inconsistent,
                 None,
                 "alternate-location group requires at least two distinct residues",
             ));
         }
         if group.iter().any(|id| id.model_id != group[0].model_id) {
-            return Err(MmcifInterpretError::new(
+            return Err(StructureInterpretError::new(
                 DiagnosticKind::Inconsistent,
                 None,
                 "alternate-location group crosses source coordinate models",
@@ -286,15 +284,15 @@ struct Candidate<'a> {
 pub(in crate::io::mmcif_interpret) fn select_alt_locations(
     block: &MmcifBlock,
     rows: &[AtomRow],
-    policy: &MmcifAltLocPolicy,
-    report: &mut MmcifInterpretationReport,
-) -> Result<Vec<AtomRow>, MmcifInterpretError> {
+    policy: &AltLocPolicy,
+    report: &mut StructureInterpretationReport,
+) -> Result<Vec<AtomRow>, StructureInterpretError> {
     let residues = residues(rows)?;
     let selection = configuration(policy);
     let conformations = super::source::conformations(block, rows)?;
     if let Some(id) = &selection.source_conformation {
         if !conformations.contains_key(id) {
-            return Err(MmcifInterpretError::new(
+            return Err(StructureInterpretError::new(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!("source alternate conformation `{id}` is unavailable"),
@@ -309,7 +307,7 @@ pub(in crate::io::mmcif_interpret) fn select_alt_locations(
         } else {
             if matches!(
                 selection.default,
-                MmcifAltLocPreference::ErrorOnAlternateLocations
+                AltLocPreference::ErrorOnAlternateLocations
             ) && !selection.overrides.contains_key(&residue.id)
             {
                 return Err(selection_error(
@@ -327,7 +325,7 @@ pub(in crate::io::mmcif_interpret) fn select_alt_locations(
             if !missing.is_empty() {
                 report
                     .issues
-                    .push(MmcifInterpretIssue::AlternateLocationOccupancyMissing {
+                    .push(StructureInterpretIssue::AlternateLocationOccupancyMissing {
                         residue: residue.id.clone(),
                         source_lines: missing,
                     });
@@ -367,7 +365,7 @@ pub(in crate::io::mmcif_interpret) fn select_alt_locations(
             for row in &omitted {
                 report
                     .issues
-                    .push(MmcifInterpretIssue::AlternateLocationOmitted {
+                    .push(StructureInterpretIssue::AlternateLocationOmitted {
                         atom_name: row.atom_name.clone(),
                         alt_id: row.alt_id.clone(),
                         residue: residue.id.clone(),
@@ -375,23 +373,23 @@ pub(in crate::io::mmcif_interpret) fn select_alt_locations(
                     });
             }
             let reason = if !conformations.is_empty() {
-                MmcifAltLocSelectionReason::SourceConformation {
+                AltLocSelectionReason::SourceConformation {
                     id: chosen.id.clone(),
                 }
             } else if selection.overrides.contains_key(&residue.id)
-                || matches!(selection.default, MmcifAltLocPreference::SelectLabel(_))
+                || matches!(selection.default, AltLocPreference::SelectLabel(_))
             {
-                MmcifAltLocSelectionReason::ExactSelection
-            } else if let MmcifAltLocPreference::PreferLabel(label) = &selection.default {
+                AltLocSelectionReason::ExactSelection
+            } else if let AltLocPreference::PreferLabel(label) = &selection.default {
                 if labels.contains(label) {
-                    MmcifAltLocSelectionReason::PreferredLabel
+                    AltLocSelectionReason::PreferredLabel
                 } else {
-                    MmcifAltLocSelectionReason::PreferredLabelUnavailable
+                    AltLocSelectionReason::PreferredLabelUnavailable
                 }
             } else {
-                MmcifAltLocSelectionReason::HighestOccupancy
+                AltLocSelectionReason::HighestOccupancy
             };
-            report.alternate_locations.push(MmcifAltLocDecision {
+            report.alternate_locations.push(AltLocDecision {
                 residue: residue.id.clone(),
                 available_labels: residue.labels.iter().cloned().collect(),
                 selected_labels: labels.into_iter().collect(),
@@ -407,14 +405,14 @@ pub(in crate::io::mmcif_interpret) fn select_alt_locations(
     let mut order = BTreeMap::new();
     for row in rows {
         order
-            .entry((MmcifResidueId::of(row), &row.comp_id, &row.atom_name))
+            .entry((SourceResidueId::of(row), &row.comp_id, &row.atom_name))
             .or_insert(row.row_index);
     }
     let mut selected = selected
         .into_iter()
         .map(|row| {
             let mut chosen = row.clone();
-            chosen.site_order = order[&(MmcifResidueId::of(row), &row.comp_id, &row.atom_name)];
+            chosen.site_order = order[&(SourceResidueId::of(row), &row.comp_id, &row.atom_name)];
             chosen
         })
         .collect::<Vec<_>>();
@@ -425,11 +423,11 @@ pub(in crate::io::mmcif_interpret) fn select_alt_locations(
 fn choose<'a>(
     residues: &[Residue<'a>],
     group: &[usize],
-    selection: &MmcifAltLocSelection,
+    selection: &AltLocSelection,
     alternatives: &BTreeMap<String, BTreeSet<String>>,
     source_declared: bool,
-    report: &mut MmcifInterpretationReport,
-) -> Result<Candidate<'a>, MmcifInterpretError> {
+    report: &mut StructureInterpretationReport,
+) -> Result<Candidate<'a>, StructureInterpretError> {
     let mut candidates = Vec::new();
     let mut last_error = None;
     for (id, labels) in alternatives {
@@ -454,7 +452,7 @@ fn choose<'a>(
                 Err(error) => {
                     if source_declared {
                         report.issues.push(
-                            MmcifInterpretIssue::AlternateLocationCombinationRejected {
+                            StructureInterpretIssue::AlternateLocationCombinationRejected {
                                 residue: residue.id.clone(),
                                 alternative: id.clone(),
                                 reason: error.message().to_owned(),
@@ -471,7 +469,7 @@ fn choose<'a>(
             if incomplete {
                 report
                     .issues
-                    .push(MmcifInterpretIssue::AlternateLocationIncomplete {
+                    .push(StructureInterpretIssue::AlternateLocationIncomplete {
                         residue: residue.id.clone(),
                         alternative: id.clone(),
                         missing_atoms: missing,
@@ -479,14 +477,14 @@ fn choose<'a>(
             }
             if retained.is_empty() || incomplete {
                 if source_declared && retained.is_empty() {
-                    report
-                        .issues
-                        .push(MmcifInterpretIssue::AlternateLocationCombinationRejected {
+                    report.issues.push(
+                        StructureInterpretIssue::AlternateLocationCombinationRejected {
                             residue: residue.id.clone(),
                             alternative: id.clone(),
                             reason: "combination contains no alternate label for this residue"
                                 .into(),
-                        });
+                        },
+                    );
                 }
                 valid = false;
                 break;
@@ -496,7 +494,7 @@ fn choose<'a>(
                 .overrides
                 .get(&residue.id)
                 .or(match &selection.default {
-                    MmcifAltLocPreference::SelectLabel(label) => Some(label),
+                    AltLocPreference::SelectLabel(label) => Some(label),
                     _ => None,
                 });
             if let Some(label) = exact {
@@ -506,16 +504,14 @@ fn choose<'a>(
                 }
             } else {
                 match &selection.default {
-                    MmcifAltLocPreference::ErrorOnAlternateLocations => {
+                    AltLocPreference::ErrorOnAlternateLocations => {
                         return Err(selection_error(
                             residue,
                             DiagnosticKind::Unsupported,
                             "residue has alternate locations",
                         ))
                     }
-                    MmcifAltLocPreference::PreferLabel(label)
-                        if selected_labels.contains(label) =>
-                    {
+                    AltLocPreference::PreferLabel(label) if selected_labels.contains(label) => {
                         candidate.preferred += 1
                     }
                     _ => {}
@@ -570,7 +566,7 @@ fn choose<'a>(
     if tied.len() > 1 {
         report
             .issues
-            .push(MmcifInterpretIssue::AlternateLocationOccupancyTie {
+            .push(StructureInterpretIssue::AlternateLocationOccupancyTie {
                 residues: group
                     .iter()
                     .map(|index| residues[*index].id.clone())

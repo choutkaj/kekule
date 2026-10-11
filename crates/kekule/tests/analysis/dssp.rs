@@ -1,7 +1,7 @@
 use kekule::dssp::{
     self, DsspChainBreak, DsspError, DsspLimits, DsspOptions, DsspResource, DsspSecondaryStructure,
 };
-use kekule::mmcif::{self, MmcifInterpretOptions, MmcifModelSelection};
+use kekule::mmcif::{self, ModelSelection, StructureInterpretOptions};
 use kekule::topology::ResidueId;
 
 const CRAMBIN_MMCIF: &str = include_str!("../fixtures/mmcif/1CRN.cif");
@@ -10,9 +10,9 @@ fn crambin_model() -> kekule::structure::Model {
     let document = mmcif::parse_str(CRAMBIN_MMCIF).expect("checked-in RCSB 1CRN fixture parses");
     mmcif::interpret_with_options(
         &document,
-        MmcifInterpretOptions {
-            model_selection: MmcifModelSelection::First,
-            ..MmcifInterpretOptions::default()
+        StructureInterpretOptions {
+            model_selection: ModelSelection::First,
+            ..StructureInterpretOptions::default()
         },
     )
     .expect("checked-in RCSB 1CRN fixture interprets")
@@ -185,9 +185,9 @@ fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
     let document = mmcif::parse_str(&source).unwrap();
     let model = mmcif::interpret_with_options(
         &document,
-        MmcifInterpretOptions {
-            model_selection: MmcifModelSelection::First,
-            ..MmcifInterpretOptions::default()
+        StructureInterpretOptions {
+            model_selection: ModelSelection::First,
+            ..StructureInterpretOptions::default()
         },
     )
     .unwrap()

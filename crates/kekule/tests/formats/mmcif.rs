@@ -45,8 +45,8 @@ duplicate covale A C1 A C2 {order}
 #[test]
 fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::mmcif::{
-        self, MmcifBlock, MmcifEntityClassifications, MmcifEntityKind, MmcifInterpretOptions,
-        MmcifWriteError, MmcifWriteOptions,
+        self, EntityKind, MmcifBlock, MmcifEntityClassifications, MmcifWriteError,
+        MmcifWriteOptions, StructureInterpretOptions,
     };
 
     let document = mmcif::parse_str(MINIMAL_MMCIF)?;
@@ -58,7 +58,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     let block: &MmcifBlock = &document.blocks()[0];
     let block_interpreted = block.interpret()?;
     let method_default = block.interpret()?;
-    let method_explicit = block.interpret_with_options(MmcifInterpretOptions::default())?;
+    let method_explicit = block.interpret_with_options(StructureInterpretOptions::default())?;
 
     assert_eq!(document.blocks().len(), 1);
     assert_eq!(interpreted.report().block_name(), "demo");
@@ -100,11 +100,11 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     // Every format namespace pairs `interpret(document)` with
     // `interpret_with_options`, and a single-block document projects like
     // its block.
-    let explicit = mmcif::interpret_with_options(&document, MmcifInterpretOptions::default())?;
+    let explicit = mmcif::interpret_with_options(&document, StructureInterpretOptions::default())?;
     assert_eq!(explicit.report(), interpreted.report());
     for from_document in [
         document.to_model()?,
-        document.to_model_with_options(MmcifInterpretOptions::default())?,
+        document.to_model_with_options(StructureInterpretOptions::default())?,
     ] {
         let from_block = block.to_model()?;
         assert!(from_document.topology().same_layout(from_block.topology()));
@@ -118,7 +118,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         mmcif::interpret_ensemble(&document)?.reports(),
         mmcif::interpret_ensemble_with_options(
             &document,
-            mmcif::MmcifEnsembleInterpretOptions::default()
+            mmcif::StructureEnsembleInterpretOptions::default()
         )?
         .reports()
     );
@@ -171,7 +171,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     let automatic = mmcif::write([interpreted.model()], MmcifWriteOptions::default())?;
     assert!(automatic.contains("1 non-polymer"));
     let mut classifications = MmcifEntityClassifications::new();
-    classifications.insert(provenance.molecule(), MmcifEntityKind::Polymer)?;
+    classifications.insert(provenance.molecule(), EntityKind::Polymer)?;
     let written = mmcif::write(
         [mmcif::MmcifBlockSource::model(interpreted.model())
             .with_classifications(&classifications)],
@@ -206,11 +206,11 @@ fn duplicate_agreeing_authoritative_bond_evidence_is_idempotent() {
 
 #[test]
 fn duplicate_conflicting_authoritative_bond_evidence_is_rejected() {
-    use kekule::mmcif::{self, MmcifInterpretError};
+    use kekule::mmcif::{self, StructureInterpretError};
 
     let document = mmcif::parse_str(&with_struct_conn("doub"))
         .expect("duplicate conflicting connectivity parses");
-    let error: MmcifInterpretError = mmcif::interpret(&document)
+    let error: StructureInterpretError = mmcif::interpret(&document)
         .expect_err("conflicting authoritative bond orders must be rejected");
 
     assert_eq!(error.location(), None);
@@ -291,7 +291,7 @@ fn without_component_bonds(text: &str) -> String {
 
 #[test]
 fn mmcif_connectivity_matches_an_independent_reference() {
-    use kekule::mmcif::{MmcifInterpretIssue, MmcifResidueId, MmcifResiduePosition};
+    use kekule::mmcif::{SourceResidueId, SourceResiduePosition, StructureInterpretIssue};
 
     // Atom, bond, and molecule counts from Biotite 1.2.0
     // (`pdbx.get_structure(include_bonds=True, altloc="occupancy")`), which
@@ -352,7 +352,7 @@ fn mmcif_connectivity_matches_an_independent_reference() {
                 .issues()
                 .iter()
                 .filter_map(|issue| match issue {
-                    MmcifInterpretIssue::ResidueBondsInferred {
+                    StructureInterpretIssue::ResidueBondsInferred {
                         residue,
                         component_id,
                         bonds,
@@ -362,10 +362,10 @@ fn mmcif_connectivity_matches_an_independent_reference() {
                 .collect::<Vec<_>>();
             let ap5 = |asym: &str| {
                 (
-                    MmcifResidueId {
+                    SourceResidueId {
                         model_id: "1".to_owned(),
                         asym_id: asym.to_owned(),
-                        position: MmcifResiduePosition::Author("215".to_owned()),
+                        position: SourceResiduePosition::Author("215".to_owned()),
                         insertion_code: None,
                     },
                     "AP5".to_owned(),

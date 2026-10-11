@@ -7,7 +7,7 @@ interpretation report; canonical `Model` and `Ensemble` keep their existing role
 
 ## Representative models
 
-The default `MmcifAltLocPolicy::HighestOccupancy` chooses a complete alternative
+The default `AltLocPolicy::HighestOccupancy` chooses a complete alternative
 for each residue. Unlabelled atoms are shared. It does not independently choose
 each atom's highest-occupancy row.
 
@@ -37,7 +37,7 @@ and [alternate-conformation relationships](https://mmcif.wwpdb.org/docs/tutorial
 `SelectLabel("A".into())` requires A at every residue with alternatives, while
 retaining shared atoms. `PreferLabel("A".into())` falls back to occupancy ranking
 where A cannot be used. `ErrorOnAlternateLocations` rejects even a single labelled
-site. For more control, use `Configured(MmcifAltLocSelection { ... })`:
+site. For more control, use `Configured(AltLocSelection { ... })`:
 
 - `default` applies to residues without an override.
 - `overrides` maps source residue identities to exact labels.

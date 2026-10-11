@@ -186,7 +186,7 @@ fn mmcif_category_ambiguity_is_rejected_without_normalizing_the_document() {
         .contains("more than one data block"));
     assert!(matches!(
         doc.interpret_ensemble(),
-        Err(mmcif::MmcifEnsembleInterpretError::MultipleAtomSiteBlocks)
+        Err(mmcif::StructureEnsembleInterpretError::MultipleAtomSiteBlocks)
     ));
 }
 
@@ -402,7 +402,7 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
     );
     let error = mmcif::parse_str(SINGLE_SITE)
         .unwrap()
-        .interpret_ensemble_with_options(mmcif::MmcifEnsembleInterpretOptions {
+        .interpret_ensemble_with_options(mmcif::StructureEnsembleInterpretOptions {
             model_ids: Some(vec!["9".into()]),
             ..Default::default()
         })

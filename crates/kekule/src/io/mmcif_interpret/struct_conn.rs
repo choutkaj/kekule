@@ -7,8 +7,8 @@ use super::super::mmcif_category::MmcifCategory;
 use super::super::MmcifBlock;
 use super::atom_site::{optional, optional_i32, required, row_error, AtomRow};
 use super::types::{
-    MmcifConnectionResolutionReason, MmcifInterpretError, MmcifInterpretIssue,
-    MmcifInterpretationReport,
+    ConnectionResolutionReason, StructureInterpretError, StructureInterpretIssue,
+    StructureInterpretationReport,
 };
 
 #[derive(Debug, Clone)]
@@ -26,8 +26,8 @@ pub(super) fn read_connections(
     all_rows: &[AtomRow],
     selected_model: &str,
     union: &mut InstanceUnion,
-    report: &mut MmcifInterpretationReport,
-) -> Result<Vec<DeclaredConnection>, MmcifInterpretError> {
+    report: &mut StructureInterpretationReport,
+) -> Result<Vec<DeclaredConnection>, StructureInterpretError> {
     let Some(table) = block.category("_struct_conn")? else {
         return Ok(Vec::new());
     };
@@ -38,9 +38,11 @@ pub(super) fn read_connections(
         let connection_id = optional(table, row, "_struct_conn.id").map(str::to_owned);
         let source_line = table.row_line(row);
         if !is_covalent_connection(&kind) {
-            report.issues.push(MmcifInterpretIssue::ConnectionIgnored {
-                connection_type: kind,
-            });
+            report
+                .issues
+                .push(StructureInterpretIssue::ConnectionIgnored {
+                    connection_type: kind,
+                });
             continue;
         }
         // Metal coordination is covalent; the dative order keeps it from
@@ -90,14 +92,14 @@ fn report_connection_partner_resolution<'a>(
     connection_type: &str,
     partner: u8,
     source_line: Option<usize>,
-    report: &mut MmcifInterpretationReport,
+    report: &mut StructureInterpretationReport,
 ) -> Option<&'a AtomRow> {
     match resolution {
         ConnectionPartnerResolution::Resolved(atom) => Some(atom),
         ConnectionPartnerResolution::Unresolved(reason) => {
             report
                 .issues
-                .push(MmcifInterpretIssue::ConnectionUnresolved {
+                .push(StructureInterpretIssue::ConnectionUnresolved {
                     connection_id: connection_id.map(str::to_owned),
                     connection_type: connection_type.to_owned(),
                     partner,
@@ -109,7 +111,7 @@ fn report_connection_partner_resolution<'a>(
         ConnectionPartnerResolution::Ambiguous { candidates, reason } => {
             report
                 .issues
-                .push(MmcifInterpretIssue::ConnectionAmbiguous {
+                .push(StructureInterpretIssue::ConnectionAmbiguous {
                     connection_id: connection_id.map(str::to_owned),
                     connection_type: connection_type.to_owned(),
                     partner,
@@ -125,7 +127,7 @@ fn report_connection_partner_resolution<'a>(
 fn connection_bond_order(
     table: &MmcifCategory<'_>,
     row: usize,
-) -> Result<BondOrder, MmcifInterpretError> {
+) -> Result<BondOrder, StructureInterpretError> {
     let Some(order) = optional(table, row, "_struct_conn.pdbx_value_order") else {
         return Ok(BondOrder::Single);
     };
@@ -243,7 +245,7 @@ impl AuthorConnectionSelector {
 struct ConnectionPartnerSelector {
     label: LabelConnectionSelector,
     author: AuthorConnectionSelector,
-    conflict: Option<MmcifConnectionResolutionReason>,
+    conflict: Option<ConnectionResolutionReason>,
 }
 
 impl ConnectionPartnerSelector {
@@ -266,10 +268,10 @@ impl ConnectionPartnerSelector {
 #[derive(Debug)]
 enum ConnectionPartnerResolution<'a> {
     Resolved(&'a AtomRow),
-    Unresolved(MmcifConnectionResolutionReason),
+    Unresolved(ConnectionResolutionReason),
     Ambiguous {
         candidates: usize,
-        reason: MmcifConnectionResolutionReason,
+        reason: ConnectionResolutionReason,
     },
 }
 
@@ -280,12 +282,12 @@ fn connection_partner<'a>(
     selected_rows: &'a [AtomRow],
     all_rows: &[AtomRow],
     selected_model: &str,
-) -> Result<ConnectionPartnerResolution<'a>, MmcifInterpretError> {
+) -> Result<ConnectionPartnerResolution<'a>, StructureInterpretError> {
     let symmetry_tag = format!("_struct_conn.ptnr{partner}_symmetry");
     if let Some(symmetry) = optional(table, row, &symmetry_tag) {
         if symmetry != "1_555" {
             return Ok(ConnectionPartnerResolution::Unresolved(
-                MmcifConnectionResolutionReason::UnsupportedSymmetry {
+                ConnectionResolutionReason::UnsupportedSymmetry {
                     symmetry: symmetry.to_owned(),
                 },
             ));
@@ -299,7 +301,7 @@ fn connection_partner<'a>(
     let (alternate_location, conflict) = match (label_alt, pdbx_label_alt) {
         (Some(left), Some(right)) if left != right => (
             Some(left.to_owned()),
-            Some(MmcifConnectionResolutionReason::ConflictingSelectorValues {
+            Some(ConnectionResolutionReason::ConflictingSelectorValues {
                 selector: "label alternate-location aliases",
             }),
         ),
@@ -379,7 +381,7 @@ fn connection_partner<'a>(
         selector.author.alternate_location.as_deref(),
     ) {
         if label != author {
-            selector.conflict = Some(MmcifConnectionResolutionReason::ConflictingSelectorValues {
+            selector.conflict = Some(ConnectionResolutionReason::ConflictingSelectorValues {
                 selector: "label and author alternate locations",
             });
         }
@@ -389,7 +391,7 @@ fn connection_partner<'a>(
     }
     if selector.is_empty() {
         return Ok(ConnectionPartnerResolution::Unresolved(
-            MmcifConnectionResolutionReason::MissingSelector,
+            ConnectionResolutionReason::MissingSelector,
         ));
     }
 
@@ -405,7 +407,7 @@ fn connection_partner<'a>(
                     candidate.model_id == selected_model && selector.matches(candidate)
                 }) {
                     return Ok(ConnectionPartnerResolution::Unresolved(
-                        MmcifConnectionResolutionReason::AlternateLocationOmitted {
+                        ConnectionResolutionReason::AlternateLocationOmitted {
                             alternate_location: alternate_location.to_owned(),
                         },
                     ));
@@ -421,16 +423,16 @@ fn connection_partner<'a>(
                     .any(|candidate| selector.author.matches(candidate))
             {
                 return Ok(ConnectionPartnerResolution::Unresolved(
-                    MmcifConnectionResolutionReason::ConflictingLabelAndAuthorSelectors,
+                    ConnectionResolutionReason::ConflictingLabelAndAuthorSelectors,
                 ));
             }
             Ok(ConnectionPartnerResolution::Unresolved(
-                MmcifConnectionResolutionReason::NoMatchingAtom,
+                ConnectionResolutionReason::NoMatchingAtom,
             ))
         }
         candidates => Ok(ConnectionPartnerResolution::Ambiguous {
             candidates: candidates.len(),
-            reason: MmcifConnectionResolutionReason::MultipleMatchingAtoms,
+            reason: ConnectionResolutionReason::MultipleMatchingAtoms,
         }),
     }
 }

@@ -2,7 +2,7 @@
 //! retains scalar items and loops exactly as parsed; no coordinate table is copied.
 use crate::diagnostics::DiagnosticKind;
 
-use super::mmcif_interpret::MmcifInterpretError;
+use super::mmcif_interpret::StructureInterpretError;
 use super::{MmcifBlock, MmcifEntry, MmcifItem, MmcifLoopTable, MmcifValue};
 
 pub(crate) enum MmcifCategory<'a> {
@@ -28,7 +28,7 @@ impl MmcifBlock {
     pub(crate) fn category(
         &self,
         category: &str,
-    ) -> Result<Option<MmcifCategory<'_>>, MmcifInterpretError> {
+    ) -> Result<Option<MmcifCategory<'_>>, StructureInterpretError> {
         let mut scalars = Vec::new();
         let mut table = None;
         for entry in self.entries() {
@@ -46,14 +46,14 @@ impl MmcifBlock {
                         .iter()
                         .any(|tag| !in_category(tag, category))
                     {
-                        return Err(MmcifInterpretError::new(
+                        return Err(StructureInterpretError::new(
                             DiagnosticKind::Inconsistent,
                             line,
                             format!("category {category} shares a loop with another category"),
                         ));
                     }
                     if table.replace(candidate).is_some() {
-                        return Err(MmcifInterpretError::new(
+                        return Err(StructureInterpretError::new(
                             DiagnosticKind::Inconsistent,
                             line,
                             format!("category {category} is split across multiple loops"),
@@ -64,7 +64,7 @@ impl MmcifBlock {
             }
         }
         match (table, scalars.is_empty()) {
-            (Some(_), false) => Err(MmcifInterpretError::new(
+            (Some(_), false) => Err(StructureInterpretError::new(
                 DiagnosticKind::Inconsistent,
                 Some(scalars[0].value().line()),
                 format!("category {category} mixes scalar items and a loop"),
