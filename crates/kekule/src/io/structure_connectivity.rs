@@ -453,6 +453,15 @@ impl<'r> Resolver<'r, '_> {
                     self.add_bond(left, right, bond.order, raw::BondEvidence::ComponentTable)?;
                 }
                 self.add_listed_bonds(&listed)?;
+                // Hydrogens the table leaves unbonded, such as N-terminal or
+                // 5'-hydroxyl hydrogens of a polymer residue, are strays.
+                stray_hydrogens.extend(
+                    residue
+                        .sites
+                        .iter()
+                        .filter(|site| is_hydrogen(site.element))
+                        .map(|site| (residue.key.clone(), site.atom)),
+                );
                 // The block's own table supplies the bonds; a template whose
                 // atoms the residue matches still supplies charges.
                 if let Some((component, variants)) = template {
@@ -955,10 +964,17 @@ impl<'r> Resolver<'r, '_> {
                                 && !bond.aromatic()
                                 && !bond.metal_coordination()
                         });
-                    if !only_single {
+                    let difference = present as isize - expected as isize;
+                    // A ring nitrogen takes or loses one proton whatever its
+                    // bond orders, as a protonated cytosine N3 or a
+                    // deprotonated imidazole nitrogen does.
+                    let ring_nitrogen = element.atomic_number() == 7
+                        && difference.abs() == 1
+                        && in_ring(candidate, index);
+                    if !only_single && !ring_nitrogen {
                         return Ok(None);
                     }
-                    delta = i8::try_from(present as isize - expected as isize).map_err(|_| {
+                    delta = i8::try_from(difference).map_err(|_| {
                         interpret_error("hydrogen count difference exceeds charge range")
                     })?;
                 }
@@ -1113,6 +1129,36 @@ struct TemplateCharge {
     atom: AtomId,
     value: i8,
     delta: i8,
+}
+
+/// Whether a template atom lies on a ring: some neighbour reaches it again
+/// without the bond between them.
+fn in_ring(component: &Component, index: usize) -> bool {
+    let neighbours = |atom: usize| {
+        component.bonds().iter().filter_map(move |bond| {
+            let [a, b] = bond.atoms();
+            match (a == atom, b == atom) {
+                (true, _) => Some(b),
+                (_, true) => Some(a),
+                _ => None,
+            }
+        })
+    };
+    neighbours(index).any(|start| {
+        let mut seen = BTreeSet::from([index, start]);
+        let mut stack = vec![start];
+        while let Some(atom) = stack.pop() {
+            for next in neighbours(atom) {
+                if next == index && atom != start {
+                    return true;
+                }
+                if seen.insert(next) {
+                    stack.push(next);
+                }
+            }
+        }
+        false
+    })
 }
 
 /// The hydrogens a template atom carries, less leaving hydrogens when the
@@ -1814,39 +1860,103 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         assert_eq!(charges(&heavy), [("ND1".to_owned(), 1)]);
         assert!(issues(&heavy).is_empty());
 
-        // An extra amine hydrogen named outside the template attaches by
-        // distance; with OXT unprotonated the aspartate is a zwitterion.
-        let zwitterion = interpret(&block(
-            &format!(
-                "{}\nH H3 ASP A 1 0.633 1.938 -0.134",
-                without(ASPARTATE, &["HXT"])
-            ),
-            "",
-        ));
-        assert_eq!(
-            charges(&zwitterion),
-            [("N".to_owned(), 1), ("OXT".to_owned(), -1)]
-        );
-        assert_eq!(
-            issues(&zwitterion),
-            [
-                StructureInterpretIssue::HydrogenAttachedByDistance {
-                    residue: residue("A", 1),
-                    atom_name: "H3".to_owned(),
-                    heavy_atom_name: "N".to_owned(),
-                },
-                StructureInterpretIssue::ProtonationFromHydrogens {
-                    residue: residue("A", 1),
-                    component_id: "ASP".to_owned(),
-                    variant: None,
-                    charged_atoms: vec![("N".to_owned(), 1), ("OXT".to_owned(), -1)],
-                },
-            ]
-        );
+        // An extra amine hydrogen named outside the template, or outside the
+        // block's own bond table, attaches by distance; with OXT unprotonated
+        // the aspartate is a zwitterion.
+        let table = "loop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n\
+            _chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\n\
+            ASP N CA sing\nASP CA C sing\nASP C O doub\nASP C OXT sing\nASP CA CB sing\n\
+            ASP CB CG sing\nASP CG OD1 doub\nASP CG OD2 sing\nASP N H sing\nASP N H2 sing\n\
+            ASP CA HA sing\nASP CB HB2 sing\nASP CB HB3 sing\nASP OD2 HD2 sing\n";
+        for extra in ["", table] {
+            let zwitterion = interpret(&block(
+                &format!(
+                    "{}\nH H3 ASP A 1 0.633 1.938 -0.134",
+                    without(ASPARTATE, &["HXT"])
+                ),
+                extra,
+            ));
+            assert_eq!(zwitterion.topology().instance_count(), 1, "{extra}");
+            assert_eq!(
+                charges(&zwitterion),
+                [("N".to_owned(), 1), ("OXT".to_owned(), -1)],
+                "{extra}"
+            );
+            assert_eq!(
+                issues(&zwitterion),
+                [
+                    StructureInterpretIssue::HydrogenAttachedByDistance {
+                        residue: residue("A", 1),
+                        atom_name: "H3".to_owned(),
+                        heavy_atom_name: "N".to_owned(),
+                    },
+                    StructureInterpretIssue::ProtonationFromHydrogens {
+                        residue: residue("A", 1),
+                        component_id: "ASP".to_owned(),
+                        variant: None,
+                        charged_atoms: vec![("N".to_owned(), 1), ("OXT".to_owned(), -1)],
+                    },
+                ],
+                "{extra}"
+            );
+        }
 
         // A deprotonated side chain carries the charge on its acid oxygen.
         let aspartate = interpret(&block(&without(ASPARTATE, &["HD2"]), ""));
         assert_eq!(charges(&aspartate), [("OD2".to_owned(), -1)]);
+
+        // A ring nitrogen takes or loses one proton whatever its bond orders:
+        // the cytosine base (ideal coordinates of the dictionary's DC)
+        // protonated at N3, as in i-motif DNA, and the imidazolate histidine.
+        let cytosine = "
+            N N1 DC A 1 -0.267 -0.584 2.528
+            C C2 DC A 1 0.270 0.648 2.563
+            O O2 DC A 1 0.052 1.424 1.647
+            N N3 DC A 1 1.037 1.035 3.581
+            C C4 DC A 1 1.291 0.212 4.589
+            N N4 DC A 1 2.085 0.622 5.635
+            C C5 DC A 1 0.746 -1.088 4.580
+            C C6 DC A 1 -0.035 -1.465 3.541
+            H H41 DC A 1 2.461 1.516 5.636
+            H H42 DC A 1 2.265 0.019 6.373
+            H H5 DC A 1 0.943 -1.771 5.394
+            H H6 DC A 1 -0.467 -2.454 3.514
+            H H3 DC A 1 1.431 2.041 3.589";
+        let imidazolate = without(HISTIDINE, &["HD1", "HE2"]);
+        for (rows, component, charged, attached) in [
+            (cytosine, "DC", vec![("N3".to_owned(), 1)], Some("N3")),
+            (
+                imidazolate.as_str(),
+                "HIS",
+                vec![("ND1".to_owned(), 0), ("NE2".to_owned(), -1)],
+                None,
+            ),
+        ] {
+            let result = interpret(&block(rows, ""));
+            let nonzero = charged
+                .iter()
+                .filter(|(_, charge)| *charge != 0)
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(charges(&result), nonzero, "{component}");
+            let mut expected = attached
+                .map(
+                    |heavy| StructureInterpretIssue::HydrogenAttachedByDistance {
+                        residue: residue("A", 1),
+                        atom_name: "H3".to_owned(),
+                        heavy_atom_name: heavy.to_owned(),
+                    },
+                )
+                .into_iter()
+                .collect::<Vec<_>>();
+            expected.push(StructureInterpretIssue::ProtonationFromHydrogens {
+                residue: residue("A", 1),
+                component_id: component.to_owned(),
+                variant: None,
+                charged_atoms: charged,
+            });
+            assert_eq!(issues(&result), expected, "{component}");
+        }
 
         // Missing ring hydrogens select a neutral tautomer, whose ring bonds
         // follow the hydrogen.

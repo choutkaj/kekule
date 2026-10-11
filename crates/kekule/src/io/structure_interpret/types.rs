@@ -170,8 +170,9 @@ pub enum StructureInterpretIssue {
         component_id: String,
         bonds: usize,
     },
-    /// A hydrogen absent from its residue template was bonded to the nearest
-    /// heavy atom of its residue.
+    /// A hydrogen that no bond source names (the residue template, the
+    /// block's own component bond table, or the source's listed bonds) was
+    /// bonded to the nearest heavy atom of its residue.
     HydrogenAttachedByDistance {
         residue: SourceResidueId,
         atom_name: String,
@@ -224,7 +225,8 @@ pub enum BondEvidence {
     },
     /// Covalent radii, for a residue without template or bond table.
     Distance,
-    /// A hydrogen absent from its template, bonded to the nearest heavy atom.
+    /// A hydrogen that no template, component bond table, or listed bond
+    /// names, bonded to the nearest heavy atom of its residue.
     HydrogenDistance,
 }
 

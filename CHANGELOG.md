@@ -257,6 +257,15 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- mmCIF residues whose bonds come from the block's own `_chem_comp_bond` table
+  attach the hydrogens the table omits, such as N-terminal `H3` or a
+  5'-terminal `HO5'`, to their nearest heavy atom, as residues bonded from
+  templates do, instead of leaving each as a one-atom molecule. Charges then
+  follow the attached hydrogens.
+- A ring nitrogen with one hydrogen more or fewer than its template, such as
+  the N3-protonated cytosine of i-motif DNA or an imidazolate histidine, has
+  its charge changed by one instead of failing interpretation, whatever its
+  template bond orders.
 - Publishing a topology no longer takes time quadratic in the residues of one
   chain or the atom sites of one residue. A 200,000-residue chain now validates
   in about 0.1 s instead of 14 s, which also dominated mmCIF interpretation of

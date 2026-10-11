@@ -504,8 +504,9 @@ protonation is never asserted as a fixed hydrogen count. When a residue's model
 hydrogens differ from its template on a heteroatom, a variant template that
 matches them exactly, such as a histidine tautomer, is selected; otherwise each
 added or removed hydrogen on a heteroatom whose template bonds are all single
-changes its charge by one, and any other difference fails. Hydrogens absent from
-carbon are left to valence.
+changes its charge by one, as one added or removed hydrogen does on a ring
+nitrogen whatever its bonds (a protonated cytosine, an imidazolate), and any
+other difference fails. Hydrogens absent from carbon are left to valence.
 
 Kekule bundles templates for standard polymer residues, their common protonation
 variants, water, common ions, and common cofactors, taken from the Chemical
