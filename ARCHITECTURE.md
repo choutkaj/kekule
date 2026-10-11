@@ -12,7 +12,7 @@ Rustdoc beside their implementations. The links below point to those sources;
 | Owner | Authoritative responsibility | Must not own |
 | --- | --- | --- |
 | `Molecule` | One nonempty connected `Graph`, derived `Perception`, `MoleculeProperties` | Coordinates, hierarchy, system classification |
-| `Topology` | Complete molecule instances, reusable definitions, qualified identities, dense layout, one `Hierarchy`, classification, `TopologyProperties` | Geometry or bonds between separate instances |
+| `Topology` | Reusable definitions and their complete molecule instances, qualified identities, dense atom and bond order, one `Hierarchy`, classification, `TopologyProperties`, layout identity | Geometry or bonds between separate instances |
 | `Conformation` | One realization's dense positions, optional cell, occupancies, B factors, and `RealizationProperties`, addressed by dense topology index | Topology, semantic IDs, or temporal state |
 | `Model` | One shared `Topology` and one bound `Conformation` | A second chemical or hierarchy model |
 | `Ensemble` | One shared topology, collection owner properties, and a weighted, unordered sample of `EnsembleMember` payloads (conformation and a finite positive relative weight) | An owned `Model` or topology in each member; temporal meaning |
@@ -99,7 +99,7 @@ unsupported or exhausted ranking rather than treating unfinished work as a tie.
 
 Owning perception runs once per reusable definition and publishes atomically.
 A successful model, ensemble, or trajectory perception operation installs a new
-shared topology snapshot without copying coordinate payloads or the layout.
+shared topology snapshot without copying coordinate payloads.
 The snapshot keeps the source's layout identity, so existing selections,
 prepared potentials, and streaming bindings stay attached to their original
 snapshot and remain usable with the new one. Failure leaves all definitions and
@@ -118,6 +118,13 @@ instances and used definitions. Definition reuse is explicit; ordinary molecular
 construction does not intern chemically equal inputs. Public system traversal is
 instance-first. A definition is a storage and reuse mechanism, not another
 chemical owner.
+
+`Topology` is one flat owner. Definitions and instances are peers: a definition
+holds reusable chemistry and an instance is one occurrence of it, and neither
+nests inside a separate layout object. Dense orders, hierarchy, classification
+overrides, and properties sit beside them. Layout identity is an explicit token
+minted when a topology is published, not a consequence of how fields are
+allocated or shared.
 
 System atom and bond identities qualify a molecule-local ID with its instance.
 Hierarchy chain, residue, and atom-site IDs are topology-global. Dense indices
@@ -244,7 +251,9 @@ its owner's domain. Compatible units convert to the stored unit; incompatible
 types or dimensions fail. Borrowed property reads avoid unnecessary string copies.
 
 Generic properties do not define chemical identity, topology layout, or perception.
-Transformations transfer entity values explicitly and do not infer annotation
+Editing a published topology's properties keeps its layout identity, as
+perception does; only builders, editors, and transformations publish a new
+layout. Transformations transfer entity values explicitly and do not infer annotation
 validity or recompute arbitrary properties. Arbitrary source fields stay in
 format sidecars unless canonical semantics, scope, and domain justify promotion.
 Occupancy and B factors are typed conformation fields with checked semantics,
@@ -275,7 +284,9 @@ Read access is through views: `Topology` lookups return `Option` views
 (`AtomView`, `BondView`, molecule, chain, residue, and atom-site views), and
 `Model::atom` joins an `AtomView` with that atom's realization state. Mutation
 goes through explicit, dimension-preserving guards: `conformation_mut()` on
-models, payloads, and collection items, and `get_mut()` on collections. Guards
+models, payloads, and collection items, `get_mut()` on collections, and
+`properties_mut()` on topologies (`topology_properties_mut()` on models and
+collections, which replaces a shared topology with a snapshot of it). Guards
 have no `DerefMut`; whole payloads are replaced through the owner.
 
 Dense positions, velocities, and forces validate values and units without carrying
@@ -449,8 +460,9 @@ Molecular equality compares authoritative represented chemistry, excluding
 perception, annotations, hierarchy, and topology classification. Topology layout
 equality is separate: it includes definitions, instances, classifications,
 hierarchy, semantic IDs, and dense order, but excludes perception and properties.
-Layout identity is stricter than equal layout. Every publication creates a new
-layout identity; perception creates new snapshots that keep it. Operations that
+Layout identity is stricter than equal layout. Every publication mints a new
+layout identity; perception and topology property edits create snapshots that
+keep it. Operations that
 address atoms and bonds by index accept any snapshot sharing their layout, and
 must not silently substitute an independently equal topology. Operations that
 read perception, such as prepared substructure targets, bind the exact snapshot.
