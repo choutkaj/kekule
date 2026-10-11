@@ -361,3 +361,287 @@ fn component_definitions_fail_with_structured_kinds_and_lines() {
         );
     }
 }
+
+#[test]
+fn force_field_libraries_define_their_residue_names() {
+    // Atom names and net charges as the residue definitions of OpenMM 8.1.1
+    // state them (amber14/protein.ff14SB.xml, DNA.OL15.xml, RNA.OL3.xml, and
+    // charmm36.xml with its ASPP, GLUP, LSN, NTER, and CTER patches). Every
+    // template these libraries share with those files matches them in atom
+    // names and net charge; these rows pin representative ones.
+    let amber = ComponentLibrary::amber();
+    let charmm = ComponentLibrary::charmm();
+    assert_eq!((amber.len(), charmm.len()), (93, 33));
+    let names = |component: &Component| {
+        component
+            .atoms()
+            .iter()
+            .map(|atom| match atom.alternate_name() {
+                Some(alternate) if alternate != atom.name() => {
+                    format!("{}|{alternate}", atom.name())
+                }
+                _ => atom.name().to_owned(),
+            })
+            .collect::<Vec<_>>()
+    };
+    let charge = |component: &Component| {
+        component
+            .atoms()
+            .iter()
+            .map(|atom| i32::from(atom.formal_charge().unwrap_or(0)))
+            .sum::<i32>()
+    };
+    for (library, id, present, absent, net, linking) in [
+        (
+            &amber,
+            "HIE",
+            &["HE2"][..],
+            &["HD1"][..],
+            0,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &amber,
+            "HID",
+            &["HD1"][..],
+            &["HE2"][..],
+            0,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &amber,
+            "HIP",
+            &["HD1", "HE2"][..],
+            &[][..],
+            1,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &amber,
+            "ASP",
+            &["OD2"][..],
+            &["HD2"][..],
+            -1,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &amber,
+            "ASH",
+            &["HD2"][..],
+            &[][..],
+            0,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &amber,
+            "LYN",
+            &["HZ2", "HZ3"][..],
+            &["HZ1"][..],
+            0,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &amber,
+            "CYX",
+            &["SG"][..],
+            &["HG"][..],
+            0,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &amber,
+            "CYM",
+            &["SG"][..],
+            &["HG"][..],
+            -1,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &amber,
+            "NALA",
+            &["H|H1", "H2|HN2", "H3"][..],
+            &[][..],
+            1,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &amber,
+            "NPRO",
+            &["H2", "H3"][..],
+            &["H"][..],
+            1,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &amber,
+            "CALA",
+            &["OXT"][..],
+            &["HXT"][..],
+            -1,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &amber,
+            "ACE",
+            &["C", "O", "CH3", "H1|HH31"][..],
+            &["OXT"][..],
+            0,
+            ComponentLinking::None,
+        ),
+        (
+            &amber,
+            "DA",
+            &["OP2"][..],
+            &["HOP2"][..],
+            -1,
+            ComponentLinking::Nucleotide,
+        ),
+        (
+            &amber,
+            "DA5",
+            &["HOP2"][..],
+            &[][..],
+            0,
+            ComponentLinking::Nucleotide,
+        ),
+        (
+            &amber,
+            "WAT",
+            &["O", "H1", "H2"][..],
+            &[][..],
+            0,
+            ComponentLinking::None,
+        ),
+        (
+            &amber,
+            "Na+",
+            &["Na+"][..],
+            &["NA"][..],
+            1,
+            ComponentLinking::None,
+        ),
+        (
+            &charmm,
+            "HSD",
+            &["HN", "HB1", "HB2", "HD1"][..],
+            &["HE2", "HB3", "H"][..],
+            0,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &charmm,
+            "HSP",
+            &["HD1", "HE2"][..],
+            &[][..],
+            1,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &charmm,
+            "ILE",
+            &["CD", "HD1", "HG11", "HG12", "O|OT1", "OT2"][..],
+            &["CD1", "HG13", "OXT"][..],
+            0,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &charmm,
+            "GLY",
+            &["HA1", "HA2"][..],
+            &["HA3"][..],
+            0,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &charmm,
+            "PRO",
+            &["HN1", "HD1", "HD2"][..],
+            &["HN", "HD3"][..],
+            0,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &charmm,
+            "ASP",
+            &["HB1", "OD2"][..],
+            &["HD2"][..],
+            -1,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &charmm,
+            "ASPP",
+            &["HD2"][..],
+            &[][..],
+            0,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &charmm,
+            "LSN",
+            &["HZ1", "HZ2"][..],
+            &["HZ3"][..],
+            0,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &charmm,
+            "CYM",
+            &["HB1", "SG"][..],
+            &["HG1"][..],
+            -1,
+            ComponentLinking::Peptide,
+        ),
+        (
+            &charmm,
+            "TIP3",
+            &["OH2", "H1", "H2"][..],
+            &["O"][..],
+            0,
+            ComponentLinking::None,
+        ),
+        (
+            &charmm,
+            "CLA",
+            &["CLA"][..],
+            &[][..],
+            -1,
+            ComponentLinking::None,
+        ),
+    ] {
+        let component = library.get(id).unwrap_or_else(|| panic!("{id} is defined"));
+        let atoms = names(component);
+        // A row names an atom, or an atom and its alternate as `name|alternate`.
+        for name in present {
+            assert!(
+                atoms
+                    .iter()
+                    .any(|atom| atom == name || atom.split('|').next() == Some(name)),
+                "{id} has {name}: {atoms:?}"
+            );
+        }
+        for name in absent {
+            assert!(
+                atoms
+                    .iter()
+                    .all(|atom| atom.split('|').all(|part| part != *name)),
+                "{id} lacks {name}: {atoms:?}"
+            );
+        }
+        assert_eq!(charge(component), net, "{id}");
+        assert_eq!(component.linking(), linking, "{id}");
+        assert_eq!(component.id(), id);
+        assert_eq!(component.variant(), None, "{id}");
+    }
+    // Names the libraries do not define fall back to the bundled templates.
+    assert!(amber.get("ALA").is_none() && charmm.get("DA").is_none());
+    // The libraries are opt-in: CHARMM chloride is the dictionary's chlorophyll a.
+    assert_eq!(
+        ComponentLibrary::bundled()
+            .get("CLA")
+            .unwrap()
+            .atoms()
+            .len(),
+        137
+    );
+}

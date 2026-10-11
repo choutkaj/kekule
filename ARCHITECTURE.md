@@ -510,7 +510,11 @@ carbon are left to valence.
 Kekule bundles templates for standard polymer residues, their common protonation
 variants, water, common ions, and common cofactors, taken from the Chemical
 Component Dictionary. Callers supply further components, up to the complete
-dictionary, as interpretation context.
+dictionary, as interpretation context. Force fields name protonation states,
+termini, water, and ions with residue and atom names of their own; libraries
+for the AMBER and CHARMM names derive their templates from the bundled entries
+and are opt-in context, since force-field names collide with dictionary
+identifiers.
 
 Interpretations own format reports, metadata, and source correspondence. Borrowed
 projections reuse canonical owners; consuming projections explicitly discard richer

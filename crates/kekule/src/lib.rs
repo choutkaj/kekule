@@ -619,6 +619,10 @@ pub mod sdf {
 /// crystallization additives; read further definitions, up to the complete
 /// dictionary, with
 /// [`ComponentLibrary::from_mmcif`](components::ComponentLibrary::from_mmcif).
+/// Structures that molecular-mechanics tools write use force-field residue and
+/// atom names; [`ComponentLibrary::amber`](components::ComponentLibrary::amber)
+/// and [`ComponentLibrary::charmm`](components::ComponentLibrary::charmm)
+/// define them.
 pub mod components {
     pub use crate::io::{
         Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentError,

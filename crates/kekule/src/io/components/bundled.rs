@@ -68,7 +68,7 @@ fn histidine_tautomers(histidine: &Component) -> [Component; 2] {
 }
 
 impl Component {
-    fn without_atom(&self, name: &str) -> Self {
+    pub(super) fn without_atom(&self, name: &str) -> Self {
         let (removed, _) = self.atom(name).expect("template atom exists");
         let mut component = self.clone();
         component.atoms.remove(removed);
@@ -85,9 +85,22 @@ impl Component {
         component
     }
 
-    fn set_formal_charge(&mut self, name: &str, charge: i8) {
+    pub(super) fn set_formal_charge(&mut self, name: &str, charge: i8) {
         let (index, _) = self.atom(name).expect("template atom exists");
         self.atoms[index].formal_charge = Some(charge);
+    }
+
+    /// Renames atoms all at once, so that `[("HB2", "HB1"), ("HB3", "HB2")]`
+    /// shifts names rather than chaining them. Alternate names are cleared.
+    pub(super) fn rename_atoms(&mut self, renamed: &[(&str, &str)]) {
+        let indices = renamed
+            .iter()
+            .map(|&(name, _)| self.atom(name).expect("template atom exists").0)
+            .collect::<Vec<_>>();
+        for (index, &(_, name)) in indices.into_iter().zip(renamed) {
+            self.atoms[index].name = name.to_owned();
+            self.atoms[index].alternate_name = None;
+        }
     }
 
     fn set_bond_order(&mut self, a: &str, b: &str, order: ComponentBondOrder) {
