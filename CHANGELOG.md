@@ -6,6 +6,12 @@ All notable changes to Kekule are documented in this file.
 
 ### Added
 
+- `kekule::diagnostics` provides the shared parse and interpretation
+  vocabulary: `SourceLocation` (line and optional column in the original
+  input), `DiagnosticKind` (I/O, limit, syntax, invalid value, invalid
+  reference, unsupported, inconsistent, chemistry), and `UnsupportedContent`.
+- `mmcif::parse_reader` and `parse_reader_with_options` read from any
+  `std::io::Read`, enforcing the byte limit while reading.
 - Published topology annotations can be edited without changing the layout.
   `Topology::properties_mut` edits in place, and
   `Model`, `Ensemble`, and `Trajectory` gain `topology_properties_mut`, which
@@ -16,6 +22,21 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** mmCIF documents keep one line-normalized copy of the source
+  and store every tag and value as a compact span into it, instead of one
+  owned string per value. `MmcifEntry`, `MmcifItem`, `MmcifLoopTable`, and
+  `MmcifValue` are now borrowed views with a lifetime: `MmcifBlock::entries()`
+  and `MmcifLoopTable::row()` return iterators, values are returned by value,
+  and `MmcifLoopTable::value_at` reads a cell by a column resolved once with
+  `column_index`. Parsing a 400,000-row atom-site table is about four times
+  faster.
+- **Breaking:** `MmcifParseError` and `MmcifInterpretError` report `kind()` and
+  `location()` instead of `line()`. `MmcifEnsembleInterpretError` gains
+  `kind()`, `location()`, and an error `source()`.
+- The default `MmcifParseOptions` limits are consistent with each other: the
+  token budget admits the default 5,000,000 atom-site rows of a typical
+  21-column table, and the input limit is 1 GiB. Previously the default token
+  budget rejected atom-site tables above about 476,000 rows.
 - `Topology` is one flat owner. Instances, dense orders, hierarchy, and
   properties sit beside the definitions instead of in a shared allocation,
   and layout identity is an explicit token minted at publication. Perception

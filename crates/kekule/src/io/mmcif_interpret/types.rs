@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use super::altloc::{MmcifAltLocDecision, MmcifAltLocPolicy, MmcifResidueId};
 use crate::core::Molecule;
+use crate::diagnostics::{DiagnosticKind, SourceLocation};
 use crate::structure::{Ensemble, EnsembleError, Model};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
@@ -473,20 +474,31 @@ impl MmcifInterpretation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifInterpretError {
-    pub(crate) line: Option<usize>,
-    pub(crate) message: String,
+    kind: DiagnosticKind,
+    location: Option<SourceLocation>,
+    message: String,
 }
 
 impl MmcifInterpretError {
-    pub(in crate::io) fn new(line: Option<usize>, message: impl Into<String>) -> Self {
+    pub(in crate::io) fn new(
+        kind: DiagnosticKind,
+        line: Option<usize>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
-            line,
+            kind,
+            location: line.map(SourceLocation::at_line),
             message: message.into(),
         }
     }
 
-    pub const fn line(&self) -> Option<usize> {
-        self.line
+    pub const fn kind(&self) -> DiagnosticKind {
+        self.kind
+    }
+
+    /// The source location, when the failure concerns specific source text.
+    pub const fn location(&self) -> Option<SourceLocation> {
+        self.location
     }
 
     pub fn message(&self) -> &str {
@@ -496,10 +508,10 @@ impl MmcifInterpretError {
 
 impl fmt::Display for MmcifInterpretError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.line {
-            Some(line) => write!(
+        match self.location {
+            Some(location) => write!(
                 f,
-                "mmCIF interpretation error at line {line}: {}",
+                "mmCIF interpretation error at {location}: {}",
                 self.message
             ),
             None => write!(f, "mmCIF interpretation error: {}", self.message),
@@ -630,4 +642,38 @@ impl fmt::Display for MmcifEnsembleInterpretError {
     }
 }
 
-impl std::error::Error for MmcifEnsembleInterpretError {}
+impl MmcifEnsembleInterpretError {
+    pub fn kind(&self) -> DiagnosticKind {
+        match self {
+            Self::Conformation { error, .. } | Self::Model { error, .. } => error.kind(),
+            Self::NoCoordinateModels
+            | Self::EmptyModelSelection
+            | Self::EmptyConformationSelection
+            | Self::MultipleAtomSiteBlocks
+            | Self::DuplicateRequestedModel(_)
+            | Self::UnknownRequestedModel(_)
+            | Self::InconsistentTopology { .. }
+            | Self::InconsistentAtomSet { .. }
+            | Self::InconsistentDenseAtomOrder { .. } => DiagnosticKind::Inconsistent,
+            Self::Ensemble(_) => DiagnosticKind::Chemistry,
+        }
+    }
+
+    /// The source location of the underlying model or selection failure.
+    pub fn location(&self) -> Option<SourceLocation> {
+        match self {
+            Self::Conformation { error, .. } | Self::Model { error, .. } => error.location(),
+            _ => None,
+        }
+    }
+}
+
+impl std::error::Error for MmcifEnsembleInterpretError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Conformation { error, .. } | Self::Model { error, .. } => Some(error),
+            Self::Ensemble(error) => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+}

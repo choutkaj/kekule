@@ -1,4 +1,5 @@
 //! Source-declared combinations constrain selection; they do not create members.
+use crate::diagnostics::DiagnosticKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::atom_site::{required, row_error, AtomRow};
@@ -21,7 +22,14 @@ pub(super) fn conformations(
         let id = required(&table, row, "_atom_sites_alt_gen.ens_id")?;
         let value = table
             .value(row, "_atom_sites_alt_gen.alt_id")
-            .ok_or_else(|| row_error(&table, row, "missing _atom_sites_alt_gen.alt_id"))?;
+            .ok_or_else(|| {
+                row_error(
+                    &table,
+                    row,
+                    DiagnosticKind::InvalidValue,
+                    "missing _atom_sites_alt_gen.alt_id",
+                )
+            })?;
         // The dictionary examples include '.' for shared sites. Shared rows are
         // retained for every combination regardless of whether '.' is listed.
         let label = value.text();
@@ -29,6 +37,7 @@ pub(super) fn conformations(
             return Err(row_error(
                 &table,
                 row,
+                DiagnosticKind::InvalidReference,
                 format!(
                     "source conformation `{id}` references unavailable alternate label `{label}`"
                 ),
@@ -42,6 +51,7 @@ pub(super) fn conformations(
             return Err(row_error(
                 &table,
                 row,
+                DiagnosticKind::Inconsistent,
                 format!("duplicate alternate label `{label}` in source conformation `{id}`"),
             ));
         }

@@ -180,7 +180,7 @@ fn duplicate_conflicting_authoritative_bond_evidence_is_rejected() {
     let error: MmcifInterpretError = mmcif::interpret(&document, MmcifInterpretOptions::default())
         .expect_err("conflicting authoritative bond orders must be rejected");
 
-    assert_eq!(error.line(), None);
+    assert_eq!(error.location(), None);
     assert_eq!(
         error.message(),
         "conflicting authoritative mmCIF bond evidence for one atom pair: Double versus Single"

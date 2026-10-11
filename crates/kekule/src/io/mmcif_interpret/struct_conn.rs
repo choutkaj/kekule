@@ -1,3 +1,4 @@
+use crate::diagnostics::DiagnosticKind;
 use std::collections::BTreeMap;
 
 use crate::core::BondOrder;
@@ -126,6 +127,7 @@ fn connection_bond_order(
         _ => Err(row_error(
             table,
             row,
+            DiagnosticKind::Unsupported,
             format!("unsupported struct_conn bond order `{order}`"),
         )),
     }
