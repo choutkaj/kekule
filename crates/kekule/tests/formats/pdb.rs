@@ -1041,3 +1041,98 @@ fn pdb_interpretation_rejects_contradictory_records() {
         );
     }
 }
+
+const CRAMBIN: &str = include_str!("../fixtures/pdb/1CRN.pdb");
+const ADENYLATE_KINASE: &str = include_str!("../fixtures/pdb/1AKE.pdb");
+
+#[test]
+fn pdb_connectivity_matches_an_independent_reference() {
+    // Atom, bond, and molecule counts from Biotite 1.2.0
+    // (`get_structure(include_bonds=True, altloc="occupancy")`) on the mmCIF
+    // files of the same entries, as `mmcif_connectivity_matches_an_independent_reference`
+    // asserts. Biotite's PDB reader gives the same counts for 1CRN; for 1AKE it
+    // maps `CONECT` serials of the dropped alternate locations of AP5 to the
+    // first atom of chain A, adding a MET 1 N self-bond and two bonds 23 A long.
+    // Charged atoms count the LYS NZ, ARG NH2, and HIS ND1 sites the dictionary
+    // charges (+1), counted from the files. The bundled templates do not cover
+    // AP5: its 62 bonds per chain come from CONECT records, none inferred, and
+    // the 12 CONECT partners in the omitted alternate location B are reported.
+    for (name, text, atoms, bonds, largest, molecules, charged, listed, disulfides, omitted) in [
+        ("1CRN", CRAMBIN, 327, 337, vec![327], 1, 2, 0, 3, 0),
+        (
+            "1AKE",
+            ADENYLATE_KINASE,
+            3804,
+            3484,
+            vec![1656, 1656, 57, 57],
+            382,
+            68,
+            124,
+            0,
+            12,
+        ),
+    ] {
+        let interpreted = interpret(text);
+        let topology = interpreted.topology();
+        let mut sizes = topology
+            .molecules()
+            .map(|instance| instance.molecule().atom_count())
+            .collect::<Vec<_>>();
+        sizes.sort_unstable_by(|a, b| b.cmp(a));
+        assert_eq!(topology.atom_count(), atoms, "{name}");
+        assert_eq!(topology.bond_count(), bonds, "{name}");
+        assert_eq!(sizes.len(), molecules, "{name}");
+        assert_eq!(&sizes[..largest.len()], largest.as_slice(), "{name}");
+        let charges = charges(&interpreted)
+            .into_iter()
+            .map(|(_, charge)| charge)
+            .collect::<Vec<_>>();
+        assert_eq!(charges, vec![1; charged], "{name}");
+
+        let report = interpreted.report();
+        let count = |wanted: fn(&StructureInterpretIssue) -> bool| {
+            report.issues().iter().filter(|issue| wanted(issue)).count()
+        };
+        let ssbond = (1..=3)
+            .map(|serial| {
+                bonds_with_evidence(
+                    &interpreted,
+                    &connection(Some(&serial.to_string()), "SSBOND"),
+                )
+            })
+            .sum::<usize>();
+        assert_eq!(
+            bonds_with_evidence(&interpreted, &connection(None, "CONECT")),
+            listed,
+            "{name}"
+        );
+        assert_eq!(ssbond, disulfides, "{name}");
+        assert_eq!(report.applied_connections(), listed + disulfides, "{name}");
+        assert_eq!(
+            count(|issue| matches!(
+                issue,
+                StructureInterpretIssue::ConnectionUnresolved {
+                    reason: ConnectionResolutionReason::AlternateLocationOmitted { .. },
+                    ..
+                }
+            )),
+            omitted,
+            "{name}"
+        );
+        assert_eq!(
+            count(|issue| matches!(issue, StructureInterpretIssue::ResidueBondsInferred { .. })),
+            0,
+            "{name}"
+        );
+    }
+}
+
+fn bonds_with_evidence(result: &StructureInterpretation, evidence: &BondEvidence) -> usize {
+    result
+        .report()
+        .instances()
+        .iter()
+        .flat_map(|instance| instance.bonds())
+        .filter(|bond| bond.evidence() == evidence)
+        .count()
+}
