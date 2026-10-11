@@ -179,6 +179,9 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- V3000 Molfiles may omit the BOND section when their COUNTS line declares no
+  bonds, as RDKit writes molecules without bonds. Declared bonds still
+  require the section.
 - `TopologyEditor` and `ModelEditor` can bond fragments of two occurrences
   that were both edited in the same draft, for example after deleting a bond
   in each. Merging copied the second occurrence's atom and bond annotations
