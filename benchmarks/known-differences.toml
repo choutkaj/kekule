@@ -70,6 +70,15 @@ examples = ["pdb:2WSE", "pdb:7FSY"]
 max_cases = { curated = 0, full = 2 }
 
 [[known]]
+id = "bio-pdb-conect-dropped-altloc"
+task = "bio.pdb.connectivity"
+match = ["bond.order||1→missing"]
+verdict = "reference-limitation"
+reason = "With altloc=\"occupancy\", Biotite's PDB reader maps CONECT serials of the alternate locations it dropped to the first atom of the chain, adding a zero-length MET 1 N self-bond and two MET N-AP5 bonds 23 A long in 1AKE. Kekule reports those CONECT partners as omitted alternate locations; its counts equal Biotite's on the entry's mmCIF file. The PDB-format reference test (pdb_connectivity_matches_an_independent_reference) records this; no benchmark task reads PDB input yet."
+examples = ["pdb:1AKE"]
+max_cases = { curated = 1, full = 1 }
+
+[[known]]
 id = "bio-nonstandard-polymer-links"
 task = "bio.connectivity"
 match = ["bond.order||missing→1"]

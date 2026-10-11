@@ -1052,7 +1052,8 @@ fn pdb_connectivity_matches_an_independent_reference() {
     // files of the same entries, as `mmcif_connectivity_matches_an_independent_reference`
     // asserts. Biotite's PDB reader gives the same counts for 1CRN; for 1AKE it
     // maps `CONECT` serials of the dropped alternate locations of AP5 to the
-    // first atom of chain A, adding a MET 1 N self-bond and two bonds 23 A long.
+    // first atom of chain A, adding a MET 1 N self-bond and two bonds 23 A long
+    // (`bio-pdb-conect-dropped-altloc` in benchmarks/known-differences.toml).
     // Charged atoms count the LYS NZ, ARG NH2, and HIS ND1 sites the dictionary
     // charges (+1), counted from the files. The bundled templates do not cover
     // AP5: its 62 bonds per chain come from CONECT records, none inferred, and
