@@ -161,9 +161,10 @@ pub mod smiles {
     use crate::core::Molecule;
     pub use crate::io::{
         MolWriteError, MolWriteErrorKind, SmilesAtomMapping, SmilesBondMapping,
-        SmilesComponentCountError, SmilesComponentInterpretation, SmilesDocument,
-        SmilesDocumentToken, SmilesDocumentTokenKind, SmilesInterpretError, SmilesInterpretation,
-        SmilesInterpretationReport, SmilesParseError, SmilesParseOptions,
+        SmilesComponentCountError, SmilesComponentInterpretation, SmilesCxField, SmilesCxFieldKind,
+        SmilesCxStereoGroupKind, SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind,
+        SmilesInterpretError, SmilesInterpretOptions, SmilesInterpretation,
+        SmilesInterpretationReport, SmilesParseError, SmilesParseOptions, SmilesRecords,
     };
     use crate::topology::{Topology, TopologyBuildError};
 
@@ -282,8 +283,8 @@ pub mod smiles {
         }
     }
 
-    /// Parses one record, preserving base SMILES, an optional CX extension, and its name.
-    /// Extension text is retained without validating its field syntax or semantics.
+    /// Parses one record: base SMILES, an optional CX extension with its fields
+    /// typed, and an optional name.
     pub fn parse_str(input: &str) -> Result<SmilesDocument, SmilesParseError> {
         crate::io::parse_smiles_document(input)
     }
@@ -296,6 +297,24 @@ pub mod smiles {
         crate::io::parse_smiles_document_with_options(input, options)
     }
 
+    /// Streams the records of a multi-record SMILES input such as a `.smi`
+    /// file, one record per line.
+    ///
+    /// Blank lines are skipped. Each item is one record or the failure of one
+    /// line, located at its input line; reading continues after a malformed
+    /// line. Memory is bounded by one line.
+    pub fn records<R: std::io::Read>(reader: R) -> SmilesRecords<R> {
+        records_with_options(reader, SmilesParseOptions::default())
+    }
+
+    /// Streams SMILES records with explicit per-record resource limits.
+    pub fn records_with_options<R: std::io::Read>(
+        reader: R,
+        options: SmilesParseOptions,
+    ) -> SmilesRecords<R> {
+        SmilesRecords::new(reader, options)
+    }
+
     /// Interprets parsed syntax as canonical represented chemistry.
     ///
     /// Bracket atoms have fixed hydrogen counts. After localizing source aromatic
@@ -306,11 +325,20 @@ pub mod smiles {
     /// specified spin. CX absolute, AND and OR groups reference source atom
     /// indices; the `r` flag relates otherwise ungrouped tetrahedral centers.
     /// Stereo relationships across disconnected molecules are not representable.
-    /// Unsupported CX fields return an error instead of being discarded.
+    /// Unsupported CX fields return an error instead of being discarded; see
+    /// [`interpret_with_options`] to omit and report them instead.
     pub fn interpret(
         document: &SmilesDocument,
     ) -> Result<SmilesInterpretation, SmilesInterpretError> {
         document.interpret()
+    }
+
+    /// Interprets parsed syntax with an explicit unsupported-content policy.
+    pub fn interpret_with_options(
+        document: &SmilesDocument,
+        options: SmilesInterpretOptions,
+    ) -> Result<SmilesInterpretation, SmilesInterpretError> {
+        document.interpret_with_options(options)
     }
 
     /// Explicitly interprets only the base SMILES and records the omitted CX extension.

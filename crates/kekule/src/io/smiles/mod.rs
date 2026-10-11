@@ -6,13 +6,14 @@ mod parse;
 mod write;
 
 pub use canonical::write_canonical_smiles;
+pub use cx::{SmilesCxField, SmilesCxFieldKind, SmilesCxStereoGroupKind};
 pub use interpret::{
     SmilesAtomMapping, SmilesBondMapping, SmilesComponentCountError, SmilesComponentInterpretation,
-    SmilesInterpretError, SmilesInterpretation, SmilesInterpretationReport,
+    SmilesInterpretError, SmilesInterpretOptions, SmilesInterpretation, SmilesInterpretationReport,
 };
 pub use parse::{
     parse_smiles_document, parse_smiles_document_with_options, SmilesDocument, SmilesDocumentToken,
-    SmilesDocumentTokenKind, SmilesParseError, SmilesParseOptions,
+    SmilesDocumentTokenKind, SmilesParseError, SmilesParseOptions, SmilesRecords,
 };
 pub use write::{write_isomeric_smiles, write_smiles};
 

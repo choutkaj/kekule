@@ -1,3 +1,4 @@
+mod lines;
 mod mmcif_category;
 mod mmcif_connectivity;
 mod mmcif_document;
@@ -34,9 +35,10 @@ pub use serialization_write::*;
 pub use smiles::{
     parse_smiles_document, parse_smiles_document_with_options, write_canonical_smiles,
     write_isomeric_smiles, write_smiles, SmilesAtomMapping, SmilesBondMapping,
-    SmilesComponentCountError, SmilesComponentInterpretation, SmilesDocument, SmilesDocumentToken,
-    SmilesDocumentTokenKind, SmilesInterpretError, SmilesInterpretation,
-    SmilesInterpretationReport, SmilesParseError, SmilesParseOptions,
+    SmilesComponentCountError, SmilesComponentInterpretation, SmilesCxField, SmilesCxFieldKind,
+    SmilesCxStereoGroupKind, SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind,
+    SmilesInterpretError, SmilesInterpretOptions, SmilesInterpretation, SmilesInterpretationReport,
+    SmilesParseError, SmilesParseOptions, SmilesRecords,
 };
 pub use structure_documents::{
     MolfileAtomMapping, MolfileBondMapping, MolfileInterpretError, MolfileInterpretOptions,

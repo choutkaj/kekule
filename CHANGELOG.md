@@ -23,6 +23,17 @@ All notable changes to Kekule are documented in this file.
 - `molfile::parse_reader` and `sdf::parse_reader` (with `_with_options`
   variants) read from any `std::io::Read`, enforcing the byte limit while
   reading.
+- `smiles::records` and `records_with_options` stream multi-record SMILES
+  input such as `.smi` files, one record per line. Blank lines are skipped,
+  a malformed, oversized, or non-UTF-8 line yields one error located at its
+  input line, and reading continues with the next line.
+- SMILES documents type their CXSMILES extension: `SmilesDocument::cx_fields()`
+  lists `SmilesCxField` values (radicals, enhanced stereo groups, the
+  relative flag, and unsupported fields as written) with their spans.
+  `SmilesInterpretOptions` with `UnsupportedContent::Report` omits
+  unsupported fields and lists them in
+  `SmilesInterpretation::omitted_cx_fields()`; `smiles::interpret_with_options`
+  and `SmilesDocument::interpret_with_options` accept it.
 - `MolfileInterpretOptions` selects the unsupported-content policy for
   `molfile::interpret_with_options`, `MolfileDocument::interpret_with_options`,
   and `SdfRecord::interpret_with_options`. With
@@ -87,6 +98,17 @@ All notable changes to Kekule are documented in this file.
   `SdfRecord::interpret`. Records are parsed from the input lines instead of
   re-joining each record's Molfile text. `MolfileInterpretation::into_parts`
   also returns the omitted content.
+- **Breaking:** SMILES records are parsed in one pass that produces both the
+  document tokens and the parsed program, and CXSMILES fields are read while
+  parsing instead of during interpretation. A malformed extension field, an
+  invalid radical code, or an out-of-range group number now fails parsing,
+  so `interpret_base` no longer projects records whose extension is
+  malformed. Unknown and unsupported fields still parse and fail
+  interpretation by default. `SmilesDocumentTokenKind::Unsupported`, which
+  no parsed document contained, is removed.
+- **Breaking:** `SmilesParseError` and `SmilesInterpretError` report `kind()`
+  and `location()` (the record's input line and the byte column) besides the
+  record-relative `offset()`, and display the location instead of the offset.
 - The default `MmcifParseOptions` limits are consistent with each other: the
   token budget admits the default 5,000,000 atom-site rows of a typical
   21-column table, and the input limit is 1 GiB. Previously the default token
