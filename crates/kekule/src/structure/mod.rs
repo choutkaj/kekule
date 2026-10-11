@@ -65,7 +65,7 @@ mod model_editor;
 mod model_state;
 mod positions;
 mod realizations;
-mod sites;
+mod scalars;
 mod solvation;
 mod state;
 mod trajectory;

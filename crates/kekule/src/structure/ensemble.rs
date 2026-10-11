@@ -7,7 +7,7 @@ use crate::topology::Topology;
 
 use super::realizations::sealed::Payload;
 use super::realizations::{realization_collection, single_molecule_topology, RealizationStore};
-use super::sites::SiteParameters;
+use super::scalars::AtomScalars;
 use super::state::{
     realization_mutators, realization_readers, site_mutators, site_readers, transform_cell,
     transform_positions,
@@ -72,7 +72,7 @@ realization_collection!(
 impl Ensemble {
     /// Collects models that share one topology layout as equally weighted
     /// members (weight `1.0`), keeping the first model's snapshot. Positions,
-    /// cells, site parameters, and properties move without copying.
+    /// cells, occupancies, B-factors, and properties move without copying.
     pub fn from_models(models: impl IntoIterator<Item = Model>) -> Result<Self, RealizationError> {
         Ok(Self {
             store: RealizationStore::from_models(models, EnsembleMember::from_model)?,
@@ -141,14 +141,15 @@ impl Ensemble {
 pub struct EnsembleMember {
     positions: Positions,
     cell: Option<PeriodicCell>,
-    sites: SiteParameters,
+    occupancies: AtomScalars,
+    b_factors: AtomScalars,
     properties: RealizationProperties,
     weight: f64,
 }
 
 impl EnsembleMember {
-    /// Creates a non-periodic member without site parameters or properties,
-    /// with a finite positive relative weight.
+    /// Creates a non-periodic member without occupancies, B-factors, or
+    /// properties, with a finite positive relative weight.
     pub fn new(positions: Positions, weight: f64) -> Result<Self, ConformationError> {
         let mut member = Self::unit(positions);
         member.weight = checked_weight(weight)?;
@@ -161,7 +162,8 @@ impl EnsembleMember {
         Self {
             positions,
             cell: None,
-            sites: SiteParameters::default(),
+            occupancies: AtomScalars::default(),
+            b_factors: AtomScalars::default(),
             properties,
             weight: 1.0,
         }
@@ -173,14 +175,15 @@ impl EnsembleMember {
         Self {
             positions: model.positions,
             cell: model.cell,
-            sites: model.sites,
+            occupancies: model.occupancies,
+            b_factors: model.b_factors,
             properties: model.properties,
             weight: 1.0,
         }
     }
 
-    /// An equally weighted member without site parameters, for frames
-    /// reinterpreted as an ensemble.
+    /// An equally weighted member without occupancies or B-factors, for
+    /// frames reinterpreted as an ensemble.
     pub(crate) fn from_frame_state(
         positions: Positions,
         cell: Option<PeriodicCell>,
@@ -189,7 +192,8 @@ impl EnsembleMember {
         Self {
             positions,
             cell,
-            sites: SiteParameters::default(),
+            occupancies: AtomScalars::default(),
+            b_factors: AtomScalars::default(),
             properties,
             weight: 1.0,
         }
@@ -273,7 +277,8 @@ impl Payload for EnsembleMember {
             topology,
             &self.positions,
             self.cell.as_ref(),
-            Some(&self.sites),
+            &self.occupancies,
+            &self.b_factors,
             &self.properties,
         )
     }
@@ -282,7 +287,8 @@ impl Payload for EnsembleMember {
         Ok(Self {
             positions: self.positions.select_indices(atoms)?,
             cell: self.cell,
-            sites: self.sites.select(atoms),
+            occupancies: self.occupancies.select(atoms),
+            b_factors: self.b_factors.select(atoms),
             properties: self.properties.project(atoms, bonds)?,
             weight: self.weight,
         })
@@ -293,7 +299,8 @@ impl Payload for EnsembleMember {
         Ok(Self {
             cell: transform_cell(self.cell, transform)?,
             positions: transform_positions(&self.positions, transform)?,
-            sites: self.sites.clone(),
+            occupancies: self.occupancies.clone(),
+            b_factors: self.b_factors.clone(),
             properties: self.properties.clone(),
             weight: self.weight,
         })

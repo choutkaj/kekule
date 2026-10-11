@@ -7,6 +7,7 @@ use crate::units::{Quantity, CANONICAL_TIME_UNIT};
 
 use super::realizations::sealed::Payload;
 use super::realizations::{realization_collection, RealizationStore};
+use super::scalars::ABSENT;
 use super::state::{
     realization_mutators, realization_readers, transform_cell, transform_positions,
 };
@@ -206,7 +207,8 @@ impl Payload for TrajectoryFrame {
             topology,
             &self.positions,
             self.cell.as_ref(),
-            None,
+            &ABSENT,
+            &ABSENT,
             &self.properties,
         )
     }

@@ -2,7 +2,8 @@
 //! ensemble members, trajectory frames, and model drafts.
 //!
 //! Each owner stores its own `positions`, `cell`, and `properties` fields, and
-//! models and ensemble members also `sites`. The macros below generate the
+//! models and ensemble members also `occupancies` and `b_factors`. The macros
+//! below generate the
 //! common public accessors from those fields; an owner provides
 //! `storage_ref(&self)` and `storage(&mut self)` returning the value that holds
 //! them.
@@ -138,13 +139,13 @@ macro_rules! site_readers {
             atom: $crate::topology::TopologyAtomIndex,
         ) -> Result<Option<f64>, $crate::structure::ConformationError> {
             let storage = self.storage_ref();
-            storage.sites.occupancy(atom, storage.positions.len())
+            storage.occupancies.get(atom, storage.positions.len())
         }
 
         /// Every occupancy in dense atom order, or `None` when none was
         /// recorded.
         pub fn occupancies(&self) -> Option<&[Option<f64>]> {
-            self.storage_ref().sites.occupancies()
+            self.storage_ref().occupancies.values()
         }
 
         /// Isotropic B-factor of one atom; `None` when it was never recorded.
@@ -153,13 +154,15 @@ macro_rules! site_readers {
             atom: $crate::topology::TopologyAtomIndex,
         ) -> Result<Option<$crate::units::Quantity<f64>>, $crate::structure::ConformationError> {
             let storage = self.storage_ref();
-            storage.sites.b_factor(atom, storage.positions.len())
+            Ok($crate::structure::scalars::b_factor_quantity(
+                storage.b_factors.get(atom, storage.positions.len())?,
+            ))
         }
 
         /// Every B-factor in dense atom order and square nanometres, or `None`
         /// when none was recorded.
         pub fn b_factors(&self) -> Option<$crate::units::Quantity<&[Option<f64>]>> {
-            self.storage_ref().sites.b_factors()
+            $crate::structure::scalars::b_factor_quantities(&self.storage_ref().b_factors)
         }
     };
 }
@@ -229,7 +232,7 @@ macro_rules! site_mutators {
         ) -> Result<(), $crate::structure::ConformationError> {
             let storage = self.storage();
             let len = storage.positions.len();
-            storage.sites.set_occupancy(atom, len, value)
+            storage.occupancies.set(atom, len, value)
         }
 
         /// Replaces every occupancy in dense atom order, or clears them all.
@@ -239,7 +242,7 @@ macro_rules! site_mutators {
         ) -> Result<(), $crate::structure::ConformationError> {
             let storage = self.storage();
             let len = storage.positions.len();
-            storage.sites.set_occupancies(len, values)
+            storage.occupancies.replace(len, values)
         }
 
         /// Sets or clears one isotropic B-factor, converting it to square
@@ -249,9 +252,10 @@ macro_rules! site_mutators {
             atom: $crate::topology::TopologyAtomIndex,
             value: Option<$crate::units::Quantity<f64>>,
         ) -> Result<(), $crate::structure::ConformationError> {
+            let value = $crate::structure::scalars::canonical_b_factor(value)?;
             let storage = self.storage();
             let len = storage.positions.len();
-            storage.sites.set_b_factor(atom, len, value)
+            storage.b_factors.set(atom, len, value)
         }
 
         /// Replaces every B-factor in dense atom order, or clears them all.
@@ -259,9 +263,10 @@ macro_rules! site_mutators {
             &mut self,
             values: Option<$crate::units::Quantity<Vec<Option<f64>>>>,
         ) -> Result<(), $crate::structure::ConformationError> {
+            let values = $crate::structure::scalars::canonical_b_factors(values)?;
             let storage = self.storage();
             let len = storage.positions.len();
-            storage.sites.set_b_factors(len, values)
+            storage.b_factors.replace(len, values)
         }
     };
 }
