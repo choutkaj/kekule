@@ -309,7 +309,6 @@ fn no_op_and_geometry_only_keep_exact_source_topology() {
     let mut source = model("CO");
     source.perceive().unwrap();
     source
-        .conformation_mut()
         .properties_mut()
         .owner_mut()
         .insert(key("label"), PropertyValue::Int(9))
@@ -371,12 +370,8 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
     let mut source = Model::new(builder.build().unwrap(), positions(&[4.0, 9.0])).unwrap();
     let source_atoms = source.topology().atom_ids().to_vec();
     let row = source.topology().atom_index(source_atoms[1]).unwrap();
+    source.set_occupancy(row, Some(0.7)).unwrap();
     source
-        .conformation_mut()
-        .set_occupancy(row, Some(0.7))
-        .unwrap();
-    source
-        .conformation_mut()
         .properties_mut()
         .owner_mut()
         .insert(key("energy"), PropertyValue::Int(10))
@@ -725,7 +720,6 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
     let source_bond = source.topology().bond_ids()[0];
     let row = source.topology().bond_index(source_bond).unwrap();
     source
-        .conformation_mut()
         .properties_mut()
         .bonds_mut()
         .set_value(key("dynamic"), row, Some(PropertyValue::Int(10)))
@@ -1026,10 +1020,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
         .unwrap();
     let id = InstanceAtomId::new(instance, carbon.atom_ids().next().unwrap());
     let row = builder.atom_index(id).unwrap();
-    builder
-        .conformation_mut()
-        .set_occupancy(row, Some(0.5))
-        .unwrap();
+    builder.set_occupancy(row, Some(0.5)).unwrap();
     builder
         .set_atom_positions([(id, Quantity::new(Point3::new(0.4, 0.0, 0.0), NANOMETER))])
         .unwrap();
@@ -1044,22 +1035,17 @@ fn recovery_keeps_builder_state_and_editor_handles() {
         4.0
     );
     assert_eq!(
-        builder
-            .conformation()
-            .occupancy(builder.atom_index(id).unwrap())
-            .unwrap(),
+        builder.occupancy(builder.atom_index(id).unwrap()).unwrap(),
         Some(0.5)
     );
     let row = builder.atom_index(id).unwrap();
     builder
-        .conformation_mut()
         .properties_mut()
         .atoms_mut()
         .set_values(key("tag"), [(row, Some(PropertyValue::Int(7)))])
         .unwrap();
     assert_eq!(
         builder
-            .conformation()
             .properties()
             .atoms()
             .value(&key("tag"), builder.atom_index(id).unwrap())
@@ -1149,7 +1135,6 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
         .unwrap();
     let row = builder.atom_index(a).unwrap();
     builder
-        .conformation_mut()
         .properties_mut()
         .atoms_mut()
         .set_value(key("dynamic"), row, Some(PropertyValue::Int(4)))
@@ -1165,7 +1150,6 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
         )
         .unwrap();
     builder
-        .conformation_mut()
         .properties_mut()
         .owner_mut()
         .insert(key("old_owner"), PropertyValue::Int(1))
@@ -1258,7 +1242,6 @@ fn sparse_batches_are_atomic_and_deleted_rows_do_not_poison_new_values() {
         .map(|id| source.topology().atom_index(*id).unwrap())
         .collect::<Vec<_>>();
     let error = source
-        .conformation_mut()
         .properties_mut()
         .atoms_mut()
         .set_values(

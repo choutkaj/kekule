@@ -290,11 +290,10 @@ fn publish_model(
         occupancies[index.index()] = occupancy;
         b_factors[index.index()] = b_factor.map(|value| value * b_factor_scale);
     }
-    let mut conformation = model.conformation_mut();
-    conformation
+    model
         .set_occupancies(Some(occupancies))
         .map_err(graph_error)?;
-    conformation
+    model
         .set_b_factors(Some(crate::units::Quantity::new(
             b_factors,
             SQUARE_NANOMETER,

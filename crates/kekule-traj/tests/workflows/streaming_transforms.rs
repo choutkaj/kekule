@@ -27,7 +27,7 @@ fn source() -> Trajectory {
             ))
             .unwrap(),
         );
-        frame.conformation_mut().set_cell(Some(
+        frame.set_cell(Some(
             PeriodicCell::orthorhombic(
                 Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
                 [true; 3],
@@ -41,7 +41,6 @@ fn source() -> Trajectory {
         frame.set_velocities(Some(Velocities::zeros(3))).unwrap();
         frame.set_forces(Some(Forces::zeros(3))).unwrap();
         frame
-            .conformation_mut()
             .properties_mut()
             .owner_mut()
             .insert(
@@ -115,7 +114,7 @@ fn unwrapper_rejects_skips_reordering_and_failures_without_advancing_and_support
         assert_eq!(unwrapper.last_frame_index(), Some(10));
     }
     let cell = buffer.cell().copied();
-    buffer.frame_mut().conformation_mut().set_cell(None);
+    buffer.frame_mut().set_cell(None);
     let missing = format!("{buffer:?}");
     assert_eq!(
         unwrapper.unwrap(11, &mut buffer),
@@ -123,7 +122,7 @@ fn unwrapper_rejects_skips_reordering_and_failures_without_advancing_and_support
     );
     assert_eq!(format!("{buffer:?}"), missing);
     assert_eq!(unwrapper.last_frame_index(), Some(10));
-    buffer.frame_mut().conformation_mut().set_cell(cell);
+    buffer.frame_mut().set_cell(cell);
     unwrapper.unwrap(11, &mut buffer).unwrap();
     assert_eq!(unwrapper.last_frame_index(), Some(11));
     unwrapper.reset();
@@ -173,7 +172,6 @@ fn ambiguous_crossings_and_changed_axes_do_not_advance_streaming_state() {
     points[0].x = 1.4; // Half a cell from the previous x = 0.9.
     buffer
         .frame_mut()
-        .conformation_mut()
         .set_positions(Quantity::new(points, NANOMETER))
         .unwrap();
     let before = (*buffer).clone();
@@ -188,7 +186,7 @@ fn ambiguous_crossings_and_changed_axes_do_not_advance_streaming_state() {
     assert_eq!((*buffer).clone(), before);
     assert_eq!(unwrapper.last_frame_index(), Some(0));
     buffer.copy_from(trajectory.get(1).unwrap()).unwrap();
-    buffer.frame_mut().conformation_mut().set_cell(Some(
+    buffer.frame_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
             [true, true, false],
@@ -227,7 +225,6 @@ fn superposition_streams_the_same_transforms_and_metadata_and_reports_source_ind
     }
     buffer
         .frame_mut()
-        .conformation_mut()
         .set_positions(Quantity::new([Point3::origin(); 3], NANOMETER))
         .unwrap();
     let before = format!("{buffer:?}");

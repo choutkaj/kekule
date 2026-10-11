@@ -460,8 +460,7 @@ fn stage(
 
 fn publish(model: &mut Model, staged: &[(usize, Point3)]) -> Result<(), GeometryEditError> {
     model
-        .conformation
-        .positions_mut()
+        .positions
         .set_canonical_batch(staged)
         .map_err(|_| GeometryEditError::NumericalFailure)
 }

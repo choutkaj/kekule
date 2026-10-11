@@ -1,11 +1,20 @@
+use std::sync::Arc;
+
 use crate::core::Molecule;
-use crate::geometry::RigidTransform;
+use crate::geometry::{PeriodicCell, RigidTransform};
+use crate::properties::RealizationProperties;
+use crate::topology::Topology;
 
 use super::realizations::sealed::Payload;
 use super::realizations::{realization_collection, single_molecule_topology, RealizationStore};
+use super::sites::SiteParameters;
+use super::state::{
+    realization_mutators, realization_readers, site_mutators, site_readers, transform_cell,
+    transform_positions,
+};
 use super::{
-    Conformation, ConformationError, ConformationMut, Model, Positions, Realization,
-    RealizationError, RealizationMut, RealizationView,
+    ConformationError, Model, ModelView, Positions, Realization, RealizationError, RealizationMut,
+    RealizationView,
 };
 
 /// A weighted, unordered sample of realizations of one shared topology, such
@@ -62,11 +71,11 @@ realization_collection!(
 
 impl Ensemble {
     /// Collects models that share one topology layout as equally weighted
-    /// members (weight `1.0`), keeping the first model's snapshot. Model
-    /// conformations move without copying.
+    /// members (weight `1.0`), keeping the first model's snapshot. Positions,
+    /// cells, site parameters, and properties move without copying.
     pub fn from_models(models: impl IntoIterator<Item = Model>) -> Result<Self, RealizationError> {
         Ok(Self {
-            store: RealizationStore::from_models(models, EnsembleMember::unit)?,
+            store: RealizationStore::from_models(models, EnsembleMember::from_model)?,
         })
     }
 
@@ -78,9 +87,7 @@ impl Ensemble {
     ) -> Result<Self, RealizationError> {
         Self::from_items(
             single_molecule_topology(molecule)?,
-            positions
-                .into_iter()
-                .map(|positions| EnsembleMember::unit(positions.into())),
+            positions.into_iter().map(EnsembleMember::unit),
         )
     }
 
@@ -124,55 +131,79 @@ impl Ensemble {
     }
 }
 
-/// One ensemble member: a [`Conformation`] and its statistical weight.
+/// One ensemble member: positions in dense topology atom order, an optional
+/// periodic cell, optional crystallographic occupancies and B-factors,
+/// realization properties, and a statistical weight.
 ///
 /// The member carries no topology; it is bound when inserted into an
-/// [`Ensemble`]. Conformation state reads through `Deref`.
+/// [`Ensemble`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnsembleMember {
-    conformation: Conformation,
+    positions: Positions,
+    cell: Option<PeriodicCell>,
+    sites: SiteParameters,
+    properties: RealizationProperties,
     weight: f64,
 }
 
-impl std::ops::Deref for EnsembleMember {
-    type Target = Conformation;
-
-    fn deref(&self) -> &Self::Target {
-        &self.conformation
-    }
-}
-
 impl EnsembleMember {
-    /// Creates a member with a finite positive relative weight; accepts
-    /// [`Conformation`] or [`super::Positions`].
-    pub fn new(
-        conformation: impl Into<Conformation>,
-        weight: f64,
-    ) -> Result<Self, ConformationError> {
-        Ok(Self {
-            conformation: conformation.into(),
-            weight: checked_weight(weight)?,
-        })
+    /// Creates a non-periodic member without site parameters or properties,
+    /// with a finite positive relative weight.
+    pub fn new(positions: Positions, weight: f64) -> Result<Self, ConformationError> {
+        let mut member = Self::unit(positions);
+        member.weight = checked_weight(weight)?;
+        Ok(member)
     }
 
     /// A member of an equally weighted collection.
-    pub(crate) fn unit(conformation: Conformation) -> Self {
+    pub(crate) fn unit(positions: Positions) -> Self {
+        let properties = RealizationProperties::new(positions.len());
         Self {
-            conformation,
+            positions,
+            cell: None,
+            sites: SiteParameters::default(),
+            properties,
             weight: 1.0,
         }
     }
 
-    pub fn conformation(&self) -> &Conformation {
-        &self.conformation
+    /// An equally weighted member holding a model's realization state; the
+    /// model's topology is dropped.
+    pub(crate) fn from_model(model: Model) -> Self {
+        Self {
+            positions: model.positions,
+            cell: model.cell,
+            sites: model.sites,
+            properties: model.properties,
+            weight: 1.0,
+        }
     }
 
-    pub fn conformation_mut(&mut self) -> ConformationMut<'_> {
-        ConformationMut::new(&mut self.conformation)
+    /// An equally weighted member without site parameters, for frames
+    /// reinterpreted as an ensemble.
+    pub(crate) fn from_frame_state(
+        positions: Positions,
+        cell: Option<PeriodicCell>,
+        properties: RealizationProperties,
+    ) -> Self {
+        Self {
+            positions,
+            cell,
+            sites: SiteParameters::default(),
+            properties,
+            weight: 1.0,
+        }
     }
 
-    pub fn into_conformation(self) -> Conformation {
-        self.conformation
+    /// Returns this member with a periodic cell.
+    #[must_use]
+    pub fn with_cell(mut self, cell: PeriodicCell) -> Self {
+        self.cell = Some(cell);
+        self
+    }
+
+    pub fn atom_count(&self) -> usize {
+        self.positions.len()
     }
 
     /// The relative statistical weight; always finite and positive.
@@ -197,6 +228,21 @@ impl EnsembleMember {
     }
 }
 
+impl EnsembleMember {
+    fn storage_ref(&self) -> &Self {
+        self
+    }
+
+    fn storage(&mut self) -> &mut Self {
+        self
+    }
+
+    realization_readers!();
+    site_readers!();
+    realization_mutators!();
+    site_mutators!();
+}
+
 fn checked_weight(weight: f64) -> Result<f64, ConformationError> {
     if weight.is_finite() && weight > 0.0 {
         Ok(weight)
@@ -206,20 +252,49 @@ fn checked_weight(weight: f64) -> Result<f64, ConformationError> {
 }
 
 impl Payload for EnsembleMember {
-    fn conformation_storage(&mut self) -> &mut Conformation {
-        &mut self.conformation
+    fn row_count(&self) -> usize {
+        self.positions.len()
+    }
+
+    fn realization_properties(&self) -> &RealizationProperties {
+        &self.properties
+    }
+
+    fn positions_storage_mut(&mut self) -> &mut Positions {
+        &mut self.positions
+    }
+
+    fn properties_storage_mut(&mut self) -> &mut RealizationProperties {
+        &mut self.properties
+    }
+
+    fn model_view<'a>(&'a self, topology: &'a Arc<Topology>) -> ModelView<'a> {
+        ModelView::bound(
+            topology,
+            &self.positions,
+            self.cell.as_ref(),
+            Some(&self.sites),
+            &self.properties,
+        )
     }
 
     fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, ConformationError> {
         Ok(Self {
-            conformation: self.conformation.project(atoms, bonds)?,
+            positions: self.positions.select_indices(atoms)?,
+            cell: self.cell,
+            sites: self.sites.select(atoms),
+            properties: self.properties.project(atoms, bonds)?,
             weight: self.weight,
         })
     }
 
+    /// Positions move and the cell rotates.
     fn transformed(&self, transform: RigidTransform) -> Result<Self, ConformationError> {
         Ok(Self {
-            conformation: self.conformation.transformed(transform)?,
+            cell: transform_cell(self.cell, transform)?,
+            positions: transform_positions(&self.positions, transform)?,
+            sites: self.sites.clone(),
+            properties: self.properties.clone(),
             weight: self.weight,
         })
     }
@@ -232,4 +307,11 @@ impl RealizationMut<'_, EnsembleMember> {
     pub fn set_weight(&mut self, weight: f64) -> Result<(), ConformationError> {
         self.item.set_weight(weight)
     }
+
+    fn storage(&mut self) -> &mut EnsembleMember {
+        self.item
+    }
+
+    realization_mutators!();
+    site_mutators!();
 }

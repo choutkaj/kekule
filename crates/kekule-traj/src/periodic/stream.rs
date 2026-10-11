@@ -236,7 +236,6 @@ impl TrajectoryUnwrapper {
 fn publish_buffer(frame: &mut FrameBuffer, positions: &Positions) -> Result<(), PeriodicError> {
     frame
         .frame_mut()
-        .conformation_mut()
         .set_positions(positions.values())
         .map_err(|error| {
             PeriodicError::Publication(Box::new(RealizationError::Conformation(error)))

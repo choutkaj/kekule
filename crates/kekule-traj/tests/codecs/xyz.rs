@@ -88,7 +88,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
     support::assert_rejects_unrelated_buffer(&mut reader);
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     let pointer = buffer.positions().values().value().as_ptr();
-    buffer.frame_mut().conformation_mut().set_cell(Some(
+    buffer.frame_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
             [true; 3],
@@ -108,7 +108,6 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
     buffer.frame_mut().set_step(Some(7));
     buffer
         .frame_mut()
-        .conformation_mut()
         .properties_mut()
         .owner_mut()
         .insert(
@@ -291,7 +290,6 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     buffer.frame_mut().set_step(None);
     buffer
         .frame_mut()
-        .conformation_mut()
         .properties_mut()
         .bonds_mut()
         .insert(
@@ -457,7 +455,6 @@ fn path_writer_failure_poisoning_prevents_partial_publication() {
     let mut frame = FrameBuffer::new(Arc::clone(&topology));
     frame
         .frame_mut()
-        .conformation_mut()
         .set_positions(Quantity::new(
             [Point3::new(1.0, 2.0, 3.0), Point3::new(4.0, 5.0, 6.0)],
             ANGSTROM,

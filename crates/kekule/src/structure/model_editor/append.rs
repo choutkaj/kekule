@@ -88,10 +88,8 @@ impl ModelEditor {
             .iter()
             .map(|id| staged.topology.bond_slot(mapping.bonds[id]))
             .collect::<Result<Vec<_>, _>>()?;
-        staged
-            .slots
-            .copy_atom_state_from(source.conformation(), &atom_rows);
-        let properties = staged.slots.properties_storage_mut();
+        staged.slots.copy_atom_state_from(source, &atom_rows);
+        let properties = &mut staged.slots.properties;
         properties
             .atoms_raw_mut()
             .copy_rows_from(source.properties().atoms().raw(), &atom_rows)
@@ -107,7 +105,7 @@ impl ModelEditor {
                 error: Box::new(error),
             })?;
         properties.owner_mut().clear();
-        staged.slots.set_cell(cell);
+        staged.slots.cell = cell;
         *self = staged;
         Ok(ModelAppend { mapping, report })
     }

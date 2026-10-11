@@ -407,7 +407,7 @@ fn references_preserve_instance_identity_and_work_on_ensemble_views() {
     let expected = selected.measure(model.as_model_view()).unwrap();
     let mut ensemble = Ensemble::new(model.shared_topology());
     let mut member = EnsembleMember::new(model.positions().clone(), 1.0).unwrap();
-    member.conformation_mut().set_cell(Some(
+    member.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
             [true; 3],

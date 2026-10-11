@@ -607,7 +607,7 @@ fn empty_selections_still_validate_binding_and_motion_arguments() {
 fn all_edits_preserve_shared_topology_cell_properties_and_chemistry() {
     let mut model = chain();
     let [a, b, c, d] = ids(&model);
-    model.conformation_mut().set_cell(Some(
+    model.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(5.0, 6.0, 7.0), NANOMETER),
             [true; 3],
@@ -615,7 +615,6 @@ fn all_edits_preserve_shared_topology_cell_properties_and_chemistry() {
         .unwrap(),
     ));
     model
-        .conformation_mut()
         .properties_mut()
         .owner_mut()
         .insert(
@@ -624,10 +623,7 @@ fn all_edits_preserve_shared_topology_cell_properties_and_chemistry() {
         )
         .unwrap();
     let a_index = model.topology().atom_index(a).unwrap();
-    model
-        .conformation_mut()
-        .set_occupancy(a_index, Some(0.75))
-        .unwrap();
+    model.set_occupancy(a_index, Some(0.75)).unwrap();
     let baseline = model.clone();
     let all = AtomSelection::all(&model.shared_topology());
     model
@@ -674,7 +670,6 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
             .map(|p| Point3::new(p.x * scale, p.y * scale, p.z * scale))
             .collect::<Vec<_>>();
         model
-            .conformation_mut()
             .set_positions(Quantity::new(points, NANOMETER))
             .unwrap();
         let all = AtomSelection::all(&model.shared_topology());

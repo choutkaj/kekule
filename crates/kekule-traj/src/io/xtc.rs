@@ -1194,8 +1194,6 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             (frame.properties().atoms().has_data(), "atom properties"),
             (frame.properties().bonds().has_data(), "bond properties"),
             (!frame.properties().owner().is_empty(), "owner properties"),
-            (frame.occupancies().is_some(), "occupancies"),
-            (frame.b_factors().is_some(), "B-factors"),
         ] {
             if present {
                 return Err(writer_field_error(

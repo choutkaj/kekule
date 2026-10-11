@@ -18,13 +18,9 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::ops::ControlFlow;
-use std::sync::Arc;
 
 use kekule::geometry::{Point3, Vector3};
-use kekule::structure::{
-    Conformation, ConformationError, Model, ModelView, PositionError, Positions,
-};
-use kekule::topology::Topology;
+use kekule::structure::{ConformationError, Model, ModelView, PositionError, Positions};
 use kekule::units::{
     Quantity, UnitError, CANONICAL_GRADIENT_UNIT, CANONICAL_LENGTH_UNIT,
     KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
@@ -136,9 +132,7 @@ impl Minimization {
             return Err(MinimizationError::IncompatibleTopology);
         }
         let mut model = source.to_model();
-        model
-            .conformation_mut()
-            .set_positions(self.positions.values())?;
+        model.set_positions(self.positions.values())?;
         Ok(model)
     }
 }
@@ -167,8 +161,7 @@ pub fn minimize_with_observer<P: Potential + ?Sized>(
     let initial = potential.evaluate(model)?;
     let mut search = Search {
         potential,
-        topology: model.shared_topology(),
-        trial: model.conformation().clone(),
+        trial: model.to_model(),
         evaluations: 1,
     };
     let mut current = Point {
@@ -358,9 +351,8 @@ fn two_loop(history: &VecDeque<Pair>, gradient: &[f64]) -> Vec<f64> {
 
 struct Search<'a, P: ?Sized> {
     potential: &'a P,
-    topology: Arc<Topology>,
-    /// Scratch conformation carrying the cell and annotations of the input.
-    trial: Conformation,
+    /// Scratch model carrying the topology, cell, and annotations of the input.
+    trial: Model,
     evaluations: usize,
 }
 
@@ -392,7 +384,7 @@ impl<P: Potential + ?Sized> Search<'_, P> {
         }
         let positions = Positions::from_vec(Quantity::new(to_points(&x), CANONICAL_LENGTH_UNIT))?;
         self.trial.set_positions(positions.values())?;
-        let view = ModelView::new(&self.topology, &self.trial)?;
+        let view = self.trial.as_model_view();
         self.evaluations += 1;
         match self.potential.evaluate(view) {
             Ok(evaluation) => {

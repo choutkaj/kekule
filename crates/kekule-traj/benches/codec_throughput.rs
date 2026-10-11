@@ -330,27 +330,23 @@ fn base_frame(topology: &Arc<Topology>) -> Result<FrameBuffer, Box<dyn Error>> {
     let mut frame = FrameBuffer::new(Arc::clone(topology));
     frame
         .frame_mut()
-        .conformation_mut()
         .set_positions(Quantity::new(positions(topology), NANOMETER))?;
     Ok(frame)
 }
 
 fn dynamic_frame(topology: &Arc<Topology>) -> Result<FrameBuffer, Box<dyn Error>> {
     let mut frame = base_frame(topology)?;
-    frame
-        .frame_mut()
-        .conformation_mut()
-        .set_cell(Some(PeriodicCell::new(
-            Quantity::new(
-                [
-                    Vector3::new(5.0, 0.0, 0.0),
-                    Vector3::new(0.2, 5.1, 0.0),
-                    Vector3::new(0.1, 0.3, 5.2),
-                ],
-                NANOMETER,
-            ),
-            [true; 3],
-        )?));
+    frame.frame_mut().set_cell(Some(PeriodicCell::new(
+        Quantity::new(
+            [
+                Vector3::new(5.0, 0.0, 0.0),
+                Vector3::new(0.2, 5.1, 0.0),
+                Vector3::new(0.1, 0.3, 5.2),
+            ],
+            NANOMETER,
+        ),
+        [true; 3],
+    )?));
     frame.frame_mut().set_step(Some(0));
     frame
         .frame_mut()

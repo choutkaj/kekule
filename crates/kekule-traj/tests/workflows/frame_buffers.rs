@@ -40,15 +40,14 @@ fn annotated() -> Trajectory {
         frame.set_step(Some(index * 10));
         frame.set_velocities(Some(Velocities::zeros(3))).unwrap();
         frame.set_forces(Some(Forces::zeros(3))).unwrap();
-        let mut conformation = frame.conformation_mut();
-        conformation.set_cell(Some(
+        frame.set_cell(Some(
             PeriodicCell::orthorhombic(
                 Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
                 [true; 3],
             )
             .unwrap(),
         ));
-        let mut properties = conformation.properties_mut();
+        let mut properties = frame.properties_mut();
         properties
             .owner_mut()
             .insert(
@@ -67,7 +66,6 @@ fn annotated() -> Trajectory {
         trajectory
             .get_mut(index as usize)
             .unwrap()
-            .conformation_mut()
             .properties_mut()
             .bonds_mut()
             .insert(

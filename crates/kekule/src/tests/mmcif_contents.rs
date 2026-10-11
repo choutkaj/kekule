@@ -2063,12 +2063,11 @@ covale A N 1 A CA 1 doub
     .unwrap()
     .into_parts();
     let first_atom = TopologyAtomIndex::new(0);
-    let mut conformation = original.conformation_mut();
-    conformation.set_occupancy(first_atom, Some(0.625)).unwrap();
-    conformation
+    original.set_occupancy(first_atom, Some(0.625)).unwrap();
+    original
         .set_b_factor(first_atom, Some(Quantity::new(0.125, NANOMETER.powi(2))))
         .unwrap();
-    conformation
+    original
         .properties_mut()
         .atoms_mut()
         .insert(

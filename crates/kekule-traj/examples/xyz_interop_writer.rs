@@ -41,17 +41,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut writer = create_trajectory_writer(&output, Arc::clone(&topology), options)?;
     let mut frame = FrameBuffer::new(topology);
     for shift in [0.0, 0.1] {
-        frame
-            .frame_mut()
-            .conformation_mut()
-            .set_positions(Quantity::new(
-                [
-                    Point3::new(shift, 0.0, 0.0),
-                    Point3::new(0.9572 + shift, 0.0, 0.0),
-                    Point3::new(-0.239_987_2 + shift, 0.927_297, 0.0),
-                ],
-                ANGSTROM,
-            ))?;
+        frame.frame_mut().set_positions(Quantity::new(
+            [
+                Point3::new(shift, 0.0, 0.0),
+                Point3::new(0.9572 + shift, 0.0, 0.0),
+                Point3::new(-0.239_987_2 + shift, 0.927_297, 0.0),
+            ],
+            ANGSTROM,
+        ))?;
         writer.write_frame(frame.frame_view())?;
     }
     writer.finish()?;

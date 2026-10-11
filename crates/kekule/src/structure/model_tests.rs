@@ -233,9 +233,7 @@ fn position_updates_are_complete_finite_and_transactional() {
     let mut model = Model::from_molecule(small.clone(), &positions).unwrap();
     let original = model.positions().values().value().to_vec();
     assert!(matches!(
-        model
-            .conformation_mut()
-            .set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
+        model.set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
         Err(ConformationError::Position(
             PositionError::PositionCountMismatch { .. }
         ))
@@ -244,9 +242,7 @@ fn position_updates_are_complete_finite_and_transactional() {
     let mut invalid = original.clone();
     invalid[0] = Point3::new(f64::INFINITY, 0.0, 0.0);
     assert!(matches!(
-        model
-            .conformation_mut()
-            .set_positions(Quantity::new(&invalid, ANGSTROM)),
+        model.set_positions(Quantity::new(&invalid, ANGSTROM)),
         Err(ConformationError::Position(
             PositionError::NonFinitePosition { index: 0 }
         ))

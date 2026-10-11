@@ -200,7 +200,6 @@ fn gradient_differentiates_energy_and_components_add_up() {
     let energy_at = |points: &[Point3]| {
         let mut moved = model.clone();
         moved
-            .conformation_mut()
             .set_positions(Quantity::new(points, NANOMETER))
             .unwrap();
         potential
@@ -275,7 +274,6 @@ fn energy_is_rigid_motion_invariant_and_gradient_has_no_net_force() {
         .collect::<Vec<_>>();
     let mut transformed = model.clone();
     transformed
-        .conformation_mut()
         .set_positions(Quantity::new(moved, NANOMETER))
         .unwrap();
     let total = |m: &Model| {
@@ -320,7 +318,7 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
     )
     .unwrap();
     let mut periodic = model.clone();
-    periodic.conformation_mut().set_cell(Some(cell));
+    periodic.set_cell(Some(cell));
     assert_eq!(
         potential.energy(periodic.as_model_view()),
         Err(EvaluationError::UnsupportedPeriodicCell)
@@ -357,7 +355,6 @@ fn ensemble_members_and_trajectory_frames_evaluate_like_models() {
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     buffer
         .frame_mut()
-        .conformation_mut()
         .set_positions(model.positions().values())
         .unwrap();
     assert_eq!(

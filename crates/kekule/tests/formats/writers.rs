@@ -403,7 +403,6 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
             .atom_index(model.topology().atom_ids()[index])
             .unwrap();
         model
-            .conformation_mut()
             .set_occupancy(row, Some((index + 1) as f64 / 10.0))
             .unwrap();
     }

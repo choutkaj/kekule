@@ -1669,8 +1669,8 @@ mod tests {
             [true; 3],
         )
         .unwrap();
-        moving.conformation_mut().set_cell(Some(cell));
-        reference.conformation_mut().set_cell(Some(cell));
+        moving.set_cell(Some(cell));
+        reference.set_cell(Some(cell));
         let selection = all(&topology);
         let moving_before = moving.positions().values().value().to_vec();
 

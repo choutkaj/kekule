@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::properties::OwnerProperties;
+use kekule::properties::{OwnerProperties, RealizationProperties};
 use kekule::structure::{
-    AsModelView, Conformation, ConformationError, Forces, ModelView, Positions, Trajectory,
-    TrajectoryFrame, TrajectoryFrameMut, TrajectoryFrameView, Velocities,
+    AsModelView, ConformationError, Forces, ModelView, Positions, Trajectory, TrajectoryFrame,
+    TrajectoryFrameMut, TrajectoryFrameView, Velocities,
 };
 use kekule::topology::Topology;
 use kekule::units::Quantity;
@@ -26,7 +26,7 @@ pub struct FrameBufferData<'a> {
     time: Option<Quantity<f64>>,
     step: Option<u64>,
     owner: Option<&'a OwnerProperties>,
-    annotations: Option<&'a Conformation>,
+    annotations: Option<&'a RealizationProperties>,
 }
 
 impl<'a> FrameBufferData<'a> {
@@ -44,8 +44,8 @@ impl<'a> FrameBufferData<'a> {
         }
     }
 
-    /// Borrows every field, including occupancies, B-factors, and all
-    /// realization properties, from a topology-bound frame.
+    /// Borrows every field, including all realization properties, from a
+    /// topology-bound frame.
     pub fn from_frame_view(frame: TrajectoryFrameView<'a>) -> Self {
         let frame = frame.payload();
         Self {
@@ -56,7 +56,7 @@ impl<'a> FrameBufferData<'a> {
             time: frame.time(),
             step: frame.step(),
             owner: None,
-            annotations: Some(frame.conformation()),
+            annotations: Some(frame.properties()),
         }
     }
 
@@ -200,9 +200,8 @@ impl FrameBuffer {
         let mut frame = self.frame_mut();
         frame.set_step(None);
         frame.set_time(None).expect("clearing time is always valid");
-        let mut conformation = frame.conformation_mut();
-        conformation.set_cell(None);
-        clear_annotations(&mut conformation);
+        frame.set_cell(None);
+        frame.properties_mut().clear();
     }
 
     /// Replaces the complete visible frame transactionally.
@@ -217,16 +216,16 @@ impl FrameBuffer {
         self.positions().validate_all(&data.positions)?;
         let time = validated_time(data.time)?;
         if let Some(source) = data.annotations {
-            if source.atom_count() != self.atom_count() {
+            if source.atoms().len() != self.atom_count() {
                 return Err(ConformationError::AtomCountMismatch {
                     expected: self.atom_count(),
-                    actual: source.atom_count(),
+                    actual: source.atoms().len(),
                 });
             }
-            if source.properties().bonds().len() != self.properties().bonds().len() {
+            if source.bonds().len() != self.properties().bonds().len() {
                 return Err(ConformationError::BondCountMismatch {
                     expected: self.properties().bonds().len(),
-                    actual: source.properties().bonds().len(),
+                    actual: source.bonds().len(),
                 });
             }
         }
@@ -252,31 +251,19 @@ impl FrameBuffer {
         let mut frame = self.frame_mut();
         frame.set_step(data.step);
         frame.set_time(time).expect("time was validated");
-        let mut conformation = frame.conformation_mut();
-        conformation
+        frame
             .set_positions(data.positions)
             .expect("positions were validated");
-        conformation.set_cell(data.cell);
+        frame.set_cell(data.cell);
         match data.annotations {
-            Some(source) => {
-                conformation
-                    .set_occupancies(source.occupancies().map(<[_]>::to_vec))
-                    .expect("source occupancies are valid");
-                conformation
-                    .set_b_factors(
-                        source
-                            .b_factors()
-                            .map(|values| Quantity::new(values.value().to_vec(), values.unit())),
-                    )
-                    .expect("source B-factors are valid");
-                conformation
-                    .set_properties(source.properties().clone())
-                    .expect("annotation dimensions were validated");
-            }
+            Some(source) => frame
+                .set_properties(source.clone())
+                .expect("annotation dimensions were validated"),
             None => {
-                clear_annotations(&mut conformation);
+                let mut properties = frame.properties_mut();
+                properties.clear();
                 if let Some(owner) = data.owner {
-                    *conformation.properties_mut().owner_mut() = owner.clone();
+                    *properties.owner_mut() = owner.clone();
                 }
             }
         }
@@ -359,14 +346,4 @@ fn validated_time(time: Option<Quantity<f64>>) -> Result<Option<Quantity<f64>>, 
     let mut probe = TrajectoryFrame::new(Positions::zeros(0));
     probe.set_time(time)?;
     Ok(probe.time())
-}
-
-fn clear_annotations(conformation: &mut kekule::structure::ConformationMut<'_>) {
-    conformation
-        .set_occupancies(None)
-        .expect("clearing occupancies is always valid");
-    conformation
-        .set_b_factors(None)
-        .expect("clearing B-factors is always valid");
-    conformation.properties_mut().clear();
 }
