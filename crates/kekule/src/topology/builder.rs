@@ -794,14 +794,30 @@ impl fmt::Display for TopologyHierarchyError {
 
 impl std::error::Error for TopologyHierarchyError {}
 
+/// Adds `delta` to the scratch occurrence count of every in-range ID of one
+/// list. Out-of-range IDs fail their lookup before their count is read.
+fn tally(counts: &mut [isize], ids: impl IntoIterator<Item = usize>, delta: isize) {
+    for id in ids {
+        if let Some(count) = counts.get_mut(id) {
+            *count += delta;
+        }
+    }
+}
+
 fn validate_hierarchy(
     hierarchy: &Hierarchy,
     atoms: &DenseOrder<InstanceAtomId>,
 ) -> Result<(), TopologyHierarchyError> {
+    // Each child list is counted once into scratch space and reset afterwards,
+    // so validation stays linear even for chains with very many residues.
+    let mut residue_counts = vec![0isize; hierarchy.residues().count()];
+    let mut listed_residues = vec![false; residue_counts.len()];
     for (slot, (chain_id, chain)) in hierarchy.chains().enumerate() {
         if chain_id.index() != slot {
             return Err(TopologyHierarchyError::InvalidChainIdentifier { slot, id: chain_id });
         }
+        let residue_ids = || chain.residues().iter().map(|id| id.index());
+        tally(&mut residue_counts, residue_ids(), 1);
         for residue_id in chain.residues() {
             let residue = hierarchy.residue(*residue_id).map_err(|_| {
                 TopologyHierarchyError::InvalidChainResidue {
@@ -809,21 +825,18 @@ fn validate_hierarchy(
                     residue: *residue_id,
                 }
             })?;
-            if residue.chain() != chain_id
-                || chain
-                    .residues()
-                    .iter()
-                    .filter(|candidate| **candidate == *residue_id)
-                    .count()
-                    != 1
-            {
+            if residue.chain() != chain_id || residue_counts[residue_id.index()] != 1 {
                 return Err(TopologyHierarchyError::InconsistentChainResidue {
                     chain: chain_id,
                     residue: *residue_id,
                 });
             }
+            listed_residues[residue_id.index()] = true;
         }
+        tally(&mut residue_counts, residue_ids(), -1);
     }
+    let mut site_counts = vec![0isize; hierarchy.atom_sites().count()];
+    let mut listed_sites = vec![false; site_counts.len()];
     for (slot, (residue_id, residue)) in hierarchy.residues().enumerate() {
         if residue_id.index() != slot {
             return Err(TopologyHierarchyError::InvalidResidueIdentifier {
@@ -831,24 +844,22 @@ fn validate_hierarchy(
                 id: residue_id,
             });
         }
-        let chain = hierarchy.chain(residue.chain()).map_err(|_| {
+        hierarchy.chain(residue.chain()).map_err(|_| {
             TopologyHierarchyError::InvalidResidueChain {
                 residue: residue_id,
                 chain: residue.chain(),
             }
         })?;
-        if chain
-            .residues()
-            .iter()
-            .filter(|candidate| **candidate == residue_id)
-            .count()
-            != 1
-        {
+        // Every chain listing was validated above, so a residue listed anywhere
+        // is listed exactly once, by its own chain.
+        if !listed_residues[residue_id.index()] {
             return Err(TopologyHierarchyError::InconsistentChainResidue {
                 chain: residue.chain(),
                 residue: residue_id,
             });
         }
+        let site_ids = || residue.atom_sites().iter().map(|id| id.index());
+        tally(&mut site_counts, site_ids(), 1);
         for site_id in residue.atom_sites() {
             let site = hierarchy.atom_site(*site_id).map_err(|_| {
                 TopologyHierarchyError::InvalidResidueAtomSite {
@@ -856,38 +867,28 @@ fn validate_hierarchy(
                     site: *site_id,
                 }
             })?;
-            if site.residue() != residue_id
-                || residue
-                    .atom_sites()
-                    .iter()
-                    .filter(|candidate| **candidate == *site_id)
-                    .count()
-                    != 1
-            {
+            if site.residue() != residue_id || site_counts[site_id.index()] != 1 {
                 return Err(TopologyHierarchyError::InconsistentResidueAtomSite {
                     residue: residue_id,
                     site: *site_id,
                 });
             }
+            listed_sites[site_id.index()] = true;
         }
+        tally(&mut site_counts, site_ids(), -1);
     }
     for (slot, (site_id, site)) in hierarchy.atom_sites().enumerate() {
         if site_id.index() != slot {
             return Err(TopologyHierarchyError::InvalidAtomSiteIdentifier { slot, id: site_id });
         }
-        let residue = hierarchy.residue(site.residue()).map_err(|_| {
+        hierarchy.residue(site.residue()).map_err(|_| {
             TopologyHierarchyError::InvalidAtomSiteResidue {
                 site: site_id,
                 residue: site.residue(),
             }
         })?;
-        if residue
-            .atom_sites()
-            .iter()
-            .filter(|candidate| **candidate == site_id)
-            .count()
-            != 1
-        {
+        // As for residues, a validated listing is unique and by the owner.
+        if !listed_sites[site_id.index()] {
             return Err(TopologyHierarchyError::InconsistentResidueAtomSite {
                 residue: site.residue(),
                 site: site_id,

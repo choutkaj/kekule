@@ -179,6 +179,10 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Publishing a topology no longer takes time quadratic in the residues of one
+  chain or the atom sites of one residue. A 200,000-residue chain now validates
+  in about 0.1 s instead of 14 s, which also dominated mmCIF interpretation of
+  large structures.
 - V3000 Molfiles may omit the BOND section when their COUNTS line declares no
   bonds, as RDKit writes molecules without bonds. Declared bonds still
   require the section.
