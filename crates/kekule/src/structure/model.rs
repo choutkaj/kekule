@@ -15,7 +15,7 @@ use crate::units::Quantity;
 use super::model_state::ModelState;
 use super::scalars::{b_factor_quantities, b_factor_quantity, AtomScalars};
 use super::state::{
-    is_bound, realization_mutators, realization_readers, site_mutators, site_readers,
+    is_bound, realization_mutators, realization_readers, site_mutators, site_readers, subset_rows,
     validate_binding,
 };
 use super::{ConformationError, PositionError, Positions};
@@ -212,17 +212,7 @@ impl Model {
     /// onto it. Realization owner properties are dropped.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, ModelError> {
         let subset = self.topology.subset(selection)?;
-        let correspondence = subset.correspondence();
-        let atoms = correspondence
-            .source_atom_indices()
-            .iter()
-            .map(|index| index.index())
-            .collect::<Vec<_>>();
-        let bonds = correspondence
-            .source_bond_indices()
-            .iter()
-            .map(|index| index.index())
-            .collect::<Vec<_>>();
+        let (atoms, bonds) = subset_rows(&subset);
         let state = ModelState {
             positions: self.positions.select_indices(&atoms)?,
             cell: self.cell,

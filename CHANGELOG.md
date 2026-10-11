@@ -45,6 +45,15 @@ All notable changes to Kekule are documented in this file.
   - Trajectory frames cannot hold occupancies or B-factors, so trajectory
     writers no longer reject them, and `FrameBufferData` borrows only
     realization properties from a source frame.
+- **Breaking:** `Ensemble` and `Trajectory` each own their topology,
+  collection properties, and items and implement their own operations, so
+  the two can diverge. The generic `Realization` trait and the
+  `RealizationView`, `RealizationMut`, and `RealizationIter` types are
+  removed. `EnsembleMemberView`, `EnsembleMemberMut`, `TrajectoryFrameView`,
+  and `TrajectoryFrameMut` are now concrete types with the same methods, and
+  `iter()` returns `EnsembleIter` or `TrajectoryIter`. Use
+  `EnsembleMemberView::new` or `TrajectoryFrameView::new` in place of
+  `RealizationView::new`.
 
 ### Fixed
 

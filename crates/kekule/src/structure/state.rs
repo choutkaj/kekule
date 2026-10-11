@@ -12,6 +12,7 @@ use std::fmt;
 
 use crate::geometry::{PeriodicCell, PeriodicCellError, RigidTransform};
 use crate::properties::{PropertyError, RealizationProperties};
+use crate::topology::transform::TopologySubset;
 use crate::topology::{Topology, TopologyAtomIndex};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 
@@ -76,6 +77,22 @@ pub(crate) fn check_property_rows(
         });
     }
     Ok(())
+}
+
+/// Source dense atom and bond rows of a subset, in subset dense order.
+pub(crate) fn subset_rows(subset: &TopologySubset) -> (Vec<usize>, Vec<usize>) {
+    let correspondence = subset.correspondence();
+    let atoms = correspondence
+        .source_atom_indices()
+        .iter()
+        .map(|index| index.index())
+        .collect();
+    let bonds = correspondence
+        .source_bond_indices()
+        .iter()
+        .map(|index| index.index())
+        .collect();
+    (atoms, bonds)
 }
 
 /// Applies a rigid transform to every position.

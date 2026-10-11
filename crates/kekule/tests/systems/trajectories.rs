@@ -7,7 +7,8 @@ use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
-    Forces, Positions, RealizationError, RealizationView, Trajectory, TrajectoryFrame, Velocities,
+    Forces, Positions, RealizationError, Trajectory, TrajectoryFrame, TrajectoryFrameView,
+    Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyBondIndex};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
@@ -204,7 +205,7 @@ fn stored_editor_keeps_dimensions_even_after_columns_are_removed_or_editor_is_fo
     assert_eq!(trajectory.get(0).unwrap().step(), Some(500));
     let topology = trajectory.shared_topology();
     let edited = trajectory.get(0).unwrap().payload().clone();
-    RealizationView::new(&topology, &edited).unwrap();
+    TrajectoryFrameView::new(&topology, &edited).unwrap();
     assert!(trajectory.get_mut(10).is_none());
 }
 

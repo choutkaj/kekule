@@ -1,19 +1,18 @@
 use std::sync::Arc;
 
 use crate::geometry::{PeriodicCell, RigidTransform};
-use crate::properties::RealizationProperties;
-use crate::topology::Topology;
+use crate::properties::{OwnerProperties, RealizationProperties, TopologyPropertiesMut};
+use crate::topology::{AtomSelection, Topology, TopologyPerceptionError};
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
 
-use super::realizations::sealed::Payload;
-use super::realizations::{realization_collection, RealizationStore};
 use super::scalars::ABSENT;
 use super::state::{
-    realization_mutators, realization_readers, transform_cell, transform_positions,
+    is_bound, realization_mutators, realization_readers, subset_rows, transform_cell,
+    transform_positions, validate_binding,
 };
 use super::{
-    ConformationError, Ensemble, EnsembleMember, Forces, ModelView, Positions, Realization,
-    RealizationError, RealizationMut, RealizationView, Velocities,
+    AsModelView, ConformationError, Ensemble, EnsembleMember, Forces, Model, ModelView, Positions,
+    RealizationError, Velocities,
 };
 
 /// A time-ordered sequence of frames of one shared topology, as produced by
@@ -32,22 +31,285 @@ use super::{
 /// `kekule-traj` companion crate.
 #[derive(Debug, Clone)]
 pub struct Trajectory {
-    store: RealizationStore<TrajectoryFrame>,
+    topology: Arc<Topology>,
+    properties: OwnerProperties,
+    frames: Vec<TrajectoryFrame>,
 }
 
-realization_collection!(
-    Trajectory,
-    TrajectoryFrame,
-    TrajectoryFrameView<'_>,
-    TrajectoryFrameMut<'_>,
-    "frame"
-);
+impl Trajectory {
+    /// An empty trajectory of one shared topology.
+    pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
+        Self {
+            topology: topology.into(),
+            properties: OwnerProperties::new(),
+            frames: Vec::new(),
+        }
+    }
 
-/// One topology-bound [`TrajectoryFrame`] borrowed from a [`Trajectory`].
-pub type TrajectoryFrameView<'a> = RealizationView<'a, TrajectoryFrame>;
+    /// Validates and collects each frame in order, binding its bond property
+    /// rows. Fails on the first invalid frame.
+    pub fn from_items(
+        topology: impl Into<Arc<Topology>>,
+        frames: impl IntoIterator<Item = TrajectoryFrame>,
+    ) -> Result<Self, RealizationError> {
+        let mut trajectory = Self::new(topology);
+        for frame in frames {
+            trajectory.push(frame)?;
+        }
+        Ok(trajectory)
+    }
 
-/// Dimension-preserving editor for one [`TrajectoryFrame`] of a [`Trajectory`].
-pub type TrajectoryFrameMut<'a> = RealizationMut<'a, TrajectoryFrame>;
+    pub fn topology(&self) -> &Topology {
+        &self.topology
+    }
+
+    pub fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
+    /// Trajectory-level annotations.
+    pub fn properties(&self) -> &OwnerProperties {
+        &self.properties
+    }
+
+    pub fn properties_mut(&mut self) -> &mut OwnerProperties {
+        &mut self.properties
+    }
+
+    pub fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
+    /// One topology-bound frame by stable index.
+    pub fn get(&self, index: usize) -> Option<TrajectoryFrameView<'_>> {
+        self.frames.get(index).map(|frame| TrajectoryFrameView {
+            topology: &self.topology,
+            frame,
+        })
+    }
+
+    /// A dimension-preserving editor for one frame. Whole-frame replacement
+    /// goes through [`Self::replace`].
+    pub fn get_mut(&mut self, index: usize) -> Option<TrajectoryFrameMut<'_>> {
+        self.frames
+            .get_mut(index)
+            .map(|frame| TrajectoryFrameMut { frame })
+    }
+
+    /// Topology-bound frames in temporal order.
+    pub fn iter(&self) -> TrajectoryIter<'_> {
+        TrajectoryIter {
+            topology: &self.topology,
+            frames: self.frames.iter(),
+        }
+    }
+
+    /// Validates and appends one frame, binding its bond property rows.
+    pub fn push(&mut self, mut frame: TrajectoryFrame) -> Result<(), RealizationError> {
+        self.bind(&mut frame)?;
+        self.frames.push(frame);
+        Ok(())
+    }
+
+    /// Validates and replaces one frame, returning the previous one. The
+    /// index is checked first; failure leaves the trajectory unchanged.
+    pub fn replace(
+        &mut self,
+        index: usize,
+        mut frame: TrajectoryFrame,
+    ) -> Result<TrajectoryFrame, RealizationError> {
+        self.check_index(index)?;
+        self.bind(&mut frame)?;
+        Ok(std::mem::replace(&mut self.frames[index], frame))
+    }
+
+    /// Removes and returns one frame, shifting later ones down.
+    pub fn remove(&mut self, index: usize) -> Result<TrajectoryFrame, RealizationError> {
+        self.check_index(index)?;
+        Ok(self.frames.remove(index))
+    }
+
+    /// Replaces the positions of every frame transactionally, in order.
+    /// Other state is kept.
+    pub fn replace_positions(
+        &mut self,
+        positions: impl IntoIterator<Item = Positions>,
+    ) -> Result<(), RealizationError> {
+        let positions = positions.into_iter().collect::<Vec<_>>();
+        if positions.len() != self.frames.len() {
+            return Err(RealizationError::ItemCountMismatch {
+                expected: self.frames.len(),
+                actual: positions.len(),
+            });
+        }
+        for values in &positions {
+            if values.len() != self.topology.atom_count() {
+                return Err(ConformationError::AtomCountMismatch {
+                    expected: self.topology.atom_count(),
+                    actual: values.len(),
+                }
+                .into());
+            }
+        }
+        for (frame, positions) in self.frames.iter_mut().zip(positions) {
+            frame.positions = positions;
+        }
+        Ok(())
+    }
+
+    /// Copies frames in the requested order, sharing the topology. Ranges and
+    /// strides can be written as `(start..end).step_by(stride)`; duplicates
+    /// and reordering are allowed, and each frame keeps its stored time and
+    /// step. Trajectory properties are kept.
+    pub fn select(
+        &self,
+        indices: impl IntoIterator<Item = usize>,
+    ) -> Result<Self, RealizationError> {
+        let frames = indices
+            .into_iter()
+            .map(|index| {
+                self.check_index(index)?;
+                Ok(self.frames[index].clone())
+            })
+            .collect::<Result<Vec<_>, RealizationError>>()?;
+        Ok(Self {
+            topology: self.shared_topology(),
+            properties: self.properties.clone(),
+            frames,
+        })
+    }
+
+    /// Publishes one induced topology subset and projects every frame onto
+    /// it. Trajectory and per-frame owner properties are dropped.
+    pub fn subset(&self, selection: &AtomSelection) -> Result<Self, RealizationError> {
+        let subset = self.topology.subset(selection)?;
+        let (atoms, bonds) = subset_rows(&subset);
+        let frames = self
+            .frames
+            .iter()
+            .map(|frame| frame.project(&atoms, &bonds))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            topology: subset.shared_topology(),
+            properties: OwnerProperties::new(),
+            frames,
+        })
+    }
+
+    /// Installs default perception through one new shared topology snapshot.
+    ///
+    /// Delegates to [`Topology::perceived`] once and keeps every frame and the
+    /// trajectory properties without copying. Failure leaves the trajectory
+    /// unchanged. The new snapshot shares the original layout, so selections,
+    /// buffers, and prepared potentials stay usable.
+    pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
+        self.topology = Arc::new(self.topology.perceived()?);
+        Ok(())
+    }
+
+    /// Length-preserving mutable access to the shared topology's static
+    /// annotations.
+    ///
+    /// A topology shared with other owners is first replaced by a snapshot of
+    /// it ([`Arc::make_mut`]), so those owners are unaffected. Either way the
+    /// layout is kept, so every frame, selection, buffer, and prepared
+    /// potential remains usable. See [`Topology::properties_mut`].
+    pub fn topology_properties_mut(&mut self) -> TopologyPropertiesMut<'_> {
+        Arc::make_mut(&mut self.topology).properties_mut()
+    }
+
+    /// Consumes the trajectory, transferring topology, trajectory properties,
+    /// and every frame without copying.
+    pub fn into_parts(self) -> (Arc<Topology>, OwnerProperties, Vec<TrajectoryFrame>) {
+        (self.topology, self.properties, self.frames)
+    }
+
+    pub fn into_items(self) -> Vec<TrajectoryFrame> {
+        self.frames
+    }
+
+    /// Checks that every present time is non-decreasing; with `require_all`,
+    /// a frame without time is an error.
+    pub fn validate_monotonic_time(&self, require_all: bool) -> Result<(), RealizationError> {
+        let mut previous = None;
+        for (index, frame) in self.frames.iter().enumerate() {
+            let Some(time) = frame.time else {
+                if require_all {
+                    return Err(RealizationError::MissingTime { frame: index });
+                }
+                continue;
+            };
+            let value = time.into_value();
+            if previous.is_some_and(|previous| value < previous) {
+                return Err(RealizationError::NonMonotonicTime { frame: index });
+            }
+            previous = Some(value);
+        }
+        Ok(())
+    }
+
+    /// Reinterprets the frames as an equally weighted ensemble (every member
+    /// has weight `1.0`), dropping temporal order, velocities, forces, time,
+    /// and step. Positions, cells, and properties move without copying.
+    ///
+    /// Equal weights are right for frames sampled from equilibrium at a
+    /// constant interval; reweight explicitly otherwise.
+    pub fn into_ensemble(self) -> Ensemble {
+        let members = self
+            .frames
+            .into_iter()
+            .map(|frame| {
+                EnsembleMember::from_frame_state(frame.positions, frame.cell, frame.properties)
+            })
+            .collect();
+        Ensemble::from_bound_members(self.topology, self.properties, members)
+    }
+
+    /// Applies one rigid transform per frame transactionally.
+    pub(crate) fn transform_frames(
+        &mut self,
+        transforms: &[RigidTransform],
+    ) -> Result<(), ConformationError> {
+        debug_assert_eq!(transforms.len(), self.frames.len());
+        let frames = self
+            .frames
+            .iter()
+            .zip(transforms)
+            .map(|(frame, transform)| frame.transformed(*transform))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.frames = frames;
+        Ok(())
+    }
+
+    fn check_index(&self, index: usize) -> Result<(), RealizationError> {
+        if index >= self.frames.len() {
+            return Err(RealizationError::IndexOutOfRange {
+                index,
+                len: self.frames.len(),
+            });
+        }
+        Ok(())
+    }
+
+    fn bind(&self, frame: &mut TrajectoryFrame) -> Result<(), RealizationError> {
+        validate_binding(frame.atom_count(), &frame.properties, &self.topology)?;
+        frame.properties.bind_bond_rows(self.topology.bond_count());
+        Ok(())
+    }
+}
+
+impl<'a> IntoIterator for &'a Trajectory {
+    type Item = TrajectoryFrameView<'a>;
+    type IntoIter = TrajectoryIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
 
 /// One trajectory frame: positions in dense topology atom order, an optional
 /// periodic cell, realization properties, and optional velocities, forces,
@@ -163,6 +425,16 @@ impl TrajectoryFrame {
         self.step = step;
     }
 
+    /// Applies a rigid transform transactionally: positions move; cells,
+    /// velocities, and forces rotate.
+    pub fn apply_rigid_transform(
+        &mut self,
+        transform: &RigidTransform,
+    ) -> Result<(), ConformationError> {
+        *self = self.transformed(*transform)?;
+        Ok(())
+    }
+
     fn check_len(&self, actual: usize) -> Result<(), ConformationError> {
         if actual != self.positions.len() {
             return Err(ConformationError::AtomCountMismatch {
@@ -171,35 +443,6 @@ impl TrajectoryFrame {
             });
         }
         Ok(())
-    }
-
-    fn storage_ref(&self) -> &Self {
-        self
-    }
-
-    fn storage(&mut self) -> &mut Self {
-        self
-    }
-
-    realization_readers!();
-    realization_mutators!();
-}
-
-impl Payload for TrajectoryFrame {
-    fn row_count(&self) -> usize {
-        self.positions.len()
-    }
-
-    fn realization_properties(&self) -> &RealizationProperties {
-        &self.properties
-    }
-
-    fn positions_storage_mut(&mut self) -> &mut Positions {
-        &mut self.positions
-    }
-
-    fn properties_storage_mut(&mut self) -> &mut RealizationProperties {
-        &mut self.properties
     }
 
     fn model_view<'a>(&'a self, topology: &'a Arc<Topology>) -> ModelView<'a> {
@@ -213,6 +456,7 @@ impl Payload for TrajectoryFrame {
         )
     }
 
+    /// Projects every dense row through a subset correspondence.
     fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, ConformationError> {
         Ok(Self {
             positions: self.positions.select_indices(atoms)?,
@@ -246,97 +490,169 @@ impl Payload for TrajectoryFrame {
             step: self.step,
         })
     }
+
+    fn storage_ref(&self) -> &Self {
+        self
+    }
+
+    fn storage(&mut self) -> &mut Self {
+        self
+    }
+
+    realization_readers!();
+    realization_mutators!();
 }
 
-impl Realization for TrajectoryFrame {}
+/// One topology-bound [`TrajectoryFrame`] borrowed from a [`Trajectory`].
+///
+/// Reads frame state through `Deref` and converts to a [`ModelView`] through
+/// [`AsModelView`] without copying.
+#[derive(Debug, Clone, Copy)]
+pub struct TrajectoryFrameView<'a> {
+    topology: &'a Arc<Topology>,
+    frame: &'a TrajectoryFrame,
+}
 
-impl TrajectoryFrame {
+impl std::ops::Deref for TrajectoryFrameView<'_> {
+    type Target = TrajectoryFrame;
+
+    fn deref(&self) -> &Self::Target {
+        self.frame
+    }
+}
+
+impl<'a> TrajectoryFrameView<'a> {
+    /// Binds a frame that already has every row `topology` requires.
+    pub fn new(
+        topology: &'a Arc<Topology>,
+        frame: &'a TrajectoryFrame,
+    ) -> Result<Self, ConformationError> {
+        validate_binding(frame.atom_count(), &frame.properties, topology)?;
+        if !is_bound(frame.atom_count(), &frame.properties, topology) {
+            return Err(ConformationError::BondCountMismatch {
+                expected: topology.bond_count(),
+                actual: frame.properties.bonds().len(),
+            });
+        }
+        Ok(Self { topology, frame })
+    }
+
+    pub fn topology(self) -> &'a Topology {
+        self.topology
+    }
+
+    pub fn shared_topology(self) -> Arc<Topology> {
+        Arc::clone(self.topology)
+    }
+
+    /// The borrowed frame with the view's full lifetime.
+    pub fn payload(self) -> &'a TrajectoryFrame {
+        self.frame
+    }
+
+    /// Borrows the frame as the common kernel input, with the view's full
+    /// lifetime.
+    pub fn as_model_view(self) -> ModelView<'a> {
+        self.frame.model_view(self.topology)
+    }
+
+    /// Materializes the frame as an owned model, dropping velocities, forces,
+    /// time, and step.
+    pub fn to_model(self) -> Model {
+        self.as_model_view().to_model()
+    }
+}
+
+impl AsModelView for TrajectoryFrameView<'_> {
+    fn as_model_view(&self) -> ModelView<'_> {
+        TrajectoryFrameView::as_model_view(*self)
+    }
+}
+
+/// Dimension-preserving mutable access to one frame of a [`Trajectory`].
+///
+/// Reads use `Deref`. There is deliberately no `DerefMut`; replace a whole
+/// frame through [`Trajectory::replace`].
+#[derive(Debug)]
+pub struct TrajectoryFrameMut<'a> {
+    frame: &'a mut TrajectoryFrame,
+}
+
+impl std::ops::Deref for TrajectoryFrameMut<'_> {
+    type Target = TrajectoryFrame;
+
+    fn deref(&self) -> &Self::Target {
+        self.frame
+    }
+}
+
+impl TrajectoryFrameMut<'_> {
+    pub fn set_velocities(
+        &mut self,
+        velocities: Option<Velocities>,
+    ) -> Result<(), ConformationError> {
+        self.frame.set_velocities(velocities)
+    }
+
+    pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), ConformationError> {
+        self.frame.set_forces(forces)
+    }
+
+    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), ConformationError> {
+        self.frame.set_time(time)
+    }
+
+    pub fn set_step(&mut self, step: Option<u64>) {
+        self.frame.set_step(step);
+    }
+
+    /// Removes velocities, returning their storage for reuse.
+    pub fn take_velocities(&mut self) -> Option<Velocities> {
+        self.frame.take_velocities()
+    }
+
+    /// Removes forces, returning their storage for reuse.
+    pub fn take_forces(&mut self) -> Option<Forces> {
+        self.frame.take_forces()
+    }
+
     /// Applies a rigid transform transactionally: positions move; cells,
     /// velocities, and forces rotate.
     pub fn apply_rigid_transform(
         &mut self,
         transform: &RigidTransform,
     ) -> Result<(), ConformationError> {
-        *self = self.transformed(*transform)?;
-        Ok(())
+        self.frame.apply_rigid_transform(transform)
     }
-}
 
-impl RealizationMut<'_, TrajectoryFrame> {
     fn storage(&mut self) -> &mut TrajectoryFrame {
-        self.item
+        self.frame
     }
 
     realization_mutators!();
+}
 
-    pub fn set_velocities(
-        &mut self,
-        velocities: Option<Velocities>,
-    ) -> Result<(), ConformationError> {
-        self.item.set_velocities(velocities)
+/// Iterator over the topology-bound frames of a [`Trajectory`], in temporal
+/// order.
+#[derive(Debug, Clone)]
+pub struct TrajectoryIter<'a> {
+    topology: &'a Arc<Topology>,
+    frames: std::slice::Iter<'a, TrajectoryFrame>,
+}
+
+impl<'a> Iterator for TrajectoryIter<'a> {
+    type Item = TrajectoryFrameView<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let topology = self.topology;
+        self.frames
+            .next()
+            .map(|frame| TrajectoryFrameView { topology, frame })
     }
 
-    pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), ConformationError> {
-        self.item.set_forces(forces)
-    }
-
-    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), ConformationError> {
-        self.item.set_time(time)
-    }
-
-    pub fn set_step(&mut self, step: Option<u64>) {
-        self.item.set_step(step);
-    }
-
-    /// Removes velocities, returning their storage for reuse.
-    pub fn take_velocities(&mut self) -> Option<Velocities> {
-        self.item.take_velocities()
-    }
-
-    /// Removes forces, returning their storage for reuse.
-    pub fn take_forces(&mut self) -> Option<Forces> {
-        self.item.take_forces()
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.frames.size_hint()
     }
 }
 
-impl Trajectory {
-    /// Checks that every present time is non-decreasing; with `require_all`,
-    /// a frame without time is an error.
-    pub fn validate_monotonic_time(&self, require_all: bool) -> Result<(), RealizationError> {
-        let mut previous = None;
-        for (index, frame) in self.iter().enumerate() {
-            let Some(time) = frame.time() else {
-                if require_all {
-                    return Err(RealizationError::MissingTime { frame: index });
-                }
-                continue;
-            };
-            let value = time.into_value();
-            if previous.is_some_and(|previous| value < previous) {
-                return Err(RealizationError::NonMonotonicTime { frame: index });
-            }
-            previous = Some(value);
-        }
-        Ok(())
-    }
-
-    /// Reinterprets the frames as an equally weighted ensemble (every member
-    /// has weight `1.0`), dropping temporal order, velocities, forces, time,
-    /// and step. Positions, cells, and properties move without copying.
-    ///
-    /// Equal weights are right for frames sampled from equilibrium at a
-    /// constant interval; reweight explicitly otherwise.
-    pub fn into_ensemble(self) -> Ensemble {
-        Ensemble::from_store(self.store.map_items(|frame| {
-            EnsembleMember::from_frame_state(frame.positions, frame.cell, frame.properties)
-        }))
-    }
-
-    pub(crate) fn store(&self) -> &RealizationStore<TrajectoryFrame> {
-        &self.store
-    }
-
-    pub(crate) fn store_mut(&mut self) -> &mut RealizationStore<TrajectoryFrame> {
-        &mut self.store
-    }
-}
+impl ExactSizeIterator for TrajectoryIter<'_> {}
