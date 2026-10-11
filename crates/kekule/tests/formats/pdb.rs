@@ -29,13 +29,18 @@ struct Site {
 impl Site {
     fn line(&self) -> String {
         let [x, y, z] = self.position;
+        // Residue names fill columns 18-20, or 18-21 when four long.
+        let residue = if self.residue.len() == 4 {
+            self.residue.to_owned()
+        } else {
+            format!("{:>3} ", self.residue)
+        };
         format!(
-            "{:<6}{:>5} {:<4}{}{:>3} {}{:>4}{}   {x:>8.3}{y:>8.3}{z:>8.3}{:>6.2}{:>6.2}      {:<4}{:>2}{:<2}",
+            "{:<6}{:>5} {:<4}{}{residue}{}{:>4}{}   {x:>8.3}{y:>8.3}{z:>8.3}{:>6.2}{:>6.2}      {:<4}{:>2}{:<2}",
             self.record,
             self.serial,
             self.name,
             self.alternate_location,
-            self.residue,
             self.chain,
             self.sequence,
             self.insertion_code,
@@ -1039,6 +1044,357 @@ fn pdb_interpretation_rejects_contradictory_records() {
             (kind, line),
             "{text}"
         );
+    }
+}
+
+/// One atom: the aligned name field, element symbol, and position.
+type Atom = (&'static str, &'static str, [f64; 3]);
+
+/// Records of one residue, shifted along x by `offset`.
+fn residue_records(
+    record: &'static str,
+    residue: &'static str,
+    chain: char,
+    atoms: &[Atom],
+    offset: f64,
+) -> Vec<String> {
+    atoms
+        .iter()
+        .map(|&(name, element, [x, y, z])| {
+            site(
+                record,
+                "1",
+                name,
+                residue,
+                chain,
+                "1",
+                [x + offset, y, z],
+                element,
+            )
+            .line()
+        })
+        .collect()
+}
+
+fn inferred_components(result: &StructureInterpretation) -> Vec<String> {
+    result
+        .report()
+        .issues()
+        .iter()
+        .filter_map(|issue| match issue {
+            StructureInterpretIssue::ResidueBondsInferred { component_id, .. } => {
+                Some(component_id.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn force_field_libraries_interpret_their_residue_names() {
+    use kekule::components::ComponentLibrary;
+    use kekule::pdb::ConnectivityOptions;
+    use std::sync::Arc;
+
+    // Positions are the ideal coordinates of the dictionary's HIS, ASP, and
+    // ILE entries, the latter with its atoms under CHARMM names.
+    const HISTIDINE: &[Atom] = &[
+        (" N  ", "N", [-0.040, -1.210, 0.053]),
+        (" CA ", "C", [1.172, -1.709, 0.652]),
+        (" C  ", "C", [1.083, -3.207, 0.905]),
+        (" O  ", "O", [0.040, -3.770, 1.222]),
+        (" CB ", "C", [1.484, -0.975, 1.962]),
+        (" CG ", "C", [2.940, -1.060, 2.353]),
+        (" ND1", "N", [3.380, -2.075, 3.129]),
+        (" CD2", "C", [3.960, -0.251, 2.046]),
+        (" CE1", "C", [4.693, -1.908, 3.317]),
+        (" NE2", "N", [5.058, -0.801, 2.662]),
+        (" OXT", "O", [2.247, -3.882, 0.744]),
+        (" H  ", "H", [-0.102, -1.155, -0.950]),
+        (" H2 ", "H", [-0.715, -0.741, 0.634]),
+        (" HA ", "H", [1.965, -1.558, -0.089]),
+        (" HB2", "H", [1.215, 0.087, 1.879]),
+        (" HB3", "H", [0.859, -1.368, 2.775]),
+        (" HD2", "H", [4.108, 0.647, 1.479]),
+        (" HE1", "H", [5.340, -2.550, 3.892]),
+        (" HE2", "H", [6.002, -0.428, 2.627]),
+        (" HXT", "H", [2.188, -4.848, 0.901]),
+    ];
+    const ASPARTATE: &[Atom] = &[
+        (" N  ", "N", [-0.317, 1.688, 0.066]),
+        (" CA ", "C", [-0.470, 0.286, -0.344]),
+        (" C  ", "C", [-1.868, -0.180, -0.029]),
+        (" O  ", "O", [-2.534, 0.415, 0.786]),
+        (" CB ", "C", [0.539, -0.580, 0.413]),
+        (" CG ", "C", [1.938, -0.195, 0.004]),
+        (" OD1", "O", [2.109, 0.681, -0.810]),
+        (" OD2", "O", [2.992, -0.826, 0.543]),
+        (" OXT", "O", [-2.374, -1.256, -0.652]),
+    ];
+    // A zwitterionic isoleucine with CHARMM's N- and C-terminal patches.
+    const ISOLEUCINE: &[Atom] = &[
+        (" N  ", "N", [-1.944, 0.335, -0.343]),
+        (" CA ", "C", [-0.487, 0.519, -0.369]),
+        (" C  ", "C", [0.066, -0.032, -1.657]),
+        (" OT1", "O", [-0.484, -0.958, -2.203]),
+        (" OT2", "O", [1.171, 0.504, -2.197]),
+        (" CB ", "C", [0.140, -0.219, 0.814]),
+        (" CG1", "C", [-0.421, 0.341, 2.122]),
+        (" CG2", "C", [1.658, -0.027, 0.788]),
+        (" CD ", "C", [0.206, -0.397, 3.305]),
+        (" HA ", "H", [-0.253, 1.582, -0.299]),
+        (" HB ", "H", [-0.092, -1.281, 0.744]),
+        ("HG11", "H", [-1.502, 0.204, 2.141]),
+        ("HG12", "H", [-0.188, 1.403, 2.192]),
+        ("HG21", "H", [1.891, 1.034, 0.857]),
+        ("HG22", "H", [2.105, -0.554, 1.631]),
+        ("HG23", "H", [2.059, -0.427, -0.143]),
+        (" HD1", "H", [-0.193, 0.001, 4.237]),
+        (" HD2", "H", [-0.026, -1.460, 3.235]),
+        (" HD3", "H", [1.287, -0.261, 3.286]),
+        (" HT1", "H", [-2.112, -0.656, -0.410]),
+        (" HT2", "H", [-2.256, 0.622, 0.572]),
+        (" HT3", "H", [-2.300, 0.950, -1.100]),
+    ];
+    let with = |library: ComponentLibrary| StructureInterpretOptions {
+        connectivity: ConnectivityOptions {
+            components: Some(Arc::new(library)),
+            ..ConnectivityOptions::default()
+        },
+        ..StructureInterpretOptions::default()
+    };
+
+    // AMBER: the NE2-protonated histidine, an aspartate without hydrogens,
+    // water, and a sodium ion.
+    let amber = entry(
+        &[
+            residue_records("ATOM", "HIE", 'A', HISTIDINE, 0.0),
+            residue_records("ATOM", "ASP", 'B', ASPARTATE, 20.0),
+            residue_records(
+                "HETATM",
+                "WAT",
+                'W',
+                &[
+                    (" O  ", "O", [0.0, 0.0, 0.0]),
+                    (" H1 ", "H", [0.96, 0.0, 0.0]),
+                    (" H2 ", "H", [-0.24, 0.93, 0.0]),
+                ],
+                40.0,
+            ),
+            residue_records(
+                "HETATM",
+                "Na+",
+                'I',
+                &[("Na+ ", "NA", [0.0, 0.0, 0.0])],
+                60.0,
+            ),
+        ]
+        .concat(),
+    );
+    let document = pdb::parse_str(&amber).unwrap();
+    let templated =
+        pdb::interpret_with_options(&document, with(ComponentLibrary::amber())).unwrap();
+    assert_eq!(templated.topology().bond_count(), 30);
+    assert_eq!(
+        charges(&templated),
+        [("OD2".to_owned(), -1), ("Na+".to_owned(), 1)]
+    );
+    assert_eq!(templated.report().issues(), &[]);
+    // The dictionary names neither HIE nor WAT, and its aspartic acid is neutral.
+    let untemplated = pdb::interpret(&document).unwrap();
+    assert_eq!(inferred_components(&untemplated), ["HIE", "WAT"]);
+    assert_eq!(charges(&untemplated), []);
+
+    // CHARMM: the isoleucine, water, and sodium and chloride ions. Terminal
+    // hydrogens HT1-HT3 attach by distance.
+    let charmm = entry(
+        &[
+            residue_records("ATOM", "ILE", 'A', ISOLEUCINE, 0.0),
+            residue_records(
+                "HETATM",
+                "TIP3",
+                'W',
+                &[
+                    (" OH2", "O", [0.0, 0.0, 0.0]),
+                    (" H1 ", "H", [0.96, 0.0, 0.0]),
+                    (" H2 ", "H", [-0.24, 0.93, 0.0]),
+                ],
+                20.0,
+            ),
+            residue_records(
+                "HETATM",
+                "SOD",
+                'I',
+                &[("SOD ", "NA", [0.0, 0.0, 0.0])],
+                40.0,
+            ),
+            residue_records(
+                "HETATM",
+                "CLA",
+                'J',
+                &[("CLA ", "CL", [0.0, 0.0, 0.0])],
+                45.0,
+            ),
+        ]
+        .concat(),
+    );
+    let document = pdb::parse_str(&charmm).unwrap();
+    let templated =
+        pdb::interpret_with_options(&document, with(ComponentLibrary::charmm())).unwrap();
+    assert_eq!(templated.topology().bond_count(), 23);
+    assert_eq!(
+        charges(&templated),
+        [
+            ("N".to_owned(), 1),
+            ("OT2".to_owned(), -1),
+            ("SOD".to_owned(), 1),
+            ("CLA".to_owned(), -1),
+        ]
+    );
+    assert_eq!(inferred_components(&templated), Vec::<String>::new());
+    let attached = templated
+        .report()
+        .issues()
+        .iter()
+        .filter_map(|issue| match issue {
+            StructureInterpretIssue::HydrogenAttachedByDistance {
+                atom_name,
+                heavy_atom_name,
+                ..
+            } => Some((atom_name.as_str(), heavy_atom_name.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(attached, [("HT1", "N"), ("HT2", "N"), ("HT3", "N")]);
+    // Without the library, CHARMM chloride meets the dictionary's chlorophyll a.
+    let error = pdb::interpret(&document).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+}
+
+#[test]
+fn force_field_termini_carry_their_charges() {
+    use kekule::components::ComponentLibrary;
+    use kekule::pdb::ConnectivityOptions;
+    use std::sync::Arc;
+
+    // Ideal coordinates of the dictionary's PRO and DA entries; the third
+    // ammonium hydrogen of proline and the 5'-hydroxyl hydrogen are placed
+    // 1.0 A from their heavy atoms.
+    let proline = |names: [&'static str; 9]| -> Vec<Atom> {
+        let [h2, h3, hb2, hb3, hg2, hg3, hd2, hd3, oxt] = names;
+        vec![
+            (" N  ", "N", [-0.816, 1.108, 0.254]),
+            (" CA ", "C", [0.001, -0.107, 0.509]),
+            (" C  ", "C", [1.408, 0.091, 0.005]),
+            (" O  ", "O", [1.650, 0.980, -0.777]),
+            (" CB ", "C", [-0.703, -1.227, -0.286]),
+            (" CG ", "C", [-2.163, -0.753, -0.439]),
+            (" CD ", "C", [-2.218, 0.614, 0.276]),
+            (oxt, "O", [2.391, -0.721, 0.424]),
+            (h2, "H", [-0.707, 1.708, 1.057]),
+            (h3, "H", [-0.567, 1.588, -0.599]),
+            (" HA ", "H", [0.009, -0.343, 1.573]),
+            (hb2, "H", [-0.240, -1.345, -1.266]),
+            (hb3, "H", [-0.666, -2.165, 0.267]),
+            (hg2, "H", [-2.416, -0.638, -1.493]),
+            (hg3, "H", [-2.843, -1.458, 0.040]),
+            (hd2, "H", [-2.872, 1.300, -0.263]),
+            (hd3, "H", [-2.559, 0.492, 1.304]),
+        ]
+    };
+    let mut amber_proline = proline([
+        " H2 ", " H3 ", " HB2", " HB3", " HG2", " HG3", " HD2", " HD3", " OXT",
+    ]);
+    amber_proline.push((" HXT", "H", [3.293, -0.594, 0.101]));
+    let charmm_proline = proline([
+        " HN1", " HN2", " HB1", " HB2", " HG1", " HG2", " HD1", " HD2", " OT2",
+    ]);
+    // A free deoxyadenosine: no phosphate, and hydroxyl hydrogens at 5' and 3'.
+    const DEOXYADENOSINE: &[Atom] = &[
+        (" O5'", "O", [0.241, -0.771, -3.320]),
+        (" C5'", "C", [-0.549, 0.270, -2.744]),
+        (" C4'", "C", [-1.239, -0.251, -1.482]),
+        (" O4'", "O", [-0.267, -0.564, -0.458]),
+        (" C3'", "C", [-2.105, 0.859, -0.835]),
+        (" O3'", "O", [-3.409, 0.895, -1.418]),
+        (" C2'", "C", [-2.173, 0.398, 0.640]),
+        (" C1'", "C", [-0.965, -0.545, 0.797]),
+        (" N9 ", "N", [-0.078, -0.047, 1.852]),
+        (" C8 ", "C", [0.962, 0.817, 1.689]),
+        (" N7 ", "N", [1.535, 1.044, 2.835]),
+        (" C5 ", "C", [0.897, 0.346, 3.805]),
+        (" C6 ", "C", [1.069, 0.196, 5.191]),
+        (" N6 ", "N", [2.079, 0.869, 5.856]),
+        (" N1 ", "N", [0.236, -0.603, 5.850]),
+        (" C2 ", "C", [-0.729, -1.249, 5.224]),
+        (" N3 ", "N", [-0.925, -1.144, 3.927]),
+        (" C4 ", "C", [-0.142, -0.368, 3.184]),
+        ("HO5'", "H", [0.659, -0.400, -4.113]),
+        (" H5'", "H", [-1.302, 0.594, -3.463]),
+        ("H5''", "H", [0.092, 1.112, -2.486]),
+        (" H4'", "H", [-1.846, -1.126, -1.712]),
+        (" H3'", "H", [-1.617, 1.830, -0.918]),
+        ("HO3'", "H", [-3.924, 1.538, -0.913]),
+        (" H2'", "H", [-3.103, -0.136, 0.831]),
+        ("H2''", "H", [-2.079, 1.253, 1.311]),
+        (" H1'", "H", [-1.309, -1.549, 1.046]),
+        (" H8 ", "H", [1.266, 1.250, 0.748]),
+        (" H61", "H", [2.185, 0.761, 6.814]),
+        (" H62", "H", [2.683, 1.447, 5.363]),
+        (" H2 ", "H", [-1.383, -1.889, 5.798]),
+    ];
+    let cases = [
+        (
+            ComponentLibrary::amber(),
+            residue_records("ATOM", "DAN", 'D', DEOXYADENOSINE, 0.0),
+            vec![],
+            vec![],
+        ),
+        (
+            ComponentLibrary::amber(),
+            residue_records("ATOM", "NPRO", 'P', &amber_proline, 0.0),
+            vec![("N".to_owned(), 1)],
+            vec![],
+        ),
+        // CHARMM's N-terminal proline patch names its hydrogens HN1 and HN2;
+        // the C-terminal patch makes a carboxylate.
+        (
+            ComponentLibrary::charmm(),
+            residue_records("ATOM", "PRO", 'P', &charmm_proline, 0.0),
+            vec![("N".to_owned(), 1), ("OT2".to_owned(), -1)],
+            vec![("HN2".to_owned(), "N".to_owned())],
+        ),
+    ];
+    for (library, lines, expected_charges, expected_attached) in cases {
+        let document = pdb::parse_str(&entry(&lines)).unwrap();
+        let interpreted = pdb::interpret_with_options(
+            &document,
+            StructureInterpretOptions {
+                connectivity: ConnectivityOptions {
+                    components: Some(Arc::new(library)),
+                    ..ConnectivityOptions::default()
+                },
+                ..StructureInterpretOptions::default()
+            },
+        )
+        .unwrap();
+        let attached = interpreted
+            .report()
+            .issues()
+            .iter()
+            .filter_map(|issue| match issue {
+                StructureInterpretIssue::HydrogenAttachedByDistance {
+                    atom_name,
+                    heavy_atom_name,
+                    ..
+                } => Some((atom_name.clone(), heavy_atom_name.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(charges(&interpreted), expected_charges, "{lines:?}");
+        assert_eq!(attached, expected_attached, "{lines:?}");
+        assert_eq!(inferred_components(&interpreted), Vec::<String>::new());
+        assert_eq!(interpreted.topology().instance_count(), 1);
     }
 }
 

@@ -6,6 +6,17 @@ All notable changes to Kekule are documented in this file.
 
 ### Added
 
+- `ComponentLibrary::amber` and `ComponentLibrary::charmm` define the residue
+  and atom names of structures that AMBER and CHARMM tools write, as
+  interpretation context for `ConnectivityOptions::components`. Their
+  templates derive from the bundled dictionary entries as the AMBER ff14SB,
+  OL15, and OL3 and the CHARMM36 libraries define each residue: protonation
+  states such as `HIE`, `HID`, `ASH`, `CYX`, `HSD`, `HSE`, and `LSN`,
+  charged `ASP` and `GLU`, AMBER terminal residues such as `NALA` and `CALA`
+  and nucleotides such as `DA5`, the `ACE` cap, water (`WAT`, `TIP3`), and
+  ions (`Na+`, `SOD`, `CLA`). CHARMM templates carry CHARMM atom names such as
+  `HN`, `HB1`, `CD`, `OT1`, and `OT2`. The libraries are opt-in, since
+  force-field names collide with dictionary identifiers.
 - `kekule::pdb` reads PDB-format entries. `pdb::parse_str` and `parse_reader`
   type the coordinate (`ATOM`, `HETATM`), `TER`, `MODEL`, `CONECT`, `LINK`,
   and `SSBOND` records, decoding hybrid-36 numbers, and keep every other

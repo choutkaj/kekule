@@ -7,6 +7,7 @@
 
 mod bundled;
 mod ccd;
+mod force_field;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -281,6 +282,52 @@ impl ComponentLibrary {
     pub fn bundled() -> &'static Self {
         static BUNDLED: OnceLock<ComponentLibrary> = OnceLock::new();
         BUNDLED.get_or_init(bundled::library)
+    }
+
+    /// Templates for AMBER residue names, for structures AMBER tools write.
+    /// Supply it as interpretation context through
+    /// [`ConnectivityOptions::components`](crate::macromolecular::ConnectivityOptions::components);
+    /// names it does not define fall back to the bundled templates.
+    ///
+    /// Each template derives from a bundled entry as the ff14SB, OL15, and OL3
+    /// libraries define the residue. Protonation states have names of their
+    /// own: `HID`, `HIE`, and `HIP` are the ND1-protonated, NE2-protonated,
+    /// and doubly protonated histidines; `ASP` and `GLU` are anions, `ASH` and
+    /// `GLH` the acids; `LYN` is neutral lysine; `CYX` a disulfide cysteine
+    /// and `CYM` a thiolate. N- and C-terminal residues such as `NALA` and
+    /// `CALA` are ammonium and carboxylate ions. `ACE` is the acetyl cap,
+    /// `WAT` water, `Na+`, `K+`, and `Cl-` the ions of older libraries, and
+    /// `DA5`, `DA3`, `DAN`, `A5`, and the like terminal and free nucleotides.
+    /// The N-methyl and amide caps `NME` and `NHE` have only single bonds,
+    /// which distance inference finds.
+    ///
+    /// The library is opt-in because force-field names collide with
+    /// dictionary identifiers.
+    pub fn amber() -> Self {
+        force_field::amber()
+    }
+
+    /// Templates for CHARMM residue names, for structures CHARMM, NAMD, and
+    /// CHARMM-GUI write; see [`Self::amber`] for their use.
+    ///
+    /// Each template derives from a bundled entry as CHARMM36 defines the
+    /// residue, with CHARMM atom names: `HN` for the amide hydrogen, methylene
+    /// hydrogens numbered from 1, `CD` for isoleucine's `CD1`, and the
+    /// terminal oxygens `OT1` and `OT2`. `HSD`, `HSE`, and `HSP` are the
+    /// ND1-protonated, NE2-protonated, and doubly protonated histidines; `ASP`
+    /// and `GLU` are anions, `ASPP` and `GLUP` the acids; `LSN` is neutral
+    /// lysine and `CYM` a thiolate. `TIP3` is water, and `SOD`, `POT`, `CAL`,
+    /// `CLA`, `ZN2`, and `CD2` ions. Terminal hydrogens `HT1`-`HT3`, which name
+    /// different atoms in different terminal patches, attach by distance.
+    /// Atoms that capping patches add to a terminal residue, such as `CAY` or
+    /// `NT`, have no template and fail interpretation; supply templates for
+    /// them. Nucleic acids keep dictionary names.
+    ///
+    /// The library is opt-in because force-field names collide with
+    /// dictionary identifiers: CHARMM `CLA` is chloride, the dictionary's
+    /// chlorophyll a.
+    pub fn charmm() -> Self {
+        force_field::charmm()
     }
 
     /// Reads every data block that defines component atoms, such as a CCD

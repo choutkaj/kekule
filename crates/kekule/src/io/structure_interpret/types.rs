@@ -26,7 +26,8 @@ pub enum ModelSelection {
 /// fails otherwise.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectivityOptions {
-    /// Templates consulted before the bundled ones.
+    /// Templates consulted before the bundled ones, such as
+    /// [`ComponentLibrary::amber`] for structures with AMBER residue names.
     pub components: Option<Arc<ComponentLibrary>>,
     /// Infer the bonds of residues without a template or bond table from
     /// covalent radii. Inferred bonds are single and reported. On by default.
