@@ -286,7 +286,11 @@ fn collect_small_rows(
         } else {
             "MOL"
         };
-        let atom_name = generated_atom_name(atom.element.symbol(), atom_id);
+        let atom_name = if assignment.kind == EntityKind::Water {
+            water_atom_name(definition.molecule(), atom_id)
+        } else {
+            generated_atom_name(atom.element.symbol(), atom_id)
+        };
         rows.push(AtomRow {
             atom: qualified,
             residue: None,
@@ -341,6 +345,18 @@ fn normalized_group_pdb(
     }
 }
 
+/// The Chemical Component Dictionary names of water atoms: `O`, `H1`, `H2`.
+fn water_atom_name(molecule: &crate::core::Molecule, atom: AtomId) -> String {
+    let hydrogen = molecule
+        .atoms()
+        .filter(|(_, candidate)| candidate.element.atomic_number() == 1)
+        .position(|(id, _)| id == atom);
+    match hydrogen {
+        Some(index) => format!("H{}", index + 1),
+        None => "O".to_owned(),
+    }
+}
+
 fn generated_atom_name(symbol: &str, atom: AtomId) -> String {
     format!("{symbol}{}", one_based_serial(atom.raw()))
 }
@@ -350,12 +366,12 @@ fn supported_bond_order(
     order: BondOrder,
 ) -> Result<BondOrder, MmcifWriteError> {
     match order {
-        BondOrder::Single | BondOrder::Double | BondOrder::Triple | BondOrder::Quadruple => {
-            Ok(order)
-        }
-        BondOrder::Zero | BondOrder::Dative => {
-            Err(MmcifWriteError::UnsupportedBondOrder { bond, order })
-        }
+        BondOrder::Single
+        | BondOrder::Double
+        | BondOrder::Triple
+        | BondOrder::Quadruple
+        | BondOrder::Dative => Ok(order),
+        BondOrder::Zero => Err(MmcifWriteError::UnsupportedBondOrder { bond, order }),
     }
 }
 

@@ -157,7 +157,7 @@ pub(super) fn write_block_end(
                 writer,
                 vec![
                     format!("conn{serial}"),
-                    "covale".to_owned(),
+                    connection_type(connection.order).to_owned(),
                     cif_value(&left.asym_id, "_struct_conn.ptnr1_label_asym_id")?,
                     cif_value(&left.label_comp_id, "_struct_conn.ptnr1_label_comp_id")?,
                     optional_display(left.label_seq_id),
@@ -242,14 +242,22 @@ fn cif_value(value: &str, field: &'static str) -> Result<String, MmcifWriteError
     Err(MmcifWriteError::UnsupportedTextValue { field })
 }
 
+/// Dative bonds are metal coordination; every other bond is covalent.
+fn connection_type(order: BondOrder) -> &'static str {
+    match order {
+        BondOrder::Dative => "metalc",
+        _ => "covale",
+    }
+}
+
 fn bond_order_code(order: BondOrder) -> &'static str {
     match order {
         BondOrder::Single => "sing",
         BondOrder::Double => "doub",
         BondOrder::Triple => "trip",
         BondOrder::Quadruple => "quad",
-        BondOrder::Zero | BondOrder::Dative => {
-            unreachable!("unsupported bond order was rejected")
-        }
+        // Metal coordination carries no conventional bond order.
+        BondOrder::Dative => "?",
+        BondOrder::Zero => unreachable!("unsupported bond order was rejected"),
     }
 }

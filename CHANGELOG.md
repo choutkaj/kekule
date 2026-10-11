@@ -6,6 +6,15 @@ All notable changes to Kekule are documented in this file.
 
 ### Added
 
+- mmCIF interpretation resolves bonds the file does not state from component
+  templates, as described in ARCHITECTURE.md. `MmcifConnectivityOptions`
+  (field `connectivity` of `MmcifInterpretOptions` and
+  `MmcifEnsembleInterpretOptions`) adds caller templates ahead of the bundled
+  ones and switches distance inference for residues without templates, which
+  is on by default. Every published bond records its evidence in
+  `MmcifInstanceProvenance::bonds` (`MmcifBondEvidence`), and the report adds
+  `ResidueBondsInferred`, `HydrogenAttachedByDistance`, `ChainBreak`,
+  `ProtonationFromHydrogens`, and `ResidueFragmented` issues.
 - `kekule::components` holds chemical component templates in the model of the
   wwPDB Chemical Component Dictionary: named atoms with elements, formal
   charges, aromatic and leaving-atom flags, and bonds with orders and
@@ -62,6 +71,23 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** mmCIF files without `_chem_comp_bond` rows, such as wwPDB
+  archive entries, no longer fall apart into one molecule per unbonded atom:
+  residue bonds come from the bundled or caller templates, and residues no
+  template covers have their bonds inferred from covalent radii. A heavy atom
+  whose name its residue template lacks is an error. Formal charges not stated
+  by `_atom_site.pdbx_formal_charge` come from the template, so lysine,
+  arginine, and histidine are cations in hydrogen-free models; model hydrogens
+  adjust heteroatom charges and select histidine tautomers.
+- **Breaking:** Metal coordination (`_struct_conn` type `metalc`, and template
+  bonds flagged `pdbx_metal_coordination_flag`) becomes `Dative` bonds, so a
+  metal site and its ligands form one molecule. The mmCIF writer emits dative
+  bonds as `metalc` connections instead of rejecting them, and names water
+  atoms `O`, `H1`, `H2`.
+- Polymer links between residues adjacent in sequence require their linking
+  atoms to lie within bonding distance; longer gaps are reported as chain
+  breaks. Without `_entity_poly`, both residues' templates decide the polymer
+  type.
 - **Breaking:** mmCIF documents keep one line-normalized copy of the source
   and store every tag and value as a compact span into it, instead of one
   owned string per value. `MmcifEntry`, `MmcifItem`, `MmcifLoopTable`, and

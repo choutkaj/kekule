@@ -26,9 +26,9 @@ _atom_site.pdbx_PDB_model_num\n{rows}\n"
 // Synthetic coordinate examples are focused unit regressions, not benchmarks.
 const CROSSED: &str = "\
 1 C C1 LIG X 42 142 . A 0.9 0 0 0 1
-2 C C1 LIG X 42 142 . B 0.1 10 0 0 1
+2 C C1 LIG X 42 142 . B 0.1 2.4 2.4 0 1
 3 O O1 LIG X 42 142 . A 0.2 1.2 0 0 1
-4 O O1 LIG X 42 142 . B 0.8 11.2 0 0 1
+4 O O1 LIG X 42 142 . B 0.8 2.4 1.2 0 1
 5 N N1 LIG X 42 142 . . 1.0 2.4 0 0 1";
 
 fn selected(
@@ -449,6 +449,15 @@ fn mmcif_altloc_explicit_conformer_ensemble_is_unweighted_and_preserves_order() 
     });
     let result = interpret_conformations(&source, &options).unwrap();
     assert_eq!(result.ensemble().len(), 3);
+    let detached = document(
+        &CROSSED
+            .replace("B 0.1 2.4 2.4 0 1", "B 0.1 10 0 0 1")
+            .replace("B 0.8 2.4 1.2 0 1", "B 0.8 11.2 0 0 1"),
+    );
+    assert!(matches!(
+        interpret_conformations(&detached, &options),
+        Err(MmcifEnsembleInterpretError::InconsistentTopology { .. })
+    ));
     assert!(result
         .ensemble()
         .iter()

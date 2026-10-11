@@ -382,7 +382,7 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
                 residue,
                 InstanceAtomId::new(waters[index], oxygen),
                 AtomSiteMetadata {
-                    label_atom_id: Some(format!("O{index}")),
+                    label_atom_id: Some("O".to_owned()),
                     ..AtomSiteMetadata::default()
                 },
             )
@@ -414,7 +414,7 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
     for (row, index) in [0, 1, 2].into_iter().enumerate() {
         assert_eq!(
             rows.value(row, "_atom_site.label_atom_id").unwrap().text(),
-            format!("O{index}")
+            "O"
         );
         assert_eq!(
             rows.value(row, "_atom_site.auth_seq_id").unwrap().text(),

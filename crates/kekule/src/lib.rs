@@ -643,13 +643,13 @@ pub mod mmcif {
     pub use crate::io::{
         MmcifAltLocDecision, MmcifAltLocPolicy, MmcifAltLocPreference, MmcifAltLocResidue,
         MmcifAltLocSelection, MmcifAltLocSelectionReason, MmcifAtomProvenance, MmcifBlock,
-        MmcifBlockSource, MmcifConnectionResolutionReason, MmcifDocument,
-        MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
-        MmcifEntityClassifications, MmcifEntityKind, MmcifEntry, MmcifInstanceProvenance,
-        MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation,
-        MmcifInterpretationReport, MmcifItem, MmcifLoopTable, MmcifModelSelection, MmcifParseError,
-        MmcifParseOptions, MmcifResidueId, MmcifResiduePosition, MmcifValue, MmcifWriteError,
-        MmcifWriteOptions,
+        MmcifBlockSource, MmcifBondEvidence, MmcifBondProvenance, MmcifConnectionResolutionReason,
+        MmcifConnectivityOptions, MmcifDocument, MmcifEnsembleInterpretError,
+        MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation, MmcifEntityClassifications,
+        MmcifEntityKind, MmcifEntry, MmcifInstanceProvenance, MmcifInterpretError,
+        MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport,
+        MmcifItem, MmcifLoopTable, MmcifModelSelection, MmcifParseError, MmcifParseOptions,
+        MmcifResidueId, MmcifResiduePosition, MmcifValue, MmcifWriteError, MmcifWriteOptions,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular meaning.

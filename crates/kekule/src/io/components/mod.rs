@@ -255,7 +255,7 @@ impl fmt::Display for ComponentError {
 
 impl std::error::Error for ComponentError {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ComponentEntry {
     component: Arc<Component>,
     variants: Vec<Arc<Component>>,
@@ -264,7 +264,7 @@ struct ComponentEntry {
 /// Component templates keyed by identifier, with any protonation variants.
 ///
 /// Libraries are cheap to clone; components are shared.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ComponentLibrary {
     entries: BTreeMap<String, ComponentEntry>,
 }

@@ -473,6 +473,11 @@ from ranked evidence:
    explicit bond table covers. It is on by default, can be disabled, and yields
    single bonds that the report identifies as inferred.
 
+Explicit bonds outrank the levels below them. A residue whose internal bonds the
+source enumerates, as files that write complete connectivity do, takes exactly
+those bonds; templates and inference only fill residues the source leaves without
+them. Close contacts that no evidence bonds are counted, never bonded.
+
 Coordination is covalent: metal-ligand links become `Dative` bonds, so a metal
 complex or a metalloprotein site is one connected molecule. Hydrogen bonds, salt
 bridges, and links to symmetry mates are never bonds; unresolvable links are
@@ -480,13 +485,15 @@ reported. A heavy atom whose name does not match its residue template is an erro
 not a silently separate molecule. The report records the evidence for every bond
 and names residues whose resolved atoms split into several molecules.
 
-Formal charges come from the source when stated, otherwise from the template.
-Hydrogens present in the model are atoms; remaining hydrogens follow from valence,
-so a template's protonation is never asserted as a fixed hydrogen count. When the
-model's hydrogens differ from the template, each added or removed hydrogen on an
-atom whose template bonds are all single changes its charge by one, and any other
-difference must select a bundled variant template, such as a histidine tautomer,
-or fail.
+Formal charges come from the source when stated, otherwise from the template,
+including when the source's own bond table supplies the bonds. Hydrogens present
+in the model are atoms; remaining hydrogens follow from valence, so a template's
+protonation is never asserted as a fixed hydrogen count. When a residue's model
+hydrogens differ from its template on a heteroatom, a variant template that
+matches them exactly, such as a histidine tautomer, is selected; otherwise each
+added or removed hydrogen on a heteroatom whose template bonds are all single
+changes its charge by one, and any other difference fails. Hydrogens absent from
+carbon are left to valence.
 
 Kekule bundles templates for standard polymer residues, their common protonation
 variants, water, common ions, and common cofactors, taken from the Chemical

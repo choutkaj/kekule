@@ -16,6 +16,8 @@ pub(super) struct DeclaredConnection {
     pub(super) left_atom: String,
     pub(super) right_atom: String,
     pub(super) order: BondOrder,
+    pub(super) connection_id: Option<String>,
+    pub(super) connection_type: String,
 }
 
 pub(super) fn read_connections(
@@ -41,7 +43,13 @@ pub(super) fn read_connections(
             });
             continue;
         }
-        let order = connection_bond_order(table, row)?;
+        // Metal coordination is covalent; the dative order keeps it from
+        // counting toward the valence of the ligand atom.
+        let order = if is_metal_coordination(&kind) {
+            BondOrder::Dative
+        } else {
+            connection_bond_order(table, row)?
+        };
         let left = connection_partner(table, row, 1, rows, all_rows, selected_model)?;
         let right = connection_partner(table, row, 2, rows, all_rows, selected_model)?;
         let left = report_connection_partner_resolution(
@@ -68,6 +76,8 @@ pub(super) fn read_connections(
             left_atom: left.atom_key(),
             right_atom: right.atom_key(),
             order,
+            connection_id,
+            connection_type: kind,
         });
         report.applied_connections += 1;
     }
@@ -135,7 +145,11 @@ fn connection_bond_order(
 
 fn is_covalent_connection(kind: &str) -> bool {
     let kind = kind.to_ascii_lowercase();
-    kind.starts_with("covale") || kind == "disulf" || kind == "modres"
+    kind.starts_with("covale") || kind == "disulf" || kind == "modres" || kind == "metalc"
+}
+
+fn is_metal_coordination(kind: &str) -> bool {
+    kind.eq_ignore_ascii_case("metalc")
 }
 
 #[derive(Debug, Default)]
