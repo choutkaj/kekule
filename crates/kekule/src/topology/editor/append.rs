@@ -48,7 +48,6 @@ impl TopologyEditor {
                 None,
                 Some(source.definition(value.definition()).unwrap().class()),
                 source
-                    .layout
                     .molecule_class_overrides
                     .contains_key(&value.definition()),
                 identity,
@@ -109,7 +108,7 @@ impl TopologyEditor {
                 .get_mut(&mapping.residues[&id])
                 .unwrap();
             target.class = Some(residue.class());
-            target.class_explicit = source.layout.residue_class_overrides.contains_key(&id);
+            target.class_explicit = source.residue_class_overrides.contains_key(&id);
         }
         for (instance, value) in source.instances() {
             let definition = source.definition(value.definition()).unwrap();
@@ -118,7 +117,6 @@ impl TopologyEditor {
             let group = self.groups[self.atoms[&handle].group].as_mut().unwrap();
             group.class = Some(definition.class());
             group.class_explicit = source
-                .layout
                 .molecule_class_overrides
                 .contains_key(&value.definition());
         }

@@ -2,7 +2,7 @@
 
 use super::{InstanceAtomId, InstanceBondId, MoleculeInstanceId};
 
-/// An instance-qualified local identifier stored in a [`DenseLayout`].
+/// An instance-qualified local identifier stored in a [`DenseOrder`].
 pub(super) trait QualifiedId: Copy + Eq {
     fn instance(self) -> MoleculeInstanceId;
     fn local(self) -> usize;
@@ -34,13 +34,13 @@ const ABSENT: u32 = u32::MAX;
 /// `lookup[starts[i]..starts[i + 1]]`, one entry per local slot of its
 /// definition, holding the slot's dense index or [`ABSENT`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct DenseLayout<Id> {
+pub(super) struct DenseOrder<Id> {
     order: Vec<Id>,
     starts: Vec<usize>,
     lookup: Vec<u32>,
 }
 
-impl<Id> Default for DenseLayout<Id> {
+impl<Id> Default for DenseOrder<Id> {
     fn default() -> Self {
         Self {
             order: Vec::new(),
@@ -50,7 +50,7 @@ impl<Id> Default for DenseLayout<Id> {
     }
 }
 
-/// A rejected replacement order for a [`DenseLayout`].
+/// A rejected replacement order for a [`DenseOrder`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum OrderError<Id> {
     Length { expected: usize, actual: usize },
@@ -58,7 +58,7 @@ pub(super) enum OrderError<Id> {
     Duplicate(Id),
 }
 
-impl<Id: QualifiedId> DenseLayout<Id> {
+impl<Id: QualifiedId> DenseOrder<Id> {
     pub(super) fn len(&self) -> usize {
         self.order.len()
     }
@@ -111,7 +111,7 @@ impl<Id: QualifiedId> DenseLayout<Id> {
     /// Replaces the order with a permutation of the current IDs.
     ///
     /// Returns, for each new dense index, its former dense index. A rejected
-    /// order leaves the layout unchanged.
+    /// order leaves the dense order unchanged.
     pub(super) fn reorder(
         &mut self,
         order: impl IntoIterator<Item = Id>,

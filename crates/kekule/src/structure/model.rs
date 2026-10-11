@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::core::Molecule;
 use crate::geometry::{PeriodicCell, Point3};
+use crate::properties::TopologyPropertiesMut;
 use crate::topology::transform::TopologySubsetError;
 use crate::topology::{
     AtomSelection, Hierarchy, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeDefinitionId,
@@ -153,6 +154,16 @@ impl Model {
     pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
         self.topology = Arc::new(self.topology.perceived()?);
         Ok(())
+    }
+
+    /// Length-preserving mutable access to the topology's static annotations.
+    ///
+    /// A topology shared with other owners is first replaced by a snapshot of
+    /// it ([`Arc::make_mut`]), so those owners are unaffected. Either way the
+    /// layout is kept, so selections, buffers, and prepared potentials remain
+    /// usable. See [`Topology::properties_mut`].
+    pub fn topology_properties_mut(&mut self) -> TopologyPropertiesMut<'_> {
+        Arc::make_mut(&mut self.topology).properties_mut()
     }
 
     /// Publishes an induced topology subset and projects the conformation onto

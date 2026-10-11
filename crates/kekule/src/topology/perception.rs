@@ -41,11 +41,11 @@ impl Topology {
     ///
     /// Represented graphs, definition reuse, all semantic IDs, dense ordering,
     /// hierarchy, classifications, and properties are preserved exactly, so the
-    /// result shares this topology's layout without copying it
-    /// ([`Self::shares_layout`]). Selections, realizations, buffers, and prepared
-    /// potentials bound to this topology remain usable with the result. Values
-    /// that read perception, such as prepared substructure targets, stay bound to
-    /// the snapshot they were prepared from.
+    /// result shares this topology's layout ([`Self::shares_layout`]).
+    /// Selections, realizations, buffers, and prepared potentials bound to this
+    /// topology remain usable with the result. Values that read perception,
+    /// such as prepared substructure targets, stay bound to the snapshot they
+    /// were prepared from.
     ///
     /// ```
     /// use kekule::{smiles, topology::Topology};
@@ -76,10 +76,17 @@ impl Topology {
             .collect::<Result<_, TopologyPerceptionError>>()?;
 
         // Perception never requires reclassification, reindexing, or rebuilding
-        // hierarchy correspondence, so the snapshot shares the published layout.
+        // hierarchy correspondence, so the snapshot keeps the published layout.
         Ok(Self {
             definitions,
-            layout: std::sync::Arc::clone(&self.layout),
+            instances: self.instances.clone(),
+            atom_order: self.atom_order.clone(),
+            bond_order: self.bond_order.clone(),
+            hierarchy: self.hierarchy.clone(),
+            molecule_class_overrides: self.molecule_class_overrides.clone(),
+            residue_class_overrides: self.residue_class_overrides.clone(),
+            properties: self.properties.clone(),
+            layout: self.layout,
         })
     }
 }

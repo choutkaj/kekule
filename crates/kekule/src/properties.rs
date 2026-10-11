@@ -1273,7 +1273,7 @@ impl TopologyProperties {
     }
 }
 
-/// Length-preserving mutable access to staged [`TopologyProperties`].
+/// Length-preserving mutable access to staged or published [`TopologyProperties`].
 #[derive(Debug)]
 pub struct TopologyPropertiesMut<'a> {
     properties: &'a mut TopologyProperties,

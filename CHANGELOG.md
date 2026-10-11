@@ -4,6 +4,23 @@ All notable changes to Kekule are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Published topology annotations can be edited without changing the layout.
+  `Topology::properties_mut` edits in place, and
+  `Model`, `Ensemble`, and `Trajectory` gain `topology_properties_mut`, which
+  replaces a topology shared with other owners by an edited snapshot. As with
+  perception, the result shares the source's layout, so selections, frame
+  buffers, and prepared potentials stay usable. `Topology` implements `Clone`;
+  a clone shares its source's layout.
+
+### Changed
+
+- `Topology` is one flat owner. Instances, dense orders, hierarchy, and
+  properties sit beside the definitions instead of in a shared allocation,
+  and layout identity is an explicit token minted at publication. Perception
+  snapshots now copy that static state instead of sharing it.
+
 ### Fixed
 
 - `TopologyEditor` and `ModelEditor` can bond fragments of two occurrences

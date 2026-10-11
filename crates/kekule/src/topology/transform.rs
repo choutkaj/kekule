@@ -140,10 +140,7 @@ fn retain_normalized(
         builder.preserve_molecule_class(
             target_id,
             definition.class(),
-            topology
-                .layout
-                .molecule_class_overrides
-                .contains_key(&source_id),
+            topology.molecule_class_overrides.contains_key(&source_id),
         )?;
         definition_targets[source_id.index()] = Some(target_id);
     }
@@ -202,23 +199,20 @@ fn retain_normalized(
             builder.preserve_residue_class(
                 ResidueId::new(target_index as u32),
                 residue.class(),
-                topology
-                    .layout
-                    .residue_class_overrides
-                    .contains_key(&residue.id()),
+                topology.residue_class_overrides.contains_key(&residue.id()),
             )?;
         }
     }
 
     let mut target = builder.build()?;
-    target.install_properties(project_topology_properties(
+    target.properties = project_topology_properties(
         topology,
         &target,
         &instance_sources,
         &atom_targets,
         &bond_targets,
         &hierarchy_projection,
-    )?);
+    )?;
     Ok(Arc::new(target))
 }
 
@@ -411,8 +405,7 @@ impl Topology {
                             &entry.key().1,
                             Some((
                                 molecule_view.class(),
-                                self.layout
-                                    .molecule_class_overrides
+                                self.molecule_class_overrides
                                     .contains_key(&molecule_view.definition_id()),
                             )),
                             &mut builder,
@@ -463,21 +456,19 @@ impl Topology {
                 builder.preserve_residue_class(
                     ResidueId::new(target_index as u32),
                     residue.class(),
-                    self.layout
-                        .residue_class_overrides
-                        .contains_key(&residue.id()),
+                    self.residue_class_overrides.contains_key(&residue.id()),
                 )?;
             }
         }
         let mut target = builder.build()?;
-        target.install_properties(project_topology_properties(
+        target.properties = project_topology_properties(
             self,
             &target,
             &instance_sources,
             &atom_targets,
             &bond_targets,
             &hierarchy_projection,
-        )?);
+        )?;
         let target = Arc::new(target);
         let atom_sources = atom_targets
             .iter()

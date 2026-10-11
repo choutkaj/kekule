@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::core::Molecule;
 use crate::geometry::RigidTransform;
-use crate::properties::OwnerProperties;
+use crate::properties::{OwnerProperties, TopologyPropertiesMut};
 use crate::topology::transform::TopologySubsetError;
 use crate::topology::{
     AtomSelection, Topology, TopologyBuildError, TopologyBuilder, TopologyPerceptionError,
@@ -222,6 +222,10 @@ impl<P: Realization> RealizationStore<P> {
         Ok(())
     }
 
+    pub(crate) fn topology_properties_mut(&mut self) -> TopologyPropertiesMut<'_> {
+        Arc::make_mut(&mut self.topology).properties_mut()
+    }
+
     pub(crate) fn into_parts(self) -> (Arc<Topology>, OwnerProperties, Vec<P>) {
         (self.topology, self.properties, self.items)
     }
@@ -425,6 +429,20 @@ macro_rules! realization_collection {
             )]
             pub fn perceive(&mut self) -> Result<(), $crate::topology::TopologyPerceptionError> {
                 self.store.perceive()
+            }
+
+            #[doc = concat!(
+                "Length-preserving mutable access to the shared topology's static annotations.\n\n",
+                "A topology shared with other owners is first replaced by a snapshot of it ",
+                "([`Arc::make_mut`](std::sync::Arc::make_mut)), so those owners are unaffected. ",
+                "Either way the layout is kept, so every ", $item, ", selection, buffer, and ",
+                "prepared potential remains usable. See ",
+                "[`Topology::properties_mut`](crate::topology::Topology::properties_mut)."
+            )]
+            pub fn topology_properties_mut(
+                &mut self,
+            ) -> $crate::properties::TopologyPropertiesMut<'_> {
+                self.store.topology_properties_mut()
             }
 
             #[doc = concat!(

@@ -1,4 +1,4 @@
-//! Immutable coordinate-free molecular systems and biological hierarchy.
+//! Coordinate-free molecular systems and biological hierarchy.
 //!
 //! A [`Topology`] turns connected molecular definitions into explicit
 //! occurrences in one system. Repeated definitions can be reused—for example,
@@ -11,18 +11,20 @@
 //! chain may span several molecule instances, and one connected molecule may
 //! contribute to several chains.
 //!
-//! Topologies are immutable after publication. Use [`TopologyBuilder`] for
-//! assembly, [`Topology::into_builder`] for append-oriented transformation, and
-//! [`transform`] or selections for checked structural subsets. Explicit
-//! [`Topology::perceived`] derives chemistry in a new snapshot with the same layout.
+//! Topology structure is immutable after publication. Use [`TopologyBuilder`]
+//! for assembly, [`Topology::into_builder`] for append-oriented transformation,
+//! and [`transform`] or selections for checked structural subsets. Explicit
+//! [`Topology::perceived`] derives chemistry in a new snapshot with the same
+//! layout, and [`Topology::properties_mut`] edits annotations without changing
+//! it.
 
 mod builder;
 mod classification;
 mod components;
+mod dense_order;
 mod editor;
 mod entity_views;
 mod hierarchy;
-mod layout;
 mod lookup;
 mod perception;
 mod selection;
@@ -33,21 +35,23 @@ mod tests;
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::core::{AtomId, BondId, Molecule};
-use crate::properties::{PropertyKey, PropertyValue, PropertyValueRef, TopologyProperties};
+use crate::properties::{
+    PropertyKey, PropertyValue, PropertyValueRef, TopologyProperties, TopologyPropertiesMut,
+};
 pub use builder::{
     TopologyBuildError, TopologyBuilder, TopologyBuilderError, TopologyHierarchyError,
     TopologyIdKind,
 };
+use dense_order::DenseOrder;
 pub use editor::*;
 pub use entity_views::{AtomView, BondView};
 pub use hierarchy::{
     AtomSite, AtomSiteId, AtomSiteMetadata, Chain, ChainId, Hierarchy, HierarchyError,
     HierarchyIdKind, Residue, ResidueId,
 };
-use layout::DenseLayout;
 pub use lookup::HierarchyLookupError;
 pub use perception::TopologyPerceptionError;
 pub use selection::{AtomSelection, BondSelection, BondSelectionMode, SelectionError};
@@ -195,7 +199,6 @@ impl<'a> ChainView<'a> {
     /// Borrows one static annotation without copying string storage.
     pub fn property_ref(self, key: &PropertyKey) -> Option<PropertyValueRef<'a>> {
         self.topology
-            .layout
             .properties
             .chains()
             .value_ref(key, self.id)
@@ -204,7 +207,6 @@ impl<'a> ChainView<'a> {
 
     pub(crate) fn local(self) -> &'a Chain {
         self.topology
-            .layout
             .hierarchy
             .chain(self.id)
             .expect("chain view references a validated topology hierarchy")
@@ -286,7 +288,6 @@ impl<'a> ResidueView<'a> {
     /// Borrows one static annotation without copying string storage.
     pub fn property_ref(self, key: &PropertyKey) -> Option<PropertyValueRef<'a>> {
         self.topology
-            .layout
             .properties
             .residues()
             .value_ref(key, self.id)
@@ -295,7 +296,6 @@ impl<'a> ResidueView<'a> {
 
     pub(crate) fn local(self) -> &'a Residue {
         self.topology
-            .layout
             .hierarchy
             .residue(self.id)
             .expect("residue view references a validated topology hierarchy")
@@ -350,7 +350,6 @@ impl<'a> AtomSiteView<'a> {
     /// Borrows one static annotation without copying string storage.
     pub fn property_ref(self, key: &PropertyKey) -> Option<PropertyValueRef<'a>> {
         self.topology
-            .layout
             .properties
             .atom_sites()
             .value_ref(key, self.id)
@@ -359,7 +358,6 @@ impl<'a> AtomSiteView<'a> {
 
     pub(crate) fn local(self) -> &'a AtomSite {
         self.topology
-            .layout
             .hierarchy
             .atom_site(self.id)
             .expect("atom-site view references a validated topology hierarchy")
@@ -453,7 +451,7 @@ impl<'a> MoleculeInstanceView<'a> {
 
     /// Returns the minimal stored instance record.
     pub fn instance(self) -> &'a MoleculeInstance {
-        &self.topology.layout.instances[self.id.index()]
+        &self.topology.instances[self.id.index()]
     }
 
     /// Returns the reusable definition referenced by this occurrence.
@@ -479,7 +477,6 @@ impl<'a> MoleculeInstanceView<'a> {
     /// Borrows one static annotation without copying string storage.
     pub fn property_ref(self, key: &PropertyKey) -> Option<PropertyValueRef<'a>> {
         self.topology
-            .layout
             .properties
             .molecule_instances()
             .value_ref(key, self.id)
@@ -517,7 +514,6 @@ impl<'a> MoleculeInstanceView<'a> {
             .into_iter()
             .map(|residue| {
                 topology
-                    .layout
                     .hierarchy
                     .residue(residue)
                     .expect("site residue")
@@ -550,7 +546,7 @@ impl<'a> MoleculeInstanceView<'a> {
     }
 
     fn site_ids(self) -> std::collections::BTreeSet<AtomSiteId> {
-        let hierarchy = &self.topology.layout.hierarchy;
+        let hierarchy = &self.topology.hierarchy;
         let instance = self.id;
         self.molecule()
             .atom_ids()
@@ -560,7 +556,7 @@ impl<'a> MoleculeInstanceView<'a> {
     }
 
     fn residue_ids(self) -> std::collections::BTreeSet<ResidueId> {
-        let hierarchy = &self.topology.layout.hierarchy;
+        let hierarchy = &self.topology.hierarchy;
         self.site_ids()
             .into_iter()
             .map(|site| hierarchy.atom_site(site).expect("indexed site").residue())
@@ -576,7 +572,7 @@ impl<'a> MoleculeInstanceView<'a> {
     }
 }
 
-/// An immutable, coordinate-free molecular system.
+/// A coordinate-free molecular system with immutable structure.
 ///
 /// `Topology` owns reusable molecule definitions, explicit instances of those
 /// definitions, topology-global dense atom and bond order, one system
@@ -599,36 +595,44 @@ impl<'a> MoleculeInstanceView<'a> {
 ///
 /// Shared ownership conventionally uses [`std::sync::Arc<Topology>`].
 ///
-/// Every publication creates a new layout identity. [`Self::perceived`] (and
+/// Every publication mints a new layout identity. [`Self::perceived`] (and
 /// model, ensemble, or trajectory perception) installs new chemistry in a new
 /// snapshot that keeps the same layout identity, because perception never
-/// changes atoms, bonds, IDs, dense order, or hierarchy. Consumers that only
+/// changes atoms, bonds, IDs, dense order, or hierarchy. Clones and annotation
+/// edits through [`Self::properties_mut`] keep it as well. Consumers that only
 /// address atoms and bonds by index, such as selections, realizations, frame
 /// buffers, readers, alignment, and potentials, accept any snapshot sharing
 /// their layout ([`Self::shares_layout`]). Consumers that read perception, such
 /// as prepared substructure targets, bind the exact snapshot. Independently
 /// published topologies never share a layout, even when [`Self::same_layout`]
-/// reports equal contents. Topology-changing operations return new values.
-#[derive(Debug)]
+/// reports equal contents. Structure-changing operations return new values.
+#[derive(Debug, Clone)]
 pub struct Topology {
     definitions: Vec<MoleculeDefinition>,
-    layout: Arc<TopologyLayout>,
-}
-
-/// Static state shared by every perception snapshot of one publication.
-///
-/// The allocation is the topology's layout identity.
-#[derive(Debug, Clone)]
-struct TopologyLayout {
     instances: Vec<MoleculeInstance>,
-    atoms: DenseLayout<InstanceAtomId>,
-    bonds: DenseLayout<InstanceBondId>,
+    atom_order: DenseOrder<InstanceAtomId>,
+    bond_order: DenseOrder<InstanceBondId>,
     hierarchy: Hierarchy,
-    properties: TopologyProperties,
     // Retain explicit assignment intent separately from inferred class values.
     // It affects future editing policy, not current topology layout equality.
     molecule_class_overrides: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
     residue_class_overrides: BTreeMap<ResidueId, ResidueClass>,
+    properties: TopologyProperties,
+    layout: LayoutId,
+}
+
+/// The identity of one published topology layout.
+///
+/// Minted once per publication and kept by every snapshot that preserves
+/// atoms, bonds, IDs, dense order, and hierarchy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LayoutId(u64);
+
+impl LayoutId {
+    fn mint() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
 }
 
 impl Topology {
@@ -692,19 +696,20 @@ impl Topology {
     pub fn same_layout(&self, other: &Self) -> bool {
         self.shares_layout(other)
             || (self.definitions == other.definitions
-                && self.layout.instances == other.layout.instances
-                && self.layout.atoms == other.layout.atoms
-                && self.layout.bonds == other.layout.bonds
-                && self.layout.hierarchy == other.layout.hierarchy)
+                && self.instances == other.instances
+                && self.atom_order == other.atom_order
+                && self.bond_order == other.bond_order
+                && self.hierarchy == other.hierarchy)
     }
 
     /// Returns whether both values are snapshots of one published layout.
     ///
-    /// This holds for one topology and for snapshots derived from it by
-    /// perception, which preserves every atom, bond, ID, dense index, and the
-    /// hierarchy. Index-based consumers accept any snapshot sharing their
-    /// layout. Independently published topologies never share a layout, even
-    /// with equal contents; compare those with [`Self::same_layout`].
+    /// This holds for one topology, its clones, and snapshots derived from it
+    /// by perception or property edits, which preserve every atom, bond, ID,
+    /// dense index, and the hierarchy. Index-based consumers accept any
+    /// snapshot sharing their layout. Independently published topologies never
+    /// share a layout, even with equal contents; compare those with
+    /// [`Self::same_layout`].
     ///
     /// ```
     /// use std::sync::Arc;
@@ -722,14 +727,7 @@ impl Topology {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn shares_layout(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.layout, &other.layout)
-    }
-
-    /// Replaces the static properties of a freshly built, unshared topology.
-    fn install_properties(&mut self, properties: TopologyProperties) {
-        Arc::get_mut(&mut self.layout)
-            .expect("a freshly built topology does not share its layout")
-            .properties = properties;
+        self.layout == other.layout
     }
 
     pub fn definition(&self, id: MoleculeDefinitionId) -> Option<&MoleculeDefinition> {
@@ -746,20 +744,19 @@ impl Topology {
     }
 
     pub fn instance_count(&self) -> usize {
-        self.layout.instances.len()
+        self.instances.len()
     }
 
     /// One instance-qualified molecule occurrence.
     pub fn molecule(&self, id: MoleculeInstanceId) -> Option<MoleculeInstanceView<'_>> {
-        (id.index() < self.layout.instances.len()).then(|| MoleculeInstanceView::new(self, id))
+        (id.index() < self.instances.len()).then(|| MoleculeInstanceView::new(self, id))
     }
 
     /// Molecule occurrences in authoritative instance order.
     pub fn molecules(
         &self,
     ) -> impl ExactSizeIterator<Item = MoleculeInstanceView<'_>> + DoubleEndedIterator {
-        self.layout
-            .instances
+        self.instances
             .iter()
             .map(|instance| MoleculeInstanceView::new(self, instance.id))
     }
@@ -775,58 +772,85 @@ impl Topology {
 
     /// Returns the one authoritative system-level hierarchy.
     pub fn hierarchy(&self) -> &Hierarchy {
-        &self.layout.hierarchy
+        &self.hierarchy
     }
 
     /// Static annotations: owner values plus dense rows for molecule
     /// instances, atoms, bonds, chains, residues, and atom sites.
     pub fn properties(&self) -> &TopologyProperties {
-        &self.layout.properties
+        &self.properties
+    }
+
+    /// Length-preserving mutable access to static annotations.
+    ///
+    /// Annotations do not define atoms, bonds, IDs, dense order, or hierarchy,
+    /// so editing them keeps this topology's layout identity, as perception
+    /// does. Shared topologies are edited through [`std::sync::Arc::make_mut`]
+    /// or the owning model or collection, which replace a shared value with an
+    /// edited snapshot.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use kekule::{properties::{PropertyKey, PropertyValue}, smiles, topology::AtomSelection};
+    ///
+    /// let mut topology = smiles::to_topology("CCO")?;
+    /// let selection = AtomSelection::all(&topology);
+    /// let key = PropertyKey::new("source")?;
+    /// Arc::make_mut(&mut topology)
+    ///     .properties_mut()
+    ///     .owner_mut()
+    ///     .insert(key.clone(), PropertyValue::String("example".into()))?;
+    ///
+    /// // The selection keeps its unedited snapshot of the same layout.
+    /// assert_eq!(selection.topology().properties().owner().get(&key), None);
+    /// assert_eq!(
+    ///     topology.properties().owner().get(&key),
+    ///     Some(&PropertyValue::String("example".into()))
+    /// );
+    /// assert!(selection.ensure_compatible(&topology).is_ok());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn properties_mut(&mut self) -> TopologyPropertiesMut<'_> {
+        TopologyPropertiesMut::new(&mut self.properties)
     }
 
     /// Every hierarchy chain in hierarchy order.
     pub fn chains(&self) -> impl Iterator<Item = ChainView<'_>> {
-        self.layout
-            .hierarchy
+        self.hierarchy
             .chains()
             .map(move |(id, _)| ChainView::new(self, id))
     }
 
     /// Every hierarchy residue in hierarchy order.
     pub fn residues(&self) -> impl Iterator<Item = ResidueView<'_>> {
-        self.layout
-            .hierarchy
+        self.hierarchy
             .residues()
             .map(move |(id, _)| ResidueView::new(self, id))
     }
 
     /// Every hierarchy atom site in hierarchy order.
     pub fn atom_sites(&self) -> impl Iterator<Item = AtomSiteView<'_>> {
-        self.layout
-            .hierarchy
+        self.hierarchy
             .atom_sites()
             .map(move |(id, _)| AtomSiteView::new(self, id))
     }
 
     pub fn chain(&self, id: ChainId) -> Option<ChainView<'_>> {
-        self.layout
-            .hierarchy
+        self.hierarchy
             .chain(id)
             .ok()
             .map(|_| ChainView::new(self, id))
     }
 
     pub fn residue(&self, id: ResidueId) -> Option<ResidueView<'_>> {
-        self.layout
-            .hierarchy
+        self.hierarchy
             .residue(id)
             .ok()
             .map(|_| ResidueView::new(self, id))
     }
 
     pub fn atom_site(&self, id: AtomSiteId) -> Option<AtomSiteView<'_>> {
-        self.layout
-            .hierarchy
+        self.hierarchy
             .atom_site(id)
             .ok()
             .map(|_| AtomSiteView::new(self, id))
@@ -865,62 +889,59 @@ impl Topology {
     }
 
     pub fn atom_count(&self) -> usize {
-        self.layout.atoms.len()
+        self.atom_order.len()
     }
 
     pub fn bond_count(&self) -> usize {
-        self.layout.bonds.len()
+        self.bond_order.len()
     }
 
     /// Qualified atom IDs in authoritative dense order.
     pub fn atom_ids(&self) -> &[InstanceAtomId] {
-        self.layout.atoms.order()
+        self.atom_order.order()
     }
 
     /// Qualified bond IDs in authoritative dense order.
     pub fn bond_ids(&self) -> &[InstanceBondId] {
-        self.layout.bonds.order()
+        self.bond_order.order()
     }
 
     pub fn atom_index(&self, atom: InstanceAtomId) -> Option<TopologyAtomIndex> {
-        self.layout
-            .atoms
+        self.atom_order
             .index(atom)
             .map(|index| TopologyAtomIndex::new(index as u32))
     }
 
     pub fn atom_id(&self, index: TopologyAtomIndex) -> Option<InstanceAtomId> {
-        self.layout.atoms.id(index.index())
+        self.atom_order.id(index.index())
     }
 
     pub fn bond_index(&self, bond: InstanceBondId) -> Option<TopologyBondIndex> {
-        self.layout
-            .bonds
+        self.bond_order
             .index(bond)
             .map(|index| TopologyBondIndex::new(index as u32))
     }
 
     pub fn bond_id(&self, index: TopologyBondIndex) -> Option<InstanceBondId> {
-        self.layout.bonds.id(index.index())
+        self.bond_order.id(index.index())
     }
 
     /// Stored instance records in instance order.
     pub(crate) fn instances(
         &self,
     ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &MoleculeInstance)> {
-        self.layout
-            .instances
+        self.instances
             .iter()
             .map(|instance| (instance.id, instance))
     }
 
     pub(crate) fn instance(&self, id: MoleculeInstanceId) -> Option<&MoleculeInstance> {
-        self.layout.instances.get(id.index())
+        self.instances.get(id.index())
     }
 
     /// The definition molecule of one valid occurrence.
     pub(crate) fn definition_molecule(&self, instance: MoleculeInstanceId) -> &Molecule {
-        let definition = self.layout.instances[instance.index()].definition;
+        let definition = self.instances[instance.index()].definition;
         self.definitions[definition.index()].molecule()
     }
 }

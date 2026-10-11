@@ -153,7 +153,7 @@ impl TopologyEditor {
         if let Some(source) = self.source.take() {
             let (definitions, overrides) = match Arc::try_unwrap(source) {
                 Ok(source) => {
-                    let overrides = source.layout.molecule_class_overrides.clone();
+                    let overrides = source.molecule_class_overrides.clone();
                     (source.definitions, overrides)
                 }
                 Err(source) => (
@@ -163,7 +163,7 @@ impl TopologyEditor {
                         .filter(|d| retained.contains(&d.id()))
                         .cloned()
                         .collect(),
-                    source.layout.molecule_class_overrides.clone(),
+                    source.molecule_class_overrides.clone(),
                 ),
             };
             for definition in definitions {
