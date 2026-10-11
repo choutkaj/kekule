@@ -31,17 +31,17 @@ Trajectory I/O and selected potentials are available separately through the sist
 
 ## Concepts
 
-`Molecule` is the foundational type storing one molecule without its geometry. `Molecule` must be a connected graph. Its `Graph` owns authoritative chemistry, while its `Perception` stores derived chemical perception such as rings and aromaticity. Topology is a collection of one or more `Molecule`s together with `Hierarchy` (`Chain`, `Residue`, `AtomSite`). Molecules in `Topology` are not stored naively, but as `Definition`s and `Instance`s. For example, a hundred water molecules will be stored as one `Definition` and a hundred `Instances`. Coordinates are detached from `Molecule`: one realization of a system's geometry is a `Conformation`, holding `Positions`, an optional periodic cell, occupancies, B-factors, and per-atom annotations.
+`Molecule` is the foundational type storing one molecule without its geometry. `Molecule` must be a connected graph. Its `Graph` owns authoritative chemistry, while its `Perception` stores derived chemical perception such as rings and aromaticity. Topology is a collection of one or more `Molecule`s together with `Hierarchy` (`Chain`, `Residue`, `AtomSite`). Molecules in `Topology` are not stored naively, but as `Definition`s and `Instance`s. For example, a hundred water molecules will be stored as one `Definition` and a hundred `Instances`. Coordinates are detached from `Molecule` and `Topology`: they live in structures. A structure is one set of coordinates and per-atom state of a topology: `Positions`, an optional periodic cell, and structure properties, plus fields specific to the kind of structure.
 ```text
 Molecule = Graph + Perception + Properties
 Topology = collection of Molecules (stored as definitions and instances) + Hierarchy
 Hierarchy = Chain -> Residue -> AtomSite
 ```
-Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. `Model` is literally a model of one or more molecules. `Ensemble` and `Trajectory` are distinct collections of realizations of one system: an ensemble is a weighted, unordered sample (conformers, Monte Carlo samples, NMR models), and every member carries a statistical weight; a trajectory is a time-ordered sequence of frames produced by dynamics.
+Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. `Model` is literally a model of one or more molecules. `Ensemble` and `Trajectory` are distinct collections of structures of one system: an ensemble is a weighted, unordered sample (conformers, Monte Carlo samples, NMR models), and every member carries a statistical weight; a trajectory is a time-ordered sequence of frames produced by dynamics.
 ```text
-Model           = Topology + Conformation
-Ensemble        = Topology + weighted EnsembleMembers (Conformation + weight)
-Trajectory      = Topology + time-ordered TrajectoryFrames (Conformation + time, step, velocities, forces)
+Model           = Topology + positions, cell, occupancies, B-factors, properties
+Ensemble        = Topology + weighted EnsembleMembers (positions, cell, occupancies, B-factors, properties, weight)
+Trajectory      = Topology + time-ordered TrajectoryFrames (positions, cell, properties, velocities, forces, time, step)
 ```
 
 ## Examples
