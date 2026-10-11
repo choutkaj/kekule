@@ -2,9 +2,13 @@ use std::sync::Arc;
 
 use kekule::core::Molecule;
 use kekule::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
-use kekule::structure::{ConformationError, Ensemble, EnsembleMember, Model, ModelView, Positions};
+use kekule::structure::{
+    ConformationError, Ensemble, EnsembleMember, Model, ModelView, Positions, Trajectory,
+    TrajectoryFrame,
+};
 use kekule::topology::{
-    AtomSiteMetadata, Hierarchy, InstanceAtomId, Topology, TopologyBuildError, TopologyBuilder,
+    AtomSelection, AtomSiteMetadata, Hierarchy, InstanceAtomId, Topology, TopologyBuildError,
+    TopologyBuilder,
 };
 
 fn key() -> PropertyKey {
@@ -194,4 +198,73 @@ fn realizations_reject_mismatched_property_rows_transactionally() {
         .is_err());
     assert_eq!(ensemble.get(0).unwrap().properties(), &bound);
     assert!(ModelView::new(&ethane, ensemble.get(0).unwrap().conformation()).is_ok());
+}
+
+#[test]
+fn owner_topology_property_edits_keep_layout_without_touching_other_holders() {
+    let topology = kekule::smiles::to_topology("CCO").unwrap();
+    let selection = AtomSelection::all(&topology);
+
+    let mut model = Model::new(Arc::clone(&topology), Positions::zeros(3)).unwrap();
+    model
+        .topology_properties_mut()
+        .owner_mut()
+        .insert(key(), PropertyValue::Int(1))
+        .unwrap();
+    // A shared topology is replaced by an edited snapshot of the same layout.
+    assert!(!Arc::ptr_eq(&topology, &model.shared_topology()));
+    assert!(model.topology().shares_layout(&topology));
+    assert_eq!(
+        model.topology().properties().owner().get(&key()),
+        Some(&PropertyValue::Int(1))
+    );
+    assert_eq!(topology.properties().owner().get(&key()), None);
+    selection
+        .ensure_compatible(&model.shared_topology())
+        .unwrap();
+    // A uniquely owned snapshot is edited in place.
+    let unique = Arc::as_ptr(&model.shared_topology());
+    model
+        .topology_properties_mut()
+        .owner_mut()
+        .insert(key(), PropertyValue::Int(2))
+        .unwrap();
+    assert_eq!(Arc::as_ptr(&model.shared_topology()), unique);
+    assert_eq!(
+        model.topology().properties().owner().get(&key()),
+        Some(&PropertyValue::Int(2))
+    );
+
+    let mut ensemble = Ensemble::from_items(
+        Arc::clone(&topology),
+        [EnsembleMember::new(Positions::zeros(3), 1.0).unwrap()],
+    )
+    .unwrap();
+    ensemble
+        .topology_properties_mut()
+        .owner_mut()
+        .insert(key(), PropertyValue::Int(3))
+        .unwrap();
+    let mut trajectory = Trajectory::from_items(
+        Arc::clone(&topology),
+        [TrajectoryFrame::new(Positions::zeros(3))],
+    )
+    .unwrap();
+    trajectory
+        .topology_properties_mut()
+        .owner_mut()
+        .insert(key(), PropertyValue::Int(4))
+        .unwrap();
+
+    assert!(ensemble.topology().shares_layout(&topology));
+    assert!(trajectory.topology().shares_layout(&topology));
+    assert_eq!(
+        ensemble.topology().properties().owner().get(&key()),
+        Some(&PropertyValue::Int(3))
+    );
+    assert_eq!(
+        trajectory.topology().properties().owner().get(&key()),
+        Some(&PropertyValue::Int(4))
+    );
+    assert_eq!(topology.properties().owner().get(&key()), None);
 }

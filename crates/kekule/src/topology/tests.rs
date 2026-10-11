@@ -320,31 +320,31 @@ fn annotated_topology() -> Topology {
 fn into_builder_round_trip_preserves_complete_topology_state() {
     let topology = annotated_topology();
     let definitions = topology.definitions.clone();
-    let instances = topology.layout.instances.clone();
-    let atoms = topology.layout.atoms.clone();
-    let bonds = topology.layout.bonds.clone();
-    let hierarchy = topology.layout.hierarchy.clone();
-    let properties = topology.layout.properties.clone();
+    let instances = topology.instances.clone();
+    let atoms = topology.atom_order.clone();
+    let bonds = topology.bond_order.clone();
+    let hierarchy = topology.hierarchy.clone();
+    let properties = topology.properties.clone();
 
     let rebuilt = topology.into_builder().build().unwrap();
 
     assert_eq!(rebuilt.definitions, definitions);
-    assert_eq!(rebuilt.layout.instances, instances);
-    assert_eq!(rebuilt.layout.atoms, atoms);
-    assert_eq!(rebuilt.layout.bonds, bonds);
-    assert_eq!(rebuilt.layout.hierarchy, hierarchy);
-    assert_eq!(rebuilt.layout.properties, properties);
+    assert_eq!(rebuilt.instances, instances);
+    assert_eq!(rebuilt.atom_order, atoms);
+    assert_eq!(rebuilt.bond_order, bonds);
+    assert_eq!(rebuilt.hierarchy, hierarchy);
+    assert_eq!(rebuilt.properties, properties);
 }
 
 #[test]
 fn into_builder_appends_after_preserved_layout_hierarchy_and_properties() {
     let topology = annotated_topology();
     let old_definitions = topology.definitions.clone();
-    let old_instances = topology.layout.instances.clone();
+    let old_instances = topology.instances.clone();
     let old_atoms = topology.atom_ids().to_vec();
     let old_bonds = topology.bond_ids().to_vec();
-    let old_hierarchy = topology.layout.hierarchy.clone();
-    let old_properties = topology.layout.properties.clone();
+    let old_hierarchy = topology.hierarchy.clone();
+    let old_properties = topology.properties.clone();
     let value_key = PropertyKey::new("tag").unwrap();
     let owner_key = PropertyKey::new("source").unwrap();
 
@@ -371,10 +371,7 @@ fn into_builder_appends_after_preserved_layout_hierarchy_and_properties() {
         &extended.definitions[..old_definitions.len()],
         old_definitions
     );
-    assert_eq!(
-        &extended.layout.instances[..old_instances.len()],
-        old_instances
-    );
+    assert_eq!(&extended.instances[..old_instances.len()], old_instances);
     assert_eq!(&extended.atom_ids()[..old_atoms.len()], old_atoms);
     assert_eq!(&extended.bond_ids()[..old_bonds.len()], old_bonds);
     for (index, atom) in old_atoms.iter().copied().enumerate() {
@@ -389,7 +386,7 @@ fn into_builder_appends_after_preserved_layout_hierarchy_and_properties() {
             Some(TopologyBondIndex::new(index as u32))
         );
     }
-    assert_eq!(extended.layout.hierarchy, old_hierarchy);
+    assert_eq!(extended.hierarchy, old_hierarchy);
     assert_eq!(extended.properties().chains(), old_properties.chains());
     assert_eq!(extended.properties().residues(), old_properties.residues());
     assert_eq!(
@@ -441,27 +438,90 @@ fn into_builder_appends_after_preserved_layout_hierarchy_and_properties() {
 }
 
 #[test]
-fn topology_directly_owns_its_layout_collections() {
+fn topology_owns_instances_and_dense_orders_beside_definitions() {
     let (topology, ..) = topology_with_reused_definition();
     assert_eq!(topology.definitions.len(), 1);
-    assert_eq!(topology.layout.instances.len(), 2);
-    assert_eq!(topology.layout.atoms.len(), 4);
-    assert_eq!(topology.layout.bonds.len(), 2);
-    for (dense, &atom) in topology.layout.atoms.order().iter().enumerate() {
-        assert_eq!(topology.layout.atoms.index(atom), Some(dense));
+    assert_eq!(topology.instances.len(), 2);
+    assert_eq!(topology.atom_order.len(), 4);
+    assert_eq!(topology.bond_order.len(), 2);
+    for (dense, &atom) in topology.atom_order.order().iter().enumerate() {
+        assert_eq!(topology.atom_order.index(atom), Some(dense));
     }
-    for (dense, &bond) in topology.layout.bonds.order().iter().enumerate() {
-        assert_eq!(topology.layout.bonds.index(bond), Some(dense));
+    for (dense, &bond) in topology.bond_order.order().iter().enumerate() {
+        assert_eq!(topology.bond_order.index(bond), Some(dense));
     }
     // Lookups reject foreign instances and local IDs beyond a definition.
     let foreign = InstanceAtomId::new(MoleculeInstanceId::new(2), AtomId::new(0));
     let beyond = InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(2));
-    assert_eq!(topology.layout.atoms.index(foreign), None);
-    assert_eq!(topology.layout.atoms.index(beyond), None);
+    assert_eq!(topology.atom_order.index(foreign), None);
+    assert_eq!(topology.atom_order.index(beyond), None);
 
     let debug = format!("{topology:?}");
-    assert!(debug.contains("atoms"));
-    assert!(debug.contains("bonds"));
+    assert!(debug.contains("atom_order"));
+    assert!(debug.contains("bond_order"));
+}
+
+#[test]
+fn property_edits_and_clones_keep_layout_identity_while_publication_mints_one() {
+    let (source, ..) = topology_with_reused_definition();
+    let selection = AtomSelection::all(&source);
+    let key = PropertyKey::new("tag").unwrap();
+
+    let mut edited = (*source).clone();
+    assert!(edited.shares_layout(&source));
+    edited
+        .properties_mut()
+        .atoms_mut()
+        .insert(
+            key.clone(),
+            PropertyColumn::Int(vec![Some(1), Some(2), Some(3), Some(4)]),
+        )
+        .unwrap();
+    edited
+        .properties_mut()
+        .owner_mut()
+        .insert(key.clone(), PropertyValue::String("edited".into()))
+        .unwrap();
+    let edited = Arc::new(edited);
+
+    assert!(edited.shares_layout(&source));
+    assert!(selection.ensure_compatible(&edited).is_ok());
+    assert_eq!(
+        edited
+            .atom_at(TopologyAtomIndex::new(2))
+            .unwrap()
+            .property(&key),
+        Some(PropertyValue::Int(3))
+    );
+    assert_eq!(
+        edited.properties().owner().get(&key),
+        Some(&PropertyValue::String("edited".into()))
+    );
+    // The source snapshot keeps its own annotations.
+    assert_eq!(
+        source
+            .atom_at(TopologyAtomIndex::new(2))
+            .unwrap()
+            .property(&key),
+        None
+    );
+    assert_eq!(source.properties().owner().get(&key), None);
+    // Editing copies only the properties; other static storage stays shared.
+    assert!(!std::ptr::eq(edited.properties(), source.properties()));
+    assert!(std::ptr::eq(edited.hierarchy(), source.hierarchy()));
+    assert!(std::ptr::eq(
+        edited.atom_ids().as_ptr(),
+        source.atom_ids().as_ptr()
+    ));
+
+    // Republishing equal content mints a new identity.
+    let republished = Arc::new(Arc::unwrap_or_clone(edited).into_builder().build().unwrap());
+    assert!(!republished.shares_layout(&source));
+    assert!(republished.same_layout(&source));
+    assert_eq!(
+        selection.ensure_compatible(&republished),
+        Err(SelectionError::TopologyMismatch)
+    );
 }
 
 #[test]

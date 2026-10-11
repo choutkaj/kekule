@@ -5,11 +5,11 @@ use std::sync::Arc;
 use crate::core::Molecule;
 use crate::properties::{PropertyError, TopologyProperties, TopologyPropertiesMut};
 
-use super::layout::{DenseLayout, OrderError};
+use super::dense_order::{DenseOrder, OrderError};
 use super::{
-    AtomSiteId, ChainId, Hierarchy, InstanceAtomId, InstanceBondId, MoleculeClass,
+    AtomSiteId, ChainId, Hierarchy, InstanceAtomId, InstanceBondId, LayoutId, MoleculeClass,
     MoleculeDefinition, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, ResidueClass,
-    ResidueId, Topology, TopologyAtomIndex, TopologyBondIndex, TopologyLayout,
+    ResidueId, Topology, TopologyAtomIndex, TopologyBondIndex,
 };
 
 /// Linear, validate-then-commit builder for coordinate-free topology.
@@ -48,8 +48,8 @@ use super::{
 pub struct TopologyBuilder {
     definitions: Vec<MoleculeDefinition>,
     pub(super) instances: Vec<MoleculeInstance>,
-    atoms: DenseLayout<InstanceAtomId>,
-    bonds: DenseLayout<InstanceBondId>,
+    atoms: DenseOrder<InstanceAtomId>,
+    bonds: DenseOrder<InstanceBondId>,
     hierarchy: Hierarchy,
     properties: TopologyProperties,
     molecule_class_overrides: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
@@ -71,11 +71,7 @@ impl TopologyBuilder {
     }
 
     pub(crate) fn from_shared(topology: Arc<Topology>) -> Self {
-        let topology = Arc::try_unwrap(topology).unwrap_or_else(|shared| Topology {
-            definitions: shared.definitions.clone(),
-            layout: Arc::clone(&shared.layout),
-        });
-        Self::from_topology(topology)
+        Self::from_topology(Arc::unwrap_or_clone(topology))
     }
 
     pub fn definition_count(&self) -> usize {
@@ -185,18 +181,20 @@ impl TopologyBuilder {
     pub(super) fn from_topology(topology: Topology) -> Self {
         let Topology {
             definitions,
-            layout,
-        } = topology;
-        // Perceived snapshots may still share the layout.
-        let TopologyLayout {
             instances,
-            atoms,
-            bonds,
+            atom_order: atoms,
+            bond_order: bonds,
             hierarchy,
-            properties,
             molecule_class_overrides,
             residue_class_overrides,
-        } = Arc::try_unwrap(layout).unwrap_or_else(|shared| (*shared).clone());
+            properties,
+            layout: _,
+        } = topology;
+        // Perceived snapshots may still share static state.
+        let atoms = Arc::unwrap_or_clone(atoms);
+        let bonds = Arc::unwrap_or_clone(bonds);
+        let hierarchy = Arc::unwrap_or_clone(hierarchy);
+        let properties = Arc::unwrap_or_clone(properties);
         let preserved_molecule_classes = definitions.iter().map(|d| (d.id(), d.class())).collect();
         let preserved_residue_classes = hierarchy
             .residues()
@@ -361,7 +359,7 @@ impl TopologyBuilder {
             self.instances.len(),
             TopologyIdKind::MoleculeInstance,
         )?;
-        self.extend_layouts(id, definition)?;
+        self.extend_orders(id, definition)?;
         self.instances.push(MoleculeInstance { id, definition });
         if self.extending_topology {
             self.properties.owner_mut().clear();
@@ -442,15 +440,14 @@ impl TopologyBuilder {
 
         Ok(Topology {
             definitions: self.definitions,
-            layout: Arc::new(TopologyLayout {
-                instances: self.instances,
-                atoms: self.atoms,
-                bonds: self.bonds,
-                hierarchy: self.hierarchy,
-                properties: self.properties,
-                molecule_class_overrides: self.molecule_class_overrides,
-                residue_class_overrides: self.residue_class_overrides,
-            }),
+            instances: self.instances,
+            atom_order: Arc::new(self.atoms),
+            bond_order: Arc::new(self.bonds),
+            hierarchy: Arc::new(self.hierarchy),
+            molecule_class_overrides: self.molecule_class_overrides,
+            residue_class_overrides: self.residue_class_overrides,
+            properties: Arc::new(self.properties),
+            layout: LayoutId::mint(),
         })
     }
 
@@ -465,8 +462,8 @@ impl TopologyBuilder {
             .sum()
     }
 
-    // Instances are appended in ID order; both layouts grow by one instance.
-    fn extend_layouts(
+    // Instances are appended in ID order; both dense orders grow by one instance.
+    fn extend_orders(
         &mut self,
         instance: MoleculeInstanceId,
         definition: MoleculeDefinitionId,
@@ -605,7 +602,7 @@ impl TopologyBuilder {
             molecule,
             class: MoleculeClass::SmallMolecule,
         });
-        if let Err(error) = self.extend_layouts(instance, definition) {
+        if let Err(error) = self.extend_orders(instance, definition) {
             self.definitions.pop();
             return Err(error);
         }
@@ -799,7 +796,7 @@ impl std::error::Error for TopologyHierarchyError {}
 
 fn validate_hierarchy(
     hierarchy: &Hierarchy,
-    atoms: &DenseLayout<InstanceAtomId>,
+    atoms: &DenseOrder<InstanceAtomId>,
 ) -> Result<(), TopologyHierarchyError> {
     for (slot, (chain_id, chain)) in hierarchy.chains().enumerate() {
         if chain_id.index() != slot {

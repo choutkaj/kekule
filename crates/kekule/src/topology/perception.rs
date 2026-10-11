@@ -1,4 +1,5 @@
 use std::fmt;
+use std::sync::Arc;
 
 use crate::chemistry::PerceptionError;
 
@@ -41,11 +42,11 @@ impl Topology {
     ///
     /// Represented graphs, definition reuse, all semantic IDs, dense ordering,
     /// hierarchy, classifications, and properties are preserved exactly, so the
-    /// result shares this topology's layout without copying it
-    /// ([`Self::shares_layout`]). Selections, realizations, buffers, and prepared
-    /// potentials bound to this topology remain usable with the result. Values
-    /// that read perception, such as prepared substructure targets, stay bound to
-    /// the snapshot they were prepared from.
+    /// result shares this topology's layout and its static storage without
+    /// copying it ([`Self::shares_layout`]). Selections, realizations, buffers,
+    /// and prepared potentials bound to this topology remain usable with the
+    /// result. Values that read perception, such as prepared substructure
+    /// targets, stay bound to the snapshot they were prepared from.
     ///
     /// ```
     /// use kekule::{smiles, topology::Topology};
@@ -76,10 +77,17 @@ impl Topology {
             .collect::<Result<_, TopologyPerceptionError>>()?;
 
         // Perception never requires reclassification, reindexing, or rebuilding
-        // hierarchy correspondence, so the snapshot shares the published layout.
+        // hierarchy correspondence, so the snapshot keeps the published layout.
         Ok(Self {
             definitions,
-            layout: std::sync::Arc::clone(&self.layout),
+            instances: self.instances.clone(),
+            atom_order: Arc::clone(&self.atom_order),
+            bond_order: Arc::clone(&self.bond_order),
+            hierarchy: Arc::clone(&self.hierarchy),
+            molecule_class_overrides: self.molecule_class_overrides.clone(),
+            residue_class_overrides: self.residue_class_overrides.clone(),
+            properties: Arc::clone(&self.properties),
+            layout: self.layout,
         })
     }
 }
