@@ -27,7 +27,7 @@ fn frame(points: &[[f64; 3]], cell: Option<PeriodicCell>) -> TrajectoryFrame {
         .map(|p| Point3::new(p[0], p[1], p[2]))
         .collect::<Vec<_>>();
     let mut frame = TrajectoryFrame::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap());
-    frame.conformation_mut().set_cell(cell);
+    frame.set_cell(cell);
     frame
 }
 
@@ -95,13 +95,11 @@ fn making_whole_preserves_complete_metadata_source_and_topology_and_supports_in_
         ))
         .unwrap();
     source_frame
-        .conformation_mut()
         .properties_mut()
         .owner_mut()
         .insert(PropertyKey::new("frame").unwrap(), PropertyValue::Int(7))
         .unwrap();
     source_frame
-        .conformation_mut()
         .properties_mut()
         .atoms_mut()
         .insert(
@@ -113,7 +111,6 @@ fn making_whole_preserves_complete_metadata_source_and_topology_and_supports_in_
     source
         .get_mut(0)
         .unwrap()
-        .conformation_mut()
         .properties_mut()
         .bonds_mut()
         .insert(

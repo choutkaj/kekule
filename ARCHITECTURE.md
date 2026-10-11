@@ -13,10 +13,9 @@ Rustdoc beside their implementations. The links below point to those sources;
 | --- | --- | --- |
 | `Molecule` | One nonempty connected `Graph`, derived `Perception`, `MoleculeProperties` | Coordinates, hierarchy, system classification |
 | `Topology` | Reusable definitions and their complete molecule instances, qualified identities, dense atom and bond order, one `Hierarchy`, classification, `TopologyProperties`, layout identity | Geometry or bonds between separate instances |
-| `Conformation` | One realization's dense positions, optional cell, occupancies, B factors, and `RealizationProperties`, addressed by dense topology index | Topology, semantic IDs, or temporal state |
-| `Model` | One shared `Topology` and one bound `Conformation` | A second chemical or hierarchy model |
-| `Ensemble` | One shared topology, collection owner properties, and a weighted, unordered sample of `EnsembleMember` payloads (conformation and a finite positive relative weight) | An owned `Model` or topology in each member; temporal meaning |
-| `Trajectory` | One shared topology, collection owner properties, and time-ordered `TrajectoryFrame` payloads (conformation plus optional velocities, forces, time, and step) | Implicit topology changes between frames; statistical weights |
+| `Model` | One shared `Topology` and one realization of it: dense positions, optional cell, occupancies, B factors, and `RealizationProperties`, addressed by dense topology index | A second chemical or hierarchy model; temporal state |
+| `Ensemble` | One shared topology, collection owner properties, and a weighted, unordered sample of `EnsembleMember` payloads (positions, optional cell, occupancies, B factors, properties, and a finite positive relative weight) | An owned `Model` or topology in each member; temporal meaning |
+| `Trajectory` | One shared topology, collection owner properties, and time-ordered `TrajectoryFrame` payloads (positions, optional cell, properties, and optional velocities, forces, time, and step) | Implicit topology changes between frames; statistical weights; crystallographic site parameters |
 
 `Ensemble` and `Trajectory` are distinct scientific concepts and distinct
 types. An ensemble is a weighted sample of a distribution: member order carries
@@ -29,6 +28,15 @@ same for both, such as item access, selection, subsetting, perception,
 superposition, and RMSD, are inherent methods of each type over one
 crate-private store. Weight- or time-dependent behavior belongs to one type
 only; do not add a public abstraction that erases the difference.
+
+Realizations are flat. `Model`, `EnsembleMember`, and `TrajectoryFrame` each
+own exactly the fields that are meaningful for them; there is no shared
+conformation payload. Positions, cell, and realization properties are common
+to all three. Occupancies and B factors are crystallographic site parameters of
+a model or ensemble member and never belong to a trajectory frame. Velocities,
+forces, time, and step belong only to frames, and a weight only to an ensemble
+member. Coordinate kernels share code through the borrowed `ModelView`, not
+through a common owned payload.
 
 Both live in `kekule::structure`. `kekule-traj` owns file codecs, streaming
 reader and writer contracts, the reusable `FrameBuffer`, periodic
@@ -236,7 +244,7 @@ repeated entity.
 | --- | --- | --- |
 | Molecule definition | `MoleculeProperties` | `AtomId`, `BondId` |
 | Topology | `TopologyProperties` | Instances, dense atoms and bonds, chains, residues, atom sites |
-| Conformation (model, ensemble member, trajectory frame) | `RealizationProperties` | Dense atoms and bonds |
+| Realization (model, ensemble member, trajectory frame) | `RealizationProperties` | Dense atoms and bonds |
 | Ensemble or trajectory collection | `OwnerProperties` | Owner values only |
 
 Unsupported domains are unrepresentable rather than rejected at runtime. Reads
@@ -256,8 +264,8 @@ perception does; only builders, editors, and transformations publish a new
 layout. Transformations transfer entity values explicitly and do not infer annotation
 validity or recompute arbitrary properties. Arbitrary source fields stay in
 format sidecars unless canonical semantics, scope, and domain justify promotion.
-Occupancy and B factors are typed conformation fields with checked semantics,
-independent of any generic property with the same name. Positions, cells,
+Occupancy and B factors are typed site fields of models and ensemble members,
+with checked semantics independent of any generic property with the same name. Positions, cells,
 weights, time, steps, velocities, and forces retain their dedicated APIs.
 
 Kekule uses one runtime unit system across all crates. Public boundaries accept
@@ -272,7 +280,7 @@ values. Exact units, tolerances, and conversion policies belong with
 ## Geometry and realization ownership
 
 A model, ensemble, or trajectory owns its shared topology once. Members and frames
-store payloads around a `Conformation`, not nested models; a detached payload has
+store flat payloads, not nested models; a detached payload has
 atom rows only and acquires bond rows when its collection binds it. Borrowed
 `ModelView` access, obtained through `AsModelView`, lets coordinate algorithms
 and writers share kernels across models, members, frames, and buffers. Owned
@@ -283,8 +291,8 @@ one shared layout; there is no special single-member ownership model.
 Read access is through views: `Topology` lookups return `Option` views
 (`AtomView`, `BondView`, molecule, chain, residue, and atom-site views), and
 `Model::atom` joins an `AtomView` with that atom's realization state. Mutation
-goes through explicit, dimension-preserving guards: `conformation_mut()` on
-models, payloads, and collection items, `get_mut()` on collections, and
+goes through explicit, dimension-preserving setters on models, detached
+payloads, and the collection item guards returned by `get_mut()`, and through
 `properties_mut()` on topologies (`topology_properties_mut()` on models and
 collections, which replaces a shared topology with a snapshot of it). Guards
 have no `DerefMut`; whole payloads are replaced through the owner.
@@ -305,7 +313,6 @@ priority and atom-ID ties choose the references without coordinates; undefined
 geometry yields an absent value rather than substituting references. Numerical
 policies and supported geometries live with
 [positions](crates/kekule/src/structure/positions.rs),
-[conformations](crates/kekule/src/structure/conformation.rs),
 [models](crates/kekule/src/structure/model.rs),
 [ensembles](crates/kekule/src/structure/ensemble.rs),
 [measurements](crates/kekule/src/structure/measure.rs), and

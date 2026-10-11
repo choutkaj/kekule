@@ -3,7 +3,7 @@ use std::sync::Arc;
 use kekule::core::Molecule;
 use kekule::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
 use kekule::structure::{
-    ConformationError, Ensemble, EnsembleMember, Model, ModelView, Positions, Trajectory,
+    ConformationError, Ensemble, EnsembleMember, Model, Positions, RealizationView, Trajectory,
     TrajectoryFrame,
 };
 use kekule::topology::{
@@ -144,13 +144,11 @@ fn realizations_reject_mismatched_property_rows_transactionally() {
     let ethane = Arc::new(Topology::from_molecule(molecule("C=C")).unwrap());
     let mut source = Model::new(Arc::clone(&ethane), Positions::zeros(2)).unwrap();
     source
-        .conformation_mut()
         .properties_mut()
         .atoms_mut()
         .insert(key(), PropertyColumn::Int(vec![Some(1), Some(2)]))
         .unwrap();
     source
-        .conformation_mut()
         .properties_mut()
         .bonds_mut()
         .insert(key(), PropertyColumn::Int(vec![Some(3)]))
@@ -160,7 +158,7 @@ fn realizations_reject_mismatched_property_rows_transactionally() {
     let mut model = Model::new(Arc::clone(&methane), Positions::zeros(1)).unwrap();
     let original = model.properties().clone();
     assert_eq!(
-        model.conformation_mut().set_properties(bound.clone()),
+        model.set_properties(bound.clone()),
         Err(ConformationError::AtomCountMismatch {
             expected: 1,
             actual: 2
@@ -172,32 +170,30 @@ fn realizations_reject_mismatched_property_rows_transactionally() {
     let mut member = EnsembleMember::new(Positions::zeros(2), 1.0).unwrap();
     let detached = member.properties().clone();
     assert_eq!(
-        member.conformation_mut().set_properties(bound.clone()),
+        member.set_properties(bound.clone()),
         Err(ConformationError::BondCountMismatch {
             expected: 0,
             actual: 1
         })
     );
     assert_eq!(member.properties(), &detached);
-    assert!(ModelView::new(&ethane, member.conformation()).is_err());
+    assert!(RealizationView::new(&ethane, &member).is_err());
 
     let mut ensemble = Ensemble::from_items(Arc::clone(&ethane), [member]).unwrap();
     assert_eq!(ensemble.get(0).unwrap().properties().bonds().len(), 1);
     ensemble
         .get_mut(0)
         .unwrap()
-        .conformation_mut()
         .set_properties(bound.clone())
         .unwrap();
     assert_eq!(ensemble.get(0).unwrap().properties(), &bound);
     assert!(ensemble
         .get_mut(0)
         .unwrap()
-        .conformation_mut()
         .set_properties(original)
         .is_err());
     assert_eq!(ensemble.get(0).unwrap().properties(), &bound);
-    assert!(ModelView::new(&ethane, ensemble.get(0).unwrap().conformation()).is_ok());
+    assert!(RealizationView::new(&ethane, ensemble.get(0).unwrap().payload()).is_ok());
 }
 
 #[test]

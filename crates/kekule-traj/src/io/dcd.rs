@@ -1277,18 +1277,6 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 "properties",
             ));
         }
-        for (present, field) in [
-            (frame.occupancies().is_some(), "occupancies"),
-            (frame.b_factors().is_some(), "B-factors"),
-        ] {
-            if present {
-                return Err(writer_field_error(
-                    &self.source_label,
-                    self.frame_count,
-                    field,
-                ));
-            }
-        }
         if self.frame_count >= i32::MAX as u64 {
             return Err(writer_overflow(
                 &self.source_label,

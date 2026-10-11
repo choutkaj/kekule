@@ -248,59 +248,6 @@ fn failed_saves_leave_no_output_or_temporary_files_and_preserve_existing_destina
 }
 
 #[test]
-fn every_codec_rejects_occupancies_and_b_factors_without_publishing() {
-    use kekule::topology::TopologyAtomIndex;
-    use kekule::units::{Quantity, SQUARE_ANGSTROM};
-    use kekule_traj::TrajectoryCodecErrorKind;
-
-    type Annotate = fn(&mut TrajectoryFrame);
-    let directory = Directory::new();
-    let topology = linear_carbon_topology(3);
-    let annotations: [(&str, Annotate); 2] = [
-        ("occupancies", |frame| {
-            frame
-                .conformation_mut()
-                .set_occupancy(TopologyAtomIndex::new(1), Some(0.5))
-                .unwrap();
-        }),
-        ("B-factors", |frame| {
-            frame
-                .conformation_mut()
-                .set_b_factor(
-                    TopologyAtomIndex::new(1),
-                    Some(Quantity::new(20.0, SQUARE_ANGSTROM)),
-                )
-                .unwrap();
-        }),
-    ];
-    for (format, name) in [
-        (TrajectoryFormat::Xyz, "out.xyz"),
-        (TrajectoryFormat::Dcd, "out.dcd"),
-        (TrajectoryFormat::Trr, "out.trr"),
-        (TrajectoryFormat::Xtc, "out.xtc"),
-    ] {
-        for (field, annotate) in annotations {
-            let mut frame = TrajectoryFrame::new(Positions::zeros(3));
-            annotate(&mut frame);
-            let trajectory = Trajectory::from_items(topology.clone(), [frame]).unwrap();
-            let error = write_trajectory_with_options(
-                directory.file(name),
-                &trajectory,
-                TrajectoryWriteOptions::new(format),
-            )
-            .unwrap_err();
-            assert_eq!(
-                support::codec_kind(&error),
-                Some(TrajectoryCodecErrorKind::UnsupportedField),
-                "{format:?} {field}"
-            );
-            assert!(error.to_string().contains(field), "{error}");
-            assert_eq!(directory.count(), 0);
-        }
-    }
-}
-
-#[test]
 fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     use kekule::{
         geometry::{PeriodicCell, Vector3},
@@ -321,7 +268,7 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     .unwrap();
     for index in 0..source.len() {
         let mut frame = source.get_mut(index).unwrap();
-        frame.conformation_mut().set_cell(Some(cell));
+        frame.set_cell(Some(cell));
         frame
             .set_time(Some(Quantity::new(index as f64, PICOSECOND)))
             .unwrap();
@@ -341,7 +288,6 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
         selected
             .get_mut(index)
             .unwrap()
-            .conformation_mut()
             .properties_mut()
             .owner_mut()
             .insert(

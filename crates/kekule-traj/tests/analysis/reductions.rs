@@ -242,10 +242,7 @@ fn stored_coordinate_statistics_do_not_implicitly_image_or_align_periodic_frames
     )
     .unwrap();
     for index in 0..t.len() {
-        t.get_mut(index)
-            .unwrap()
-            .conformation_mut()
-            .set_cell(Some(cell));
+        t.get_mut(index).unwrap().set_cell(Some(cell));
     }
     // A minimum-image contact would match; stored distance is nine nanometers.
     assert_eq!(

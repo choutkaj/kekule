@@ -111,7 +111,7 @@ impl Model {
             return Err(PeriodicBoxError::NotFullyPeriodic);
         }
         PeriodicGeometry::new(cell).map_err(PeriodicBoxError::Geometry)?;
-        self.conformation_mut().set_cell(Some(cell));
+        self.set_cell(Some(cell));
         Ok(())
     }
 }

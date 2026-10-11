@@ -6,8 +6,9 @@
 //! In-memory trajectories live in [`kekule::structure`]:
 //! [`kekule::structure::Trajectory`] is an ordered temporal collection of
 //! [`kekule::structure::TrajectoryFrame`] payloads sharing one immutable
-//! topology. A frame is a [`kekule::structure::Conformation`] plus optional
-//! velocities, forces, time, and step; it carries no topology of its own.
+//! topology. A frame holds positions, an optional cell, realization
+//! properties, and optional velocities, forces, time, and step; it carries no
+//! topology of its own.
 //! Frame order is temporal. [`kekule::structure::Ensemble`] is the distinct
 //! type for weighted, unordered samples; both offer superposition and RMSD.
 //!

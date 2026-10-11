@@ -33,7 +33,6 @@ fn trajectory_payload_and_buffer_reject_mismatched_annotation_rows() {
     // Annotations of a larger realization do not fit this topology's rows.
     let mut larger = TrajectoryFrame::new(Positions::zeros(2));
     larger
-        .conformation_mut()
         .properties_mut()
         .atoms_mut()
         .insert(key.clone(), PropertyColumn::Int(vec![Some(7), Some(8)]))
@@ -41,17 +40,10 @@ fn trajectory_payload_and_buffer_reject_mismatched_annotation_rows() {
     let foreign = larger.properties().clone();
     let mut frame = TrajectoryFrame::new(positions.clone());
     let original = frame.properties().clone();
-    assert!(frame
-        .conformation_mut()
-        .set_properties(foreign.clone())
-        .is_err());
+    assert!(frame.set_properties(foreign.clone()).is_err());
     assert_eq!(frame.properties(), &original);
     let mut buffer = FrameBuffer::new(topology);
-    assert!(buffer
-        .frame_mut()
-        .conformation_mut()
-        .set_properties(foreign)
-        .is_err());
+    assert!(buffer.frame_mut().set_properties(foreign).is_err());
     assert!(buffer
         .replace_from_data(FrameBufferData::from_frame_view(
             Trajectory::from_items(kekule::smiles::to_topology("CC").unwrap(), [larger])

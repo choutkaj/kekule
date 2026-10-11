@@ -180,8 +180,7 @@ fn model_perception_changes_snapshot_preserving_realization_and_existing_binding
     ))
     .unwrap();
     let mut model = Model::new(Arc::clone(&topology), positions).unwrap();
-    let mut conformation = model.conformation_mut();
-    let mut properties = conformation.properties_mut();
+    let mut properties = model.properties_mut();
     properties
         .owner_mut()
         .insert(key(), PropertyValue::Int(7))
@@ -202,7 +201,7 @@ fn model_perception_changes_snapshot_preserving_realization_and_existing_binding
             Some(PropertyValue::Int(9)),
         )
         .unwrap();
-    conformation.set_cell(Some(
+    model.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), NANOMETER),
             [true; 3],
@@ -271,15 +270,14 @@ fn ensemble_perception_preserves_members_weights_and_collection_properties() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
     let mut member = EnsembleMember::new(Positions::zeros(6), 1.0).unwrap();
     member.set_weight(0.25).unwrap();
-    let mut conformation = member.conformation_mut();
-    conformation.set_cell(Some(
+    member.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), NANOMETER),
             [true; 3],
         )
         .unwrap(),
     ));
-    let mut properties = conformation.properties_mut();
+    let mut properties = member.properties_mut();
     properties
         .owner_mut()
         .insert(key(), PropertyValue::Int(10))
@@ -299,7 +297,6 @@ fn ensemble_perception_preserves_members_weights_and_collection_properties() {
     ensemble
         .get_mut(0)
         .unwrap()
-        .conformation_mut()
         .properties_mut()
         .bonds_mut()
         .insert(key(), PropertyColumn::Int(vec![Some(12); 6]))
@@ -357,7 +354,6 @@ fn topology_model_and_ensemble_failure_preserve_complete_previous_state() {
     )
     .unwrap();
     model
-        .conformation_mut()
         .properties_mut()
         .owner_mut()
         .insert(key(), PropertyValue::Int(14))

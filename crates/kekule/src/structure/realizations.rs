@@ -3,22 +3,27 @@ use std::sync::Arc;
 
 use crate::core::Molecule;
 use crate::geometry::RigidTransform;
-use crate::properties::{OwnerProperties, TopologyPropertiesMut};
+use crate::properties::{OwnerProperties, RealizationProperties, TopologyPropertiesMut};
 use crate::topology::transform::TopologySubsetError;
 use crate::topology::{
     AtomSelection, Topology, TopologyBuildError, TopologyBuilder, TopologyPerceptionError,
 };
 
-use super::{
-    AsModelView, Conformation, ConformationError, ConformationMut, Model, ModelView, Positions,
-};
+use super::state::{is_bound, validate_binding};
+use super::{AsModelView, ConformationError, Model, ModelView, Positions};
 
 pub(crate) mod sealed {
     use super::*;
 
     /// Crate-private payload behavior behind [`super::Realization`].
     pub trait Payload: Clone {
-        fn conformation_storage(&mut self) -> &mut Conformation;
+        /// The number of atom rows.
+        fn row_count(&self) -> usize;
+        fn realization_properties(&self) -> &RealizationProperties;
+        fn positions_storage_mut(&mut self) -> &mut Positions;
+        fn properties_storage_mut(&mut self) -> &mut RealizationProperties;
+        /// Borrows the payload as a view of a topology it is bound to.
+        fn model_view<'a>(&'a self, topology: &'a Arc<Topology>) -> ModelView<'a>;
         /// Projects every dense row through a subset correspondence.
         fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, ConformationError>;
         /// Applies a rigid transform to every coordinate-frame-dependent value.
@@ -27,14 +32,11 @@ pub(crate) mod sealed {
 }
 
 /// One realization payload stored in an [`super::Ensemble`] or
-/// [`super::Trajectory`]: a [`Conformation`] plus payload-specific state.
+/// [`super::Trajectory`].
 ///
-/// Implemented by [`super::EnsembleMember`] and [`super::TrajectoryFrame`].
-/// Payload state reads like a conformation through `Deref`.
-pub trait Realization:
-    sealed::Payload + fmt::Debug + PartialEq + std::ops::Deref<Target = Conformation>
-{
-}
+/// Implemented by [`super::EnsembleMember`] and [`super::TrajectoryFrame`],
+/// each of which owns its own fields.
+pub trait Realization: sealed::Payload + fmt::Debug + PartialEq {}
 
 /// Crate-private storage shared by the distinct public collection types.
 ///
@@ -69,23 +71,21 @@ impl<P: Realization> RealizationStore<P> {
         Ok(store)
     }
 
-    /// Collects model conformations sharing one layout, keeping the first
-    /// model's snapshot.
+    /// Collects the realization state of models sharing one layout, keeping
+    /// the first model's snapshot.
     pub(crate) fn from_models(
         models: impl IntoIterator<Item = Model>,
-        mut payload: impl FnMut(Conformation) -> P,
+        mut payload: impl FnMut(Model) -> P,
     ) -> Result<Self, RealizationError> {
         let mut models = models.into_iter();
         let first = models.next().ok_or(RealizationError::EmptySource)?;
-        let (topology, conformation) = first.into_parts();
-        let mut store = Self::new(topology);
-        store.items.push(payload(conformation));
+        let mut store = Self::new(first.shared_topology());
+        store.items.push(payload(first));
         for model in models {
             if !model.topology().shares_layout(&store.topology) {
                 return Err(RealizationError::TopologyMismatch);
             }
-            let (_, conformation) = model.into_parts();
-            store.items.push(payload(conformation));
+            store.items.push(payload(model));
         }
         Ok(store)
     }
@@ -168,7 +168,7 @@ impl<P: Realization> RealizationStore<P> {
             }
         }
         for (item, positions) in self.items.iter_mut().zip(positions) {
-            *item.conformation_storage().positions_mut() = positions;
+            *item.positions_storage_mut() = positions;
         }
         Ok(())
     }
@@ -269,8 +269,13 @@ impl<P: Realization> RealizationStore<P> {
     }
 
     fn prepare(&self, item: &mut P) -> Result<(), RealizationError> {
-        item.validate_for(&self.topology)?;
-        item.conformation_storage().bind(&self.topology);
+        validate_binding(
+            item.row_count(),
+            item.realization_properties(),
+            &self.topology,
+        )?;
+        item.properties_storage_mut()
+            .bind_bond_rows(self.topology.bond_count());
         Ok(())
     }
 }
@@ -530,11 +535,12 @@ impl<P> std::ops::Deref for RealizationView<'_, P> {
 impl<'a, P: Realization> RealizationView<'a, P> {
     /// Binds a payload that already has every row `topology` requires.
     pub fn new(topology: &'a Arc<Topology>, item: &'a P) -> Result<Self, ConformationError> {
-        item.validate_for(topology)?;
-        if !item.is_bound_to(topology) {
+        let properties = item.realization_properties();
+        validate_binding(item.row_count(), properties, topology)?;
+        if !is_bound(item.row_count(), properties, topology) {
             return Err(ConformationError::BondCountMismatch {
                 expected: topology.bond_count(),
-                actual: item.properties().bonds().len(),
+                actual: properties.bonds().len(),
             });
         }
         Ok(Self { topology, item })
@@ -553,14 +559,14 @@ impl<'a, P: Realization> RealizationView<'a, P> {
         self.item
     }
 
-    /// Borrows the conformation as the common kernel input, with the view's
-    /// full lifetime.
+    /// Borrows the payload as the common kernel input, with the view's full
+    /// lifetime.
     pub fn as_model_view(self) -> ModelView<'a> {
-        ModelView::bound(self.topology, self.item)
+        self.item.model_view(self.topology)
     }
 
-    /// Materializes the conformation as an owned model, dropping
-    /// payload-specific state.
+    /// Materializes the payload as an owned model, dropping payload-specific
+    /// state such as weights, velocities, forces, time, and step.
     pub fn to_model(self) -> Model {
         self.as_model_view().to_model()
     }
@@ -591,10 +597,6 @@ impl<P> std::ops::Deref for RealizationMut<'_, P> {
 }
 
 impl<P: Realization> RealizationMut<'_, P> {
-    pub fn conformation_mut(&mut self) -> ConformationMut<'_> {
-        ConformationMut::new(self.item.conformation_storage())
-    }
-
     /// Applies a rigid transform transactionally: positions move; cells,
     /// velocities, and forces rotate.
     pub fn apply_rigid_transform(

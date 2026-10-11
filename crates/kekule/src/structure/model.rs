@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::core::Molecule;
 use crate::geometry::{PeriodicCell, Point3};
-use crate::properties::TopologyPropertiesMut;
+use crate::properties::{RealizationProperties, TopologyPropertiesMut};
 use crate::topology::transform::TopologySubsetError;
 use crate::topology::{
     AtomSelection, Hierarchy, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeDefinitionId,
@@ -12,19 +12,26 @@ use crate::topology::{
 };
 use crate::units::Quantity;
 
-use super::{Conformation, ConformationError, ConformationMut, PositionError, Positions};
+use super::model_state::ModelState;
+use super::sites::SiteParameters;
+use super::state::{
+    atom_row, is_bound, realization_mutators, realization_readers, site_mutators, site_readers,
+    validate_binding,
+};
+use super::{ConformationError, PositionError, Positions};
 
-/// One concrete realization of one immutable topology.
+/// One concrete realization of one topology.
 ///
-/// A model owns a shared [`Topology`] and one bound [`Conformation`]: a
-/// position for every topology atom, an optional [`PeriodicCell`], optional
-/// occupancies and B-factors, and realization properties. The topology stays
-/// coordinate-free and may be shared with other models, ensemble members,
-/// trajectory frames, selections, and prepared potentials.
+/// A model owns a shared [`Topology`] and the state of one realization of it,
+/// in the topology's dense atom order: a position for every atom, an optional
+/// [`PeriodicCell`], optional crystallographic occupancies and B-factors, and
+/// realization properties. The topology stays coordinate-free and may be
+/// shared with other models, ensemble members, trajectory frames, selections,
+/// and prepared potentials.
 ///
-/// Conformation state reads through `Deref` (`model.positions()`,
-/// `model.cell()`, `model.properties()`); mutate it through
-/// [`Self::conformation_mut`]. Static annotations live on
+/// Read and change realization state through the model's own
+/// dimension-preserving methods (`model.positions()`, `model.set_cell(..)`,
+/// `model.properties_mut()`, ...). Static annotations live on
 /// [`Self::topology`].
 ///
 /// Use [`Self::from_molecule`] for a single connected molecule,
@@ -33,40 +40,83 @@ use super::{Conformation, ConformationError, ConformationMut, PositionError, Pos
 #[derive(Debug, Clone)]
 pub struct Model {
     pub(super) topology: Arc<Topology>,
-    pub(super) conformation: Conformation,
+    pub(super) positions: Positions,
+    pub(super) cell: Option<PeriodicCell>,
+    pub(super) sites: SiteParameters,
+    pub(super) properties: RealizationProperties,
 }
 
 impl PartialEq for Model {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.topology, &other.topology) && self.conformation == other.conformation
-    }
-}
-
-impl std::ops::Deref for Model {
-    type Target = Conformation;
-
-    fn deref(&self) -> &Self::Target {
-        &self.conformation
+        Arc::ptr_eq(&self.topology, &other.topology)
+            && self.positions == other.positions
+            && self.cell == other.cell
+            && self.sites == other.sites
+            && self.properties == other.properties
     }
 }
 
 impl Model {
-    /// Binds a conformation (or plain [`Positions`]) to a topology.
+    /// Binds dense positions to a topology, without a cell, site parameters,
+    /// or properties.
     ///
-    /// Positions must follow the topology's dense atom order. Bond property
-    /// rows of a detached conformation are allocated here.
+    /// Positions must follow the topology's dense atom order.
     pub fn new(
         topology: impl Into<Arc<Topology>>,
-        conformation: impl Into<Conformation>,
+        positions: Positions,
     ) -> Result<Self, ModelError> {
-        let topology = topology.into();
-        let mut conformation = conformation.into();
-        conformation.validate_for(&topology)?;
-        conformation.bind(&topology);
+        let properties = RealizationProperties::new(positions.len());
+        Self::from_state(
+            topology.into(),
+            ModelState {
+                positions,
+                cell: None,
+                sites: SiteParameters::default(),
+                properties,
+            },
+        )
+    }
+
+    /// Validates staged state against `topology` and binds its bond rows.
+    pub(super) fn from_state(
+        topology: Arc<Topology>,
+        state: ModelState,
+    ) -> Result<Self, ModelError> {
+        validate_binding(state.positions.len(), &state.properties, &topology)?;
+        let ModelState {
+            positions,
+            cell,
+            sites,
+            mut properties,
+        } = state;
+        properties.bind_bond_rows(topology.bond_count());
         Ok(Self {
             topology,
-            conformation,
+            positions,
+            cell,
+            sites,
+            properties,
         })
+    }
+
+    /// Moves the realization state out as draft state, keeping the topology.
+    pub(super) fn into_state(self) -> (Arc<Topology>, ModelState) {
+        (
+            self.topology,
+            ModelState {
+                positions: self.positions,
+                cell: self.cell,
+                sites: self.sites,
+                properties: self.properties,
+            },
+        )
+    }
+
+    /// Returns this model with a periodic cell.
+    #[must_use]
+    pub fn with_cell(mut self, cell: PeriodicCell) -> Self {
+        self.cell = Some(cell);
+        self
     }
 
     pub fn builder() -> ModelBuilder {
@@ -75,9 +125,10 @@ impl Model {
 
     /// Moves a model into coordinated append-oriented construction state.
     pub fn into_builder(self) -> ModelBuilder {
+        let (topology, state) = self.into_state();
         ModelBuilder {
-            topology: TopologyBuilder::from_shared(self.topology),
-            conformation: self.conformation,
+            topology: TopologyBuilder::from_shared(topology),
+            state,
             extending_model: true,
         }
     }
@@ -104,41 +155,25 @@ impl Model {
         Arc::clone(&self.topology)
     }
 
-    pub fn conformation(&self) -> &Conformation {
-        &self.conformation
+    pub fn atom_count(&self) -> usize {
+        self.positions.len()
     }
 
     /// Borrows this model as the common kernel input without copying.
     pub fn as_model_view(&self) -> ModelView<'_> {
-        ModelView::bound(&self.topology, &self.conformation)
-    }
-
-    /// Dimension-preserving mutable access to the conformation.
-    pub fn conformation_mut(&mut self) -> ConformationMut<'_> {
-        ConformationMut::new(&mut self.conformation)
-    }
-
-    /// Replaces the conformation after validating it against the topology,
-    /// returning the previous one.
-    pub fn replace_conformation(
-        &mut self,
-        conformation: impl Into<Conformation>,
-    ) -> Result<Conformation, ModelError> {
-        let mut conformation = conformation.into();
-        conformation.validate_for(&self.topology)?;
-        conformation.bind(&self.topology);
-        Ok(std::mem::replace(&mut self.conformation, conformation))
-    }
-
-    /// Consumes the model without copying either part.
-    pub fn into_parts(self) -> (Arc<Topology>, Conformation) {
-        (self.topology, self.conformation)
+        ModelView::bound(
+            &self.topology,
+            &self.positions,
+            self.cell.as_ref(),
+            Some(&self.sites),
+            &self.properties,
+        )
     }
 
     /// Installs default perception through a new topology snapshot.
     ///
     /// Delegates to [`Topology::perceived`], perceiving each definition once.
-    /// The conformation is kept without copying. Failure leaves the model
+    /// Realization state is kept without copying. Failure leaves the model
     /// unchanged. The new snapshot shares the original layout, so selections,
     /// buffers, and prepared potentials bound before perception remain usable.
     ///
@@ -166,8 +201,8 @@ impl Model {
         Arc::make_mut(&mut self.topology).properties_mut()
     }
 
-    /// Publishes an induced topology subset and projects the conformation onto
-    /// it. Realization owner properties are dropped.
+    /// Publishes an induced topology subset and projects realization state
+    /// onto it. Realization owner properties are dropped.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, ModelError> {
         let subset = self.topology.subset(selection)?;
         let correspondence = subset.correspondence();
@@ -181,8 +216,16 @@ impl Model {
             .iter()
             .map(|index| index.index())
             .collect::<Vec<_>>();
-        let conformation = self.conformation.project(&atoms, &bonds)?;
-        Self::new(subset.shared_topology(), conformation)
+        let state = ModelState {
+            positions: self.positions.select_indices(&atoms)?,
+            cell: self.cell,
+            sites: self.sites.select(&atoms),
+            properties: self
+                .properties
+                .project(&atoms, &bonds)
+                .map_err(ConformationError::from)?,
+        };
+        Self::from_state(subset.shared_topology(), state)
     }
 
     pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelError> {
@@ -210,7 +253,7 @@ impl Model {
         position: Quantity<Point3>,
     ) -> Result<(), ModelError> {
         let index = atom_index(&self.topology, atom)?;
-        Ok(self.conformation.set_position(index, position)?)
+        Ok(self.set_position_at(index, position)?)
     }
 
     /// Applies a sparse coordinate batch atomically; repeated atoms use the
@@ -234,11 +277,21 @@ impl Model {
                 Ok((index, point))
             })
             .collect::<Result<Vec<_>, ModelError>>()?;
-        Ok(self
-            .conformation
-            .positions_mut()
-            .set_canonical_batch(&staged)?)
+        Ok(self.positions.set_canonical_batch(&staged)?)
     }
+
+    fn storage_ref(&self) -> &Self {
+        self
+    }
+
+    fn storage(&mut self) -> &mut Self {
+        self
+    }
+
+    realization_readers!();
+    site_readers!();
+    realization_mutators!();
+    site_mutators!();
 }
 
 pub(super) fn atom_index(
@@ -277,48 +330,38 @@ impl<'a> From<&'a Model> for ModelView<'a> {
     }
 }
 
-/// A borrowed topology plus bound conformation: the common input contract of
-/// coordinate-dependent kernels.
+/// A borrowed topology plus the realization state bound to it: the common
+/// input contract of coordinate-dependent kernels.
 ///
-/// Conformation state reads through `Deref`. The inherent accessors below
-/// return borrows with the view's full lifetime. Views preserve exact
+/// Models, ensemble members, trajectory frames, and frame buffers all borrow
+/// as a view. Accessors return borrows with the view's full lifetime. A view of
+/// a trajectory frame has no occupancies or B-factors. Views preserve exact
 /// topology identity.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelView<'a> {
     topology: &'a Arc<Topology>,
-    conformation: &'a Conformation,
-}
-
-impl std::ops::Deref for ModelView<'_> {
-    type Target = Conformation;
-
-    fn deref(&self) -> &Self::Target {
-        self.conformation
-    }
+    positions: &'a Positions,
+    cell: Option<&'a PeriodicCell>,
+    sites: Option<&'a SiteParameters>,
+    properties: &'a RealizationProperties,
 }
 
 impl<'a> ModelView<'a> {
-    /// Borrows a conformation that already has every row `topology` requires.
-    pub fn new(
-        topology: &'a Arc<Topology>,
-        conformation: &'a Conformation,
-    ) -> Result<Self, ConformationError> {
-        conformation.validate_for(topology)?;
-        if !conformation.is_bound_to(topology) {
-            return Err(ConformationError::BondCountMismatch {
-                expected: topology.bond_count(),
-                actual: conformation.properties().bonds().len(),
-            });
-        }
-        Ok(Self::bound(topology, conformation))
-    }
-
     /// Only owners that already enforce binding may use this.
-    pub(crate) fn bound(topology: &'a Arc<Topology>, conformation: &'a Conformation) -> Self {
-        debug_assert!(conformation.is_bound_to(topology));
+    pub(crate) fn bound(
+        topology: &'a Arc<Topology>,
+        positions: &'a Positions,
+        cell: Option<&'a PeriodicCell>,
+        sites: Option<&'a SiteParameters>,
+        properties: &'a RealizationProperties,
+    ) -> Self {
+        debug_assert!(is_bound(positions.len(), properties, topology));
         Self {
             topology,
-            conformation,
+            positions,
+            cell,
+            sites,
+            properties,
         }
     }
 
@@ -334,58 +377,91 @@ impl<'a> ModelView<'a> {
         Arc::clone(self.topology)
     }
 
-    pub fn conformation(self) -> &'a Conformation {
-        self.conformation
+    pub fn atom_count(self) -> usize {
+        self.positions.len()
     }
 
     pub fn positions(self) -> &'a Positions {
-        self.conformation.positions()
+        self.positions
     }
 
     pub fn cell(self) -> Option<&'a PeriodicCell> {
-        self.conformation.cell()
+        self.cell
     }
 
-    pub fn properties(self) -> &'a crate::properties::RealizationProperties {
-        self.conformation.properties()
+    pub fn properties(self) -> &'a RealizationProperties {
+        self.properties
+    }
+
+    /// Occupancy of one atom; `None` when it was never recorded or the
+    /// realization has no site parameters.
+    pub fn occupancy(self, atom: TopologyAtomIndex) -> Result<Option<f64>, ConformationError> {
+        match self.sites {
+            Some(sites) => sites.occupancy(atom, self.positions.len()),
+            None => atom_row(self.positions.len(), atom).map(|_| None),
+        }
+    }
+
+    /// Every occupancy in dense atom order, or `None` when none was recorded.
+    pub fn occupancies(self) -> Option<&'a [Option<f64>]> {
+        self.sites.and_then(SiteParameters::occupancies)
+    }
+
+    /// Isotropic B-factor of one atom; `None` when it was never recorded or
+    /// the realization has no site parameters.
+    pub fn b_factor(
+        self,
+        atom: TopologyAtomIndex,
+    ) -> Result<Option<Quantity<f64>>, ConformationError> {
+        match self.sites {
+            Some(sites) => sites.b_factor(atom, self.positions.len()),
+            None => atom_row(self.positions.len(), atom).map(|_| None),
+        }
+    }
+
+    /// Every B-factor in dense atom order and square nanometres, or `None`
+    /// when none was recorded.
+    pub fn b_factors(self) -> Option<Quantity<&'a [Option<f64>]>> {
+        self.sites.and_then(SiteParameters::b_factors)
+    }
+
+    pub(crate) fn sites(self) -> Option<&'a SiteParameters> {
+        self.sites
     }
 
     pub fn position(self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelError> {
         let index = atom_index(self.topology, atom)?;
-        Ok(self.conformation.positions().position_at(index.index())?)
+        Ok(self.positions.position_at(index.index())?)
     }
 
     /// One atom with its topology identity and realization state.
     pub fn atom(self, atom: InstanceAtomId) -> Option<ModelAtomView<'a>> {
         let atom = self.topology.atom(atom)?;
-        Some(ModelAtomView {
-            atom,
-            conformation: self.conformation,
-        })
+        Some(ModelAtomView { atom, model: self })
     }
 
     /// One atom by dense index.
     pub fn atom_at(self, index: TopologyAtomIndex) -> Option<ModelAtomView<'a>> {
         let atom = self.topology.atom_at(index)?;
-        Some(ModelAtomView {
-            atom,
-            conformation: self.conformation,
-        })
+        Some(ModelAtomView { atom, model: self })
     }
 
     /// Atoms with their realization state, in dense order.
     pub fn atoms(self) -> impl ExactSizeIterator<Item = ModelAtomView<'a>> + 'a {
-        let conformation = self.conformation;
         self.topology
             .atoms()
-            .map(move |atom| ModelAtomView { atom, conformation })
+            .map(move |atom| ModelAtomView { atom, model: self })
     }
 
-    /// Materializes this borrowed realization as an owned model.
+    /// Materializes this borrowed realization as an owned model. A view of a
+    /// trajectory frame yields a model without site parameters.
     pub fn to_model(self) -> Model {
         Model {
             topology: Arc::clone(self.topology),
-            conformation: self.conformation.clone(),
+            positions: self.positions.clone(),
+            cell: self.cell.copied(),
+            sites: self.sites.cloned().unwrap_or_default(),
+            properties: self.properties.clone(),
         }
     }
 }
@@ -404,7 +480,7 @@ impl<'a> ModelView<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct ModelAtomView<'a> {
     atom: crate::topology::AtomView<'a>,
-    conformation: &'a Conformation,
+    model: ModelView<'a>,
 }
 
 impl<'a> std::ops::Deref for ModelAtomView<'a> {
@@ -422,22 +498,22 @@ impl<'a> ModelAtomView<'a> {
     }
 
     pub fn position(self) -> Quantity<Point3> {
-        self.conformation
+        self.model
             .positions()
             .position_at(self.atom.index().index())
-            .expect("bound conformations cover every atom")
+            .expect("bound realizations cover every atom")
     }
 
     pub fn occupancy(self) -> Option<f64> {
-        self.conformation
+        self.model
             .occupancy(self.atom.index())
-            .expect("bound conformations cover every atom")
+            .expect("bound realizations cover every atom")
     }
 
     pub fn b_factor(self) -> Option<Quantity<f64>> {
-        self.conformation
+        self.model
             .b_factor(self.atom.index())
-            .expect("bound conformations cover every atom")
+            .expect("bound realizations cover every atom")
     }
 
     /// One realization annotation of this atom. Static annotations are
@@ -446,11 +522,11 @@ impl<'a> ModelAtomView<'a> {
         self,
         key: &crate::properties::PropertyKey,
     ) -> Option<crate::properties::PropertyValue> {
-        self.conformation
+        self.model
             .properties()
             .atoms()
             .value(key, self.atom.index())
-            .expect("bound conformations cover every atom")
+            .expect("bound realizations cover every atom")
     }
 }
 
@@ -506,23 +582,13 @@ impl From<TopologySubsetError> for ModelError {
 ///
 /// Each call to [`Self::add_molecule`] adds one molecule occurrence and its
 /// dense positions. [`Self::build`] publishes the coordinate-free topology and
-/// the matching model transactionally. The staged conformation follows staged
+/// the matching model transactionally. Staged realization state follows staged
 /// dense atom order; use [`Self::atom_index`] to address it by atom ID.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ModelBuilder {
     topology: TopologyBuilder,
-    conformation: Conformation,
+    state: ModelState,
     extending_model: bool,
-}
-
-impl Default for ModelBuilder {
-    fn default() -> Self {
-        Self {
-            topology: TopologyBuilder::default(),
-            conformation: Conformation::new(Positions::default()),
-            extending_model: false,
-        }
-    }
 }
 
 impl ModelBuilder {
@@ -586,18 +652,9 @@ impl ModelBuilder {
             .map(|index| TopologyAtomIndex::new(index as u32))
     }
 
-    /// Staged conformation in staged dense atom order.
-    pub fn conformation(&self) -> &Conformation {
-        &self.conformation
-    }
-
-    pub fn conformation_mut(&mut self) -> ConformationMut<'_> {
-        ConformationMut::new(&mut self.conformation)
-    }
-
     pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelBuildError> {
         let index = self.checked_atom_index(atom)?;
-        Ok(self.conformation.positions().position_at(index.index())?)
+        Ok(self.state.positions.position_at(index.index())?)
     }
 
     pub fn set_position(
@@ -607,8 +664,7 @@ impl ModelBuilder {
     ) -> Result<(), ModelBuildError> {
         let index = self.checked_atom_index(atom)?;
         Ok(self
-            .conformation
-            .set_position(index, position)
+            .set_position_at(index, position)
             .map_err(ModelError::from)?)
     }
 
@@ -633,10 +689,7 @@ impl ModelBuilder {
                 Ok((index, point))
             })
             .collect::<Result<Vec<_>, ModelBuildError>>()?;
-        Ok(self
-            .conformation
-            .positions_mut()
-            .set_canonical_batch(&staged)?)
+        Ok(self.state.positions.set_canonical_batch(&staged)?)
     }
 
     pub fn validate(&self) -> Result<(), ModelBuildError> {
@@ -652,7 +705,7 @@ impl ModelBuilder {
 
     /// Replaces the dense atom order with a permutation of every staged atom.
     ///
-    /// Conformation atom state and staged topology atom properties move with
+    /// Staged realization atom state and topology atom properties move with
     /// their atoms. See [`TopologyBuilder::set_atom_order`]. A rejected order
     /// leaves the builder unchanged.
     pub fn set_atom_order(
@@ -660,7 +713,7 @@ impl ModelBuilder {
         order: impl IntoIterator<Item = InstanceAtomId>,
     ) -> Result<(), ModelBuildError> {
         let previous = self.topology.reorder_atoms(order)?;
-        self.conformation.reorder_atoms(&previous);
+        self.state.reorder_atoms(&previous);
         Ok(())
     }
 
@@ -722,7 +775,7 @@ impl ModelBuilder {
     /// Validates and publishes the staged topology and model.
     pub fn build(self) -> Result<Model, ModelBuildError> {
         let topology = Arc::new(self.topology.build()?);
-        Ok(Model::new(topology, self.conformation)?)
+        Ok(Model::from_state(topology, self.state)?)
     }
 
     fn checked_atom_index(
@@ -734,20 +787,30 @@ impl ModelBuilder {
     }
 
     fn reserve(&mut self, additional: usize) -> Result<(), ModelBuildError> {
-        self.conformation
+        self.state
             .try_reserve_atoms(additional)
             .map_err(|_| ModelBuildError::CapacityOverflow)
     }
 
     fn extend(&mut self, positions: &Positions, added_bonds: usize) {
-        self.conformation.extend(positions, added_bonds);
+        self.state.extend(positions, added_bonds);
         if self.extending_model {
-            self.conformation
-                .properties_storage_mut()
-                .owner_mut()
-                .clear();
+            self.state.properties.owner_mut().clear();
         }
     }
+
+    fn storage_ref(&self) -> &ModelState {
+        &self.state
+    }
+
+    fn storage(&mut self) -> &mut ModelState {
+        &mut self.state
+    }
+
+    realization_readers!();
+    site_readers!();
+    realization_mutators!();
+    site_mutators!();
 }
 
 fn validate_position_count(expected: usize, actual: usize) -> Result<(), ModelBuildError> {

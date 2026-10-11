@@ -64,19 +64,20 @@ fn cell() -> PeriodicCell {
 }
 
 #[test]
-fn canonical_model_constructors_accept_owned_and_shared_topology_and_conformations() {
+fn canonical_model_constructors_accept_owned_and_shared_topology() {
     let owned = Model::new(single_atom_topology(), single_position(1.0)).unwrap();
     let shared = owned.shared_topology();
     let shared_model = Model::new(Arc::clone(&shared), single_position(2.0)).unwrap();
     assert!(Arc::ptr_eq(&shared_model.shared_topology(), &shared));
 
-    let conformation = Conformation::new(single_position(3.0)).with_cell(cell());
-    let complete = Model::new(Arc::clone(&shared), conformation.clone()).unwrap();
-    assert_eq!(complete.cell(), conformation.cell());
-    assert_eq!(complete.positions(), conformation.positions());
-    let (topology, recovered) = complete.into_parts();
-    assert!(Arc::ptr_eq(&topology, &shared));
-    assert_eq!(recovered.positions(), conformation.positions());
+    let complete = Model::new(Arc::clone(&shared), single_position(3.0))
+        .unwrap()
+        .with_cell(cell());
+    assert!(Arc::ptr_eq(&complete.shared_topology(), &shared));
+    assert_eq!(complete.cell(), Some(&cell()));
+    assert_eq!(complete.positions(), &single_position(3.0));
+    assert_eq!(complete.occupancies(), None);
+    assert!(complete.properties().is_empty());
 }
 
 #[test]
@@ -112,9 +113,7 @@ fn model_builder_rejects_excess_replacement_positions_before_mutation() {
         .unwrap();
     let before = builder.clone();
     assert_eq!(
-        builder
-            .conformation_mut()
-            .set_positions(Quantity::new(vec![Point3::origin(); 2], NANOMETER)),
+        builder.set_positions(Quantity::new(vec![Point3::origin(); 2], NANOMETER)),
         Err(ConformationError::Position(
             PositionError::PositionCountMismatch {
                 expected: 1,
@@ -127,7 +126,7 @@ fn model_builder_rejects_excess_replacement_positions_before_mutation() {
 }
 
 #[test]
-fn model_rejects_conformations_with_other_dimensions() {
+fn realizations_reject_rows_of_other_dimensions() {
     let (model, _, _) = model_fixture();
     assert_eq!(
         Model::new(model.shared_topology(), single_position(1.0)).unwrap_err(),
@@ -136,8 +135,8 @@ fn model_rejects_conformations_with_other_dimensions() {
             actual: 1
         })
     );
-    // A conformation bound to a topology with one bond cannot bind to one
-    // with no bonds: populated bond rows never resize silently.
+    // A member bound to a topology with one bond cannot bind to one with no
+    // bonds: populated bond rows never resize silently.
     let two_atoms = Arc::new(
         crate::topology::Topology::from_molecules([
             single_atom_topology()
@@ -155,10 +154,15 @@ fn model_rejects_conformations_with_other_dimensions() {
         ])
         .unwrap(),
     );
-    let bound = model.conformation().clone();
+    let bound = Ensemble::from_models([model])
+        .unwrap()
+        .into_items()
+        .pop()
+        .unwrap();
+    assert_eq!(bound.properties().bonds().len(), 1);
     assert_eq!(
-        Model::new(two_atoms, bound).unwrap_err(),
-        ModelError::Conformation(ConformationError::BondCountMismatch {
+        Ensemble::from_items(two_atoms, [bound]).unwrap_err(),
+        RealizationError::Conformation(ConformationError::BondCountMismatch {
             expected: 0,
             actual: 1
         })
@@ -192,9 +196,8 @@ fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
     let topology = Arc::new(single_atom_topology());
     let score = key("score");
     let mut first = EnsembleMember::new(single_position(1.0), 1.0).unwrap();
-    let mut conformation = first.conformation_mut();
-    conformation.set_cell(Some(cell()));
-    let mut properties = conformation.properties_mut();
+    first.set_cell(Some(cell()));
+    let mut properties = first.properties_mut();
     properties
         .owner_mut()
         .insert(key("method"), PropertyValue::String("sampled".into()))
@@ -233,12 +236,13 @@ fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
     );
     let owned = member.to_model();
     assert!(Arc::ptr_eq(&owned.shared_topology(), &topology));
-    assert_eq!(owned.conformation(), member.conformation());
+    assert_eq!(owned.positions(), member.positions());
+    assert_eq!(owned.cell(), member.cell());
+    assert_eq!(owned.properties(), member.properties());
 
     ensemble
         .get_mut(0)
         .unwrap()
-        .conformation_mut()
         .properties_mut()
         .atoms_mut()
         .set_value(score.clone(), ATOM0, Some(PropertyValue::Int(9)))
@@ -258,15 +262,14 @@ fn detached_members_get_bond_rows_only_when_bound() {
     assert!(member.properties().bonds().is_empty());
     // Detached payloads cannot carry bond annotations yet.
     assert!(matches!(
-        member
-            .conformation_mut()
-            .properties_mut()
-            .bonds_mut()
-            .set_value(label.clone(), BOND0, Some(PropertyValue::Int(1))),
+        member.properties_mut().bonds_mut().set_value(
+            label.clone(),
+            BOND0,
+            Some(PropertyValue::Int(1))
+        ),
         Err(PropertyError::InvalidIndex { len: 0, index: 0 })
     ));
     member
-        .conformation_mut()
         .properties_mut()
         .owner_mut()
         .insert(label.clone(), PropertyValue::Int(7))
@@ -282,14 +285,13 @@ fn detached_members_get_bond_rows_only_when_bound() {
 
     let mut editor = ensemble.get_mut(0).unwrap();
     let before = editor.properties().clone();
-    let mut conformation = editor.conformation_mut();
-    assert!(conformation
+    assert!(editor
         .properties_mut()
         .bonds_mut()
         .insert(label.clone(), PropertyColumn::Int(vec![Some(8); 2]))
         .is_err());
-    assert_eq!(conformation.properties(), &before);
-    conformation
+    assert_eq!(editor.properties(), &before);
+    editor
         .properties_mut()
         .bonds_mut()
         .insert(label.clone(), PropertyColumn::Int(vec![Some(8)]))
@@ -325,7 +327,6 @@ fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
     .into_items()
     .remove(0);
     bound_elsewhere
-        .conformation_mut()
         .properties_mut()
         .bonds_mut()
         .set_value(key("bond"), BOND0, Some(PropertyValue::Int(1)))
@@ -384,16 +385,14 @@ fn ensemble_replacement_preserves_order_and_publishes_complete_member_state() {
         .unwrap();
     let collection_properties = ensemble.properties().clone();
     let mut replacement = EnsembleMember::new(Positions::zeros(2), 1.0).unwrap();
-    replacement.conformation_mut().set_cell(Some(cell()));
+    replacement.set_cell(Some(cell()));
     replacement.set_weight(0.5).unwrap();
     replacement
-        .conformation_mut()
         .properties_mut()
         .owner_mut()
         .insert(score.clone(), PropertyValue::Int(1))
         .unwrap();
     replacement
-        .conformation_mut()
         .properties_mut()
         .atoms_mut()
         .set_value(score, ATOM0, Some(PropertyValue::Int(2)))
@@ -437,17 +436,23 @@ fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
             assert_eq!(member.weight(), 0.5);
         }
         let properties = member.properties().clone();
-        let detached = Conformation::new(Positions::zeros(2)).properties().clone();
+        let detached = EnsembleMember::new(Positions::zeros(2), 1.0)
+            .unwrap()
+            .properties()
+            .clone();
         assert_eq!(
-            member.conformation_mut().set_properties(detached),
+            member.set_properties(detached),
             Err(ConformationError::BondCountMismatch {
                 expected: 1,
                 actual: 0
             })
         );
-        let wrong_atoms = Conformation::new(Positions::zeros(1)).properties().clone();
+        let wrong_atoms = EnsembleMember::new(Positions::zeros(1), 1.0)
+            .unwrap()
+            .properties()
+            .clone();
         assert_eq!(
-            member.conformation_mut().set_properties(wrong_atoms),
+            member.set_properties(wrong_atoms),
             Err(ConformationError::AtomCountMismatch {
                 expected: 2,
                 actual: 1
@@ -455,9 +460,7 @@ fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
         );
         assert_eq!(member.properties(), &properties);
         assert_eq!(
-            member
-                .conformation_mut()
-                .set_positions(Quantity::new(vec![Point3::origin(); 3], NANOMETER)),
+            member.set_positions(Quantity::new(vec![Point3::origin(); 3], NANOMETER)),
             Err(ConformationError::Position(
                 PositionError::PositionCountMismatch {
                     expected: 2,
@@ -480,7 +483,6 @@ fn model_view_materialization_clones_realization_and_shares_topology() {
     let score = key("score");
     let atom = topology.atom_ids()[0];
     source
-        .conformation_mut()
         .properties_mut()
         .atoms_mut()
         .set_value(score.clone(), ATOM0, Some(PropertyValue::Int(4)))
@@ -488,9 +490,8 @@ fn model_view_materialization_clones_realization_and_shares_topology() {
     let owned = source.as_model_view().to_model();
 
     assert!(Arc::ptr_eq(&owned.shared_topology(), &topology));
-    assert_eq!(owned.conformation(), source.conformation());
+    assert_eq!(owned, source);
     source
-        .conformation_mut()
         .properties_mut()
         .atoms_mut()
         .set_value(score.clone(), ATOM0, Some(PropertyValue::Int(8)))
@@ -508,13 +509,12 @@ fn model_view_materialization_clones_realization_and_shares_topology() {
 #[test]
 fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
     let (mut model, _, _) = model_fixture();
-    let mut conformation = model.conformation_mut();
-    conformation.set_occupancy(ATOM0, Some(0.75)).unwrap();
-    conformation
+    model.set_occupancy(ATOM0, Some(0.75)).unwrap();
+    model
         .set_b_factor(ATOM0, Some(Quantity::new(12.5, SQUARE_ANGSTROM)))
         .unwrap();
     // No reserved names: a generic property may use the same key.
-    conformation
+    model
         .properties_mut()
         .atoms_mut()
         .set_value(key("occupancy"), ATOM0, Some(PropertyValue::Int(1)))
@@ -533,31 +533,30 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
         Some(PropertyValue::Int(1))
     );
 
-    let before = model.conformation().clone();
-    let mut conformation = model.conformation_mut();
+    let before = model.clone();
     assert_eq!(
-        conformation.set_occupancy(ATOM0, Some(f64::NAN)),
+        model.set_occupancy(ATOM0, Some(f64::NAN)),
         Err(ConformationError::NonFiniteValue { index: 0 })
     );
     assert!(matches!(
-        conformation.set_b_factor(ATOM0, Some(Quantity::new(1.0, KELVIN))),
+        model.set_b_factor(ATOM0, Some(Quantity::new(1.0, KELVIN))),
         Err(ConformationError::Unit(_))
     ));
     assert_eq!(
-        conformation.set_occupancy(TopologyAtomIndex::new(2), Some(1.0)),
+        model.set_occupancy(TopologyAtomIndex::new(2), Some(1.0)),
         Err(ConformationError::InvalidAtomIndex { index: 2, len: 2 })
     );
     assert_eq!(
-        conformation.set_occupancies(Some(vec![Some(1.0)])),
+        model.set_occupancies(Some(vec![Some(1.0)])),
         Err(ConformationError::AtomCountMismatch {
             expected: 2,
             actual: 1
         })
     );
-    assert_eq!(model.conformation(), &before);
+    assert_eq!(model, before);
 
     // Clearing every value compares equal to never recording any.
-    let mut cleared = model.conformation().clone();
+    let mut cleared = model.clone();
     cleared.set_occupancy(ATOM0, None).unwrap();
     cleared.set_occupancies(None).unwrap();
     assert_eq!(cleared.occupancies(), None);
@@ -566,9 +565,8 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
 #[test]
 fn model_subset_projects_entity_state_and_drops_owner_properties() {
     let (mut model, atom, bond) = model_fixture();
-    let mut conformation = model.conformation_mut();
-    conformation.set_occupancy(ATOM0, Some(0.5)).unwrap();
-    let mut properties = conformation.properties_mut();
+    model.set_occupancy(ATOM0, Some(0.5)).unwrap();
+    let mut properties = model.properties_mut();
     properties
         .owner_mut()
         .insert(key("energy"), PropertyValue::Int(3))
@@ -616,8 +614,7 @@ fn model_subset_projects_entity_state_and_drops_owner_properties() {
 #[test]
 fn ensemble_collection_and_member_properties_are_separate() {
     let (mut model, atom, _) = model_fixture();
-    let mut conformation = model.conformation_mut();
-    let mut properties = conformation.properties_mut();
+    let mut properties = model.properties_mut();
     properties
         .atoms_mut()
         .set_value(key("member_atom"), ATOM0, Some(PropertyValue::Int(1)))
@@ -634,7 +631,6 @@ fn ensemble_collection_and_member_properties_are_separate() {
     ensemble
         .get_mut(0)
         .unwrap()
-        .conformation_mut()
         .properties_mut()
         .owner_mut()
         .insert(key("member"), PropertyValue::Int(1))
@@ -669,9 +665,9 @@ fn ensemble_collection_and_member_properties_are_separate() {
 }
 
 #[test]
-fn trajectories_reinterpret_as_ensembles_without_copying_conformations() {
+fn trajectories_reinterpret_as_ensembles_without_copying_positions() {
     let (model, _, _) = model_fixture();
-    let mut frame = TrajectoryFrame::new(model.conformation().clone());
+    let mut frame = TrajectoryFrame::new(model.positions().clone());
     frame.set_step(Some(4));
     frame.set_velocities(Some(Velocities::zeros(2))).unwrap();
     assert_eq!(
@@ -697,14 +693,64 @@ fn trajectories_reinterpret_as_ensembles_without_copying_conformations() {
 }
 
 #[test]
-fn model_atom_views_join_topology_identity_with_realization_state() {
-    let (mut model, carbon, _) = model_fixture();
-    let mut conformation = model.conformation_mut();
-    conformation.set_occupancy(ATOM0, Some(0.5)).unwrap();
-    conformation
+fn site_parameters_follow_models_and_members_but_never_frames() {
+    let (mut model, _, _) = model_fixture();
+    model.set_occupancy(ATOM0, Some(0.5)).unwrap();
+    model
         .set_b_factor(ATOM0, Some(Quantity::new(20.0, SQUARE_ANGSTROM)))
         .unwrap();
-    conformation
+    model.set_cell(Some(cell()));
+
+    // Models become members with their site parameters, cell, and rows.
+    let ensemble = Ensemble::from_models([model.clone()]).unwrap();
+    let member = ensemble.get(0).unwrap();
+    assert_eq!(member.occupancies(), Some([Some(0.5), None].as_slice()));
+    assert_eq!(
+        member.b_factors().unwrap().value(),
+        model.b_factors().unwrap().value()
+    );
+    assert_eq!(member.cell(), Some(&cell()));
+    assert_eq!(member.as_model_view().occupancy(ATOM0), Ok(Some(0.5)));
+    assert_eq!(member.to_model(), model);
+
+    // Frame views report no site parameters but still check atom indices.
+    let mut frame = TrajectoryFrame::new(model.positions().clone()).with_cell(cell());
+    frame
+        .properties_mut()
+        .owner_mut()
+        .insert(key("source"), PropertyValue::Int(1))
+        .unwrap();
+    let trajectory = Trajectory::from_items(model.shared_topology(), [frame]).unwrap();
+    let view = trajectory.get(0).unwrap().as_model_view();
+    assert_eq!(view.occupancies(), None);
+    assert!(view.b_factors().is_none());
+    assert_eq!(view.occupancy(ATOM0), Ok(None));
+    assert_eq!(view.b_factor(ATOM0), Ok(None));
+    assert_eq!(
+        view.occupancy(TopologyAtomIndex::new(2)),
+        Err(ConformationError::InvalidAtomIndex { index: 2, len: 2 })
+    );
+    assert_eq!(view.to_model().occupancies(), None);
+
+    // Frames reinterpreted as members keep their cell and rows, without sites.
+    let ensemble = trajectory.into_ensemble();
+    let member = ensemble.get(0).unwrap();
+    assert_eq!(member.occupancies(), None);
+    assert_eq!(member.cell(), Some(&cell()));
+    assert_eq!(
+        member.properties().owner().get(&key("source")),
+        Some(&PropertyValue::Int(1))
+    );
+}
+
+#[test]
+fn model_atom_views_join_topology_identity_with_realization_state() {
+    let (mut model, carbon, _) = model_fixture();
+    model.set_occupancy(ATOM0, Some(0.5)).unwrap();
+    model
+        .set_b_factor(ATOM0, Some(Quantity::new(20.0, SQUARE_ANGSTROM)))
+        .unwrap();
+    model
         .properties_mut()
         .atoms_mut()
         .set_value(key("charge"), ATOM0, Some(PropertyValue::Int(-1)))

@@ -62,9 +62,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             .collect::<Vec<_>>();
         frame
             .frame_mut()
-            .conformation_mut()
             .set_positions(Quantity::new(positions, NANOMETER))?;
-        frame.frame_mut().conformation_mut().set_cell(Some(cell));
+        frame.frame_mut().set_cell(Some(cell));
         frame
             .frame_mut()
             .set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))?;

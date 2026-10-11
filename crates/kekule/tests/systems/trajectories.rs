@@ -9,7 +9,7 @@ use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
     Forces, Positions, RealizationError, RealizationView, Trajectory, TrajectoryFrame, Velocities,
 };
-use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyBondIndex};
+use kekule::topology::{AtomSelection, Topology, TopologyBondIndex};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
 fn chain(atoms: usize) -> Arc<Topology> {
@@ -52,15 +52,14 @@ fn annotated() -> Trajectory {
         frame.set_step(Some(index * 10));
         frame.set_velocities(Some(Velocities::zeros(3))).unwrap();
         frame.set_forces(Some(Forces::zeros(3))).unwrap();
-        let mut conformation = frame.conformation_mut();
-        conformation.set_cell(Some(
+        frame.set_cell(Some(
             PeriodicCell::orthorhombic(
                 Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
                 [true; 3],
             )
             .unwrap(),
         ));
-        let mut properties = conformation.properties_mut();
+        let mut properties = frame.properties_mut();
         properties
             .owner_mut()
             .insert(
@@ -80,7 +79,6 @@ fn annotated() -> Trajectory {
         trajectory
             .get_mut(index as usize)
             .unwrap()
-            .conformation_mut()
             .properties_mut()
             .bonds_mut()
             .insert(
@@ -137,7 +135,6 @@ fn owned_frames_are_complete_and_independent_and_replacement_is_transactional() 
     let old = original.get(1).unwrap().payload().clone();
     let mut owned = old.clone();
     owned
-        .conformation_mut()
         .set_positions(Quantity::new([Point3::origin(); 3], NANOMETER))
         .unwrap();
     owned.set_step(Some(999));
@@ -174,20 +171,15 @@ fn stored_editor_keeps_dimensions_even_after_columns_are_removed_or_editor_is_fo
         assert!(frame
             .set_time(Some(Quantity::new(f64::NAN, PICOSECOND)))
             .is_err());
-        let mut conformation = frame.conformation_mut();
-        assert!(conformation
+        assert!(frame
             .set_positions(Quantity::new([Point3::origin(); 2], NANOMETER))
             .is_err());
-        assert!(conformation
-            .set_occupancy(TopologyAtomIndex::new(0), Some(f64::NAN))
-            .is_err());
-        assert!(conformation.set_properties(smaller).is_err());
+        assert!(frame.set_properties(smaller).is_err());
     }
     assert_eq!(trajectory.get(0).unwrap().payload(), &before);
     {
         let mut frame = trajectory.get_mut(0).unwrap();
-        let mut conformation = frame.conformation_mut();
-        let mut properties = conformation.properties_mut();
+        let mut properties = frame.properties_mut();
         properties.bonds_mut().remove(&key);
         assert!(properties
             .bonds_mut()
@@ -202,7 +194,7 @@ fn stored_editor_keeps_dimensions_even_after_columns_are_removed_or_editor_is_fo
             .bonds_mut()
             .set_value(key, TopologyBondIndex::new(1), Some(PropertyValue::Int(9)))
             .unwrap();
-        conformation
+        frame
             .set_positions(Quantity::new([Point3::origin(); 3], NANOMETER))
             .unwrap();
         frame.set_step(Some(500));

@@ -4,9 +4,10 @@
 //! type: definition-invariant annotations are [`MoleculeProperties`] of a
 //! [`crate::core::Molecule`], system annotations are [`TopologyProperties`] of a
 //! [`crate::topology::Topology`], and coordinate-dependent annotations are
-//! [`RealizationProperties`] of a [`crate::structure::Conformation`]. Each scope
-//! holds [`OwnerProperties`] plus one [`PropertyTable`] per entity domain,
-//! addressed by that domain's identifier ([`PropertyRow`]).
+//! [`RealizationProperties`] of a [`crate::structure::Model`], ensemble member,
+//! or trajectory frame. Each scope holds [`OwnerProperties`] plus one
+//! [`PropertyTable`] per entity domain, addressed by that domain's identifier
+//! ([`PropertyRow`]).
 //!
 //! Owners hand out read access through `properties()` and length-preserving
 //! mutable access through `properties_mut()`. Row counts are fixed by the

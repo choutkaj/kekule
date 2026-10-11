@@ -36,7 +36,6 @@ fn set_atom_value(
 ) {
     let row = index(model, atom);
     model
-        .conformation_mut()
         .properties_mut()
         .atoms_mut()
         .set_value(name, row, Some(value))
@@ -208,8 +207,7 @@ fn annotated(conflict: Option<&str>) -> Model {
         )
         .unwrap();
     let mut model = Model::new(builder.build().unwrap(), positions(atom_count)).unwrap();
-    let mut conformation = model.conformation_mut();
-    conformation
+    model
         .properties_mut()
         .atoms_mut()
         .insert(
@@ -217,7 +215,7 @@ fn annotated(conflict: Option<&str>) -> Model {
             column(atom_count, 900, conflict == Some("model atom")),
         )
         .unwrap();
-    conformation
+    model
         .properties_mut()
         .bonds_mut()
         .insert(
@@ -227,13 +225,12 @@ fn annotated(conflict: Option<&str>) -> Model {
         .unwrap();
     for i in (0..atom_count).step_by(2) {
         let row = TopologyAtomIndex::new(i as u32);
-        conformation.set_occupancy(row, Some(0.75)).unwrap();
-        conformation
+        model.set_occupancy(row, Some(0.75)).unwrap();
+        model
             .set_b_factor(row, Some(Quantity::new(15.0 + i as f64, SQUARE_ANGSTROM)))
             .unwrap();
     }
     model
-        .conformation_mut()
         .properties_mut()
         .owner_mut()
         .insert(key("energy"), PropertyValue::Int(-12))
@@ -693,7 +690,6 @@ fn coordinates_and_property_units_are_preserved_with_missing_rows() {
         PropertyValue::String("note".into()),
     );
     source
-        .conformation_mut()
         .set_positions(Quantity::new(
             vec![Point3::new(2.0, 3.0, 4.0), Point3::new(-1.0, 8.0, 0.0)],
             NANOMETER,
@@ -734,7 +730,6 @@ fn coordinates_and_property_units_are_preserved_with_missing_rows() {
     );
     // An incompatible dimension rejects even though both columns are Real.
     source
-        .conformation_mut()
         .properties_mut()
         .atoms_mut()
         .remove(&key("distance"))
@@ -768,9 +763,7 @@ fn cell(size: f64, axes: [bool; 3]) -> PeriodicCell {
 #[test]
 fn periodic_cell_rules_are_explicit_and_transactional() {
     let mut source = model("CO");
-    source
-        .conformation_mut()
-        .set_cell(Some(cell(4.0, [true; 3])));
+    source.set_cell(Some(cell(4.0, [true; 3])));
     let mut empty = ModelEditor::new();
     empty.append_model(&source).unwrap();
     assert_eq!(empty.finish().unwrap().cell(), source.cell());
@@ -795,7 +788,7 @@ fn periodic_cell_rules_are_explicit_and_transactional() {
         cell(4.0 + 1e-10, [true; 3]),
         cell(4.0, [true, true, false]),
     ] {
-        source.conformation_mut().set_cell(Some(wrong));
+        source.set_cell(Some(wrong));
         let before = format!("{editor:?}");
         assert!(matches!(
             editor.append_model(&source),
@@ -803,7 +796,7 @@ fn periodic_cell_rules_are_explicit_and_transactional() {
         ));
         assert_eq!(format!("{editor:?}"), before);
     }
-    source.conformation_mut().set_cell(None);
+    source.set_cell(None);
     editor.append_model(&source).unwrap();
     let expected = *editor.cell().unwrap();
     assert_eq!(editor.finish().unwrap().cell(), Some(&expected));
@@ -909,8 +902,7 @@ fn edited_source_ids_and_reordered_definition_occurrences_keep_dense_state_assoc
         .insert(key("tag"), column(2, 300, false))
         .unwrap();
     let mut source = Model::new(builder.build().unwrap(), positions(5)).unwrap();
-    let mut conformation = source.conformation_mut();
-    let mut properties = conformation.properties_mut();
+    let mut properties = source.properties_mut();
     properties
         .atoms_mut()
         .insert(key("tag"), column(5, 400, false))

@@ -864,18 +864,6 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 "bond properties",
             ));
         }
-        for (present, field) in [
-            (frame.occupancies().is_some(), "occupancies"),
-            (frame.b_factors().is_some(), "B-factors"),
-        ] {
-            if present {
-                return Err(writer_field_error(
-                    &self.source_label,
-                    self.frame_count,
-                    field,
-                ));
-            }
-        }
         if self.frame_count == u64::MAX {
             return Err(writer_limit(
                 &self.source_label,

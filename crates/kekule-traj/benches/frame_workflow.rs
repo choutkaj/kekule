@@ -14,7 +14,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let model = mmcif::parse_str(&std::fs::read_to_string(path)?)?
         .interpret()?
         .into_model();
-    let frame = TrajectoryFrame::new(model.conformation().clone());
+    let mut frame = TrajectoryFrame::new(model.positions().clone());
+    frame.set_cell(model.cell().copied());
     let trajectory =
         Trajectory::from_items(model.shared_topology(), (0..64).map(|_| frame.clone()))?;
     let atoms = AtomSelection::all(&trajectory.shared_topology());

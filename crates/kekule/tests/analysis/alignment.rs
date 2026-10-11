@@ -206,11 +206,9 @@ fn superposition_rotates_complete_geometric_state_and_preserves_metadata() {
     .unwrap();
 
     let mut reference_frame = frame(&reference);
-    reference_frame
-        .conformation_mut()
-        .set_cell(Some(reference_cell));
+    reference_frame.set_cell(Some(reference_cell));
     let mut moving_frame = frame(&moving);
-    moving_frame.conformation_mut().set_cell(Some(moving_cell));
+    moving_frame.set_cell(Some(moving_cell));
     moving_frame
         .set_velocities(Some(
             Velocities::new(Quantity::new(
@@ -235,8 +233,7 @@ fn superposition_rotates_complete_geometric_state_and_preserves_metadata() {
     moving_frame.set_step(Some(25));
     let score = PropertyKey::new("score").unwrap();
     let label = PropertyKey::new("label").unwrap();
-    let mut conformation = moving_frame.conformation_mut();
-    let mut properties = conformation.properties_mut();
+    let mut properties = moving_frame.properties_mut();
     properties
         .atoms_mut()
         .set_value(
@@ -342,9 +339,7 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
         Point3::new(0.0, 0.0, 1.0),
     ];
     let mut periodic = frame(&points);
-    periodic
-        .conformation_mut()
-        .set_cell(Some(periodic_cell(1.0)));
+    periodic.set_cell(Some(periodic_cell(1.0)));
     let trajectory = Trajectory::from_items(Arc::clone(&topology), [periodic]).unwrap();
     let all = AtomSelection::all(&topology);
 
@@ -440,7 +435,6 @@ fn split_and_fused_workflows_keep_collection_and_item_properties() {
     let key = PropertyKey::new("simulation").unwrap();
     let mut annotated = frame(&moving);
     annotated
-        .conformation_mut()
         .properties_mut()
         .owner_mut()
         .insert(key.clone(), PropertyValue::Int(7))
@@ -496,10 +490,8 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
     ];
     let mut reference = frame(&points);
     let mut moving = frame(&points.map(|p| Point3::new(p.x + 0.3, p.y - 0.2, p.z + 0.1)));
-    reference
-        .conformation_mut()
-        .set_cell(Some(periodic_cell(1.0)));
-    moving.conformation_mut().set_cell(Some(periodic_cell(1.0)));
+    reference.set_cell(Some(periodic_cell(1.0)));
+    moving.set_cell(Some(periodic_cell(1.0)));
     let original = Trajectory::from_items(Arc::clone(&topology), [reference, moving]).unwrap();
     let all = AtomSelection::all(&topology);
     assert!(original.rmsd(0, &all).unwrap().value()[1] > 0.3);
@@ -659,9 +651,8 @@ fn correspondence_fixture() -> (Trajectory, Model, AtomCorrespondence, AtomCorre
                 .unwrap(),
             ))
             .unwrap();
-        let mut conformation = frame.conformation_mut();
-        conformation.set_cell(Some(periodic_cell(20.0)));
-        let mut properties = conformation.properties_mut();
+        frame.set_cell(Some(periodic_cell(20.0)));
+        let mut properties = frame.properties_mut();
         properties
             .owner_mut()
             .insert(

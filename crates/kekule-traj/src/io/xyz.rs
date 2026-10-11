@@ -760,8 +760,6 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
                 !frame.properties().owner().is_empty(),
                 "frame owner properties",
             ),
-            (frame.occupancies().is_some(), "occupancies"),
-            (frame.b_factors().is_some(), "B-factors"),
         ];
         if let Some((_, field)) = unsupported.into_iter().find(|(present, _)| *present) {
             return Err(writer_field_error(

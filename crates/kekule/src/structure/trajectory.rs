@@ -1,11 +1,18 @@
-use crate::geometry::RigidTransform;
+use std::sync::Arc;
+
+use crate::geometry::{PeriodicCell, RigidTransform};
+use crate::properties::RealizationProperties;
+use crate::topology::Topology;
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
 
 use super::realizations::sealed::Payload;
 use super::realizations::{realization_collection, RealizationStore};
+use super::state::{
+    realization_mutators, realization_readers, transform_cell, transform_positions,
+};
 use super::{
-    Conformation, ConformationError, ConformationMut, Ensemble, EnsembleMember, Forces,
-    Realization, RealizationError, RealizationMut, RealizationView, Velocities,
+    ConformationError, Ensemble, EnsembleMember, Forces, ModelView, Positions, Realization,
+    RealizationError, RealizationMut, RealizationView, Velocities,
 };
 
 /// A time-ordered sequence of frames of one shared topology, as produced by
@@ -41,57 +48,53 @@ pub type TrajectoryFrameView<'a> = RealizationView<'a, TrajectoryFrame>;
 /// Dimension-preserving editor for one [`TrajectoryFrame`] of a [`Trajectory`].
 pub type TrajectoryFrameMut<'a> = RealizationMut<'a, TrajectoryFrame>;
 
-/// One trajectory frame: a [`Conformation`] plus optional velocities, forces,
+/// One trajectory frame: positions in dense topology atom order, an optional
+/// periodic cell, realization properties, and optional velocities, forces,
 /// time, and step.
 ///
-/// The frame carries no topology; it is bound when inserted into a
-/// [`Trajectory`]. Conformation state reads through `Deref`.
+/// Frames carry no crystallographic occupancies or B-factors. The frame
+/// carries no topology; it is bound when inserted into a [`Trajectory`].
+///
+/// ```compile_fail,E0599
+/// use kekule::structure::{Positions, TrajectoryFrame};
+/// let mut frame = TrajectoryFrame::new(Positions::zeros(1));
+/// frame.set_occupancies(None);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrajectoryFrame {
-    conformation: Conformation,
+    positions: Positions,
+    cell: Option<PeriodicCell>,
+    properties: RealizationProperties,
     velocities: Option<Velocities>,
     forces: Option<Forces>,
     time: Option<Quantity<f64>>,
     step: Option<u64>,
 }
 
-impl From<Conformation> for TrajectoryFrame {
-    fn from(conformation: Conformation) -> Self {
+impl TrajectoryFrame {
+    /// Creates a non-periodic frame without properties or dynamics.
+    pub fn new(positions: Positions) -> Self {
+        let properties = RealizationProperties::new(positions.len());
         Self {
-            conformation,
+            positions,
+            cell: None,
+            properties,
             velocities: None,
             forces: None,
             time: None,
             step: None,
         }
     }
-}
 
-impl std::ops::Deref for TrajectoryFrame {
-    type Target = Conformation;
-
-    fn deref(&self) -> &Self::Target {
-        &self.conformation
-    }
-}
-
-impl TrajectoryFrame {
-    /// Creates a frame without dynamics; accepts [`Conformation`] or
-    /// [`super::Positions`].
-    pub fn new(conformation: impl Into<Conformation>) -> Self {
-        Self::from(conformation.into())
+    /// Returns this frame with a periodic cell.
+    #[must_use]
+    pub fn with_cell(mut self, cell: PeriodicCell) -> Self {
+        self.cell = Some(cell);
+        self
     }
 
-    pub fn conformation(&self) -> &Conformation {
-        &self.conformation
-    }
-
-    pub fn conformation_mut(&mut self) -> ConformationMut<'_> {
-        ConformationMut::new(&mut self.conformation)
-    }
-
-    pub fn into_conformation(self) -> Conformation {
-        self.conformation
+    pub fn atom_count(&self) -> usize {
+        self.positions.len()
     }
 
     pub fn velocities(&self) -> Option<&Velocities> {
@@ -160,24 +163,59 @@ impl TrajectoryFrame {
     }
 
     fn check_len(&self, actual: usize) -> Result<(), ConformationError> {
-        if actual != self.conformation.atom_count() {
+        if actual != self.positions.len() {
             return Err(ConformationError::AtomCountMismatch {
-                expected: self.conformation.atom_count(),
+                expected: self.positions.len(),
                 actual,
             });
         }
         Ok(())
     }
+
+    fn storage_ref(&self) -> &Self {
+        self
+    }
+
+    fn storage(&mut self) -> &mut Self {
+        self
+    }
+
+    realization_readers!();
+    realization_mutators!();
 }
 
 impl Payload for TrajectoryFrame {
-    fn conformation_storage(&mut self) -> &mut Conformation {
-        &mut self.conformation
+    fn row_count(&self) -> usize {
+        self.positions.len()
+    }
+
+    fn realization_properties(&self) -> &RealizationProperties {
+        &self.properties
+    }
+
+    fn positions_storage_mut(&mut self) -> &mut Positions {
+        &mut self.positions
+    }
+
+    fn properties_storage_mut(&mut self) -> &mut RealizationProperties {
+        &mut self.properties
+    }
+
+    fn model_view<'a>(&'a self, topology: &'a Arc<Topology>) -> ModelView<'a> {
+        ModelView::bound(
+            topology,
+            &self.positions,
+            self.cell.as_ref(),
+            None,
+            &self.properties,
+        )
     }
 
     fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, ConformationError> {
         Ok(Self {
-            conformation: self.conformation.project(atoms, bonds)?,
+            positions: self.positions.select_indices(atoms)?,
+            cell: self.cell,
+            properties: self.properties.project(atoms, bonds)?,
             velocities: self.velocities.as_ref().map(|values| values.select(atoms)),
             forces: self.forces.as_ref().map(|values| values.select(atoms)),
             time: self.time,
@@ -189,7 +227,9 @@ impl Payload for TrajectoryFrame {
     fn transformed(&self, transform: RigidTransform) -> Result<Self, ConformationError> {
         let rotate = |vector| transform.transform_vector(vector);
         Ok(Self {
-            conformation: self.conformation.transformed(transform)?,
+            cell: transform_cell(self.cell, transform)?,
+            positions: transform_positions(&self.positions, transform)?,
+            properties: self.properties.clone(),
             velocities: self
                 .velocities
                 .as_ref()
@@ -221,6 +261,12 @@ impl TrajectoryFrame {
 }
 
 impl RealizationMut<'_, TrajectoryFrame> {
+    fn storage(&mut self) -> &mut TrajectoryFrame {
+        self.item
+    }
+
+    realization_mutators!();
+
     pub fn set_velocities(
         &mut self,
         velocities: Option<Velocities>,
@@ -274,15 +320,14 @@ impl Trajectory {
 
     /// Reinterprets the frames as an equally weighted ensemble (every member
     /// has weight `1.0`), dropping temporal order, velocities, forces, time,
-    /// and step. Conformations move without copying.
+    /// and step. Positions, cells, and properties move without copying.
     ///
     /// Equal weights are right for frames sampled from equilibrium at a
     /// constant interval; reweight explicitly otherwise.
     pub fn into_ensemble(self) -> Ensemble {
-        Ensemble::from_store(
-            self.store
-                .map_items(|frame| EnsembleMember::unit(frame.into_conformation())),
-        )
+        Ensemble::from_store(self.store.map_items(|frame| {
+            EnsembleMember::from_frame_state(frame.positions, frame.cell, frame.properties)
+        }))
     }
 
     pub(crate) fn store(&self) -> &RealizationStore<TrajectoryFrame> {

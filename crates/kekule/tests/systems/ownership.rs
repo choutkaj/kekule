@@ -9,7 +9,8 @@ use kekule::properties::{
 };
 use kekule::smiles;
 use kekule::structure::{
-    Conformation, ConformationError, Model, ModelError, PositionError, Positions, RealizationError,
+    ConformationError, Model, ModelError, PositionError, Positions, RealizationError,
+    TrajectoryFrame,
 };
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{
@@ -45,7 +46,6 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
     )
     .unwrap();
     model
-        .conformation_mut()
         .set_positions(Quantity::new(
             Alternating {
                 calls: &calls,
@@ -61,7 +61,7 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
     calls.set(0);
     let before = model.positions().clone();
     assert!(matches!(
-        model.conformation_mut().set_positions(Quantity::new(
+        model.set_positions(Quantity::new(
             Alternating {
                 calls: &calls,
                 first: &invalid,
@@ -125,13 +125,13 @@ fn borrowed_property_reads_retain_string_storage_and_missing_cells() {
     let text = String::from("a property that should be borrowed");
     let pointer = text.as_ptr();
     let row = TopologyAtomIndex::new;
-    let mut conformation = Conformation::new(Positions::zeros(2));
-    conformation
+    let mut frame = TrajectoryFrame::new(Positions::zeros(2));
+    frame
         .properties_mut()
         .atoms_mut()
         .insert(key.clone(), PropertyColumn::String(vec![Some(text), None]))
         .unwrap();
-    let table = conformation.properties().atoms();
+    let table = frame.properties().atoms();
     let value = table.value_ref(&key, row(0)).unwrap().unwrap();
     let PropertyValueRef::String(text) = value else {
         panic!("expected string")

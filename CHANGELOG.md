@@ -21,6 +21,30 @@ All notable changes to Kekule are documented in this file.
   and layout identity is an explicit token minted at publication. Perception
   snapshots still share static storage, including properties until one
   snapshot edits them.
+- **Breaking:** `Conformation` and `ConformationMut` are removed. `Model`,
+  `EnsembleMember`, and `TrajectoryFrame` own their realization fields
+  directly, and each holds only the fields meaningful for it: all three have
+  positions, an optional cell, and realization properties; models and members
+  also have occupancies and B-factors; frames also have velocities, forces,
+  time, and step.
+  - `Model::new`, `EnsembleMember::new`, and `TrajectoryFrame::new` take
+    `Positions`; each type has `with_cell`.
+  - Read realization state from the owner (`positions()`, `cell()`,
+    `properties()`, `occupancies()`, ...) and change it with the owner's
+    dimension-preserving setters (`set_positions`, `set_position_at`,
+    `set_cell`, `set_properties`, `properties_mut`, `set_occupancy`, ...).
+    The same setters are on the member and frame editors returned by
+    `get_mut`, and on `ModelBuilder`. The index-based `set_position` of the
+    former `ConformationMut` is now `set_position_at`, beside the existing
+    ID-based `Model::set_position`.
+  - `conformation()`, `conformation_mut()`, `into_conformation()`,
+    `Model::replace_conformation`, `Model::into_parts`, and `ModelView::new`
+    are removed. `ModelView` no longer dereferences to a conformation; it has
+    its own accessors, and a view of a trajectory frame reports no
+    occupancies or B-factors. `Realization` no longer requires `Deref`.
+  - Trajectory frames cannot hold occupancies or B-factors, so trajectory
+    writers no longer reject them, and `FrameBufferData` borrows only
+    realization properties from a source frame.
 
 ### Fixed
 

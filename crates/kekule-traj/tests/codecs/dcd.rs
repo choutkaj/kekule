@@ -42,7 +42,6 @@ fn set_frame(
 ) {
     buffer
         .frame_mut()
-        .conformation_mut()
         .set_positions(Quantity::new(
             coordinates.map(|[x, y, z]| Point3::new(x, y, z)),
             ANGSTROM,
@@ -53,7 +52,7 @@ fn set_frame(
         .frame_mut()
         .set_time(time.map(|value| Quantity::new(value, PICOSECOND)))
         .unwrap();
-    buffer.frame_mut().conformation_mut().set_cell(cell);
+    buffer.frame_mut().set_cell(cell);
 }
 
 #[test]
@@ -108,10 +107,7 @@ fn dcd_acute_cell_angles_round_trip_without_degree_cosine_ambiguity() {
         )
         .unwrap();
         frame.frame_mut().set_step(Some(4));
-        frame
-            .frame_mut()
-            .conformation_mut()
-            .set_cell(Some(unrepresentable));
+        frame.frame_mut().set_cell(Some(unrepresentable));
         assert_eq!(
             codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
             Some(TrajectoryCodecErrorKind::InvalidFrame)
@@ -348,7 +344,7 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
             Vector3::new(0.0, 0.0, -30.0),
         ],
     ] {
-        frame.frame_mut().conformation_mut().set_cell(Some(
+        frame.frame_mut().set_cell(Some(
             PeriodicCell::new(Quantity::new(vectors, ANGSTROM), [true; 3]).unwrap(),
         ));
         assert_eq!(
@@ -357,10 +353,7 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
         );
         assert_eq!(writer.writer(), &before);
     }
-    frame
-        .frame_mut()
-        .conformation_mut()
-        .set_cell(Some(canonical));
+    frame.frame_mut().set_cell(Some(canonical));
     writer.write_frame(frame.frame_view()).unwrap();
     let bytes = writer.finish().unwrap().into_inner();
     let mut reader = DcdReader::new(
@@ -602,7 +595,6 @@ fn indexed_dcd_restoration_failure_does_not_publish_or_change_destination() {
     );
     destination
         .frame_mut()
-        .conformation_mut()
         .properties_mut()
         .owner_mut()
         .insert(
@@ -883,7 +875,6 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
     );
     bond_annotated
         .frame_mut()
-        .conformation_mut()
         .properties_mut()
         .bonds_mut()
         .insert(

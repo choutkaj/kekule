@@ -56,20 +56,21 @@
 //! [`Model::translate`], [`Model::rotate`], and [`Model::apply_transform`] also
 //! support rigid selection manipulation. No relaxation is performed.
 
-mod conformation;
 mod dynamics;
 mod ensemble;
 mod geometry_edit;
 pub mod measure;
 mod model;
 mod model_editor;
+mod model_state;
 mod positions;
 mod realizations;
+mod sites;
 mod solvation;
+mod state;
 mod trajectory;
 pub use solvation::*;
 
-pub use conformation::*;
 pub use dynamics::*;
 pub use ensemble::*;
 pub use geometry_edit::*;
@@ -80,6 +81,7 @@ pub(crate) use realizations::RealizationStore;
 pub use realizations::{
     Realization, RealizationError, RealizationIter, RealizationMut, RealizationView,
 };
+pub use state::ConformationError;
 pub use trajectory::*;
 
 #[cfg(test)]

@@ -307,7 +307,7 @@ fn correspondence_retains_alignment_geometry_and_periodic_rejections() {
         kabsch(moving.as_model_view(), reference.as_model_view(), &empty),
         Err(AlignmentError::InsufficientSelectedAtoms { selected: 0, .. })
     ));
-    moving.conformation_mut().set_cell(Some(
+    moving.set_cell(Some(
         crate::geometry::PeriodicCell::new(
             Quantity::new(
                 [
