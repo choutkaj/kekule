@@ -4,9 +4,9 @@
 use std::sync::Arc;
 
 use kekule::alignment::{
-    kabsch, AlignedRmsdOptions, AlignmentError, AlignmentGeometry, AlignmentOptions,
+    kabsch, rmsd, AlignedRmsdOptions, AlignmentError, AlignmentGeometry, AlignmentOptions,
     AtomCorrespondence, AtomCorrespondenceError, CorrespondenceSide, PeriodicPolicy, Reference,
-    Weighting,
+    SymmetricSelection, Weighting,
 };
 use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::geometry::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
@@ -869,4 +869,135 @@ fn correspondence_measurement_validates_weights_empty_pairs_and_periodic_policy(
         Err(AlignmentError::Item { index: 0, source })
             if matches!(*source, AlignmentError::PeriodicCoordinates { .. })
     ));
+}
+
+/// Acetate (C0, C1, O2, O3) with its oxygens mirrored across the xz plane
+/// but lifted out of it, so no proper rotation exchanges them.
+fn acetate_points(swapped: bool) -> [Point3; 4] {
+    let (o2, o3) = if swapped {
+        (-0.125, 0.125)
+    } else {
+        (0.125, -0.125)
+    };
+    [
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(0.125, 0.0, 0.0),
+        Point3::new(0.25, o2, 0.0625),
+        Point3::new(0.25, o3, 0.0625),
+    ]
+}
+
+fn acetate_model(topology: &Arc<Topology>, points: &[Point3]) -> Model {
+    Model::new(
+        Arc::clone(topology),
+        Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
+    )
+    .unwrap()
+}
+
+fn nanometers(positions: &Positions) -> Vec<Point3> {
+    (0..positions.len())
+        .map(|index| positions.position_at(index).unwrap().into_value())
+        .collect()
+}
+
+#[test]
+fn symmetric_rmsd_pairs_equivalent_atoms_with_their_closest_counterparts() {
+    let topology = kekule::smiles::to_topology("CC(=O)[O-]").unwrap();
+    let reference = acetate_model(&topology, &acetate_points(false));
+    let swapped = acetate_model(&topology, &acetate_points(true));
+    let all = AtomSelection::all(&topology);
+    let symmetric = SymmetricSelection::new(&all).unwrap();
+    assert_eq!(symmetric.permutation_count(), 2);
+
+    // Each oxygen is 0.25 nm from its label, so the plain RMSD over four
+    // atoms is sqrt(2 * 0.25^2 / 4); exchanging the oxygens removes it.
+    let plain = rmsd(swapped.as_model_view(), reference.as_model_view(), &all).unwrap();
+    assert_eq!(plain, Quantity::new(0.03125_f64.sqrt(), NANOMETER));
+    let corrected = rmsd(
+        swapped.as_model_view(),
+        reference.as_model_view(),
+        &symmetric,
+    )
+    .unwrap();
+    assert_eq!(corrected, Quantity::new(0.0, NANOMETER));
+
+    let fit = kabsch(
+        swapped.as_model_view(),
+        reference.as_model_view(),
+        &symmetric,
+    )
+    .unwrap();
+    assert_close(fit.rmsd().into_value(), 0.0, 1.0e-12);
+    assert_eq!(fit.selected_atom_count(), 4);
+
+    let foreign = SymmetricSelection::new(&AtomSelection::all(
+        &kekule::smiles::to_topology("CC(=O)[O-]").unwrap(),
+    ))
+    .unwrap();
+    assert_eq!(
+        rmsd(swapped.as_model_view(), reference.as_model_view(), &foreign),
+        Err(AlignmentError::SelectionTopologyMismatch)
+    );
+}
+
+#[test]
+fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
+    let topology = kekule::smiles::to_topology("CC(=O)[O-]").unwrap();
+    let reference = acetate_points(false);
+    let moved_swapped = transformed(&acetate_points(true), quarter_turn());
+    let members = [reference.to_vec(), moved_swapped.clone()].map(|points| {
+        EnsembleMember::new(
+            Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
+            1.0,
+        )
+        .unwrap()
+    });
+    let mut ensemble = Ensemble::from_items(Arc::clone(&topology), members).unwrap();
+    let all = AtomSelection::all(&topology);
+    let symmetric = SymmetricSelection::new(&all).unwrap();
+    let oxygens = selection(&topology, &[2, 3]);
+    let symmetric_oxygens = SymmetricSelection::new(&oxygens).unwrap();
+
+    // The best fit exchanges the oxygens; a measurement that may not
+    // exchange them then sees each 0.25 nm from its label.
+    let plain_oxygens = ensemble.aligned_rmsd(0, &symmetric, &oxygens).unwrap();
+    assert_close(plain_oxygens.value()[0], 0.0, 1.0e-12);
+    assert_close(plain_oxygens.value()[1], 0.25, 1.0e-12);
+    let corrected = ensemble
+        .aligned_rmsd(0, &symmetric, &symmetric_oxygens)
+        .unwrap();
+    assert_close(corrected.value()[0], 0.0, 1.0e-12);
+    assert_close(corrected.value()[1], 0.0, 1.0e-12);
+
+    ensemble.superpose(0, &symmetric).unwrap();
+    let superposed = nanometers(ensemble.get(1).unwrap().positions());
+    for (actual, expected) in superposed.iter().zip(acetate_points(true)) {
+        assert_vector_close(*actual - expected, Vector3::new(0.0, 0.0, 0.0), 1.0e-12);
+    }
+    let direct = ensemble.rmsd(0, &symmetric).unwrap();
+    assert_eq!(direct.value()[0], 0.0);
+    assert_close(direct.value()[1], 0.0, 1.0e-12);
+
+    // Trajectories share the kernels.
+    let mut trajectory = Trajectory::from_items(
+        Arc::clone(&topology),
+        [frame(&reference), frame(&moved_swapped)],
+    )
+    .unwrap();
+    let report = trajectory.superpose(0, &symmetric).unwrap();
+    assert_close(
+        report.alignment(1).unwrap().rmsd().into_value(),
+        0.0,
+        1.0e-12,
+    );
+
+    // An empty collection still validates the selection binding.
+    let foreign = kekule::smiles::to_topology("CC(=O)[O-]").unwrap();
+    let foreign = SymmetricSelection::new(&AtomSelection::all(&foreign)).unwrap();
+    let model = acetate_model(&topology, &reference);
+    assert_eq!(
+        Ensemble::new(Arc::clone(&topology)).rmsd(&model, &foreign),
+        Err(AlignmentError::SelectionTopologyMismatch)
+    );
 }

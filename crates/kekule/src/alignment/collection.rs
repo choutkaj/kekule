@@ -3,12 +3,12 @@
 
 use crate::geometry::RigidTransform;
 use crate::structure::{AsModelView, Ensemble, ModelView, Trajectory};
-use crate::topology::{Topology, TopologyAtomIndex};
+use crate::topology::{AtomSelection, Topology};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 use super::{
-    check_fit_count, check_measurement_count, kabsch_pairs, measure_pairs, AlignmentError,
-    AlignmentOptions, FitAtoms, NormalizedWeights, RigidAlignment, Weighting,
+    best_kabsch, best_measure, check_fit_count, check_measurement_count, AlignmentError,
+    AlignmentOptions, FitAtoms, NormalizedWeights, Pairs, RigidAlignment, Weighting,
 };
 
 /// The reference of a collection-wide fit or RMSD.
@@ -77,8 +77,6 @@ impl SuperpositionReport {
     }
 }
 
-type Pairs = Vec<(TopologyAtomIndex, TopologyAtomIndex)>;
-
 /// Fits every item onto the reference without changing anything.
 ///
 /// `items` are the borrowed views of one collection over `topology`, in
@@ -95,14 +93,14 @@ fn fit_items<'a>(
         Reference::View(_) => None,
     };
     let reference = reference_view(items, reference)?;
-    let pairs = item_pairs(topology, items, reference, atoms)?;
-    check_fit_count(pairs.len())?;
-    let weights = NormalizedWeights::new(options.weighting, pairs.len())?;
+    let sets = item_pair_sets(topology, items, reference, atoms)?;
+    check_fit_count(atoms.len())?;
+    let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
     let alignments = items
         .iter()
         .enumerate()
         .map(|(index, item)| {
-            kabsch_pairs(*item, reference, &pairs, weights, options.periodic_policy)
+            best_kabsch(*item, reference, &sets, weights, options.periodic_policy)
                 .map_err(|source| item_error(index, source))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -121,17 +119,17 @@ fn item_rmsd<'a>(
     options: AlignmentOptions<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
     let reference = reference_view(items, reference)?;
-    let pairs = item_pairs(topology, items, reference, atoms)?;
-    check_measurement_count(pairs.len())?;
-    let weights = NormalizedWeights::new(options.weighting, pairs.len())?;
+    let sets = item_pair_sets(topology, items, reference, atoms)?;
+    check_measurement_count(atoms.len())?;
+    let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
     let values = items
         .iter()
         .enumerate()
         .map(|(index, item)| {
-            measure_pairs(
+            best_measure(
                 *item,
                 reference,
-                &pairs,
+                &sets,
                 weights,
                 options.periodic_policy,
                 None,
@@ -152,20 +150,22 @@ fn item_aligned_rmsd<'a>(
     options: AlignedRmsdOptions<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
     let reference = reference_view(items, reference)?;
-    let fit = item_pairs(topology, items, reference, fit)?;
-    let measurement = item_pairs(topology, items, reference, measurement)?;
+    let fit_sets = item_pair_sets(topology, items, reference, fit)?;
+    let measurement_sets = item_pair_sets(topology, items, reference, measurement)?;
     check_fit_count(fit.len())?;
     check_measurement_count(measurement.len())?;
     let fit_weights = NormalizedWeights::new(options.fit.weighting, fit.len())?;
     let measurement_weights =
         NormalizedWeights::new(options.measurement_weighting, measurement.len())?;
     let policy = options.fit.periodic_policy;
+    // The best fit fixes the transform; the measurement then takes its own
+    // best permutation under that transform.
     let measure = |moving: ModelView<'_>| {
-        let alignment = kabsch_pairs(moving, reference, &fit, fit_weights, policy)?;
-        measure_pairs(
+        let alignment = best_kabsch(moving, reference, &fit_sets, fit_weights, policy)?;
+        best_measure(
             moving,
             reference,
-            &measurement,
+            &measurement_sets,
             measurement_weights,
             policy,
             Some(alignment.transform()),
@@ -198,37 +198,50 @@ fn reference_view<'a>(
 }
 
 /// Validates the pairing once against the collection topology.
-fn item_pairs(
+fn item_pair_sets(
     topology: &Topology,
     items: &[ModelView<'_>],
     reference: ModelView<'_>,
     atoms: FitAtoms<'_>,
-) -> Result<Pairs, AlignmentError> {
+) -> Result<Vec<Pairs>, AlignmentError> {
     match items.first() {
-        Some(item) => atoms.pairs(*item, reference),
+        Some(item) => atoms.pair_sets(*item, reference),
         // Without items, validate against the collection topology itself.
         None => match atoms {
             FitAtoms::Selection(selection) => {
-                if !topology.shares_layout(reference.topology()) {
-                    return Err(AlignmentError::TopologyMismatch);
-                }
-                if !selection.topology().shares_layout(topology) {
-                    return Err(AlignmentError::SelectionTopologyMismatch);
-                }
-                Ok(selection
+                check_empty_selection(topology, selection, reference)?;
+                Ok(vec![selection
                     .indices()
                     .iter()
                     .map(|index| (*index, *index))
-                    .collect())
+                    .collect()])
             }
             FitAtoms::Correspondence(correspondence) => {
                 correspondence
                     .ensure_compatible(topology, reference.topology())
                     .map_err(AlignmentError::Correspondence)?;
-                Ok(correspondence.index_pairs().to_vec())
+                Ok(vec![correspondence.index_pairs().to_vec()])
+            }
+            FitAtoms::Symmetric(symmetric) => {
+                check_empty_selection(topology, symmetric.selection(), reference)?;
+                Ok(symmetric.pair_sets())
             }
         },
     }
+}
+
+fn check_empty_selection(
+    topology: &Topology,
+    selection: &AtomSelection,
+    reference: ModelView<'_>,
+) -> Result<(), AlignmentError> {
+    if !topology.shares_layout(reference.topology()) {
+        return Err(AlignmentError::TopologyMismatch);
+    }
+    if !selection.topology().shares_layout(topology) {
+        return Err(AlignmentError::SelectionTopologyMismatch);
+    }
+    Ok(())
 }
 
 fn transforms(report: &SuperpositionReport) -> Vec<RigidTransform> {
