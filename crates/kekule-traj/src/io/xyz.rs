@@ -15,8 +15,8 @@ use kekule::topology::Topology;
 use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
 use super::{
-    codec_context, io_context, projected_index_limit, require_nonempty_writer,
-    reserve_index_for_push, TrajectoryIoLimits,
+    codec_context, io_context, projected_index_limit, require_no_partial_frame,
+    require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits,
 };
 
 const MAX_WRITER_COMMENT_BYTES: usize = 1_048_576;
@@ -637,6 +637,10 @@ pub struct XyzWriter<W> {
     options: XyzWriteOptions,
     source_label: String,
     frame_count: u64,
+    /// Set while a frame's bytes are being written and left set if writing
+    /// fails, so a stream that may end in a partial frame is never extended
+    /// or reported as finished.
+    partial: bool,
 }
 
 impl<W: Write> XyzWriter<W> {
@@ -701,6 +705,7 @@ impl<W: Write> XyzWriter<W> {
             options,
             source_label,
             frame_count: 0,
+            partial: false,
         })
     }
 
@@ -717,6 +722,12 @@ impl<W: Write> XyzWriter<W> {
     }
 
     pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::Finish,
+            TrajectoryFormat::Xyz,
+            &self.source_label,
+        )?;
         require_nonempty_writer(self.frame_count, TrajectoryFormat::Xyz, &self.source_label)
     }
 
@@ -745,6 +756,12 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xyz,
+            &self.source_label,
+        )?;
         if !self.topology().shares_layout(frame.topology()) {
             return Err(TrajectoryIoError::TopologyMismatch);
         }
@@ -792,6 +809,7 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
             }
         }
 
+        self.partial = true;
         writeln!(self.writer, "{}", self.topology.atom_count()).map_err(|error| {
             io_context(
                 TrajectoryIoOperation::WriteFrame,
@@ -832,6 +850,7 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
                 )
             })?;
         }
+        self.partial = false;
         self.frame_count = self.frame_count.checked_add(1).ok_or_else(|| {
             codec_context(
                 TrajectoryCodecErrorKind::ResourceLimitExceeded,

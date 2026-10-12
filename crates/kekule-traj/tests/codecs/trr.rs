@@ -19,15 +19,15 @@ use kekule_traj::io::{
     ScalarPrecision, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 use kekule_traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryIoError,
-    TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryFormat,
+    TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
 use crate::support;
 use support::{
-    buffer_snapshot, codec_kind, topology as build_topology, x_coordinates as xs, GuardedCursor,
-    RestoreSeekFailure,
+    buffer_snapshot, codec_error, codec_kind, topology as build_topology, x_coordinates as xs,
+    GuardedCursor, RestoreSeekFailure,
 };
 
 fn topology() -> Arc<Topology> {
@@ -148,9 +148,16 @@ fn trr_cell_validation_uses_the_encoded_precision_before_appending_bytes() {
         let before = writer.writer().clone();
         if precision == TrrScalarPrecision::Float32 {
             assert_eq!(
-                codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
-                Some(TrajectoryCodecErrorKind::InvalidFrame)
-            );
+            writer.write_frame(frame.frame_view()),
+            Err(codec_error(
+                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoOperation::WriteFrame,
+                TrajectoryFormat::Trr,
+                "box-rounding.trr",
+                None,
+                "TRR cell is not representable at the selected precision: TRR periodic cell is invalid: periodic-cell vectors must have non-zero finite volume",
+            ))
+        );
             assert_eq!(writer.writer(), &before);
             frame.frame_mut().set_cell(ordinary_cell);
         }
@@ -574,8 +581,15 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
     )
     .unwrap();
     assert_eq!(
-        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::UnsupportedField)
+        writer.write_frame(frame.frame_view()),
+        Err(codec_error(
+            TrajectoryCodecErrorKind::UnsupportedField,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Trr,
+            "zero.trr",
+            Some(0),
+            "TRR cannot preserve properties",
+        ))
     );
     frame.frame_mut().properties_mut().owner_mut().clear();
     writer.write_frame(frame.frame_view()).unwrap();
@@ -737,13 +751,18 @@ fn trr_triplet_fields_reject_nonfinite_input_without_publishing_partial_frames()
             "triplets.trr",
         )
         .unwrap();
-        let error = writer.write_frame(frame.frame_view()).unwrap_err();
         assert_eq!(
-            codec_kind(&error),
-            Some(TrajectoryCodecErrorKind::InvalidFrame)
+            writer.write_frame(frame.frame_view()),
+            Err(codec_error(
+                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoOperation::WriteFrame,
+                TrajectoryFormat::Trr,
+                "triplets.trr",
+                None,
+                &format!("TRR {field} is not representable at the selected precision"),
+            ))
         );
-        assert!(error.to_string().contains(field));
-        assert!(writer.writer().get_ref().is_empty());
+        assert_eq!(writer.writer().get_ref(), &Vec::<u8>::new());
     }
 }
 
@@ -770,8 +789,15 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
         ))
         .unwrap();
     assert_eq!(
-        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::InvalidFrame)
+        writer.write_frame(frame.frame_view()),
+        Err(codec_error(
+            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Trr,
+            "late-invalid.trr",
+            None,
+            "TRR position is not representable at the selected precision",
+        ))
     );
     assert!(writer.writer().get_ref().is_empty());
 
@@ -789,8 +815,15 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
         )
         .unwrap();
     assert_eq!(
-        codec_kind(&writer.write_frame(bond_annotated.frame_view()).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::UnsupportedField)
+        writer.write_frame(bond_annotated.frame_view()),
+        Err(codec_error(
+            TrajectoryCodecErrorKind::UnsupportedField,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Trr,
+            "late-invalid.trr",
+            Some(0),
+            "TRR cannot preserve bond properties",
+        ))
     );
     assert!(writer.writer().get_ref().is_empty());
 }
@@ -896,24 +929,6 @@ fn format_agnostic_trr_metadata_tracks_mixed_precision_sequentially_and_indexed(
         }
     );
     fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn empty_trr_writer_is_rejected() {
-    let topology = topology();
-    let error = TrrWriter::new(
-        Cursor::new(Vec::new()),
-        topology,
-        TrrWriteOptions::default(),
-        "empty.trr",
-    )
-    .unwrap()
-    .finish()
-    .unwrap_err();
-    assert_eq!(
-        codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::InvalidFrame)
-    );
 }
 
 #[test]

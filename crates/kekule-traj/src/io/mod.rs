@@ -86,7 +86,8 @@ pub use metadata::{
 
 pub(crate) use limits::{projected_index_limit, reserve_index_for_push};
 pub(crate) use util::{
-    codec_context, frame_offset_context, io_context, probe_seekable_eof, require_nonempty_writer,
+    codec_context, frame_offset_context, io_context, probe_seekable_eof, require_no_partial_frame,
+    require_nonempty_writer, validation_detail,
 };
 
 #[cfg(test)]

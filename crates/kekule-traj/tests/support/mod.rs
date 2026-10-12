@@ -1,14 +1,17 @@
 #![allow(dead_code)]
 
 use std::cell::RefCell;
-use std::io::{self, BufRead, Cursor, Read, Seek, SeekFrom};
+use std::io::{self, BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use kekule::core::{Atom, BondOrder, Element};
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule_traj::{FrameBuffer, TrajectoryCodecErrorKind, TrajectoryIoError, TrajectoryReader};
+use kekule_traj::{
+    FrameBuffer, TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryFormat,
+    TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader,
+};
 
 /// Reject another topology context without changing its buffer or consuming input.
 /// Call before reading and checking the first expected frame in the caller.
@@ -63,6 +66,24 @@ pub fn codec_kind(error: &TrajectoryIoError) -> Option<TrajectoryCodecErrorKind>
         TrajectoryIoError::Codec(context) => Some(context.kind()),
         _ => None,
     }
+}
+
+/// The exact codec error a reader or writer reports, for whole-value assertions.
+pub fn codec_error(
+    kind: TrajectoryCodecErrorKind,
+    operation: TrajectoryIoOperation,
+    format: TrajectoryFormat,
+    source_label: &str,
+    frame: Option<u64>,
+    detail: &str,
+) -> TrajectoryIoError {
+    let mut context = TrajectoryCodecErrorContext::new(kind, operation, Some(format))
+        .with_source_label(source_label)
+        .with_detail(detail);
+    if let Some(frame) = frame {
+        context = context.with_frame(frame);
+    }
+    context.into()
 }
 
 pub fn x_coordinates(buffer: &FrameBuffer) -> Vec<f64> {
@@ -291,6 +312,50 @@ impl Seek for NoBackwardSeekCursor {
                 ));
             }
         }
+        self.inner.seek(position)
+    }
+}
+
+/// A seekable sink that accepts `budget` bytes in total and then fails every
+/// write, so a writer can be cut off partway through a frame.
+pub struct ByteBudgetSink {
+    inner: Cursor<Vec<u8>>,
+    remaining: usize,
+}
+
+impl ByteBudgetSink {
+    pub const INJECTED_FAILURE: &'static str = "injected write failure";
+
+    pub fn new(budget: usize) -> Self {
+        Self {
+            inner: Cursor::new(Vec::new()),
+            remaining: budget,
+        }
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        self.inner.get_ref()
+    }
+}
+
+impl Write for ByteBudgetSink {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if self.remaining == 0 && !buffer.is_empty() {
+            return Err(io::Error::other(Self::INJECTED_FAILURE));
+        }
+        let accepted = buffer.len().min(self.remaining);
+        let written = self.inner.write(&buffer[..accepted])?;
+        self.remaining -= written;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Seek for ByteBudgetSink {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
         self.inner.seek(position)
     }
 }

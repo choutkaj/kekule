@@ -18,7 +18,8 @@ use kekule::units::{
 
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
-    require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits,
+    require_no_partial_frame, require_nonempty_writer, reserve_index_for_push, validation_detail,
+    TrajectoryIoLimits,
 };
 
 const TRR_MAGIC: i32 = 1993;
@@ -779,6 +780,10 @@ pub struct TrrWriter<W> {
     options: TrrWriteOptions,
     source_label: String,
     frame_count: u64,
+    /// Set while a frame's bytes are being written and left set if writing
+    /// fails, so a stream that may end in a partial frame is never extended
+    /// or reported as finished.
+    partial: bool,
     raw: Vec<u8>,
 }
 
@@ -805,6 +810,7 @@ impl<W: Write> TrrWriter<W> {
             options,
             source_label,
             frame_count: 0,
+            partial: false,
             raw: Vec::new(),
         })
     }
@@ -822,6 +828,12 @@ impl<W: Write> TrrWriter<W> {
     }
 
     pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::Finish,
+            TrajectoryFormat::Trr,
+            &self.source_label,
+        )?;
         require_nonempty_writer(self.frame_count, TrajectoryFormat::Trr, &self.source_label)
     }
 
@@ -850,6 +862,12 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Trr,
+            &self.source_label,
+        )?;
         if !frame.topology().shares_layout(self.topology()) {
             return Err(TrajectoryIoError::TopologyMismatch);
         }
@@ -1004,7 +1022,10 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                     TrajectoryIoOperation::WriteFrame,
                     Some(TrajectoryFormat::Trr),
                     &self.source_label,
-                    format!("TRR cell is not representable at the selected precision: {error}"),
+                    format!(
+                        "TRR cell is not representable at the selected precision: {}",
+                        validation_detail(&error)
+                    ),
                 )
             })?;
         }
@@ -1041,6 +1062,18 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             )?;
         }
 
+        let mut block_sizes = [0_i32; 10];
+        for (target, size) in
+            block_sizes
+                .iter_mut()
+                .zip([0, 0, box_size, 0, 0, 0, 0, vector_bytes, v_size, f_size])
+        {
+            *target = i32::try_from(size)
+                .map_err(|_| writer_limit(&self.source_label, "TRR block size exceeds i32"))?;
+        }
+        // Every scalar and size was checked above, so a rejected frame leaves
+        // the stream untouched; from here only I/O can fail.
+        self.partial = true;
         write_i32(&mut self.writer, TRR_MAGIC, &self.source_label)?;
         write_i32(
             &mut self.writer,
@@ -1048,13 +1081,8 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             &self.source_label,
         )?;
         write_xdr_string(&mut self.writer, TRR_VERSION, &self.source_label)?;
-        for size in [0, 0, box_size, 0, 0, 0, 0, vector_bytes, v_size, f_size] {
-            write_i32(
-                &mut self.writer,
-                i32::try_from(size)
-                    .map_err(|_| writer_limit(&self.source_label, "TRR block size exceeds i32"))?,
-                &self.source_label,
-            )?;
+        for size in block_sizes {
+            write_i32(&mut self.writer, size, &self.source_label)?;
         }
         write_i32(
             &mut self.writer,
@@ -1121,6 +1149,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             )?;
             write_bytes(&mut self.writer, &self.raw, &self.source_label)?;
         }
+        self.partial = false;
         self.frame_count = self
             .frame_count
             .checked_add(1)
