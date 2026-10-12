@@ -342,6 +342,7 @@ impl MolfileInterpretationReport {
 
 /// Nonfatal source-representation diagnostic produced during interpretation.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MolfileInterpretationWarning {
     /// Incompatible wedge marks cannot specify an axis configuration. The
     /// source document retains the marks; the interpreted graph omits that
@@ -363,6 +364,14 @@ pub enum MolfileInterpretationWarning {
         center: AtomId,
         location: SourceLocation,
         mark_count: usize,
+    },
+    /// A V3000 atom `CFG` parity contradicts the configuration of the atom's
+    /// 3D coordinates. CTfile parity is derived from coordinates, so, as for
+    /// wedges in a conformation, the coordinates decide and the parity is not
+    /// asserted.
+    AtomParityContradictsCoordinates {
+        center: AtomId,
+        location: SourceLocation,
     },
 }
 
@@ -544,6 +553,7 @@ pub fn interpret_molfile_document(
             .and_then(|atom| atom_lines.get(atom.index()))
             .copied();
         let mut editor = raw.editor;
+        let mut contradicted_parities = Vec::new();
         let mut publication_report = canonicalize_molecule_for_publication(
             editor.working_mut(),
             Some(&raw.geometry),
@@ -562,6 +572,8 @@ pub fn interpret_molfile_document(
                 editor.working_mut(),
                 &raw.atom_map,
                 &atom_cfg,
+                &raw.geometry,
+                &mut contradicted_parities,
             )?);
         let mut coordinate_warnings = Vec::new();
         let inferred = molfile_coordinate_tetrahedra(
@@ -653,6 +665,12 @@ pub fn interpret_molfile_document(
             })
             .collect::<Vec<_>>();
         warnings.extend(coordinate_warnings);
+        warnings.extend(contradicted_parities.into_iter().map(|(center, location)| {
+            MolfileInterpretationWarning::AtomParityContradictsCoordinates {
+                center: ids.atom(center).expect("warned atoms survive publication"),
+                location,
+            }
+        }));
         let atom_mappings = raw
             .atom_map
             .iter()
@@ -689,10 +707,15 @@ pub fn interpret_molfile_document(
     })
 }
 
+/// Installs V3000 atom parities. A specified parity that contradicts the
+/// atom's 3D coordinates is skipped and recorded in `contradicted`, leaving the
+/// center to coordinate inference; flat drawings never contradict a parity.
 fn install_v3000_atom_cfg(
     molecule: &mut Molecule,
     atom_map: &BTreeMap<AtomId, AtomId>,
     declarations: &[(AtomId, MolfileAtomParity, SourceLocation)],
+    geometry: &dyn crate::chemistry::AtomPositionSource,
+    contradicted: &mut Vec<(AtomId, SourceLocation)>,
 ) -> Result<Vec<StereoElementId>, MolfileInterpretError> {
     let mut created = Vec::new();
     for (source, parity, location) in declarations {
@@ -734,6 +757,13 @@ fn install_v3000_atom_cfg(
             .sum::<usize>();
         if hydrogen_swaps % 2 != 0 {
             orientation = orientation.map(TetrahedralOrientation::inverted);
+        }
+        if orientation.is_some_and(|asserted| {
+            crate::algorithms::tetrahedral_orientation_at(geometry, center, &carriers)
+                .is_some_and(|observed| observed != asserted)
+        }) {
+            contradicted.push((center, *location));
+            continue;
         }
         let existing = molecule
             .stereo_elements()

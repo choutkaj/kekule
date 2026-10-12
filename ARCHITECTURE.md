@@ -447,7 +447,9 @@ caller-supplied topology (see Trajectories and streaming).
 Sibling SDF records and mmCIF blocks never merge implicitly. Singular projections
 check cardinality; plural molecule projections retain every connected component
 in source order. MOL/SDF interpretation supplies deterministic synthetic hierarchy
-at topology scope. mmCIF preserves label/author hierarchy identities and interprets
+at topology scope. In a conformation the coordinates are the configuration:
+wedges and atom parities that contradict them yield to them with a warning,
+while flat drawings take configurations from those annotations. mmCIF preserves label/author hierarchy identities and interprets
 all coordinate-model candidates against the same identity, chemistry, and dense
 layout. PDB carries author identities only: a residue is a run of consecutive
 records, and a number that recurs after other residues names a new residue.

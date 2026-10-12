@@ -463,3 +463,220 @@ fn coordinate_axis_handedness_is_scale_and_rotation_invariant() {
         );
     }
 }
+
+fn with_orientation(kind: &StereoElementKind, invert: bool, unknown: bool) -> StereoElement {
+    let mut kind = kind.clone();
+    match &mut kind {
+        StereoElementKind::Tetrahedral(stereo) => {
+            stereo.orientation = (!unknown)
+                .then_some(
+                    stereo
+                        .orientation
+                        .map(|o| if invert { o.inverted() } else { o }),
+                )
+                .flatten();
+        }
+        StereoElementKind::DoubleBond(stereo) => {
+            stereo.orientation = (!unknown)
+                .then_some(
+                    stereo
+                        .orientation
+                        .map(|o| if invert { o.inverted() } else { o }),
+                )
+                .flatten();
+        }
+        StereoElementKind::Axis(stereo) => {
+            stereo.orientation = (!unknown)
+                .then_some(
+                    stereo
+                        .orientation
+                        .map(|o| if invert { o.inverted() } else { o }),
+                )
+                .flatten();
+        }
+    }
+    StereoElement::new(kind)
+}
+
+#[test]
+fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict() {
+    let (tetrahedral, _, _, _) = tetrahedral_marked_graph();
+    let tetrahedral_positions = test_positions(vec![
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::new(0.0, 0.0, 1.0),
+        Point3::new(0.0, 0.0, -1.0),
+    ]);
+    let mut double_bond = crate::core::MoleculeEditor::new();
+    let left = double_bond.add_atom(carbon()).unwrap();
+    let right = double_bond.add_atom(carbon()).unwrap();
+    let fluorine = double_bond.add_atom(element_atom("F")).unwrap();
+    let chlorine = double_bond.add_atom(element_atom("Cl")).unwrap();
+    double_bond
+        .add_bond(left, right, BondOrder::Double)
+        .unwrap();
+    double_bond
+        .add_bond(left, fluorine, BondOrder::Single)
+        .unwrap();
+    double_bond
+        .add_bond(right, chlorine, BondOrder::Single)
+        .unwrap();
+    let double_bond_positions = test_positions(vec![
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::new(1.0, -1.0, 0.0),
+    ]);
+    let (axis, axis_positions, _) = coordinate_axis_graph(true);
+    let axis_options = stereo_api::CoordinateStereoOptions {
+        infer_axes: true,
+        ..stereo_api::CoordinateStereoOptions::default()
+    };
+
+    for (label, mut molecule, positions, options) in [
+        (
+            "tetrahedral",
+            tetrahedral,
+            tetrahedral_positions,
+            stereo_api::CoordinateStereoOptions::default(),
+        ),
+        (
+            "double bond",
+            double_bond,
+            double_bond_positions,
+            stereo_api::CoordinateStereoOptions::default(),
+        ),
+        ("axis", axis.into_editor(), axis_positions, axis_options),
+    ] {
+        let report = stereo_api::materialize_coordinate_stereo_with_options(
+            &mut molecule,
+            &positions,
+            options,
+        )
+        .unwrap();
+        assert_eq!(report.disagreements, [], "{label}");
+        let [id] = report.created_elements[..] else {
+            panic!("{label}: expected one materialized element, got {report:?}");
+        };
+        let asserted = molecule.stereo_element(id).unwrap().kind.clone();
+        let infer = |molecule: &crate::core::MoleculeEditor| {
+            stereo_api::infer_coordinate_stereo_with_options(
+                molecule.working(),
+                &positions,
+                options,
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            infer(&molecule),
+            stereo_api::CoordinateStereoResult::default(),
+            "{label}: an asserted focus is not re-inferred"
+        );
+
+        molecule
+            .replace_stereo_element(id, with_orientation(&asserted, true, false))
+            .unwrap();
+        assert_eq!(
+            infer(&molecule),
+            stereo_api::CoordinateStereoResult {
+                elements: Vec::new(),
+                disagreements: vec![id],
+            },
+            "{label}: an inverted assertion contradicts the coordinates"
+        );
+
+        molecule
+            .replace_stereo_element(id, with_orientation(&asserted, false, true))
+            .unwrap();
+        assert_eq!(
+            infer(&molecule),
+            stereo_api::CoordinateStereoResult::default(),
+            "{label}: an unknown configuration never contradicts"
+        );
+    }
+}
+
+#[test]
+fn coordinate_stereo_compares_implicit_hydrogen_carriers_and_ignores_flat_centers() {
+    // F/C=C/Cl drawn trans: relative to the left implicit hydrogen, Cl is cis.
+    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut hydrogen_bearing = carbon();
+    hydrogen_bearing.hydrogens = ImplicitHydrogens::Fixed(1);
+    let left = molecule.add_atom(hydrogen_bearing.clone()).unwrap();
+    let right = molecule.add_atom(hydrogen_bearing).unwrap();
+    let fluorine = molecule.add_atom(element_atom("F")).unwrap();
+    let chlorine = molecule.add_atom(element_atom("Cl")).unwrap();
+    let bond = molecule.add_bond(left, right, BondOrder::Double).unwrap();
+    molecule
+        .add_bond(left, fluorine, BondOrder::Single)
+        .unwrap();
+    molecule
+        .add_bond(right, chlorine, BondOrder::Single)
+        .unwrap();
+    let trans = test_positions(vec![
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::new(1.0, -1.0, 0.0),
+    ]);
+    let id = molecule
+        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
+                bond,
+                left,
+                right,
+                left_carrier: StereoCarrier::ImplicitHydrogen,
+                right_carrier: StereoCarrier::Atom(chlorine),
+                orientation: Some(DoubleBondOrientation::Together),
+            },
+        )))
+        .unwrap();
+    let disagreements = |molecule: &crate::core::MoleculeEditor| {
+        stereo_api::infer_coordinate_stereo(molecule.working(), &trans)
+            .unwrap()
+            .disagreements
+    };
+    assert_eq!(disagreements(&molecule), []);
+    let asserted = molecule.stereo_element(id).unwrap().kind.clone();
+    molecule
+        .replace_stereo_element(id, with_orientation(&asserted, true, false))
+        .unwrap();
+    assert_eq!(disagreements(&molecule), [id]);
+
+    // A flat drawing carries no tetrahedral configuration to contradict.
+    let (mut flat, center, carriers, _) = tetrahedral_marked_graph();
+    let id = flat
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
+                center,
+                carriers: carriers.into_iter().map(StereoCarrier::Atom).collect(),
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
+        .unwrap();
+    let drawing = test_positions(vec![
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::new(-1.0, 0.0, 0.0),
+        Point3::new(0.0, -1.0, 0.0),
+    ]);
+    for orientation in [
+        TetrahedralOrientation::Clockwise,
+        TetrahedralOrientation::CounterClockwise,
+    ] {
+        let mut kind = flat.stereo_element(id).unwrap().kind.clone();
+        if let StereoElementKind::Tetrahedral(stereo) = &mut kind {
+            stereo.orientation = Some(orientation);
+        }
+        flat.replace_stereo_element(id, StereoElement::new(kind))
+            .unwrap();
+        assert_eq!(
+            stereo_api::infer_coordinate_stereo(flat.working(), &drawing)
+                .unwrap()
+                .disagreements,
+            []
+        );
+    }
+}

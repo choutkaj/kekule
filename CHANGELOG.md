@@ -100,6 +100,14 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** `CoordinateStereoResult` and
+  `CoordinateStereoMaterializationReport` gain `disagreements`, the asserted
+  stereo elements whose configuration the coordinates contradict. Inference
+  still fills only foci without an element and leaves asserted ones, including
+  explicitly unknown configurations, unchanged; that contract is now documented.
+  Unknown configurations and flat or degenerate geometry never disagree.
+- **Breaking:** `MolfileInterpretationWarning` is `#[non_exhaustive]` and gains
+  `AtomParityContradictsCoordinates`.
 - **Breaking:** `MoleculeWriteErrorKind` says why a SMILES or Molfile writer
   failed. The new `MissingPerception` kind marks a source that must be
   perceived before writing, which used to be reported as
@@ -271,6 +279,14 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- A V3000 atom `CFG` parity that contradicts its atom's 3D coordinates no
+  longer overrides them silently. The coordinates decide the configuration, as
+  they already did for wedges, and interpretation reports
+  `AtomParityContradictsCoordinates`. Flat drawings still take configurations
+  from parities.
+- The Molfile writer's error for asserted stereo its coordinates contradict
+  names the center or bond and the contradiction instead of reporting an
+  unencodable stereo element.
 - `OverwritePolicy::Forbid` path writers check that the destination's
   filesystem supports hard links, which publication needs to never replace a
   file, when the writer is created. On FAT, exFAT, and some network shares they

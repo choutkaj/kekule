@@ -59,16 +59,26 @@ pub struct CoordinateStereoOptions {
     pub perception: StereoPerceptionOptions,
 }
 
-/// Detached coordinate-derived stereo proposed for represented materialization.
+/// Coordinate-derived stereo for the foci the molecule leaves unasserted, and
+/// the asserted stereo the coordinates contradict.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CoordinateStereoResult {
+    /// New elements for stereocenters, double bonds, and (when enabled) axes
+    /// without a stereo element, ready to materialize.
     pub elements: Vec<StereoElement>,
+    /// Existing specified elements whose configuration is the opposite of the
+    /// one their carriers have in the coordinates, in element order. Unknown
+    /// configurations and degenerate or flat geometry are never contradictions.
+    pub disagreements: Vec<StereoElementId>,
 }
 
 /// Stereo elements created by an explicit coordinate-stereo materialization.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CoordinateStereoMaterializationReport {
     pub created_elements: Vec<StereoElementId>,
+    /// Existing elements the coordinates contradict; materialization leaves
+    /// them unchanged. See [`CoordinateStereoResult::disagreements`].
+    pub disagreements: Vec<StereoElementId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -267,6 +277,12 @@ pub fn detect_stereo_candidates(
 
 /// Infers coordinate-derived stereo without changing the molecule.
 ///
+/// Only foci without a stereo element are inferred: an asserted center,
+/// double bond, or axis keeps its element, including an explicitly unknown
+/// configuration, so the result can be materialized as is. Asserted
+/// configurations the coordinates contradict are reported in
+/// [`CoordinateStereoResult::disagreements`] rather than overridden.
+///
 /// `positions` must be dense and follow the molecule's atom iteration order.
 pub fn infer_coordinate_stereo(
     mol: &Molecule,
@@ -275,7 +291,9 @@ pub fn infer_coordinate_stereo(
     infer_coordinate_stereo_with_options(mol, positions, CoordinateStereoOptions::default())
 }
 
-/// Infers coordinate-derived stereo with an explicit axis policy.
+/// Infers coordinate-derived stereo with an explicit axis policy. See
+/// [`infer_coordinate_stereo`] for which foci are inferred. Asserted axes are
+/// compared with the coordinates whether or not axis inference is enabled.
 ///
 /// `positions` must be dense and follow the molecule's atom iteration order.
 pub fn infer_coordinate_stereo_with_options(
@@ -295,12 +313,22 @@ pub fn infer_coordinate_stereo_with_options(
     let candidates = detect_stereo_candidates_with_options(mol, options.perception)
         .map_err(CoordinateStereoError::Perception)?;
     let source = MoleculePositions::new(mol, positions);
+    let disagreements = mol
+        .stereo_elements()
+        .filter(|(_, element)| coordinates_contradict(mol, &source, &element.kind))
+        .map(|(id, _)| id)
+        .collect();
     Ok(CoordinateStereoResult {
         elements: infer_coordinate_stereo_elements(mol, &source, options.infer_axes, &candidates),
+        disagreements,
     })
 }
 
 /// Materializes inferred coordinate stereo as represented chemistry.
+///
+/// Adds elements only for unasserted foci; asserted stereo, including
+/// configurations the coordinates contradict, is left unchanged and the
+/// contradictions are reported. See [`infer_coordinate_stereo`].
 ///
 /// `positions` must be dense and follow the edited molecule's atom iteration
 /// order.
@@ -335,7 +363,10 @@ pub fn materialize_coordinate_stereo_with_options(
     }
     validate_stereo(staged.working())?;
     *editor = staged;
-    Ok(CoordinateStereoMaterializationReport { created_elements })
+    Ok(CoordinateStereoMaterializationReport {
+        created_elements,
+        disagreements: inferred.disagreements,
+    })
 }
 
 fn validate_existing_elements(mol: &Molecule, issues: &mut Vec<StereoValidationIssue>) {
@@ -754,32 +785,7 @@ fn infer_coordinate_tetrahedral(
         if has_tetrahedral_stereo(mol, center) {
             continue;
         }
-        let Some(center_point) = coordinates.position_value(center) else {
-            continue;
-        };
-        // For three explicit ligands, using the center as the fourth point
-        // has the same determinant sign as a virtual ligand opposite their
-        // vector sum. No hydrogen coordinate needs to be guessed or stored.
-        let carrier_points = carriers
-            .iter()
-            .map(|carrier| match carrier {
-                StereoCarrier::Atom(atom) => coordinates.position_value(*atom),
-                StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => {
-                    Some(center_point)
-                }
-            })
-            .collect::<Option<Vec<_>>>();
-        let Some(carrier_points) = carrier_points else {
-            continue;
-        };
-        let points = [
-            center_point,
-            carrier_points[0],
-            carrier_points[1],
-            carrier_points[2],
-            carrier_points[3],
-        ];
-        let Some(orientation) = tetrahedral_orientation_from_points(points) else {
+        let Some(orientation) = tetrahedral_orientation_at(coordinates, center, &carriers) else {
             continue;
         };
         assigned.push(StereoElement::new(StereoElementKind::Tetrahedral(
@@ -885,6 +891,118 @@ fn infer_coordinate_axes(
         })));
     }
     assigned
+}
+
+/// Whether the coordinates give an asserted configuration's own carriers the
+/// opposite configuration. Unknown configurations and degenerate geometry are
+/// not contradictions.
+pub(crate) fn coordinates_contradict(
+    mol: &Molecule,
+    coordinates: &dyn AtomPositionSource,
+    kind: &StereoElementKind,
+) -> bool {
+    match kind {
+        StereoElementKind::Tetrahedral(stereo) => stereo
+            .orientation
+            .zip(tetrahedral_orientation_at(
+                coordinates,
+                stereo.center,
+                &stereo.carriers,
+            ))
+            .is_some_and(|(asserted, observed)| asserted != observed),
+        StereoElementKind::DoubleBond(stereo) => stereo
+            .orientation
+            .zip(double_bond_orientation_at(mol, coordinates, stereo))
+            .is_some_and(|(asserted, observed)| asserted != observed),
+        StereoElementKind::Axis(stereo) => stereo
+            .orientation
+            .zip(axis_orientation_at(mol, coordinates, stereo))
+            .is_some_and(|(asserted, observed)| asserted != observed),
+    }
+}
+
+/// The configuration of four tetrahedral carriers in `coordinates`.
+pub(crate) fn tetrahedral_orientation_at(
+    coordinates: &dyn AtomPositionSource,
+    center: AtomId,
+    carriers: &[StereoCarrier],
+) -> Option<TetrahedralOrientation> {
+    let center_point = coordinates.position_value(center)?;
+    // For three explicit ligands, using the center as the fourth point
+    // has the same determinant sign as a virtual ligand opposite their
+    // vector sum. No hydrogen coordinate needs to be guessed or stored.
+    let point = |carrier: &StereoCarrier| match carrier {
+        StereoCarrier::Atom(atom) => coordinates.position_value(*atom),
+        StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => Some(center_point),
+    };
+    let [first, second, third, fourth] = carriers else {
+        return None;
+    };
+    tetrahedral_orientation_from_points([
+        center_point,
+        point(first)?,
+        point(second)?,
+        point(third)?,
+        point(fourth)?,
+    ])
+}
+
+/// The configuration of a double bond's carriers in `coordinates`. An
+/// implicit-hydrogen carrier is located through the endpoint's one explicit
+/// substituent, which lies on the opposite side.
+fn double_bond_orientation_at(
+    mol: &Molecule,
+    coordinates: &dyn AtomPositionSource,
+    stereo: &DoubleBondStereo,
+) -> Option<DoubleBondOrientation> {
+    let reference = |endpoint: AtomId, other: AtomId, carrier: StereoCarrier| match carrier {
+        StereoCarrier::Atom(atom) => Some((atom, false)),
+        StereoCarrier::ImplicitHydrogen => {
+            let mut substituents = mol
+                .neighbors(endpoint)
+                .ok()?
+                .filter(|neighbor| *neighbor != other);
+            let substituent = substituents.next()?;
+            substituents.next().is_none().then_some((substituent, true))
+        }
+        StereoCarrier::ImplicitLonePair => None,
+    };
+    let (left, left_inverted) = reference(stereo.left, stereo.right, stereo.left_carrier)?;
+    let (right, right_inverted) = reference(stereo.right, stereo.left, stereo.right_carrier)?;
+    let orientation = double_bond_orientation_from_points(double_bond_points(
+        coordinates,
+        stereo.left,
+        stereo.right,
+        left,
+        right,
+    )?)?;
+    Some(if left_inverted != right_inverted {
+        orientation.inverted()
+    } else {
+        orientation
+    })
+}
+
+/// The configuration of an axis's two atom carriers in `coordinates`. The
+/// handedness is unchanged when both endpoint roles swap, so it does not depend
+/// on which endpoint the first carrier is attached to.
+fn axis_orientation_at(
+    mol: &Molecule,
+    coordinates: &dyn AtomPositionSource,
+    stereo: &AxisStereo,
+) -> Option<AxisOrientation> {
+    let [StereoCarrier::Atom(first), StereoCarrier::Atom(second)] = stereo.carriers[..] else {
+        return None;
+    };
+    let bond = mol.bond(stereo.axis).ok()?;
+    let (start, _) = bond.endpoints();
+    let first_on_start = mol.bond_between(start, first).ok()?.is_some();
+    let (left_reference, right_reference) = if first_on_start {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    axis_orientation_from_3d_coordinates(coordinates, bond, left_reference, right_reference)
 }
 
 fn first_atom_carrier(carriers: &[StereoCarrier]) -> Option<AtomId> {
