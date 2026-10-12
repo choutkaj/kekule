@@ -22,7 +22,15 @@ static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum OverwritePolicy {
+    /// Never replace a file. Publication hard-links the completed temporary
+    /// file to the destination, which fails atomically if the destination
+    /// exists; no portable rename refuses to replace. Hard-link support is
+    /// checked when the writer is created, so a filesystem without it (FAT,
+    /// exFAT, some network shares) is rejected before any frame is written;
+    /// use [`Self::Replace`] there.
     Forbid,
+    /// Atomically rename the completed temporary file over any existing
+    /// destination.
     Replace,
 }
 
@@ -165,7 +173,10 @@ pub struct FileTrajectoryWriter {
 }
 
 impl FileTrajectoryWriter {
-    /// Flushes, synchronizes, and atomically publishes a nonempty trajectory.
+    /// Flushes, synchronizes, and atomically publishes a nonempty trajectory,
+    /// then synchronizes the destination directory on Unix so the publication
+    /// survives a crash. An error from that last step means the trajectory is
+    /// published but its directory entry may not yet be durable.
     ///
     /// Finishing before any successful frame write returns a structured error
     /// and removes the unpublished temporary sibling.
@@ -184,32 +195,25 @@ impl FileTrajectoryWriter {
             inner.flush_and_sync(&label)?;
         }
         self.inner.take();
+        let finish_error = |error| {
+            io_context(
+                TrajectoryIoOperation::Finish,
+                Some(self.format),
+                &label,
+                error,
+            )
+        };
         match self.overwrite {
             OverwritePolicy::Forbid => {
-                std::fs::hard_link(&self.temporary, &self.destination).map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::Finish,
-                        Some(self.format()),
-                        &label,
-                        error,
-                    )
-                })?;
-                self.published = true;
-                let _ = std::fs::remove_file(&self.temporary);
+                std::fs::hard_link(&self.temporary, &self.destination).map(|()| {
+                    let _ = std::fs::remove_file(&self.temporary);
+                })
             }
-            OverwritePolicy::Replace => {
-                std::fs::rename(&self.temporary, &self.destination).map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::Finish,
-                        Some(self.format()),
-                        &label,
-                        error,
-                    )
-                })?;
-                self.published = true;
-            }
+            OverwritePolicy::Replace => std::fs::rename(&self.temporary, &self.destination),
         }
-        Ok(())
+        .map_err(finish_error)?;
+        self.published = true;
+        sync_parent_directory(&self.destination).map_err(finish_error)
     }
 
     pub const fn format(&self) -> TrajectoryFormat {
@@ -330,16 +334,6 @@ pub fn create_trajectory_writer(
             io::Error::new(io::ErrorKind::AlreadyExists, "destination already exists"),
         ));
     }
-    #[cfg(windows)]
-    if options.overwrite == OverwritePolicy::Replace && destination.exists() {
-        return Err(codec_context(
-            TrajectoryCodecErrorKind::UnsupportedVariant,
-            TrajectoryIoOperation::Open,
-            Some(options.format),
-            &label,
-            "atomic replacement of an existing destination is unavailable on this platform",
-        ));
-    }
     let temporary = create_temporary_sibling(&destination, options.format)?;
     let file = OpenOptions::new()
         .write(true)
@@ -353,6 +347,21 @@ pub fn create_trajectory_writer(
                 error,
             )
         })?;
+    if options.overwrite == OverwritePolicy::Forbid {
+        if let Err(error) = require_hard_links(&temporary, |from, to| std::fs::hard_link(from, to))
+        {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(codec_context(
+                TrajectoryCodecErrorKind::UnsupportedVariant,
+                TrajectoryIoOperation::Open,
+                Some(options.format),
+                &label,
+                format!(
+                    "OverwritePolicy::Forbid publishes through a hard link, which this destination cannot use ({error}); OverwritePolicy::Replace publishes by rename"
+                ),
+            ));
+        }
+    }
     let inner_result = match options.format {
         TrajectoryFormat::Xyz => {
             xyz::XyzWriter::new(BufWriter::new(file), topology, options.xyz, label)
@@ -412,4 +421,88 @@ fn create_temporary_sibling(
         &destination.display().to_string(),
         "could not reserve a unique temporary sibling name",
     ))
+}
+
+/// Checks that the temporary file can be hard-linked beside itself, as
+/// [`OverwritePolicy::Forbid`] publication will need. `link` is the hard-link
+/// primitive, injectable so an unsupported filesystem can be tested.
+fn require_hard_links(
+    temporary: &Path,
+    link: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
+    let probe = temporary.with_extension("link-probe");
+    link(temporary, &probe)?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+
+/// Makes a publication durable: a rename or link survives a crash only once
+/// its directory is synchronized. Filesystems that cannot synchronize a
+/// directory report `InvalidInput` or `Unsupported`, which is accepted.
+#[cfg(unix)]
+fn sync_parent_directory(destination: &Path) -> io::Result<()> {
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    match File::open(parent).and_then(|directory| directory.sync_all()) {
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::InvalidInput | io::ErrorKind::Unsupported
+            ) =>
+        {
+            Ok(())
+        }
+        result => result,
+    }
+}
+
+/// The standard library cannot open a directory handle on this platform, so
+/// directory synchronization is left to the filesystem.
+#[cfg(not(unix))]
+fn sync_parent_directory(_destination: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn forbid_requires_hard_links_and_leaves_no_probe_behind() {
+        let directory = std::env::temp_dir().join(format!(
+            "kekule-publish-{}-{}",
+            std::process::id(),
+            TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory).unwrap();
+        let temporary = directory.join(".out.xyz.1.2.tmp");
+        fs::write(&temporary, b"trajectory").unwrap();
+
+        require_hard_links(&temporary, |from, to| fs::hard_link(from, to)).unwrap();
+        let error = require_hard_links(&temporary, |_, _| {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "filesystem has no hard links",
+            ))
+        })
+        .unwrap_err();
+        assert_eq!(
+            (error.kind(), error.to_string()),
+            (
+                io::ErrorKind::Unsupported,
+                "filesystem has no hard links".to_owned()
+            )
+        );
+        let mut names = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, [".out.xyz.1.2.tmp"]);
+        fs::remove_dir_all(directory).unwrap();
+    }
 }

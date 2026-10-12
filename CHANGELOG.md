@@ -271,6 +271,15 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- `OverwritePolicy::Forbid` path writers check that the destination's
+  filesystem supports hard links, which publication needs to never replace a
+  file, when the writer is created. On FAT, exFAT, and some network shares they
+  now fail before any frame is written, with an error naming
+  `OverwritePolicy::Replace`, instead of after writing every frame.
+- `OverwritePolicy::Replace` replaces an existing destination on Windows too,
+  where it used to be refused.
+- On Unix, finishing a path writer synchronizes the destination directory, so
+  a trajectory reported as published survives a crash.
 - DCD writing with `DcdTimePolicy::HeaderDelta` accepts frame times that
   match step × `DELTA` to f32 precision, the precision `DELTA` has in the file.
   A 0.002 ps timestep used to be rejected from 2 ps on, because rounding it to

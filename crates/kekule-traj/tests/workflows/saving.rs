@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -13,10 +13,13 @@ use kekule_traj::io::{
     read_trajectory, read_trajectory_with_options, write_trajectory, write_trajectory_with_options,
     OverwritePolicy, TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
-use kekule_traj::{TrajectoryFormat, TrajectoryIoError};
+use kekule_traj::{
+    TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError,
+    TrajectoryIoErrorContext, TrajectoryIoOperation,
+};
 
 use crate::support;
-use support::{linear_carbon_topology, topology};
+use support::{codec_error, linear_carbon_topology, topology};
 
 struct Directory(PathBuf);
 impl Directory {
@@ -33,8 +36,14 @@ impl Directory {
     fn file(&self, name: &str) -> PathBuf {
         self.0.join(name)
     }
-    fn count(&self) -> usize {
-        fs::read_dir(&self.0).unwrap().count()
+    /// Every entry, sorted, so a stray temporary file fails by name.
+    fn names(&self) -> Vec<String> {
+        let mut names = fs::read_dir(&self.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
     }
 }
 impl Drop for Directory {
@@ -42,6 +51,11 @@ impl Drop for Directory {
         fs::remove_dir_all(&self.0).unwrap();
     }
 }
+/// The source label a path writer reports for `path`.
+fn label(path: &Path) -> String {
+    path.display().to_string()
+}
+
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -153,7 +167,10 @@ fn saving_round_trips_all_codecs_using_defaults_or_explicit_native_options() {
             same_frame(actual, expected, 1.0e-6);
         }
     }
-    assert_eq!(directory.count(), 4);
+    assert_eq!(
+        directory.names(),
+        ["output.XYZ", "output.dcd", "output.trr", "output.xtc"]
+    );
 }
 
 #[test]
@@ -166,7 +183,19 @@ fn explicit_format_overrides_extension_and_precision_is_preserved() {
     )
     .unwrap();
     let path = directory.file("trajectory.data");
-    assert!(write_trajectory(&path, &trajectory).is_err());
+    assert_eq!(
+        write_trajectory(&path, &trajectory),
+        Err(TrajectoryCodecErrorContext::new(
+            TrajectoryCodecErrorKind::UnknownFormat,
+            TrajectoryIoOperation::Open,
+            None,
+        )
+        .with_source_label(label(&path))
+        .with_detail(
+            "destination extension does not identify a supported format; supply explicit write options"
+        )
+        .into())
+    );
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr)
         .with_trr_options(TrrWriteOptions::default().with_precision(TrrScalarPrecision::Float64));
     write_trajectory_with_options(&path, &trajectory, options).unwrap();
@@ -198,53 +227,210 @@ fn every_empty_path_writer_rejects_publication_and_removes_temporary_files() {
         let empty =
             create_trajectory_writer(&path, topology.clone(), TrajectoryWriteOptions::new(format))
                 .unwrap();
-        assert!(empty.finish().is_err());
-        assert!(!path.exists());
-        assert_eq!(directory.count(), 0);
+        assert_eq!(
+            empty.finish(),
+            Err(codec_error(
+                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoOperation::Finish,
+                format,
+                &label(&path),
+                None,
+                &format!("{format} production trajectories must contain at least one frame"),
+            ))
+        );
+        assert_eq!(directory.names(), Vec::<String>::new());
     }
 }
 
 #[test]
-fn failed_saves_leave_no_output_or_temporary_files_and_preserve_existing_destinations() {
+fn rejected_saves_leave_no_destination_or_temporary_file() {
     let directory = Directory::new();
-    let topology = linear_carbon_topology(3);
     let path = directory.file("out.xyz");
-    let mut trajectory = Trajectory::new(topology);
-    assert!(write_trajectory(&path, &trajectory).is_err());
-    assert_eq!(directory.count(), 0);
-    trajectory
+    let empty = Trajectory::new(linear_carbon_topology(3));
+    let mut stepped = empty.clone();
+    stepped
         .push(TrajectoryFrame::new(Positions::zeros(3)))
         .unwrap();
     let mut late = TrajectoryFrame::new(Positions::zeros(3));
-    late.set_step(Some(1)); // XYZ cannot carry this state.
-    trajectory.push(late).unwrap();
-    assert!(write_trajectory(&path, &trajectory).is_err());
-    assert_eq!(directory.count(), 0);
-    trajectory.get_mut(1).unwrap().set_step(None);
-    trajectory
+    late.set_step(Some(1)); // XYZ cannot carry a step.
+    stepped.push(late).unwrap();
+    let mut annotated = empty.clone();
+    annotated
+        .push(TrajectoryFrame::new(Positions::zeros(3)))
+        .unwrap();
+    annotated
         .properties_mut()
         .insert(PropertyKey::new("run").unwrap(), PropertyValue::Int(2))
         .unwrap();
-    assert_eq!(
-        write_trajectory(&path, &trajectory),
-        Err(TrajectoryIoError::UnsupportedField("collection properties"))
-    );
-    assert_eq!(directory.count(), 0);
-    trajectory.properties_mut().clear();
-    write_trajectory(&path, &trajectory).unwrap();
-    let before = fs::read(&path).unwrap();
-    assert!(write_trajectory(&path, &trajectory).is_err());
-    assert_eq!(fs::read(&path).unwrap(), before);
-    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xyz)
-        .with_overwrite_policy(OverwritePolicy::Replace);
-    let replaced = write_trajectory_with_options(&path, &trajectory, options);
-    if cfg!(windows) {
-        assert!(replaced.is_err());
-    } else {
-        replaced.unwrap();
+    for (trajectory, expected) in [
+        (
+            &empty,
+            codec_error(
+                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoOperation::Finish,
+                TrajectoryFormat::Xyz,
+                &label(&path),
+                None,
+                "XYZ production trajectories must contain at least one frame",
+            ),
+        ),
+        (
+            &stepped,
+            codec_error(
+                TrajectoryCodecErrorKind::UnsupportedField,
+                TrajectoryIoOperation::WriteFrame,
+                TrajectoryFormat::Xyz,
+                &label(&path),
+                Some(1),
+                "XYZ cannot preserve step",
+            ),
+        ),
+        (
+            &annotated,
+            TrajectoryIoError::UnsupportedField("collection properties"),
+        ),
+    ] {
+        assert_eq!(write_trajectory(&path, trajectory), Err(expected));
+        assert_eq!(directory.names(), Vec::<String>::new());
     }
-    assert_eq!(fs::read(&path).unwrap(), before);
-    assert_eq!(directory.count(), 1);
+}
+
+/// One frame of three atoms whose first x coordinate is `shift` angstroms.
+fn single_frame(shift: f64) -> Trajectory {
+    use kekule::geometry::Point3;
+    use kekule::units::{Quantity, ANGSTROM};
+
+    let mut trajectory = Trajectory::new(linear_carbon_topology(3));
+    let positions = Positions::new(Quantity::new(
+        [
+            Point3::new(shift, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(2.0, 0.0, 0.0),
+        ],
+        ANGSTROM,
+    ))
+    .unwrap();
+    trajectory.push(TrajectoryFrame::new(positions)).unwrap();
+    trajectory
+}
+
+#[test]
+fn a_failed_frame_write_prevents_publication_of_the_frames_before_it() {
+    use kekule_traj::io::create_trajectory_writer;
+    use kekule_traj::TrajectoryWriter;
+
+    let directory = Directory::new();
+    let path = directory.file("poisoned.xyz");
+    let mut trajectory = single_frame(0.0);
+    let mut writer = create_trajectory_writer(
+        &path,
+        trajectory.shared_topology(),
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xyz),
+    )
+    .unwrap();
+    writer.write_frame(trajectory.get(0).unwrap()).unwrap();
+    trajectory.get_mut(0).unwrap().set_step(Some(1));
+    assert_eq!(
+        writer.write_frame(trajectory.get(0).unwrap()),
+        Err(codec_error(
+            TrajectoryCodecErrorKind::UnsupportedField,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xyz,
+            &label(&path),
+            Some(1),
+            "XYZ cannot preserve step",
+        ))
+    );
+    assert_eq!(
+        writer.finish(),
+        Err(codec_error(
+            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoOperation::Finish,
+            TrajectoryFormat::Xyz,
+            &label(&path),
+            None,
+            "cannot publish a trajectory after an earlier frame-write failure",
+        ))
+    );
+    assert_eq!(directory.names(), Vec::<String>::new());
+}
+
+#[test]
+fn forbid_policy_never_replaces_an_existing_destination() {
+    use kekule_traj::io::create_trajectory_writer;
+    use kekule_traj::TrajectoryWriter;
+
+    let directory = Directory::new();
+    let path = directory.file("out.xyz");
+    write_trajectory(&path, &single_frame(0.0)).unwrap();
+    let original = fs::read(&path).unwrap();
+
+    // An existing destination is refused before any frame is written.
+    assert_eq!(
+        write_trajectory(&path, &single_frame(5.0)),
+        Err(TrajectoryIoErrorContext::new(
+            TrajectoryIoOperation::Open,
+            io::ErrorKind::AlreadyExists,
+            "destination already exists",
+        )
+        .with_format(TrajectoryFormat::Xyz)
+        .with_source_label(label(&path))
+        .into())
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+
+    // A destination that appears while the writer is open is not replaced
+    // either: publication itself refuses to overwrite.
+    let late = directory.file("late.xyz");
+    let replacement = single_frame(5.0);
+    let mut writer = create_trajectory_writer(
+        &late,
+        replacement.shared_topology(),
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xyz),
+    )
+    .unwrap();
+    writer.write_frame(replacement.get(0).unwrap()).unwrap();
+    fs::write(&late, &original).unwrap();
+    let Err(TrajectoryIoError::Io(context)) = writer.finish() else {
+        panic!("publishing over a file that appeared later must fail with an I/O error");
+    };
+    // The message is the operating system's own text, so compare the rest.
+    assert_eq!(
+        (
+            context.operation(),
+            context.format(),
+            context.source_label(),
+            context.error_kind(),
+        ),
+        (
+            TrajectoryIoOperation::Finish,
+            Some(TrajectoryFormat::Xyz),
+            Some(label(&late).as_str()),
+            io::ErrorKind::AlreadyExists,
+        )
+    );
+    assert_eq!(fs::read(&late).unwrap(), original);
+    assert_eq!(directory.names(), ["late.xyz", "out.xyz"]);
+}
+
+#[test]
+fn replace_policy_atomically_replaces_an_existing_destination() {
+    let directory = Directory::new();
+    let path = directory.file("out.xyz");
+    write_trajectory(&path, &single_frame(0.0)).unwrap();
+    let replacement = single_frame(5.0);
+    write_trajectory_with_options(
+        &path,
+        &replacement,
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xyz)
+            .with_overwrite_policy(OverwritePolicy::Replace),
+    )
+    .unwrap();
+    let read = read_trajectory(&path, replacement.shared_topology()).unwrap();
+    assert_eq!(read.len(), 1);
+    // XYZ keeps six decimals of these exactly representable coordinates.
+    same_frame(read.get(0).unwrap(), replacement.get(0).unwrap(), 0.0);
+    assert_eq!(directory.names(), ["out.xyz"]);
 }
 
 #[test]
