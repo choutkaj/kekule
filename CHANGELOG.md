@@ -271,10 +271,11 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
-- Trajectory path writers publish on filesystems without hard links, such as
-  FAT, exFAT, and some network shares. `OverwritePolicy::Forbid` falls back to
-  reserving the destination with an exclusive empty file and renaming the
-  completed trajectory over it, so it still never replaces another file.
+- `OverwritePolicy::Forbid` path writers check that the destination's
+  filesystem supports hard links, which publication needs to never replace a
+  file, when the writer is created. On FAT, exFAT, and some network shares they
+  now fail before any frame is written, with an error naming
+  `OverwritePolicy::Replace`, instead of after writing every frame.
 - `OverwritePolicy::Replace` replaces an existing destination on Windows too,
   where it used to be refused.
 - On Unix, finishing a path writer synchronizes the destination directory, so

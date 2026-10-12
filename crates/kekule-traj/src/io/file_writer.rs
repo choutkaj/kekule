@@ -24,10 +24,10 @@ static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 pub enum OverwritePolicy {
     /// Never replace a file. Publication hard-links the completed temporary
     /// file to the destination, which fails atomically if the destination
-    /// exists. Filesystems without hard links (FAT, exFAT, some network
-    /// shares) instead reserve the destination with an exclusive empty file and
-    /// rename over it: no other file is replaced, but a concurrent reader may
-    /// briefly see the empty reservation.
+    /// exists; no portable rename refuses to replace. Hard-link support is
+    /// checked when the writer is created, so a filesystem without it (FAT,
+    /// exFAT, some network shares) is rejected before any frame is written;
+    /// use [`Self::Replace`] there.
     Forbid,
     /// Atomically rename the completed temporary file over any existing
     /// destination.
@@ -205,8 +205,8 @@ impl FileTrajectoryWriter {
         };
         match self.overwrite {
             OverwritePolicy::Forbid => {
-                publish_without_replacing(&self.temporary, &self.destination, |from, to| {
-                    std::fs::hard_link(from, to)
+                std::fs::hard_link(&self.temporary, &self.destination).map(|()| {
+                    let _ = std::fs::remove_file(&self.temporary);
                 })
             }
             OverwritePolicy::Replace => std::fs::rename(&self.temporary, &self.destination),
@@ -347,6 +347,21 @@ pub fn create_trajectory_writer(
                 error,
             )
         })?;
+    if options.overwrite == OverwritePolicy::Forbid {
+        if let Err(error) = require_hard_links(&temporary, |from, to| std::fs::hard_link(from, to))
+        {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(codec_context(
+                TrajectoryCodecErrorKind::UnsupportedVariant,
+                TrajectoryIoOperation::Open,
+                Some(options.format),
+                &label,
+                format!(
+                    "OverwritePolicy::Forbid publishes through a hard link, which this destination cannot use ({error}); OverwritePolicy::Replace publishes by rename"
+                ),
+            ));
+        }
+    }
     let inner_result = match options.format {
         TrajectoryFormat::Xyz => {
             xyz::XyzWriter::new(BufWriter::new(file), topology, options.xyz, label)
@@ -408,30 +423,17 @@ fn create_temporary_sibling(
     ))
 }
 
-/// Moves a completed temporary file to `destination` without replacing an
-/// existing file; see [`OverwritePolicy::Forbid`]. `link` is the hard-link
-/// primitive, injectable so the fallback can be tested.
-fn publish_without_replacing(
+/// Checks that the temporary file can be hard-linked beside itself, as
+/// [`OverwritePolicy::Forbid`] publication will need. `link` is the hard-link
+/// primitive, injectable so an unsupported filesystem can be tested.
+fn require_hard_links(
     temporary: &Path,
-    destination: &Path,
     link: impl FnOnce(&Path, &Path) -> io::Result<()>,
 ) -> io::Result<()> {
-    match link(temporary, destination) {
-        Ok(()) => {
-            let _ = std::fs::remove_file(temporary);
-            Ok(())
-        }
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(error),
-        Err(_) => {
-            OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(destination)?;
-            std::fs::rename(temporary, destination).inspect_err(|_| {
-                let _ = std::fs::remove_file(destination);
-            })
-        }
-    }
+    let probe = temporary.with_extension("link-probe");
+    link(temporary, &probe)?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
 }
 
 /// Makes a publication durable: a rename or link survives a crash only once
@@ -470,34 +472,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn publication_without_hard_links_reserves_the_destination_and_never_replaces_it() {
+    fn forbid_requires_hard_links_and_leaves_no_probe_behind() {
         let directory = std::env::temp_dir().join(format!(
             "kekule-publish-{}-{}",
             std::process::id(),
             TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&directory).unwrap();
-        let temporary = directory.join(".out.xyz.tmp");
-        let destination = directory.join("out.xyz");
-        let no_hard_links = |_: &Path, _: &Path| {
+        let temporary = directory.join(".out.xyz.1.2.tmp");
+        fs::write(&temporary, b"trajectory").unwrap();
+
+        require_hard_links(&temporary, |from, to| fs::hard_link(from, to)).unwrap();
+        let error = require_hard_links(&temporary, |_, _| {
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "filesystem has no hard links",
             ))
-        };
-
-        fs::write(&temporary, b"first").unwrap();
-        publish_without_replacing(&temporary, &destination, no_hard_links).unwrap();
-        assert_eq!(fs::read(&destination).unwrap(), b"first");
-        assert!(!temporary.exists());
-
-        // The reservation fails on the existing file, which stays intact; the
-        // temporary file is left for the writer's drop to remove.
-        fs::write(&temporary, b"second").unwrap();
-        let error = publish_without_replacing(&temporary, &destination, no_hard_links).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
-        assert_eq!(fs::read(&destination).unwrap(), b"first");
-        assert_eq!(fs::read(&temporary).unwrap(), b"second");
+        })
+        .unwrap_err();
+        assert_eq!(
+            (error.kind(), error.to_string()),
+            (
+                io::ErrorKind::Unsupported,
+                "filesystem has no hard links".to_owned()
+            )
+        );
+        let mut names = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, [".out.xyz.1.2.tmp"]);
         fs::remove_dir_all(directory).unwrap();
     }
 }
