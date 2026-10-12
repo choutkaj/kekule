@@ -18,27 +18,43 @@ pub(super) fn emitted_coordinate(value: f64) -> f64 {
         .expect("a formatted coordinate is a valid floating-point number")
 }
 
-pub(super) fn render(
-    record: &MolfileRecord<'_>,
-    title: &str,
-) -> Result<String, MoleculeWriteError> {
-    if !record.stereo_groups.is_empty() {
+/// Rejects records whose size or enhanced stereo V2000 cannot hold. It needs
+/// only counts, so a caller can test a source before preparing a record.
+pub(super) fn check_capacity(
+    atoms: usize,
+    bonds: usize,
+    has_stereo_groups: bool,
+) -> Result<(), MoleculeWriteError> {
+    if has_stereo_groups {
         return Err(MoleculeWriteError::unsupported(
             "V2000 cannot encode enhanced stereo groups; use V3000",
         ));
     }
-    if record.atoms.len() > V2000_MAX_ATOMS || record.bonds.len() > V2000_MAX_BONDS {
+    if atoms > V2000_MAX_ATOMS || bonds > V2000_MAX_BONDS {
         return Err(MoleculeWriteError::unsupported(
             "V2000 writer supports at most 999 atoms and 999 bonds",
         ));
     }
+    Ok(())
+}
+
+pub(super) fn render(
+    record: &MolfileRecord<'_>,
+    title: &str,
+) -> Result<String, MoleculeWriteError> {
+    check_capacity(
+        record.atoms.len(),
+        record.bonds.len(),
+        !record.stereo_groups.is_empty(),
+    )?;
 
     let mut out = String::new();
     record.push_header(&mut out, title);
     out.push_str(&format!(
-        "{:>3}{:>3}  0  0  0  0            999 V2000\n",
+        "{:>3}{:>3}  0  0{:>3}  0            999 V2000\n",
         record.atoms.len(),
-        record.bonds.len()
+        record.bonds.len(),
+        u8::from(record.chiral)
     ));
 
     for record_atom in &record.atoms {
