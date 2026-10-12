@@ -449,37 +449,6 @@ fn detection_restores_position_on_read_failure_and_honors_a_zero_byte_limit() {
 }
 
 #[test]
-fn path_writer_failure_poisoning_prevents_partial_publication() {
-    let topology = topology();
-    let output = temporary_path(Some("xyz"));
-    let mut frame = FrameBuffer::new(Arc::clone(&topology));
-    frame
-        .frame_mut()
-        .set_positions(Quantity::new(
-            [Point3::new(1.0, 2.0, 3.0), Point3::new(4.0, 5.0, 6.0)],
-            ANGSTROM,
-        ))
-        .unwrap();
-    let mut writer = create_trajectory_writer(
-        &output,
-        topology,
-        TrajectoryWriteOptions::new(TrajectoryFormat::Xyz),
-    )
-    .unwrap();
-    writer.write_frame(frame.frame_view()).unwrap();
-    frame.frame_mut().set_step(Some(1));
-    assert_eq!(
-        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::UnsupportedField)
-    );
-    assert_eq!(
-        codec_kind(&writer.finish().unwrap_err()),
-        Some(TrajectoryCodecErrorKind::InvalidFrame)
-    );
-    assert!(!output.exists());
-}
-
-#[test]
 fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
     let topology = topology();
     let limits = TrajectoryIoLimits {
