@@ -47,7 +47,11 @@ pub trait SeekableTrajectoryReader: TrajectoryReader {
 /// Streaming writer for topology-bound frame views.
 ///
 /// Writers reject topology mismatches and unsupported frame state rather than
-/// silently dropping data.
+/// silently dropping data. A rejected frame writes nothing, so the writer
+/// remains usable. A failure while a frame's bytes are being written, such as
+/// an I/O error, may leave a partial frame in the stream; the writer then
+/// refuses every further frame and finishing, rather than extend or report a
+/// corrupt stream as complete.
 pub trait TrajectoryWriter {
     fn topology(&self) -> &Topology;
 

@@ -5,18 +5,20 @@ use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
-use kekule_traj::io::xtc::{XtcMagic, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
+use kekule_traj::io::xtc::{
+    XtcCellPolicy, XtcMagic, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter,
+};
 use kekule_traj::io::TrajectoryIoLimits;
 use kekule_traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryIoError,
-    TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryFormat,
+    TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
 use crate::support;
 use support::{
-    buffer_snapshot, codec_kind, linear_carbon_topology as topology, x_coordinates as x_values,
-    GuardedCursor, RestoreSeekFailure,
+    buffer_snapshot, codec_error, codec_kind, linear_carbon_topology as topology,
+    x_coordinates as x_values, GuardedCursor, RestoreSeekFailure,
 };
 
 fn source_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer {
@@ -141,9 +143,16 @@ fn xtc_rejects_cells_degenerate_after_f32_rounding_before_appending_bytes() {
         .unwrap(),
     ));
     assert_eq!(
-        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::InvalidFrame)
-    );
+            writer.write_frame(frame.frame_view()),
+            Err(codec_error(
+                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoOperation::WriteFrame,
+                TrajectoryFormat::Xtc,
+                "box-rounding.xtc",
+                None,
+                "XTC cell is not representable as a valid f32 box: XTC periodic cell is invalid: periodic-cell vectors must have non-zero finite volume",
+            ))
+        );
     assert_eq!(writer.writer(), &before);
     frame.frame_mut().set_cell(valid_cell);
     frame.frame_mut().set_step(Some(1));
@@ -508,8 +517,15 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
     .unwrap();
     let overflow = source_frame(&topology, 0.0, i32::MAX as u64 + 1);
     assert_eq!(
-        codec_kind(&writer.write_frame(overflow.frame_view()).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep)
+        writer.write_frame(overflow.frame_view()),
+        Err(codec_error(
+            TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xtc,
+            "overflow-writer.xtc",
+            None,
+            "XTC step exceeds nonnegative signed 32-bit XDR capacity",
+        ))
     );
     assert!(writer.writer().get_ref().is_empty());
 }
@@ -801,7 +817,20 @@ fn xtc_rejects_trailing_compressed_data_and_mixed_file_profiles() {
 #[test]
 fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     let topology = topology(12);
-    assert!(XtcWriteOptions::default().with_precision(0.0).is_err());
+    for precision in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        assert_eq!(
+            XtcWriteOptions::default().with_precision(precision),
+            Err(codec_error(
+                TrajectoryCodecErrorKind::InvalidPrecision,
+                TrajectoryIoOperation::Open,
+                TrajectoryFormat::Xtc,
+                "XTC writer options",
+                None,
+                "XTC precision must be finite and positive",
+            )),
+            "{precision}"
+        );
+    }
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
@@ -812,9 +841,16 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     let mut frame = source_frame(&topology, 0.0, 0);
     frame.frame_mut().set_cell(None);
     assert_eq!(
-        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::InconsistentMetadata)
-    );
+            writer.write_frame(frame.frame_view()),
+            Err(codec_error(
+                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::WriteFrame,
+                TrajectoryFormat::Xtc,
+                "strict.xtc",
+                None,
+                "XTC writer requires a periodic cell; XtcCellPolicy::ZeroMatrixAsAbsent writes a zero box instead",
+            ))
+        );
     frame
         .frame_mut()
         .set_cell(source_frame(&topology, 0.0, 0).cell().copied());
@@ -828,8 +864,15 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
         )
         .unwrap();
     assert_eq!(
-        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::UnsupportedField)
+        writer.write_frame(frame.frame_view()),
+        Err(codec_error(
+            TrajectoryCodecErrorKind::UnsupportedField,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xtc,
+            "strict.xtc",
+            Some(0),
+            "XTC cannot preserve owner properties",
+        ))
     );
     frame.frame_mut().properties_mut().owner_mut().clear();
     frame
@@ -845,27 +888,81 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
         )
         .unwrap();
     assert_eq!(
-        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::UnsupportedField)
+        writer.write_frame(frame.frame_view()),
+        Err(codec_error(
+            TrajectoryCodecErrorKind::UnsupportedField,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xtc,
+            "strict.xtc",
+            Some(0),
+            "XTC cannot preserve bond properties",
+        ))
     );
 }
 
 #[test]
-fn empty_xtc_writer_is_rejected() {
-    let topology = topology(3);
-    let error = XtcWriter::new(
+fn xtc_zero_box_policy_round_trips_frames_without_a_cell() {
+    // GROMACS writes an all-zero box for non-periodic systems; the reader's
+    // ZeroMatrixAsAbsent policy reads it as no cell, and the writer's matching
+    // policy writes it, so such trajectories round-trip.
+    let topology = topology(12);
+    let frames = [(0.0, 4_u64), (0.01, 5)].map(|(shift, step)| {
+        let mut frame = source_frame(&topology, shift, step);
+        frame.frame_mut().set_cell(None);
+        (shift, step, frame)
+    });
+    let mut strict = XtcWriter::new(
         Cursor::new(Vec::new()),
-        topology,
+        Arc::clone(&topology),
         XtcWriteOptions::default(),
-        "empty.xtc",
+        "vacuum.xtc",
     )
-    .unwrap()
-    .finish()
-    .unwrap_err();
+    .unwrap();
     assert_eq!(
-        codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::InvalidFrame)
+        strict.write_frame(frames[0].2.frame_view()),
+        Err(codec_error(
+            TrajectoryCodecErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xtc,
+            "vacuum.xtc",
+            None,
+            "XTC writer requires a periodic cell; XtcCellPolicy::ZeroMatrixAsAbsent writes a zero box instead",
+        ))
     );
+
+    let mut writer = XtcWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        XtcWriteOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent),
+        "vacuum.xtc",
+    )
+    .unwrap();
+    for (_, _, frame) in &frames {
+        writer.write_frame(frame.frame_view()).unwrap();
+    }
+    let bytes = writer.finish().unwrap().into_inner();
+    let mut reader = XtcReader::new(
+        Cursor::new(bytes),
+        Arc::clone(&topology),
+        XtcReadOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent),
+    )
+    .unwrap();
+    let mut destination = reader.frame_buffer();
+    for (shift, step, _) in frames {
+        assert!(reader.read_next(&mut destination).unwrap());
+        assert!(destination.cell().is_none());
+        assert_eq!(destination.frame_view().step(), Some(step));
+        assert_eq!(
+            destination.frame_view().time().map(|time| *time.value()),
+            Some(step as f64 * 0.25)
+        );
+        // Precision 1000 quantizes coordinates to 0.001 nm.
+        let expected = (0..12)
+            .map(|index| 0.1 * index as f64 + shift)
+            .collect::<Vec<_>>();
+        assert_x_close(&destination, &expected, 0.0005 + 1.0e-6);
+    }
+    assert!(!reader.read_next(&mut destination).unwrap());
 }
 
 #[test]

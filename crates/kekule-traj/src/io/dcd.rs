@@ -16,7 +16,8 @@ use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_T
 use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
-    require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits,
+    require_no_partial_frame, require_nonempty_writer, reserve_index_for_push, validation_detail,
+    TrajectoryIoLimits,
 };
 
 const HEADER_BYTES: usize = 84;
@@ -183,6 +184,9 @@ impl DcdWriteOptions {
         self
     }
 
+    /// Stores `DELTA`, the duration of one step. With
+    /// [`DcdTimePolicy::HeaderDelta`], every frame time must equal its step
+    /// times `DELTA` to f32 precision, the precision `DELTA` has in the file.
     pub const fn with_header_delta(mut self, delta: f32, time_policy: DcdTimePolicy) -> Self {
         self.delta = delta;
         self.time_policy = time_policy;
@@ -1048,6 +1052,10 @@ pub struct DcdWriter<W> {
     source_label: String,
     header_start: u64,
     frame_count: u64,
+    /// Set while a frame's bytes are being written and left set if writing
+    /// fails, so a stream that may end in a partial frame is never extended
+    /// or reported as finished.
+    partial: bool,
     finalized: bool,
     axis: Vec<f32>,
 }
@@ -1137,6 +1145,7 @@ impl<W: Write + Seek> DcdWriter<W> {
             source_label,
             header_start,
             frame_count: 0,
+            partial: false,
             finalized: false,
             axis,
         })
@@ -1158,6 +1167,12 @@ impl<W: Write + Seek> DcdWriter<W> {
         if self.finalized {
             return Ok(());
         }
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::Finish,
+            TrajectoryFormat::Dcd,
+            &self.source_label,
+        )?;
         require_nonempty_writer(self.frame_count, TrajectoryFormat::Dcd, &self.source_label)?;
         if self.frame_count > i32::MAX as u64 {
             return Err(codec_context(
@@ -1185,6 +1200,7 @@ impl<W: Write + Seek> DcdWriter<W> {
                 "DCD header count offset overflows",
             )
         })?;
+        self.partial = true;
         self.writer
             .seek(SeekFrom::Start(count_offset))
             .and_then(|_| {
@@ -1204,6 +1220,7 @@ impl<W: Write + Seek> DcdWriter<W> {
                     error,
                 )
             })?;
+        self.partial = false;
         self.finalized = true;
         Ok(())
     }
@@ -1233,6 +1250,12 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Dcd,
+            &self.source_label,
+        )?;
         if self.finalized {
             return Err(codec_context(
                 TrajectoryCodecErrorKind::InvalidFrame,
@@ -1319,9 +1342,13 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                         format!("DCD time unit is incompatible: {error}"),
                     )
                 })?;
+                // Readers derive time as step × DELTA, and DELTA is stored
+                // as f32. A time therefore matches when it agrees to f32
+                // precision; rounding a timestep such as 0.002 to f32
+                // already moves it by up to half an f32 epsilon.
                 let expected = (expected_step as f64) * f64::from(self.options.delta);
                 if !actual.is_finite()
-                    || (actual - expected).abs() > 1.0e-9 * expected.abs().max(1.0)
+                    || (actual - expected).abs() > f64::from(f32::EPSILON) * expected.abs()
                 {
                     return Err(codec_context(
                         TrajectoryCodecErrorKind::InconsistentMetadata,
@@ -1377,12 +1404,28 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 }
             }
         }
-        if let Some(cell) = cell {
-            let values = encode_cell(cell, &self.source_label)?;
-            let mut payload = [0_u8; CELL_BYTES];
-            for (chunk, value) in payload.as_chunks_mut::<8>().0.iter_mut().zip(values) {
-                chunk.copy_from_slice(&self.options.endian.encode_f64(value));
-            }
+        // Everything that can reject the frame is checked above or here, so a
+        // rejected frame leaves the stream untouched.
+        let cell_payload = cell
+            .map(|cell| -> Result<[u8; CELL_BYTES], TrajectoryIoError> {
+                let values = encode_cell(cell, &self.source_label)?;
+                let mut payload = [0_u8; CELL_BYTES];
+                for (chunk, value) in payload.as_chunks_mut::<8>().0.iter_mut().zip(values) {
+                    chunk.copy_from_slice(&self.options.endian.encode_f64(value));
+                }
+                Ok(payload)
+            })
+            .transpose()?;
+        let byte_len = positions
+            .value()
+            .len()
+            .checked_mul(4)
+            .and_then(|len| u32::try_from(len).ok())
+            .ok_or_else(|| {
+                writer_overflow(&self.source_label, "DCD coordinate record exceeds u32")
+            })?;
+        self.partial = true;
+        if let Some(payload) = cell_payload {
             write_record(
                 &mut self.writer,
                 self.options.endian,
@@ -1399,28 +1442,17 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                     1 => point.y,
                     _ => point.z,
                 } * factor;
-                let narrowed = value as f32;
-                self.axis.push(narrowed);
-            }
-            let byte_len =
-                self.axis.len().checked_mul(4).ok_or_else(|| {
-                    writer_overflow(&self.source_label, "DCD record size overflows")
-                })?;
-            if byte_len > u32::MAX as usize {
-                return Err(writer_overflow(
-                    &self.source_label,
-                    "DCD coordinate record exceeds u32",
-                ));
+                self.axis.push(value as f32);
             }
             self.writer
-                .write_all(&self.options.endian.encode_u32(byte_len as u32))
+                .write_all(&self.options.endian.encode_u32(byte_len))
                 .and_then(|_| {
                     for value in &self.axis {
                         self.writer
                             .write_all(&self.options.endian.encode_f32(*value))?;
                     }
                     self.writer
-                        .write_all(&self.options.endian.encode_u32(byte_len as u32))
+                        .write_all(&self.options.endian.encode_u32(byte_len))
                 })
                 .map_err(|error| {
                     io_context(
@@ -1431,6 +1463,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                     )
                 })?;
         }
+        self.partial = false;
         self.frame_count = self
             .frame_count
             .checked_add(1)
@@ -1675,7 +1708,10 @@ fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], Traje
             TrajectoryIoOperation::WriteFrame,
             Some(TrajectoryFormat::Dcd),
             source_label,
-            format!("DCD cell becomes degenerate in its lengths/cosines representation: {error}"),
+            format!(
+                "DCD cell becomes degenerate in its lengths/cosines representation: {}",
+                validation_detail(&error)
+            ),
         )
     })?;
     Ok(values)

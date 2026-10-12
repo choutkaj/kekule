@@ -73,6 +73,38 @@ pub(crate) fn require_nonempty_writer(
     Ok(())
 }
 
+/// Refuses further use of a codec writer whose earlier write failed partway
+/// through a frame: its stream may end in a partial frame, so neither another
+/// frame nor finishing can produce a valid file.
+pub(crate) fn require_no_partial_frame(
+    partial: bool,
+    operation: TrajectoryIoOperation,
+    format: TrajectoryFormat,
+    source_label: &str,
+) -> Result<(), TrajectoryIoError> {
+    if partial {
+        return Err(codec_context(
+            TrajectoryCodecErrorKind::InvalidFrame,
+            operation,
+            Some(format),
+            source_label,
+            format!("an earlier {format} write failed partway; the stream may be incomplete"),
+        ));
+    }
+    Ok(())
+}
+
+/// The cause of a reused reader-side validation failure without the reader's
+/// operation, frame, and source context, which would misdescribe a write.
+pub(crate) fn validation_detail(error: &TrajectoryIoError) -> String {
+    match error {
+        TrajectoryIoError::Codec(context) => context
+            .detail()
+            .map_or_else(|| context.kind().to_string(), str::to_owned),
+        other => other.to_string(),
+    }
+}
+
 pub(crate) fn io_context(
     operation: TrajectoryIoOperation,
     format: Option<TrajectoryFormat>,

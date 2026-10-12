@@ -10,15 +10,15 @@ use kekule_traj::io::dcd::{
 };
 use kekule_traj::io::TrajectoryIoLimits;
 use kekule_traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryIoError,
-    TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryFormat,
+    TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
 use crate::support;
 use support::{
-    buffer_snapshot, codec_kind, topology as build_topology, x_coordinates as xs, GuardedCursor,
-    NoBackwardSeekCursor, RestoreSeekFailure,
+    buffer_snapshot, codec_error, codec_kind, topology as build_topology, x_coordinates as xs,
+    GuardedCursor, NoBackwardSeekCursor, RestoreSeekFailure,
 };
 
 fn topology() -> Arc<Topology> {
@@ -109,8 +109,15 @@ fn dcd_acute_cell_angles_round_trip_without_degree_cosine_ambiguity() {
         frame.frame_mut().set_step(Some(4));
         frame.frame_mut().set_cell(Some(unrepresentable));
         assert_eq!(
-            codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
-            Some(TrajectoryCodecErrorKind::InvalidFrame)
+            writer.write_frame(frame.frame_view()),
+            Err(codec_error(
+                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoOperation::WriteFrame,
+                TrajectoryFormat::Dcd,
+                "acute.dcd",
+                None,
+                "DCD cell becomes degenerate in its lengths/cosines representation: DCD cell angles are degenerate",
+            ))
         );
         assert_eq!(writer.writer(), &before);
         let mut reader = DcdReader::new(
@@ -348,8 +355,15 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
             PeriodicCell::new(Quantity::new(vectors, ANGSTROM), [true; 3]).unwrap(),
         ));
         assert_eq!(
-            codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
-            Some(TrajectoryCodecErrorKind::UnsupportedVariant)
+            writer.write_frame(frame.frame_view()),
+            Err(codec_error(
+                TrajectoryCodecErrorKind::UnsupportedVariant,
+                TrajectoryIoOperation::WriteFrame,
+                TrajectoryFormat::Dcd,
+                "oriented.dcd",
+                None,
+                "DCD cells require a along positive x, b in the xy plane with positive y, and c with positive z",
+            ))
         );
         assert_eq!(writer.writer(), &before);
     }
@@ -730,24 +744,6 @@ fn dcd_ordinary_frames_do_not_require_backward_eof_probe_seeks() {
 }
 
 #[test]
-fn empty_dcd_writer_is_rejected() {
-    let topology = topology();
-    let error = DcdWriter::new(
-        Cursor::new(Vec::new()),
-        topology,
-        DcdWriteOptions::default(),
-        "empty.dcd",
-    )
-    .unwrap()
-    .finish()
-    .unwrap_err();
-    assert_eq!(
-        codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::InvalidFrame)
-    );
-}
-
-#[test]
 fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     let topology = topology();
     let valid = fixed_atom_fixture(DcdEndian::Big);
@@ -860,8 +856,15 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
         Some(cell),
     );
     assert_eq!(
-        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::InvalidFrame)
+        writer.write_frame(frame.frame_view()),
+        Err(codec_error(
+            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Dcd,
+            "late-invalid.dcd",
+            None,
+            "DCD coordinate cannot be represented as finite f32",
+        ))
     );
     assert_eq!(writer.writer().get_ref().len(), header_bytes);
 
@@ -886,8 +889,15 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
         )
         .unwrap();
     assert_eq!(
-        codec_kind(&writer.write_frame(bond_annotated.frame_view()).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::UnsupportedField)
+        writer.write_frame(bond_annotated.frame_view()),
+        Err(codec_error(
+            TrajectoryCodecErrorKind::UnsupportedField,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Dcd,
+            "late-invalid.dcd",
+            Some(0),
+            "DCD cannot preserve bond properties",
+        ))
     );
     assert_eq!(writer.writer().get_ref().len(), header_bytes);
 }
@@ -970,4 +980,77 @@ fn fixed_atom_fixture(endian: DcdEndian) -> Vec<u8> {
         record(&payload);
     }
     bytes
+}
+
+#[test]
+fn dcd_header_delta_accepts_frame_times_that_agree_at_f32_precision() {
+    // DELTA is stored as f32, so a 0.002 ps timestep becomes
+    // 0.0020000000949949026 ps in the file. Frame times built from the f64
+    // timestep differ from step × DELTA by that rounding, about 5e-8 relative.
+    const TIMESTEP: f64 = 0.002;
+    let time_policy = DcdTimePolicy::HeaderDelta { unit: PICOSECOND };
+    let topology = topology();
+    let mut writer = DcdWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        DcdWriteOptions::default()
+            .with_step_sequence(0, 1000)
+            .with_header_delta(TIMESTEP as f32, time_policy),
+        "timestep.dcd",
+    )
+    .unwrap();
+    let coordinates = [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]];
+    let mut source = FrameBuffer::new(Arc::clone(&topology));
+    for step in [0, 1000, 2000] {
+        set_frame(
+            &mut source,
+            coordinates,
+            step,
+            Some(step as f64 * TIMESTEP),
+            None,
+        );
+        writer.write_frame(source.frame_view()).unwrap();
+    }
+    // A time off by more than f32 precision still contradicts DELTA.
+    set_frame(
+        &mut source,
+        coordinates,
+        3000,
+        Some(3000.0 * TIMESTEP * (1.0 + 1.0e-6)),
+        None,
+    );
+    assert_eq!(
+        writer.write_frame(source.frame_view()),
+        Err(codec_error(
+            TrajectoryCodecErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Dcd,
+            "timestep.dcd",
+            None,
+            "DCD frame time does not match the explicit DELTA policy",
+        ))
+    );
+    let bytes = writer.finish().unwrap().into_inner();
+
+    let mut reader = DcdReader::new(
+        Cursor::new(bytes),
+        topology,
+        DcdReadOptions::default().with_time_policy(time_policy),
+    )
+    .unwrap();
+    let mut destination = reader.frame_buffer();
+    let mut read = Vec::new();
+    while reader.read_next(&mut destination).unwrap() {
+        let frame = destination.frame_view();
+        read.push((frame.step(), frame.time().map(|time| *time.value())));
+    }
+    let stored = f64::from(TIMESTEP as f32);
+    assert_eq!(
+        read,
+        [
+            (Some(0), Some(0.0)),
+            (Some(1000), Some(1000.0 * stored)),
+            (Some(2000), Some(2000.0 * stored)),
+        ]
+    );
 }

@@ -17,7 +17,8 @@ use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
-    require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits,
+    require_no_partial_frame, require_nonempty_writer, reserve_index_for_push, validation_detail,
+    TrajectoryIoLimits,
 };
 
 const XTC_HEADER_BYTES: usize = 56;
@@ -118,6 +119,7 @@ impl XtcReadOptions {
 pub struct XtcWriteOptions {
     magic: XtcMagic,
     precision: f32,
+    cell_policy: XtcCellPolicy,
 }
 
 impl Default for XtcWriteOptions {
@@ -125,6 +127,7 @@ impl Default for XtcWriteOptions {
         Self {
             magic: XtcMagic::Xtc1995,
             precision: 1000.0,
+            cell_policy: XtcCellPolicy::RequirePeriodic,
         }
     }
 }
@@ -144,12 +147,25 @@ impl XtcWriteOptions {
         Ok(self)
     }
 
+    /// Chooses how frames without a cell are written, mirroring the reader's
+    /// [`XtcCellPolicy`]. [`XtcCellPolicy::ZeroMatrixAsAbsent`] writes the
+    /// zero box that GROMACS uses for non-periodic systems; the default,
+    /// [`XtcCellPolicy::RequirePeriodic`], rejects such frames.
+    pub const fn with_cell_policy(mut self, cell_policy: XtcCellPolicy) -> Self {
+        self.cell_policy = cell_policy;
+        self
+    }
+
     pub const fn magic(self) -> XtcMagic {
         self.magic
     }
 
     pub const fn precision(self) -> f32 {
         self.precision
+    }
+
+    pub const fn cell_policy(self) -> XtcCellPolicy {
+        self.cell_policy
     }
 }
 
@@ -1111,6 +1127,10 @@ pub struct XtcWriter<W> {
     options: XtcWriteOptions,
     source_label: String,
     frame_count: u64,
+    /// Set while a frame's bytes are being written and left set if writing
+    /// fails, so a stream that may end in a partial frame is never extended
+    /// or reported as finished.
+    partial: bool,
 }
 
 impl<W: Write> XtcWriter<W> {
@@ -1144,6 +1164,7 @@ impl<W: Write> XtcWriter<W> {
             options,
             source_label,
             frame_count: 0,
+            partial: false,
         })
     }
 
@@ -1160,6 +1181,12 @@ impl<W: Write> XtcWriter<W> {
     }
 
     pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::Finish,
+            TrajectoryFormat::Xtc,
+            &self.source_label,
+        )?;
         require_nonempty_writer(self.frame_count, TrajectoryFormat::Xtc, &self.source_label)
     }
 
@@ -1188,6 +1215,12 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xtc,
+            &self.source_label,
+        )?;
         if !frame.topology().shares_layout(self.topology()) {
             return Err(TrajectoryIoError::TopologyMismatch);
         }
@@ -1244,57 +1277,65 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             )
         })?;
         self.adapter.frame.time = finite_f32(time, &self.source_label, "time")?;
-        let cell = frame.cell().copied().ok_or_else(|| {
-            codec_context(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
-                TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xtc),
+        match (frame.cell().copied(), self.options.cell_policy) {
+            (None, XtcCellPolicy::ZeroMatrixAsAbsent) => self.adapter.frame.boxvec = [0.0; 9],
+            (None, XtcCellPolicy::RequirePeriodic) => {
+                return Err(codec_context(
+                    TrajectoryCodecErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::WriteFrame,
+                    Some(TrajectoryFormat::Xtc),
+                    &self.source_label,
+                    "XTC writer requires a periodic cell; XtcCellPolicy::ZeroMatrixAsAbsent writes a zero box instead",
+                ))
+            }
+            (Some(cell), _) => {
+            if cell.periodic_axes() != [true; 3] {
+                return Err(codec_context(
+                    TrajectoryCodecErrorKind::UnsupportedVariant,
+                    TrajectoryIoOperation::WriteFrame,
+                    Some(TrajectoryFormat::Xtc),
+                    &self.source_label,
+                    "XTC writer requires all three periodic axes",
+                ));
+            }
+            let vectors = cell.vectors().value_in(NANOMETER).map_err(|error| {
+                codec_context(
+                    TrajectoryCodecErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::WriteFrame,
+                    Some(TrajectoryFormat::Xtc),
+                    &self.source_label,
+                    format!("XTC cell unit is incompatible: {error}"),
+                )
+            })?;
+            for (target, value) in self.adapter.frame.boxvec.iter_mut().zip(
+                vectors
+                    .into_iter()
+                    .flat_map(|vector| [vector.x, vector.y, vector.z]),
+            ) {
+                *target = finite_f32(value, &self.source_label, "box")?;
+            }
+            // Scalar finiteness alone cannot ensure the narrowed matrix still spans
+            // three dimensions. Validate the representation the reader will receive.
+            decode_cell(
+                self.adapter.frame.boxvec.map(f64::from),
+                XtcCellPolicy::RequirePeriodic,
                 &self.source_label,
-                "XTC writer requires a periodic cell",
+                self.frame_count,
             )
-        })?;
-        if cell.periodic_axes() != [true; 3] {
-            return Err(codec_context(
-                TrajectoryCodecErrorKind::UnsupportedVariant,
-                TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xtc),
-                &self.source_label,
-                "XTC writer requires all three periodic axes",
-            ));
+            .map_err(|error| {
+                codec_context(
+                    TrajectoryCodecErrorKind::InvalidFrame,
+                    TrajectoryIoOperation::WriteFrame,
+                    Some(TrajectoryFormat::Xtc),
+                    &self.source_label,
+                    format!(
+                        "XTC cell is not representable as a valid f32 box: {}",
+                        validation_detail(&error)
+                    ),
+                )
+            })?;
+            }
         }
-        let vectors = cell.vectors().value_in(NANOMETER).map_err(|error| {
-            codec_context(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
-                TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xtc),
-                &self.source_label,
-                format!("XTC cell unit is incompatible: {error}"),
-            )
-        })?;
-        for (target, value) in self.adapter.frame.boxvec.iter_mut().zip(
-            vectors
-                .into_iter()
-                .flat_map(|vector| [vector.x, vector.y, vector.z]),
-        ) {
-            *target = finite_f32(value, &self.source_label, "box")?;
-        }
-        // Scalar finiteness alone cannot ensure the narrowed matrix still spans
-        // three dimensions. Validate the representation the reader will receive.
-        decode_cell(
-            self.adapter.frame.boxvec.map(f64::from),
-            XtcCellPolicy::RequirePeriodic,
-            &self.source_label,
-            self.frame_count,
-        )
-        .map_err(|error| {
-            codec_context(
-                TrajectoryCodecErrorKind::InvalidFrame,
-                TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xtc),
-                &self.source_label,
-                format!("XTC cell is not representable as a valid f32 box: {error}"),
-            )
-        })?;
         let positions = frame.positions().values();
         let factor = positions
             .unit()
@@ -1355,7 +1396,11 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             }
         }
         self.adapter.frame.precision = self.options.precision;
+        // The encoder writes the frame piecewise, so a failure or panic inside
+        // it can leave a partial frame behind.
+        self.partial = true;
         self.adapter.write(&self.source_label, self.frame_count)?;
+        self.partial = false;
         self.frame_count = self
             .frame_count
             .checked_add(1)

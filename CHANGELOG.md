@@ -6,6 +6,10 @@ All notable changes to Kekule are documented in this file.
 
 ### Added
 
+- `XtcWriteOptions::with_cell_policy` mirrors the reader's `XtcCellPolicy`:
+  `ZeroMatrixAsAbsent` writes the all-zero box GROMACS uses for
+  non-periodic systems, so XTC files without a cell round-trip. The default
+  still requires a periodic cell.
 - `smiles::write_to` writes one SMILES record to a sink as a line ending in
   a newline, completing the `write` and `write_to` pair every writer offers.
 - `ComponentLibrary::amber` and `ComponentLibrary::charmm` define the residue
@@ -267,6 +271,17 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- DCD writing with `DcdTimePolicy::HeaderDelta` accepts frame times that
+  match step × `DELTA` to f32 precision, the precision `DELTA` has in the file.
+  A 0.002 ps timestep used to be rejected from 2 ps on, because rounding it to
+  f32 alone exceeded the old 1e-9 relative tolerance.
+- XYZ, DCD, TRR, and XTC writers refuse further frames and finishing after a
+  write fails partway through a frame or DCD header update, instead of
+  appending to, and reporting as complete, a stream that may hold a partial
+  frame. A rejected frame still writes nothing and leaves the writer usable.
+- Cell-validation errors from the DCD, TRR, and XTC writers state only the
+  cause, no longer the reused reader's "while attempting to read frame"
+  context.
 - V3000 records longer than the CTfile's 80 columns, such as atoms with
   round-trip coordinates and several properties or large stereo collections,
   continue on following lines ending in `-` instead of running past the limit.

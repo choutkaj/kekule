@@ -5,5 +5,6 @@ mod support;
 
 mod dcd;
 mod trr;
+mod writers;
 mod xtc;
 mod xyz;
