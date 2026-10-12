@@ -11,9 +11,11 @@ use crate::units::ANGSTROM;
 
 use super::structure_documents::{
     materialize_molfile_stereo_hydrogens, molfile_coordinate_tetrahedra,
-    molfile_stereo_group_members_at_atom,
+    molfile_coordinates_are_flat, molfile_stereo_group_members_at_atom,
 };
 use super::{MoleculeWriteError, MolfileVersion};
+
+const PROGRAM: &str = "kekule";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ComponentKey {
@@ -51,6 +53,21 @@ pub(super) struct MolfileStereoGroup {
 }
 
 impl<'a> MolfileRecord<'a> {
+    /// Writes the three header lines. The program line follows the CTfile
+    /// `IIPPPPPPPPMMDDYYHHmmdd` layout with blank initials and timestamp, so
+    /// output stays deterministic and the dimensional code lands in columns
+    /// 21-22. Readers such as RDKit take any nonzero z as 3D whatever this
+    /// code says, so it is `2D` exactly when every emitted z is zero and `3D`
+    /// otherwise.
+    pub(super) fn push_header(&self, out: &mut String, title: &str) {
+        let dimension = if self.atoms.iter().all(|atom| atom.position.z == 0.0) {
+            "2D"
+        } else {
+            "3D"
+        };
+        out.push_str(&format!("{title}\n  {PROGRAM:<8}{:10}{dimension}\n\n", ""));
+    }
+
     pub(super) fn molecule(molecule: &'a Molecule) -> Result<Self, MoleculeWriteError> {
         let atoms = molecule
             .atoms()
@@ -162,6 +179,21 @@ impl<'a> MolfileRecord<'a> {
                 projected,
                 &indexes,
             )?);
+        }
+        // Readers such as RDKit take any nonzero z as 3D, then derive stereo
+        // from coordinates and ignore bond marks. A flat drawing whose marks
+        // carry stereo is emitted on z = 0, which moves no mark because XY is
+        // unchanged. Every other record keeps its coordinates.
+        let points = atoms.iter().map(|atom| atom.position).collect::<Vec<_>>();
+        if molfile_coordinates_are_flat(&points)
+            && bonds.iter().any(|bond| {
+                bond.stereo
+                    .is_some_and(|kind| kind != SourceStereoBondMarkKind::MolfileDoubleBondGeometry)
+            })
+        {
+            for atom in &mut atoms {
+                atom.position.z = 0.0;
+            }
         }
         let mut stereo_groups = Vec::new();
         for occurrence in topology.molecules() {

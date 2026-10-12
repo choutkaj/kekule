@@ -972,7 +972,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         },
     )
     .expect("metadata molecule should write");
-    assert_eq!(mol_text.lines().nth(1), Some("kekule"));
+    assert_eq!(mol_text.lines().nth(1), Some("  kekule            2D"));
     assert_eq!(mol_text.matches("M  CHG").count(), 2);
     assert_eq!(mol_text.matches("M  ISO").count(), 2);
     assert_eq!(mol_text.matches("M  RAD").count(), 2);
@@ -989,7 +989,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         },
     )
     .expect("two records should write");
-    assert_eq!(sdf_text.lines().nth(1), Some("kekule"));
+    assert_eq!(sdf_text.lines().nth(1), Some("  kekule            2D"));
     let records = read_sdf_records(&sdf_text).expect("written records should parse");
     assert_eq!(records.len(), 2);
     for record in records {

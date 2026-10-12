@@ -18,11 +18,8 @@ pub(super) fn render_mol_v3000(
     record: &MolfileRecord<'_>,
     title: &str,
 ) -> std::result::Result<String, MoleculeWriteError> {
-    let program = "kekule";
-    let comment = "";
-
     let mut out = String::new();
-    out.push_str(&format!("{title}\n{program}\n{comment}\n"));
+    record.push_header(&mut out, title);
     out.push_str("  0  0  0  0  0  0            999 V3000\n");
     out.push_str("M  V30 BEGIN CTAB\n");
     out.push_str(&format!(

@@ -169,6 +169,106 @@ fn molfile_version_policy_promotes_counts_and_explicit_v2000_fails() {
     );
 }
 
+const DRAWING_HEADER: &str = "  kekule            2D";
+const CONFORMATION_HEADER: &str = "  kekule            3D";
+
+#[test]
+fn molfile_header_dimension_code_states_the_emitted_coordinate_kind() {
+    // CTfile header line 2 is `IIPPPPPPPPMMDDYYHHmmdd...`: blank initials,
+    // the program name in columns 3-10, a blank timestamp, and the
+    // dimensional code in columns 21-22. Readers such as RDKit take any
+    // nonzero z as 3D, so the code is 2D exactly when every emitted z is zero.
+    use molfile::MolfileSource;
+    use MolfileWriteVersion::{V2000, V3000};
+    let conformer = model("CO", &[[0.0, 0.0, 0.0], [1.2, 0.3, -0.4]]);
+    let drawing = model("CO", &[[0.0, 0.0, 0.0], [1.2, 0.3, 0.0]]);
+    // An unmarked flat record keeps its plane, so its z is emitted as given.
+    let raised_plane = model("CO", &[[0.0, 0.0, 1.5], [1.2, 0.3, 1.5]]);
+    // Both z values print as 0.0000 in V2000 but stay distinct in V3000.
+    let sub_precision_relief = model("CO", &[[0.0, 0.0, 0.0], [1.2, 0.0, 0.00004]]);
+    let coordinate_free = molecule("CO");
+    for (source, version, expected) in [
+        (MolfileSource::from(&conformer), V2000, CONFORMATION_HEADER),
+        ((&conformer).into(), V3000, CONFORMATION_HEADER),
+        ((&drawing).into(), V2000, DRAWING_HEADER),
+        ((&drawing).into(), V3000, DRAWING_HEADER),
+        ((&raised_plane).into(), V2000, CONFORMATION_HEADER),
+        ((&raised_plane).into(), V3000, CONFORMATION_HEADER),
+        ((&sub_precision_relief).into(), V2000, DRAWING_HEADER),
+        ((&sub_precision_relief).into(), V3000, CONFORMATION_HEADER),
+        ((&coordinate_free).into(), V2000, DRAWING_HEADER),
+        ((&coordinate_free).into(), V3000, DRAWING_HEADER),
+    ] {
+        let text = molfile::write(source, MolfileWriteOptions { version }).unwrap();
+        assert_eq!(text.lines().nth(1), Some(expected), "{version:?}\n{text}");
+        assert_eq!(text.lines().nth(2), Some(""));
+    }
+
+    let text = sdf::write(
+        [
+            sdf::SdfRecordSource::model(&conformer).with_title("conformer"),
+            sdf::SdfRecordSource::model(&drawing).with_title("drawing"),
+        ],
+        SdfWriteOptions::default(),
+    )
+    .unwrap();
+    let headers = text
+        .split("$$$$\n")
+        .filter(|record| !record.is_empty())
+        .map(|record| record.lines().take(2).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        headers,
+        [
+            ["conformer", CONFORMATION_HEADER],
+            ["drawing", DRAWING_HEADER]
+        ]
+    );
+}
+
+#[test]
+fn molfile_writes_a_marked_flat_drawing_on_the_z_zero_plane() {
+    // RDKit reads any nonzero z as 3D and then ignores bond marks, so a raised
+    // drawing whose wedge carries stereo is emitted on z = 0 with XY intact.
+    let layout = [
+        [0.0, 1.0, 1.5],
+        [0.0, 0.0, 1.5],
+        [1.0, -0.5, 1.5],
+        [-1.0, -0.5, 1.5],
+    ];
+    let raised_drawing = model("C[C@H](N)O", &layout);
+    let canonical =
+        |topology: &Topology| smiles::write(topology, SmilesWriteOptions::canonical()).unwrap();
+    assert_eq!(canonical(raised_drawing.topology()), "C[C@H](N)O");
+    for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
+        let text = molfile::write(&raised_drawing, MolfileWriteOptions { version }).unwrap();
+        assert_eq!(
+            text.lines().nth(1),
+            Some(DRAWING_HEADER),
+            "{version:?}\n{text}"
+        );
+        let document = molfile::parse_str(&text).unwrap();
+        let z = document
+            .atoms()
+            .iter()
+            .map(|atom| atom.position().z)
+            .collect::<Vec<_>>();
+        assert_eq!(z, [0.0; 4], "{version:?}\n{text}");
+        let marked = document
+            .bonds()
+            .iter()
+            .filter(|bond| bond.stereo().is_some())
+            .count();
+        assert_eq!(marked, 1, "{version:?}\n{text}");
+        let written = molfile::interpret(&document).unwrap().into_model();
+        assert_eq!(
+            canonical(written.topology()),
+            "C[C@H](N)O",
+            "{version:?}\n{text}"
+        );
+    }
+}
+
 fn interpret_records(text: &str) -> Vec<SdfRecordInterpretation> {
     sdf::parse_str(text)
         .unwrap()

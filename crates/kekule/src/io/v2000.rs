@@ -577,10 +577,8 @@ pub(super) fn render_mol_v2000(
         ));
     }
 
-    let program = "kekule";
-    let comment = "";
     let mut out = String::new();
-    out.push_str(&format!("{title}\n{program}\n{comment}\n"));
+    record.push_header(&mut out, title);
     out.push_str(&format!(
         "{:>3}{:>3}  0  0  0  0            999 V2000\n",
         record.atoms.len(),
