@@ -1164,7 +1164,7 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
         },
     )
     .expect("V3000 should write");
-    assert_eq!(written.lines().nth(1), Some("kekule"));
+    assert_eq!(written.lines().nth(1), Some("  kekule            2D"));
     assert!(written.contains("V3000"));
     assert!(written.contains("CHG=1"));
     assert!(written.contains("MASS=13"));

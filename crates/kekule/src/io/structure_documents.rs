@@ -884,6 +884,14 @@ pub(super) fn materialize_molfile_stereo_hydrogens(
     }
 }
 
+/// Whether Molfile coordinates form a flat XY drawing rather than a
+/// conformation. Import and the writer's header dimension code share it.
+pub(super) fn molfile_coordinates_are_flat(points: &[Point3]) -> bool {
+    points
+        .first()
+        .is_none_or(|first| points.iter().all(|point| point.z == first.z))
+}
+
 /// Uses the same detached inference for import and for lossless writer planning.
 /// A flat XY drawing carries tetrahedral stereo through annotations only.
 pub(super) fn molfile_coordinate_tetrahedra(
@@ -899,10 +907,7 @@ pub(super) fn molfile_coordinate_tetrahedra(
             })
         })
         .collect::<Result<Vec<Point3>, _>>()?;
-    if points
-        .first()
-        .is_none_or(|first| points.iter().all(|point| point.z == first.z))
-    {
+    if molfile_coordinates_are_flat(&points) {
         return Ok(Vec::new());
     }
     let positions = Positions::from_vec(Quantity::new(points, ANGSTROM))

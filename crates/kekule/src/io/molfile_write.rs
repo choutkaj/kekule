@@ -11,9 +11,11 @@ use crate::units::ANGSTROM;
 
 use super::structure_documents::{
     materialize_molfile_stereo_hydrogens, molfile_coordinate_tetrahedra,
-    molfile_stereo_group_members_at_atom,
+    molfile_coordinates_are_flat, molfile_stereo_group_members_at_atom,
 };
 use super::{MoleculeWriteError, MolfileVersion};
+
+const PROGRAM: &str = "kekule";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ComponentKey {
@@ -51,6 +53,26 @@ pub(super) struct MolfileStereoGroup {
 }
 
 impl<'a> MolfileRecord<'a> {
+    /// Writes the three header lines. The program line follows the CTfile
+    /// `IIPPPPPPPPMMDDYYHHmmdd` layout with blank initials and timestamp, so
+    /// output stays deterministic and the dimensional code lands in columns
+    /// 21-22. Readers choose drawing or conformation semantics from that code,
+    /// so it states exactly what import concludes from the emitted
+    /// coordinates: a flat XY drawing is `2D`, anything else is `3D`.
+    pub(super) fn push_header(&self, out: &mut String, title: &str) {
+        let points = self
+            .atoms
+            .iter()
+            .map(|atom| atom.position)
+            .collect::<Vec<_>>();
+        let dimension = if molfile_coordinates_are_flat(&points) {
+            "2D"
+        } else {
+            "3D"
+        };
+        out.push_str(&format!("{title}\n  {PROGRAM:<8}{:10}{dimension}\n\n", ""));
+    }
+
     pub(super) fn molecule(molecule: &'a Molecule) -> Result<Self, MoleculeWriteError> {
         let atoms = molecule
             .atoms()
