@@ -120,6 +120,38 @@ fn smiles_write_to_emits_each_record_as_one_line() {
 }
 
 #[test]
+fn molfile_rejects_asserted_stereo_its_coordinates_contradict() {
+    // These coordinates are F[C@H](Cl)Br; a 3D reader takes the configuration
+    // from them, so writing the opposite assertion would invert it.
+    let points = [
+        [0.6, 0.6, 0.6],
+        [0.0, 0.0, 0.0],
+        [0.6, -0.6, -0.6],
+        [-0.6, 0.6, -0.6],
+    ];
+    for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
+        molfile::write(
+            &model("F[C@H](Cl)Br", &points),
+            MolfileWriteOptions { version },
+        )
+        .unwrap();
+        let error = molfile::write(
+            &model("F[C@@H](Cl)Br", &points),
+            MolfileWriteOptions { version },
+        )
+        .unwrap_err();
+        assert_eq!(
+            (error.kind(), error.message()),
+            (
+                MoleculeWriteErrorKind::UnsupportedRepresentation,
+                "specified tetrahedral stereo at atom a1 contradicts the emitted coordinates, which readers take as the configuration"
+            ),
+            "{version:?}"
+        );
+    }
+}
+
+#[test]
 fn molfile_v3000_continues_records_past_80_columns() {
     // CTfile lines hold at most 80 characters; a longer V3000 record ends
     // each line but its last with `-` and breaks after a space, because

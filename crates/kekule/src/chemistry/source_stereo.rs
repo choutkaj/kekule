@@ -195,6 +195,24 @@ pub(crate) fn project_molfile_stereo_bond_marks(
             }
         }
         let Some((bond, projection)) = selected else {
+            if geometry.is_some_and(|geometry| {
+                crate::algorithms::coordinates_contradict(molecule, geometry, &target.kind)
+            }) {
+                let focus = match &target.kind {
+                    StereoElementKind::Tetrahedral(stereo) => {
+                        format!("tetrahedral stereo at atom {}", stereo.center)
+                    }
+                    StereoElementKind::DoubleBond(stereo) => {
+                        format!("double-bond stereo at bond {}", stereo.bond)
+                    }
+                    StereoElementKind::Axis(stereo) => {
+                        format!("axial stereo at bond {}", stereo.axis)
+                    }
+                };
+                return Err(format!(
+                    "specified {focus} contradicts the emitted coordinates, which readers take as the configuration"
+                ));
+            }
             if matches!(&target.kind, StereoElementKind::DoubleBond(stereo) if stereo.orientation.is_some())
             {
                 return Err("specified double-bond stereo disagrees with emitted coordinates or has degenerate geometry".to_owned());
