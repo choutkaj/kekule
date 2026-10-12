@@ -3,7 +3,10 @@ use crate::core::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
 use crate::topology::{TopologyAtomIndex, TopologyBondIndex, TopologyBuilder};
-use crate::units::{Quantity, ANGSTROM, KELVIN, NANOMETER, SQUARE_ANGSTROM, SQUARE_NANOMETER};
+use crate::units::{
+    Quantity, UnitError, ANGSTROM, KELVIN, KILOCALORIE_PER_MOLE, KILOJOULE_PER_MOLE, NANOMETER,
+    SQUARE_ANGSTROM, SQUARE_NANOMETER,
+};
 use std::sync::Arc;
 
 fn key(name: &str) -> PropertyKey {
@@ -893,4 +896,216 @@ fn ensemble_members_always_carry_finite_positive_relative_weights() {
     let (model, _, _) = model_fixture();
     let ensemble = Ensemble::from_models([model.clone(), model]).unwrap();
     assert!(ensemble.iter().all(|member| member.weight() == 1.0));
+}
+
+/// Unit-weight members of a one-atom topology with energies in kJ/mol.
+fn energy_ensemble(energies: &[f64]) -> Ensemble {
+    let members = energies.iter().map(|energy| {
+        EnsembleMember::new(single_position(0.0), 1.0)
+            .unwrap()
+            .with_energy(Quantity::new(*energy, KILOJOULE_PER_MOLE))
+            .unwrap()
+    });
+    Ensemble::from_items(single_atom_topology(), members).unwrap()
+}
+
+fn weights(ensemble: &Ensemble) -> Vec<f64> {
+    ensemble.iter().map(|member| member.weight()).collect()
+}
+
+fn energies(ensemble: &Ensemble) -> Vec<Option<Quantity<f64>>> {
+    ensemble.iter().map(|member| member.energy()).collect()
+}
+
+#[test]
+fn ensemble_member_energies_are_canonical_finite_and_follow_the_sampled_structure() {
+    let member = EnsembleMember::new(single_position(0.0), 2.0).unwrap();
+    assert_eq!(member.energy(), None);
+    let mut member = member
+        .with_energy(Quantity::new(1.0, KILOCALORIE_PER_MOLE))
+        .unwrap();
+    assert_eq!(
+        member.energy(),
+        Some(Quantity::new(4.184, KILOJOULE_PER_MOLE))
+    );
+    assert_eq!(member.weight(), 2.0);
+
+    // Invalid energies are rejected without changing the stored one.
+    for value in [f64::NAN, f64::INFINITY] {
+        assert_eq!(
+            member.set_energy(Some(Quantity::new(value, KILOJOULE_PER_MOLE))),
+            Err(StructureError::NonFiniteEnergy)
+        );
+    }
+    assert_eq!(
+        member.set_energy(Some(Quantity::new(1.0, KELVIN))),
+        Err(StructureError::Unit(Box::new(
+            UnitError::IncompatibleUnits {
+                from: KELVIN,
+                to: KILOJOULE_PER_MOLE,
+            }
+        )))
+    );
+    assert_eq!(
+        member.energy(),
+        Some(Quantity::new(4.184, KILOJOULE_PER_MOLE))
+    );
+
+    let mut ensemble = Ensemble::from_items(single_atom_topology(), [member]).unwrap();
+    ensemble
+        .get_mut(0)
+        .unwrap()
+        .set_energy(Some(Quantity::new(-3.0, KILOJOULE_PER_MOLE)))
+        .unwrap();
+    let expected = Some(Quantity::new(-3.0, KILOJOULE_PER_MOLE));
+    assert_eq!(energies(&ensemble.select([0, 0]).unwrap()), [expected; 2]);
+    let all = crate::topology::AtomSelection::all(&ensemble.shared_topology());
+    assert_eq!(energies(&ensemble.subset(&all).unwrap()), [expected]);
+    ensemble.get_mut(0).unwrap().set_energy(None).unwrap();
+    assert_eq!(energies(&ensemble), [None]);
+
+    // Models carry no energy.
+    let (model, _, _) = model_fixture();
+    assert_eq!(energies(&Ensemble::from_models([model]).unwrap()), [None]);
+}
+
+#[test]
+fn boltzmann_weights_follow_relative_energies_at_temperature() {
+    // 1, 0, and 2 kcal/mol above the minimum at 298.15 K. Expected factors
+    // exp(-dE/RT) evaluated independently to 40 digits (Python `decimal`,
+    // R = N_A k_B exact in the 2019 SI).
+    let mut ensemble = energy_ensemble(&[-100.0 + 4.184, -100.0, -100.0 + 8.368]);
+    ensemble
+        .assign_boltzmann_weights(Quantity::new(298.15, KELVIN))
+        .unwrap();
+    let expected = [0.184_924_695_965_256_4, 1.0, 0.034_197_143_177_842_51];
+    for (weight, expected) in weights(&ensemble).into_iter().zip(expected) {
+        assert!(
+            (weight - expected).abs() <= 1.0e-15,
+            "{weight} != {expected}"
+        );
+    }
+    assert_eq!(ensemble.get(1).unwrap().weight(), 1.0);
+
+    // Invalid temperatures and missing energies change nothing.
+    let before = weights(&ensemble);
+    for temperature in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(
+            ensemble.assign_boltzmann_weights(Quantity::new(temperature, KELVIN)),
+            Err(EnsembleError::InvalidTemperature)
+        );
+    }
+    assert_eq!(
+        ensemble.assign_boltzmann_weights(Quantity::new(1.0, KILOJOULE_PER_MOLE)),
+        Err(EnsembleError::Unit(Box::new(
+            UnitError::IncompatibleUnits {
+                from: KILOJOULE_PER_MOLE,
+                to: KELVIN,
+            }
+        )))
+    );
+    ensemble.get_mut(2).unwrap().set_energy(None).unwrap();
+    assert_eq!(
+        ensemble.assign_boltzmann_weights(Quantity::new(298.15, KELVIN)),
+        Err(EnsembleError::MissingEnergy { index: 2 })
+    );
+    assert_eq!(weights(&ensemble), before);
+
+    // A factor that underflows to zero is rejected transactionally.
+    let mut wide = energy_ensemble(&[0.0, 1.0e6]);
+    assert_eq!(
+        wide.assign_boltzmann_weights(Quantity::new(298.15, KELVIN)),
+        Err(EnsembleError::Structure(StructureError::InvalidWeight))
+    );
+    assert_eq!(weights(&wide), [1.0, 1.0]);
+}
+
+#[test]
+fn weight_ranking_and_coverage_select_the_most_populated_members() {
+    let topology = Arc::new(single_atom_topology());
+    let members = [1.0, 4.0, 2.0, 2.0, 1.0]
+        .map(|weight| EnsembleMember::new(single_position(0.0), weight).unwrap());
+    let ensemble = Ensemble::from_items(Arc::clone(&topology), members).unwrap();
+
+    // Equal weights keep member order.
+    assert_eq!(ensemble.ranked_by_weight(), [1, 2, 3, 0, 4]);
+    assert_eq!(ensemble.probabilities().unwrap(), [0.1, 0.4, 0.2, 0.2, 0.1]);
+    assert_eq!(weights(&ensemble), [1.0, 4.0, 2.0, 2.0, 1.0]);
+
+    assert_eq!(ensemble.covering_weight(0.4).unwrap(), [1]);
+    assert_eq!(ensemble.covering_weight(0.5).unwrap(), [1, 2]);
+    assert_eq!(ensemble.covering_weight(0.85).unwrap(), [1, 2, 3, 0]);
+    assert_eq!(ensemble.covering_weight(1.0).unwrap(), [1, 2, 3, 0, 4]);
+    for fraction in [0.0, -0.5, 1.5, f64::NAN] {
+        assert_eq!(
+            ensemble.covering_weight(fraction),
+            Err(EnsembleError::InvalidFraction)
+        );
+    }
+    // A full fraction keeps members too light to change the total.
+    let light =
+        [1.0, 1.0e-20].map(|weight| EnsembleMember::new(single_position(0.0), weight).unwrap());
+    let light = Ensemble::from_items(Arc::clone(&topology), light).unwrap();
+    assert_eq!(light.covering_weight(1.0).unwrap(), [0, 1]);
+    assert_eq!(light.covering_weight(0.999).unwrap(), [0]);
+
+    let skewed =
+        [2.0, 1.0, 1.0].map(|weight| EnsembleMember::new(single_position(0.0), weight).unwrap());
+    let skewed = Ensemble::from_items(Arc::clone(&topology), skewed).unwrap();
+    assert_eq!(skewed.effective_sample_size().unwrap(), 8.0 / 3.0);
+    let uniform = [7.0; 4].map(|weight| EnsembleMember::new(single_position(0.0), weight).unwrap());
+    let uniform = Ensemble::from_items(Arc::clone(&topology), uniform).unwrap();
+    assert_eq!(uniform.effective_sample_size().unwrap(), 4.0);
+
+    let empty = Ensemble::new(topology);
+    assert_eq!(empty.ranked_by_weight(), Vec::<usize>::new());
+    assert_eq!(empty.probabilities(), Err(EnsembleError::EmptySource));
+    assert_eq!(
+        empty.effective_sample_size(),
+        Err(EnsembleError::EmptySource)
+    );
+    assert_eq!(empty.covering_weight(0.5), Err(EnsembleError::EmptySource));
+}
+
+#[test]
+fn energy_ranking_and_windows_are_relative_to_the_lowest_member() {
+    let mut ensemble = energy_ensemble(&[10.0, 0.0, 30.0, 4.184, 0.0]);
+    assert_eq!(ensemble.ranked_by_energy().unwrap(), [1, 4, 3, 0, 2]);
+    // The window bound is inclusive and converted to the canonical unit.
+    assert_eq!(
+        ensemble
+            .within_energy_window(Quantity::new(1.0, KILOCALORIE_PER_MOLE))
+            .unwrap(),
+        [1, 3, 4]
+    );
+    assert_eq!(
+        ensemble
+            .within_energy_window(Quantity::new(0.0, KILOJOULE_PER_MOLE))
+            .unwrap(),
+        [1, 4]
+    );
+    let window = ensemble
+        .within_energy_window(Quantity::new(10.0, KILOJOULE_PER_MOLE))
+        .unwrap();
+    assert_eq!(window, [0, 1, 3, 4]);
+    assert_eq!(
+        energies(&ensemble.select(window).unwrap()),
+        [10.0, 0.0, 4.184, 0.0].map(|value| Some(Quantity::new(value, KILOJOULE_PER_MOLE)))
+    );
+
+    for value in [-1.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(
+            ensemble.within_energy_window(Quantity::new(value, KILOJOULE_PER_MOLE)),
+            Err(EnsembleError::InvalidEnergyWindow)
+        );
+    }
+    ensemble.get_mut(3).unwrap().set_energy(None).unwrap();
+    assert_eq!(
+        ensemble.ranked_by_energy(),
+        Err(EnsembleError::MissingEnergy { index: 3 })
+    );
+    assert_eq!(
+        ensemble.within_energy_window(Quantity::new(1.0, KILOJOULE_PER_MOLE)),
+        Err(EnsembleError::MissingEnergy { index: 3 })
+    );
 }

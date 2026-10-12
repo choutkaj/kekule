@@ -14,12 +14,14 @@ Rustdoc beside their implementations. The links below point to those sources;
 | `Molecule` | One nonempty connected `Graph`, derived `Perception`, `MoleculeProperties` | Coordinates, hierarchy, system classification |
 | `Topology` | Reusable definitions and their complete molecule instances, qualified identities, dense atom and bond order, one `Hierarchy`, classification, `TopologyProperties`, layout identity | Geometry or bonds between separate instances |
 | `Model` | One shared `Topology` and one structure of it: dense positions, optional cell, occupancies, B factors, and `StructureProperties`, addressed by dense topology index | A second chemical or hierarchy model; temporal state |
-| `Ensemble` | One shared topology, collection owner properties, and a weighted, unordered sample of `EnsembleMember` payloads (positions, optional cell, occupancies, B factors, properties, and a finite positive relative weight) | An owned `Model` or topology in each member; temporal meaning |
+| `Ensemble` | One shared topology, collection owner properties, and a weighted, unordered sample of `EnsembleMember` payloads (positions, optional cell, occupancies, B factors, properties, a finite positive relative weight, and an optional energy) | An owned `Model` or topology in each member; temporal meaning |
 | `Trajectory` | One shared topology, collection owner properties, and time-ordered `TrajectoryFrame` payloads (positions, optional cell, properties, and optional velocities, forces, time, and step) | Implicit topology changes between frames; statistical weights; crystallographic site parameters |
 
 `Ensemble` and `Trajectory` are distinct scientific concepts and distinct
 types. An ensemble is a weighted sample of a distribution: member order carries
-no meaning, every member has a weight, and its statistics must be weighted. A
+no meaning, every member has a weight, and its statistics must be weighted.
+Member energies are annotations on one shared scale; weights derive from them
+only through an explicit Boltzmann assignment, never implicitly. A
 trajectory is a path produced by dynamics: frame order and spacing are
 physical. A trajectory samples an ensemble only under ergodicity, so
 `Trajectory::into_ensemble` is an explicit, lossy projection with equal
@@ -39,9 +41,9 @@ owns exactly the fields that are meaningful for it; there is no shared payload
 type. Positions, cell, and structure properties are common to all three.
 Occupancies and B factors are crystallographic per-atom fields of a model or
 ensemble member and never belong to a trajectory frame. Velocities,
-forces, time, and step belong only to frames, and a weight only to an ensemble
-member. Coordinate kernels share code through the borrowed `ModelView`, not
-through a common owned payload.
+forces, time, and step belong only to frames, and a weight and an energy only
+to an ensemble member. Coordinate kernels share code through the borrowed
+`ModelView`, not through a common owned payload.
 
 Both live in `kekule::structure`. `kekule-traj` owns file codecs, streaming
 reader and writer contracts, the reusable `FrameBuffer`, periodic
@@ -271,7 +273,7 @@ validity or recompute arbitrary properties. Arbitrary source fields stay in
 format sidecars unless canonical semantics, scope, and domain justify promotion.
 Occupancy and B factors are typed site fields of models and ensemble members,
 with checked semantics independent of any generic property with the same name. Positions, cells,
-weights, time, steps, velocities, and forces retain their dedicated APIs.
+weights, energies, time, steps, velocities, and forces retain their dedicated APIs.
 
 Kekule uses one runtime unit system across all crates. Public boundaries accept
 compatible `Quantity` units; internal numerical state uses the library-wide

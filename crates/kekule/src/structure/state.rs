@@ -318,6 +318,8 @@ pub enum StructureError {
     },
     /// A frame time is not finite.
     NonFiniteTime,
+    /// An ensemble member energy is not finite.
+    NonFiniteEnergy,
     /// An ensemble weight is not finite and positive.
     InvalidWeight,
     /// The payload exceeds addressable capacity.
@@ -350,6 +352,7 @@ impl fmt::Display for StructureError {
                 write!(formatter, "vector at index {index} must be finite")
             }
             Self::NonFiniteTime => formatter.write_str("frame time must be finite"),
+            Self::NonFiniteEnergy => formatter.write_str("ensemble member energy must be finite"),
             Self::InvalidWeight => {
                 formatter.write_str("ensemble weight must be finite and positive")
             }

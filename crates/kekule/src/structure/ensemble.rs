@@ -8,6 +8,7 @@ use crate::topology::transform::TopologySubsetError;
 use crate::topology::{
     AtomSelection, Topology, TopologyBuildError, TopologyBuilder, TopologyPerceptionError,
 };
+use crate::units::{Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};
 
 use super::scalars::AtomScalars;
 use super::state::{
@@ -19,11 +20,13 @@ use super::{AsModelView, Model, ModelView, Positions, StructureError};
 /// A weighted, unordered sample of structures of one shared topology, such
 /// as conformers, Monte Carlo samples, or alternate experimental models.
 ///
-/// Every [`EnsembleMember`] carries a finite positive statistical weight.
-/// Weights are relative: only their ratios are meaningful, so selecting,
-/// duplicating, or removing members needs no renormalization. Member order is
-/// stable but carries no physical meaning; use [`super::Trajectory`] when order
-/// is temporal. Statistics over an ensemble must use its weights.
+/// Every [`EnsembleMember`] carries a finite positive statistical weight and
+/// may carry an energy. Weights are relative: only their ratios are
+/// meaningful, so selecting, duplicating, or removing members needs no
+/// renormalization. Member order is stable but carries no physical meaning;
+/// use [`super::Trajectory`] when order is temporal. Statistics over an
+/// ensemble must use its weights. Energies never change weights implicitly;
+/// [`Self::assign_boltzmann_weights`] derives them explicitly.
 ///
 /// Members are validated against the shared topology on insertion, so they
 /// can be read as [`super::ModelView`]s without further checks. Superposition
@@ -251,7 +254,8 @@ impl Ensemble {
     }
 
     /// Publishes one induced topology subset and projects every member onto
-    /// it. Ensemble and per-member owner properties are dropped.
+    /// it. Ensemble and per-member owner properties are dropped; weights and
+    /// energies describe the sampled structure and are kept.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, EnsembleError> {
         let subset = self.topology.subset(selection)?;
         let (atoms, bonds) = subset_rows(&subset);
@@ -304,29 +308,183 @@ impl Ensemble {
     /// Fails on an empty ensemble, which has no probabilities, or when a
     /// scaled weight would underflow to zero. Failure changes nothing.
     pub fn normalize_weights(&mut self) -> Result<(), EnsembleError> {
+        let probabilities = self.probabilities()?;
+        for (member, weight) in self.members.iter_mut().zip(probabilities) {
+            member.weight = weight;
+        }
+        Ok(())
+    }
+
+    /// The probability of each member, in member order: its weight divided by
+    /// the total weight. The ensemble is not changed.
+    ///
+    /// Fails on an empty ensemble or when a probability would underflow to
+    /// zero.
+    pub fn probabilities(&self) -> Result<Vec<f64>, EnsembleError> {
         if self.is_empty() {
             return Err(EnsembleError::EmptySource);
         }
-        // Scale by the largest weight first so the total cannot overflow.
+        let scaled = self.scaled_weights();
+        let total = scaled.iter().sum::<f64>();
+        Ok(scaled
+            .into_iter()
+            .map(|weight| checked_weight(weight / total))
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Kish's effective sample size, `(Σw)² / Σw²`: the number of equally
+    /// weighted members that would give the same statistical precision.
+    ///
+    /// It is the member count for equal weights and approaches one when a
+    /// single member dominates. Fails on an empty ensemble.
+    pub fn effective_sample_size(&self) -> Result<f64, EnsembleError> {
+        if self.is_empty() {
+            return Err(EnsembleError::EmptySource);
+        }
+        let scaled = self.scaled_weights();
+        let total = scaled.iter().sum::<f64>();
+        let squares = scaled.iter().map(|weight| weight * weight).sum::<f64>();
+        Ok(total * total / squares)
+    }
+
+    /// Member indices by descending weight; equal weights keep member order.
+    ///
+    /// Select the ten most populated members with
+    /// `ensemble.select(ensemble.ranked_by_weight().into_iter().take(10))`.
+    pub fn ranked_by_weight(&self) -> Vec<usize> {
+        let mut indices = (0..self.members.len()).collect::<Vec<_>>();
+        indices.sort_by(|&a, &b| self.members[b].weight.total_cmp(&self.members[a].weight));
+        indices
+    }
+
+    /// The fewest members, by descending weight, whose weights together
+    /// reach `fraction` of the total, in [`Self::ranked_by_weight`] order.
+    ///
+    /// `fraction` must lie in `(0, 1]`; `1` selects every member, including
+    /// those too light to change a floating-point total. Pass the result to
+    /// [`Self::select`] to keep, for example, 95% of a Boltzmann population.
+    /// Fails on an empty ensemble.
+    pub fn covering_weight(&self, fraction: f64) -> Result<Vec<usize>, EnsembleError> {
+        if !(fraction > 0.0 && fraction <= 1.0) {
+            return Err(EnsembleError::InvalidFraction);
+        }
+        if self.is_empty() {
+            return Err(EnsembleError::EmptySource);
+        }
+        let ranked = self.ranked_by_weight();
+        if fraction == 1.0 {
+            return Ok(ranked);
+        }
+        let scaled = self.scaled_weights();
+        // Sum in ranked order so the running total ends exactly at the total.
+        let total = ranked.iter().map(|&index| scaled[index]).sum::<f64>();
+        let target = fraction * total;
+        let mut covered = 0.0;
+        let count = ranked
+            .iter()
+            .position(|&index| {
+                covered += scaled[index];
+                covered >= target
+            })
+            .map_or(ranked.len(), |position| position + 1);
+        Ok(ranked[..count].to_vec())
+    }
+
+    /// Member indices by ascending energy; equal energies keep member order.
+    ///
+    /// Fails with [`EnsembleError::MissingEnergy`] if any member has none.
+    pub fn ranked_by_energy(&self) -> Result<Vec<usize>, EnsembleError> {
+        let energies = self.energies()?;
+        let mut indices = (0..energies.len()).collect::<Vec<_>>();
+        indices.sort_by(|&a, &b| {
+            energies[a]
+                .partial_cmp(&energies[b])
+                .expect("member energies are finite")
+        });
+        Ok(indices)
+    }
+
+    /// Indices, in member order, of the members whose energy lies at most
+    /// `window` above the lowest member energy.
+    ///
+    /// `window` is a finite, nonnegative energy, such as the 6 kcal/mol
+    /// window common in conformer searches. Fails if any member has no
+    /// energy.
+    pub fn within_energy_window(&self, window: Quantity<f64>) -> Result<Vec<usize>, EnsembleError> {
+        let window = window.value_in(CANONICAL_ENERGY_UNIT)?;
+        if !(window.is_finite() && window >= 0.0) {
+            return Err(EnsembleError::InvalidEnergyWindow);
+        }
+        let energies = self.energies()?;
+        let minimum = energies.iter().copied().fold(f64::INFINITY, f64::min);
+        Ok(energies
+            .iter()
+            .enumerate()
+            .filter(|(_, energy)| *energy - minimum <= window)
+            .map(|(index, _)| index)
+            .collect())
+    }
+
+    /// Replaces every weight by the Boltzmann factor of the member energy
+    /// relative to the lowest one, `exp(-(E - E_min) / RT)`, so the lowest
+    /// member gets weight `1`.
+    ///
+    /// This treats each member as one distinct state, such as a conformer
+    /// from a conformer search. Members already drawn from the distribution,
+    /// such as molecular dynamics or Monte Carlo samples, are equally
+    /// weighted and must not be Boltzmann weighted again. Previous weights,
+    /// including degeneracies of collapsed members, are discarded; weight
+    /// equivalent members individually before collapsing them.
+    ///
+    /// `temperature` must be finite and positive. Fails if any member has no
+    /// energy or a weight would underflow to zero (restrict the ensemble to
+    /// an energy window first). Failure changes nothing.
+    pub fn assign_boltzmann_weights(
+        &mut self,
+        temperature: Quantity<f64>,
+    ) -> Result<(), EnsembleError> {
+        let temperature = temperature.value_in(CANONICAL_TEMPERATURE_UNIT)?;
+        let thermal_energy = MOLAR_GAS_CONSTANT * temperature;
+        if !(temperature.is_finite() && thermal_energy.is_finite() && thermal_energy > 0.0) {
+            return Err(EnsembleError::InvalidTemperature);
+        }
+        let energies = self.energies()?;
+        let minimum = energies.iter().copied().fold(f64::INFINITY, f64::min);
+        let weights = energies
+            .iter()
+            .map(|energy| checked_weight((-(energy - minimum) / thermal_energy).exp()))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (member, weight) in self.members.iter_mut().zip(weights) {
+            member.weight = weight;
+        }
+        Ok(())
+    }
+
+    /// Weights divided by the largest one, so sums cannot overflow.
+    fn scaled_weights(&self) -> Vec<f64> {
         let maximum = self
             .members
             .iter()
             .map(|member| member.weight)
             .fold(0.0_f64, f64::max);
-        let total = self
-            .members
+        self.members
             .iter()
             .map(|member| member.weight / maximum)
-            .sum::<f64>();
-        let normalized = self
-            .members
+            .collect()
+    }
+
+    /// Every member energy in [`CANONICAL_ENERGY_UNIT`].
+    fn energies(&self) -> Result<Vec<f64>, EnsembleError> {
+        self.members
             .iter()
-            .map(|member| checked_weight(member.weight / maximum / total))
-            .collect::<Result<Vec<_>, _>>()?;
-        for (member, weight) in self.members.iter_mut().zip(normalized) {
-            member.weight = weight;
-        }
-        Ok(())
+            .enumerate()
+            .map(|(index, member)| {
+                member
+                    .energy
+                    .map(Quantity::into_value)
+                    .ok_or(EnsembleError::MissingEnergy { index })
+            })
+            .collect()
     }
 
     /// Applies one rigid transform per member transactionally.
@@ -373,7 +531,7 @@ impl<'a> IntoIterator for &'a Ensemble {
 
 /// One ensemble member: positions in dense topology atom order, an optional
 /// periodic cell, optional crystallographic occupancies and B-factors,
-/// structure properties, and a statistical weight.
+/// structure properties, a statistical weight, and an optional energy.
 ///
 /// The member carries no topology; it is bound when inserted into an
 /// [`Ensemble`].
@@ -385,11 +543,12 @@ pub struct EnsembleMember {
     b_factors: AtomScalars,
     properties: StructureProperties,
     weight: f64,
+    energy: Option<Quantity<f64>>,
 }
 
 impl EnsembleMember {
-    /// Creates a non-periodic member without occupancies, B-factors, or
-    /// properties, with a finite positive relative weight.
+    /// Creates a non-periodic member without occupancies, B-factors,
+    /// properties, or energy, with a finite positive relative weight.
     pub fn new(positions: Positions, weight: f64) -> Result<Self, StructureError> {
         let mut member = Self::unit(positions);
         member.weight = checked_weight(weight)?;
@@ -406,6 +565,7 @@ impl EnsembleMember {
             b_factors: AtomScalars::default(),
             properties,
             weight: 1.0,
+            energy: None,
         }
     }
 
@@ -419,6 +579,7 @@ impl EnsembleMember {
             b_factors: model.b_factors,
             properties: model.properties,
             weight: 1.0,
+            energy: None,
         }
     }
 
@@ -436,6 +597,7 @@ impl EnsembleMember {
             b_factors: AtomScalars::default(),
             properties,
             weight: 1.0,
+            energy: None,
         }
     }
 
@@ -458,6 +620,37 @@ impl EnsembleMember {
     /// Sets a finite positive relative weight.
     pub fn set_weight(&mut self, weight: f64) -> Result<(), StructureError> {
         self.weight = checked_weight(weight)?;
+        Ok(())
+    }
+
+    /// Returns this member with a finite energy.
+    pub fn with_energy(mut self, energy: Quantity<f64>) -> Result<Self, StructureError> {
+        self.set_energy(Some(energy))?;
+        Ok(self)
+    }
+
+    /// The member's energy in [`CANONICAL_ENERGY_UNIT`], if known.
+    ///
+    /// Energies of one ensemble share one scale, such as the electronic or
+    /// free energies of conformers at one level of theory; only differences
+    /// between members are meaningful. Record the scale in the ensemble
+    /// properties.
+    pub const fn energy(&self) -> Option<Quantity<f64>> {
+        self.energy
+    }
+
+    /// Sets or clears a finite energy, converted to the canonical energy
+    /// unit. The weight is unchanged.
+    pub fn set_energy(&mut self, energy: Option<Quantity<f64>>) -> Result<(), StructureError> {
+        self.energy = energy
+            .map(|energy| {
+                let energy = energy.into_unit(CANONICAL_ENERGY_UNIT)?;
+                if !energy.value().is_finite() {
+                    return Err(StructureError::NonFiniteEnergy);
+                }
+                Ok(energy)
+            })
+            .transpose()?;
         Ok(())
     }
 
@@ -491,6 +684,7 @@ impl EnsembleMember {
             b_factors: self.b_factors.select(atoms),
             properties: self.properties.project(atoms, bonds)?,
             weight: self.weight,
+            energy: self.energy,
         })
     }
 
@@ -503,6 +697,7 @@ impl EnsembleMember {
             b_factors: self.b_factors.clone(),
             properties: self.properties.clone(),
             weight: self.weight,
+            energy: self.energy,
         })
     }
 
@@ -519,6 +714,9 @@ impl EnsembleMember {
     structure_mutators!();
     site_mutators!();
 }
+
+/// The molar gas constant `N_A k_B` in kJ/(mol K), exact since the 2019 SI.
+const MOLAR_GAS_CONSTANT: f64 = 8.314_462_618_153_24e-3;
 
 fn checked_weight(weight: f64) -> Result<f64, StructureError> {
     if weight.is_finite() && weight > 0.0 {
@@ -581,7 +779,8 @@ impl<'a> EnsembleMemberView<'a> {
         self.member.model_view(self.topology)
     }
 
-    /// Materializes the member as an owned model, dropping its weight.
+    /// Materializes the member as an owned model, dropping its weight and
+    /// energy.
     pub fn to_model(self) -> Model {
         self.as_model_view().to_model()
     }
@@ -614,6 +813,11 @@ impl EnsembleMemberMut<'_> {
     /// Sets a finite positive relative weight.
     pub fn set_weight(&mut self, weight: f64) -> Result<(), StructureError> {
         self.member.set_weight(weight)
+    }
+
+    /// Sets or clears a finite energy; the weight is unchanged.
+    pub fn set_energy(&mut self, energy: Option<Quantity<f64>>) -> Result<(), StructureError> {
+        self.member.set_energy(energy)
     }
 
     /// Applies a rigid transform transactionally: positions move and the
@@ -675,9 +879,20 @@ pub enum EnsembleError {
         expected: usize,
         actual: usize,
     },
+    /// An energy-based operation found a member without an energy.
+    MissingEnergy {
+        index: usize,
+    },
+    /// A temperature is not finite and positive.
+    InvalidTemperature,
+    /// An energy window is not finite and nonnegative.
+    InvalidEnergyWindow,
+    /// A weight fraction is not in `(0, 1]`.
+    InvalidFraction,
     Structure(StructureError),
     Subset(TopologySubsetError),
     TopologyBuild(TopologyBuildError),
+    Unit(Box<UnitError>),
 }
 
 impl fmt::Display for EnsembleError {
@@ -694,9 +909,20 @@ impl fmt::Display for EnsembleError {
                 formatter,
                 "ensemble requires {expected} replacement members, but received {actual}"
             ),
+            Self::MissingEnergy { index } => write!(formatter, "member {index} has no energy"),
+            Self::InvalidTemperature => {
+                formatter.write_str("temperature must be finite and positive")
+            }
+            Self::InvalidEnergyWindow => {
+                formatter.write_str("energy window must be finite and nonnegative")
+            }
+            Self::InvalidFraction => {
+                formatter.write_str("weight fraction must be greater than 0 and at most 1")
+            }
             Self::Structure(error) => write!(formatter, "invalid ensemble member: {error}"),
             Self::Subset(error) => write!(formatter, "cannot subset ensemble: {error}"),
             Self::TopologyBuild(error) => write!(formatter, "cannot build topology: {error}"),
+            Self::Unit(error) => write!(formatter, "invalid quantity unit: {error}"),
         }
     }
 }
@@ -707,6 +933,7 @@ impl std::error::Error for EnsembleError {
             Self::Structure(error) => Some(error),
             Self::Subset(error) => Some(error),
             Self::TopologyBuild(error) => Some(error),
+            Self::Unit(error) => Some(error.as_ref()),
             _ => None,
         }
     }
@@ -727,5 +954,11 @@ impl From<TopologySubsetError> for EnsembleError {
 impl From<TopologyBuildError> for EnsembleError {
     fn from(error: TopologyBuildError) -> Self {
         Self::TopologyBuild(error)
+    }
+}
+
+impl From<UnitError> for EnsembleError {
+    fn from(error: UnitError) -> Self {
+        Self::Unit(Box::new(error))
     }
 }
