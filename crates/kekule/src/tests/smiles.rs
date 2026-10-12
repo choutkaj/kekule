@@ -1355,7 +1355,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         smiles_api::SmilesWriteOptions::default()
     )
     .expect_err("dative bond should be rejected")
-    .message
+    .message()
     .contains("cannot encode"));
 
     molecule
@@ -1385,7 +1385,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         smiles_api::SmilesWriteOptions::default()
     )
     .expect_err("atom chirality should be rejected")
-    .message
+    .message()
     .contains("stereochemistry"));
 
     let element = molecule
@@ -1405,7 +1405,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         smiles_api::SmilesWriteOptions::default()
     )
     .expect_err("ordinary SMILES cannot preserve an explicit spin assertion")
-    .message
+    .message()
     .contains("explicit radical spin"));
 
     {
@@ -1494,8 +1494,9 @@ fn all_smiles_writers_require_perception_for_bracketed_inferred_hydrogens() {
                 panic!("{writer} writer must not guess an unperceived inferred count: {written}")
             }
         };
-        assert!(
-            error.message().contains("hydrogen perception"),
+        assert_eq!(
+            error.kind(),
+            smiles_api::MoleculeWriteErrorKind::MissingPerception,
             "{writer}: {error}"
         );
     }
@@ -1823,7 +1824,7 @@ fn isomeric_smiles_accepts_interpreted_source_stereo_and_rejects_unknown_stereo(
     assert!(
         smiles_api::write(&unknown, smiles_api::SmilesWriteOptions::isomeric())
             .expect_err("unknown stereo should be rejected")
-            .message
+            .message()
             .contains("unknown stereo")
     );
 }

@@ -812,7 +812,7 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
         }
     )
     .expect_err("specified double-bond stereo should be rejected")
-    .message
+    .message()
     .contains("requires a Model"));
 
     let element = molecule
@@ -833,7 +833,7 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
         }
     )
     .expect_err("quadruple bond should be rejected")
-    .message
+    .message()
     .contains("quadruple"));
 }
 

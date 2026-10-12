@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::algorithms::{allowed_valences, rdkit_default_valence, RemoveHydrogensReport};
+use crate::algorithms::{
+    allowed_valences, rdkit_default_valence, HydrogenTransformError, RemoveHydrogensReport,
+};
 use crate::core::Molecule;
 use crate::core::*;
 use crate::io::MoleculeWriteError;
@@ -92,11 +94,9 @@ fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, Mol
     // Metadata does not affect a molecular identifier. Use the common hydrogen
     // transform so carrier remapping and count reconstruction have one owner.
     normalized.properties_mut().owner_mut().clear();
-    let removal = normalized.remove_hydrogens().map_err(|error| {
-        MoleculeWriteError::new(format!(
-            "canonical SMILES hydrogen normalization requires known hydrogen perception: {error}"
-        ))
-    })?;
+    let removal = normalized
+        .remove_hydrogens()
+        .map_err(hydrogen_normalization_error)?;
     // Removal publishes dense IDs and clears perception; translate the
     // original hydrogen counts and aromatic system.
     restore_projection_valence(&mut normalized, mol.perception(), &removal);
@@ -108,6 +108,24 @@ fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, Mol
         |bond| ids.bond(bond),
     );
     Ok(normalized)
+}
+
+/// Classifies a hydrogen-normalization failure by its cause.
+fn hydrogen_normalization_error(error: HydrogenTransformError) -> MoleculeWriteError {
+    let message = format!("canonical SMILES hydrogen normalization failed: {error}");
+    match error {
+        HydrogenTransformError::MissingValencePerception => {
+            MoleculeWriteError::missing_perception(message)
+        }
+        HydrogenTransformError::ResourceLimit { .. } => MoleculeWriteError::resource_limit(message),
+        HydrogenTransformError::HydrogenCountOverflow { .. }
+        | HydrogenTransformError::UnsupportedImplicitAxisHydrogen { .. } => {
+            MoleculeWriteError::unsupported(message)
+        }
+        HydrogenTransformError::InconsistentStereoHydrogen { .. }
+        | HydrogenTransformError::Molecule(_)
+        | HydrogenTransformError::Publication(_) => MoleculeWriteError::invalid_model(message),
+    }
 }
 
 fn canonical_projection_graph(
@@ -313,7 +331,7 @@ fn canonical_smiles_atom_representation(
     )?;
     if smiles_atom_requires_brackets(&payload, aromatic, inferred_hydrogens) {
         if atom.hydrogens.is_inferred() && perceived_hydrogens.is_none() {
-            return Err(MoleculeWriteError::new(format!(
+            return Err(MoleculeWriteError::missing_perception(format!(
                 "canonical SMILES bracket atom {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
             )));
         }
@@ -343,7 +361,7 @@ fn canonical_smiles_atom_normalized(
         atom,
         aromatic,
         inferred_hydrogens,
-    )? {
+    ) {
         let mut normalized = atom.clone();
         normalized.hydrogens = ImplicitHydrogens::Fixed(
             atom.hydrogens
@@ -357,7 +375,7 @@ fn canonical_smiles_atom_normalized(
         atom_id,
         atom,
         inferred_hydrogens,
-    )? {
+    ) {
         let mut normalized = atom.clone();
         normalized.hydrogens = ImplicitHydrogens::Fixed(atom.hydrogens.represented_count());
         return Ok((normalized, 0));
@@ -396,15 +414,15 @@ fn canonical_smiles_should_bracket_metal_bound_hydrogens(
     atom: &Atom,
     aromatic: bool,
     inferred_hydrogens: u8,
-) -> std::result::Result<bool, MoleculeWriteError> {
-    Ok(atom.formal_charge == 0
+) -> bool {
+    atom.formal_charge == 0
         && atom.radical.is_none()
         && atom.atom_map.is_none()
         && !aromatic
         && atom.hydrogens.is_inferred()
         && inferred_hydrogens > 0
         && matches!(atom.element.symbol(), "B" | "C" | "N" | "O" | "P" | "S")
-        && atom_has_metal_neighbor(mol, atom_id)?)
+        && atom_has_metal_neighbor(mol, atom_id)
 }
 
 fn canonical_smiles_should_bracket_metal_bound_zero_hydrogens(
@@ -412,8 +430,8 @@ fn canonical_smiles_should_bracket_metal_bound_zero_hydrogens(
     atom_id: AtomId,
     atom: &Atom,
     inferred_hydrogens: u8,
-) -> std::result::Result<bool, MoleculeWriteError> {
-    Ok(atom.formal_charge == 0
+) -> bool {
+    atom.formal_charge == 0
         && atom.radical.is_none()
         && atom.atom_map.is_none()
         && atom.hydrogens.represented_count() == 0
@@ -422,7 +440,7 @@ fn canonical_smiles_should_bracket_metal_bound_zero_hydrogens(
             atom.element.symbol(),
             "B" | "C" | "N" | "O" | "P" | "S" | "F" | "Cl" | "Br" | "I"
         )
-        && atom_has_metal_neighbor(mol, atom_id)?)
+        && atom_has_metal_neighbor(mol, atom_id)
 }
 
 fn canonical_smiles_atom_for_sort(
@@ -459,11 +477,11 @@ fn canonical_smiles_can_use_organic_form(
         return Ok(false);
     }
     if (!atom.hydrogens.is_inferred() || inferred_hydrogens == 0)
-        && atom_has_metal_neighbor(mol, atom_id)?
+        && atom_has_metal_neighbor(mol, atom_id)
     {
         return Ok(false);
     }
-    let bond_valence = smiles_bond_valence_sum(mol, atom_id, stored_kekule)?;
+    let bond_valence = smiles_bond_valence_sum(mol, atom_id, stored_kekule);
     if aromatic {
         let Some(target) = canonical_organic_valence_target(atom, true) else {
             return Ok(false);
@@ -485,23 +503,15 @@ fn canonical_smiles_can_use_organic_form(
     )
 }
 
-fn atom_has_metal_neighbor(
-    mol: &Molecule,
-    atom_id: AtomId,
-) -> std::result::Result<bool, MoleculeWriteError> {
-    for (_, bond) in mol
-        .incident_bonds(atom_id)
-        .map_err(|error| MoleculeWriteError::new(error.to_string()))?
-    {
-        let neighbor_id = bond.other_atom(atom_id);
-        let neighbor = mol
-            .atom(neighbor_id)
-            .map_err(|error| MoleculeWriteError::new(error.to_string()))?;
-        if is_smiles_metal_like(neighbor.element.symbol()) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+fn atom_has_metal_neighbor(mol: &Molecule, atom_id: AtomId) -> bool {
+    mol.incident_bonds(atom_id)
+        .expect("the writer visits live atoms")
+        .any(|(_, bond)| {
+            let neighbor = mol
+                .atom(bond.other_atom(atom_id))
+                .expect("the writer visits live atoms");
+            is_smiles_metal_like(neighbor.element.symbol())
+        })
 }
 
 fn is_smiles_metal_like(symbol: &str) -> bool {
@@ -602,28 +612,22 @@ fn canonical_organic_valence_target(atom: &Atom, aromatic: bool) -> Option<u8> {
     }
 }
 
-fn smiles_bond_valence_sum(
-    mol: &Molecule,
-    atom_id: AtomId,
-    stored_kekule: bool,
-) -> std::result::Result<u8, MoleculeWriteError> {
+fn smiles_bond_valence_sum(mol: &Molecule, atom_id: AtomId, stored_kekule: bool) -> u8 {
     mol.incident_bonds(atom_id)
-        .map_err(|error| MoleculeWriteError::new(error.to_string()))?
+        .expect("the writer visits live atoms")
         .map(|(bond_id, bond)| {
             if mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true) && !stored_kekule {
-                return Ok(1);
+                return 1;
             }
-            Ok(match bond.order {
+            match bond.order {
                 BondOrder::Zero | BondOrder::Dative => 0,
                 BondOrder::Single => 1,
                 BondOrder::Double => 2,
                 BondOrder::Triple => 3,
                 BondOrder::Quadruple => 4,
-            })
+            }
         })
-        .try_fold(0u8, |sum, value: std::result::Result<u8, MoleculeWriteError>| {
-            Ok(sum.saturating_add(value?))
-        })
+        .fold(0u8, u8::saturating_add)
 }
 
 #[cfg(test)]

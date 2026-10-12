@@ -1282,7 +1282,7 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         }
     )
     .expect_err("invalid stereo element should be rejected")
-    .message
+    .message()
     .contains("cannot encode"));
 
     let mut molecule = crate::core::MoleculeEditor::new();
@@ -1324,7 +1324,7 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         }
     )
     .expect_err("specified double-bond stereo should be rejected")
-    .message
+    .message()
     .contains("specified stereo"));
 
     let element = molecule
@@ -1345,6 +1345,6 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         }
     )
     .expect_err("quadruple should be rejected")
-    .message
+    .message()
     .contains("quadruple"));
 }

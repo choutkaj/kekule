@@ -552,8 +552,12 @@ universal save trait or implicit trajectory-to-structure export.
 Exact capability and numerical policies live with
 [SMILES writing](crates/kekule/src/io/smiles/write.rs),
 [canonical labeling](crates/kekule/src/io/smiles/canonical.rs),
-[MOL/SDF writing](crates/kekule/src/io/molfile_write.rs), and
-[mmCIF writing](crates/kekule/src/io/mmcif_write.rs).
+[Molfile writing](crates/kekule/src/io/molfile_write.rs),
+[SDF writing](crates/kekule/src/io/sdf_write.rs), and
+[mmCIF writing](crates/kekule/src/io/mmcif_write.rs). Writer failures say why
+no output was produced: the format cannot encode the content, the source lacks
+required perception, a work limit was reached, the source is inconsistent, or
+the sink failed.
 
 ## Identity and reconstruction
 
