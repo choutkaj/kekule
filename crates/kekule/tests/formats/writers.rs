@@ -347,6 +347,71 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
 }
 
 #[test]
+fn sdf_rejects_titles_and_data_fields_that_would_break_record_framing() {
+    use sdf::SdfWriteError;
+    let methane = model("C", &[[0.0, 0.0, 0.0]]);
+    let title = |message: &str| SdfWriteError::InvalidTitle(message.to_owned());
+    let field = |name: &str, message: &str| SdfWriteError::InvalidDataField {
+        name: name.to_owned(),
+        message: message.to_owned(),
+    };
+    const NAME: &str =
+        "SDF data field names must be nonempty, trimmed, and exclude angle brackets or line breaks";
+    for (record_title, fields, expected) in [
+        (
+            "two\nlines",
+            vec![],
+            title("SDF record titles cannot contain line breaks"),
+        ),
+        (
+            " $$$$ ",
+            vec![],
+            title("SDF record titles cannot be a record delimiter"),
+        ),
+        ("", vec![SdfDataField::new("", "value")], field("", NAME)),
+        (
+            "",
+            vec![SdfDataField::new(" ID", "value")],
+            field(" ID", NAME),
+        ),
+        (
+            "",
+            vec![SdfDataField::new("A<B", "value")],
+            field("A<B", NAME),
+        ),
+        (
+            "",
+            vec![SdfDataField::new("ID", "one\r\ntwo")],
+            field(
+                "ID",
+                "SDF data field values cannot contain carriage returns",
+            ),
+        ),
+        (
+            "",
+            vec![SdfDataField::new("ID", "one\n\ntwo")],
+            field("ID", "SDF data field values cannot contain blank lines"),
+        ),
+        (
+            "",
+            vec![SdfDataField::new("ID", "one\n$$$$")],
+            field(
+                "ID",
+                "SDF data field values cannot contain a record delimiter line",
+            ),
+        ),
+    ] {
+        let record = sdf::SdfRecordSource::model(&methane)
+            .with_title(record_title)
+            .with_data_fields(&fields);
+        assert_eq!(
+            sdf::write([record], SdfWriteOptions::default()),
+            Err(expected)
+        );
+    }
+}
+
+#[test]
 fn sdf_explicit_records_preserve_title_and_data_fields() {
     let record = SdfRecordInterpretation::new(
         "named record",

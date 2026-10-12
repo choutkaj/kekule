@@ -62,12 +62,18 @@ fn bracket_metadata_export_preserves_the_perceived_hydrogen_count() {
             smiles::SmilesWriteOptions::isomeric(),
         ] {
             let error = smiles::write(&original, options).unwrap_err();
-            assert!(error.to_string().contains("hydrogen perception"));
+            assert_eq!(
+                error.kind(),
+                smiles::MoleculeWriteErrorKind::MissingPerception
+            );
         }
         if map.is_some() || charge != 0 {
             let error =
                 smiles::write(&original, smiles::SmilesWriteOptions::canonical()).unwrap_err();
-            assert!(error.to_string().contains("hydrogen perception"));
+            assert_eq!(
+                error.kind(),
+                smiles::MoleculeWriteErrorKind::MissingPerception
+            );
         }
         original.perceive().unwrap();
         for options in [
@@ -91,7 +97,14 @@ fn bracket_metadata_export_preserves_the_perceived_hydrogen_count() {
 fn canonical_hydrogen_collapse_requires_a_known_parent_count() {
     let mut inferred = molecule("[H]C");
     let error = smiles::write(&inferred, smiles::SmilesWriteOptions::canonical()).unwrap_err();
-    assert!(error.to_string().contains("hydrogen perception"));
+    assert_eq!(
+        error.kind(),
+        smiles::MoleculeWriteErrorKind::MissingPerception
+    );
+    assert_eq!(
+        error.message(),
+        "canonical SMILES hydrogen normalization failed: hydrogen transformation requires current valence perception"
+    );
     inferred.perceive().unwrap();
     for original in [inferred, molecule("[H][CH3]")] {
         let written = smiles::write(&original, smiles::SmilesWriteOptions::canonical()).unwrap();

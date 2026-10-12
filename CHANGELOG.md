@@ -94,6 +94,14 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** `MoleculeWriteErrorKind` says why a SMILES or Molfile writer
+  failed. The new `MissingPerception` kind marks a source that must be
+  perceived before writing, which used to be reported as
+  `UnsupportedRepresentation`. Canonical SMILES classifies a failed hydrogen
+  normalization by its cause instead of always blaming missing perception.
+  `UnsupportedRepresentation` now means only that the format cannot encode the
+  content. `InvalidMetadata` is removed: SDF titles and data fields have always
+  been rejected as `SdfWriteError::InvalidTitle` and `InvalidDataField`.
 - **Breaking:** The interpretation types shared by macromolecular formats have
   format-neutral names and a namespace of their own, `kekule::macromolecular`;
   `kekule::mmcif` still re-exports them. `MmcifInterpretOptions`,

@@ -1,28 +1,12 @@
+//! SDF writing: independent Molfile records, each with a title and data fields.
 use std::fmt;
 use std::io::Write;
 
-use crate::core::Molecule;
 use crate::structure::{AsModelView, EnsembleMemberView, Model, ModelView, TrajectoryFrameView};
 
-use super::molfile_write::MolfileRecord;
+use super::molfile_write::render_model;
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
-use super::v2000::{render_mol_v2000, validate_sdf_data_field, validate_sdf_title};
-use super::v3000::render_mol_v3000;
-use super::{MoleculeWriteError, MolfileVersion};
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum MolfileWriteVersion {
-    #[default]
-    Auto,
-    V2000,
-    V3000,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MolfileWriteOptions {
-    pub version: MolfileWriteVersion,
-}
+use super::{MoleculeWriteError, MolfileWriteVersion};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SdfWriteOptions {
@@ -70,93 +54,6 @@ impl From<MoleculeWriteError> for SdfWriteError {
     fn from(error: MoleculeWriteError) -> Self {
         Self::Molfile(error)
     }
-}
-
-fn render_molfile_record(
-    record: &MolfileRecord<'_>,
-    title: &str,
-    version: MolfileWriteVersion,
-) -> Result<String, MoleculeWriteError> {
-    match version {
-        MolfileWriteVersion::V2000 => render_mol_v2000(record, title),
-        MolfileWriteVersion::V3000 => render_mol_v3000(record, title),
-        MolfileWriteVersion::Auto => {
-            render_mol_v2000(record, title).or_else(|_| render_mol_v3000(record, title))
-        }
-    }
-}
-
-fn render_molfile_model(
-    model: ModelView<'_>,
-    title: &str,
-    version: MolfileWriteVersion,
-) -> Result<String, MoleculeWriteError> {
-    match version {
-        MolfileWriteVersion::V2000 => {
-            render_mol_v2000(&MolfileRecord::model(model, MolfileVersion::V2000)?, title)
-        }
-        MolfileWriteVersion::V3000 => {
-            render_mol_v3000(&MolfileRecord::model(model, MolfileVersion::V3000)?, title)
-        }
-        // A fallback must rebuild its stereo projection from the V3000
-        // coordinates, not reuse a rounded V2000 drawing.
-        MolfileWriteVersion::Auto => render_molfile_model(model, title, MolfileWriteVersion::V2000)
-            .or_else(|_| render_molfile_model(model, title, MolfileWriteVersion::V3000)),
-    }
-}
-
-/// What one Molfile CTAB describes: a coordinate-free molecule written with
-/// zero coordinates, or a geometry-bearing model.
-///
-/// Convert from `&Molecule`, `&Model`, or any borrowed model view through
-/// [`Self::model`]. Specified stereo requires coordinates.
-#[derive(Debug, Clone, Copy)]
-pub enum MolfileSource<'a> {
-    Molecule(&'a Molecule),
-    Model(ModelView<'a>),
-}
-
-impl<'a> MolfileSource<'a> {
-    pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
-        Self::Model(model.as_model_view())
-    }
-}
-
-impl<'a> From<&'a Molecule> for MolfileSource<'a> {
-    fn from(molecule: &'a Molecule) -> Self {
-        Self::Molecule(molecule)
-    }
-}
-
-impl<'a> From<&'a Model> for MolfileSource<'a> {
-    fn from(model: &'a Model) -> Self {
-        Self::model(model)
-    }
-}
-
-/// Writes one CTAB. V2000 rounds coordinates to four decimal places in
-/// angstroms; V3000 keeps round-trip decimal text. Stereo is projected
-/// against the coordinates emitted by the chosen version.
-pub fn write_molfile<'a>(
-    source: impl Into<MolfileSource<'a>>,
-    options: MolfileWriteOptions,
-) -> Result<String, MoleculeWriteError> {
-    match source.into() {
-        MolfileSource::Molecule(molecule) => {
-            render_molfile_record(&MolfileRecord::molecule(molecule)?, "", options.version)
-        }
-        MolfileSource::Model(model) => render_molfile_model(model, "", options.version),
-    }
-}
-
-pub fn write_molfile_to<'a>(
-    writer: &mut impl Write,
-    source: impl Into<MolfileSource<'a>>,
-    options: MolfileWriteOptions,
-) -> Result<(), MoleculeWriteError> {
-    writer
-        .write_all(write_molfile(source, options)?.as_bytes())
-        .map_err(MoleculeWriteError::io)
 }
 
 /// One SDF record: a model view with an optional title and data fields.
@@ -247,12 +144,9 @@ pub fn write_sdf_to<'a, R: Into<SdfRecordSource<'a>>>(
         let record = record.into();
         validate_title(record.title)?;
         for field in record.data_fields {
-            validate_sdf_data_field(field).map_err(|error| SdfWriteError::InvalidDataField {
-                name: field.name().to_owned(),
-                message: error.to_string(),
-            })?;
+            validate_data_field(field)?;
         }
-        let ctab = render_molfile_model(record.model, record.title, options.version)?;
+        let ctab = render_model(record.model, record.title, options.version)?;
         writer.write_all(ctab.as_bytes()).map_err(sdf_io)?;
         for field in record.data_fields {
             writeln!(writer, ">  <{}>\n{}\n", field.name(), field.value()).map_err(sdf_io)?;
@@ -263,7 +157,40 @@ pub fn write_sdf_to<'a, R: Into<SdfRecordSource<'a>>>(
 }
 
 fn validate_title(title: &str) -> Result<(), SdfWriteError> {
-    validate_sdf_title(title).map_err(|error| SdfWriteError::InvalidTitle(error.to_string()))
+    let invalid = |message: &str| Err(SdfWriteError::InvalidTitle(message.to_owned()));
+    if title.contains(['\r', '\n']) {
+        return invalid("SDF record titles cannot contain line breaks");
+    }
+    if title.trim() == "$$$$" {
+        return invalid("SDF record titles cannot be a record delimiter");
+    }
+    Ok(())
+}
+
+fn validate_data_field(field: &SdfDataField) -> Result<(), SdfWriteError> {
+    let invalid = |message: &str| {
+        Err(SdfWriteError::InvalidDataField {
+            name: field.name().to_owned(),
+            message: message.to_owned(),
+        })
+    };
+    let name = field.name();
+    if name.is_empty() || name.trim() != name || name.contains(['<', '>', '\r', '\n']) {
+        return invalid(
+            "SDF data field names must be nonempty, trimmed, and exclude angle brackets or line breaks",
+        );
+    }
+    let value = field.value();
+    if value.contains('\r') {
+        return invalid("SDF data field values cannot contain carriage returns");
+    }
+    if !value.is_empty() && value.split('\n').any(str::is_empty) {
+        return invalid("SDF data field values cannot contain blank lines");
+    }
+    if value.lines().any(|line| line.trim() == "$$$$") {
+        return invalid("SDF data field values cannot contain a record delimiter line");
+    }
+    Ok(())
 }
 
 fn sdf_io(error: std::io::Error) -> SdfWriteError {

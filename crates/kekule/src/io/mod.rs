@@ -7,7 +7,7 @@ mod molfile_document;
 mod molfile_write;
 mod pdb_document;
 mod sdf_document;
-mod serialization_write;
+mod sdf_write;
 pub(crate) mod smiles;
 mod staged_coordinates;
 mod structure_connectivity;
@@ -15,6 +15,7 @@ mod structure_documents;
 mod structure_interpret;
 mod v2000;
 mod v3000;
+mod write_error;
 
 pub use components::{
     Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentError, ComponentLibrary,
@@ -28,9 +29,10 @@ pub use molfile_document::{
     MolfileHeader, MolfileParseError, MolfileParseOptions, MolfileRadical, MolfileStereoGroup,
     MolfileStereoGroupKind, MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion,
 };
+pub use molfile_write::*;
 pub use pdb_document::*;
 pub use sdf_document::*;
-pub use serialization_write::*;
+pub use sdf_write::*;
 pub use smiles::{
     parse_smiles_document, parse_smiles_document_with_options, write_canonical_smiles,
     write_isomeric_smiles, write_smiles, SmilesAtomMapping, SmilesBondMapping,
@@ -52,4 +54,4 @@ pub use structure_interpret::{
     StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
     StructureInterpretationReport,
 };
-pub use v2000::*;
+pub use write_error::*;
