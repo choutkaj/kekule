@@ -6,6 +6,10 @@ use crate::io::MoleculeWriteError;
 
 use super::MolfileRecord;
 
+/// CTfile lines hold at most 80 characters.
+const MAX_LINE: usize = 80;
+const PREFIX: &str = "M  V30 ";
+
 pub(super) fn render(
     record: &MolfileRecord<'_>,
     title: &str,
@@ -13,32 +17,36 @@ pub(super) fn render(
     let mut out = String::new();
     record.push_header(&mut out, title);
     out.push_str("  0  0  0  0  0  0            999 V3000\n");
-    out.push_str("M  V30 BEGIN CTAB\n");
-    out.push_str(&format!(
-        "M  V30 COUNTS {} {} 0 0 0\n",
-        record.atoms.len(),
-        record.bonds.len()
-    ));
-    out.push_str("M  V30 BEGIN ATOM\n");
+    push_line(&mut out, "BEGIN CTAB");
+    push_line(
+        &mut out,
+        &format!(
+            "COUNTS {} {} 0 0 {}",
+            record.atoms.len(),
+            record.bonds.len(),
+            u8::from(record.chiral)
+        ),
+    );
+    push_line(&mut out, "BEGIN ATOM");
     for (index, record_atom) in (1u64..).zip(record.atoms.iter()) {
         let atom = record_atom.atom;
         let point = record_atom.position;
-        out.push_str(&format!(
-            "M  V30 {index} {} {} {} {} {}",
+        let mut line = format!(
+            "{index} {} {} {} {} {}",
             atom.element.symbol(),
             point.x,
             point.y,
             point.z,
             atom.atom_map.unwrap_or(0)
-        ));
+        );
         if atom.formal_charge != 0 {
-            out.push_str(&format!(" CHG={}", atom.formal_charge));
+            line.push_str(&format!(" CHG={}", atom.formal_charge));
         }
         if let Some(isotope) = atom.isotope {
-            out.push_str(&format!(" MASS={isotope}"));
+            line.push_str(&format!(" MASS={isotope}"));
         }
         if let Some(radical) = atom.radical {
-            out.push_str(&format!(" RAD={}", v3000_radical_code(radical)?));
+            line.push_str(&format!(" RAD={}", v3000_radical_code(radical)?));
         }
         match atom.hydrogens {
             ImplicitHydrogens::Inferred => {}
@@ -50,30 +58,27 @@ pub(super) fn render(
                     explicit_valence(record_atom.molecule, record_atom.id) + usize::from(explicit);
                 // VAL=0 means unspecified, whereas -1 explicitly means zero.
                 if valence == 0 {
-                    out.push_str(" VAL=-1");
+                    line.push_str(" VAL=-1");
                 } else {
-                    out.push_str(&format!(" VAL={valence}"));
+                    line.push_str(&format!(" VAL={valence}"));
                 }
             }
         }
-        out.push('\n');
+        push_line(&mut out, &line);
     }
-    out.push_str("M  V30 END ATOM\n");
-    out.push_str("M  V30 BEGIN BOND\n");
+    push_line(&mut out, "END ATOM");
+    push_line(&mut out, "BEGIN BOND");
     for (serial, bond) in (1u64..).zip(record.bonds.iter()) {
         let order_code = v3000_bond_code(bond.order)?;
-        out.push_str(&format!(
-            "M  V30 {serial} {order_code} {} {}",
-            bond.from, bond.to
-        ));
+        let mut line = format!("{serial} {order_code} {} {}", bond.from, bond.to);
         if let Some(cfg) = v3000_bond_cfg(bond.order, bond.stereo)? {
-            out.push_str(&format!(" CFG={cfg}"));
+            line.push_str(&format!(" CFG={cfg}"));
         }
-        out.push('\n');
+        push_line(&mut out, &line);
     }
-    out.push_str("M  V30 END BOND\n");
+    push_line(&mut out, "END BOND");
     if !record.stereo_groups.is_empty() {
-        out.push_str("M  V30 BEGIN COLLECTION\n");
+        push_line(&mut out, "BEGIN COLLECTION");
         let mut absolute_written = false;
         for (index, group) in record.stereo_groups.iter().enumerate() {
             if group.kind == StereoGroupKind::Absolute && absolute_written {
@@ -100,19 +105,39 @@ pub(super) fn render(
                     ))
                 }
             };
-            out.push_str(&format!("M  V30 {kind}"));
-            out.push_str(&format!(" ATOMS=({}", atoms.len()));
+            let mut line = format!("{kind} ATOMS=({}", atoms.len());
             for member in atoms {
-                out.push_str(&format!(" {member}"));
+                line.push_str(&format!(" {member}"));
             }
-            out.push(')');
-            out.push('\n');
+            line.push(')');
+            push_line(&mut out, &line);
         }
-        out.push_str("M  V30 END COLLECTION\n");
+        push_line(&mut out, "END COLLECTION");
     }
-    out.push_str("M  V30 END CTAB\n");
+    push_line(&mut out, "END CTAB");
     out.push_str("M  END\n");
     Ok(out)
+}
+
+/// Writes one `M  V30` record, continuing it on following lines that end in
+/// `-` when it exceeds the CTfile line length. Each break follows a space, so
+/// no continuation starts with whitespace that readers trim; a single token
+/// too long for one line is split inside.
+fn push_line(out: &mut String, body: &str) {
+    let room = MAX_LINE - PREFIX.len() - 1;
+    let mut rest = body;
+    while PREFIX.len() + rest.len() > MAX_LINE {
+        // Readers strip one trailing `-` per line, so a token split inside
+        // keeps any `-` of its own.
+        let split = rest[..room].rfind(' ').map_or(room, |space| space + 1);
+        out.push_str(PREFIX);
+        out.push_str(&rest[..split]);
+        out.push_str("-\n");
+        rest = &rest[split..];
+    }
+    out.push_str(PREFIX);
+    out.push_str(rest);
+    out.push('\n');
 }
 
 fn v3000_bond_code(order: BondOrder) -> Result<u8, MoleculeWriteError> {

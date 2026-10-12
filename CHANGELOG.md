@@ -6,6 +6,8 @@ All notable changes to Kekule are documented in this file.
 
 ### Added
 
+- `smiles::write_to` writes one SMILES record to a sink as a line ending in
+  a newline, completing the `write` and `write_to` pair every writer offers.
 - `ComponentLibrary::amber` and `ComponentLibrary::charmm` define the residue
   and atom names of structures that AMBER and CHARMM tools write, as
   interpretation context for `ConnectivityOptions::components`. Their
@@ -265,6 +267,20 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- V3000 records longer than the CTfile's 80 columns, such as atoms with
+  round-trip coordinates and several properties or large stereo collections,
+  continue on following lines ending in `-` instead of running past the limit.
+- Molfiles set the chiral flag when they assert absolute stereo: a specified
+  tetrahedral or axis center that is ungrouped or in an `ABS` group. An unset
+  flag made BIOVIA-convention readers, and RDKit's
+  `TranslateChiralFlagToStereoGroups`, read those centers as a racemic `AND`
+  group.
+- mmCIF values starting with `$`, `[`, or `]`, which CIF 1.1 reserves, are
+  quoted.
+- Automatic Molfile version choice promotes to V3000 only when V2000 cannot
+  represent the content, and skips the V2000 attempt when the atom and bond
+  counts or enhanced stereo groups already rule it out. Other failures are
+  reported as they occur instead of being retried as V3000.
 - Molfile and SDF output states its dimensional code in the header's program
   line, so readers such as RDKit treat a written conformation as 3D instead of
   as a 2D drawing. The code is `2D` exactly when every written z is zero,

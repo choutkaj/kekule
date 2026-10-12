@@ -4,7 +4,7 @@ use std::io::Write;
 use crate::core::Molecule;
 use crate::structure::{AsModelView, Model, ModelView};
 
-use super::{MoleculeWriteError, MolfileVersion};
+use super::{MoleculeWriteError, MoleculeWriteErrorKind, MolfileVersion};
 
 mod record;
 mod v2000;
@@ -15,9 +15,14 @@ use record::MolfileRecord;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MolfileWriteVersion {
+    /// V2000 when it can represent the content, otherwise V3000. Only an
+    /// [`UnsupportedRepresentation`](MoleculeWriteErrorKind::UnsupportedRepresentation)
+    /// failure promotes; any other failure is returned as is.
     #[default]
     Auto,
+    /// Fixed-width V2000, failing on content it cannot represent.
     V2000,
+    /// Free-format V3000, with records continued past 80 columns.
     V3000,
 }
 
@@ -88,9 +93,10 @@ fn render_molecule(
     match version {
         MolfileWriteVersion::V2000 => v2000::render(record, title),
         MolfileWriteVersion::V3000 => v3000::render(record, title),
-        MolfileWriteVersion::Auto => {
-            v2000::render(record, title).or_else(|_| v3000::render(record, title))
-        }
+        MolfileWriteVersion::Auto => match v2000::render(record, title) {
+            Err(error) if is_representational(&error) => v3000::render(record, title),
+            rendered => rendered,
+        },
     }
 }
 
@@ -107,9 +113,32 @@ pub(super) fn render_model(
         MolfileWriteVersion::V3000 => {
             v3000::render(&MolfileRecord::model(model, MolfileVersion::V3000)?, title)
         }
-        // A fallback must rebuild its stereo projection from the V3000
-        // coordinates, not reuse a rounded V2000 drawing.
-        MolfileWriteVersion::Auto => render_model(model, title, MolfileWriteVersion::V2000)
-            .or_else(|_| render_model(model, title, MolfileWriteVersion::V3000)),
+        MolfileWriteVersion::Auto => {
+            // Size and enhanced stereo are known before any stereo projection,
+            // so content V2000 cannot hold skips the V2000 attempt entirely.
+            let topology = model.topology();
+            let fits = v2000::check_capacity(
+                topology.atom_count(),
+                topology.bond_count(),
+                topology
+                    .molecules()
+                    .any(|occurrence| occurrence.molecule().stereo_groups().next().is_some()),
+            );
+            if fits.is_ok() {
+                match render_model(model, title, MolfileWriteVersion::V2000) {
+                    Err(error) if is_representational(&error) => {}
+                    rendered => return rendered,
+                }
+            }
+            // The fallback rebuilds its stereo projection from the V3000
+            // coordinates rather than reusing a rounded V2000 drawing.
+            render_model(model, title, MolfileWriteVersion::V3000)
+        }
     }
+}
+
+/// Only a format limit promotes Auto to V3000; any other failure would
+/// recur in V3000 and is reported as V2000 found it.
+fn is_representational(error: &MoleculeWriteError) -> bool {
+    error.kind() == MoleculeWriteErrorKind::UnsupportedRepresentation
 }

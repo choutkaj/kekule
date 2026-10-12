@@ -106,6 +106,123 @@ fn smiles_writes_molecules_and_repeated_topology_instances_in_authoritative_orde
 }
 
 #[test]
+fn smiles_write_to_emits_each_record_as_one_line() {
+    let mut output = Vec::new();
+    for source in ["OCC", "[Na+].[Cl-]"] {
+        smiles::write_to(
+            &mut output,
+            &smiles::to_topology(source).unwrap(),
+            SmilesWriteOptions::canonical(),
+        )
+        .unwrap();
+    }
+    assert_eq!(String::from_utf8(output).unwrap(), "CCO\n[Cl-].[Na+]\n");
+}
+
+#[test]
+fn molfile_v3000_continues_records_past_80_columns() {
+    // CTfile lines hold at most 80 characters; a longer V3000 record ends
+    // each line but its last with `-` and breaks after a space, because
+    // readers trim leading whitespace from continuation lines.
+    let charged = model(
+        "[13CH3-]",
+        &[[-1.2345678901234567, -2.345678901234568, -3.456789012345679]],
+    );
+    let text = molfile::write(
+        &charged,
+        MolfileWriteOptions {
+            version: MolfileWriteVersion::V3000,
+        },
+    )
+    .unwrap();
+    let stored = charged
+        .positions()
+        .position_at(0)
+        .unwrap()
+        .value_in(ANGSTROM)
+        .unwrap();
+    let atom_block = text
+        .lines()
+        .skip_while(|line| *line != "M  V30 BEGIN ATOM")
+        .skip(1)
+        .take_while(|line| *line != "M  V30 END ATOM")
+        .collect::<Vec<_>>();
+    // `CHG=-1` would end the first line at column 81, so it starts the second.
+    let first = format!("M  V30 1 C {} {} {} 0 -", stored.x, stored.y, stored.z);
+    assert_eq!(first.len(), 74);
+    assert_eq!(
+        atom_block,
+        [first.as_str(), "M  V30 CHG=-1 MASS=13 VAL=3"],
+        "{text}"
+    );
+    let reread = molfile::parse_str(&text).unwrap();
+    let atom = &reread.atoms()[0];
+    assert_eq!(atom.formal_charge(), -1);
+    assert_eq!(atom.isotope(), Some(13));
+    assert_eq!(atom.position(), stored);
+}
+
+#[test]
+fn molfile_chiral_flag_states_whether_stereo_is_absolute() {
+    // An unset flag makes BIOVIA-convention readers, and RDKit's
+    // TranslateChiralFlagToStereoGroups, treat ungrouped centers as one
+    // racemic AND group; Kekule reads ungrouped stereo as absolute.
+    let layout = [
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [1.0, -0.5, 0.0],
+        [-1.0, -0.5, 0.0],
+    ];
+    for (source, version, chiral) in [
+        ("CC(N)O", MolfileWriteVersion::V2000, false),
+        ("C[C@H](N)O", MolfileWriteVersion::V2000, true),
+        ("C[C@H](N)O", MolfileWriteVersion::V3000, true),
+        ("C[C@H](N)O |a:1|", MolfileWriteVersion::V3000, true),
+        ("C[C@H](N)O |&1:1|", MolfileWriteVersion::V3000, false),
+        ("C[C@H](N)O |o1:1|", MolfileWriteVersion::V3000, false),
+    ] {
+        let text =
+            molfile::write(&model(source, &layout), MolfileWriteOptions { version }).unwrap();
+        let document = molfile::parse_str(&text).unwrap();
+        assert_eq!(
+            document.chiral_flag(),
+            chiral,
+            "{source} {version:?}\n{text}"
+        );
+    }
+}
+
+#[test]
+fn automatic_molfile_version_writes_what_explicit_v3000_writes_when_v2000_cannot() {
+    let layout = [
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [1.0, -0.5, 0.0],
+        [-1.0, -0.5, 0.0],
+    ];
+    let enhanced = model("C[C@H](N)O |&1:1|", &layout);
+    let sodium = molecule("[Na+]");
+    let large = Model::new(
+        Topology::from_molecules(vec![sodium; 1_000]).unwrap(),
+        Positions::zeros(1_000),
+    )
+    .unwrap();
+    for model in [&enhanced, &large] {
+        let explicit = molfile::write(
+            model,
+            MolfileWriteOptions {
+                version: MolfileWriteVersion::V3000,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            molfile::write(model, MolfileWriteOptions::default()).unwrap(),
+            explicit
+        );
+    }
+}
+
+#[test]
 fn molfile_model_flattens_disconnected_topology_and_preserves_coordinates() {
     let model = model(
         "CO.O",
@@ -802,6 +919,10 @@ impl Write for FailingWriter {
 #[test]
 fn streaming_writers_report_structured_io_failures() {
     let model = model("C", &[[0.0, 0.0, 0.0]]);
+    assert!(matches!(
+        smiles::write_to(&mut FailingWriter, &molecule("C"), SmilesWriteOptions::default()),
+        Err(error) if error.kind() == MoleculeWriteErrorKind::Io(io::ErrorKind::BrokenPipe)
+    ));
     assert!(matches!(
         molfile::write_to(&mut FailingWriter, &model, MolfileWriteOptions::default()),
         Err(error) if error.kind() == MoleculeWriteErrorKind::Io(io::ErrorKind::BrokenPipe)

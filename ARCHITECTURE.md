@@ -528,7 +528,9 @@ owners. See the [public format namespaces](crates/kekule/src/lib.rs),
 [structure interpretation](crates/kekule/src/io/structure_interpret/mod.rs).
 
 Writers live in format namespaces as one `write(source, options)` returning a
-string and one `write_to(writer, source, options)` sink writer per format. Each
+string and one `write_to(writer, source, options)` sink writer per format. Sink
+writers stream into the caller's writer without buffering it, as trajectory
+codecs do; callers wrap unbuffered sinks, and only path writers buffer. Each
 source type converts from the inputs that format can represent: molecules,
 models, collection items, interpreted records, or mmCIF block sources carrying
 classifications or reports. Models and collection items share a borrowed

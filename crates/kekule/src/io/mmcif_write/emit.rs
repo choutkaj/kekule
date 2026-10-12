@@ -228,7 +228,9 @@ fn cif_value(value: &str, field: &'static str) -> Result<String, MmcifWriteError
         && !value
             .chars()
             .any(|character| character.is_ascii_whitespace() || character == '#')
-        && !value.starts_with(';')
+        // CIF 1.1 reserves `$` (save-frame references) and brackets at the
+        // start of an unquoted value, as well as `;` text fields.
+        && !value.starts_with([';', '$', '[', ']'])
         && !value.contains(['\'', '"']);
     if bare {
         return Ok(value.to_owned());
@@ -259,5 +261,35 @@ fn bond_order_code(order: BondOrder) -> &'static str {
         // Metal coordination carries no conventional bond order.
         BondOrder::Dative => "?",
         BondOrder::Zero => unreachable!("unsupported bond order was rejected"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cif_value;
+
+    #[test]
+    fn cif_values_quote_exactly_the_text_cif_cannot_leave_bare() {
+        for (value, expected) in [
+            ("CA", "CA"),
+            ("1-2", "1-2"),
+            ("a#b", "'a#b'"),
+            ("two words", "'two words'"),
+            ("C1'", "\"C1'\""),
+            ("say \"hi\"", "'say \"hi\"'"),
+            (".", "'.'"),
+            ("?", "'?'"),
+            ("_tag", "'_tag'"),
+            ("#comment", "'#comment'"),
+            (";text", "';text'"),
+            ("$frame", "'$frame'"),
+            ("[1]", "'[1]'"),
+            ("]", "']'"),
+            ("loop_", "'loop_'"),
+            ("DATA_block", "'DATA_block'"),
+            ("save_frame", "'save_frame'"),
+        ] {
+            assert_eq!(cif_value(value, "_test").unwrap(), expected, "{value}");
+        }
     }
 }

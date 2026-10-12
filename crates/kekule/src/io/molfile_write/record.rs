@@ -46,6 +46,11 @@ pub(super) struct MolfileRecord<'a> {
     pub(super) atoms: Vec<MolfileAtom<'a>>,
     pub(super) bonds: Vec<MolfileBond>,
     pub(super) stereo_groups: Vec<MolfileStereoGroup>,
+    /// The CTfile chiral flag. Readers following the BIOVIA convention, and
+    /// RDKit's `TranslateChiralFlagToStereoGroups`, read an unset flag as
+    /// putting every ungrouped center in one racemic AND group, so the flag
+    /// is set whenever the source asserts an absolute configuration.
+    pub(super) chiral: bool,
 }
 
 #[derive(Debug)]
@@ -105,6 +110,7 @@ impl<'a> MolfileRecord<'a> {
             atoms,
             bonds,
             stereo_groups,
+            chiral: asserts_absolute_stereo(molecule),
         })
     }
 
@@ -204,8 +210,27 @@ impl<'a> MolfileRecord<'a> {
             atoms,
             bonds,
             stereo_groups,
+            chiral: topology
+                .molecules()
+                .any(|occurrence| asserts_absolute_stereo(occurrence.molecule())),
         })
     }
+}
+
+/// Whether a specified tetrahedral or axis configuration is absolute: either
+/// ungrouped, which Kekule reads as absolute, or in an ABS group.
+fn asserts_absolute_stereo(molecule: &Molecule) -> bool {
+    molecule.stereo_elements().any(|(_, element)| {
+        element.is_specified()
+            && !matches!(element.kind, StereoElementKind::DoubleBond(_))
+            && element.group.is_none_or(|group| {
+                molecule
+                    .stereo_group(group)
+                    .expect("a grouped stereo element names a live group")
+                    .kind
+                    == StereoGroupKind::Absolute
+            })
+    })
 }
 
 fn prepare_bond(

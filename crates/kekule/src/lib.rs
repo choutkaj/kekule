@@ -432,6 +432,20 @@ pub mod smiles {
             }
         }
     }
+
+    /// Writes one SMILES record as a line terminated by `\n`, so repeated
+    /// calls produce a line-delimited SMILES file. See [`write()`].
+    pub fn write_to<'a>(
+        writer: &mut impl std::io::Write,
+        source: impl Into<SmilesSource<'a>>,
+        options: SmilesWriteOptions,
+    ) -> Result<(), MoleculeWriteError> {
+        let mut line = write(source, options)?;
+        line.push('\n');
+        writer
+            .write_all(line.as_bytes())
+            .map_err(MoleculeWriteError::io)
+    }
 }
 
 /// Molfile parsing, interpretation, and V2000/V3000 writing.
@@ -601,6 +615,9 @@ pub mod sdf {
         crate::io::write_sdf(records, options)
     }
 
+    /// Streams the records [`write()`] would return, each as soon as it is
+    /// rendered; wrap an unbuffered sink such as a `File` in a
+    /// [`BufWriter`](std::io::BufWriter).
     pub fn write_to<'a, R: Into<SdfRecordSource<'a>>>(
         writer: &mut impl std::io::Write,
         records: impl IntoIterator<Item = R>,
@@ -782,6 +799,10 @@ pub mod mmcif {
         crate::io::write_mmcif(blocks, options)
     }
 
+    /// Streams the blocks [`write()`] would return. Values reach `writer` as
+    /// they are formatted, so memory stays bounded however large the
+    /// structure; wrap an unbuffered sink such as a `File` in a
+    /// [`BufWriter`](std::io::BufWriter).
     pub fn write_to<'a, B: Into<MmcifBlockSource<'a>>>(
         writer: &mut impl std::io::Write,
         blocks: impl IntoIterator<Item = B>,
