@@ -56,16 +56,11 @@ impl<'a> MolfileRecord<'a> {
     /// Writes the three header lines. The program line follows the CTfile
     /// `IIPPPPPPPPMMDDYYHHmmdd` layout with blank initials and timestamp, so
     /// output stays deterministic and the dimensional code lands in columns
-    /// 21-22. Readers choose drawing or conformation semantics from that code,
-    /// so it states exactly what import concludes from the emitted
-    /// coordinates: a flat XY drawing is `2D`, anything else is `3D`.
+    /// 21-22. Readers such as RDKit take any nonzero z as 3D whatever this
+    /// code says, so it is `2D` exactly when every emitted z is zero and `3D`
+    /// otherwise.
     pub(super) fn push_header(&self, out: &mut String, title: &str) {
-        let points = self
-            .atoms
-            .iter()
-            .map(|atom| atom.position)
-            .collect::<Vec<_>>();
-        let dimension = if molfile_coordinates_are_flat(&points) {
+        let dimension = if self.atoms.iter().all(|atom| atom.position.z == 0.0) {
             "2D"
         } else {
             "3D"
@@ -184,6 +179,21 @@ impl<'a> MolfileRecord<'a> {
                 projected,
                 &indexes,
             )?);
+        }
+        // Readers such as RDKit take any nonzero z as 3D, then derive stereo
+        // from coordinates and ignore bond marks. A flat drawing whose marks
+        // carry stereo is emitted on z = 0, which moves no mark because XY is
+        // unchanged. Every other record keeps its coordinates.
+        let points = atoms.iter().map(|atom| atom.position).collect::<Vec<_>>();
+        if molfile_coordinates_are_flat(&points)
+            && bonds.iter().any(|bond| {
+                bond.stereo
+                    .is_some_and(|kind| kind != SourceStereoBondMarkKind::MolfileDoubleBondGeometry)
+            })
+        {
+            for atom in &mut atoms {
+                atom.position.z = 0.0;
+            }
         }
         let mut stereo_groups = Vec::new();
         for occurrence in topology.molecules() {

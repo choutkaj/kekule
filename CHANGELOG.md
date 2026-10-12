@@ -259,10 +259,12 @@ All notable changes to Kekule are documented in this file.
 
 - Molfile and SDF output states its dimensional code in the header's program
   line, so readers such as RDKit treat a written conformation as 3D instead of
-  as a 2D drawing. Coordinates on one z plane, including the zeros of a
-  coordinate-free molecule, are `2D`, matching how Kekule reads them; any other
-  coordinates are `3D`. The program name moves to the CTfile program columns
-  3-10, leaving the user-initials field blank.
+  as a 2D drawing. The code is `2D` exactly when every written z is zero,
+  including a coordinate-free molecule, since RDKit takes any nonzero z as 3D
+  and then ignores wedges. A flat drawing whose wedge or crossed bond carries
+  stereo is therefore written on the z = 0 plane; other coordinates are written
+  as given. The program name moves to the CTfile program columns 3-10, leaving
+  the user-initials field blank.
 - mmCIF residues whose bonds come from the block's own `_chem_comp_bond` table
   attach the hydrogens the table omits, such as N-terminal `H3` or a
   5'-terminal `HO5'`, to their nearest heavy atom, as residues bonded from
