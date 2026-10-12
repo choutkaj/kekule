@@ -2,8 +2,10 @@
 //!
 //! Atoms are paired by [`FitAtoms`]: an [`AtomSelection`] pairs each selected
 //! atom with itself (both sides share one topology layout), and an
-//! [`AtomCorrespondence`] pairs atoms of independent topologies. Every
-//! operation accepts either through `impl Into<FitAtoms>`.
+//! [`AtomCorrespondence`] pairs atoms of independent topologies, and a
+//! [`SymmetricSelection`] pairs a selection under every permutation of
+//! symmetry-equivalent atoms, keeping the smallest RMSD. Every operation
+//! accepts any of them through `impl Into<FitAtoms>`.
 //!
 //! - [`kabsch`] fits one view onto another and returns the moving-to-reference
 //!   transform and post-fit RMSD.
@@ -74,11 +76,18 @@ use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 mod collection;
 mod correspondence;
+mod symmetry;
 pub use collection::{AlignedRmsdOptions, Reference, SuperpositionReport};
 pub use correspondence::{AtomCorrespondence, AtomCorrespondenceError, CorrespondenceSide};
+pub use symmetry::{SymmetricSelection, SymmetryError, SymmetryLimits};
 
 #[cfg(test)]
 mod correspondence_tests;
+#[cfg(test)]
+mod symmetry_tests;
+
+/// Moving/reference topology atom index pairs.
+pub(crate) type Pairs = Vec<(TopologyAtomIndex, TopologyAtomIndex)>;
 
 const MIN_FIT_ATOMS: usize = 3;
 
@@ -98,6 +107,11 @@ pub enum FitAtoms<'a> {
     Selection(&'a AtomSelection),
     /// Explicit ordered pairs between two topologies, in pair order.
     Correspondence(&'a AtomCorrespondence),
+    /// A selection paired under every symmetry permutation, keeping the one
+    /// with the smallest RMSD; both views and the selection share one
+    /// topology layout. Pairs follow sorted selection order on the reference
+    /// side.
+    Symmetric(&'a SymmetricSelection),
 }
 
 impl<'a> From<&'a AtomSelection> for FitAtoms<'a> {
@@ -112,12 +126,19 @@ impl<'a> From<&'a AtomCorrespondence> for FitAtoms<'a> {
     }
 }
 
+impl<'a> From<&'a SymmetricSelection> for FitAtoms<'a> {
+    fn from(selection: &'a SymmetricSelection) -> Self {
+        Self::Symmetric(selection)
+    }
+}
+
 impl FitAtoms<'_> {
     /// Number of atom pairs.
     pub fn len(self) -> usize {
         match self {
             Self::Selection(selection) => selection.indices().len(),
             Self::Correspondence(correspondence) => correspondence.len(),
+            Self::Symmetric(selection) => selection.len(),
         }
     }
 
@@ -125,34 +146,48 @@ impl FitAtoms<'_> {
         self.len() == 0
     }
 
-    /// Validates the pairing against both views and returns its index pairs.
-    pub(crate) fn pairs(
+    /// Validates the pairing against both views and returns its candidate
+    /// pair sets: one, or one per symmetry permutation with the identity
+    /// first. Every set has the same length and reference order.
+    pub(crate) fn pair_sets(
         self,
         moving: ModelView<'_>,
         reference: ModelView<'_>,
-    ) -> Result<Vec<(TopologyAtomIndex, TopologyAtomIndex)>, AlignmentError> {
+    ) -> Result<Vec<Pairs>, AlignmentError> {
         match self {
             Self::Selection(selection) => {
-                if !moving.topology().shares_layout(reference.topology()) {
-                    return Err(AlignmentError::TopologyMismatch);
-                }
-                selection
-                    .ensure_compatible(moving.topology_arc())
-                    .map_err(|_| AlignmentError::SelectionTopologyMismatch)?;
-                Ok(selection
+                check_selection(selection, moving, reference)?;
+                Ok(vec![selection
                     .indices()
                     .iter()
                     .map(|index| (*index, *index))
-                    .collect())
+                    .collect()])
             }
             Self::Correspondence(correspondence) => {
                 correspondence
                     .ensure_compatible(moving.topology(), reference.topology())
                     .map_err(AlignmentError::Correspondence)?;
-                Ok(correspondence.index_pairs().to_vec())
+                Ok(vec![correspondence.index_pairs().to_vec()])
+            }
+            Self::Symmetric(symmetric) => {
+                check_selection(symmetric.selection(), moving, reference)?;
+                Ok(symmetric.pair_sets())
             }
         }
     }
+}
+
+fn check_selection(
+    selection: &AtomSelection,
+    moving: ModelView<'_>,
+    reference: ModelView<'_>,
+) -> Result<(), AlignmentError> {
+    if !moving.topology().shares_layout(reference.topology()) {
+        return Err(AlignmentError::TopologyMismatch);
+    }
+    selection
+        .ensure_compatible(moving.topology_arc())
+        .map_err(|_| AlignmentError::SelectionTopologyMismatch)
 }
 
 /// Fits `moving` onto `reference` with uniform weights.
@@ -179,9 +214,10 @@ pub fn kabsch_with_options<'a>(
     atoms: impl Into<FitAtoms<'a>>,
     options: AlignmentOptions<'_>,
 ) -> Result<RigidAlignment, AlignmentError> {
-    let pairs = atoms.into().pairs(moving, reference)?;
-    let weights = NormalizedWeights::new(options.weighting, pairs.len())?;
-    kabsch_pairs(moving, reference, &pairs, weights, options.periodic_policy)
+    let atoms = atoms.into();
+    let sets = atoms.pair_sets(moving, reference)?;
+    let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
+    best_kabsch(moving, reference, &sets, weights, options.periodic_policy)
 }
 
 /// Direct RMSD over paired atoms, measured exactly as stored without fitting.
@@ -200,17 +236,61 @@ pub fn rmsd_with_options<'a>(
     atoms: impl Into<FitAtoms<'a>>,
     options: AlignmentOptions<'_>,
 ) -> Result<Quantity<f64>, AlignmentError> {
-    let pairs = atoms.into().pairs(moving, reference)?;
-    let weights = NormalizedWeights::new(options.weighting, pairs.len())?;
-    let value = measure_pairs(
+    let atoms = atoms.into();
+    let sets = atoms.pair_sets(moving, reference)?;
+    let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
+    let value = best_measure(
         moving,
         reference,
-        &pairs,
+        &sets,
         weights,
         options.periodic_policy,
         None,
     )?;
     Ok(Quantity::new(value, CANONICAL_LENGTH_UNIT))
+}
+
+/// The fit with the smallest RMSD over candidate pair sets; ties keep the
+/// earliest set. Any failing set fails the fit.
+pub(crate) fn best_kabsch(
+    moving: ModelView<'_>,
+    reference: ModelView<'_>,
+    sets: &[Pairs],
+    weights: NormalizedWeights<'_>,
+    policy: PeriodicPolicy,
+) -> Result<RigidAlignment, AlignmentError> {
+    let mut best: Option<RigidAlignment> = None;
+    for pairs in sets {
+        let alignment = kabsch_pairs(moving, reference, pairs, weights, policy)?;
+        if best
+            .as_ref()
+            .is_none_or(|best| alignment.rmsd.value() < best.rmsd.value())
+        {
+            best = Some(alignment);
+        }
+    }
+    best.ok_or(AlignmentError::EmptySelection)
+}
+
+/// The smallest measured RMSD over candidate pair sets.
+pub(crate) fn best_measure(
+    moving: ModelView<'_>,
+    reference: ModelView<'_>,
+    sets: &[Pairs],
+    weights: NormalizedWeights<'_>,
+    policy: PeriodicPolicy,
+    transform: Option<RigidTransform>,
+) -> Result<f64, AlignmentError> {
+    let mut best = f64::INFINITY;
+    for pairs in sets {
+        best = best.min(measure_pairs(
+            moving, reference, pairs, weights, policy, transform,
+        )?);
+    }
+    if sets.is_empty() {
+        return Err(AlignmentError::EmptySelection);
+    }
+    Ok(best)
 }
 
 fn check_periodic(

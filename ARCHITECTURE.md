@@ -593,6 +593,14 @@ system sizes and does not claim chemical equivalence or rebind either owner.
 See [alignment correspondence](crates/kekule/src/alignment/correspondence.rs) and
 [collection alignment](crates/kekule/src/alignment/collection.rs).
 
+Symmetry-corrected alignment pairs one selection under every permutation of
+equivalent atoms and keeps the smallest RMSD. The permutations are prepared once
+per selection and layout by an exact, bounded search for graph automorphisms that
+fix the selection setwise and never exchange molecule instances. Equivalence uses
+element, isotope, hydrogen count, and connectivity, not bond orders or charges,
+so localized resonance forms stay equivalent. Exceeding a bound is an error, never
+a truncated result. See [symmetry permutations](crates/kekule/src/alignment/symmetry.rs).
+
 Reconstruction validates represented graph connectedness first, then property
 references/dimensions, then installs checked perception. Topology reconstruction
 restores definitions, instances, classes, hierarchy, qualified IDs, and dense
