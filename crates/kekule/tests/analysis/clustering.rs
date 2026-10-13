@@ -634,3 +634,97 @@ fn member_distances_do_not_depend_on_member_order() {
         Err(ClusteringError::DirectedCorrespondence)
     );
 }
+
+/// Five members of one shape with the given weights.
+fn weighted_members(weights: [f64; 5]) -> Ensemble {
+    Ensemble::from_items(
+        kekule::smiles::to_topology("CCCC").unwrap(),
+        weights.map(|weight| member(shape(false, false), weight)),
+    )
+    .unwrap()
+}
+
+#[test]
+fn k_medoids_minimizes_the_weighted_distance_to_medoids() {
+    let distances = five_points();
+    // Points 0, 1, 4, 10, 11.5 nm. BUILD picks 4 (summed distance 20.5),
+    // then 10; swapping 4 for 1 lowers the total from 8.5 to the optimum
+    // 5.5, which {1, 11.5} only ties.
+    let uniform = weighted_members([1.0; 5]);
+    let two = uniform.cluster_k_medoids(&distances, 2).unwrap();
+    assert_eq!(two.assignments(), [0, 0, 0, 1, 1]);
+    assert_eq!(two.representatives(), [1, 3]);
+
+    // Weighting 4 by 10 and 11.5 by 2 makes {4, 11.5} optimal at 8.5.
+    let weighted = weighted_members([1.0, 1.0, 10.0, 1.0, 2.0]);
+    let two = weighted.cluster_k_medoids(&distances, 2).unwrap();
+    assert_eq!(two.assignments(), [0, 0, 0, 1, 1]);
+    assert_eq!(two.representatives(), [2, 4]);
+
+    // One cluster gathers around the weighted medoid; one per member keeps
+    // every member alone.
+    assert_eq!(
+        uniform.cluster_k_medoids(&distances, 1).unwrap(),
+        partition(&[0, 0, 0, 0, 0], &[2])
+    );
+    assert_eq!(
+        uniform.cluster_k_medoids(&distances, 5).unwrap(),
+        partition(&[0, 1, 2, 3, 4], &[0, 1, 2, 3, 4])
+    );
+}
+
+#[test]
+fn k_medoids_keeps_each_medoid_in_its_own_cluster() {
+    // Identical members: every choice ties, so the lowest indices become
+    // medoids, and the free member joins the lower one.
+    let topology = kekule::smiles::to_topology("CCCC").unwrap();
+    let identical = Ensemble::from_items(
+        topology,
+        [1.0; 3].map(|weight| member(shape(false, false), weight)),
+    )
+    .unwrap();
+    let zeros = DistanceMatrix::from_condensed(3, Quantity::new(vec![0.0; 3], NANOMETER)).unwrap();
+    assert_eq!(
+        identical.cluster_k_medoids(&zeros, 2).unwrap(),
+        partition(&[0, 1, 0], &[0, 1])
+    );
+}
+
+#[test]
+fn k_medoids_rejects_invalid_cluster_counts_and_matrices() {
+    let ensemble = weighted_members([1.0; 5]);
+    let distances = five_points();
+    for requested in [0, 6] {
+        assert_eq!(
+            ensemble.cluster_k_medoids(&distances, requested),
+            Err(ClusteringError::InvalidClusterCount {
+                requested,
+                members: 5,
+            })
+        );
+    }
+    assert_eq!(
+        ensemble.cluster_k_medoids(&line_distances(&[0.0, 1.0]), 1),
+        Err(ClusteringError::MatrixMismatch {
+            expected: 5,
+            actual: 2,
+        })
+    );
+    let topology = kekule::smiles::to_topology("CCCC").unwrap();
+    let empty = Ensemble::new(topology);
+    let none = DistanceMatrix::from_condensed(0, Quantity::new(Vec::new(), NANOMETER)).unwrap();
+    assert_eq!(
+        empty.cluster_k_medoids(&none, 0).unwrap(),
+        partition(&[], &[])
+    );
+
+    // Fitted RMSDs separate the two shapes into two medoid clusters.
+    let (topology, shapes) = two_shapes();
+    let matrix = shapes
+        .pairwise_rmsd(&AtomSelection::all(&topology))
+        .unwrap();
+    assert_eq!(
+        shapes.cluster_k_medoids(&matrix, 2).unwrap().assignments(),
+        [0, 0, 1, 1]
+    );
+}

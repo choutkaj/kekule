@@ -85,7 +85,7 @@ impl DistanceMatrix {
     }
 
     /// The distance between two members in canonical units.
-    fn at(&self, first: usize, second: usize) -> f64 {
+    pub(super) fn at(&self, first: usize, second: usize) -> f64 {
         match first.cmp(&second) {
             std::cmp::Ordering::Equal => 0.0,
             std::cmp::Ordering::Less => self.values[condensed_index(self.members, first, second)],
@@ -334,14 +334,7 @@ impl Ensemble {
     /// The weighted medoid of every cluster of `assignments`, whose clusters
     /// are numbered densely from zero.
     fn weighted_medoids(&self, distances: &DistanceMatrix, assignments: &[usize]) -> Vec<usize> {
-        let maximum = self
-            .iter()
-            .map(|member| member.weight())
-            .fold(0.0_f64, f64::max);
-        let weights = self
-            .iter()
-            .map(|member| member.weight() / maximum)
-            .collect::<Vec<_>>();
+        let weights = self.scaled_weights();
         let clusters = assignments.iter().max().map_or(0, |last| last + 1);
         let mut members = vec![Vec::new(); clusters];
         for (member, cluster) in assignments.iter().enumerate() {

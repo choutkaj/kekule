@@ -12,6 +12,10 @@
 //! medoid. Complete linkage cut at height `h` bounds every cluster's
 //! diameter by `h`.
 //!
+//! [`Ensemble::cluster_k_medoids`] finds a given number of clusters directly,
+//! choosing medoid members that minimize the weight-summed distance from
+//! every member to its nearest medoid, so populated members attract medoids.
+//!
 //! [`Ensemble::cluster_by_radius`] is leader clustering on fitted RMSD. It
 //! needs no matrix, so it scales to larger ensembles. With
 //! a [`SymmetricSelection`](crate::alignment::SymmetricSelection) and a small
@@ -61,6 +65,7 @@
 use std::fmt;
 
 mod hierarchical;
+mod medoids;
 pub use hierarchical::{Cut, Dendrogram, DistanceMatrix, Linkage, Merge};
 
 use crate::alignment::{
