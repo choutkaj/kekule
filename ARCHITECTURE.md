@@ -463,7 +463,10 @@ check cardinality; plural molecule projections retain every connected component
 in source order. MOL/SDF interpretation supplies deterministic synthetic hierarchy
 at topology scope. In a conformation the coordinates are the configuration:
 wedges and atom parities that contradict them yield to them with a warning,
-while flat drawings take configurations from those annotations. mmCIF preserves label/author hierarchy identities and interprets
+while flat drawings take configurations from those annotations. A
+conformation gives E/Z only to double bonds that are eligible before symmetry
+analysis, so an endpoint with two identical terminal ligands has none, whereas
+every double bond in a flat drawing asserts one. mmCIF preserves label/author hierarchy identities and interprets
 all coordinate-model candidates against the same identity, chemistry, and dense
 layout. PDB carries author identities only: a residue is a run of consecutive
 records, and a number that recurs after other residues names a new residue.

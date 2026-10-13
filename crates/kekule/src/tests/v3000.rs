@@ -593,6 +593,114 @@ fn molfile_model_does_not_promote_unasserted_alkene_geometry_to_specified_stereo
     assert_eq!(molecule.stereo_elements().count(), 0);
 }
 
+/// Propene drawn with its hydrogens, as V2000 text. `deuterium` makes one
+/// methylene hydrogen 2H; `methyl_z` lifts the methyl out of the drawing plane.
+fn drawn_propene(deuterium: bool, methyl_z: f64) -> String {
+    let atoms = [
+        ("C", 0.0, 0.0, 0.0),
+        ("C", 1.33, 0.0, 0.0),
+        ("C", 2.0, 1.2, methyl_z),
+        ("H", -0.55, 0.95, 0.0),
+        ("H", -0.55, -0.95, 0.0),
+        ("H", 1.9, -0.95, 0.0),
+    ];
+    let mut source = "propene\n  kekule\n\n  6  5  0  0  0  0            999 V2000\n".to_owned();
+    for (symbol, x, y, z) in atoms {
+        source.push_str(&format!(
+            "{x:10.4}{y:10.4}{z:10.4} {symbol:<3} 0  0  0  0  0  0\n"
+        ));
+    }
+    source.push_str("  1  2  2  0\n  2  3  1  0\n  1  4  1  0\n  1  5  1  0\n  2  6  1  0\n");
+    if deuterium {
+        source.push_str("M  ISO  1   4   2\n");
+    }
+    source + "M  END\n"
+}
+
+#[test]
+fn molfile_conformation_specifies_e_z_only_at_locally_eligible_double_bonds() {
+    // RDKit 2026.03.3 assigns no E/Z to either propene and Z to the
+    // 3D isotopologue, whose 2H and methyl share a side. Kekule keeps the E/Z
+    // that a flat drawing asserts.
+    let together = DoubleBondStereo {
+        bond: BondId::new(0),
+        left: AtomId::new(0),
+        right: AtomId::new(1),
+        left_carrier: StereoCarrier::Atom(AtomId::new(3)),
+        right_carrier: StereoCarrier::Atom(AtomId::new(2)),
+        orientation: Some(DoubleBondOrientation::Together),
+    };
+    for (deuterium, methyl_z, expected) in [
+        (false, 0.1, vec![]),
+        (false, 0.0, vec![together.clone()]),
+        (true, 0.1, vec![together.clone()]),
+    ] {
+        let molecule = read_molfile(&drawn_propene(deuterium, methyl_z)).unwrap();
+        let double_bonds = molecule
+            .stereo_elements()
+            .map(|(_, element)| match &element.kind {
+                StereoElementKind::DoubleBond(stereo) => stereo.clone(),
+                other => panic!("expected double-bond stereo, found {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            double_bonds, expected,
+            "deuterium {deuterium}, z {methyl_z}"
+        );
+    }
+}
+
+#[test]
+fn molfile_conformation_writes_no_e_z_at_ineligible_double_bonds() {
+    // A conformation neither invents an unknown mark for the methylene nor
+    // carries an E/Z assertion there, which its coordinates cannot express.
+    let interpretation = molfile::parse_str(&drawn_propene(false, 0.1))
+        .unwrap()
+        .interpret()
+        .unwrap();
+    for version in [
+        molfile::MolfileWriteVersion::V2000,
+        molfile::MolfileWriteVersion::V3000,
+    ] {
+        let written = molfile::write(
+            interpretation.model(),
+            molfile::MolfileWriteOptions { version },
+        )
+        .unwrap();
+        assert!(read_molfile(&written)
+            .unwrap()
+            .stereo_elements()
+            .next()
+            .is_none());
+    }
+
+    let mut asserted = interpretation.molecules().next().unwrap().clone();
+    let mut editor = asserted.edit();
+    editor
+        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
+                bond: BondId::new(0),
+                left: AtomId::new(0),
+                right: AtomId::new(1),
+                left_carrier: StereoCarrier::Atom(AtomId::new(3)),
+                right_carrier: StereoCarrier::Atom(AtomId::new(2)),
+                orientation: Some(DoubleBondOrientation::Together),
+            },
+        )))
+        .unwrap();
+    asserted = editor.finish().unwrap();
+    let model = Model::from_molecule(asserted, interpretation.model().positions()).unwrap();
+    let error = molfile::write(&model, molfile::MolfileWriteOptions::default()).unwrap_err();
+    assert_eq!(
+        error.kind(),
+        molfile::MoleculeWriteErrorKind::UnsupportedRepresentation
+    );
+    assert_eq!(
+        error.message(),
+        "cannot encode specified double-bond stereo at bond b0: a conformation's coordinates give it no E/Z, since it is aromatic or an endpoint has identical terminal ligands"
+    );
+}
+
 #[test]
 fn molfile_model_e_z_preserves_explicit_carrier_pairs_and_explicit_hydrogen() {
     for smiles in ["F/C(Cl)=C(Br)/I", "[H]/C(F)=C(Cl)/Br"] {

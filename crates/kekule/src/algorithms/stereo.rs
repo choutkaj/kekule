@@ -700,6 +700,23 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     candidates
 }
 
+/// Double bonds that are stereo candidates before graph-symmetry analysis:
+/// supported geometry, not aromatic, and one or two carriers at each endpoint,
+/// neither endpoint bearing two identical terminal ligands. Unlike the full
+/// candidate set, this does not depend on the molecule's stereo elements.
+pub(crate) fn locally_eligible_double_bonds(
+    mol: &Molecule,
+) -> std::result::Result<std::collections::BTreeSet<BondId>, StereoPerceptionError> {
+    let perceived = prepared(mol)?;
+    Ok(double_bond_candidates(&perceived)
+        .into_iter()
+        .filter_map(|candidate| match candidate {
+            StereoCandidate::DoubleBond { bond, .. } => Some(bond),
+            StereoCandidate::Tetrahedral { .. } => None,
+        })
+        .collect())
+}
+
 /// Shared represented-graph geometry bounds for source decoding and perception.
 /// Ring size is graph-theoretic and independent of the selected ring basis.
 /// A heteroatom endpoint does not by itself exclude cis/trans stereochemistry.

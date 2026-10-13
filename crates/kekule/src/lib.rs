@@ -498,7 +498,9 @@ pub mod molfile {
 
     /// Interprets a parsed Molfile into canonical molecules, geometry, and a report.
     /// Unmarked tetrahedral configurations in 3D coordinates use the shared
-    /// chemical eligibility and symmetry model. Explicit unknown assertions
+    /// chemical eligibility and symmetry model, and 3D coordinates give E/Z
+    /// only to double bonds eligible before symmetry analysis, so a `=CH2`
+    /// drawn with its hydrogens has none. Explicit unknown assertions
     /// remain unknown; derived perception is not installed on the result.
     /// Valence outside that model is reported as a warning without discarding
     /// the represented graph. Resource exhaustion remains an error.

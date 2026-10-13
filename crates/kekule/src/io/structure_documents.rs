@@ -566,6 +566,25 @@ pub fn interpret_molfile_document(
                 format!("could not publish canonical molecule: {error}"),
             )
         })?;
+        if let Some(double_bonds) =
+            molfile_coordinate_double_bonds(editor.working(), &raw.geometry)?
+        {
+            let unasserted = editor
+                .stereo_elements()
+                .filter(|(_, element)| {
+                    !crate::chemistry::molfile_keeps_decoded_stereo(element, Some(&double_bonds))
+                })
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>();
+            for id in &unasserted {
+                editor
+                    .remove_stereo_element(*id)
+                    .expect("collected live stereo element");
+            }
+            publication_report
+                .created_stereo_elements
+                .retain(|id| !unasserted.contains(id));
+        }
         publication_report
             .created_stereo_elements
             .extend(install_v3000_atom_cfg(
@@ -922,6 +941,44 @@ pub(super) fn molfile_coordinates_are_flat(points: &[Point3]) -> bool {
         .is_none_or(|first| points.iter().all(|point| point.z == first.z))
 }
 
+fn molfile_points(
+    molecule: &Molecule,
+    geometry: &dyn crate::chemistry::AtomPositionSource,
+) -> Result<Vec<Point3>, MolfileInterpretError> {
+    molecule
+        .atom_ids()
+        .map(|atom| {
+            geometry.position_value(atom).ok_or_else(|| {
+                MolfileInterpretError::chemistry(format!("missing source coordinates for {atom}"))
+            })
+        })
+        .collect()
+}
+
+/// In a conformation, the double bonds whose E/Z the coordinates specify: those
+/// eligible before graph-symmetry analysis, so a bond with an endpoint bearing
+/// two identical terminal ligands (`=CH2` with drawn hydrogens, `=C(CH3)2`)
+/// has none. `None` for a flat drawing, whose drawn double bonds all assert
+/// their configuration, and for a graph outside the valence model, which
+/// coordinate tetrahedra report. Import and writer planning share it.
+pub(super) fn molfile_coordinate_double_bonds(
+    molecule: &Molecule,
+    geometry: &dyn crate::chemistry::AtomPositionSource,
+) -> Result<Option<BTreeSet<BondId>>, MolfileInterpretError> {
+    if molfile_coordinates_are_flat(&molfile_points(molecule, geometry)?) {
+        return Ok(None);
+    }
+    match crate::algorithms::locally_eligible_double_bonds(molecule) {
+        Ok(bonds) => Ok(Some(bonds)),
+        Err(crate::algorithms::StereoPerceptionError::Perception(
+            crate::chemistry::PerceptionError::Valence(_),
+        )) => Ok(None),
+        Err(error) => Err(MolfileInterpretError::chemistry(format!(
+            "could not classify Molfile coordinate double bonds: {error}"
+        ))),
+    }
+}
+
 /// Uses the same detached inference for import and for lossless writer planning.
 /// A flat XY drawing carries tetrahedral stereo through annotations only.
 pub(super) fn molfile_coordinate_tetrahedra(
@@ -929,14 +986,7 @@ pub(super) fn molfile_coordinate_tetrahedra(
     geometry: &dyn crate::chemistry::AtomPositionSource,
     warnings: &mut Vec<MolfileInterpretationWarning>,
 ) -> Result<Vec<StereoElement>, MolfileInterpretError> {
-    let points = molecule
-        .atom_ids()
-        .map(|atom| {
-            geometry.position_value(atom).ok_or_else(|| {
-                MolfileInterpretError::chemistry(format!("missing source coordinates for {atom}"))
-            })
-        })
-        .collect::<Result<Vec<Point3>, _>>()?;
+    let points = molfile_points(molecule, geometry)?;
     if molfile_coordinates_are_flat(&points) {
         return Ok(Vec::new());
     }
