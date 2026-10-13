@@ -2,14 +2,15 @@ schema_version = 1
 
 # Moved verbatim from benchmarks/corpora when the benchmark layer was rebuilt.
 # Each sources.lock.json is the original lock with per-file URL and SHA-256;
-# smoke's 1CRN.cif entry now lives at ../mmcif/1CRN.cif.
+# smoke's 1CRN.cif entry now lives at ../mmcif/1CRN.cif. Smoke's lock has one
+# later addition, CID 3034034.
 
 [[fixture]]
 path = "smoke/data/pubchem"
-source = "PubChem PUG REST 3D SDF records for CIDs 241, 702, 931, 2244, 2519 and 8029"
+source = "PubChem PUG REST 3D SDF records for CIDs 241, 702, 931, 2244, 2519, 8029 and 3034034 (quinine, whose bridgehead nitrogen is a coordinate stereocenter)"
 lock = "smoke/sources.lock.json"
-retrieved = "by 2026-07-25"
-preprocessing = "None; original downloaded bytes with CRLF line endings"
+retrieved = "by 2026-07-25; CID 3034034 on 2026-10-13"
+preprocessing = "None; original downloaded bytes, with CRLF line endings except CID 3034034, which PubChem served with LF"
 purpose = "Invariant-suite inputs; not a scientific benchmark"
 
 [[fixture]]

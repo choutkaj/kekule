@@ -510,11 +510,13 @@ pub(crate) fn source_tetrahedral_carriers(
 
     // Only a primary specified-H declaration can assert a virtual carrier here.
     // Installed implicit-H assignments are deliberately invisible to this
-    // normalization kernel.
+    // normalization kernel. A nitrogen lone pair is a carrier only where the
+    // shared eligibility model makes it stereogenic.
     let declared_hydrogens = atom.hydrogens.represented_count();
     if declared_hydrogens == 0
         && carriers.len() == 3
-        && stable_tetrahedral_lone_pair_center(atom.element.symbol())
+        && (stable_tetrahedral_lone_pair_center(atom.element.symbol())
+            || crate::algorithms::nitrogen_lone_pair_is_stereogenic(molecule, center))
     {
         carriers.push(StereoCarrier::ImplicitLonePair);
         return Some(carriers);

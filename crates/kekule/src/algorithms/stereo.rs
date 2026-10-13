@@ -1104,6 +1104,17 @@ fn normalized_direction(vector: Vector3) -> Option<Vector3> {
     (norm.is_finite() && norm > 0.0).then(|| vector / norm)
 }
 
+/// Whether a nitrogen's lone pair is a tetrahedral stereo carrier under the
+/// shared eligibility model (a three-membered ring or a bridgehead), so source
+/// annotations decode the same nitrogen centers that coordinate inference
+/// finds. Without installed perception it is read from a detached perceived
+/// copy; a graph outside the valence model has no such nitrogen.
+pub(crate) fn nitrogen_lone_pair_is_stereogenic(mol: &Molecule, center: AtomId) -> bool {
+    mol.atom(center)
+        .is_ok_and(|atom| atom.element.symbol() == "N")
+        && prepared(mol).is_ok_and(|mol| nitrogen::lone_pair_is_stereogenic(&mol, center))
+}
+
 pub(crate) fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
     let count = mol.implicit_hydrogens(atom).ok().flatten().unwrap_or(0);
     // Stereo eligibility only needs small ligand counts. Preserve the existing

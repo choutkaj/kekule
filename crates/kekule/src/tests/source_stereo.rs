@@ -1027,15 +1027,18 @@ fn molfile_3d_inference_preserves_unknown_and_rejects_degenerate_or_symmetric_si
 
 #[test]
 fn molfile_writers_preserve_unasserted_3d_tetrahedra_as_unknown() {
-    for smiles in ["C(F)(Cl)Br", "C(F)(Cl)(Br)I"] {
+    let points = [
+        Point3::origin(),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::new(0.0, 0.0, 1.0),
+        Point3::new(-1.0, -1.0, -1.0),
+        Point3::new(-1.0, 1.0, 1.5),
+    ];
+    // The aziridine nitrogen's lone pair is its fourth carrier; its ring
+    // carbon has two methyls and no stereo.
+    for smiles in ["C(F)(Cl)Br", "C(F)(Cl)(Br)I", "N1(F)CC1(C)C"] {
         let molecule = read_smiles(smiles).unwrap();
-        let points = [
-            Point3::origin(),
-            Point3::new(1.0, 0.0, 0.0),
-            Point3::new(0.0, 1.0, 0.0),
-            Point3::new(0.0, 0.0, 1.0),
-            Point3::new(-1.0, -1.0, -1.0),
-        ];
         let positions = test_positions(points[..molecule.atom_count()].to_vec());
         let model = Model::from_molecule(molecule.clone(), &positions).unwrap();
         let before = model.clone();
@@ -1056,10 +1059,14 @@ fn molfile_writers_preserve_unasserted_3d_tetrahedra_as_unknown() {
             .unwrap(),
         ] {
             let (parsed, _) = read_molfile_with_report(&source).unwrap();
-            assert_eq!(parsed.stereo_elements().count(), 1);
-            assert!(parsed
+            let unknown = parsed
                 .stereo_elements()
-                .all(|(_, element)| !element.is_specified()));
+                .map(|(_, element)| match &element.kind {
+                    StereoElementKind::Tetrahedral(stereo) => (stereo.center, stereo.orientation),
+                    other => panic!("expected tetrahedral stereo, found {other:?}"),
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(unknown, [(AtomId::new(0), None)], "{smiles}");
         }
         assert_eq!(model, before);
     }
@@ -1307,6 +1314,81 @@ fn molfile_wedges_use_drawing_geometry_for_hydrogen_and_lone_pair_carriers() {
             let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
             assert_eq!(assigned.assigned.len(), 1, "{symbol} {charge_code}");
             assert_eq!(assigned.assigned[0].descriptor, expected, "{source}");
+        }
+    }
+}
+
+#[test]
+fn molfile_wedges_decode_and_write_stereogenic_nitrogen_lone_pairs() {
+    // RDKit 2026.03.3 drew CC[N@]1C[C@H]1C with its wedge rooted at the ring
+    // nitrogen. RDKit AssignCIPLabels gives R at N3 and C5 of that drawing,
+    // and S at both after reflection.
+    let atoms = [
+        ("C", 2.3326, -0.9304),
+        ("C", 1.6888, 0.4244),
+        ("N", 0.1936, 0.5443),
+        ("C", -1.0413, 1.3957),
+        ("C", -1.1612, -0.0995),
+        ("C", -2.0126, -1.3345),
+    ];
+    for (mirror, expected) in [(1.0, StereoDescriptor::R), (-1.0, StereoDescriptor::S)] {
+        let mut source =
+            "aziridine\n     RDKit          2D\n\n  6  6  0  0  0  0  0  0  0  0999 V2000\n"
+                .to_owned();
+        for (symbol, x, y) in atoms {
+            source.push_str(&format!(
+                "{:10.4}{y:10.4}    0.0000 {symbol}   0  0  0  0  0  0  0  0  0  0  0  0\n",
+                mirror * x
+            ));
+        }
+        source.push_str("  1  2  1  0\n  3  2  1  1\n  3  4  1  0\n  4  5  1  0\n  5  6  1  6\n  5  3  1  0\nM  END\n");
+        let mut molecule = read_molfile(&source).expect("wedged aziridine interprets");
+        perceive(&mut molecule).unwrap();
+        let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+        let mut descriptors = assigned
+            .assigned
+            .iter()
+            .map(
+                |assignment| match &molecule.stereo_element(assignment.element).unwrap().kind {
+                    StereoElementKind::Tetrahedral(stereo) => {
+                        (stereo.center, assignment.descriptor)
+                    }
+                    other => panic!("expected tetrahedral stereo, found {other:?}"),
+                },
+            )
+            .collect::<Vec<_>>();
+        descriptors.sort_by_key(|(center, _)| *center);
+        assert_eq!(
+            descriptors,
+            [(AtomId::new(2), expected), (AtomId::new(4), expected)]
+        );
+
+        let interpretation = molfile::parse_str(&source).unwrap().interpret().unwrap();
+        let original = interpretation
+            .molecules()
+            .next()
+            .unwrap()
+            .stereo_elements()
+            .map(|(_, element)| element.kind.clone())
+            .collect::<Vec<_>>();
+        for version in [
+            molfile::MolfileWriteVersion::V2000,
+            molfile::MolfileWriteVersion::V3000,
+        ] {
+            let written = molfile::write(
+                interpretation.model(),
+                molfile::MolfileWriteOptions { version },
+            )
+            .expect("nitrogen wedge writes");
+            let reread = read_molfile(&written).expect("written drawing interprets");
+            assert_eq!(
+                reread
+                    .stereo_elements()
+                    .map(|(_, element)| element.kind.clone())
+                    .collect::<Vec<_>>(),
+                original,
+                "{written}"
+            );
         }
     }
 }
