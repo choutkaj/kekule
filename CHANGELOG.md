@@ -279,6 +279,11 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Molfile and SDF wedges, `CFG` parities, and the writer accept a nitrogen
+  whose lone pair is a stereo carrier: a nitrogen in a three-membered ring or
+  at a bridgehead, as in quinine. Writing a 3D model with such a center,
+  including one Kekule had just read, failed with an unencodable stereo
+  element, and a drawing wedged at the nitrogen failed to interpret.
 - A V3000 atom `CFG` parity that contradicts its atom's 3D coordinates no
   longer overrides them silently. The coordinates decide the configuration, as
   they already did for wedges, and interpretation reports

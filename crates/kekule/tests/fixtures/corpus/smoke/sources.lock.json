@@ -101,6 +101,17 @@
       "category": "pubchem",
       "files": [
         {
+          "path": "data/pubchem/cid_3034034.sdf",
+          "sha256": "dbc01a58eab65e3a11c24be8f25467c3edea9f0ab77a49b45d9fbd981eed532c",
+          "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/3034034/SDF?record_type=3d"
+        }
+      ],
+      "id": "CID:3034034"
+    },
+    {
+      "category": "pubchem",
+      "files": [
+        {
           "path": "data/pubchem_smiles/cid_5950.txt",
           "sha256": "42f7943b651863323d016c70571e9d66e928ae96533e4e0710d4151aa4d044b7",
           "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/5950/property/IsomericSMILES/TXT"

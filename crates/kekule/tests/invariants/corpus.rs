@@ -72,7 +72,12 @@ pub struct KnownDefect {
 
 /// Each entry must keep failing exactly as described; when a fix makes it
 /// pass, the invariant reports the entry so it can be deleted.
-pub const KNOWN_DEFECTS: &[KnownDefect] = &[];
+pub const KNOWN_DEFECTS: &[KnownDefect] = &[KnownDefect {
+    invariant: "renumbering",
+    sample: "molfile:cid_3034034.sdf#0",
+    failure: r#"canonical Some("[H]/C=C\\[C@H]1C[N@@]2CC[C@H]1C[C@H]2[C@H](O)c1ccnc2ccc(OC)cc12") != Some("[H]/C=C/[C@H]1C[N@@]2CC[C@H]1C[C@H]2[C@H](O)c1ccnc2ccc(OC)cc12")"#,
+    defect: "3D coordinate inference assigns E/Z to the terminal vinyl C=CH2 because its two explicit hydrogens count as distinct carriers",
+}];
 
 /// Fails on every (sample label, message) failure that does not match a known
 /// defect of `invariant`, and on every known defect of `invariant` that no
