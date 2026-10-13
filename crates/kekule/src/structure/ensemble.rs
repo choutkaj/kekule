@@ -461,7 +461,7 @@ impl Ensemble {
     }
 
     /// Weights divided by the largest one, so sums cannot overflow.
-    fn scaled_weights(&self) -> Vec<f64> {
+    pub(crate) fn scaled_weights(&self) -> Vec<f64> {
         let maximum = self
             .members
             .iter()
