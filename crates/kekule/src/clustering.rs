@@ -198,17 +198,20 @@ impl Ensemble {
     /// are farther than `radius` from one another. Clusters are numbered in
     /// order of founding.
     ///
-    /// `atoms` pairs members of this ensemble's layout, typically a
-    /// selection or a [`SymmetricSelection`](crate::alignment::SymmetricSelection).
-    /// Each member is fitted to at most every representative, so the cost
-    /// grows with members times clusters (times symmetry permutations).
-    /// Fit failures name the member being placed.
+    /// `atoms` is a selection or a
+    /// [`SymmetricSelection`](crate::alignment::SymmetricSelection) of this
+    /// ensemble's layout, so each distance is the same whichever member
+    /// moves; an [`AtomCorrespondence`](crate::alignment::AtomCorrespondence)
+    /// is rejected. Each member is fitted to at most every representative, so
+    /// the cost grows with members times clusters (times symmetry
+    /// permutations). Fit failures name the member being placed.
     pub fn cluster_by_radius_with_options<'a>(
         &self,
         radius: Quantity<f64>,
         atoms: impl Into<FitAtoms<'a>>,
         options: ClusteringOptions<'_>,
     ) -> Result<EnsemblePartition, ClusteringError> {
+        let atoms = undirected(atoms.into())?;
         let radius = radius.value_in(CANONICAL_LENGTH_UNIT)?;
         if !(radius.is_finite() && radius >= 0.0) {
             return Err(ClusteringError::InvalidRadius);
@@ -227,7 +230,6 @@ impl Ensemble {
                 representatives: Vec::new(),
             });
         };
-        let atoms = atoms.into();
         let sets = atoms.pair_sets(*first, *first)?;
         check_fit_count(atoms.len())?;
         let weights = NormalizedWeights::new(options.alignment.weighting, atoms.len())?;
@@ -297,6 +299,19 @@ impl Ensemble {
                 .map_err(EnsembleError::from)?;
         }
         Ok(collapsed)
+    }
+}
+
+/// Clustering distances must not depend on which member moves. Fitting
+/// member `a` onto `b` pairs `a`'s moving atoms with `b`'s reference atoms,
+/// so a correspondence pairing different atoms of one layout gives a
+/// different RMSD in each direction, and results would follow member order.
+/// Selections pair atoms with themselves and symmetry permutations form a
+/// group, so both give the same RMSD either way.
+fn undirected(atoms: FitAtoms<'_>) -> Result<FitAtoms<'_>, ClusteringError> {
+    match atoms {
+        FitAtoms::Correspondence(_) => Err(ClusteringError::DirectedCorrespondence),
+        atoms => Ok(atoms),
     }
 }
 
@@ -392,6 +407,10 @@ pub enum ClusteringError {
         requested: usize,
         members: usize,
     },
+    /// Distances between members were requested over an
+    /// [`AtomCorrespondence`](crate::alignment::AtomCorrespondence), whose
+    /// fits depend on which member moves.
+    DirectedCorrespondence,
     Alignment(Box<AlignmentError>),
     Ensemble(Box<EnsembleError>),
     Unit(Box<UnitError>),
@@ -441,6 +460,9 @@ impl fmt::Display for ClusteringError {
             Self::InvalidClusterCount { requested, members } => write!(
                 formatter,
                 "cannot cut {members} members into {requested} clusters"
+            ),
+            Self::DirectedCorrespondence => formatter.write_str(
+                "member distances require a selection, not a directed atom correspondence",
             ),
             Self::Alignment(error) => write!(formatter, "cannot fit members: {error}"),
             Self::Ensemble(error) => error.fmt(formatter),

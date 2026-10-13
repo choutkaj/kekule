@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
-use kekule::alignment::{kabsch, AlignmentError, AlignmentGeometry, SymmetricSelection};
+use kekule::alignment::{
+    kabsch, AlignmentError, AlignmentGeometry, AtomCorrespondence, FitAtoms, SymmetricSelection,
+};
 use kekule::clustering::{
     ClusterOrder, ClusteringError, ClusteringOptions, Cut, Dendrogram, DistanceMatrix,
     EnsemblePartition, Linkage, PartitionError,
@@ -583,4 +585,52 @@ fn hierarchical_clusters_are_represented_by_weighted_medoids() {
         )
         .unwrap();
     assert_eq!(clusters.assignments(), [0, 0, 1, 1]);
+}
+
+#[test]
+fn member_distances_do_not_depend_on_member_order() {
+    let (topology, ensemble) = two_shapes();
+    let reversed = ensemble.select([3, 2, 1, 0]).unwrap();
+    let all = AtomSelection::all(&topology);
+    let symmetric = SymmetricSelection::new(&all).unwrap();
+    for atoms in [FitAtoms::from(&all), FitAtoms::from(&symmetric)] {
+        let forward = ensemble.pairwise_rmsd(atoms).unwrap();
+        let backward = reversed.pairwise_rmsd(atoms).unwrap();
+        for first in 0..4 {
+            for second in 0..4 {
+                let a = forward.get(first, second).unwrap().into_value();
+                let b = backward.get(3 - first, 3 - second).unwrap().into_value();
+                // Fitting either member onto the other gives the same RMSD up
+                // to rounding.
+                assert!((a - b).abs() <= 1.0e-12, "{first} {second}: {a} != {b}");
+            }
+        }
+    }
+
+    // Exchanging two atoms makes each fit depend on which member moves.
+    let ids = topology.atom_ids();
+    let exchanged = AtomCorrespondence::from_pairs(
+        &topology,
+        &topology,
+        [
+            (ids[0], ids[1]),
+            (ids[1], ids[0]),
+            (ids[2], ids[2]),
+            (ids[3], ids[3]),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        ensemble.pairwise_rmsd(&exchanged),
+        Err(ClusteringError::DirectedCorrespondence)
+    );
+    assert_eq!(
+        ensemble.cluster_by_radius(Quantity::new(0.1, NANOMETER), &exchanged),
+        Err(ClusteringError::DirectedCorrespondence)
+    );
+    // The pairing is rejected before members are examined.
+    assert_eq!(
+        Ensemble::new(Arc::clone(&topology)).pairwise_rmsd(&exchanged),
+        Err(ClusteringError::DirectedCorrespondence)
+    );
 }

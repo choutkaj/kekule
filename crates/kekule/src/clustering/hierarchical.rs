@@ -6,7 +6,7 @@ use crate::alignment::{
 use crate::structure::{Ensemble, ModelView};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
-use super::{ClusteringError, EnsemblePartition};
+use super::{undirected, ClusteringError, EnsemblePartition};
 
 /// Symmetric pairwise distances between the members of one ensemble, stored
 /// once per unordered pair in [`CANONICAL_LENGTH_UNIT`].
@@ -259,16 +259,19 @@ impl Ensemble {
     /// Fitted RMSD between every pair of members, after a
     /// [`kabsch`](crate::alignment::kabsch) fit over `atoms`.
     ///
-    /// `atoms` pairs members of this ensemble's layout, typically a
-    /// selection or a [`SymmetricSelection`](crate::alignment::SymmetricSelection).
-    /// Each unordered pair is fitted once, lower member moving, so the cost
-    /// is `n (n - 1) / 2` fits (times symmetry permutations). A failed fit
-    /// names both members.
+    /// `atoms` is a selection or a
+    /// [`SymmetricSelection`](crate::alignment::SymmetricSelection) of this
+    /// ensemble's layout, so each distance is the same whichever member
+    /// moves; an [`AtomCorrespondence`](crate::alignment::AtomCorrespondence)
+    /// is rejected. Each unordered pair is fitted once, lower member moving,
+    /// so the cost is `n (n - 1) / 2` fits (times symmetry permutations). A
+    /// failed fit names both members.
     pub fn pairwise_rmsd_with_options<'a>(
         &self,
         atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'_>,
     ) -> Result<DistanceMatrix, ClusteringError> {
+        let atoms = undirected(atoms.into())?;
         let views = self
             .iter()
             .map(|member| member.as_model_view())
@@ -281,7 +284,6 @@ impl Ensemble {
                 values: Vec::new(),
             });
         };
-        let atoms = atoms.into();
         let sets = atoms.pair_sets(*first, *first)?;
         check_fit_count(atoms.len())?;
         let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
