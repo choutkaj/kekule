@@ -377,8 +377,11 @@ Ensemble clustering is weight-aware and belongs to ensembles only. It returns an
 `EnsemblePartition`, a separate result of member assignments and one
 representative per cluster, and never changes the ensemble. Collapsing a
 partition keeps each representative's own state with its cluster's summed
-weight. Visiting order and tie-breaking are deterministic. See
-[clustering](crates/kekule/src/clustering.rs).
+weight. Visiting order and tie-breaking are deterministic. Pairwise distances
+are a separate `DistanceMatrix` result, and a hierarchical `Dendrogram` depends
+on distances alone; ensemble weights enter only when choosing representatives.
+See [clustering](crates/kekule/src/clustering.rs) and
+[hierarchical clustering](crates/kekule/src/clustering/hierarchical.rs).
 
 For format profiles, limits, periodic conventions, statistical definitions, and
 streaming sequence/reset contracts, see

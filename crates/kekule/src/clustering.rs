@@ -6,7 +6,14 @@
 //! [`Ensemble::collapse`] then keeps one member per cluster, carrying the
 //! summed weight of its cluster.
 //!
-//! [`Ensemble::cluster_by_radius`] is leader clustering on fitted RMSD. With
+//! [`Ensemble::cluster_hierarchical`] cuts the [`Dendrogram`] of a
+//! [`DistanceMatrix`], such as [`Ensemble::pairwise_rmsd`], at a height or
+//! into a number of clusters, and represents each cluster by its weighted
+//! medoid. Complete linkage cut at height `h` bounds every cluster's
+//! diameter by `h`.
+//!
+//! [`Ensemble::cluster_by_radius`] is leader clustering on fitted RMSD. It
+//! needs no matrix, so it scales to larger ensembles. With
 //! a [`SymmetricSelection`](crate::alignment::SymmetricSelection) and a small
 //! radius it merges rotamers, copies of one conformer that differ only by
 //! exchanged equivalent atoms. Weight members by energy before collapsing, so
@@ -52,6 +59,9 @@
 //! ```
 
 use std::fmt;
+
+mod hierarchical;
+pub use hierarchical::{Cut, Dendrogram, DistanceMatrix, Linkage, Merge};
 
 use crate::alignment::{
     best_kabsch, check_fit_count, AlignmentError, AlignmentOptions, FitAtoms, NormalizedWeights,
@@ -350,6 +360,38 @@ pub enum ClusteringError {
         expected: usize,
         actual: usize,
     },
+    /// A distance matrix covers a different member count than the ensemble.
+    MatrixMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    /// Condensed distances have the wrong length for their member count.
+    CondensedLength {
+        members: usize,
+        expected: usize,
+        actual: usize,
+    },
+    /// A distance is not finite and nonnegative; `index` is condensed.
+    InvalidDistance {
+        index: usize,
+    },
+    /// The pairwise distances of this many members are not addressable.
+    MatrixTooLarge {
+        members: usize,
+    },
+    /// Fitting one pair of members failed.
+    PairFit {
+        first: usize,
+        second: usize,
+        source: Box<AlignmentError>,
+    },
+    /// A dendrogram cut height is not finite and nonnegative.
+    InvalidHeight,
+    /// A requested cluster count is zero or exceeds the member count.
+    InvalidClusterCount {
+        requested: usize,
+        members: usize,
+    },
     Alignment(Box<AlignmentError>),
     Ensemble(Box<EnsembleError>),
     Unit(Box<UnitError>),
@@ -365,6 +407,41 @@ impl fmt::Display for ClusteringError {
                 formatter,
                 "partition covers {actual} members, but the ensemble has {expected}"
             ),
+            Self::MatrixMismatch { expected, actual } => write!(
+                formatter,
+                "distance matrix covers {actual} members, but the ensemble has {expected}"
+            ),
+            Self::CondensedLength {
+                members,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "{members} members require {expected} condensed distances, but received {actual}"
+            ),
+            Self::InvalidDistance { index } => write!(
+                formatter,
+                "condensed distance {index} must be finite and nonnegative"
+            ),
+            Self::MatrixTooLarge { members } => write!(
+                formatter,
+                "pairwise distances of {members} members are not addressable"
+            ),
+            Self::PairFit {
+                first,
+                second,
+                source,
+            } => write!(
+                formatter,
+                "cannot fit members {first} and {second}: {source}"
+            ),
+            Self::InvalidHeight => {
+                formatter.write_str("dendrogram cut height must be finite and nonnegative")
+            }
+            Self::InvalidClusterCount { requested, members } => write!(
+                formatter,
+                "cannot cut {members} members into {requested} clusters"
+            ),
             Self::Alignment(error) => write!(formatter, "cannot fit members: {error}"),
             Self::Ensemble(error) => error.fmt(formatter),
             Self::Unit(error) => write!(formatter, "invalid quantity unit: {error}"),
@@ -375,7 +452,7 @@ impl fmt::Display for ClusteringError {
 impl std::error::Error for ClusteringError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Alignment(error) => Some(error.as_ref()),
+            Self::Alignment(error) | Self::PairFit { source: error, .. } => Some(error.as_ref()),
             Self::Ensemble(error) => Some(error.as_ref()),
             Self::Unit(error) => Some(error.as_ref()),
             _ => None,

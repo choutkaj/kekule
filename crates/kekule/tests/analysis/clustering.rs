@@ -1,10 +1,12 @@
-//! Partitioning ensembles into clusters and collapsing them.
+//! Partitioning ensembles into clusters, hierarchical clustering on distance
+//! matrices, and collapsing clusters to representatives.
 
 use std::sync::Arc;
 
 use kekule::alignment::{kabsch, AlignmentError, AlignmentGeometry, SymmetricSelection};
 use kekule::clustering::{
-    ClusterOrder, ClusteringError, ClusteringOptions, EnsemblePartition, PartitionError,
+    ClusterOrder, ClusteringError, ClusteringOptions, Cut, Dendrogram, DistanceMatrix,
+    EnsemblePartition, Linkage, PartitionError,
 };
 use kekule::geometry::{Matrix3, Point3, RigidTransform, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
@@ -319,4 +321,266 @@ fn partitions_assign_every_member_to_a_cluster_containing_its_representative() {
             member: 1,
         })
     );
+}
+
+/// Condensed distances between points on a line, in nanometers.
+fn line_distances(points: &[f64]) -> DistanceMatrix {
+    let mut values = Vec::new();
+    for (index, first) in points.iter().enumerate() {
+        for second in &points[index + 1..] {
+            values.push((second - first).abs());
+        }
+    }
+    DistanceMatrix::from_condensed(points.len(), Quantity::new(values, NANOMETER)).unwrap()
+}
+
+/// Points at 0, 1, 4, 10, and 11.5 nm: two tight pairs and a point nearer
+/// the first pair.
+fn five_points() -> DistanceMatrix {
+    line_distances(&[0.0, 1.0, 4.0, 10.0, 11.5])
+}
+
+/// Each merge as (clusters, height in nm, size).
+fn merges(dendrogram: &Dendrogram) -> Vec<([usize; 2], f64, usize)> {
+    dendrogram
+        .merges()
+        .iter()
+        .map(|merge| (merge.clusters(), merge.height().into_value(), merge.size()))
+        .collect()
+}
+
+#[test]
+fn distance_matrices_store_each_unordered_pair_once() {
+    let matrix =
+        DistanceMatrix::from_condensed(3, Quantity::new(vec![1.0, 2.0, 3.0], NANOMETER)).unwrap();
+    assert_eq!(matrix.len(), 3);
+    assert_eq!(
+        matrix.condensed(),
+        Quantity::new(&[1.0, 2.0, 3.0][..], NANOMETER)
+    );
+    for (first, second, expected) in [
+        (0, 1, 1.0),
+        (1, 0, 1.0),
+        (0, 2, 2.0),
+        (2, 1, 3.0),
+        (2, 2, 0.0),
+    ] {
+        assert_eq!(
+            matrix.get(first, second),
+            Some(Quantity::new(expected, NANOMETER))
+        );
+    }
+    assert_eq!(matrix.get(3, 0), None);
+
+    assert_eq!(
+        DistanceMatrix::from_condensed(3, Quantity::new(vec![1.0, 2.0], NANOMETER)),
+        Err(ClusteringError::CondensedLength {
+            members: 3,
+            expected: 3,
+            actual: 2,
+        })
+    );
+    for invalid in [-1.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(
+            DistanceMatrix::from_condensed(3, Quantity::new(vec![1.0, invalid, 3.0], NANOMETER)),
+            Err(ClusteringError::InvalidDistance { index: 1 })
+        );
+    }
+    assert_eq!(
+        DistanceMatrix::from_condensed(2, Quantity::new(vec![1.0], KELVIN)),
+        Err(ClusteringError::Unit(Box::new(
+            UnitError::IncompatibleUnits {
+                from: KELVIN,
+                to: NANOMETER,
+            }
+        )))
+    );
+    assert_eq!(
+        DistanceMatrix::from_condensed(usize::MAX, Quantity::new(Vec::new(), NANOMETER)),
+        Err(ClusteringError::MatrixTooLarge {
+            members: usize::MAX
+        })
+    );
+    for members in [0, 1] {
+        let trivial =
+            DistanceMatrix::from_condensed(members, Quantity::new(Vec::new(), NANOMETER)).unwrap();
+        assert_eq!(trivial.dendrogram(Linkage::Average).merges().len(), 0);
+    }
+}
+
+#[test]
+fn dendrograms_merge_the_closest_clusters_under_each_linkage() {
+    // Members are clusters 0-4; merges create 5-8. Heights derived by hand:
+    // single takes the closest pair between clusters, complete the
+    // farthest, and average the mean over all pairs.
+    let matrix = five_points();
+    assert_eq!(
+        merges(&matrix.dendrogram(Linkage::Single)),
+        [
+            ([0, 1], 1.0, 2),
+            ([3, 4], 1.5, 2),
+            ([2, 5], 3.0, 3),
+            ([6, 7], 6.0, 5)
+        ]
+    );
+    assert_eq!(
+        merges(&matrix.dendrogram(Linkage::Complete)),
+        [
+            ([0, 1], 1.0, 2),
+            ([3, 4], 1.5, 2),
+            ([2, 5], 4.0, 3),
+            ([6, 7], 11.5, 5)
+        ]
+    );
+    let average = matrix.dendrogram(Linkage::Average);
+    assert_eq!(average.member_count(), 5);
+    assert_eq!(
+        merges(&average)[..3],
+        [([0, 1], 1.0, 2), ([3, 4], 1.5, 2), ([2, 5], 3.5, 3)]
+    );
+    // The mean of the six distances between {0, 1, 4} and {10, 11.5} is
+    // 54.5 / 6 = 109 / 12.
+    let last = average.merges()[3];
+    assert_eq!((last.clusters(), last.size()), ([6, 7], 5));
+    assert!((last.height().into_value() - 109.0 / 12.0).abs() <= 1.0e-12);
+
+    // Equal distances merge deterministically, keeping the earlier pair.
+    let even = line_distances(&[0.0, 1.0, 2.0]).dendrogram(Linkage::Single);
+    assert_eq!(merges(&even), [([0, 1], 1.0, 2), ([2, 3], 1.0, 3)]);
+}
+
+#[test]
+fn dendrogram_cuts_apply_merges_by_height_or_cluster_count() {
+    let dendrogram = five_points().dendrogram(Linkage::Average);
+    let count = |clusters| dendrogram.cut(Cut::Count(clusters));
+    assert_eq!(count(1).unwrap(), [0, 0, 0, 0, 0]);
+    assert_eq!(count(2).unwrap(), [0, 0, 0, 1, 1]);
+    assert_eq!(count(3).unwrap(), [0, 0, 1, 2, 2]);
+    assert_eq!(count(5).unwrap(), [0, 1, 2, 3, 4]);
+    for requested in [0, 6] {
+        assert_eq!(
+            count(requested),
+            Err(ClusteringError::InvalidClusterCount {
+                requested,
+                members: 5,
+            })
+        );
+    }
+    // Height cuts are inclusive.
+    let height = |value| dendrogram.cut(Cut::Height(Quantity::new(value, NANOMETER)));
+    assert_eq!(height(1.5).unwrap(), [0, 0, 1, 2, 2]);
+    assert_eq!(height(0.5).unwrap(), [0, 1, 2, 3, 4]);
+    assert_eq!(height(100.0).unwrap(), [0, 0, 0, 0, 0]);
+    for invalid in [-1.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(height(invalid), Err(ClusteringError::InvalidHeight));
+    }
+
+    let empty = DistanceMatrix::from_condensed(0, Quantity::new(Vec::new(), NANOMETER))
+        .unwrap()
+        .dendrogram(Linkage::Single);
+    assert_eq!(empty.cut(Cut::Count(0)).unwrap(), Vec::<usize>::new());
+    assert_eq!(
+        empty.cut(Cut::Count(1)),
+        Err(ClusteringError::InvalidClusterCount {
+            requested: 1,
+            members: 0,
+        })
+    );
+}
+
+#[test]
+fn pairwise_rmsd_fits_every_unordered_pair_once() {
+    let (topology, ensemble) = two_shapes();
+    let atoms = AtomSelection::all(&topology);
+    let matrix = ensemble.pairwise_rmsd(&atoms).unwrap();
+    assert_eq!(matrix.len(), 4);
+    for first in 0..4 {
+        for second in first + 1..4 {
+            let fit = kabsch(
+                ensemble.get(first).unwrap().as_model_view(),
+                ensemble.get(second).unwrap().as_model_view(),
+                &atoms,
+            )
+            .unwrap();
+            assert_eq!(matrix.get(first, second), Some(fit.rmsd()));
+            assert_eq!(matrix.get(second, first), Some(fit.rmsd()));
+        }
+    }
+
+    let empty = Ensemble::new(Arc::clone(&topology))
+        .pairwise_rmsd(&atoms)
+        .unwrap();
+    assert!(empty.is_empty());
+
+    let collinear = (0..4)
+        .map(|index| Point3::new(f64::from(index), 0.0, 0.0))
+        .collect();
+    let degenerate = Ensemble::from_items(
+        Arc::clone(&topology),
+        [member(shape(false, false), 1.0), member(collinear, 1.0)],
+    )
+    .unwrap();
+    assert_eq!(
+        degenerate.pairwise_rmsd(&atoms),
+        Err(ClusteringError::PairFit {
+            first: 0,
+            second: 1,
+            source: Box::new(AlignmentError::DegenerateGeometry {
+                geometry: AlignmentGeometry::Reference,
+            }),
+        })
+    );
+}
+
+#[test]
+fn hierarchical_clusters_are_represented_by_weighted_medoids() {
+    let topology = kekule::smiles::to_topology("CCCC").unwrap();
+    let ensemble = |weights: [f64; 5]| {
+        Ensemble::from_items(
+            Arc::clone(&topology),
+            weights.map(|weight| member(shape(false, false), weight)),
+        )
+        .unwrap()
+    };
+    let distances = five_points();
+
+    // Uniformly weighted, member 1 is closest to the rest of {0, 1, 2}
+    // (summed distances 5, 4, 7), and the tie in {3, 4} keeps member 3.
+    let uniform = ensemble([1.0; 5])
+        .cluster_hierarchical(&distances, Linkage::Average, Cut::Count(2))
+        .unwrap();
+    assert_eq!(uniform.assignments(), [0, 0, 0, 1, 1]);
+    assert_eq!(uniform.representatives(), [1, 3]);
+    // Heavy members pull the medoid: weighted sums 4.1, 3.1, 0.7 and 0.3,
+    // 0.15 after scaling by the largest weight.
+    let weighted = ensemble([1.0, 1.0, 10.0, 1.0, 2.0])
+        .cluster_hierarchical(&distances, Linkage::Average, Cut::Count(2))
+        .unwrap();
+    assert_eq!(weighted.representatives(), [2, 4]);
+
+    assert_eq!(
+        ensemble([1.0; 5]).cluster_hierarchical(
+            &line_distances(&[0.0, 1.0]),
+            Linkage::Average,
+            Cut::Count(1)
+        ),
+        Err(ClusteringError::MatrixMismatch {
+            expected: 5,
+            actual: 2,
+        })
+    );
+
+    // Fitted RMSDs separate the two shapes under a complete-linkage cut.
+    let (topology, shapes) = two_shapes();
+    let atoms = AtomSelection::all(&topology);
+    let distance = shape_distance(&shapes, &atoms);
+    let matrix = shapes.pairwise_rmsd(&atoms).unwrap();
+    let clusters = shapes
+        .cluster_hierarchical(
+            &matrix,
+            Linkage::Complete,
+            Cut::Height(Quantity::new(distance / 2.0, NANOMETER)),
+        )
+        .unwrap();
+    assert_eq!(clusters.assignments(), [0, 0, 1, 1]);
 }
