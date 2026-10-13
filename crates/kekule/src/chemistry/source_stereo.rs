@@ -119,15 +119,35 @@ pub(crate) fn normalize_source_stereo(
     })
 }
 
+/// Whether interpretation keeps a decoded Molfile stereo element. In a
+/// conformation, `coordinate_double_bonds` names the double bonds at which
+/// coordinates specify E/Z; a configuration decoded elsewhere is no assertion.
+/// A flat drawing (`None`) keeps every decoded element.
+pub(crate) fn molfile_keeps_decoded_stereo(
+    element: &StereoElement,
+    coordinate_double_bonds: Option<&BTreeSet<BondId>>,
+) -> bool {
+    match (&element.kind, coordinate_double_bonds) {
+        (StereoElementKind::DoubleBond(stereo), Some(bonds)) => {
+            stereo.orientation.is_none() || bonds.contains(&stereo.bond)
+        }
+        _ => true,
+    }
+}
+
 /// Project canonical stereo elements into format-local Molfile bond marks.
 ///
 /// The marks are detached writer state and are never stored back on the
 /// canonical molecule. Candidate projections are verified by decoding them
-/// with the same source-stereo kernel used during interpretation.
+/// with the same source-stereo kernel used during interpretation, and keeping
+/// what interpretation keeps (see [`molfile_keeps_decoded_stereo`]).
 pub(crate) fn project_molfile_stereo_bond_marks(
     molecule: &Molecule,
     geometry: Option<&dyn AtomPositionSource>,
+    coordinate_double_bonds: Option<&BTreeSet<BondId>>,
 ) -> std::result::Result<BTreeMap<BondId, MolfileStereoBondProjection>, String> {
+    let keeps =
+        |element: &StereoElement| molfile_keeps_decoded_stereo(element, coordinate_double_bonds);
     if molecule.stereo_elements().next().is_none() && geometry.is_none() {
         return Ok(BTreeMap::new());
     }
@@ -145,7 +165,10 @@ pub(crate) fn project_molfile_stereo_bond_marks(
     if geometry.is_some() {
         let marks = molfile_double_bond_geometry_marks(&staged, &[]);
         decode(&mut staged, &marks).map_err(|error| error.to_string())?;
-        for (_, element) in staged.stereo_elements() {
+        for (_, element) in staged
+            .stereo_elements()
+            .filter(|(_, element)| keeps(element))
+        {
             if let StereoElementKind::DoubleBond(stereo) = &element.kind {
                 if !has_double_bond_stereo(molecule, stereo.bond) {
                     // Drawing a nondegenerate alkene specifies E/Z in Molfile.
@@ -168,6 +191,15 @@ pub(crate) fn project_molfile_stereo_bond_marks(
                 "cannot encode specified stereo: Molfile output requires a Model with coordinates"
                     .to_owned(),
             );
+        }
+        if !keeps(target) {
+            let StereoElementKind::DoubleBond(stereo) = &target.kind else {
+                unreachable!("only double-bond stereo is conformation-dependent");
+            };
+            return Err(format!(
+                "cannot encode specified double-bond stereo at bond {}: a conformation's coordinates give it no E/Z, since it is aromatic or an endpoint has identical terminal ligands",
+                stereo.bond
+            ));
         }
         let candidates = molfile_projection_candidates(molecule, target)?;
         let mut selected = None;
@@ -235,11 +267,16 @@ pub(crate) fn project_molfile_stereo_bond_marks(
     source_marks.extend(molfile_double_bond_geometry_marks(&staged, &source_marks));
     let report = decode(&mut staged, &source_marks)
         .map_err(|error| format!("projected Molfile stereo is inconsistent: {error}"))?;
+    let decoded = staged
+        .stereo_elements()
+        .map(|(_, element)| element)
+        .filter(|element| keeps(element))
+        .collect::<Vec<_>>();
     if !report.warnings.is_empty()
-        || staged.stereo_elements().count() != molecule.stereo_elements().count() + added_unknown.len()
+        || decoded.len() != molecule.stereo_elements().count() + added_unknown.len()
         || molecule.stereo_elements().any(|(_, expected)|
-            !staged.stereo_elements().any(|(_, actual)| actual.kind == expected.kind))
-        || added_unknown.iter().any(|bond| !staged.stereo_elements().any(|(_, actual)|
+            !decoded.iter().any(|actual| actual.kind == expected.kind))
+        || added_unknown.iter().any(|bond| !decoded.iter().any(|actual|
             matches!(&actual.kind, StereoElementKind::DoubleBond(stereo) if stereo.bond == *bond && stereo.orientation.is_none())))
     {
         return Err("Molfile bond annotations cannot preserve all stereo assertions together".to_owned());

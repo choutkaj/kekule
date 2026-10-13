@@ -279,6 +279,12 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- A 3D Molfile or SDF record no longer gives E/Z to a double bond whose
+  endpoint carries two identical terminal ligands, such as a vinyl `=CH2`
+  drawn with its hydrogens. The configuration was arbitrary, and canonical
+  SMILES depended on atom order. Flat drawings still assert E/Z at every
+  drawn double bond. Writing a conformation with such an assertion now fails
+  as unsupported instead of emitting it.
 - Molfile and SDF wedges, `CFG` parities, and the writer accept a nitrogen
   whose lone pair is a stereo carrier: a nitrogen in a three-membered ring or
   at a bridgehead, as in quinine. Writing a 3D model with such a center,

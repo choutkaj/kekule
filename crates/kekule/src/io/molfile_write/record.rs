@@ -12,8 +12,9 @@ use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::ANGSTROM;
 
 use crate::io::structure_documents::{
-    materialize_molfile_stereo_hydrogens, molfile_coordinate_tetrahedra,
-    molfile_coordinates_are_flat, molfile_stereo_group_members_at_atom,
+    materialize_molfile_stereo_hydrogens, molfile_coordinate_double_bonds,
+    molfile_coordinate_tetrahedra, molfile_coordinates_are_flat,
+    molfile_stereo_group_members_at_atom,
 };
 use crate::io::{MoleculeWriteError, MolfileVersion};
 
@@ -296,11 +297,20 @@ fn stereo_projections(
     } else {
         molecule
     };
-    Ok(project_molfile_stereo_bond_marks(molecule, geometry)
-        .map_err(MoleculeWriteError::unsupported)?
-        .into_iter()
-        .map(|(bond, projection)| (bond, (projection.from, projection.kind)))
-        .collect())
+    // The reader keeps only the double-bond configurations a conformation's
+    // coordinates specify, so planning verifies against the same set.
+    let coordinate_double_bonds = geometry
+        .map(|geometry| molfile_coordinate_double_bonds(molecule, geometry))
+        .transpose()
+        .map_err(|error| MoleculeWriteError::invalid_model(error.to_string()))?
+        .flatten();
+    Ok(
+        project_molfile_stereo_bond_marks(molecule, geometry, coordinate_double_bonds.as_ref())
+            .map_err(MoleculeWriteError::unsupported)?
+            .into_iter()
+            .map(|(bond, projection)| (bond, (projection.from, projection.kind)))
+            .collect(),
+    )
 }
 
 fn project_stereo_groups(
