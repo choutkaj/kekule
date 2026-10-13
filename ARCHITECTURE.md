@@ -373,6 +373,13 @@ frame indices are diagnostic labels, not statistical weights. Preprocessing,
 including alignment or imaging, is explicit. These are separate analysis results,
 not new topology state or a generic reduction framework.
 
+Ensemble clustering is weight-aware and belongs to ensembles only. It returns an
+`EnsemblePartition`, a separate result of member assignments and one
+representative per cluster, and never changes the ensemble. Collapsing a
+partition keeps each representative's own state with its cluster's summed
+weight. Visiting order and tie-breaking are deterministic. See
+[clustering](crates/kekule/src/clustering.rs).
+
 For format profiles, limits, periodic conventions, statistical definitions, and
 streaming sequence/reset contracts, see
 [trajectory payloads](crates/kekule/src/structure/trajectory.rs),

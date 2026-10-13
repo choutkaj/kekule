@@ -121,6 +121,7 @@ macro_rules! fixed_u32_id {
 mod algorithms;
 pub mod alignment;
 mod chemistry;
+pub mod clustering;
 pub mod core;
 pub mod descriptors;
 pub mod diagnostics;
