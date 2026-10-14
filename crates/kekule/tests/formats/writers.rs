@@ -152,6 +152,41 @@ fn molfile_rejects_asserted_stereo_its_coordinates_contradict() {
 }
 
 #[test]
+fn molfile_rejects_atom_map_zero_which_both_versions_read_as_no_map() {
+    let source = molecule("[CH4:0]");
+    assert_eq!(source.atoms().next().unwrap().1.atom_map, Some(0));
+    let model = model("C[CH4:0]", &[[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]);
+    for version in [
+        MolfileWriteVersion::Auto,
+        MolfileWriteVersion::V2000,
+        MolfileWriteVersion::V3000,
+    ] {
+        for (error, atom) in [
+            (
+                molfile::write(&source, MolfileWriteOptions { version }).unwrap_err(),
+                1,
+            ),
+            (
+                molfile::write(&model, MolfileWriteOptions { version }).unwrap_err(),
+                2,
+            ),
+        ] {
+            assert_eq!(
+                (error.kind(), error.message()),
+                (
+                    MoleculeWriteErrorKind::UnsupportedRepresentation,
+                    format!(
+                        "Molfile cannot encode atom map 0 on atom {atom}, which it reads as no atom map"
+                    )
+                    .as_str()
+                ),
+                "{version:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn molfile_v3000_continues_records_past_80_columns() {
     // CTfile lines hold at most 80 characters; a longer V3000 record ends
     // each line but its last with `-` and breaks after a space, because

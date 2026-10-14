@@ -279,6 +279,9 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Molfile writing fails with `UnsupportedRepresentation` for an atom map of
+  0, which both versions write and read as no atom map, instead of silently
+  dropping it.
 - A 3D Molfile or SDF record no longer gives E/Z to a double bond whose
   endpoint carries two identical terminal ligands, such as a vinyl `=CH2`
   drawn with its hydrogens. The configuration was arbitrary, and canonical
