@@ -549,6 +549,7 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
         &[record],
         sdf::SdfWriteOptions {
             version: sdf::MolfileWriteVersion::V2000,
+            ..Default::default()
         },
     )
     .expect("representable field should write");
@@ -581,6 +582,7 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
             &[record],
             sdf::SdfWriteOptions {
                 version: sdf::MolfileWriteVersion::V2000,
+                ..Default::default()
             },
         )
         .expect_err("unrepresentable SDF metadata must fail");
@@ -608,6 +610,7 @@ fn v2000_radical_codes_round_trip_exact_multiplicity() {
             &parsed,
             molfile::MolfileWriteOptions {
                 version: molfile::MolfileWriteVersion::V2000,
+                ..Default::default()
             },
         )
         .expect("radical record should write");
@@ -690,6 +693,7 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
                 interpreted.model(),
                 molfile::MolfileWriteOptions {
                     version: molfile::MolfileWriteVersion::V2000,
+                    ..Default::default()
                 },
             )
             .expect("canonical stereo should project with its drawing");
@@ -808,7 +812,8 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
     assert!(molfile::write(
         molecule.working(),
         molfile::MolfileWriteOptions {
-            version: molfile::MolfileWriteVersion::V2000
+            version: molfile::MolfileWriteVersion::V2000,
+            ..Default::default()
         }
     )
     .expect_err("specified double-bond stereo should be rejected")
@@ -829,7 +834,8 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
     assert!(molfile::write(
         molecule.working(),
         molfile::MolfileWriteOptions {
-            version: molfile::MolfileWriteVersion::V2000
+            version: molfile::MolfileWriteVersion::V2000,
+            ..Default::default()
         }
     )
     .expect_err("quadruple bond should be rejected")
@@ -865,6 +871,7 @@ $$$$
         &records,
         sdf::SdfWriteOptions {
             version: sdf::MolfileWriteVersion::V2000,
+            ..Default::default()
         },
     )
     .expect("sdf should write");
@@ -902,6 +909,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
             &parsed,
             molfile::MolfileWriteOptions {
                 version: molfile::MolfileWriteVersion::V2000,
+                ..Default::default()
             },
         )
         .expect("charge should write");
@@ -969,6 +977,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         &molecule,
         molfile::MolfileWriteOptions {
             version: molfile::MolfileWriteVersion::V2000,
+            ..Default::default()
         },
     )
     .expect("metadata molecule should write");
@@ -986,6 +995,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         &records,
         sdf::SdfWriteOptions {
             version: sdf::MolfileWriteVersion::V2000,
+            ..Default::default()
         },
     )
     .expect("two records should write");
@@ -1033,6 +1043,7 @@ fn v2000_atom_fields_are_read_from_their_ctfile_columns() {
             &molecule,
             molfile::MolfileWriteOptions {
                 version: molfile::MolfileWriteVersion::V2000,
+                ..Default::default()
             },
         )
         .unwrap();

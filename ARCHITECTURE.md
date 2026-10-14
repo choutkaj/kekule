@@ -567,13 +567,19 @@ universal save trait or implicit trajectory-to-structure export.
 - Molfile chooses V2000 when it can represent all supported content, otherwise
   promotes to V3000; explicitly requested versions fail on unsupported content.
   Coordinate stereo must agree with the actual rounded emitted geometry. Writers
-  must not invent assertions from an unasserted drawing or hide a conflict.
+  must not invent assertions from an unasserted drawing or hide a conflict. A
+  Molfile or SDF record cannot carry a periodic cell, so writing a model with
+  one fails unless the caller chooses to omit it.
 - SDF represents independent records; an ensemble member's weight and energy
   travel as data fields, and only the explicit `sdf::ensemble` assembles
   records into an ensemble. mmCIF distinguishes independent model blocks
   from one ensemble's multi-model block, and cannot carry member weights or
   energies, so writing unequal weights or any energy fails unless the
-  caller chooses to omit them. Canonical classification informs entity
+  caller chooses to omit them. mmCIF writes a cell periodic along all three
+  axes in the standard crystallographic frame as `_cell` in space group P 1,
+  and reads `_cell` as the model's cell only in P 1 (or with no space group),
+  where the coordinates are a whole unit cell; PDB's 1 Å placeholder cube is
+  no cell. Canonical classification informs entity
   kinds; hierarchy alone does not establish polymer status or contextual roles.
   Expert overrides and source provenance handle finer format distinctions.
 

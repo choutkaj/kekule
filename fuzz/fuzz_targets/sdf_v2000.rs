@@ -17,6 +17,7 @@ fuzz_target!(|data: &[u8]| {
         .collect::<Vec<_>>();
     let options = SdfWriteOptions {
         version: MolfileWriteVersion::V2000,
+        ..Default::default()
     };
     if let Ok(output) = write(&interpreted, options) {
         if let Ok(document) = parse_str(&output) {

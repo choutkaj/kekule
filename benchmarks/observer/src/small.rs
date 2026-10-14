@@ -675,6 +675,7 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                     &[record],
                     sdf::SdfWriteOptions {
                         version: sdf::MolfileWriteVersion::V2000,
+                        ..Default::default()
                     },
                 )
                 .map_err(|e| Failure::new("write", e))?
@@ -684,8 +685,14 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                 } else {
                     molfile::MolfileWriteVersion::V2000
                 };
-                molfile::write(&model, molfile::MolfileWriteOptions { version })
-                    .map_err(|e| Failure::new("write", e))?
+                molfile::write(
+                    &model,
+                    molfile::MolfileWriteOptions {
+                        version,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| Failure::new("write", e))?
             }
         }
         other => {

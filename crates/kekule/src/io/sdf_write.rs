@@ -5,13 +5,16 @@ use std::io::Write;
 use crate::structure::{AsModelView, EnsembleMemberView, Model, ModelView, TrajectoryFrameView};
 use crate::units::{Quantity, KILOJOULE_PER_MOLE};
 
-use super::molfile_write::render_model;
+use super::molfile_write::{check_cell, render_model};
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
-use super::{MoleculeWriteError, MolfileWriteVersion};
+use super::{MoleculeWriteError, MolfileWriteVersion, UnrepresentablePolicy};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SdfWriteOptions {
     pub version: MolfileWriteVersion,
+    /// A model's periodic cell, which an SDF record cannot carry: by default
+    /// a record whose model has a cell fails to write.
+    pub cell: UnrepresentablePolicy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,6 +172,7 @@ pub fn write_sdf_to<'a, R: Into<SdfRecordSource<'a>>>(
                 });
             }
         }
+        check_cell(record.model, options.cell)?;
         let ctab = render_model(record.model, record.title, options.version)?;
         writer.write_all(ctab.as_bytes()).map_err(sdf_io)?;
         for field in record.data_fields.iter().chain(&member_fields) {

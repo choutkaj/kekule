@@ -279,6 +279,17 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Structure writers no longer drop a model's periodic cell silently. mmCIF
+  writes a cell periodic along all three axes in the standard
+  crystallographic frame as `_cell` in space group P 1, and mmCIF reading now
+  takes `_cell` as the model's cell when the space group is P 1 or absent
+  (not for PDB's 1 Å placeholder). A cell mmCIF cannot hold (partially
+  periodic, rotated, or differing between ensemble members) fails with
+  `MmcifWriteError::UnrepresentableCell`. Molfile and SDF cannot hold any
+  cell and fail with `UnsupportedRepresentation`. The new
+  `MmcifWriteOptions::cell`, `MolfileWriteOptions::cell` and
+  `SdfWriteOptions::cell` set to `UnrepresentablePolicy::Omit` write the
+  structure without it.
 - Writing an ensemble no longer drops its members' weights and energies
   silently. SDF writes them to each member's `kekule.weight` and
   `kekule.energy.kJ_per_mol` data fields (`sdf::WEIGHT_FIELD`,

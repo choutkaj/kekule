@@ -1,14 +1,14 @@
 use std::sync::Arc;
 use std::{io, io::Write};
 
-use kekule::geometry::Point3;
+use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::mmcif::{self, EntityKind, MmcifEntityClassifications, MmcifWriteOptions};
 use kekule::molfile::{self, MoleculeWriteErrorKind, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
 use kekule::structure::{Ensemble, Model, Positions};
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE};
+use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE, NANOMETER};
 
 fn molecule(source: &str) -> kekule::core::Molecule {
     let mut molecules = smiles::to_molecules(source).expect("SMILES interprets");
@@ -132,12 +132,18 @@ fn molfile_rejects_asserted_stereo_its_coordinates_contradict() {
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
         molfile::write(
             &model("F[C@H](Cl)Br", &points),
-            MolfileWriteOptions { version },
+            MolfileWriteOptions {
+                version,
+                ..Default::default()
+            },
         )
         .unwrap();
         let error = molfile::write(
             &model("F[C@@H](Cl)Br", &points),
-            MolfileWriteOptions { version },
+            MolfileWriteOptions {
+                version,
+                ..Default::default()
+            },
         )
         .unwrap_err();
         assert_eq!(
@@ -163,11 +169,25 @@ fn molfile_rejects_atom_map_zero_which_both_versions_read_as_no_map() {
     ] {
         for (error, atom) in [
             (
-                molfile::write(&source, MolfileWriteOptions { version }).unwrap_err(),
+                molfile::write(
+                    &source,
+                    MolfileWriteOptions {
+                        version,
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err(),
                 1,
             ),
             (
-                molfile::write(&model, MolfileWriteOptions { version }).unwrap_err(),
+                molfile::write(
+                    &model,
+                    MolfileWriteOptions {
+                        version,
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err(),
                 2,
             ),
         ] {
@@ -199,6 +219,7 @@ fn molfile_v3000_continues_records_past_80_columns() {
         &charged,
         MolfileWriteOptions {
             version: MolfileWriteVersion::V3000,
+            ..Default::default()
         },
     )
     .unwrap();
@@ -248,8 +269,14 @@ fn molfile_chiral_flag_states_whether_stereo_is_absolute() {
         ("C[C@H](N)O |&1:1|", MolfileWriteVersion::V3000, false),
         ("C[C@H](N)O |o1:1|", MolfileWriteVersion::V3000, false),
     ] {
-        let text =
-            molfile::write(&model(source, &layout), MolfileWriteOptions { version }).unwrap();
+        let text = molfile::write(
+            &model(source, &layout),
+            MolfileWriteOptions {
+                version,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let document = molfile::parse_str(&text).unwrap();
         assert_eq!(
             document.chiral_flag(),
@@ -279,6 +306,7 @@ fn automatic_molfile_version_writes_what_explicit_v3000_writes_when_v2000_cannot
             model,
             MolfileWriteOptions {
                 version: MolfileWriteVersion::V3000,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -332,6 +360,7 @@ fn molfile_version_policy_promotes_counts_and_explicit_v2000_fails() {
         &model,
         MolfileWriteOptions {
             version: MolfileWriteVersion::V2000,
+            ..Default::default()
         },
     )
     .unwrap_err();
@@ -383,7 +412,14 @@ fn molfile_header_dimension_code_states_the_emitted_coordinate_kind() {
         ((&coordinate_free).into(), V2000, DRAWING_HEADER),
         ((&coordinate_free).into(), V3000, DRAWING_HEADER),
     ] {
-        let text = molfile::write(source, MolfileWriteOptions { version }).unwrap();
+        let text = molfile::write(
+            source,
+            MolfileWriteOptions {
+                version,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(text.lines().nth(1), Some(expected), "{version:?}\n{text}");
         assert_eq!(text.lines().nth(2), Some(""));
     }
@@ -425,7 +461,14 @@ fn molfile_writes_a_marked_flat_drawing_on_the_z_zero_plane() {
         |topology: &Topology| smiles::write(topology, SmilesWriteOptions::canonical()).unwrap();
     assert_eq!(canonical(raised_drawing.topology()), "C[C@H](N)O");
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
-        let text = molfile::write(&raised_drawing, MolfileWriteOptions { version }).unwrap();
+        let text = molfile::write(
+            &raised_drawing,
+            MolfileWriteOptions {
+                version,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(
             text.lines().nth(1),
             Some(DRAWING_HEADER),
@@ -653,6 +696,122 @@ fn mmcif_rejects_ensemble_weights_and_energies_it_cannot_carry() {
     // Equal weights without energies are what interpretation gives back.
     ensemble.get_mut(1).unwrap().set_weight(1.0).unwrap();
     mmcif::write([&ensemble], MmcifWriteOptions::default()).unwrap();
+}
+
+/// One methane carbon in a 2 x 3 x 4 nm box periodic along `periodic`.
+fn boxed_model(periodic: [bool; 3]) -> Model {
+    let mut model = model("C", &[[1.0, 2.0, 3.0]]);
+    model.set_cell(Some(
+        PeriodicCell::orthorhombic(
+            Quantity::new(Vector3::new(2.0, 3.0, 4.0), NANOMETER),
+            periodic,
+        )
+        .unwrap(),
+    ));
+    model
+}
+
+#[test]
+fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
+    let boxed = boxed_model([true; 3]);
+    let mut open = boxed.clone();
+    open.set_cell(None);
+    let message = "a Molfile cannot represent a periodic cell; set the cell option to omit it";
+    for version in [
+        MolfileWriteVersion::Auto,
+        MolfileWriteVersion::V2000,
+        MolfileWriteVersion::V3000,
+    ] {
+        let options = MolfileWriteOptions {
+            version,
+            ..Default::default()
+        };
+        let error = molfile::write(&boxed, options).unwrap_err();
+        assert_eq!(
+            (error.kind(), error.message()),
+            (MoleculeWriteErrorKind::UnsupportedRepresentation, message)
+        );
+        let omitted = MolfileWriteOptions {
+            cell: molfile::UnrepresentablePolicy::Omit,
+            ..options
+        };
+        assert_eq!(
+            molfile::write(&boxed, omitted).unwrap(),
+            molfile::write(&open, options).unwrap()
+        );
+    }
+    let error = sdf::write([&boxed], SdfWriteOptions::default()).unwrap_err();
+    assert_eq!(error.to_string(), message);
+    let omitted = SdfWriteOptions {
+        cell: sdf::UnrepresentablePolicy::Omit,
+        ..Default::default()
+    };
+    assert_eq!(
+        sdf::write([&boxed], omitted).unwrap(),
+        sdf::write([&open], SdfWriteOptions::default()).unwrap()
+    );
+}
+
+#[test]
+fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
+    let cell_of = |text: &str| {
+        mmcif::parse_str(text)
+            .unwrap()
+            .interpret()
+            .unwrap()
+            .model()
+            .cell()
+            .copied()
+    };
+    let boxed = boxed_model([true; 3]);
+    let text = mmcif::write([&boxed], MmcifWriteOptions::default()).unwrap();
+    assert!(text.starts_with(
+        "data_model\n#\n_cell.length_a 20.000\n_cell.length_b 30.000\n_cell.length_c 40.000\n\
+         _cell.angle_alpha 90.000\n_cell.angle_beta 90.000\n_cell.angle_gamma 90.000\n#\n\
+         _symmetry.space_group_name_H-M 'P 1'\n#\n"
+    ));
+    let reread = cell_of(&text).unwrap();
+    assert!(reread.is_orthorhombic());
+    let lengths = |cell: PeriodicCell| {
+        let [a, b, c] = cell.vectors().into_unit(NANOMETER).unwrap().into_value();
+        [a.x, b.y, c.z]
+    };
+    for (actual, expected) in lengths(reread).into_iter().zip([2.0, 3.0, 4.0]) {
+        assert!((actual - expected).abs() < 1e-12);
+    }
+
+    let slab = boxed_model([true, true, false]);
+    assert_eq!(
+        mmcif::write([&slab], MmcifWriteOptions::default())
+            .unwrap_err()
+            .to_string(),
+        "mmCIF cannot represent the periodic cell: an mmCIF cell is periodic along all three axes"
+    );
+    let omit = MmcifWriteOptions {
+        cell: mmcif::UnrepresentablePolicy::Omit,
+        ..MmcifWriteOptions::default()
+    };
+    assert_eq!(cell_of(&mmcif::write([&slab], omit.clone()).unwrap()), None);
+
+    let mut ensemble = Ensemble::from_models([boxed.clone(), boxed]).unwrap();
+    let text = mmcif::write([&ensemble], MmcifWriteOptions::default()).unwrap();
+    let members = mmcif::parse_str(&text)
+        .unwrap()
+        .interpret_ensemble()
+        .unwrap()
+        .ensemble()
+        .iter()
+        .map(|member| member.as_model_view().cell().is_some())
+        .collect::<Vec<_>>();
+    assert_eq!(members, [true, true]);
+    ensemble.get_mut(1).unwrap().set_cell(None);
+    assert_eq!(
+        mmcif::write([&ensemble], MmcifWriteOptions::default())
+            .unwrap_err()
+            .to_string(),
+        "mmCIF cannot represent the periodic cell: ensemble members have different cells"
+    );
+    mmcif::write([&ensemble], omit).unwrap();
 }
 
 #[test]

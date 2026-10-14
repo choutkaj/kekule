@@ -463,7 +463,7 @@ pub mod molfile {
         MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning,
         MolfileParseError, MolfileParseOptions, MolfileRadical, MolfileSource, MolfileStereoGroup,
         MolfileStereoGroupKind, MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion,
-        MolfileWriteOptions, MolfileWriteVersion,
+        MolfileWriteOptions, MolfileWriteVersion, UnrepresentablePolicy,
     };
 
     /// Parses one V2000 or V3000 Molfile into its typed connection table

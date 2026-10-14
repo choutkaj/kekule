@@ -1,6 +1,7 @@
 mod components;
 mod lines;
 mod mmcif_category;
+mod mmcif_cell;
 mod mmcif_document;
 mod mmcif_write;
 mod molfile_document;

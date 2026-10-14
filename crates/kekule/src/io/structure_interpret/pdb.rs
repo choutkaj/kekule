@@ -112,6 +112,7 @@ fn pdb_source(
         polymer_order,
         connections: connection_records(document)?,
         catalog: ConnectivityCatalog::new(connectivity),
+        cell: None,
         issues,
     })
 }

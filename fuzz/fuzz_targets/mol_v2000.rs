@@ -14,6 +14,7 @@ fuzz_target!(|data: &[u8]| {
         for molecule in interpreted.molecules() {
             let options = MolfileWriteOptions {
                 version: MolfileWriteVersion::V2000,
+                ..Default::default()
             };
             if let Ok(output) = write(molecule, options) {
                 if let Ok(document) = parse_str(&output) {

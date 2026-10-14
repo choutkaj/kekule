@@ -82,6 +82,7 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
                     &model,
                     MolfileWriteOptions {
                         version: MolfileWriteVersion::V2000,
+                        ..Default::default()
                     },
                 )
                 .map_err(|error| error.to_string()),
@@ -92,6 +93,7 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
                     &model,
                     MolfileWriteOptions {
                         version: MolfileWriteVersion::V3000,
+                        ..Default::default()
                     },
                 )
                 .map_err(|error| error.to_string()),
