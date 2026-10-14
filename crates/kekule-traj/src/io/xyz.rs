@@ -189,7 +189,7 @@ impl<R: BufRead> XyzReader<R> {
                 "XYZ frame count exceeds the configured limit",
             ));
         }
-        let Some(count_line) = read_line(
+        let Some((count_line, consumed)) = read_line(
             &mut self.reader,
             &mut self.line,
             self.options.limits.max_text_line_bytes,
@@ -199,18 +199,13 @@ impl<R: BufRead> XyzReader<R> {
         else {
             return Ok(false);
         };
-        let mut frame_bytes = u64::try_from(count_line.len())
-            .ok()
-            .and_then(|bytes| bytes.checked_add(1))
-            .ok_or_else(|| {
-                frame_codec_error(
-                    TrajectoryCodecErrorKind::ResourceLimitExceeded,
-                    operation,
-                    &self.options.source_label,
-                    self.frame_cursor,
-                    "XYZ frame byte count overflows",
-                )
-            })?;
+        let mut frame_bytes = checked_frame_add(
+            0,
+            consumed,
+            &self.options.source_label,
+            self.frame_cursor,
+            operation,
+        )?;
         validate_frame_bytes(
             frame_bytes,
             &self.options.limits,
@@ -248,15 +243,14 @@ impl<R: BufRead> XyzReader<R> {
             .with_counts(self.topology().atom_count() as u64, atom_count as u64)
             .into());
         }
-        if read_line(
+        let Some((_, consumed)) = read_line(
             &mut self.reader,
             &mut self.line,
             self.options.limits.max_comment_bytes,
             &self.options.source_label,
             operation,
         )?
-        .is_none()
-        {
+        else {
             return Err(frame_codec_error(
                 TrajectoryCodecErrorKind::TruncatedRecord,
                 operation,
@@ -264,10 +258,10 @@ impl<R: BufRead> XyzReader<R> {
                 self.frame_cursor,
                 "XYZ frame is missing its comment line",
             ));
-        }
+        };
         frame_bytes = checked_frame_add(
             frame_bytes,
-            self.line.len(),
+            consumed,
             &self.options.source_label,
             self.frame_cursor,
             operation,
@@ -288,7 +282,7 @@ impl<R: BufRead> XyzReader<R> {
                 .atom(atom_id)
                 .expect("dense topology atom IDs name topology atoms")
                 .element;
-            let Some(line) = read_line(
+            let Some((line, consumed)) = read_line(
                 &mut self.reader,
                 &mut self.line,
                 self.options.limits.max_text_line_bytes,
@@ -306,7 +300,7 @@ impl<R: BufRead> XyzReader<R> {
             };
             frame_bytes = checked_frame_add(
                 frame_bytes,
-                line.len(),
+                consumed,
                 &self.options.source_label,
                 self.frame_cursor,
                 operation,
@@ -929,16 +923,16 @@ fn validate_frame_bytes(
     Ok(())
 }
 
+/// Adds the bytes one line consumed from the source, terminator included.
 fn checked_frame_add(
     frame_bytes: u64,
-    line_bytes: usize,
+    consumed_bytes: usize,
     source_label: &str,
     frame: u64,
     operation: TrajectoryIoOperation,
 ) -> Result<u64, TrajectoryIoError> {
-    u64::try_from(line_bytes)
+    u64::try_from(consumed_bytes)
         .ok()
-        .and_then(|bytes| bytes.checked_add(1))
         .and_then(|bytes| frame_bytes.checked_add(bytes))
         .ok_or_else(|| {
             frame_codec_error(
@@ -951,13 +945,15 @@ fn checked_frame_add(
         })
 }
 
+/// Reads one line and returns it without its LF or CRLF terminator, together
+/// with the exact number of source bytes consumed, terminator included.
 fn read_line<'a, R: BufRead>(
     reader: &mut R,
     line: &'a mut String,
     limit: usize,
     source_label: &str,
     operation: TrajectoryIoOperation,
-) -> Result<Option<&'a str>, TrajectoryIoError> {
+) -> Result<Option<(&'a str, usize)>, TrajectoryIoError> {
     line.clear();
     let bounded = limit.checked_add(1).ok_or_else(|| {
         codec_context(
@@ -990,7 +986,7 @@ fn read_line<'a, R: BufRead>(
             line.pop();
         }
     }
-    Ok(Some(line.as_str()))
+    Ok(Some((line.as_str(), read)))
 }
 
 fn frame_codec_error(

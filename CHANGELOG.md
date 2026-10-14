@@ -315,6 +315,10 @@ All notable changes to Kekule are documented in this file.
 - mmCIF parsing no longer takes time quadratic in the values on one line.
   Each value searched for the end of its line from the line's start, so a
   loop written on one long line was tokenized in O(length × values).
+- The XYZ reader's `max_frame_bytes` check counts the bytes each line takes in
+  the source, terminator included. A CRLF line was counted one byte short, and
+  a final line without a terminator one byte long, so the limit depended on
+  line endings.
 - A 3D Molfile or SDF record no longer gives E/Z to a double bond whose
   endpoint carries two identical terminal ligands, such as a vinyl `=CH2`
   drawn with its hydrogens. The configuration was arbitrary, and canonical

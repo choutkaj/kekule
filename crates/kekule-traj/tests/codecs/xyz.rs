@@ -16,12 +16,14 @@ use kekule_traj::io::{
 };
 use kekule_traj::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
-    TrajectoryFormat, TrajectoryIoError, TrajectoryReader, TrajectoryWriter,
+    TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
 use crate::support;
-use support::{codec_kind, topology as build_topology, x_coordinates as point_xs, GuardedCursor};
+use support::{
+    codec_error, codec_kind, topology as build_topology, x_coordinates as point_xs, GuardedCursor,
+};
 
 const TWO_FRAMES: &str = "2\r\nfirst\r\nC 0.0 1.0 2.0\r\nH 3.0 4.0 5.0\r\n\
 2\nsecond\nC 1.0 2.0 3.0\nH 4.0 5.0 6.0";
@@ -481,6 +483,58 @@ fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
     .into_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
+}
+
+#[test]
+fn xyz_frame_byte_limit_charges_exact_source_bytes_including_terminators() {
+    let topology = support::linear_carbon_topology(1);
+    // Each row is (input, its exact byte length); the frame is accepted at
+    // that limit and rejected one byte below it.
+    for (input, frame_bytes) in [
+        ("1\r\n\r\nC 0 0 0\r\n", 14),
+        ("1\n\nC 0 0 0\n", 11),
+        ("1\n\nC 0 0 0", 10),
+    ] {
+        assert_eq!(input.len() as u64, frame_bytes);
+        let read = |max_frame_bytes| {
+            let mut reader = XyzReader::new(
+                Cursor::new(input.as_bytes()),
+                Arc::clone(&topology),
+                XyzReadOptions::default()
+                    .with_limits(TrajectoryIoLimits {
+                        max_frame_bytes,
+                        ..TrajectoryIoLimits::default()
+                    })
+                    .with_source_label("frame-bytes.xyz"),
+            )
+            .unwrap();
+            let mut buffer = FrameBuffer::new(Arc::clone(&topology));
+            let first = reader.read_next(&mut buffer);
+            (first, point_xs(&buffer), reader.read_next(&mut buffer))
+        };
+
+        let (first, xs, eof) = read(frame_bytes);
+        assert!(first.unwrap(), "{input:?}");
+        assert_eq!(xs, [0.0]);
+        assert!(!eof.unwrap(), "{input:?}");
+
+        let (first, _, _) = read(frame_bytes - 1);
+        assert_eq!(
+            first,
+            Err(codec_error(
+                TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                TrajectoryIoOperation::ReadHeader,
+                TrajectoryFormat::Xyz,
+                "frame-bytes.xyz",
+                Some(0),
+                &format!(
+                    "XYZ frame exceeds configured {}-byte limit",
+                    frame_bytes - 1
+                ),
+            )),
+            "{input:?}"
+        );
+    }
 }
 
 #[test]
