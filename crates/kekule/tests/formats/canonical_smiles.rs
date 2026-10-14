@@ -13,6 +13,11 @@ fn canonical_smiles_matches_rdkit_charge_closures_stereo_and_cx_radicals() {
         ("OC(=O)C[H]", "CC(=O)O"),
         ("[H]OC(=O)c1ccccc1", "O=C(O)c1ccccc1"),
         ("[H]n1cccc1", "c1cc[nH]c1"),
+        // An imine N-H that alone carries the C=N configuration stays
+        // explicit, since a direction mark needs an explicit atom.
+        ("[H]/N=C(/C([H])([H])[H])[H]", "[H]/N=C/C"),
+        ("C/C=N/[H]", "[H]/N=C/C"),
+        (r"[H]/N=C\C", r"[H]/N=C\C"),
         ("[O-][N+](=O)c1ccccc1", "O=[N+]([O-])c1ccccc1"),
         (
             "CC12CCC3C(CCC4CC(O)CCC43C)C2CCC1=O",

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::{
     allowed_valences, rdkit_default_valence, HydrogenTransformError, RemoveHydrogensReport,
@@ -94,9 +94,11 @@ fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, Mol
     // Metadata does not affect a molecular identifier. Use the common hydrogen
     // transform so carrier remapping and count reconstruction have one owner.
     normalized.properties_mut().owner_mut().clear();
-    let removal = normalized
-        .remove_hydrogens()
-        .map_err(hydrogen_normalization_error)?;
+    let removal = crate::algorithms::remove_hydrogens_keeping(
+        &mut normalized,
+        &double_bond_reference_hydrogens(mol),
+    )
+    .map_err(hydrogen_normalization_error)?;
     // Removal publishes dense IDs and clears perception; translate the
     // original hydrogen counts and aromatic system.
     restore_projection_valence(&mut normalized, mol.perception(), &removal);
@@ -108,6 +110,40 @@ fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, Mol
         |bond| ids.bond(bond),
     );
     Ok(normalized)
+}
+
+/// Graph hydrogens that carry a double bond's configuration at an endpoint
+/// with no other single-bond substituent, such as the H of `[H]/N=C/C`. A
+/// SMILES direction mark needs an explicit atom there, so they stay explicit.
+fn double_bond_reference_hydrogens(mol: &Molecule) -> BTreeSet<AtomId> {
+    let is_hydrogen = |atom: AtomId| {
+        mol.atom(atom)
+            .is_ok_and(|atom| atom.element.atomic_number() == 1)
+    };
+    let mut keep = BTreeSet::new();
+    for (_, element) in mol.stereo_elements() {
+        let StereoElementKind::DoubleBond(stereo) = &element.kind else {
+            continue;
+        };
+        for (endpoint, other, carrier) in [
+            (stereo.left, stereo.right, stereo.left_carrier),
+            (stereo.right, stereo.left, stereo.right_carrier),
+        ] {
+            let StereoCarrier::Atom(carrier) = carrier else {
+                continue;
+            };
+            let only_hydrogens = mol.incident_bonds(endpoint).is_ok_and(|mut bonds| {
+                bonds.all(|(_, bond)| {
+                    let neighbor = bond.other_atom(endpoint);
+                    neighbor == other || bond.order != BondOrder::Single || is_hydrogen(neighbor)
+                })
+            });
+            if is_hydrogen(carrier) && only_hydrogens {
+                keep.insert(carrier);
+            }
+        }
+    }
+    keep
 }
 
 /// Classifies a hydrogen-normalization failure by its cause.

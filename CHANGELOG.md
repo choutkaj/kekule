@@ -279,6 +279,11 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Canonical SMILES no longer panics on an E/Z bond whose only carrier at one
+  endpoint is an explicit hydrogen, such as the N-H of `[H]/N=C/C` read from
+  an RDKit-embedded SDF record. Hydrogen normalization collapsed that
+  hydrogen, leaving no atom to carry the direction mark; it now stays
+  explicit, and the output matches RDKit's (`[H]/N=C/C`).
 - Structure writers no longer drop a model's periodic cell silently. mmCIF
   writes a cell periodic along all three axes in the standard
   crystallographic frame as `_cell` in space group P 1, and mmCIF reading now
