@@ -2,8 +2,9 @@
 //!
 //! PDB records carry author identities only. A residue is a run of
 //! consecutive coordinate records with one chain, sequence number, and
-//! insertion code; a number that recurs after other residues names a new
-//! residue, as when numbering wraps around. Without entity records, a chain's
+//! insertion code, which a `TER` record also ends; a number that recurs after
+//! other residues or a `TER` record names a new residue, as when numbering
+//! wraps around or a segment restarts it. Without entity records, a chain's
 //! polymer is read from its `TER` records, and its residues' order gives
 //! polymer adjacency.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -261,6 +262,9 @@ fn read_rows(
         if terminated.contains(&index) {
             let chain = residues[residue].asym_id.clone();
             runs.close(&chain, true, &mut residues);
+            // `TER` also ends the residue: records after it start a new one,
+            // even when they repeat its chain, number, and insertion code.
+            current = None;
         }
     }
     runs.close_all(&mut residues);

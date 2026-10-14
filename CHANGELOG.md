@@ -302,6 +302,11 @@ All notable changes to Kekule are documented in this file.
   `DegenerateDihedral` when their atoms were collinear, so `OpenFfPotential`
   could not evaluate linear groups such as acetylene, whose torsions Rosemary
   zeroes. Torsions with a nonzero amplitude still need a defined dihedral.
+- A PDB `TER` record ends the residue it follows as well as the chain's
+  polymer. A segment that restarted with the same chain, residue number, and
+  insertion code used to join that residue, and its repeated atom names failed
+  as duplicate alternate-location records; it is now a new residue, reported
+  with its occurrence like a number that recurs after other residues.
 - A 3D Molfile or SDF record no longer gives E/Z to a double bond whose
   endpoint carries two identical terminal ligands, such as a vinyl `=CH2`
   drawn with its hydrogens. The configuration was arbitrary, and canonical
