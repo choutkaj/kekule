@@ -1,4 +1,4 @@
-use std::io::{self, Cursor, Read, Seek, SeekFrom};
+use std::io::{self, BufRead, BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,12 +16,14 @@ use kekule_traj::io::{
 };
 use kekule_traj::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
-    TrajectoryFormat, TrajectoryIoError, TrajectoryReader, TrajectoryWriter,
+    TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
 use crate::support;
-use support::{codec_kind, topology as build_topology, x_coordinates as point_xs, GuardedCursor};
+use support::{
+    codec_error, codec_kind, topology as build_topology, x_coordinates as point_xs, GuardedCursor,
+};
 
 const TWO_FRAMES: &str = "2\r\nfirst\r\nC 0.0 1.0 2.0\r\nH 3.0 4.0 5.0\r\n\
 2\nsecond\nC 1.0 2.0 3.0\nH 4.0 5.0 6.0";
@@ -481,6 +483,136 @@ fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
     .into_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
+}
+
+#[test]
+fn xyz_frame_byte_limit_charges_exact_source_bytes_including_terminators() {
+    let topology = support::linear_carbon_topology(1);
+    // Each row is (input, its exact byte length); the frame is accepted at
+    // that limit and rejected one byte below it.
+    for (input, frame_bytes) in [
+        ("1\r\n\r\nC 0 0 0\r\n", 14),
+        ("1\n\nC 0 0 0\n", 11),
+        ("1\n\nC 0 0 0", 10),
+    ] {
+        assert_eq!(input.len() as u64, frame_bytes);
+        let read = |max_frame_bytes| {
+            let mut reader = XyzReader::new(
+                Cursor::new(input.as_bytes()),
+                Arc::clone(&topology),
+                XyzReadOptions::default()
+                    .with_limits(TrajectoryIoLimits {
+                        max_frame_bytes,
+                        ..TrajectoryIoLimits::default()
+                    })
+                    .with_source_label("frame-bytes.xyz"),
+            )
+            .unwrap();
+            let mut buffer = FrameBuffer::new(Arc::clone(&topology));
+            let first = reader.read_next(&mut buffer);
+            (first, point_xs(&buffer), reader.read_next(&mut buffer))
+        };
+
+        let (first, xs, eof) = read(frame_bytes);
+        assert!(first.unwrap(), "{input:?}");
+        assert_eq!(xs, [0.0]);
+        assert!(!eof.unwrap(), "{input:?}");
+
+        let (first, _, _) = read(frame_bytes - 1);
+        assert_eq!(
+            first,
+            Err(codec_error(
+                TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                TrajectoryIoOperation::ReadHeader,
+                TrajectoryFormat::Xyz,
+                "frame-bytes.xyz",
+                Some(0),
+                &format!(
+                    "XYZ frame exceeds configured {}-byte limit",
+                    frame_bytes - 1
+                ),
+            )),
+            "{input:?}"
+        );
+    }
+}
+
+fn read_first_xyz_frame<R: BufRead>(
+    stream: R,
+    topology: &Arc<Topology>,
+    max_scratch_bytes: usize,
+) -> (Result<bool, TrajectoryIoError>, FrameBuffer) {
+    let mut reader = XyzReader::new(
+        stream,
+        Arc::clone(topology),
+        XyzReadOptions::default()
+            .with_limits(TrajectoryIoLimits {
+                max_scratch_bytes,
+                ..TrajectoryIoLimits::default()
+            })
+            .with_source_label("scratch.xyz"),
+    )
+    .unwrap();
+    let mut destination = FrameBuffer::new(Arc::clone(topology));
+    let result = reader.read_next(&mut destination);
+    if result == Ok(true) {
+        assert_eq!(reader.read_next(&mut destination), Ok(false));
+    }
+    (result, destination)
+}
+
+#[test]
+fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
+    let topology = support::linear_carbon_topology(1);
+    let comment = "x".repeat(4096);
+    let input = format!("1\n{comment}\nC 0 0 0\n").into_bytes();
+    let positions = std::mem::size_of::<Point3>();
+    // The retained line buffer must hold the longest line, here the comment
+    // with its terminator; the count and atom lines alone would fit.
+    let required = positions + comment.len() + 1;
+    let exceeded = codec_error(
+        TrajectoryCodecErrorKind::ResourceLimitExceeded,
+        TrajectoryIoOperation::ReadHeader,
+        TrajectoryFormat::Xyz,
+        "scratch.xyz",
+        Some(0),
+        "XYZ line buffer: aggregate decode scratch exceeds the configured limit",
+    );
+    let untouched = support::buffer_snapshot(&FrameBuffer::new(Arc::clone(&topology)));
+
+    // A seven-byte buffer splits the comment across many chunks; the result
+    // must not depend on how the stream is buffered.
+    let streams = || -> [Box<dyn BufRead>; 2] {
+        [
+            Box::new(Cursor::new(input.clone())),
+            Box::new(BufReader::with_capacity(7, Cursor::new(input.clone()))),
+        ]
+    };
+    for max_scratch_bytes in [positions, required - 1] {
+        for stream in streams() {
+            let (result, destination) = read_first_xyz_frame(stream, &topology, max_scratch_bytes);
+            assert_eq!(result, Err(exceeded.clone()), "{max_scratch_bytes}");
+            assert_eq!(support::buffer_snapshot(&destination), untouched);
+        }
+        let indexed = XyzReader::new(
+            Cursor::new(input.clone()),
+            Arc::clone(&topology),
+            XyzReadOptions::default()
+                .with_limits(TrajectoryIoLimits {
+                    max_scratch_bytes,
+                    ..TrajectoryIoLimits::default()
+                })
+                .with_source_label("scratch.xyz"),
+        )
+        .unwrap()
+        .into_indexed();
+        assert_eq!(indexed.err(), Some(exceeded.clone()), "{max_scratch_bytes}");
+    }
+    for stream in streams() {
+        let (result, destination) = read_first_xyz_frame(stream, &topology, required);
+        assert_eq!(result, Ok(true));
+        assert_eq!(point_xs(&destination), [0.0]);
+    }
 }
 
 #[test]

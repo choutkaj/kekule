@@ -107,6 +107,7 @@ pub struct MolfileAtom {
     pub(super) position: Point3,
     pub(super) formal_charge: i32,
     pub(super) isotope: Option<u16>,
+    pub(super) mass_difference: Option<i8>,
     pub(super) radical: Option<MolfileRadical>,
     pub(super) hydrogen_count: Option<u8>,
     pub(super) valence: Option<u8>,
@@ -122,6 +123,7 @@ impl MolfileAtom {
             position,
             formal_charge: 0,
             isotope: None,
+            mass_difference: None,
             radical: None,
             hydrogen_count: None,
             valence: None,
@@ -148,6 +150,13 @@ impl MolfileAtom {
     /// Declared mass number.
     pub const fn isotope(&self) -> Option<u16> {
         self.isotope
+    }
+
+    /// A nonzero legacy V2000 mass difference from the element's nominal
+    /// mass, which interpretation resolves to a mass number. An `M  ISO`
+    /// record replaces every atom-block mass difference.
+    pub const fn mass_difference(&self) -> Option<i8> {
+        self.mass_difference
     }
 
     pub const fn radical(&self) -> Option<MolfileRadical> {
@@ -283,6 +292,13 @@ pub enum MolfileUnsupportedContent {
     /// A V3000 bond option other than `CFG`. `bond` indexes
     /// [`MolfileDocument::bonds`].
     BondOption { bond: usize, key: String },
+    /// A nonzero V2000 atom-block query or reaction field: stereo care, H0
+    /// designator, inversion/retention or exact change. `atom` indexes
+    /// [`MolfileDocument::atoms`].
+    AtomField { atom: usize, field: String },
+    /// A nonzero V2000 bond-block ring/chain topology or reacting-center
+    /// field. `bond` indexes [`MolfileDocument::bonds`].
+    BondField { bond: usize, field: String },
     /// A V3000 collection other than enhanced stereo groups, such as
     /// `MDLV30/HILITE`.
     Collection(String),
@@ -299,6 +315,8 @@ impl fmt::Display for MolfileUnsupportedContent {
             Self::Record(keyword) => write!(formatter, "record `{keyword}`"),
             Self::AtomOption { key, .. } => write!(formatter, "V3000 atom option `{key}`"),
             Self::BondOption { key, .. } => write!(formatter, "V3000 bond option `{key}`"),
+            Self::AtomField { field, .. } => write!(formatter, "V2000 atom {field} field"),
+            Self::BondField { field, .. } => write!(formatter, "V2000 bond {field} field"),
             Self::Collection(name) => write!(formatter, "V3000 collection `{name}`"),
             Self::Block(name) => write!(formatter, "V3000 block `{name}`"),
             Self::TrailingContent => formatter.write_str("content after `M  END`"),

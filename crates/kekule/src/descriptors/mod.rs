@@ -25,6 +25,13 @@ pub fn atomic_mass(element: Element, isotope: Option<u16>) -> Option<Quantity<f6
     Some(Quantity::new(mass, DALTON))
 }
 
+/// The mass number a legacy CTfile mass difference counts from: the most
+/// abundant natural isotope, as RDKit reads it. `None` for an element without
+/// a naturally abundant isotope.
+pub(crate) fn mass_difference_reference(element: Element) -> Option<u16> {
+    data::most_abundant_isotope(element)
+}
+
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::error::Error;

@@ -26,6 +26,77 @@ C C1 GLY A 1 1 0.0 0.0 0.0
 C C2 GLY A 1 1 1.0 0.0 0.0
 "#;
 
+/// The cell of an interpreted model as its diagonal in angstroms, when the
+/// cell is orthorhombic.
+fn orthorhombic_cell(text: &str) -> Option<[f64; 3]> {
+    let interpreted = mmcif::parse_str(text).unwrap().interpret().unwrap();
+    interpreted.model().cell().map(|cell| {
+        assert!(cell.is_orthorhombic());
+        assert_eq!(cell.periodic_axes(), [true; 3]);
+        let [a, b, c] = cell
+            .vectors()
+            .into_unit(kekule::units::ANGSTROM)
+            .unwrap()
+            .into_value();
+        [a.x, b.y, c.z]
+    })
+}
+
+#[test]
+fn mmcif_cell_is_the_model_cell_only_for_a_whole_unit_cell() {
+    let cell = |lengths: &str| {
+        let [a, b, c]: [&str; 3] = lengths.split(' ').collect::<Vec<_>>().try_into().unwrap();
+        format!(
+            "_cell.length_a {a}\n_cell.length_b {b}\n_cell.length_c {c}\n\
+             _cell.angle_alpha 90\n_cell.angle_beta 90\n_cell.angle_gamma 90.0\n"
+        )
+    };
+    for (header, expected) in [
+        // No space group declared: the coordinates are taken as a unit cell.
+        (cell("20 30 40.0(2)"), Some([20.0, 30.0, 40.0])),
+        (
+            cell("20 30 40") + "_symmetry.space_group_name_H-M 'P 1'\n",
+            Some([20.0, 30.0, 40.0]),
+        ),
+        // An asymmetric unit's translates are not its crystal.
+        (
+            cell("20 30 40") + "_symmetry.space_group_name_H-M 'P 21 21 21'\n",
+            None,
+        ),
+        (
+            cell("20 30 40") + "_space_group.name_H-M_alt 'P 21 21 21'\n",
+            None,
+        ),
+        // PDB's placeholder for structures without a crystal lattice.
+        (
+            cell("1.000 1.000 1.000") + "_symmetry.space_group_name_H-M 'P 1'\n",
+            None,
+        ),
+        (cell("20 30 ?"), None),
+    ] {
+        let text = MINIMAL_MMCIF.replacen("data_demo\n", &format!("data_demo\n{header}"), 1);
+        let actual = orthorhombic_cell(&text);
+        match (actual, expected) {
+            (Some(actual), Some(expected)) => {
+                for (actual, expected) in actual.into_iter().zip(expected) {
+                    assert!((actual - expected).abs() < 1e-9, "{header}");
+                }
+            }
+            (actual, expected) => assert_eq!(actual, expected, "{header}"),
+        }
+    }
+    let malformed = MINIMAL_MMCIF.replacen(
+        "data_demo\n",
+        &format!("data_demo\n{}", cell("20 abc 40")),
+        1,
+    );
+    let error = mmcif::parse_str(&malformed)
+        .unwrap()
+        .interpret()
+        .unwrap_err();
+    assert_eq!(error.message(), "invalid _cell.length_b `abc`");
+}
+
 fn with_struct_conn(order: &str) -> String {
     format!(
         r#"{MINIMAL_MMCIF}

@@ -186,7 +186,14 @@ fn minimum_formal_charge_round_trips_without_overflow() {
 fn molfile_control_text_in_positional_headers_is_not_a_terminator() {
     let original = molecule("CO");
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
-        let written = molfile::write(&original, MolfileWriteOptions { version }).unwrap();
+        let written = molfile::write(
+            &original,
+            MolfileWriteOptions {
+                version,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         for header in 0..3 {
             let mut lines = written.lines().collect::<Vec<_>>();
             lines[header] = "M  END";
@@ -205,12 +212,16 @@ fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
         &molecule("CO"),
         molfile::MolfileWriteOptions {
             version: molfile::MolfileWriteVersion::V2000,
+            ..Default::default()
         },
     )
     .unwrap();
     let model = molfile::parse_str(&mol).unwrap().to_model().unwrap();
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
-        let options = SdfWriteOptions { version };
+        let options = SdfWriteOptions {
+            version,
+            ..Default::default()
+        };
         let record = SdfRecordInterpretation::new("M  END", model.clone(), Vec::new());
         let written = sdf::write(&[record], options).unwrap();
         let document = sdf::parse_str(&written).unwrap();
@@ -252,6 +263,7 @@ fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_cou
             &original,
             molfile::MolfileWriteOptions {
                 version: molfile::MolfileWriteVersion::V3000,
+                ..Default::default()
             },
         )
         .unwrap();

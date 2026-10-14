@@ -2,6 +2,7 @@
 
 use crate::structure::Ensemble;
 
+use super::hierarchical::ObjectiveDistances;
 use super::{ClusteringError, DistanceMatrix, EnsemblePartition};
 
 impl Ensemble {
@@ -50,15 +51,16 @@ impl Ensemble {
             });
         }
         let weights = self.scaled_weights();
-        let mut medoids = build(distances, &weights, clusters);
-        swap(distances, &weights, &mut medoids);
+        let objective = ObjectiveDistances::new(distances);
+        let mut medoids = build(objective, &weights, clusters);
+        swap(objective, &weights, &mut medoids);
         Ok(partition(distances, &medoids))
     }
 }
 
 /// Greedy initialization: each step adds the non-medoid that leaves the
 /// smallest weighted total distance, the lowest index on ties.
-fn build(distances: &DistanceMatrix, weights: &[f64], clusters: usize) -> Vec<usize> {
+fn build(distances: ObjectiveDistances<'_>, weights: &[f64], clusters: usize) -> Vec<usize> {
     let members = distances.len();
     let mut medoids = Vec::with_capacity(clusters);
     let mut is_medoid = vec![false; members];
@@ -92,7 +94,7 @@ struct Nearest {
 }
 
 impl Nearest {
-    fn new(distances: &DistanceMatrix, medoids: &[usize]) -> Self {
+    fn new(distances: ObjectiveDistances<'_>, medoids: &[usize]) -> Self {
         let members = distances.len();
         let mut nearest = Self {
             slot: vec![0; members],
@@ -126,7 +128,7 @@ impl Nearest {
 /// Applies the best improving medoid exchange until none improves, stopping
 /// as well if rounding makes a predicted improvement fail to lower the
 /// recomputed total, so the loop always ends.
-fn swap(distances: &DistanceMatrix, weights: &[f64], medoids: &mut [usize]) {
+fn swap(distances: ObjectiveDistances<'_>, weights: &[f64], medoids: &mut [usize]) {
     let mut nearest = Nearest::new(distances, medoids);
     let mut total = nearest.total(weights);
     loop {
@@ -157,7 +159,7 @@ fn swap(distances: &DistanceMatrix, weights: &[f64], medoids: &mut [usize]) {
 /// `min(d(x, o), d_n)` otherwise. The second change does not depend on `m`,
 /// so one pass over the members prices every slot at once.
 fn best_swap(
-    distances: &DistanceMatrix,
+    distances: ObjectiveDistances<'_>,
     weights: &[f64],
     medoids: &[usize],
     nearest: &Nearest,
@@ -251,13 +253,13 @@ mod tests {
             .collect()
     }
 
-    fn total(distances: &DistanceMatrix, weights: &[f64], medoids: &[usize]) -> f64 {
+    fn total(distances: ObjectiveDistances<'_>, weights: &[f64], medoids: &[usize]) -> f64 {
         Nearest::new(distances, medoids).total(weights)
     }
 
     /// Textbook PAM SWAP: recompute the full weighted total for every
     /// exchange and apply the best one.
-    fn naive_swap(distances: &DistanceMatrix, weights: &[f64], medoids: &mut [usize]) {
+    fn naive_swap(distances: ObjectiveDistances<'_>, weights: &[f64], medoids: &mut [usize]) {
         loop {
             let current = total(distances, weights, medoids);
             let mut best: Option<(usize, usize, f64)> = None;
@@ -286,18 +288,19 @@ mod tests {
         let mut swapped = false;
         for (members, clusters, seed) in [(6, 2, 1), (12, 3, 2), (25, 4, 3), (40, 7, 4)] {
             let pairs = members * (members - 1) / 2;
-            let distances = DistanceMatrix::from_condensed(
+            let matrix = DistanceMatrix::from_condensed(
                 members,
                 Quantity::new(sequence(pairs, seed, 0.5), NANOMETER),
             )
             .unwrap();
+            let distances = ObjectiveDistances::new(&matrix);
             let weights = sequence(members, seed + 100, 0.1);
-            let start = build(&distances, &weights, clusters);
+            let start = build(distances, &weights, clusters);
             let mut fast = start.clone();
-            swap(&distances, &weights, &mut fast);
+            swap(distances, &weights, &mut fast);
             swapped |= fast != start;
             let mut naive = start;
-            naive_swap(&distances, &weights, &mut naive);
+            naive_swap(distances, &weights, &mut naive);
             assert_eq!(fast, naive, "{members} members, {clusters} clusters");
         }
         // BUILD alone must not already be optimal everywhere.

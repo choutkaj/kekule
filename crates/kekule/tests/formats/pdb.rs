@@ -883,6 +883,144 @@ fn recurring_numbers_and_alternate_locations_identify_residues() {
 }
 
 #[test]
+fn a_ter_record_ends_the_residue_it_follows() {
+    // Records after a TER record start a new residue even when they repeat
+    // the chain, number, and insertion code of the residue it ends.
+    let calpha = |serial, x| site("ATOM", serial, " CA ", "GLY", 'A', "1", [x, 0.0, 0.0], "C");
+    let single = vec![
+        calpha("1", 0.0).line(),
+        ter("2", "GLY", 'A', "1"),
+        calpha("3", 10.0).line(),
+    ];
+    // The second dipeptide, numbered 2-3 in records 10-17, restarts at the
+    // number that ends the first.
+    let restarted = glycine_dipeptide()
+        .into_iter()
+        .map(|line| {
+            let serial = line[6..11].trim().parse::<u32>().unwrap() + 9;
+            let sequence = line[22..26].trim().parse::<i32>().unwrap() + 1;
+            let x = line[30..38].trim().parse::<f64>().unwrap() + 20.0;
+            format!(
+                "{}{serial:>5}{}{sequence:>4}{}{x:>8.3}{}",
+                &line[..6],
+                &line[11..22],
+                &line[26..30],
+                &line[38..]
+            )
+        })
+        .collect::<Vec<_>>();
+    let segments = [
+        glycine_dipeptide(),
+        vec![ter("9", "GLY", 'A', "2")],
+        restarted,
+        vec![ter("18", "GLY", 'A', "3")],
+    ]
+    .concat();
+    // Each instance's residues: author number, occurrence, and source lines.
+    type Residues<'a> = Vec<(&'a str, Option<usize>, Vec<usize>)>;
+    let cases: [(Vec<String>, EntityKind, Vec<Residues>, usize); 2] = [
+        (
+            single.clone(),
+            EntityKind::NonPolymer,
+            vec![vec![("1", None, vec![1])], vec![("1", Some(1), vec![3])]],
+            0,
+        ),
+        (
+            segments,
+            EntityKind::Polymer,
+            vec![
+                vec![("1", None, vec![1, 2, 3, 4]), ("2", None, vec![5, 6, 7, 8])],
+                vec![
+                    ("2", Some(1), vec![10, 11, 12, 13]),
+                    ("3", None, vec![14, 15, 16, 17]),
+                ],
+            ],
+            2,
+        ),
+    ];
+    for (lines, kind, expected, peptide_bonds) in cases {
+        let interpreted = interpret(&entry(&lines));
+        let instances = interpreted
+            .report()
+            .instances()
+            .iter()
+            .map(|instance| {
+                assert_eq!(instance.entity_kinds(), std::slice::from_ref(&kind));
+                let mut residues: Residues = Vec::new();
+                for atom in instance.atoms() {
+                    let sequence = atom.author_sequence_id().unwrap();
+                    match residues.last_mut() {
+                        Some((last, occurrence, lines))
+                            if *last == sequence && *occurrence == atom.occurrence() =>
+                        {
+                            lines.push(atom.source_line());
+                        }
+                        _ => residues.push((sequence, atom.occurrence(), vec![atom.source_line()])),
+                    }
+                }
+                residues
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(instances, expected);
+        let hierarchy = interpreted.topology().hierarchy();
+        let residues = hierarchy
+            .residues()
+            .map(|(_, residue)| {
+                (
+                    residue.name().to_owned(),
+                    residue.author_seq_id().map(str::to_owned),
+                    residue.atom_sites().len(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let sizes = expected
+            .iter()
+            .flatten()
+            .map(|(sequence, _, lines)| {
+                ("GLY".to_owned(), Some((*sequence).to_owned()), lines.len())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(residues, sizes);
+        assert_eq!(hierarchy.chains().count(), 1);
+        assert_eq!(
+            bonds_with_evidence(&interpreted, &BondEvidence::PolymerLink),
+            peptide_bonds
+        );
+        assert_eq!(interpreted.report().issues(), &[]);
+    }
+
+    // Every coordinate model numbers its repeats afresh.
+    let models = entry(
+        &[
+            vec!["MODEL        1".to_owned()],
+            single.clone(),
+            vec!["ENDMDL".to_owned(), "MODEL        2".to_owned()],
+            single,
+            vec!["ENDMDL".to_owned()],
+        ]
+        .concat(),
+    );
+    let ensemble = pdb::interpret_ensemble(&pdb::parse_str(&models).unwrap()).unwrap();
+    assert_eq!(ensemble.ensemble().len(), 2);
+    let occurrences = ensemble
+        .reports()
+        .iter()
+        .map(|report| {
+            report
+                .instances()
+                .iter()
+                .flat_map(|instance| instance.atoms())
+                .map(|atom| (atom.source_line(), atom.occurrence()))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        occurrences,
+        [[(2, None), (4, Some(1))], [(7, None), (9, Some(1))]]
+    );
+}
+
+#[test]
 fn atom_names_imply_elements_without_element_columns() {
     let text = entry(&[
         site("ATOM", "1", " CA ", "GLY", 'A', "1", [0.0, 0.0, 0.0], "").coordinates_only(),

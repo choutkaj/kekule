@@ -3,8 +3,10 @@ use std::collections::BTreeMap;
 
 use crate::core::BondOrder;
 use crate::diagnostics::DiagnosticKind;
+use crate::geometry::PeriodicCell;
 
 use super::super::mmcif_category::MmcifCategory;
+use super::super::mmcif_cell::cell_from_parameters;
 use super::super::structure_connectivity::ConnectivityCatalog;
 use super::super::{MmcifBlock, MmcifDocument};
 use super::altloc::{inventory, source::conformations};
@@ -183,7 +185,79 @@ fn mmcif_source(
         polymer_order: polymer_asym_order(block)?,
         connections: read_struct_conn(block)?,
         catalog: ConnectivityCatalog::from_block(block, connectivity)?,
+        cell: read_cell(block)?,
         issues: report.issues,
+    })
+}
+
+/// The periodic cell of the block's coordinates: `_cell` when the
+/// coordinates are a whole unit cell, so space group P 1 or none declared.
+/// Under another space group they are an asymmetric unit, whose translates
+/// alone are not the crystal. PDB's 1 Å cube, the cell it records for
+/// structures without a crystal lattice such as NMR and EM models, is no
+/// cell, and neither is an incomplete `_cell`.
+fn read_cell(block: &MmcifBlock) -> Result<Option<PeriodicCell>, StructureInterpretError> {
+    let Some(table) = block.category("_cell")? else {
+        return Ok(None);
+    };
+    let mut parameters = [0.0; 6];
+    for (parameter, tag) in parameters.iter_mut().zip([
+        "_cell.length_a",
+        "_cell.length_b",
+        "_cell.length_c",
+        "_cell.angle_alpha",
+        "_cell.angle_beta",
+        "_cell.angle_gamma",
+    ]) {
+        let Some(text) = optional(&table, 0, tag) else {
+            return Ok(None);
+        };
+        // A standard uncertainty may follow in parentheses, as in `54.21(3)`.
+        let number = text.split_once('(').map_or(text, |(number, _)| number);
+        *parameter = number
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| {
+                row_error(
+                    &table,
+                    0,
+                    DiagnosticKind::InvalidValue,
+                    format!("invalid {tag} `{text}`"),
+                )
+            })?;
+    }
+    for category in ["_symmetry", "_space_group"] {
+        let tag = format!(
+            "{category}.{}",
+            if category == "_symmetry" {
+                "space_group_name_H-M"
+            } else {
+                "name_H-M_alt"
+            }
+        );
+        if let Some(table) = block.category(category)? {
+            if let Some(name) = optional(&table, 0, &tag) {
+                if !name
+                    .split_whitespace()
+                    .collect::<String>()
+                    .eq_ignore_ascii_case("P1")
+                {
+                    return Ok(None);
+                }
+            }
+        }
+    }
+    if parameters == [1.0, 1.0, 1.0, 90.0, 90.0, 90.0] {
+        return Ok(None);
+    }
+    cell_from_parameters(parameters).map(Some).map_err(|error| {
+        row_error(
+            &table,
+            0,
+            DiagnosticKind::InvalidValue,
+            format!("invalid `_cell`: {error}"),
+        )
     })
 }
 

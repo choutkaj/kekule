@@ -201,6 +201,11 @@ pub(crate) fn torsions(
 ) -> Result<f64, Singular> {
     let mut energy = 0.0;
     for term in terms {
+        // Without amplitude the energy and its gradient vanish identically, so
+        // the dihedral need not be defined; linear groups rely on this.
+        if term.terms.iter().all(|t| t.k == 0.0) {
+            continue;
+        }
         let points = term.atoms.map(|atom| x[atom]);
         let Some(phi) = dihedral(points) else {
             return Err(singular(
@@ -539,6 +544,44 @@ mod tests {
         for mut gradients in [Gradients::None, Gradients::total(3)] {
             let error = angles(&angle, &zero_arm, &mut gradients).unwrap_err();
             assert_eq!(error.kind, SingularGeometry::DegenerateAngle);
+        }
+        // A torsion without amplitude is zero at any geometry, including a
+        // collinear one where the dihedral is undefined; any amplitude needs it.
+        let collinear = [
+            p(0., 0., 0.),
+            p(0.1, 0., 0.),
+            p(0.22, 0., 0.),
+            p(0.32, 0., 0.),
+        ];
+        let torsion = |k| {
+            [PeriodicTorsion {
+                atoms: [0, 1, 2, 3],
+                terms: Box::new([
+                    FourierTerm {
+                        k: 0.0,
+                        periodicity: 1.0,
+                        phase: 0.0,
+                    },
+                    FourierTerm {
+                        k,
+                        periodicity: 3.0,
+                        phase: std::f64::consts::PI,
+                    },
+                ]),
+            }]
+        };
+        let energy = torsions(0, "t", &torsion(0.0), &collinear, &mut Gradients::None).unwrap();
+        assert_eq!(energy, 0.0);
+        let mut gradients = Gradients::total(4);
+        let energy = torsions(0, "t", &torsion(0.0), &collinear, &mut gradients).unwrap();
+        assert_eq!(energy, 0.0);
+        assert_eq!(total(gradients), vec![Vector3::zero(); 4]);
+        for mut gradients in [Gradients::None, Gradients::total(4)] {
+            let error = torsions(0, "t", &torsion(1.0), &collinear, &mut gradients).unwrap_err();
+            assert_eq!(
+                (error.interaction, error.atoms, error.kind),
+                ("t", vec![0, 1, 2, 3], SingularGeometry::DegenerateDihedral)
+            );
         }
         // A linear equilibrium is stationary, so its zero gradient is defined.
         let straight = [HarmonicAngle {

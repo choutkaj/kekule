@@ -279,6 +279,78 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Structure writers no longer drop a model's periodic cell silently. mmCIF
+  writes a cell periodic along all three axes in the standard
+  crystallographic frame as `_cell` in space group P 1, and mmCIF reading now
+  takes `_cell` as the model's cell when the space group is P 1 or absent
+  (not for PDB's 1 Å placeholder). A cell mmCIF cannot hold (partially
+  periodic, rotated, or differing between ensemble members) fails with
+  `MmcifWriteError::UnrepresentableCell`. Molfile and SDF cannot hold any
+  cell and fail with `UnsupportedRepresentation`. The new
+  `MmcifWriteOptions::cell`, `MolfileWriteOptions::cell` and
+  `SdfWriteOptions::cell` set to `UnrepresentablePolicy::Omit` write the
+  structure without it.
+- Writing an ensemble no longer drops its members' weights and energies
+  silently. SDF writes them to each member's `kekule.weight` and
+  `kekule.energy.kJ_per_mol` data fields (`sdf::WEIGHT_FIELD`,
+  `sdf::ENERGY_FIELD`), and the new `sdf::ensemble` assembles interpreted
+  records back into a weighted ensemble. mmCIF cannot carry them, so writing
+  unequal weights or any energy fails with
+  `MmcifWriteError::UnrepresentableEnsembleMember` unless
+  `MmcifWriteOptions::ensemble_metadata` is `UnrepresentablePolicy::Omit`.
+- V2000 atom fields are read from their CTfile columns, so a three-digit atom
+  map that touches the field before it, as Kekule itself writes maps 100 to
+  999, is no longer lost on reading.
+- A present but nonnumeric V2000 hydrogen-count, valence, charge, atom-map,
+  mass-difference or bond stereo field is a syntax error instead of reading
+  as absent.
+- Nonzero V2000 stereo care, H0 designator, inversion/retention and
+  exact-change atom fields and ring/chain topology and reacting-center bond
+  fields are reported as unsupported content, like their V3000 options,
+  instead of being dropped silently.
+- A V2000 atom-block mass difference sets the isotope when no `M  ISO`
+  record replaces it (`MolfileAtom::mass_difference`). Like RDKit, it counts
+  from the element's most abundant isotope; an element without a naturally
+  abundant isotope fails interpretation instead.
+- Molfile writing fails with `UnsupportedRepresentation` for an atom map of
+  0, which both versions write and read as no atom map, instead of silently
+  dropping it.
+- Proper and improper torsions whose amplitudes are all zero contribute zero
+  energy and gradient at any geometry. They used to be rejected as a
+  `DegenerateDihedral` when their atoms were collinear, so `OpenFfPotential`
+  could not evaluate linear groups such as acetylene, whose torsions Rosemary
+  zeroes. Torsions with a nonzero amplitude still need a defined dihedral.
+- A PDB `TER` record ends the residue it follows as well as the chain's
+  polymer. A segment that restarted with the same chain, residue number, and
+  insertion code used to join that residue, and its repeated atom names failed
+  as duplicate alternate-location records; it is now a new residue, reported
+  with its occurrence like a number that recurs after other residues.
+- `MmcifParseOptions::max_atom_site_rows` stops parsing at the first excess
+  `_atom_site` loop row instead of after buffering the whole loop, so memory
+  stays bounded by the limit. The error now names the line of that row rather
+  than the `loop_` keyword, and takes precedence over syntax errors later in
+  the loop.
+- mmCIF parsing no longer takes time quadratic in the values on one line.
+  Each value searched for the end of its line from the line's start, so a
+  loop written on one long line was tokenized in O(length × values).
+- The XYZ reader's `max_scratch_bytes` covers its reusable line buffer as well
+  as its positions, as the limit's combined-scratch contract states. The
+  buffer grows only within the budget the positions leave, so a line longer
+  than that fails with `ResourceLimitExceeded` before it is buffered, instead
+  of growing the buffer up to the line limits regardless of the scratch limit.
+- The XYZ reader's `max_frame_bytes` check counts the bytes each line takes in
+  the source, terminator included. A CRLF line was counted one byte short, and
+  a final line without a terminator one byte long, so the limit depended on
+  line endings.
+- Average-linkage dendrograms no longer overflow to infinite merge heights
+  when finite distances approach `f64::MAX`, which also changed height cuts.
+  Merged distances are computed as a weighted mean that never exceeds the
+  larger input.
+- `Ensemble::cluster_k_medoids` and the representatives of
+  `Ensemble::cluster_hierarchical` choose the member with the least weighted
+  distance sum when those sums exceed `f64::MAX`, instead of the lowest index
+  among infinite sums. Such sums are compared on distances rescaled by a power
+  of two, so ordinary inputs and their tie-breaking are unchanged.
 - A 3D Molfile or SDF record no longer gives E/Z to a double bond whose
   endpoint carries two identical terminal ligands, such as a vinyl `=CH2`
   drawn with its hydrogens. The configuration was arbitrary, and canonical

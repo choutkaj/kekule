@@ -2015,6 +2015,7 @@ covale A N 1 A CA 1 doub
         MmcifWriteOptions {
             block_name: "round_trip".to_owned(),
             coordinate_precision: 4,
+            ..Default::default()
         },
     )
     .expect("supported model should write");

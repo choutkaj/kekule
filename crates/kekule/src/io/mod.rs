@@ -1,12 +1,14 @@
 mod components;
 mod lines;
 mod mmcif_category;
+mod mmcif_cell;
 mod mmcif_document;
 mod mmcif_write;
 mod molfile_document;
 mod molfile_write;
 mod pdb_document;
 mod sdf_document;
+mod sdf_ensemble;
 mod sdf_write;
 pub(crate) mod smiles;
 mod staged_coordinates;
@@ -32,6 +34,7 @@ pub use molfile_document::{
 pub use molfile_write::*;
 pub use pdb_document::*;
 pub use sdf_document::*;
+pub use sdf_ensemble::*;
 pub use sdf_write::*;
 pub use smiles::{
     parse_smiles_document, parse_smiles_document_with_options, write_canonical_smiles,

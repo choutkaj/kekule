@@ -2,6 +2,7 @@
 use super::prepare::{AtomRow, PreparedModel};
 use super::{MmcifWriteError, MmcifWriteOptions};
 use crate::core::BondOrder;
+use crate::io::mmcif_cell::CellParameters;
 use std::collections::BTreeMap;
 use std::io::Write;
 
@@ -15,9 +16,10 @@ fn mmcif_io(error: std::io::Error) -> MmcifWriteError {
 pub(super) fn render_model_to(
     writer: &mut impl Write,
     model: &PreparedModel,
+    cell: Option<CellParameters>,
     options: &MmcifWriteOptions,
 ) -> Result<(), MmcifWriteError> {
-    write_block_start(writer, model, options)?;
+    write_block_start(writer, model, cell, options)?;
     let mut atom_serial = 1u64;
     write_atom_rows(writer, &model.atoms, 1, &mut atom_serial, options)?;
     write_block_end(writer, model)
@@ -26,11 +28,43 @@ pub(super) fn render_model_to(
 pub(super) fn write_block_start(
     writer: &mut impl Write,
     model: &PreparedModel,
+    cell: Option<CellParameters>,
     options: &MmcifWriteOptions,
 ) -> Result<(), MmcifWriteError> {
     writer
         .write_all(format!("data_{}\n#\n", options.block_name).as_bytes())
         .map_err(mmcif_io)?;
+    if let Some(parameters) = cell {
+        // Lengths in angstroms and angles in degrees, at coordinate precision.
+        let tags = [
+            "_cell.length_a",
+            "_cell.length_b",
+            "_cell.length_c",
+            "_cell.angle_alpha",
+            "_cell.angle_beta",
+            "_cell.angle_gamma",
+        ];
+        for (tag, value) in tags.into_iter().zip(parameters) {
+            let value = format_coordinate(value, options.coordinate_precision);
+            writer
+                .write_all(
+                    format!(
+                        "{tag} {value}
+"
+                    )
+                    .as_bytes(),
+                )
+                .map_err(mmcif_io)?;
+        }
+        writer
+            .write_all(
+                b"#
+_symmetry.space_group_name_H-M 'P 1'
+#
+",
+            )
+            .map_err(mmcif_io)?;
+    }
 
     write_loop_header(writer, &["_entity.id", "_entity.type"])?;
     for entity in &model.entities {

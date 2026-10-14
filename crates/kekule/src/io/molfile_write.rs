@@ -4,7 +4,7 @@ use std::io::Write;
 use crate::core::Molecule;
 use crate::structure::{AsModelView, Model, ModelView};
 
-use super::{MoleculeWriteError, MoleculeWriteErrorKind, MolfileVersion};
+use super::{MoleculeWriteError, MoleculeWriteErrorKind, MolfileVersion, UnrepresentablePolicy};
 
 mod record;
 mod v2000;
@@ -29,6 +29,9 @@ pub enum MolfileWriteVersion {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MolfileWriteOptions {
     pub version: MolfileWriteVersion,
+    /// A model's periodic cell, which a Molfile cannot carry: by default a
+    /// model with a cell fails to write.
+    pub cell: UnrepresentablePolicy,
 }
 
 /// What one Molfile CTAB describes: a coordinate-free molecule written with
@@ -71,7 +74,10 @@ pub fn write_molfile<'a>(
         MolfileSource::Molecule(molecule) => {
             render_molecule(&MolfileRecord::molecule(molecule)?, "", options.version)
         }
-        MolfileSource::Model(model) => render_model(model, "", options.version),
+        MolfileSource::Model(model) => {
+            check_cell(model, options.cell)?;
+            render_model(model, "", options.version)
+        }
     }
 }
 
@@ -98,6 +104,20 @@ fn render_molecule(
             rendered => rendered,
         },
     }
+}
+
+/// Fails for a model with a periodic cell, which no CTAB can carry, unless
+/// the caller chose to omit it.
+pub(super) fn check_cell(
+    model: ModelView<'_>,
+    policy: UnrepresentablePolicy,
+) -> Result<(), MoleculeWriteError> {
+    if model.cell().is_some() && policy == UnrepresentablePolicy::Fail {
+        return Err(MoleculeWriteError::unsupported(
+            "a Molfile cannot represent a periodic cell; set the cell option to omit it",
+        ));
+    }
+    Ok(())
 }
 
 /// Renders one model CTAB with an SDF or Molfile title.

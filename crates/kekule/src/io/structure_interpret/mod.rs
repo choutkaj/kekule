@@ -13,6 +13,7 @@ mod types;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostics::DiagnosticKind;
+use crate::geometry::PeriodicCell;
 use crate::structure::ModelBuilder;
 use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};
 
@@ -55,6 +56,8 @@ struct StructureSource {
     polymer_order: BTreeMap<String, usize>,
     connections: Vec<ConnectionRecord>,
     catalog: ConnectivityCatalog,
+    /// The periodic cell of every coordinate model, if the source has one.
+    cell: Option<PeriodicCell>,
     /// Issues found while reading the source.
     issues: Vec<StructureInterpretIssue>,
 }
@@ -98,6 +101,7 @@ struct PreparedSource {
     polymer_order: BTreeMap<String, usize>,
     connections: Vec<ConnectionRecord>,
     catalog: ConnectivityCatalog,
+    cell: Option<PeriodicCell>,
 }
 
 impl PreparedSource {
@@ -113,6 +117,7 @@ impl PreparedSource {
             polymer_order,
             connections,
             catalog,
+            cell,
             issues,
         } = source;
         let mut report = StructureInterpretationReport {
@@ -154,6 +159,7 @@ impl PreparedSource {
             polymer_order,
             connections,
             catalog,
+            cell,
         })
     }
 
@@ -211,6 +217,7 @@ impl PreparedSource {
             rows,
             &self.polymer_order,
             &self.catalog,
+            self.cell,
             report,
         )
     }
@@ -221,6 +228,7 @@ fn publish_model(
     rows: ModelRows,
     polymer_asym_order: &BTreeMap<String, usize>,
     catalog: &ConnectivityCatalog,
+    cell: Option<PeriodicCell>,
     mut report: StructureInterpretationReport,
 ) -> Result<StructureInterpretation, StructureInterpretError> {
     let ModelRows {
@@ -279,6 +287,7 @@ fn publish_model(
     *builder.topology_builder_mut().hierarchy_mut() =
         build_topology_hierarchy(&report.instances, polymer_asym_order)?;
     let mut model = builder.build().map_err(graph_error)?;
+    model.set_cell(cell);
     let mut occupancies = vec![None; model.atom_count()];
     let mut b_factors = vec![None; model.atom_count()];
     let b_factor_scale = SQUARE_ANGSTROM

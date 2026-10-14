@@ -280,6 +280,24 @@ fn mmcif_quoted_values_allow_embedded_delimiters() {
 }
 
 #[test]
+fn mmcif_loop_values_on_one_long_line_parse_in_order() {
+    let rows = 20_000;
+    let values = (0..rows).map(|row| row.to_string()).collect::<Vec<_>>();
+    let source = format!("data_x\nloop_\n_test.value\n{} \n", values.join(" "));
+    let document = mmcif::parse_str(&source).unwrap();
+    let table = document.blocks()[0].loop_with_tag("_test.value").unwrap();
+    assert_eq!(table.row_count(), rows);
+    let parsed = (0..rows)
+        .map(|row| {
+            let value = table.value_at(row, 0).unwrap();
+            assert_eq!(value.line(), 4);
+            value.text()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(parsed, values);
+}
+
+#[test]
 fn mmcif_quotes_must_close_before_whitespace_or_end_of_line() {
     for literal in ["'value'junk", "\"value\"junk", "'value'#comment"] {
         let error = mmcif::parse_str(&format!("data_x\n_x.text {literal}\n")).unwrap_err();
@@ -411,6 +429,60 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
         (error.kind(), error.location()),
         (DiagnosticKind::Inconsistent, None)
     );
+}
+
+#[test]
+fn mmcif_atom_site_row_limit_stops_at_the_first_excess_row() {
+    use crate::diagnostics::{DiagnosticKind, SourceLocation};
+    let options = |max_atom_site_rows| MmcifParseOptions {
+        max_atom_site_rows,
+        ..MmcifParseOptions::default()
+    };
+    // Each unterminated quote follows the excess row and is never tokenized.
+    for (input, max_rows, line) in [
+        ("data_x\nloop_\n_atom_site.id\n1\n2\n'open\n", 1, 5),
+        (
+            "data_x\nloop_\n_atom_site.id\n_atom_site.type_symbol\n1 C\n2 'open\n",
+            1,
+            6,
+        ),
+        (
+            "data_x\nloop_\n_atom_site.id\n_atom_site.type_symbol\n1 C\n2\n",
+            1,
+            6,
+        ),
+        (
+            "data_x\nloop_\n_x.id\n_atom_site.id\n1 1\n2 2 'open\n",
+            1,
+            6,
+        ),
+        ("data_x\nloop_\n_atom_site.id\n1\n'open\n", 0, 4),
+    ] {
+        let error = mmcif::parse_str_with_options(input, options(max_rows)).unwrap_err();
+        assert_eq!(
+            (error.kind(), error.location(), error.message()),
+            (
+                DiagnosticKind::Limit,
+                SourceLocation::at_line(line),
+                "atom-site row count exceeds configured limit"
+            ),
+            "{input:?}"
+        );
+    }
+    for (input, max_rows, tag, rows) in [
+        (
+            "data_x\nloop_\n_atom_site.id\n1\nloop_\n_x.id\n1\n",
+            1,
+            "_atom_site.id",
+            1,
+        ),
+        ("data_x\nloop_\n_atom_site.id\n", 0, "_atom_site.id", 0),
+        ("data_x\nloop_\n_x.id\n1\n2\n", 1, "_x.id", 2),
+    ] {
+        let document = mmcif::parse_str_with_options(input, options(max_rows)).unwrap();
+        let table = document.blocks()[0].loop_with_tag(tag).unwrap();
+        assert_eq!(table.row_count(), rows, "{input:?}");
+    }
 }
 
 #[test]

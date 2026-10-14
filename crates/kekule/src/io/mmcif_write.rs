@@ -1,9 +1,12 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
 use crate::core::BondOrder;
+use crate::geometry::PeriodicCell;
+use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::structure_interpret::{
     EntityKind, StructureEnsembleInterpretation, StructureInterpretation,
     StructureInterpretationReport,
 };
+use crate::io::UnrepresentablePolicy;
 use crate::structure::{AsModelView, Ensemble, Model, ModelView};
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId};
 use std::collections::BTreeMap;
@@ -26,6 +29,14 @@ const MAX_COORDINATE_PRECISION: usize = 15;
 pub struct MmcifWriteOptions {
     pub block_name: String,
     pub coordinate_precision: usize,
+    /// Ensemble member weights and energies, which mmCIF cannot carry: by
+    /// default an ensemble with unequal weights or any energy fails to write.
+    pub ensemble_metadata: UnrepresentablePolicy,
+    /// A periodic cell mmCIF cannot carry: one not periodic along all three
+    /// axes, not in the standard crystallographic orientation, or differing
+    /// between ensemble members. By default such a cell fails to write;
+    /// representable cells are always written as `_cell` in space group P 1.
+    pub cell: UnrepresentablePolicy,
 }
 
 impl Default for MmcifWriteOptions {
@@ -33,6 +44,8 @@ impl Default for MmcifWriteOptions {
         Self {
             block_name: "model".to_owned(),
             coordinate_precision: 3,
+            ensemble_metadata: UnrepresentablePolicy::Fail,
+            cell: UnrepresentablePolicy::Fail,
         }
     }
 }
@@ -117,6 +130,18 @@ pub enum MmcifWriteError {
     IncompatibleEnsembleMember {
         member: usize,
         field: &'static str,
+    },
+    /// Ensemble member state mmCIF cannot represent, with
+    /// [`UnrepresentablePolicy::Fail`]: `field` is `"weight"` for unequal
+    /// weights or `"energy"` for a member energy.
+    UnrepresentableEnsembleMember {
+        member: usize,
+        field: &'static str,
+    },
+    /// A periodic cell mmCIF cannot represent, with
+    /// [`UnrepresentablePolicy::Fail`].
+    UnrepresentableCell {
+        reason: &'static str,
     },
     Io {
         kind: std::io::ErrorKind,
@@ -254,6 +279,13 @@ impl fmt::Display for MmcifWriteError {
                 f,
                 "ensemble member {member} has incompatible mmCIF {field}"
             ),
+            Self::UnrepresentableEnsembleMember { member, field } => write!(
+                f,
+                "mmCIF cannot represent the {field} of ensemble member {member}"
+            ),
+            Self::UnrepresentableCell { reason } => {
+                write!(f, "mmCIF cannot represent the periodic cell: {reason}")
+            }
             Self::Io { message, .. } => write!(f, "mmCIF output failed: {message}"),
         }
     }
@@ -436,7 +468,7 @@ pub fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
             } else {
                 options.block_name.clone()
             },
-            coordinate_precision: options.coordinate_precision,
+            ..options.clone()
         };
         match block.content {
             BlockContent::Model(view) => {
@@ -480,8 +512,39 @@ fn write_model_block_to(
             generic_entity_plan(view, &normalized)?
         }
     };
+    let cell = block_cell([view.cell()], options.cell)?;
     let prepared = prepare_model(view, plan)?;
-    render_model_to(writer, &prepared, options)
+    render_model_to(writer, &prepared, cell, options)
+}
+
+/// The `_cell` parameters of a block whose models have these cells, or none
+/// when they have none or the caller omits a cell mmCIF cannot represent.
+fn block_cell<'a>(
+    cells: impl IntoIterator<Item = Option<&'a PeriodicCell>>,
+    policy: UnrepresentablePolicy,
+) -> Result<Option<CellParameters>, MmcifWriteError> {
+    let mut cells = cells.into_iter();
+    let first = cells.next().flatten();
+    let parameters = if cells.any(|cell| cell != first) {
+        Err("ensemble members have different cells")
+    } else {
+        match first.map(cell_parameters).transpose() {
+            Ok(parameters) => return Ok(parameters),
+            Err(CellParameterError::PartiallyPeriodic) => {
+                Err("an mmCIF cell is periodic along all three axes")
+            }
+            Err(CellParameterError::NonstandardOrientation) => {
+                Err("an mmCIF cell has a along x and b in the xy plane, as its coordinates assume")
+            }
+        }
+    };
+    match (parameters, policy) {
+        (Err(reason), UnrepresentablePolicy::Fail) => {
+            Err(MmcifWriteError::UnrepresentableCell { reason })
+        }
+        (Err(_), UnrepresentablePolicy::Omit) => Ok(None),
+        (Ok(parameters), _) => Ok(parameters),
+    }
 }
 
 fn write_ensemble_block_to(
@@ -503,13 +566,35 @@ fn write_ensemble_block_to(
             (None, Some(reports))
         }
     };
+    if options.ensemble_metadata == UnrepresentablePolicy::Fail {
+        // Interpretation gives every member weight 1.0 and no energy, so
+        // only equal weights and absent energies survive a round trip.
+        let weight = ensemble.get(0).map(|member| member.weight());
+        for (index, member) in ensemble.iter().enumerate() {
+            let field = if member.energy().is_some() {
+                "energy"
+            } else if Some(member.weight()) != weight {
+                "weight"
+            } else {
+                continue;
+            };
+            return Err(MmcifWriteError::UnrepresentableEnsembleMember {
+                member: index + 1,
+                field,
+            });
+        }
+    }
+    let cell = block_cell(
+        ensemble.iter().map(|member| member.as_model_view().cell()),
+        options.cell,
+    )?;
     let mut members = ensemble.iter().enumerate();
     let (_, first_member) = members.next().ok_or(MmcifWriteError::EmptyEnsemble)?;
     let first_view = first_member.as_model_view();
     let first_plan = ensemble_entity_plan(first_view, classifications, reports.map(|all| &all[0]))?;
     let first = prepare_model(first_view, first_plan)?;
 
-    write_block_start(writer, &first, options)?;
+    write_block_start(writer, &first, cell, options)?;
     let mut atom_serial = 1u64;
     write_atom_rows(writer, &first.atoms, 1, &mut atom_serial, options)?;
 

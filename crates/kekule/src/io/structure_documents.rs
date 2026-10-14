@@ -98,6 +98,29 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, MolfileInterpretError> {
     value.formal_charge = i8::try_from(atom.formal_charge)
         .map_err(|_| invalid("formal charge is outside i8 range".to_owned()))?;
     value.isotope = atom.isotope;
+    if let Some(difference) = atom.mass_difference {
+        let nominal = crate::descriptors::mass_difference_reference(element).ok_or_else(|| {
+            MolfileInterpretError::at(
+                DiagnosticKind::Unsupported,
+                atom.location,
+                format!(
+                    "V2000 mass difference on {} has no reference mass, since the element has no naturally abundant isotope; declare the mass number with `M  ISO`",
+                    element.symbol()
+                ),
+            )
+        })?;
+        value.isotope = Some(
+            nominal
+                .checked_add_signed(i16::from(difference))
+                .filter(|&mass| mass > 0)
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "V2000 mass difference {difference} gives no mass number for {}",
+                        element.symbol()
+                    ))
+                })?,
+        );
+    }
     value.radical = atom.radical.and_then(|radical| match radical {
         MolfileRadical::Singlet => AtomRadical::new(2, Some(1)),
         MolfileRadical::Doublet => AtomRadical::new(1, Some(2)),

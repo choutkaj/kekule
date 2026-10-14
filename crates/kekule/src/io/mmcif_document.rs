@@ -516,14 +516,7 @@ pub fn parse_mmcif_str(
     }
     let source: Arc<str> = normalize_line_endings(input).into();
     let mut tokens = Tokens {
-        tokenizer: Tokenizer {
-            source: &source,
-            line_start: 0,
-            line: 1,
-            column: 0,
-            count: 0,
-            options,
-        },
+        tokenizer: Tokenizer::new(&source, options),
         peeked: None,
     };
     parse_blocks(&source, &mut tokens, options.max_atom_site_rows)
@@ -563,19 +556,7 @@ fn parse_blocks(
             }
             tokens.next()?;
             if is_bare_word(token, text(token), "loop_") {
-                let table = parse_loop(source, tokens, token)?;
-                if table
-                    .tags
-                    .iter()
-                    .any(|tag| tag.to_ascii_lowercase().starts_with("_atom_site."))
-                    && table.values.len() / table.tags.len() > max_atom_site_rows
-                {
-                    return Err(MmcifParseError::new(
-                        DiagnosticKind::Limit,
-                        token.line as usize,
-                        "atom-site row count exceeds configured limit",
-                    ));
-                }
+                let table = parse_loop(source, tokens, token, max_atom_site_rows)?;
                 for tag in &table.tags {
                     if !data_names.insert(tag.to_ascii_lowercase()) {
                         return Err(MmcifParseError::new(
@@ -643,10 +624,14 @@ fn parse_blocks(
     Ok(MmcifDocument { blocks })
 }
 
+/// Parses one loop after its `loop_` keyword. An atom-site loop fails at the
+/// first value of its first row beyond `max_atom_site_rows`, before buffering
+/// the rest of the loop.
 fn parse_loop(
     source: &str,
     tokens: &mut Tokens<'_>,
     keyword: Span,
+    max_atom_site_rows: usize,
 ) -> Result<LoopData, MmcifParseError> {
     let text = |span: Span| span.text(source);
     let mut tags = Vec::new();
@@ -668,10 +653,21 @@ fn parse_loop(
     if tags.is_empty() {
         return Err(syntax_error(keyword, "loop has no tags"));
     }
+    let max_values = tags
+        .iter()
+        .any(|tag| tag.to_ascii_lowercase().starts_with("_atom_site."))
+        .then(|| max_atom_site_rows.saturating_mul(tags.len()));
     let mut values = Vec::new();
     while let Some(token) = tokens.peek()? {
         if is_control(token, text(token)) {
             break;
+        }
+        if max_values == Some(values.len()) {
+            return Err(MmcifParseError::new(
+                DiagnosticKind::Limit,
+                token.line as usize,
+                "atom-site row count exceeds configured limit",
+            ));
         }
         tokens.next()?;
         values.push(token);
@@ -747,19 +743,50 @@ impl Tokens<'_> {
 struct Tokenizer<'a> {
     source: &'a str,
     line_start: usize,
+    /// End of the physical line at `line_start`, found once per line so that
+    /// tokenizing a line is linear in its length.
+    line_end: usize,
     line: usize,
     column: usize,
     count: usize,
     options: MmcifParseOptions,
+    /// Number of line-end searches, which pins that each line is searched once.
+    #[cfg(test)]
+    line_end_searches: usize,
 }
 
-impl Tokenizer<'_> {
+impl<'a> Tokenizer<'a> {
+    fn new(source: &'a str, options: MmcifParseOptions) -> Self {
+        let mut tokenizer = Self {
+            source,
+            line_start: 0,
+            line_end: 0,
+            line: 1,
+            column: 0,
+            count: 0,
+            options,
+            #[cfg(test)]
+            line_end_searches: 0,
+        };
+        tokenizer.enter_line(0);
+        tokenizer
+    }
+
+    /// Makes `start`, the start of a physical line or one past the end of the
+    /// source, the current line.
+    fn enter_line(&mut self, start: usize) {
+        self.line_start = start;
+        if start <= self.source.len() {
+            self.line_end = self.line_end(start);
+        }
+    }
+
     fn next_token(&mut self) -> Result<Option<Span>, MmcifParseError> {
         loop {
             if self.line_start > self.source.len() {
                 return Ok(None);
             }
-            let line_end = self.line_end(self.line_start);
+            let line_end = self.line_end;
             if self.column == 0 && self.source[self.line_start..].starts_with(';') {
                 return self.semicolon_text(line_end).map(Some);
             }
@@ -769,7 +796,7 @@ impl Tokenizer<'_> {
                 self.column += 1;
             }
             if self.column == bytes.len() || bytes[self.column] == b'#' {
-                self.line_start = line_end + 1;
+                self.enter_line(line_end + 1);
                 self.line += 1;
                 self.column = 0;
                 continue;
@@ -868,13 +895,17 @@ impl Tokenizer<'_> {
                 "closing semicolon must be followed by whitespace or end of line",
             ));
         }
-        self.line_start = closing;
+        self.enter_line(closing);
         self.line = line;
         self.column = 1;
         self.span(text_start, text_end, opening_line, false)
     }
 
-    fn line_end(&self, start: usize) -> usize {
+    fn line_end(&mut self, start: usize) -> usize {
+        #[cfg(test)]
+        {
+            self.line_end_searches += 1;
+        }
         self.source[start..]
             .find('\n')
             .map_or(self.source.len(), |offset| start + offset)
@@ -924,5 +955,33 @@ mod tests {
             "token budget must cover a full default-sized atom-site table"
         );
         assert!(u32::try_from(options.max_input_bytes).is_ok());
+    }
+
+    #[test]
+    fn tokenizer_searches_each_line_end_once() {
+        let repeats = 1_000;
+        let source = format!(
+            "data_x\nloop_\n_x.a\n_x.b\n_x.c\n{}# trailing comment\n;text\n; 2 3\n",
+            "1 'a b' \"c\" ".repeat(repeats)
+        );
+        let mut tokenizer = Tokenizer::new(&source, MmcifParseOptions::default());
+        let mut tokens = Vec::new();
+        while let Some(span) = tokenizer.next_token().unwrap() {
+            tokens.push((span.text(&source), span.line, span.bare));
+        }
+        let mut expected = vec![
+            ("data_x", 1, true),
+            ("loop_", 2, true),
+            ("_x.a", 3, true),
+            ("_x.b", 4, true),
+            ("_x.c", 5, true),
+        ];
+        for _ in 0..repeats {
+            expected.extend([("1", 6, true), ("a b", 6, false), ("c", 6, false)]);
+        }
+        expected.extend([("text", 7, false), ("2", 8, true), ("3", 8, true)]);
+        assert_eq!(tokens, expected);
+        // Eight lines plus the empty remainder after the final newline.
+        assert_eq!(tokenizer.line_end_searches, 9);
     }
 }
