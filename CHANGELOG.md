@@ -328,6 +328,11 @@ All notable changes to Kekule are documented in this file.
   when finite distances approach `f64::MAX`, which also changed height cuts.
   Merged distances are computed as a weighted mean that never exceeds the
   larger input.
+- `Ensemble::cluster_k_medoids` and the representatives of
+  `Ensemble::cluster_hierarchical` choose the member with the least weighted
+  distance sum when those sums exceed `f64::MAX`, instead of the lowest index
+  among infinite sums. Such sums are compared on distances rescaled by a power
+  of two, so ordinary inputs and their tie-breaking are unchanged.
 - A 3D Molfile or SDF record no longer gives E/Z to a double bond whose
   endpoint carries two identical terminal ligands, such as a vinyl `=CH2`
   drawn with its hydrogens. The configuration was arbitrary, and canonical

@@ -342,6 +342,13 @@ fn five_points() -> DistanceMatrix {
     line_distances(&[0.0, 1.0, 4.0, 10.0, 11.5])
 }
 
+/// Three members whose summed distances exceed `f64::MAX` nm: 2.3e308 from
+/// member 0, 2.1e308 from member 1, and 2.0e308 from member 2.
+fn huge_distances() -> DistanceMatrix {
+    DistanceMatrix::from_condensed(3, Quantity::new(vec![1.2e308, 1.1e308, 0.9e308], NANOMETER))
+        .unwrap()
+}
+
 /// Each merge as (clusters, height in nm, size).
 fn merges(dendrogram: &Dendrogram) -> Vec<([usize; 2], f64, usize)> {
     dendrogram
@@ -591,6 +598,20 @@ fn hierarchical_clusters_are_represented_by_weighted_medoids() {
         })
     );
 
+    // Summed distances beyond `f64::MAX` still compare: 2.3e308, 2.1e308,
+    // and 2.0e308 nm make member 2 the medoid.
+    let three = Ensemble::from_items(
+        Arc::clone(&topology),
+        [1.0; 3].map(|weight| member(shape(false, false), weight)),
+    )
+    .unwrap();
+    assert_eq!(
+        three
+            .cluster_hierarchical(&huge_distances(), Linkage::Complete, Cut::Count(1))
+            .unwrap(),
+        partition(&[0, 0, 0], &[2])
+    );
+
     // Fitted RMSDs separate the two shapes under a complete-linkage cut.
     let (topology, shapes) = two_shapes();
     let atoms = AtomSelection::all(&topology);
@@ -689,6 +710,18 @@ fn k_medoids_minimizes_the_weighted_distance_to_medoids() {
     assert_eq!(
         uniform.cluster_k_medoids(&distances, 5).unwrap(),
         partition(&[0, 1, 2, 3, 4], &[0, 1, 2, 3, 4])
+    );
+
+    // Summed distances beyond `f64::MAX` still compare: member 2 is the
+    // medoid at 2.0e308 nm.
+    let three = Ensemble::from_items(
+        kekule::smiles::to_topology("CCCC").unwrap(),
+        [1.0; 3].map(|weight| member(shape(false, false), weight)),
+    )
+    .unwrap();
+    assert_eq!(
+        three.cluster_k_medoids(&huge_distances(), 1).unwrap(),
+        partition(&[0, 0, 0], &[2])
     );
 }
 

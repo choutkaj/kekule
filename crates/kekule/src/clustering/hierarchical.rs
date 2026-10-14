@@ -96,6 +96,44 @@ impl DistanceMatrix {
     }
 }
 
+/// Distances rescaled for summing weighted objectives over the members.
+///
+/// Every distance is multiplied by one power of two, the largest that keeps
+/// `4 n` times the largest distance finite: one unless distances come within
+/// that factor of `f64::MAX`. Objectives sum at most `3 n` distances
+/// weighted by at most one, so they stay finite with room for rounding.
+/// Scaling by a power of two is exact barring underflow, and rounding
+/// commutes with it, so scaled objectives compare and tie exactly as
+/// unscaled ones would without overflow. Scaled values are not lengths in
+/// any unit and only ever compare with one another.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ObjectiveDistances<'a> {
+    matrix: &'a DistanceMatrix,
+    scale: f64,
+}
+
+impl<'a> ObjectiveDistances<'a> {
+    pub(super) fn new(matrix: &'a DistanceMatrix) -> Self {
+        let largest = matrix.values.iter().copied().fold(0.0, f64::max);
+        let terms = 4.0 * matrix.members as f64;
+        let mut scale = 1.0;
+        while largest * scale * terms > f64::MAX {
+            scale *= 0.5;
+        }
+        Self { matrix, scale }
+    }
+
+    /// The number of members.
+    pub(super) fn len(&self) -> usize {
+        self.matrix.members
+    }
+
+    /// The scaled distance between two members in either order.
+    pub(super) fn at(&self, first: usize, second: usize) -> f64 {
+        self.matrix.at(first, second) * self.scale
+    }
+}
+
 /// How the distance between two clusters follows from member distances.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -335,6 +373,7 @@ impl Ensemble {
     /// are numbered densely from zero.
     fn weighted_medoids(&self, distances: &DistanceMatrix, assignments: &[usize]) -> Vec<usize> {
         let weights = self.scaled_weights();
+        let distances = ObjectiveDistances::new(distances);
         let clusters = assignments.iter().max().map_or(0, |last| last + 1);
         let mut members = vec![Vec::new(); clusters];
         for (member, cluster) in assignments.iter().enumerate() {
@@ -535,6 +574,23 @@ mod tests {
             heights.push((best.2, clusters[best.0].len()));
         }
         heights
+    }
+
+    #[test]
+    fn objective_distances_rescale_only_matrices_whose_sums_could_overflow() {
+        let ordinary = random_matrix(7, 5);
+        let objective = ObjectiveDistances::new(&ordinary);
+        assert_eq!(objective.scale, 1.0);
+        assert_eq!(objective.at(2, 5), ordinary.at(2, 5));
+        // 12 times 1.2e308 overflows until halved four times: 0.075e308
+        // times 12 is 0.9e308.
+        let huge = DistanceMatrix {
+            members: 3,
+            values: vec![1.2e308, 1.1e308, 0.9e308],
+        };
+        let objective = ObjectiveDistances::new(&huge);
+        assert_eq!(objective.scale, 0.0625);
+        assert_eq!(objective.at(1, 0), 1.2e308 * 0.0625);
     }
 
     #[test]
