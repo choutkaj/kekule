@@ -535,6 +535,9 @@ pub mod molfile {
         crate::io::write_molfile(source, options)
     }
 
+    /// Writes the CTAB [`write()`] would return. It renders the whole CTAB
+    /// first, since automatic version selection learns whether V2000 can hold
+    /// it only by rendering it, so nothing reaches `writer` on failure.
     pub fn write_to<'a>(
         writer: &mut impl std::io::Write,
         source: impl Into<MolfileSource<'a>>,
