@@ -307,6 +307,9 @@ All notable changes to Kekule are documented in this file.
   insertion code used to join that residue, and its repeated atom names failed
   as duplicate alternate-location records; it is now a new residue, reported
   with its occurrence like a number that recurs after other residues.
+- mmCIF parsing no longer takes time quadratic in the values on one line.
+  Each value searched for the end of its line from the line's start, so a
+  loop written on one long line was tokenized in O(length × values).
 - A 3D Molfile or SDF record no longer gives E/Z to a double bond whose
   endpoint carries two identical terminal ligands, such as a vinyl `=CH2`
   drawn with its hydrogens. The configuration was arbitrary, and canonical

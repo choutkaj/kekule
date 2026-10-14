@@ -280,6 +280,24 @@ fn mmcif_quoted_values_allow_embedded_delimiters() {
 }
 
 #[test]
+fn mmcif_loop_values_on_one_long_line_parse_in_order() {
+    let rows = 20_000;
+    let values = (0..rows).map(|row| row.to_string()).collect::<Vec<_>>();
+    let source = format!("data_x\nloop_\n_test.value\n{} \n", values.join(" "));
+    let document = mmcif::parse_str(&source).unwrap();
+    let table = document.blocks()[0].loop_with_tag("_test.value").unwrap();
+    assert_eq!(table.row_count(), rows);
+    let parsed = (0..rows)
+        .map(|row| {
+            let value = table.value_at(row, 0).unwrap();
+            assert_eq!(value.line(), 4);
+            value.text()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(parsed, values);
+}
+
+#[test]
 fn mmcif_quotes_must_close_before_whitespace_or_end_of_line() {
     for literal in ["'value'junk", "\"value\"junk", "'value'#comment"] {
         let error = mmcif::parse_str(&format!("data_x\n_x.text {literal}\n")).unwrap_err();
