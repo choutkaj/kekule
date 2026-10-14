@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::{compute_ring_membership, ordered_atom_pair};
@@ -33,6 +34,11 @@ pub(super) fn write_source_order_emission(
     mode: StereoWriteMode,
     style: CanonicalAtomStyle,
 ) -> std::result::Result<Emission, MoleculeWriteError> {
+    let mol = match mode {
+        StereoWriteMode::Encode => without_unknown_stereo(mol),
+        StereoWriteMode::Reject => Cow::Borrowed(mol),
+    };
+    let mol = mol.as_ref();
     validate_smiles_writeable(mol, mode)?;
     let rings = compute_ring_membership(mol);
     let order_neighbors = |neighbors: &mut [(BondId, SmilesBondOrder, AtomId)]| {
@@ -112,6 +118,27 @@ pub(super) enum SmilesBondOrder {
 pub(super) enum StereoWriteMode {
     Reject,
     Encode,
+}
+
+/// SMILES has no notation for an explicitly unknown configuration, so, like
+/// RDKit, the isomeric and canonical writers leave those centers, bonds and
+/// axes unmarked; they read back as unspecified.
+pub(super) fn without_unknown_stereo(mol: &Molecule) -> Cow<'_, Molecule> {
+    let unknown = mol
+        .stereo_elements()
+        .filter(|(_, element)| !element.is_specified())
+        .map(|(id, _)| id)
+        .collect::<Vec<_>>();
+    if unknown.is_empty() {
+        return Cow::Borrowed(mol);
+    }
+    let mut unmarked = mol.clone();
+    for id in unknown {
+        unmarked
+            .remove_stereo_element(id)
+            .expect("collected live stereo element");
+    }
+    Cow::Owned(unmarked)
 }
 
 pub(super) fn validate_smiles_writeable(

@@ -247,12 +247,28 @@ pub(crate) fn add_hydrogens_to_molecule(
 pub(crate) fn remove_hydrogens_from_molecule(
     molecule: &mut Molecule,
 ) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
+    remove_hydrogens_keeping(molecule, &BTreeSet::new())
+}
+
+/// Removes hydrogens as [`remove_hydrogens_from_molecule`] does, but retains
+/// those in `keep` (reported as [`RetainedHydrogenReason::UnsupportedStereoRole`]).
+pub(crate) fn remove_hydrogens_keeping(
+    molecule: &mut Molecule,
+    keep: &BTreeSet<AtomId>,
+) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
     let mut report = RemoveHydrogensReport::default();
     let mut candidates = Vec::<(AtomId, AtomId, BondId)>::new();
     for (hydrogen, atom) in molecule
         .atoms()
         .filter(|(_, atom)| atom.element.atomic_number() == 1)
     {
+        if keep.contains(&hydrogen) {
+            report.retained.push(RetainedHydrogen {
+                hydrogen,
+                reason: RetainedHydrogenReason::UnsupportedStereoRole,
+            });
+            continue;
+        }
         match removable_hydrogen(molecule, hydrogen, atom)? {
             Ok((parent, bond)) => candidates.push((hydrogen, parent, bond)),
             Err(reason) => report.retained.push(RetainedHydrogen { hydrogen, reason }),

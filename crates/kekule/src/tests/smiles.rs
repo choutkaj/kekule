@@ -1802,31 +1802,47 @@ fn isomeric_smiles_flips_tetrahedral_marker_for_odd_writer_carrier_order() {
 }
 
 #[test]
-fn isomeric_smiles_accepts_interpreted_source_stereo_and_rejects_unknown_stereo() {
+fn isomeric_smiles_accepts_interpreted_source_stereo_and_leaves_unknown_stereo_unmarked() {
     let directional = read_smiles("C/C=C\\C").expect("directional bond markers should parse");
     let written = smiles_api::write(&directional, smiles_api::SmilesWriteOptions::isomeric())
         .expect("interpreted directional stereo should write without perception");
     assert!(written.contains('/') || written.contains('\\'));
 
-    let mut unknown = read_smiles("F[C@H](Cl)Br").expect("tetrahedral SMILES should parse");
-    let element = unknown.stereo_element_ids().next().expect("stereo element");
-    let mut replacement = unknown
-        .stereo_element(element)
-        .expect("stereo element")
-        .clone();
-    match &mut replacement.kind {
-        StereoElementKind::Tetrahedral(stereo) => stereo.orientation = None,
-        other => panic!("expected tetrahedral stereo, found {other:?}"),
+    // SMILES has no notation for an explicitly unknown configuration. Like
+    // RDKit 2026.03.3, whose canonical SMILES for the unmarked molecules are
+    // FC(Cl)Br and CC=CC, the writers leave it unmarked.
+    for (source, isomeric, canonical) in [
+        ("F[C@H](Cl)Br", "F[CH](Cl)Br", "FC(Cl)Br"),
+        ("C/C=C/C", "CC=CC", "CC=CC"),
+    ] {
+        let mut unknown = read_smiles(source).expect("stereo SMILES should parse");
+        let element = unknown.stereo_element_ids().next().expect("stereo element");
+        let mut replacement = unknown
+            .stereo_element(element)
+            .expect("stereo element")
+            .clone();
+        match &mut replacement.kind {
+            StereoElementKind::Tetrahedral(stereo) => stereo.orientation = None,
+            StereoElementKind::DoubleBond(stereo) => stereo.orientation = None,
+            other => panic!("expected tetrahedral or double-bond stereo, found {other:?}"),
+        }
+        unknown
+            .replace_stereo_element(element, replacement)
+            .expect("valid replacement");
+        perceive(&mut unknown).expect("molecule perceives");
+        assert_eq!(
+            smiles_api::write(&unknown, smiles_api::SmilesWriteOptions::isomeric()).unwrap(),
+            isomeric
+        );
+        assert_eq!(
+            smiles_api::write(&unknown, smiles_api::SmilesWriteOptions::canonical()).unwrap(),
+            canonical
+        );
+        assert!(unknown
+            .stereo_elements()
+            .next()
+            .is_some_and(|(_, element)| !element.is_specified()));
     }
-    unknown
-        .replace_stereo_element(element, replacement)
-        .expect("valid replacement");
-    assert!(
-        smiles_api::write(&unknown, smiles_api::SmilesWriteOptions::isomeric())
-            .expect_err("unknown stereo should be rejected")
-            .message()
-            .contains("unknown stereo")
-    );
 }
 
 #[test]
