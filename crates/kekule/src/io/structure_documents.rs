@@ -99,17 +99,16 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, MolfileInterpretError> {
         .map_err(|_| invalid("formal charge is outside i8 range".to_owned()))?;
     value.isotope = atom.isotope;
     if let Some(difference) = atom.mass_difference {
-        let nominal = crate::descriptors::unambiguous_nominal_mass_number(element)
-            .ok_or_else(|| {
-                MolfileInterpretError::at(
-                    DiagnosticKind::Unsupported,
-                    atom.location,
-                    format!(
-                        "V2000 mass difference on {} has no agreed reference mass; declare the mass number with `M  ISO`",
-                        element.symbol()
-                    ),
-                )
-            })?;
+        let nominal = crate::descriptors::mass_difference_reference(element).ok_or_else(|| {
+            MolfileInterpretError::at(
+                DiagnosticKind::Unsupported,
+                atom.location,
+                format!(
+                    "V2000 mass difference on {} has no reference mass, since the element has no naturally abundant isotope; declare the mass number with `M  ISO`",
+                    element.symbol()
+                ),
+            )
+        })?;
         value.isotope = Some(
             nominal
                 .checked_add_signed(i16::from(difference))

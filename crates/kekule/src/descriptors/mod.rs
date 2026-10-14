@@ -25,13 +25,11 @@ pub fn atomic_mass(element: Element, isotope: Option<u16>) -> Option<Quantity<f6
     Some(Quantity::new(mass, DALTON))
 }
 
-/// The mass number a legacy CTfile mass difference counts from, when the
-/// element's rounded standard atomic weight and its most abundant isotope
-/// agree on it. Readers differ between those two references otherwise.
-pub(crate) fn unambiguous_nominal_mass_number(element: Element) -> Option<u16> {
-    let most_abundant = data::most_abundant_isotope(element)?;
-    let weight = data::standard_atomic_weight(element)?;
-    (weight.round() == f64::from(most_abundant)).then_some(most_abundant)
+/// The mass number a legacy CTfile mass difference counts from: the most
+/// abundant natural isotope, as RDKit reads it. `None` for an element without
+/// a naturally abundant isotope.
+pub(crate) fn mass_difference_reference(element: Element) -> Option<u16> {
+    data::most_abundant_isotope(element)
 }
 
 use std::cmp::Ordering;

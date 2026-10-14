@@ -290,10 +290,9 @@ All notable changes to Kekule are documented in this file.
   fields are reported as unsupported content, like their V3000 options,
   instead of being dropped silently.
 - A V2000 atom-block mass difference sets the isotope when no `M  ISO`
-  record replaces it (`MolfileAtom::mass_difference`). It counts from the
-  most abundant isotope where that agrees with the rounded standard atomic
-  weight; for other elements, such as Br, interpretation fails instead of
-  guessing.
+  record replaces it (`MolfileAtom::mass_difference`). Like RDKit, it counts
+  from the element's most abundant isotope; an element without a naturally
+  abundant isotope fails interpretation instead.
 - Molfile writing fails with `UnsupportedRepresentation` for an atom map of
   0, which both versions write and read as no atom map, instead of silently
   dropping it.

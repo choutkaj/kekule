@@ -1181,12 +1181,13 @@ fn v2000_query_and_reaction_fields_are_unsupported_content() {
 
 #[test]
 fn v2000_mass_difference_sets_the_isotope_unless_m_iso_replaces_it() {
-    // RDKit 2026.03.3 reads the first two rows as 13C and 2H. The legacy
-    // offset counts from the most abundant isotope where that agrees with
-    // the rounded standard atomic weight; for Br they differ (79 and 80).
+    // RDKit 2026.03.3 reads the first three rows as 13C, 2H and 80Br: the
+    // legacy offset counts from the most abundant isotope, which for Br (79)
+    // differs from the rounded standard atomic weight (80).
     for (atoms, properties, expected) in [
         (["C   1  0  0  0  0  0"].as_slice(), [].as_slice(), Ok(vec![Some(13)])),
         (&["H   1  0  0  0  0  0"], &[], Ok(vec![Some(2)])),
+        (&["Br  1  0  0  0  0  0"], &[], Ok(vec![Some(80)])),
         (&["C   1  0  0  0  0  0"], &["M  ISO  1   1  14"], Ok(vec![Some(14)])),
         (
             &["C   1  0  0  0  0  0", "O   0  0  0  0  0  0"],
@@ -1194,11 +1195,11 @@ fn v2000_mass_difference_sets_the_isotope_unless_m_iso_replaces_it() {
             Ok(vec![None, Some(18)]),
         ),
         (
-            &["Br  1  0  0  0  0  0"],
+            &["Tc  1  0  0  0  0  0"],
             &[],
             Err((
                 DiagnosticKind::Unsupported,
-                "V2000 mass difference on Br has no agreed reference mass; declare the mass number with `M  ISO`",
+                "V2000 mass difference on Tc has no reference mass, since the element has no naturally abundant isotope; declare the mass number with `M  ISO`",
             )),
         ),
         (
