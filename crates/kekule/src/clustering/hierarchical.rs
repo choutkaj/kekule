@@ -436,8 +436,14 @@ fn nearest_neighbor_chain(
                 Linkage::Single => to_low.min(to_high),
                 Linkage::Complete => to_low.max(to_high),
                 Linkage::Average => {
+                    // The size-weighted mean, stepped from one input towards
+                    // the other so no intermediate exceeds the larger input;
+                    // summing scaled inputs first overflows near `f64::MAX`.
+                    // Clamping keeps rounding from leaving the inputs' range.
                     let (low_size, high_size) = (size[low] as f64, size[high] as f64);
-                    (low_size * to_low + high_size * to_high) / (low_size + high_size)
+                    let fraction = high_size / (low_size + high_size);
+                    (to_low + (to_high - to_low) * fraction)
+                        .clamp(to_low.min(to_high), to_low.max(to_high))
                 }
             };
             let (first, second) = if low < slot { (low, slot) } else { (slot, low) };

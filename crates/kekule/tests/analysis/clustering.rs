@@ -452,6 +452,25 @@ fn dendrograms_merge_the_closest_clusters_under_each_linkage() {
 }
 
 #[test]
+fn average_linkage_heights_stay_finite_for_the_largest_finite_distances() {
+    // The mean of equal distances is that distance, however close to
+    // `f64::MAX`.
+    let matrix =
+        DistanceMatrix::from_condensed(3, Quantity::new(vec![1.0e308; 3], NANOMETER)).unwrap();
+    let dendrogram = matrix.dendrogram(Linkage::Average);
+    assert_eq!(
+        merges(&dendrogram),
+        [([0, 1], 1.0e308, 2), ([2, 3], 1.0e308, 3)]
+    );
+    assert_eq!(
+        dendrogram
+            .cut(Cut::Height(Quantity::new(1.1e308, NANOMETER)))
+            .unwrap(),
+        [0, 0, 0]
+    );
+}
+
+#[test]
 fn dendrogram_cuts_apply_merges_by_height_or_cluster_count() {
     let dendrogram = five_points().dendrogram(Linkage::Average);
     let count = |clusters| dendrogram.cut(Cut::Count(clusters));

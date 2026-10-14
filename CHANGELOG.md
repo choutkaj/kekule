@@ -324,6 +324,10 @@ All notable changes to Kekule are documented in this file.
   the source, terminator included. A CRLF line was counted one byte short, and
   a final line without a terminator one byte long, so the limit depended on
   line endings.
+- Average-linkage dendrograms no longer overflow to infinite merge heights
+  when finite distances approach `f64::MAX`, which also changed height cuts.
+  Merged distances are computed as a weighted mean that never exceeds the
+  larger input.
 - A 3D Molfile or SDF record no longer gives E/Z to a double bond whose
   endpoint carries two identical terminal ligands, such as a vinyl `=CH2`
   drawn with its hydrogens. The configuration was arbitrary, and canonical
