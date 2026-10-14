@@ -1005,3 +1005,233 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         }
     }
 }
+
+/// A V2000 CTAB of the given atom lines (symbol and fields after the
+/// coordinates), bond lines and property lines.
+fn v2000_ctab(atoms: &[&str], bonds: &[&str], properties: &[&str]) -> String {
+    let mut source = format!(
+        "audit\nkekule\n\n{:>3}{:>3}  0  0  0  0            999 V2000\n",
+        atoms.len(),
+        bonds.len()
+    );
+    for atom in atoms {
+        source.push_str(&format!("    0.0000    0.0000    0.0000 {atom}\n"));
+    }
+    for line in bonds.iter().chain(properties) {
+        source.push_str(line);
+        source.push('\n');
+    }
+    source + "M  END\n"
+}
+
+#[test]
+fn v2000_atom_fields_are_read_from_their_ctfile_columns() {
+    // A three-digit atom map fills its column and touches the field before it.
+    for atom_map in [1, 99, 100, 999] {
+        let molecule = read_smiles(&format!("[CH4:{atom_map}]")).unwrap();
+        let written = molfile::write(
+            &molecule,
+            molfile::MolfileWriteOptions {
+                version: molfile::MolfileWriteVersion::V2000,
+            },
+        )
+        .unwrap();
+        let document = molfile::parse_str(&written).unwrap();
+        assert_eq!(document.atoms()[0].atom_map(), Some(atom_map), "{written}");
+        let reread = molfile::interpret(&document).unwrap();
+        let (_, atom) = reread.molecules().next().unwrap().atoms().next().unwrap();
+        assert_eq!(atom.atom_map, Some(atom_map));
+    }
+}
+
+#[test]
+fn v2000_present_numeric_fields_must_be_numbers() {
+    for (atoms, bonds, line, message) in [
+        (
+            ["C   0  0  0  X  0  0  0  0  0  0  0  0"].as_slice(),
+            [].as_slice(),
+            5,
+            "invalid V2000 atom hydrogen-count code field",
+        ),
+        (
+            &["C   0  0  0  0  0  X  0  0  0  0  0  0"],
+            &[],
+            5,
+            "invalid V2000 atom valence code field",
+        ),
+        (
+            &["C   0  X  0  0  0  0  0  0  0  0  0  0"],
+            &[],
+            5,
+            "invalid V2000 atom charge code field",
+        ),
+        (
+            &["C   0  0  0  0  0  0  0  0  0 1x  0  0"],
+            &[],
+            5,
+            "invalid V2000 atom map field",
+        ),
+        (
+            &["C   0  0", "C   0  0"],
+            &["  1  2  1  X  0  0  0"],
+            7,
+            "invalid V2000 bond stereo field",
+        ),
+    ] {
+        let error = molfile::parse_str(&v2000_ctab(atoms, bonds, &[])).unwrap_err();
+        assert_eq!(
+            (error.kind(), error.location(), error.message()),
+            (
+                DiagnosticKind::Syntax,
+                SourceLocation::at_line(line),
+                message
+            )
+        );
+    }
+}
+
+#[test]
+fn v2000_query_and_reaction_fields_are_unsupported_content() {
+    use molfile::MolfileUnsupportedContent::{AtomField, BondField};
+    for (atoms, bonds, expected) in [
+        (
+            ["C   0  0  0  0  1  0  0  0  0  0  0  0"].as_slice(),
+            [].as_slice(),
+            (
+                AtomField {
+                    atom: 0,
+                    field: "stereo care".to_owned(),
+                },
+                5,
+            ),
+        ),
+        (
+            &["C   0  0  0  0  0  0  1  0  0  0  0  0"],
+            &[],
+            (
+                AtomField {
+                    atom: 0,
+                    field: "H0 designator".to_owned(),
+                },
+                5,
+            ),
+        ),
+        (
+            &["C   0  0  0  0  0  0  0  0  0  0  1  0"],
+            &[],
+            (
+                AtomField {
+                    atom: 0,
+                    field: "inversion/retention".to_owned(),
+                },
+                5,
+            ),
+        ),
+        (
+            &["C   0  0  0  0  0  0  0  0  0  0  0  2"],
+            &[],
+            (
+                AtomField {
+                    atom: 0,
+                    field: "exact change".to_owned(),
+                },
+                5,
+            ),
+        ),
+        (
+            &["C   0  0", "C   0  0"],
+            &["  1  2  1  0  0  1  0"],
+            (
+                BondField {
+                    bond: 0,
+                    field: "topology".to_owned(),
+                },
+                7,
+            ),
+        ),
+        (
+            &["C   0  0", "C   0  0"],
+            &["  1  2  1  0  0  0  4"],
+            (
+                BondField {
+                    bond: 0,
+                    field: "reacting center".to_owned(),
+                },
+                7,
+            ),
+        ),
+    ] {
+        let document = molfile::parse_str(&v2000_ctab(atoms, bonds, &[])).unwrap();
+        let unsupported = [molfile::MolfileUnsupported::new(
+            expected.0,
+            SourceLocation::at_line(expected.1),
+        )];
+        assert_eq!(document.unsupported(), unsupported);
+        assert_eq!(
+            molfile::interpret(&document).unwrap_err().kind(),
+            DiagnosticKind::Unsupported
+        );
+        let report = molfile::MolfileInterpretOptions {
+            unsupported: UnsupportedContent::Report,
+        };
+        let interpretation = molfile::interpret_with_options(&document, report).unwrap();
+        assert_eq!(interpretation.omitted(), unsupported);
+    }
+}
+
+#[test]
+fn v2000_mass_difference_sets_the_isotope_unless_m_iso_replaces_it() {
+    // RDKit 2026.03.3 reads the first two rows as 13C and 2H. The legacy
+    // offset counts from the most abundant isotope where that agrees with
+    // the rounded standard atomic weight; for Br they differ (79 and 80).
+    for (atoms, properties, expected) in [
+        (["C   1  0  0  0  0  0"].as_slice(), [].as_slice(), Ok(vec![Some(13)])),
+        (&["H   1  0  0  0  0  0"], &[], Ok(vec![Some(2)])),
+        (&["C   1  0  0  0  0  0"], &["M  ISO  1   1  14"], Ok(vec![Some(14)])),
+        (
+            &["C   1  0  0  0  0  0", "O   0  0  0  0  0  0"],
+            &["M  ISO  1   2  18"],
+            Ok(vec![None, Some(18)]),
+        ),
+        (
+            &["Br  1  0  0  0  0  0"],
+            &[],
+            Err((
+                DiagnosticKind::Unsupported,
+                "V2000 mass difference on Br has no agreed reference mass; declare the mass number with `M  ISO`",
+            )),
+        ),
+        (
+            &["H  -1  0  0  0  0  0"],
+            &[],
+            Err((
+                DiagnosticKind::InvalidValue,
+                "V2000 mass difference -1 gives no mass number for H",
+            )),
+        ),
+    ] {
+        let source = v2000_ctab(atoms, &[], properties);
+        let document = molfile::parse_str(&source).unwrap();
+        let result = molfile::interpret(&document)
+            .map(|interpretation| {
+                interpretation
+                    .molecules()
+                    .flat_map(|molecule| molecule.atoms().map(|(_, atom)| atom.isotope))
+                    .collect::<Vec<_>>()
+            })
+            .map_err(|error| (error.kind(), error.message().to_owned()));
+        assert_eq!(
+            result,
+            expected.map_err(|(kind, message)| (kind, message.to_owned())),
+            "{source}"
+        );
+    }
+    let error = molfile::parse_str(&v2000_ctab(&["C   5  0  0  0  0  0"], &[], &[])).unwrap_err();
+    assert_eq!(
+        (error.kind(), error.message()),
+        (
+            DiagnosticKind::InvalidValue,
+            "V2000 mass difference 5 is outside -3 to 4"
+        )
+    );
+}

@@ -42,12 +42,20 @@ pub(super) fn parse_v2000_ctab(
     };
     for index in 4..bond_start {
         let line = lines.text(index).expect("block length checked");
-        ctab.atoms.push(parse_v2000_atom(lines, index, line)?);
+        let atom = parse_v2000_atom(lines, index, line, &mut ctab.unsupported, index - 4)?;
+        ctab.atoms.push(atom);
     }
     let mut endpoints = BTreeSet::new();
     for index in bond_start..property_start {
         let line = lines.text(index).expect("block length checked");
-        let bond = parse_v2000_bond(lines, index, line, ctab.atoms.len())?;
+        let bond = parse_v2000_bond(
+            lines,
+            index,
+            line,
+            ctab.atoms.len(),
+            &mut ctab.unsupported,
+            index - bond_start,
+        )?;
         let [a, b] = bond.atoms;
         if !endpoints.insert((a.min(b), a.max(b))) {
             return Err(lines.error(
@@ -100,6 +108,8 @@ fn parse_v2000_atom(
     lines: MolfileLines<'_>,
     index: usize,
     line: &str,
+    unsupported: &mut Vec<MolfileUnsupported>,
+    atom_index: usize,
 ) -> std::result::Result<MolfileAtom, MolfileParseError> {
     let symbol = atom_symbol_from_v2000_line(line)
         .ok_or_else(|| lines.error(index, DiagnosticKind::Syntax, "invalid V2000 atom line"))?;
@@ -111,7 +121,7 @@ fn parse_v2000_atom(
         )
     })?;
     let mut atom = MolfileAtom::new(symbol, Point3::new(x, y, z), lines.location(index));
-    apply_atom_v2000_fields(lines, index, &mut atom, line)?;
+    apply_atom_v2000_fields(lines, index, &mut atom, line, unsupported, atom_index)?;
     Ok(atom)
 }
 
@@ -166,28 +176,111 @@ fn fixed_atom_coordinates(line: &str) -> Option<[f64; 3]> {
     None
 }
 
+/// The atom-block fields after the symbol, by CTfile position: mass
+/// difference, charge, parity, hydrogen count, stereo care, valence, H0
+/// designator, two unused fields, atom map, inversion/retention and exact
+/// change.
+const V2000_ATOM_FIELD_COLUMNS: [(usize, usize); 12] = [
+    (34, 36),
+    (36, 39),
+    (39, 42),
+    (42, 45),
+    (45, 48),
+    (48, 51),
+    (51, 54),
+    (54, 57),
+    (57, 60),
+    (60, 63),
+    (63, 66),
+    (66, 69),
+];
+const MASS_DIFFERENCE: usize = 0;
+const CHARGE: usize = 1;
+const HYDROGEN_COUNT: usize = 3;
+const STEREO_CARE: usize = 4;
+const VALENCE: usize = 5;
+const H0_DESIGNATOR: usize = 6;
+const ATOM_MAP: usize = 9;
+const INVERSION: usize = 10;
+const EXACT_CHANGE: usize = 11;
+
+/// Query and reaction atom fields Kekule does not represent: a nonzero value
+/// is reported as unsupported content.
+const UNSUPPORTED_ATOM_FIELDS: [(usize, &str); 4] = [
+    (STEREO_CARE, "stereo care"),
+    (H0_DESIGNATOR, "H0 designator"),
+    (INVERSION, "inversion/retention"),
+    (EXACT_CHANGE, "exact change"),
+];
+
+/// Atom-block fields after the symbol: fixed CTfile columns when the line
+/// has the fixed layout, otherwise whitespace-separated tokens.
+enum V2000AtomFields<'a> {
+    /// The line and how far its fields sit right of their CTfile columns.
+    Columns(&'a str, usize),
+    Tokens(Vec<&'a str>),
+}
+
+impl<'a> V2000AtomFields<'a> {
+    fn of(line: &'a str) -> Self {
+        // Fixed columns keep a field that touches its neighbour, such as a
+        // three-digit atom map after a zero, from shifting later fields.
+        if fixed_atom_coordinates(line).is_some() {
+            // A z coordinate that fills the separator column shifts the
+            // remaining fields one column right.
+            let shift = usize::from(line.as_bytes().get(30).is_some_and(|&byte| byte != b' '));
+            Self::Columns(line, shift)
+        } else {
+            Self::Tokens(line.split_whitespace().skip(4).collect())
+        }
+    }
+
+    /// The field's text, or `None` when it is absent or blank.
+    fn get(&self, field: usize) -> Option<&'a str> {
+        match self {
+            Self::Columns(line, shift) => {
+                let (start, end) = V2000_ATOM_FIELD_COLUMNS[field];
+                nonblank_field(line, start + shift, end + shift)
+            }
+            Self::Tokens(tokens) => tokens.get(field).copied(),
+        }
+    }
+}
+
 fn apply_atom_v2000_fields(
     lines: MolfileLines<'_>,
     index: usize,
     atom: &mut MolfileAtom,
     line: &str,
+    unsupported: &mut Vec<MolfileUnsupported>,
+    atom_index: usize,
 ) -> std::result::Result<(), MolfileParseError> {
-    // Coordinate fields can touch, for example a negative y immediately
-    // followed by a full-width negative z. Tokenize only the atom fields so
-    // that this cannot shift charge, hydrogen, valence or atom-map columns.
-    let fields = if fixed_atom_coordinates(line).is_some() {
-        line[31..].split_whitespace().collect::<Vec<_>>()
-    } else {
-        line.split_whitespace().skip(3).collect::<Vec<_>>()
-    };
-    if let Some(value) = fields.get(2) {
-        let charge_code = value.parse::<u8>().map_err(|_| {
-            lines.error(
-                index,
-                DiagnosticKind::Syntax,
-                "invalid V2000 atom charge code",
-            )
-        })?;
+    let fields = V2000AtomFields::of(line);
+    let number =
+        |field: usize, name: &str| -> std::result::Result<Option<i32>, MolfileParseError> {
+            fields
+                .get(field)
+                .map(|value| {
+                    value.parse::<i32>().map_err(|_| {
+                        lines.error(
+                            index,
+                            DiagnosticKind::Syntax,
+                            format!("invalid V2000 atom {name} field"),
+                        )
+                    })
+                })
+                .transpose()
+        };
+    let invalid = |message: String| lines.error(index, DiagnosticKind::InvalidValue, message);
+    if let Some(difference) = number(MASS_DIFFERENCE, "mass difference")?.filter(|&d| d != 0) {
+        if !(-3..=4).contains(&difference) {
+            return Err(invalid(format!(
+                "V2000 mass difference {difference} is outside -3 to 4"
+            )));
+        }
+        atom.mass_difference = Some(difference as i8);
+    }
+    if let Some(charge_code) = number(CHARGE, "charge code")? {
         atom.formal_charge = match charge_code {
             0 | 4 => 0,
             1 => 3,
@@ -197,49 +290,61 @@ fn apply_atom_v2000_fields(
             6 => -2,
             7 => -3,
             _ => {
-                return Err(lines.error(
-                    index,
-                    DiagnosticKind::InvalidValue,
-                    format!("invalid V2000 atom charge code {charge_code}"),
-                ))
+                return Err(invalid(format!(
+                    "invalid V2000 atom charge code {charge_code}"
+                )))
             }
         };
         if charge_code == 4 {
             atom.radical = Some(MolfileRadical::Doublet);
         }
     }
-    if let Some(code) = fields.get(4).and_then(|value| value.parse::<u8>().ok()) {
+    if let Some(code) = number(HYDROGEN_COUNT, "hydrogen-count code")? {
         atom.hydrogen_count = match code {
             0 => None,
-            1..=5 => Some(code - 1),
+            1..=5 => Some(code as u8 - 1),
             _ => {
-                return Err(lines.error(
-                    index,
-                    DiagnosticKind::InvalidValue,
-                    format!("invalid V2000 atom hydrogen-count code {code}"),
-                ))
+                return Err(invalid(format!(
+                    "invalid V2000 atom hydrogen-count code {code}"
+                )))
             }
         };
     }
-    if let Some(code) = fields.get(6).and_then(|value| value.parse::<u8>().ok()) {
+    if let Some(code) = number(VALENCE, "valence code")? {
         atom.valence = match code {
             0 => None,
-            1..=14 => Some(code),
+            1..=14 => Some(code as u8),
             15 => Some(0),
-            _ => {
-                return Err(lines.error(
-                    index,
-                    DiagnosticKind::InvalidValue,
-                    format!("invalid V2000 atom valence code {code}"),
-                ))
-            }
+            _ => return Err(invalid(format!("invalid V2000 atom valence code {code}"))),
         };
     }
-    if let Some(atom_map) = fields
-        .get(10)
-        .or_else(|| fields.get(9))
-        .and_then(|value| value.parse::<u32>().ok())
-    {
+    for (field, name) in UNSUPPORTED_ATOM_FIELDS {
+        if number(field, name)?.is_some_and(|value| value != 0) {
+            unsupported.push(MolfileUnsupported {
+                content: MolfileUnsupportedContent::AtomField {
+                    atom: atom_index,
+                    field: name.to_owned(),
+                },
+                location: lines.location(index),
+            });
+        }
+    }
+    let atom_map = match &fields {
+        V2000AtomFields::Columns(..) => number(ATOM_MAP, "map")?,
+        // Loosely spaced lines from some writers omit the unused fields
+        // before the atom map.
+        V2000AtomFields::Tokens(tokens) => {
+            let field = if tokens.len() > ATOM_MAP {
+                ATOM_MAP
+            } else {
+                ATOM_MAP - 1
+            };
+            number(field, "map")?
+        }
+    };
+    if let Some(atom_map) = atom_map {
+        let atom_map = u32::try_from(atom_map)
+            .map_err(|_| invalid(format!("invalid V2000 atom map {atom_map}")))?;
         if atom_map != 0 {
             atom.atom_map = Some(atom_map);
         }
@@ -252,9 +357,36 @@ fn parse_v2000_bond(
     index: usize,
     line: &str,
     atom_count: usize,
+    unsupported: &mut Vec<MolfileUnsupported>,
+    bond_index: usize,
 ) -> std::result::Result<MolfileBond, MolfileParseError> {
-    let (a, b, order_code, stereo_code) = parse_v2000_bond_line(line)
+    let fields = parse_v2000_bond_line(line)
         .ok_or_else(|| lines.error(index, DiagnosticKind::Syntax, "invalid V2000 bond line"))?;
+    let (a, b, order_code) = fields.required;
+    let number = |field: usize, name: &str| -> std::result::Result<u8, MolfileParseError> {
+        fields.optional[field].map_or(Ok(0), |value| {
+            value.parse::<u8>().map_err(|_| {
+                lines.error(
+                    index,
+                    DiagnosticKind::Syntax,
+                    format!("invalid V2000 bond {name} field"),
+                )
+            })
+        })
+    };
+    let stereo_code = number(BOND_STEREO, "stereo")?;
+    for (field, name) in UNSUPPORTED_BOND_FIELDS {
+        if number(field, name)? != 0 {
+            unsupported.push(MolfileUnsupported {
+                content: MolfileUnsupportedContent::BondField {
+                    bond: bond_index,
+                    field: name.to_owned(),
+                },
+                location: lines.location(index),
+            });
+        }
+    }
+
     let endpoint = |serial: usize| {
         serial
             .checked_sub(1)
@@ -326,32 +458,64 @@ fn parse_v2000_bond(
     })
 }
 
-fn parse_v2000_bond_line(line: &str) -> Option<(usize, usize, u8, u8)> {
+/// Optional bond-block fields after the order, by CTfile position: stereo,
+/// an unused field, ring/chain topology and reacting-center status.
+const V2000_BOND_FIELD_COLUMNS: [(usize, usize); 4] = [(9, 12), (12, 15), (15, 18), (18, 21)];
+const BOND_STEREO: usize = 0;
+const BOND_TOPOLOGY: usize = 2;
+const REACTING_CENTER: usize = 3;
+
+/// Query and reaction bond fields Kekule does not represent: a nonzero value
+/// is reported as unsupported content.
+const UNSUPPORTED_BOND_FIELDS: [(usize, &str); 2] = [
+    (BOND_TOPOLOGY, "topology"),
+    (REACTING_CENTER, "reacting center"),
+];
+
+/// A bond line's endpoints and order, and its optional fields as text
+/// (`None` when absent or blank).
+struct V2000BondFields<'a> {
+    required: (usize, usize, u8),
+    optional: [Option<&'a str>; 4],
+}
+
+fn parse_v2000_bond_line(line: &str) -> Option<V2000BondFields<'_>> {
     if !line.is_ascii() {
         return None;
     }
-    let (a, b, order_code, stereo_code) = if let (Some(a), Some(b), Some(order), Some(stereo)) = (
+    if let (Some(a), Some(b), Some(order), Some(_)) = (
         ascii_field(line, 0, 3),
         ascii_field(line, 3, 6),
         ascii_field(line, 6, 9),
         ascii_field(line, 9, 12),
     ) {
-        (
-            a.trim().parse().ok()?,
-            b.trim().parse().ok()?,
-            order.trim().parse().ok()?,
-            stereo.trim().parse::<u8>().ok(),
-        )
-    } else {
-        let mut fields = line.split_whitespace();
-        (
-            fields.next()?.parse().ok()?,
-            fields.next()?.parse().ok()?,
-            fields.next()?.parse().ok()?,
-            fields.next().and_then(|value| value.parse::<u8>().ok()),
-        )
-    };
-    Some((a, b, order_code, stereo_code.unwrap_or(0)))
+        return Some(V2000BondFields {
+            required: (
+                a.trim().parse().ok()?,
+                b.trim().parse().ok()?,
+                order.trim().parse().ok()?,
+            ),
+            optional: V2000_BOND_FIELD_COLUMNS.map(|(start, end)| nonblank_field(line, start, end)),
+        });
+    }
+    let mut fields = line.split_whitespace();
+    let required = (
+        fields.next()?.parse().ok()?,
+        fields.next()?.parse().ok()?,
+        fields.next()?.parse().ok()?,
+    );
+    let mut optional = [None; 4];
+    for (slot, value) in optional.iter_mut().zip(fields) {
+        *slot = Some(value);
+    }
+    Some(V2000BondFields { required, optional })
+}
+
+/// A fixed field, truncated at the end of the line; `None` when absent or blank.
+fn nonblank_field(line: &str, start: usize, end: usize) -> Option<&str> {
+    line.get(start..end.min(line.len()))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn ascii_field(line: &str, start: usize, end: usize) -> Option<&str> {
@@ -366,6 +530,7 @@ fn parse_v2000_properties(
     ctab: &mut MolfileCtab,
 ) -> std::result::Result<(), MolfileParseError> {
     let mut replaced_legacy_charge_and_radical = false;
+    let mut replaced_legacy_mass_differences = false;
     let mut index = range.start;
     while index < range.end {
         let start = index;
@@ -401,6 +566,13 @@ fn parse_v2000_properties(
                 atom.radical = None;
             }
             replaced_legacy_charge_and_radical = true;
+        }
+        if code == "ISO" && !replaced_legacy_mass_differences {
+            // Likewise `M  ISO` replaces every atom-block mass difference.
+            for atom in &mut ctab.atoms {
+                atom.mass_difference = None;
+            }
+            replaced_legacy_mass_differences = true;
         }
         let pairs = &fields[fields.len().min(1)..];
         match code {

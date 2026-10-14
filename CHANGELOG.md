@@ -279,6 +279,21 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- V2000 atom fields are read from their CTfile columns, so a three-digit atom
+  map that touches the field before it, as Kekule itself writes maps 100 to
+  999, is no longer lost on reading.
+- A present but nonnumeric V2000 hydrogen-count, valence, charge, atom-map,
+  mass-difference or bond stereo field is a syntax error instead of reading
+  as absent.
+- Nonzero V2000 stereo care, H0 designator, inversion/retention and
+  exact-change atom fields and ring/chain topology and reacting-center bond
+  fields are reported as unsupported content, like their V3000 options,
+  instead of being dropped silently.
+- A V2000 atom-block mass difference sets the isotope when no `M  ISO`
+  record replaces it (`MolfileAtom::mass_difference`). It counts from the
+  most abundant isotope where that agrees with the rounded standard atomic
+  weight; for other elements, such as Br, interpretation fails instead of
+  guessing.
 - Molfile writing fails with `UnsupportedRepresentation` for an atom map of
   0, which both versions write and read as no atom map, instead of silently
   dropping it.
