@@ -279,6 +279,14 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Writing an ensemble no longer drops its members' weights and energies
+  silently. SDF writes them to each member's `kekule.weight` and
+  `kekule.energy.kJ_per_mol` data fields (`sdf::WEIGHT_FIELD`,
+  `sdf::ENERGY_FIELD`), and the new `sdf::ensemble` assembles interpreted
+  records back into a weighted ensemble. mmCIF cannot carry them, so writing
+  unequal weights or any energy fails with
+  `MmcifWriteError::UnrepresentableEnsembleMember` unless
+  `MmcifWriteOptions::ensemble_metadata` is `UnrepresentablePolicy::Omit`.
 - V2000 atom fields are read from their CTfile columns, so a three-digit atom
   map that touches the field before it, as Kekule itself writes maps 100 to
   999, is no longer lost on reading.

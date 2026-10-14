@@ -568,8 +568,12 @@ universal save trait or implicit trajectory-to-structure export.
   promotes to V3000; explicitly requested versions fail on unsupported content.
   Coordinate stereo must agree with the actual rounded emitted geometry. Writers
   must not invent assertions from an unasserted drawing or hide a conflict.
-- SDF represents independent records. mmCIF distinguishes independent model blocks
-  from one ensemble's multi-model block. Canonical classification informs entity
+- SDF represents independent records; an ensemble member's weight and energy
+  travel as data fields, and only the explicit `sdf::ensemble` assembles
+  records into an ensemble. mmCIF distinguishes independent model blocks
+  from one ensemble's multi-model block, and cannot carry member weights or
+  energies, so writing unequal weights or any energy fails unless the
+  caller chooses to omit them. Canonical classification informs entity
   kinds; hierarchy alone does not establish polymer status or contextual roles.
   Expert overrides and source provenance handle finer format distinctions.
 

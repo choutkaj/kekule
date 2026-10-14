@@ -3,6 +3,7 @@ use std::fmt;
 use std::io::Write;
 
 use crate::structure::{AsModelView, EnsembleMemberView, Model, ModelView, TrajectoryFrameView};
+use crate::units::{Quantity, KILOJOULE_PER_MOLE};
 
 use super::molfile_write::render_model;
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
@@ -56,15 +57,24 @@ impl From<MoleculeWriteError> for SdfWriteError {
     }
 }
 
+/// The data field an ensemble member's relative weight is written to and
+/// [`sdf::ensemble`](crate::sdf::ensemble) reads it from.
+pub const SDF_WEIGHT_FIELD: &str = "kekule.weight";
+/// The data field an ensemble member's energy is written to, in kJ/mol.
+pub const SDF_ENERGY_FIELD: &str = "kekule.energy.kJ_per_mol";
+
 /// One SDF record: a model view with an optional title and data fields.
 ///
 /// Convert from `&Model`, a borrowed ensemble member or trajectory frame, or
-/// `&SdfRecordInterpretation` (which keeps its title and data fields).
+/// `&SdfRecordInterpretation` (which keeps its title and data fields). An
+/// ensemble member's weight and energy follow its data fields as
+/// [`SDF_WEIGHT_FIELD`] and [`SDF_ENERGY_FIELD`].
 #[derive(Debug, Clone, Copy)]
 pub struct SdfRecordSource<'a> {
     model: ModelView<'a>,
     title: &'a str,
     data_fields: &'a [SdfDataField],
+    member: Option<(f64, Option<Quantity<f64>>)>,
 }
 
 impl<'a> SdfRecordSource<'a> {
@@ -73,6 +83,7 @@ impl<'a> SdfRecordSource<'a> {
             model: model.as_model_view(),
             title: "",
             data_fields: &[],
+            member: None,
         }
     }
 
@@ -101,6 +112,7 @@ impl<'a> From<EnsembleMemberView<'a>> for SdfRecordSource<'a> {
             model: member.as_model_view(),
             title: "",
             data_fields: &[],
+            member: Some((member.weight(), member.energy())),
         }
     }
 }
@@ -111,6 +123,7 @@ impl<'a> From<TrajectoryFrameView<'a>> for SdfRecordSource<'a> {
             model: frame.as_model_view(),
             title: "",
             data_fields: &[],
+            member: None,
         }
     }
 }
@@ -143,17 +156,40 @@ pub fn write_sdf_to<'a, R: Into<SdfRecordSource<'a>>>(
     for record in records {
         let record = record.into();
         validate_title(record.title)?;
+        let member_fields = record.member.map_or_else(Vec::new, member_fields);
         for field in record.data_fields {
             validate_data_field(field)?;
+            if member_fields
+                .iter()
+                .any(|member| member.name() == field.name())
+            {
+                return Err(SdfWriteError::InvalidDataField {
+                    name: field.name().to_owned(),
+                    message: "this field carries the ensemble member's own metadata".to_owned(),
+                });
+            }
         }
         let ctab = render_model(record.model, record.title, options.version)?;
         writer.write_all(ctab.as_bytes()).map_err(sdf_io)?;
-        for field in record.data_fields {
+        for field in record.data_fields.iter().chain(&member_fields) {
             writeln!(writer, ">  <{}>\n{}\n", field.name(), field.value()).map_err(sdf_io)?;
         }
         writer.write_all(b"$$$$\n").map_err(sdf_io)?;
     }
     Ok(())
+}
+
+/// An ensemble member's weight and energy as data fields, in the shortest
+/// decimal text that reads back to the same value.
+fn member_fields((weight, energy): (f64, Option<Quantity<f64>>)) -> Vec<SdfDataField> {
+    let mut fields = vec![SdfDataField::new(SDF_WEIGHT_FIELD, weight.to_string())];
+    if let Some(energy) = energy {
+        let kj_per_mol = energy
+            .value_in(KILOJOULE_PER_MOLE)
+            .expect("member energies have an energy-per-amount dimension");
+        fields.push(SdfDataField::new(SDF_ENERGY_FIELD, kj_per_mol.to_string()));
+    }
+    fields
 }
 
 fn validate_title(title: &str) -> Result<(), SdfWriteError> {

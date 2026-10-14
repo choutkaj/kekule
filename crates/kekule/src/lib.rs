@@ -557,10 +557,23 @@ pub mod molfile {
 pub mod sdf {
     pub use crate::io::{
         MoleculeWriteError, MolfileInterpretOptions, MolfileWriteVersion, SdfDataField,
-        SdfDocument, SdfInterpretError, SdfParseError, SdfParseOptions, SdfRecord,
-        SdfRecordInterpretation, SdfRecordInterpretationReport, SdfRecordSource, SdfRecords,
-        SdfWriteError, SdfWriteOptions,
+        SdfDocument, SdfEnsembleError, SdfInterpretError, SdfParseError, SdfParseOptions,
+        SdfRecord, SdfRecordInterpretation, SdfRecordInterpretationReport, SdfRecordSource,
+        SdfRecords, SdfWriteError, SdfWriteOptions, UnrepresentablePolicy,
+        SDF_ENERGY_FIELD as ENERGY_FIELD, SDF_WEIGHT_FIELD as WEIGHT_FIELD,
     };
+
+    /// Assembles interpreted records, in order, into one ensemble whose
+    /// members share the first record's topology. Each member takes its
+    /// relative weight from [`WEIGHT_FIELD`] (1.0 when absent) and its energy
+    /// from [`ENERGY_FIELD`] in kJ/mol (none when absent), the fields
+    /// [`write()`] emits for ensemble members. Sibling records never form an
+    /// ensemble implicitly.
+    pub fn ensemble<'a>(
+        records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
+    ) -> Result<crate::structure::Ensemble, SdfEnsembleError> {
+        crate::io::sdf_ensemble(records)
+    }
 
     /// Streams the records of an SDF input from `reader`.
     ///
@@ -695,6 +708,7 @@ pub mod mmcif {
         StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
         StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretIssue,
         StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
+        UnrepresentablePolicy,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular meaning.

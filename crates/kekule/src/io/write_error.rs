@@ -69,3 +69,14 @@ impl fmt::Display for MoleculeWriteError {
 }
 
 impl std::error::Error for MoleculeWriteError {}
+
+/// What a structure writer does with state its format cannot represent, such
+/// as a periodic cell in a Molfile. Representable state is always written.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum UnrepresentablePolicy {
+    /// Fail rather than write a record that silently lacks the state.
+    #[default]
+    Fail,
+    /// Write the record without the state.
+    Omit,
+}

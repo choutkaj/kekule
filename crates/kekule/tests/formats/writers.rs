@@ -8,7 +8,7 @@ use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
 use kekule::structure::{Ensemble, Model, Positions};
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule::units::{Quantity, ANGSTROM};
+use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE};
 
 fn molecule(source: &str) -> kekule::core::Molecule {
     let mut molecules = smiles::to_molecules(source).expect("SMILES interprets");
@@ -528,6 +528,131 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
             .abs()
             <= 1e-9
     );
+}
+
+/// A two-member methane ensemble weighted 1:3 with energies 0 and 5 kJ/mol.
+fn weighted_ensemble() -> Ensemble {
+    let first = model("C", &[[1.0, 0.0, 0.0]]);
+    let later = Model::new(
+        first.shared_topology(),
+        Positions::new(Quantity::new([Point3::new(9.0, 0.0, 0.0)], ANGSTROM)).unwrap(),
+    )
+    .unwrap();
+    let mut ensemble = Ensemble::from_models([first, later]).unwrap();
+    for (index, weight, energy) in [(0, 1.0, 0.0), (1, 3.0, 5.0)] {
+        let mut member = ensemble.get_mut(index).unwrap();
+        member.set_weight(weight).unwrap();
+        member
+            .set_energy(Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
+            .unwrap();
+    }
+    ensemble
+}
+
+fn member_metadata(ensemble: &Ensemble) -> Vec<(f64, Option<f64>)> {
+    ensemble
+        .iter()
+        .map(|member| {
+            (
+                member.weight(),
+                member
+                    .energy()
+                    .map(|energy| energy.value_in(KILOJOULE_PER_MOLE).unwrap()),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn sdf_ensemble_members_carry_their_weight_and_energy_through_data_fields() {
+    let ensemble = weighted_ensemble();
+    let text = sdf::write(&ensemble, SdfWriteOptions::default()).unwrap();
+    let records = interpret_records(&text);
+    let fields = records
+        .iter()
+        .map(|record| {
+            record
+                .data_fields()
+                .iter()
+                .map(|field| (field.name().to_owned(), field.value().to_owned()))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let field = |name: &str, value: &str| (name.to_owned(), value.to_owned());
+    assert_eq!(
+        fields,
+        [
+            vec![field(sdf::WEIGHT_FIELD, "1"), field(sdf::ENERGY_FIELD, "0")],
+            vec![field(sdf::WEIGHT_FIELD, "3"), field(sdf::ENERGY_FIELD, "5")],
+        ]
+    );
+    let reread = sdf::ensemble(&records).unwrap();
+    assert_eq!(member_metadata(&reread), member_metadata(&ensemble));
+    assert_eq!(reread.probabilities().unwrap(), [0.25, 0.75]);
+
+    // Records without the fields are equally weighted and have no energy.
+    let plain = interpret_records(
+        &sdf::write(&[model("C", &[[0.0; 3]])], SdfWriteOptions::default()).unwrap(),
+    );
+    assert_eq!(
+        member_metadata(&sdf::ensemble(&plain).unwrap()),
+        [(1.0, None)]
+    );
+
+    let malformed = text.replacen(">  <kekule.weight>\n3\n", ">  <kekule.weight>\nheavy\n", 1);
+    assert_eq!(
+        sdf::ensemble(&interpret_records(&malformed))
+            .unwrap_err()
+            .to_string(),
+        "SDF record 1 data field `kekule.weight` is not a number: `heavy`"
+    );
+    let fields = [SdfDataField::new(sdf::WEIGHT_FIELD, "2")];
+    let member = sdf::SdfRecordSource::from(ensemble.get(0).unwrap()).with_data_fields(&fields);
+    assert_eq!(
+        sdf::write([member], SdfWriteOptions::default()).unwrap_err(),
+        sdf::SdfWriteError::InvalidDataField {
+            name: sdf::WEIGHT_FIELD.to_owned(),
+            message: "this field carries the ensemble member's own metadata".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn mmcif_rejects_ensemble_weights_and_energies_it_cannot_carry() {
+    let mut ensemble = weighted_ensemble();
+    let error = mmcif::write([&ensemble], MmcifWriteOptions::default()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "mmCIF cannot represent the energy of ensemble member 1"
+    );
+    for index in 0..2 {
+        ensemble.get_mut(index).unwrap().set_energy(None).unwrap();
+    }
+    let error = mmcif::write([&ensemble], MmcifWriteOptions::default()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "mmCIF cannot represent the weight of ensemble member 2"
+    );
+    let omitted = mmcif::write(
+        [&weighted_ensemble()],
+        MmcifWriteOptions {
+            ensemble_metadata: mmcif::UnrepresentablePolicy::Omit,
+            ..MmcifWriteOptions::default()
+        },
+    )
+    .unwrap();
+    let reread = mmcif::parse_str(&omitted)
+        .unwrap()
+        .interpret_ensemble()
+        .unwrap();
+    assert_eq!(
+        member_metadata(reread.ensemble()),
+        [(1.0, None), (1.0, None)]
+    );
+
+    // Equal weights without energies are what interpretation gives back.
+    ensemble.get_mut(1).unwrap().set_weight(1.0).unwrap();
+    mmcif::write([&ensemble], MmcifWriteOptions::default()).unwrap();
 }
 
 #[test]

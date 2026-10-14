@@ -4,6 +4,7 @@ use crate::io::structure_interpret::{
     EntityKind, StructureEnsembleInterpretation, StructureInterpretation,
     StructureInterpretationReport,
 };
+use crate::io::UnrepresentablePolicy;
 use crate::structure::{AsModelView, Ensemble, Model, ModelView};
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId};
 use std::collections::BTreeMap;
@@ -26,6 +27,9 @@ const MAX_COORDINATE_PRECISION: usize = 15;
 pub struct MmcifWriteOptions {
     pub block_name: String,
     pub coordinate_precision: usize,
+    /// Ensemble member weights and energies, which mmCIF cannot carry: by
+    /// default an ensemble with unequal weights or any energy fails to write.
+    pub ensemble_metadata: UnrepresentablePolicy,
 }
 
 impl Default for MmcifWriteOptions {
@@ -33,6 +37,7 @@ impl Default for MmcifWriteOptions {
         Self {
             block_name: "model".to_owned(),
             coordinate_precision: 3,
+            ensemble_metadata: UnrepresentablePolicy::Fail,
         }
     }
 }
@@ -115,6 +120,13 @@ pub enum MmcifWriteError {
         actual: usize,
     },
     IncompatibleEnsembleMember {
+        member: usize,
+        field: &'static str,
+    },
+    /// Ensemble member state mmCIF cannot represent, with
+    /// [`UnrepresentablePolicy::Fail`]: `field` is `"weight"` for unequal
+    /// weights or `"energy"` for a member energy.
+    UnrepresentableEnsembleMember {
         member: usize,
         field: &'static str,
     },
@@ -253,6 +265,10 @@ impl fmt::Display for MmcifWriteError {
             Self::IncompatibleEnsembleMember { member, field } => write!(
                 f,
                 "ensemble member {member} has incompatible mmCIF {field}"
+            ),
+            Self::UnrepresentableEnsembleMember { member, field } => write!(
+                f,
+                "mmCIF cannot represent the {field} of ensemble member {member}"
             ),
             Self::Io { message, .. } => write!(f, "mmCIF output failed: {message}"),
         }
@@ -436,7 +452,7 @@ pub fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
             } else {
                 options.block_name.clone()
             },
-            coordinate_precision: options.coordinate_precision,
+            ..options.clone()
         };
         match block.content {
             BlockContent::Model(view) => {
@@ -503,6 +519,24 @@ fn write_ensemble_block_to(
             (None, Some(reports))
         }
     };
+    if options.ensemble_metadata == UnrepresentablePolicy::Fail {
+        // Interpretation gives every member weight 1.0 and no energy, so
+        // only equal weights and absent energies survive a round trip.
+        let weight = ensemble.get(0).map(|member| member.weight());
+        for (index, member) in ensemble.iter().enumerate() {
+            let field = if member.energy().is_some() {
+                "energy"
+            } else if Some(member.weight()) != weight {
+                "weight"
+            } else {
+                continue;
+            };
+            return Err(MmcifWriteError::UnrepresentableEnsembleMember {
+                member: index + 1,
+                field,
+            });
+        }
+    }
     let mut members = ensemble.iter().enumerate();
     let (_, first_member) = members.next().ok_or(MmcifWriteError::EmptyEnsemble)?;
     let first_view = first_member.as_model_view();
