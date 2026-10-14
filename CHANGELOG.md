@@ -315,6 +315,11 @@ All notable changes to Kekule are documented in this file.
 - mmCIF parsing no longer takes time quadratic in the values on one line.
   Each value searched for the end of its line from the line's start, so a
   loop written on one long line was tokenized in O(length × values).
+- The XYZ reader's `max_scratch_bytes` covers its reusable line buffer as well
+  as its positions, as the limit's combined-scratch contract states. The
+  buffer grows only within the budget the positions leave, so a line longer
+  than that fails with `ResourceLimitExceeded` before it is buffered, instead
+  of growing the buffer up to the line limits regardless of the scratch limit.
 - The XYZ reader's `max_frame_bytes` check counts the bytes each line takes in
   the source, terminator included. A CRLF line was counted one byte short, and
   a final line without a terminator one byte long, so the limit depended on

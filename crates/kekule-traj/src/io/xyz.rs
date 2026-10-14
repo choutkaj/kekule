@@ -1,6 +1,6 @@
 //! Strict bounded multi-frame XYZ trajectory I/O.
 
-use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::{
@@ -14,6 +14,7 @@ use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
+use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
     codec_context, io_context, projected_index_limit, require_no_partial_frame,
     require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits,
@@ -41,6 +42,10 @@ impl Default for XyzReadOptions {
 
 impl XyzReadOptions {
     /// Sets limits applied before allocation, scanning, and seeking.
+    /// `max_scratch_bytes` bounds the combined capacities of the dense position
+    /// array and the reusable line buffer, which grows to hold the longest
+    /// line read so far, terminator included, in both sequential and indexed
+    /// modes. The frame index has its own `max_index_bytes` limit.
     pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
         self.limits = limits;
         self
@@ -103,7 +108,7 @@ pub struct XyzReader<R> {
     topology: Arc<Topology>,
     options: XyzReadOptions,
     frame_cursor: u64,
-    line: String,
+    line: Vec<u8>,
     positions: Vec<Point3>,
 }
 
@@ -150,7 +155,7 @@ impl<R: BufRead> XyzReader<R> {
             topology,
             options,
             frame_cursor: 0,
-            line: String::new(),
+            line: Vec::new(),
             positions,
         })
     }
@@ -189,11 +194,17 @@ impl<R: BufRead> XyzReader<R> {
                 "XYZ frame count exceeds the configured limit",
             ));
         }
+        // The position array never grows after construction; the line buffer
+        // may grow only within what it leaves of the scratch budget.
+        let position_bytes = scratch_bytes(&self.positions);
         let Some((count_line, consumed)) = read_line(
             &mut self.reader,
             &mut self.line,
             self.options.limits.max_text_line_bytes,
+            position_bytes,
+            &self.options.limits,
             &self.options.source_label,
+            self.frame_cursor,
             operation,
         )?
         else {
@@ -247,7 +258,10 @@ impl<R: BufRead> XyzReader<R> {
             &mut self.reader,
             &mut self.line,
             self.options.limits.max_comment_bytes,
+            position_bytes,
+            &self.options.limits,
             &self.options.source_label,
+            self.frame_cursor,
             operation,
         )?
         else {
@@ -286,7 +300,10 @@ impl<R: BufRead> XyzReader<R> {
                 &mut self.reader,
                 &mut self.line,
                 self.options.limits.max_text_line_bytes,
+                position_bytes,
+                &self.options.limits,
                 &self.options.source_label,
+                self.frame_cursor,
                 operation,
             )?
             else {
@@ -947,46 +964,109 @@ fn checked_frame_add(
 
 /// Reads one line and returns it without its LF or CRLF terminator, together
 /// with the exact number of source bytes consumed, terminator included.
+///
+/// The line, terminator included, must fit `limit`. The retained `line` buffer
+/// grows only while its capacity plus `other_scratch_bytes` stays within
+/// `max_scratch_bytes`, so whether a line fits depends only on its length.
+#[allow(clippy::too_many_arguments)]
 fn read_line<'a, R: BufRead>(
     reader: &mut R,
-    line: &'a mut String,
+    line: &'a mut Vec<u8>,
     limit: usize,
+    other_scratch_bytes: Option<usize>,
+    limits: &TrajectoryIoLimits,
     source_label: &str,
+    frame: u64,
     operation: TrajectoryIoOperation,
 ) -> Result<Option<(&'a str, usize)>, TrajectoryIoError> {
     line.clear();
-    let bounded = limit.checked_add(1).ok_or_else(|| {
-        codec_context(
-            TrajectoryCodecErrorKind::ResourceLimitExceeded,
-            operation,
-            Some(TrajectoryFormat::Xyz),
-            source_label,
-            "XYZ line limit overflows",
-        )
-    })?;
-    let read = Read::by_ref(reader)
-        .take(bounded as u64)
-        .read_line(line)
-        .map_err(|error| io_context(operation, Some(TrajectoryFormat::Xyz), source_label, error))?;
+    loop {
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                return Err(io_context(
+                    operation,
+                    Some(TrajectoryFormat::Xyz),
+                    source_label,
+                    error,
+                ))
+            }
+        };
+        if available.is_empty() {
+            break;
+        }
+        // Scan at most one byte past the limit, enough to detect an overlong line.
+        let window = &available[..available.len().min((limit - line.len()).saturating_add(1))];
+        let (chunk, complete) = match window.iter().position(|byte| *byte == b'\n') {
+            Some(end) => (&window[..=end], true),
+            None => (window, false),
+        };
+        let needed = line.len() + chunk.len();
+        if needed > limit {
+            return Err(codec_context(
+                TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                operation,
+                Some(TrajectoryFormat::Xyz),
+                source_label,
+                format!("XYZ line exceeds configured {limit}-byte limit"),
+            ));
+        }
+        if needed > line.capacity() {
+            // Grow geometrically so a long line is not copied once per buffered
+            // chunk, but never past the line limit or the remaining budget.
+            let remaining = other_scratch_bytes
+                .and_then(|bytes| limits.max_scratch_bytes.checked_sub(bytes))
+                .unwrap_or(0);
+            let target = line
+                .capacity()
+                .saturating_mul(2)
+                .min(limit)
+                .min(remaining)
+                .max(needed);
+            reserve_scratch(
+                line,
+                target,
+                other_scratch_bytes,
+                limits.max_scratch_bytes,
+                |detail| {
+                    frame_codec_error(
+                        TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                        operation,
+                        source_label,
+                        frame,
+                        format!("XYZ line buffer: {detail}"),
+                    )
+                },
+            )?;
+        }
+        line.extend_from_slice(chunk);
+        let consumed = chunk.len();
+        reader.consume(consumed);
+        if complete {
+            break;
+        }
+    }
+    let read = line.len();
     if read == 0 {
         return Ok(None);
     }
-    if read > limit {
-        return Err(codec_context(
-            TrajectoryCodecErrorKind::ResourceLimitExceeded,
+    let mut content = line.as_slice();
+    if let Some(stripped) = content.strip_suffix(b"\n") {
+        content = stripped.strip_suffix(b"\r").unwrap_or(stripped);
+    }
+    let content = std::str::from_utf8(content).map_err(|_| {
+        io_context(
             operation,
             Some(TrajectoryFormat::Xyz),
             source_label,
-            format!("XYZ line exceeds configured {limit}-byte limit"),
-        ));
-    }
-    if line.ends_with('\n') {
-        line.pop();
-        if line.ends_with('\r') {
-            line.pop();
-        }
-    }
-    Ok(Some((line.as_str(), read)))
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "stream did not contain valid UTF-8",
+            ),
+        )
+    })?;
+    Ok(Some((content, read)))
 }
 
 fn frame_codec_error(
