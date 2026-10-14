@@ -180,6 +180,10 @@ pub mod smiles {
         Ordinary,
         /// Non-canonical SMILES preserving represented stereo.
         ///
+        /// SMILES has no notation for an explicitly unknown configuration, so
+        /// this and canonical mode write such centers, bonds and axes
+        /// unmarked, as RDKit does; they read back as unspecified.
+        ///
         /// Tetrahedral absolute, AND, OR and relative groups are emitted as
         /// CXSMILES (`a`, `&`, `o`, `r`). Unsupported member geometries,
         /// quantitative racemic groups and multiple independent relative groups

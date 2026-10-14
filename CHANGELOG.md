@@ -279,6 +279,10 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Isomeric and canonical SMILES write explicitly unknown stereo unmarked,
+  as RDKit does, instead of refusing the molecule. SMILES has no notation for
+  an unknown configuration, so an amidine C=N read with a Molfile "either"
+  mark is written `CNC(C)=N`; it reads back as unspecified.
 - Canonical SMILES no longer panics on an E/Z bond whose only carrier at one
   endpoint is an explicit hydrogen, such as the N-H of `[H]/N=C/C` read from
   an RDKit-embedded SDF record. Hydrogen normalization collapsed that

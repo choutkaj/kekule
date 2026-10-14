@@ -9,9 +9,9 @@ use crate::io::MoleculeWriteError;
 
 use super::write::{
     smiles_atom, smiles_atom_requires_brackets, smiles_incident_bonds_for_style,
-    validate_smiles_bracket_radical, validate_smiles_writeable, write_smiles_component,
-    CanonicalAtomStyle, SmilesBondOrder, SmilesStereoWriteContext, SmilesWritePlan,
-    StereoWriteMode,
+    validate_smiles_bracket_radical, validate_smiles_writeable, without_unknown_stereo,
+    write_smiles_component, CanonicalAtomStyle, SmilesBondOrder, SmilesStereoWriteContext,
+    SmilesWritePlan, StereoWriteMode,
 };
 
 mod labeling;
@@ -73,6 +73,8 @@ fn write_canonical_emission_with_limits(
             "canonical SMILES exceeds the input complexity limit ({max_input_complexity})"
         )));
     }
+    let molecule = without_unknown_stereo(molecule);
+    let molecule = molecule.as_ref();
     validate_smiles_writeable(molecule, StereoWriteMode::Encode)?;
     let normalized = canonical_hydrogen_graph(molecule)?;
     let atom_style = canonical_atom_style(&normalized);

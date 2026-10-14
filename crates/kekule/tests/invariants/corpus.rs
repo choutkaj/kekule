@@ -30,11 +30,12 @@ impl Sample {
         molecule
     }
 
-    /// SMILES cannot encode atropisomeric axes yet; writers must reject them.
+    /// SMILES cannot encode atropisomeric axes yet; writers must reject a
+    /// specified one. An explicitly unknown axis is written unmarked.
     pub fn has_axis_stereo(&self) -> bool {
-        self.molecule
-            .stereo_elements()
-            .any(|(_, element)| matches!(element.kind, StereoElementKind::Axis(_)))
+        self.molecule.stereo_elements().any(|(_, element)| {
+            matches!(element.kind, StereoElementKind::Axis(_)) && element.is_specified()
+        })
     }
 }
 
