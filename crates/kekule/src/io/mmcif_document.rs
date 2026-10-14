@@ -556,19 +556,7 @@ fn parse_blocks(
             }
             tokens.next()?;
             if is_bare_word(token, text(token), "loop_") {
-                let table = parse_loop(source, tokens, token)?;
-                if table
-                    .tags
-                    .iter()
-                    .any(|tag| tag.to_ascii_lowercase().starts_with("_atom_site."))
-                    && table.values.len() / table.tags.len() > max_atom_site_rows
-                {
-                    return Err(MmcifParseError::new(
-                        DiagnosticKind::Limit,
-                        token.line as usize,
-                        "atom-site row count exceeds configured limit",
-                    ));
-                }
+                let table = parse_loop(source, tokens, token, max_atom_site_rows)?;
                 for tag in &table.tags {
                     if !data_names.insert(tag.to_ascii_lowercase()) {
                         return Err(MmcifParseError::new(
@@ -636,10 +624,14 @@ fn parse_blocks(
     Ok(MmcifDocument { blocks })
 }
 
+/// Parses one loop after its `loop_` keyword. An atom-site loop fails at the
+/// first value of its first row beyond `max_atom_site_rows`, before buffering
+/// the rest of the loop.
 fn parse_loop(
     source: &str,
     tokens: &mut Tokens<'_>,
     keyword: Span,
+    max_atom_site_rows: usize,
 ) -> Result<LoopData, MmcifParseError> {
     let text = |span: Span| span.text(source);
     let mut tags = Vec::new();
@@ -661,10 +653,21 @@ fn parse_loop(
     if tags.is_empty() {
         return Err(syntax_error(keyword, "loop has no tags"));
     }
+    let max_values = tags
+        .iter()
+        .any(|tag| tag.to_ascii_lowercase().starts_with("_atom_site."))
+        .then(|| max_atom_site_rows.saturating_mul(tags.len()));
     let mut values = Vec::new();
     while let Some(token) = tokens.peek()? {
         if is_control(token, text(token)) {
             break;
+        }
+        if max_values == Some(values.len()) {
+            return Err(MmcifParseError::new(
+                DiagnosticKind::Limit,
+                token.line as usize,
+                "atom-site row count exceeds configured limit",
+            ));
         }
         tokens.next()?;
         values.push(token);

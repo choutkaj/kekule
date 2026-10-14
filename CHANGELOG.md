@@ -307,6 +307,11 @@ All notable changes to Kekule are documented in this file.
   insertion code used to join that residue, and its repeated atom names failed
   as duplicate alternate-location records; it is now a new residue, reported
   with its occurrence like a number that recurs after other residues.
+- `MmcifParseOptions::max_atom_site_rows` stops parsing at the first excess
+  `_atom_site` loop row instead of after buffering the whole loop, so memory
+  stays bounded by the limit. The error now names the line of that row rather
+  than the `loop_` keyword, and takes precedence over syntax errors later in
+  the loop.
 - mmCIF parsing no longer takes time quadratic in the values on one line.
   Each value searched for the end of its line from the line's start, so a
   loop written on one long line was tokenized in O(length × values).

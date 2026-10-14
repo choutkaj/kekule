@@ -432,6 +432,60 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
 }
 
 #[test]
+fn mmcif_atom_site_row_limit_stops_at_the_first_excess_row() {
+    use crate::diagnostics::{DiagnosticKind, SourceLocation};
+    let options = |max_atom_site_rows| MmcifParseOptions {
+        max_atom_site_rows,
+        ..MmcifParseOptions::default()
+    };
+    // Each unterminated quote follows the excess row and is never tokenized.
+    for (input, max_rows, line) in [
+        ("data_x\nloop_\n_atom_site.id\n1\n2\n'open\n", 1, 5),
+        (
+            "data_x\nloop_\n_atom_site.id\n_atom_site.type_symbol\n1 C\n2 'open\n",
+            1,
+            6,
+        ),
+        (
+            "data_x\nloop_\n_atom_site.id\n_atom_site.type_symbol\n1 C\n2\n",
+            1,
+            6,
+        ),
+        (
+            "data_x\nloop_\n_x.id\n_atom_site.id\n1 1\n2 2 'open\n",
+            1,
+            6,
+        ),
+        ("data_x\nloop_\n_atom_site.id\n1\n'open\n", 0, 4),
+    ] {
+        let error = mmcif::parse_str_with_options(input, options(max_rows)).unwrap_err();
+        assert_eq!(
+            (error.kind(), error.location(), error.message()),
+            (
+                DiagnosticKind::Limit,
+                SourceLocation::at_line(line),
+                "atom-site row count exceeds configured limit"
+            ),
+            "{input:?}"
+        );
+    }
+    for (input, max_rows, tag, rows) in [
+        (
+            "data_x\nloop_\n_atom_site.id\n1\nloop_\n_x.id\n1\n",
+            1,
+            "_atom_site.id",
+            1,
+        ),
+        ("data_x\nloop_\n_atom_site.id\n", 0, "_atom_site.id", 0),
+        ("data_x\nloop_\n_x.id\n1\n2\n", 1, "_x.id", 2),
+    ] {
+        let document = mmcif::parse_str_with_options(input, options(max_rows)).unwrap();
+        let table = document.blocks()[0].loop_with_tag(tag).unwrap();
+        assert_eq!(table.row_count(), rows, "{input:?}");
+    }
+}
+
+#[test]
 fn mmcif_readers_enforce_limits_while_reading_and_match_string_parsing() {
     use crate::diagnostics::{DiagnosticKind, SourceLocation};
     assert_eq!(
