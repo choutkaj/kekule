@@ -310,6 +310,14 @@ All notable changes to Kekule are documented in this file.
   component dictionary entries already did, through one symbol reader shared
   by the three formats. The mmCIF writer writes these isotopes as `D` and `T`
   instead of rejecting them, and still rejects isotopes it cannot name.
+- Structure interpretation no longer drops a stated unit cell silently. PDB
+  `CRYST1` records are typed (`PdbDocument::cryst1`, `PdbCryst1`) and give
+  the model its periodic cell by the rule mmCIF `_cell` follows: space group
+  P 1 or none, and not the 1 Å placeholder. Before, PDB entries never had a
+  cell. Cell parameters in either format that are not the model's cell, being
+  incomplete, under another space group, or the placeholder, are reported as
+  the new `StructureInterpretIssue::CellOmitted` with a
+  `CellOmissionReason` and the source location.
 - Isomeric and canonical SMILES write explicitly unknown stereo unmarked,
   as RDKit does, instead of refusing the molecule. SMILES has no notation for
   an unknown configuration, so an amidine C=N read with a Molfile "either"

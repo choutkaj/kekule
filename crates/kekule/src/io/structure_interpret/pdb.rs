@@ -13,6 +13,7 @@ use crate::core::{BondOrder, Element};
 use crate::diagnostics::DiagnosticKind;
 
 use super::super::element_symbol::parse_structure_element_symbol;
+use super::super::mmcif_cell::stated_cell;
 use super::super::structure_connectivity::ConnectivityCatalog;
 use super::super::{PdbAtom, PdbAtomKind, PdbDocument, PdbPartner};
 use super::altloc::inventory;
@@ -105,6 +106,31 @@ fn pdb_source(
             source_lines: inferred,
         });
     }
+    let cell = match document.cryst1() {
+        None => None,
+        Some(record) => {
+            let [a, b, c] = record.lengths();
+            let [alpha, beta, gamma] = record.angles();
+            let space_groups = record.space_group().into_iter().collect::<Vec<_>>();
+            match stated_cell([a, b, c, alpha, beta, gamma], &space_groups) {
+                Ok(Ok(cell)) => Some(cell),
+                Ok(Err(reason)) => {
+                    issues.push(StructureInterpretIssue::CellOmitted {
+                        reason,
+                        location: record.location(),
+                    });
+                    None
+                }
+                Err(error) => {
+                    return Err(StructureInterpretError::new(
+                        DiagnosticKind::InvalidValue,
+                        Some(record.location().line()),
+                        format!("invalid CRYST1 cell: {error}"),
+                    ))
+                }
+            }
+        }
+    };
     Ok(StructureSource {
         name: document.id_code().unwrap_or_default().to_owned(),
         entity_definitions: 0,
@@ -113,7 +139,7 @@ fn pdb_source(
         polymer_order,
         connections: connection_records(document)?,
         catalog: ConnectivityCatalog::new(connectivity),
-        cell: None,
+        cell,
         issues,
     })
 }

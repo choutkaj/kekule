@@ -36,11 +36,11 @@ pub(crate) use pdb::{
     interpret_pdb, interpret_pdb_conformations, interpret_pdb_ensemble, pdb_alternate_locations,
 };
 pub use types::{
-    AtomProvenance, BondEvidence, BondProvenance, ConnectionResolutionReason, ConnectivityOptions,
-    EntityKind, InstanceProvenance, ModelSelection, StructureEnsembleInterpretError,
-    StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretError,
-    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
-    StructureInterpretationReport,
+    AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason, ConnectionResolutionReason,
+    ConnectivityOptions, EntityKind, InstanceProvenance, ModelSelection,
+    StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
+    StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretIssue,
+    StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
 };
 
 /// Everything interpretation reads from one source, an mmCIF data block or a

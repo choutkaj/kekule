@@ -1,9 +1,10 @@
 use kekule::core::BondOrder;
 use kekule::diagnostics::{DiagnosticKind, SourceLocation};
 use kekule::pdb::{
-    self, AltLocPolicy, AltLocResidue, BondEvidence, ConnectionResolutionReason, EntityKind,
-    ModelSelection, PdbAtomKind, PdbParseOptions, SourceResidueId, SourceResiduePosition,
-    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+    self, AltLocPolicy, AltLocResidue, BondEvidence, CellOmissionReason,
+    ConnectionResolutionReason, EntityKind, ModelSelection, PdbAtomKind, PdbParseOptions,
+    SourceResidueId, SourceResiduePosition, StructureInterpretIssue, StructureInterpretOptions,
+    StructureInterpretation,
 };
 
 /// One `ATOM` or `HETATM` record in the 80 fixed columns of the PDB format.
@@ -324,6 +325,8 @@ fn pdb_records_parse_by_fixed_columns() {
         "CONECT    1A0000    3    3",
         "CONECT    3    1",
         "MASTER        0    0    0    0    0    0    0    0    3    1    2    0",
+        // The unit cell of 1AKE.
+        "CRYST1   73.200   79.800   85.000  90.00  90.00  90.00 P 21 2 21     8          ",
     ]
     .join("\r\n")
         + "\rEND\r\n";
@@ -444,6 +447,107 @@ fn pdb_records_parse_by_fixed_columns() {
         .map(|record| (record.name(), record.location().line()))
         .collect::<Vec<_>>();
     assert_eq!(other, [("HEADER", 1), ("REMARK", 2), ("MASTER", 11)]);
+
+    let cryst1 = document.cryst1().unwrap();
+    assert_eq!(cryst1.lengths(), [Some(73.2), Some(79.8), Some(85.0)]);
+    assert_eq!(cryst1.angles(), [Some(90.0); 3]);
+    assert_eq!(cryst1.space_group(), Some("P 21 2 21"));
+    assert_eq!(cryst1.z(), Some(8));
+    assert_eq!(cryst1.location(), SourceLocation::at_line(12));
+}
+
+/// A `CRYST1` record in its fixed columns; `None` leaves a field blank.
+fn cryst1(lengths: [Option<f64>; 3], space_group: &str) -> String {
+    let [a, b, c] =
+        lengths.map(|length| length.map_or(String::new(), |length| format!("{length:.3}")));
+    format!(
+        "CRYST1{a:>9}{b:>9}{c:>9}{:>7}{:>7}{:>7} {space_group:<11}{:>4}",
+        "90.00", "90.00", "90.00", "1"
+    )
+}
+
+#[test]
+fn cryst1_is_the_model_cell_only_for_a_whole_unit_cell() {
+    let space_group = |name: &str| CellOmissionReason::SpaceGroup {
+        name: name.to_owned(),
+    };
+    for (record, expected, omission) in [
+        (Some(cryst1([Some(30.0); 3], "P 1")), Some([30.0; 3]), None),
+        // An asymmetric unit's translates are not its crystal.
+        (
+            Some(cryst1([Some(73.2), Some(79.8), Some(85.0)], "P 21 2 21")),
+            None,
+            Some(space_group("P 21 2 21")),
+        ),
+        // The placeholder of structures without a crystal lattice.
+        (
+            Some(cryst1([Some(1.0); 3], "P 1")),
+            None,
+            Some(CellOmissionReason::Placeholder),
+        ),
+        (
+            Some(cryst1([Some(30.0), Some(30.0), None], "P 1")),
+            None,
+            Some(CellOmissionReason::Incomplete),
+        ),
+        (None, None, None),
+    ] {
+        let text = entry(
+            &record
+                .iter()
+                .cloned()
+                .chain(glycine_dipeptide())
+                .collect::<Vec<_>>(),
+        );
+        let interpreted = interpret(&text);
+        let cell = interpreted.model().cell().map(|cell| {
+            assert!(cell.is_orthorhombic());
+            assert_eq!(cell.periodic_axes(), [true; 3]);
+            let [a, b, c] = cell
+                .vectors()
+                .into_unit(kekule::units::ANGSTROM)
+                .unwrap()
+                .into_value();
+            [a.x, b.y, c.z]
+        });
+        match (cell, expected) {
+            (Some(cell), Some(expected)) => {
+                for (cell, expected) in cell.into_iter().zip(expected) {
+                    assert!((cell - expected).abs() < 1e-9, "{record:?}");
+                }
+            }
+            (cell, expected) => assert_eq!(cell, expected, "{record:?}"),
+        }
+        let omissions = interpreted
+            .report()
+            .issues()
+            .iter()
+            .filter(|issue| matches!(issue, StructureInterpretIssue::CellOmitted { .. }))
+            .cloned()
+            .collect::<Vec<_>>();
+        let expected = omission
+            .map(|reason| StructureInterpretIssue::CellOmitted {
+                reason,
+                location: SourceLocation::at_line(1),
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(omissions, expected, "{record:?}");
+    }
+
+    let duplicate = entry(&[
+        cryst1([Some(30.0); 3], "P 1"),
+        cryst1([Some(30.0); 3], "P 1"),
+    ]);
+    let error = pdb::parse_str(&duplicate).unwrap_err();
+    assert_eq!(
+        (error.kind(), error.location(), error.message()),
+        (
+            DiagnosticKind::Inconsistent,
+            SourceLocation::at_line(2),
+            "duplicate CRYST1 record"
+        )
+    );
 }
 
 #[test]

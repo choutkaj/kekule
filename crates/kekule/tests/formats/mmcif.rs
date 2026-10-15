@@ -1,4 +1,5 @@
-use kekule::mmcif;
+use kekule::diagnostics::SourceLocation;
+use kekule::mmcif::{self, CellOmissionReason, StructureInterpretIssue};
 
 const MINIMAL_MMCIF: &str = r#"
 data_demo
@@ -27,10 +28,17 @@ C C2 GLY A 1 1 1.0 0.0 0.0
 "#;
 
 /// The cell of an interpreted model as its diagonal in angstroms, when the
-/// cell is orthorhombic.
-fn orthorhombic_cell(text: &str) -> Option<[f64; 3]> {
+/// cell is orthorhombic, and the report's cell omissions.
+fn orthorhombic_cell(text: &str) -> (Option<[f64; 3]>, Vec<StructureInterpretIssue>) {
     let interpreted = mmcif::parse_str(text).unwrap().interpret().unwrap();
-    interpreted.model().cell().map(|cell| {
+    let omissions = interpreted
+        .report()
+        .issues()
+        .iter()
+        .filter(|issue| matches!(issue, StructureInterpretIssue::CellOmitted { .. }))
+        .cloned()
+        .collect();
+    let cell = interpreted.model().cell().map(|cell| {
         assert!(cell.is_orthorhombic());
         assert_eq!(cell.periodic_axes(), [true; 3]);
         let [a, b, c] = cell
@@ -39,7 +47,8 @@ fn orthorhombic_cell(text: &str) -> Option<[f64; 3]> {
             .unwrap()
             .into_value();
         [a.x, b.y, c.z]
-    })
+    });
+    (cell, omissions)
 }
 
 #[test]
@@ -51,31 +60,52 @@ fn mmcif_cell_is_the_model_cell_only_for_a_whole_unit_cell() {
              _cell.angle_alpha 90\n_cell.angle_beta 90\n_cell.angle_gamma 90.0\n"
         )
     };
-    for (header, expected) in [
+    // Omissions locate the space group, or else the first stated parameter.
+    let omitted = |reason, line| {
+        vec![StructureInterpretIssue::CellOmitted {
+            reason,
+            location: SourceLocation::at_line(line),
+        }]
+    };
+    let space_group = |name: &str| CellOmissionReason::SpaceGroup {
+        name: name.to_owned(),
+    };
+    for (header, expected, omissions) in [
         // No space group declared: the coordinates are taken as a unit cell.
-        (cell("20 30 40.0(2)"), Some([20.0, 30.0, 40.0])),
+        (cell("20 30 40.0(2)"), Some([20.0, 30.0, 40.0]), vec![]),
         (
             cell("20 30 40") + "_symmetry.space_group_name_H-M 'P 1'\n",
             Some([20.0, 30.0, 40.0]),
+            vec![],
         ),
         // An asymmetric unit's translates are not its crystal.
         (
             cell("20 30 40") + "_symmetry.space_group_name_H-M 'P 21 21 21'\n",
             None,
+            omitted(space_group("P 21 21 21"), 9),
         ),
         (
             cell("20 30 40") + "_space_group.name_H-M_alt 'P 21 21 21'\n",
             None,
+            omitted(space_group("P 21 21 21"), 9),
         ),
         // PDB's placeholder for structures without a crystal lattice.
         (
             cell("1.000 1.000 1.000") + "_symmetry.space_group_name_H-M 'P 1'\n",
             None,
+            omitted(CellOmissionReason::Placeholder, 3),
         ),
-        (cell("20 30 ?"), None),
+        (
+            cell("20 30 ?"),
+            None,
+            omitted(CellOmissionReason::Incomplete, 3),
+        ),
+        // A `_cell` stating no lengths or angles omits nothing.
+        ("_cell.entry_id demo\n".to_owned(), None, vec![]),
     ] {
         let text = MINIMAL_MMCIF.replacen("data_demo\n", &format!("data_demo\n{header}"), 1);
-        let actual = orthorhombic_cell(&text);
+        let (actual, actual_omissions) = orthorhombic_cell(&text);
+        assert_eq!(actual_omissions, omissions, "{header}");
         match (actual, expected) {
             (Some(actual), Some(expected)) => {
                 for (actual, expected) in actual.into_iter().zip(expected) {

@@ -199,6 +199,26 @@ pub enum StructureInterpretIssue {
         residue: SourceResidueId,
         fragments: usize,
     },
+    /// The source states unit-cell parameters (mmCIF `_cell`, PDB `CRYST1`)
+    /// that are not the model's periodic cell, so the model has none.
+    CellOmitted {
+        reason: CellOmissionReason,
+        location: SourceLocation,
+    },
+}
+
+/// Why stated unit-cell parameters are not a model's periodic cell.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CellOmissionReason {
+    /// Some of the six lengths and angles are missing or unknown.
+    Incomplete,
+    /// The coordinates are the asymmetric unit of this space group, whose
+    /// translates alone are not the crystal.
+    SpaceGroup { name: String },
+    /// PDB's 1 Å cube, recorded for structures without a crystal lattice
+    /// such as NMR and EM models.
+    Placeholder,
 }
 
 /// The evidence a bond was resolved from.
