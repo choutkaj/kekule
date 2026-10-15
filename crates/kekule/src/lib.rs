@@ -207,6 +207,17 @@ pub mod smiles {
         /// order are canonical, and inverting every member of a non-absolute
         /// group produces the same output.
         ///
+        /// Canonical output of a molecule with a ring requires installed
+        /// aromaticity perception, such as [`Molecule::perceive`] installs, and
+        /// fails with [`MoleculeWriteErrorKind::MissingPerception`] without it.
+        /// Perceived
+        /// aromatic atoms and bonds are written aromatic, so every Kekule form
+        /// of a molecule gives one string under the installed aromaticity
+        /// model. The exception is a molecule with a stereo center or E/Z
+        /// endpoint on an aromatic atom: SMILES cannot mark that configuration
+        /// on aromatic syntax, so the whole molecule is written in its stored
+        /// Kekule form.
+        ///
         /// Complete canonical labeling is bounded by 100,000 search states,
         /// 50,000,000 atom/edge/twin visits, and 2,000,000 pending atom labels.
         /// Serialization additionally bounds the input to 2,000,000 combined
@@ -402,6 +413,8 @@ pub mod smiles {
     /// Writes one SMILES record.
     ///
     /// [`SmilesWriteMode`] selects ordinary, isomeric, or canonical output.
+    /// Canonical output of a molecule with a ring requires installed
+    /// aromaticity perception.
     /// Every mode preserves isotope labels and total hydrogen counts. An atom
     /// that permits inferred hydrogens and requires bracket syntax must have
     /// hydrogen perception installed; otherwise writing returns an error. Call
@@ -417,9 +430,13 @@ pub mod smiles {
     ///
     /// ```
     /// use kekule::smiles::{self, SmilesWriteOptions};
-    /// let molecule = smiles::to_molecules("OCC")?.remove(0);
-    /// let canonical = smiles::write(&molecule, SmilesWriteOptions::canonical())?;
-    /// assert_eq!(canonical, smiles::write(&smiles::to_molecules("CCO")?[0], SmilesWriteOptions::canonical())?);
+    /// let canonical = |source: &str| -> Result<String, Box<dyn std::error::Error>> {
+    ///     let mut molecule = smiles::to_molecules(source)?.remove(0);
+    ///     molecule.perceive()?;
+    ///     Ok(smiles::write(&molecule, SmilesWriteOptions::canonical())?)
+    /// };
+    /// assert_eq!(canonical("OCC")?, "CCO");
+    /// assert_eq!(canonical("CC1=C(C)C=CC=C1")?, canonical("CC1=CC=CC=C1C")?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn write<'a>(

@@ -77,6 +77,15 @@ fn write_canonical_emission_with_limits(
     let molecule = molecule.as_ref();
     validate_smiles_writeable(molecule, StereoWriteMode::Encode)?;
     let normalized = canonical_hydrogen_graph(molecule)?;
+    // Aromatic spelling and ranking read installed aromaticity. Without it,
+    // each Kekule form of one cyclic molecule would have its own canonical
+    // string. A connected graph has a ring exactly when it has as many bonds
+    // as atoms; an acyclic molecule has no aromatic atom to perceive.
+    if molecule.bond_count() >= molecule.atom_count() && !molecule.perception().has_aromaticity() {
+        return Err(MoleculeWriteError::missing_perception(
+            "canonical SMILES requires installed aromaticity perception; perceive the molecule before writing",
+        ));
+    }
     let atom_style = canonical_atom_style(&normalized);
     let projected = canonical_projection_graph(&normalized, atom_style)?;
     let mol = &projected;

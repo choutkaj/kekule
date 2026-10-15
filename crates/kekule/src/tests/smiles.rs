@@ -1115,12 +1115,14 @@ fn source_order_smiles_retains_branch_order_and_omits_kekule_single_bonds() {
 
 #[test]
 fn canonical_smiles_prefers_clean_simple_ring_closure() {
-    let molecule = read_smiles("C1=CC=CC=C1").expect("benzene parses");
+    // RDKit 2026.03.3 writes 1,3-cyclohexadiene as `C1=CCCC=C1`.
+    let mut molecule = read_smiles("C1=CC=CCC1").expect("cyclohexadiene parses");
+    perceive(&mut molecule).expect("cyclohexadiene perceives");
 
     let written = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::canonical())
         .expect("canonical SMILES should write");
 
-    assert_eq!(written, "C1=CC=CC=C1");
+    assert_eq!(written, "C1=CCCC=C1");
 }
 
 #[test]
