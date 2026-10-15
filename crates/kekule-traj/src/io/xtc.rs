@@ -31,6 +31,9 @@ const XTC_MAGIC_INTS: [i32; 73] = [
     3329021, 4194304, 5284491, 6658042, 8388607, 10568983, 13316085, 16777216,
 ];
 const XTC_FIRST_SMALL_INDEX: usize = 9;
+/// Largest scaled coordinate magnitude, and bound on each axis's span, that
+/// GROMACS writes (its `MAXABS`). Wider spans overflow the encoder's sizes.
+const XTC_MAX_SCALED: i64 = i32::MAX as i64 - 2;
 
 /// Supported XTC magic and compressed-byte-count profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1390,15 +1393,22 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                     "could not reserve XTC writer coordinate scratch",
                 )
             })?;
+        // Compressed frames store coordinates as integers relative to each
+        // axis's minimum, so both the scaled values and their per-axis spans
+        // must stay within GROMACS's range.
+        let compressed = self.topology.atom_count() > 9;
+        let mut minimum = [i64::MAX; 3];
+        let mut maximum = [i64::MIN; 3];
         for point in *positions.value() {
-            for value in [point.x * factor, point.y * factor, point.z * factor] {
+            for (axis, value) in [point.x * factor, point.y * factor, point.z * factor]
+                .into_iter()
+                .enumerate()
+            {
                 let value = finite_f32(value, &self.source_label, "position")?;
-                if self.topology.atom_count() > 9 {
-                    let scaled = f64::from(value) * f64::from(self.options.precision);
-                    if !scaled.is_finite()
-                        || scaled.round() < f64::from(i32::MIN)
-                        || scaled.round() > f64::from(i32::MAX)
-                    {
+                if compressed {
+                    // Scale in f32, exactly as the encoder does.
+                    let scaled = (value * self.options.precision).round();
+                    if !scaled.is_finite() || f64::from(scaled).abs() > XTC_MAX_SCALED as f64 {
                         return Err(codec_context(
                             TrajectoryCodecErrorKind::InvalidFrame,
                             TrajectoryIoOperation::WriteFrame,
@@ -1407,9 +1417,20 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                             "XTC coordinate exceeds the selected precision's integer range",
                         ));
                     }
+                    minimum[axis] = minimum[axis].min(scaled as i64);
+                    maximum[axis] = maximum[axis].max(scaled as i64);
                 }
                 self.adapter.frame.positions.push(value);
             }
+        }
+        if compressed && (0..3).any(|axis| maximum[axis] - minimum[axis] >= XTC_MAX_SCALED) {
+            return Err(codec_context(
+                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Xtc),
+                &self.source_label,
+                "XTC coordinate span along an axis exceeds the selected precision's integer range",
+            ));
         }
         self.adapter.frame.precision = self.options.precision;
         // The encoder writes the frame piecewise, so a failure or panic inside

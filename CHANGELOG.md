@@ -360,6 +360,13 @@ All notable changes to Kekule are documented in this file.
   canonical classification, a metal, saccharide, or water residue bonded to a
   polymer is no longer written as a polymer residue; explicit classifications
   hold as given.
+- The XTC writer no longer writes a corrupt frame when the coordinates on one
+  axis span more than the selected precision can encode, which it did
+  silently in release builds. It now rejects such a frame with
+  `TrajectoryCodecErrorKind::InvalidFrame` before writing anything, as
+  GROMACS does, bounding the scaled coordinates and each axis's span by
+  `i32::MAX - 2`. At a precision of 10^6 per nm, a frame from -1500 to
+  1500 nm is rejected.
 - Isomeric and canonical SMILES write explicitly unknown stereo unmarked,
   as RDKit does, instead of refusing the molecule. SMILES has no notation for
   an unknown configuration, so an amidine C=N read with a Molfile "either"
