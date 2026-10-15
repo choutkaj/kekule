@@ -1241,6 +1241,132 @@ fn hydrogen_isotope_symbols_read_as_isotopes_and_write_back() {
 }
 
 #[test]
+fn author_chains_holding_ligands_and_water_write_as_separate_mmcif_asyms() {
+    // Chain A holds a glycine dipeptide, a sulfate, a zinc that a `LINK`
+    // coordinates to the second glycine's carbonyl oxygen, and a water.
+    let mut lines = glycine_dipeptide();
+    lines.push(ter("9", "GLY", 'A', "2"));
+    for (serial, name, position, element) in [
+        ("10", " S  ", [10.0, 0.0, 0.0], "S"),
+        ("11", " O1 ", [10.849, 0.849, 0.849], "O"),
+        ("12", " O2 ", [9.151, -0.849, 0.849], "O"),
+        ("13", " O3 ", [9.151, 0.849, -0.849], "O"),
+        ("14", " O4 ", [10.849, -0.849, -0.849], "O"),
+    ] {
+        lines.push(site("HETATM", serial, name, "SO4", 'A', "101", position, element).line());
+    }
+    lines.push(
+        site(
+            "HETATM",
+            "15",
+            "ZN  ",
+            "ZN",
+            'A',
+            "102",
+            [7.152, -0.136, 0.0],
+            "ZN",
+        )
+        .line(),
+    );
+    lines.push(
+        site(
+            "HETATM",
+            "16",
+            " O  ",
+            "HOH",
+            'A',
+            "201",
+            [20.0, 0.0, 0.0],
+            "O",
+        )
+        .line(),
+    );
+    lines.push(link(
+        [" O  ", "ZN  "],
+        [("GLY", 'A', "2"), ("ZN", 'A', "102")],
+        ["1555", "1555"],
+        2.10,
+    ));
+    let interpreted = interpret(&entry(&lines));
+    let source_bonds = bonds(&interpreted)
+        .into_iter()
+        .map(|(a, b, order, _)| (a, b, order))
+        .collect::<Vec<_>>();
+    assert!(source_bonds.contains(&("O".to_owned(), "ZN".to_owned(), BondOrder::Dative)));
+
+    // Residues by component, label asym, author asym, entity, and kind.
+    let residues = |result: &StructureInterpretation| {
+        let mut atoms = result
+            .report()
+            .instances()
+            .iter()
+            .flat_map(|instance| instance.atoms())
+            .collect::<Vec<_>>();
+        atoms.sort_by_key(|atom| atom.source_line());
+        let mut residues = atoms
+            .into_iter()
+            .map(|atom| {
+                (
+                    atom.component_id().to_owned(),
+                    atom.asym_id().to_owned(),
+                    atom.auth_asym_id().map(str::to_owned),
+                    atom.entity_id().map(str::to_owned),
+                    atom.entity_kind().clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        residues.dedup();
+        residues
+    };
+    let expected = |entities: [&str; 4]| {
+        [
+            ("GLY", "A", EntityKind::Polymer),
+            ("SO4", "A_2", EntityKind::NonPolymer),
+            ("ZN", "A_3", EntityKind::NonPolymer),
+            ("HOH", "A_4", EntityKind::Water),
+        ]
+        .into_iter()
+        .zip(entities)
+        .map(|((component, asym, kind), entity)| {
+            (
+                component.to_owned(),
+                asym.to_owned(),
+                Some("A".to_owned()),
+                Some(entity.to_owned()),
+                kind,
+            )
+        })
+        .collect::<Vec<_>>()
+    };
+    // Source provenance and canonical classification plan the same asyms;
+    // entities without source identifiers are numbered by each plan.
+    for (written, entities) in [
+        (
+            kekule::mmcif::write([&interpreted], kekule::mmcif::MmcifWriteOptions::default()),
+            ["K1", "K2", "K3", "K4"],
+        ),
+        (
+            kekule::mmcif::write(
+                [interpreted.model()],
+                kekule::mmcif::MmcifWriteOptions::default(),
+            ),
+            ["1", "2", "3", "4"],
+        ),
+    ] {
+        let reread = kekule::mmcif::parse_str(&written.unwrap())
+            .unwrap()
+            .interpret()
+            .unwrap();
+        assert_eq!(residues(&reread), expected(entities));
+        let reread_bonds = bonds(&reread)
+            .into_iter()
+            .map(|(a, b, order, _)| (a, b, order))
+            .collect::<Vec<_>>();
+        assert_eq!(reread_bonds, source_bonds);
+    }
+}
+
+#[test]
 fn pdb_parse_errors_locate_the_record() {
     let oxygen = site("HETATM", "1", " O  ", "HOH", 'W', "1", [0.0, 0.0, 0.0], "O");
     let water = oxygen.line();
@@ -1797,6 +1923,29 @@ fn pdb_connectivity_matches_an_independent_reference() {
             0,
             "{name}"
         );
+
+        // The model writes as mmCIF, planned from its source provenance or
+        // from canonical classification, and reads back whole.
+        let options = kekule::mmcif::MmcifWriteOptions::default;
+        for written in [
+            kekule::mmcif::write([&interpreted], options()),
+            kekule::mmcif::write([interpreted.model()], options()),
+        ] {
+            let reread = kekule::mmcif::parse_str(&written.unwrap())
+                .unwrap()
+                .interpret()
+                .unwrap();
+            let topology = reread.topology();
+            assert_eq!(
+                (
+                    topology.atom_count(),
+                    topology.bond_count(),
+                    topology.instance_count()
+                ),
+                (atoms, bonds, molecules),
+                "{name}"
+            );
+        }
     }
 }
 

@@ -586,6 +586,10 @@ universal save trait or implicit trajectory-to-structure export.
   are not the model's cell are reported as omitted. Canonical classification informs entity
   kinds; hierarchy alone does not establish polymer status or contextual roles.
   Expert overrides and source provenance handle finer format distinctions.
+  Every entity instance is its own label asym: a chain the source names as
+  one asym stays one, while a chain without a source asym that holds a
+  polymer, ligands, and water, as a PDB author chain does, is written as
+  several asyms that keep its author chain identifier.
 
 Exact capability and numerical policies live with
 [SMILES writing](crates/kekule/src/io/smiles/write.rs),

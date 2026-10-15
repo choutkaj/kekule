@@ -347,6 +347,19 @@ All notable changes to Kekule are documented in this file.
   report every element that structural edits pruned: adding, deleting or
   rewiring bonds, changing bond orders, deleting atoms, and oxohalogen
   normalization.
+- Models read from PDB can be written as mmCIF. A PDB author chain holds its
+  protein, ligands, and water, but the writer planned one entity per chain,
+  so `mmcif::write` failed with `ConflictingAsymEntityClassifications` on any
+  such chain (1AKE among them), and polymer residues without a
+  `label_seq_id` made bonds between them ambiguous. The writer now gives each
+  entity instance of a chain without a source `label_asym_id` its own label
+  asym: the chain's polymer keeps its label, each ligand residue and the
+  chain's water get labels of their own such as `A_2`, and every one keeps
+  the chain's `auth_asym_id`. A source asym is still never split. Polymer
+  residues without a `label_seq_id` are numbered from 1 in chain order. Under
+  canonical classification, a metal, saccharide, or water residue bonded to a
+  polymer is no longer written as a polymer residue; explicit classifications
+  hold as given.
 - Isomeric and canonical SMILES write explicitly unknown stereo unmarked,
   as RDKit does, instead of refusing the molecule. SMILES has no notation for
   an unknown configuration, so an amidine C=N read with a Molfile "either"
