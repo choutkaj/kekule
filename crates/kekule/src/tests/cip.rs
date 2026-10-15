@@ -4,6 +4,11 @@ fn assign_cip(mol: &mut Molecule) -> CipAssignmentReport {
     stereo_api::assign_cip_descriptors(mol).expect("CIP assignment should succeed")
 }
 
+/// Installs inferred hydrogen counts, which CIP ranking requires to be known.
+fn perceive_hydrogens(mol: &mut Molecule) {
+    valence_api::perceive_valence(mol, ValenceModel::RdkitLike).expect("valence perceives");
+}
+
 fn installed_cip_descriptors(mol: &Molecule) -> Vec<(StereoElementId, StereoDescriptor)> {
     mol.perception().cip_descriptors().collect()
 }
@@ -33,6 +38,7 @@ fn assert_cip_not_stereogenic(mol: &mut Molecule, element: StereoElementId) {
 fn successful_cip_with_no_assignments_installs_empty_stereo_section() {
     let mut mol = crate::core::MoleculeEditor::new();
     mol.add_atom(carbon()).expect("single carbon");
+    perceive_hydrogens(mol.working_mut());
     assert!(!mol.perception().has_stereo());
 
     let report = assign_cip(mol.working_mut());
@@ -198,6 +204,7 @@ fn cip_skips_axis_with_equivalent_endpoint_ligands_as_nonstereogenic() {
         })))
         .expect("axis stereo element");
 
+    perceive_hydrogens(mol.working_mut());
     assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
@@ -217,6 +224,7 @@ fn cip_assigns_axis_descriptor_after_coordinate_stereo_materialization() {
     assert_eq!(materialization_report.created_elements.len(), 1);
 
     let mut mol = mol.finish().expect("materialized molecule publishes");
+    perceive_hydrogens(&mut mol);
 
     let report = assign_cip(&mut mol);
 
@@ -273,6 +281,7 @@ fn cip_axis_with_two_enantiomorphic_endpoint_pairs_is_absolute() {
             })))
             .expect("axis assertion");
         let mut molecule = editor.finish().expect("molecule");
+        perceive_hydrogens(&mut molecule);
         assign_cip(&mut molecule);
         assert_eq!(
             molecule.cip_descriptor(element).expect("axis"),
@@ -557,7 +566,9 @@ fn axis_stereo_graph(
             orientation: Some(orientation),
         })))
         .expect("axis stereo element");
-    (mol.finish().expect("connected axis fixture"), stereo)
+    let mut mol = mol.finish().expect("connected axis fixture");
+    perceive_hydrogens(&mut mol);
+    (mol, stereo)
 }
 
 #[test]
@@ -688,6 +699,7 @@ fn cip_labels_explicitly_asserted_small_ring_double_bond() {
         )))
         .expect("double-bond stereo element");
 
+    perceive_hydrogens(mol.working_mut());
     let report = assign_cip(mol.working_mut());
     assert_eq!(
         report.assigned,
@@ -793,6 +805,7 @@ fn cip_skips_double_bond_with_equivalent_endpoint_ligands_as_nonstereogenic() {
         )))
         .expect("double-bond stereo element");
 
+    perceive_hydrogens(mol.working_mut());
     assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
@@ -931,10 +944,9 @@ fn pseudoasymmetric_double_bond_graph(
         )))
         .expect("double-bond stereo element");
 
-    (
-        mol.finish().expect("connected double-bond fixture"),
-        double_bond_element,
-    )
+    let mut mol = mol.finish().expect("connected double-bond fixture");
+    perceive_hydrogens(&mut mol);
+    (mol, double_bond_element)
 }
 
 fn pseudoasymmetric_axis_graph(orientation: AxisOrientation) -> (Molecule, StereoElementId) {
@@ -963,7 +975,9 @@ fn pseudoasymmetric_axis_graph(orientation: AxisOrientation) -> (Molecule, Stere
         })))
         .expect("axis stereo element");
 
-    (mol.finish().expect("connected axis fixture"), axis_element)
+    let mut mol = mol.finish().expect("connected axis fixture");
+    perceive_hydrogens(&mut mol);
+    (mol, axis_element)
 }
 
 fn add_enantiomorphic_tetrahedral_carriers(mol: &mut Molecule, parent: AtomId) -> (AtomId, AtomId) {
@@ -1106,6 +1120,7 @@ fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands
         )))
         .expect("parent pseudoasymmetric stereo element");
 
+    perceive_hydrogens(mol.working_mut());
     mol.working_mut().set_inferred_hydrogens(center, 0);
     mol.working_mut().set_inferred_hydrogens(child_r, 1);
     mol.working_mut().set_inferred_hydrogens(child_s, 1);
@@ -1442,6 +1457,7 @@ fn cip_applies_recursive_rule1a_before_isotope_priority() {
         )))
         .expect("stereo element");
 
+    perceive_hydrogens(mol.working_mut());
     mol.working_mut().set_inferred_hydrogens(center, 1);
 
     let report = assign_cip(mol.working_mut());
@@ -1618,6 +1634,7 @@ fn cip_skips_equivalent_ligands_as_nonstereogenic() {
         )))
         .expect("stereo element");
 
+    perceive_hydrogens(mol.working_mut());
     assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
@@ -1664,6 +1681,7 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
         )))
         .expect("stereo element");
 
+    perceive_hydrogens(mol.working_mut());
     assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
@@ -1710,6 +1728,7 @@ fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() 
         )))
         .expect("double-bond stereo element");
 
+    perceive_hydrogens(mol.working_mut());
     assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
@@ -1749,6 +1768,7 @@ fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
         })))
         .expect("axis stereo element");
 
+    perceive_hydrogens(mol.working_mut());
     assert_cip_not_stereogenic(mol.working_mut(), stereo);
 }
 
@@ -1803,7 +1823,39 @@ fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
         )))
         .expect("stereo element");
 
+    perceive_hydrogens(mol.working_mut());
     assert_cip_not_stereogenic(mol.working_mut(), stereo);
+}
+
+#[test]
+fn cip_requires_known_implicit_hydrogen_counts() {
+    // Both rows are 2-propanol, whose methyl ligands make the centre
+    // nonstereogenic. Fixed counts need no perception; inferred counts do,
+    // and ranking them as zero hydrogens would label the centre R.
+    for (source, unknown) in [
+        ("C[C@@H](O)[CH3]", vec![0, 2]),
+        ("[CH3][C@@H]([OH])[CH3]", vec![]),
+    ] {
+        let mut molecule = read_smiles(source).expect("SMILES parses");
+        let element = StereoElementId::new(0);
+        if !unknown.is_empty() {
+            assert_eq!(
+                stereo_api::assign_cip_descriptors(&mut molecule),
+                Err(CipAssignmentError {
+                    issues: unknown
+                        .iter()
+                        .map(|&atom| CipAssignmentIssue::UnknownHydrogenCount {
+                            atom: AtomId::new(atom),
+                        })
+                        .collect(),
+                }),
+                "{source}"
+            );
+            assert!(!molecule.perception().has_stereo(), "{source}");
+            perceive_hydrogens(&mut molecule);
+        }
+        assert_cip_not_stereogenic(&mut molecule, element);
+    }
 }
 
 #[test]
@@ -2007,6 +2059,7 @@ fn successful_cip_reassignment_replaces_the_complete_descriptor_set() {
     let unknown = mol
         .add_stereo_element(StereoElement::new(unknown_kind))
         .expect("unknown stereo element");
+    perceive_hydrogens(mol.working_mut());
     mol.working_mut()
         .install_cip_descriptor(specified, StereoDescriptor::S);
     mol.working_mut()

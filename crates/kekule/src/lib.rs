@@ -1009,7 +1009,9 @@ pub mod perception {
 ///
 /// Coordinate inference and candidate detection are read-only. Coordinate
 /// materialization is an explicitly named representation transform, while CIP
-/// descriptors remain opt-in derived state.
+/// descriptors remain opt-in derived state. CIP assignment requires known
+/// implicit hydrogen counts: run valence perception first, or it reports
+/// `CipAssignmentIssue::UnknownHydrogenCount` instead of ranking with none.
 pub mod stereo {
     pub use crate::algorithms::{
         assign_cip_descriptors, assign_cip_descriptors_with_options, cleanup_stereo,

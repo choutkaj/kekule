@@ -38,6 +38,18 @@ pub(super) fn assign_cip_descriptors_with_options(
                 .collect(),
         });
     }
+    // Ligand expansion and mancude typing count implicit hydrogens: missing
+    // valence perception is not zero H.
+    let unknown_hydrogens = mol
+        .atom_ids()
+        .filter(|&atom| mol.implicit_hydrogens(atom).expect("live atom").is_none())
+        .map(|atom| CipAssignmentIssue::UnknownHydrogenCount { atom })
+        .collect::<Vec<_>>();
+    if !unknown_hydrogens.is_empty() {
+        return Err(CipAssignmentError {
+            issues: unknown_hydrogens,
+        });
+    }
 
     let mut report = CipAssignmentReport::default();
     let mut issues = Vec::new();
