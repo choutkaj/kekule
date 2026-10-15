@@ -492,7 +492,8 @@ from ranked evidence:
    residue's template and replace distance inference for residues without one.
 2. Component templates supplied as interpretation context, keyed by component
    identifier and matched to source atoms by atom name and element.
-3. Polymer linkage between residues adjacent in sequence, accepted only within
+3. Polymer linkage between residues adjacent in sequence, and the links of a
+   branched entity between residues of one copy of it, accepted only within
    bonding distance; a longer gap is a reported chain break.
 4. Distance inference from covalent radii for residues that no template or
    explicit bond table covers. It is on by default, can be disabled, and yields

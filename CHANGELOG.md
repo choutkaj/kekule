@@ -328,6 +328,13 @@ All notable changes to Kekule are documented in this file.
   incomplete, under another space group, or the placeholder, are reported as
   the new `StructureInterpretIssue::CellOmitted` with a
   `CellOmissionReason` and the source location.
+- mmCIF glycan links (`_pdbx_entity_branch_link`) bond the residues of every
+  copy of a branched entity. Each end of a link resolved to the first matching
+  residue of any copy, so when copies shared a molecule only the first got its
+  glycosidic bonds, and a copy missing a residue was bonded to another copy's.
+  Links now apply within each asym that `_pdbx_branch_scheme` lists, only
+  within bonding distance; a longer gap is reported as
+  `StructureInterpretIssue::ChainBreak`, as for polymer links.
 - Isomeric and canonical SMILES write explicitly unknown stereo unmarked,
   as RDKit does, instead of refusing the molecule. SMILES has no notation for
   an unknown configuration, so an amidine C=N read with a Molfile "either"

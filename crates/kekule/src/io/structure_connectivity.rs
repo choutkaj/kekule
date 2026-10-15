@@ -653,29 +653,60 @@ impl<'r> Resolver<'r, '_> {
         Ok(())
     }
 
+    /// Links the residues of each copy of a branched entity as its
+    /// `_pdbx_entity_branch_link` rows state: both ends lie in the same asym,
+    /// which `_pdbx_branch_scheme` lists, and the linking atoms within bonding
+    /// distance. A longer gap is a reported break, as between polymer
+    /// residues.
     fn apply_branch_links(
         &mut self,
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
     ) -> Result<(), raw::StructureInterpretError> {
         for link in &self.catalog.branch_links {
-            let left =
-                resolve_branch_residue(residues, self.catalog, &link.entity_id, link.number_1);
-            let right =
-                resolve_branch_residue(residues, self.catalog, &link.entity_id, link.number_2);
-            let (Some(left), Some(right)) = (left, right) else {
-                continue;
-            };
-            let (Some(&left_atom), Some(&right_atom)) =
-                (left.atoms.get(&link.atom_1), right.atoms.get(&link.atom_2))
-            else {
-                continue;
-            };
-            self.add_bond(
-                left_atom,
-                right_atom,
-                link.order,
-                raw::BondEvidence::BranchLink,
-            )?;
+            let asyms = self
+                .catalog
+                .branch_sites
+                .iter()
+                .filter(|site| site.entity_id == link.entity_id)
+                .map(|site| site.asym_id.as_str())
+                .collect::<BTreeSet<_>>();
+            for asym_id in asyms {
+                let resolve = |number| {
+                    resolve_branch_residue(residues, self.catalog, &link.entity_id, asym_id, number)
+                };
+                let (Some(left), Some(right)) = (resolve(link.number_1), resolve(link.number_2))
+                else {
+                    continue;
+                };
+                let (Some(&left_atom), Some(&right_atom)) =
+                    (left.atoms.get(&link.atom_1), right.atoms.get(&link.atom_2))
+                else {
+                    continue;
+                };
+                let (left_site, right_site) = (
+                    left.site(left_atom)
+                        .expect("linking atom is a residue site"),
+                    right
+                        .site(right_atom)
+                        .expect("linking atom is a residue site"),
+                );
+                if within_bonding_distance(
+                    (left_site.element, left_site.point),
+                    (right_site.element, right_site.point),
+                ) {
+                    self.add_bond(
+                        left_atom,
+                        right_atom,
+                        link.order,
+                        raw::BondEvidence::BranchLink,
+                    )?;
+                } else {
+                    self.issues.push(raw::StructureInterpretIssue::ChainBreak {
+                        residue: left.key.id(self.model_id),
+                        next: right.key.id(self.model_id),
+                    });
+                }
+            }
         }
         Ok(())
     }
@@ -1182,16 +1213,20 @@ fn expected_hydrogens(component: &Component, index: usize, linked: bool) -> usiz
         .count()
 }
 
+/// The residue of one asym that a branch scheme row numbers, if modelled.
 fn resolve_branch_residue<'a>(
     residues: &'a BTreeMap<ResidueKey, ResidueAtoms>,
     catalog: &ConnectivityCatalog,
     entity_id: &str,
+    asym_id: &str,
     number: i32,
 ) -> Option<&'a ResidueAtoms> {
     catalog
         .branch_sites
         .iter()
-        .filter(|site| site.entity_id == entity_id && site.number == number)
+        .filter(|site| {
+            site.entity_id == entity_id && site.asym_id == asym_id && site.number == number
+        })
         .find_map(|site| {
             residues.values().find(|residue| {
                 residue.key.asym_id == site.asym_id
@@ -1584,6 +1619,111 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .bonds()
             .all(|(_, bond)| bond.order == BondOrder::Single));
         assert!(graph.is_connected());
+    }
+
+    /// Two copies, B and C, of [`BRANCH`]'s NAG-GAL entity, which a covalent
+    /// `_struct_conn` from B's `O5` to C's `C4` joins into one molecule
+    /// group. `rows` are the `_atom_site` rows of [`BRANCH`]'s layout.
+    fn two_branch_copies(rows: &str) -> String {
+        let header = BRANCH
+            .split("loop_\n_atom_site.group_PDB")
+            .next()
+            .unwrap()
+            .replace("B 2\n", "B 2\nC 2\n")
+            .replace(
+                "B 2 GAL 2 11\n",
+                "B 2 GAL 2 11\nC 2 NAG 1 20\nC 2 GAL 2 21\n",
+            );
+        let atom_site = BRANCH.split("loop_\n_atom_site.group_PDB").nth(1).unwrap();
+        let columns = atom_site.split("HETATM").next().unwrap();
+        format!(
+            "{header}loop_\n_struct_conn.id\n_struct_conn.conn_type_id\n\
+             _struct_conn.ptnr1_label_asym_id\n_struct_conn.ptnr1_label_comp_id\n\
+             _struct_conn.ptnr1_label_atom_id\n_struct_conn.ptnr1_label_seq_id\n\
+             _struct_conn.ptnr2_label_asym_id\n_struct_conn.ptnr2_label_comp_id\n\
+             _struct_conn.ptnr2_label_atom_id\n_struct_conn.ptnr2_label_seq_id\n\
+             covale1 covale B GAL O5 . C NAG C4 .\n\
+             loop_\n_atom_site.group_PDB{columns}{rows}"
+        )
+    }
+
+    #[test]
+    fn branch_links_bond_each_copy_within_bonding_distance() {
+        let copy_b = "HETATM 1 C C4 NAG B 2 . 10 0.0 0.0 0.0\n\
+                      HETATM 2 O O4 NAG B 2 . 10 1.4 0.0 0.0\n";
+        let copy_b_gal = "HETATM 3 C C1 GAL B 2 . 11 2.8 0.0 0.0\n\
+                          HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0\n";
+        let copy_c = "HETATM 5 C C4 NAG C 2 . 20 5.6 0.0 0.0\n\
+                      HETATM 6 O O4 NAG C 2 . 20 7.0 0.0 0.0\n";
+        let copy_c_gal = "HETATM 7 C C1 GAL C 2 . 21 8.4 0.0 0.0\n\
+                          HETATM 8 O O5 GAL C 2 . 21 9.8 0.0 0.0\n";
+        // C's galactose 5 Å off its link partner.
+        let copy_c_gal_far = "HETATM 7 C C1 GAL C 2 . 21 8.4 5.0 0.0\n\
+                              HETATM 8 O O5 GAL C 2 . 21 9.8 5.0 0.0\n";
+        let residue = |asym: &str, sequence: &str| SourceResidueId {
+            model_id: "1".to_owned(),
+            asym_id: asym.to_owned(),
+            position: SourceResiduePosition::Author(sequence.to_owned()),
+            insertion_code: None,
+        };
+        for (rows, links, breaks) in [
+            // Each copy is linked, not only the first one listed.
+            (
+                [copy_b, copy_b_gal, copy_c, copy_c_gal].concat(),
+                vec![("B", "B"), ("C", "C")],
+                vec![],
+            ),
+            // B's unmodelled NAG leaves its GAL unlinked; C's NAG does not
+            // stand in for it.
+            (
+                [copy_b_gal, copy_c, copy_c_gal].concat(),
+                vec![("C", "C")],
+                vec![],
+            ),
+            // A link beyond bonding distance is a reported break.
+            (
+                [copy_b, copy_b_gal, copy_c, copy_c_gal_far].concat(),
+                vec![("B", "B")],
+                vec![StructureInterpretIssue::ChainBreak {
+                    residue: residue("C", "20"),
+                    next: residue("C", "21"),
+                }],
+            ),
+        ] {
+            let text = two_branch_copies(&rows);
+            let interpretation = interpret(&text);
+            let report = interpretation.report();
+            let asym_of = |atom| {
+                report
+                    .instances()
+                    .iter()
+                    .flat_map(|instance| instance.atoms())
+                    .find(|candidate| candidate.atom() == atom)
+                    .unwrap()
+                    .asym_id()
+                    .to_owned()
+            };
+            let mut actual = report
+                .instances()
+                .iter()
+                .flat_map(|instance| instance.bonds())
+                .filter(|bond| *bond.evidence() == BondEvidence::BranchLink)
+                .map(|bond| bond.atoms().map(asym_of))
+                .collect::<Vec<_>>();
+            actual.sort();
+            let expected = links
+                .iter()
+                .map(|(left, right)| [left.to_string(), right.to_string()])
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "{rows}");
+            let actual_breaks = report
+                .issues()
+                .iter()
+                .filter(|issue| matches!(issue, StructureInterpretIssue::ChainBreak { .. }))
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(actual_breaks, breaks, "{rows}");
+        }
     }
 
     use crate::components::ComponentLibrary;
