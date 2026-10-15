@@ -294,6 +294,16 @@ All notable changes to Kekule are documented in this file.
   as RDKit writes them. Acyclic molecules need no aromaticity. A molecule
   with a stereo center or E/Z endpoint on an aromatic atom is still written
   in its stored Kekule form, now documented on `SmilesWriteMode::Canonical`.
+- Molfile query hydrogen counts are no longer read as fixed hydrogen counts.
+  The V2000 hydrogen-count field and V3000 `HCOUNT` are CTfile query
+  constraints ("at least n hydrogens"), yet a V2000 code of 3 became
+  `ImplicitHydrogens::Fixed(2)` without any report. A nonzero value is now
+  unsupported content (`MolfileUnsupportedContent::AtomField` with field
+  `hydrogen count`, or `AtomOption` with key `HCOUNT`): rejected by default,
+  or reported and omitted with `UnsupportedContent::Report`, leaving the
+  atom's count to its declared valence or to inference. A declared valence
+  is the only Molfile hydrogen declaration. `MolfileAtom::hydrogen_count` is
+  removed.
 - Isomeric and canonical SMILES write explicitly unknown stereo unmarked,
   as RDKit does, instead of refusing the molecule. SMILES has no notation for
   an unknown configuration, so an amidine C=N read with a Molfile "either"

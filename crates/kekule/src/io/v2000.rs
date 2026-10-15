@@ -205,8 +205,10 @@ const INVERSION: usize = 10;
 const EXACT_CHANGE: usize = 11;
 
 /// Query and reaction atom fields Kekule does not represent: a nonzero value
-/// is reported as unsupported content.
-const UNSUPPORTED_ATOM_FIELDS: [(usize, &str); 4] = [
+/// is reported as unsupported content. The hydrogen-count field is a query
+/// constraint ("at least n"), not a molecular hydrogen declaration.
+const UNSUPPORTED_ATOM_FIELDS: [(usize, &str); 5] = [
+    (HYDROGEN_COUNT, "hydrogen count"),
     (STEREO_CARE, "stereo care"),
     (H0_DESIGNATOR, "H0 designator"),
     (INVERSION, "inversion/retention"),
@@ -300,15 +302,11 @@ fn apply_atom_v2000_fields(
         }
     }
     if let Some(code) = number(HYDROGEN_COUNT, "hydrogen-count code")? {
-        atom.hydrogen_count = match code {
-            0 => None,
-            1..=5 => Some(code as u8 - 1),
-            _ => {
-                return Err(invalid(format!(
-                    "invalid V2000 atom hydrogen-count code {code}"
-                )))
-            }
-        };
+        if !(0..=5).contains(&code) {
+            return Err(invalid(format!(
+                "invalid V2000 atom hydrogen-count code {code}"
+            )));
+        }
     }
     if let Some(code) = number(VALENCE, "valence code")? {
         atom.valence = match code {

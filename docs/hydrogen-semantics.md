@@ -28,7 +28,11 @@ either wholly fixed or wholly inferred:
 For example, `C` infers its count, `[CH4]` fixes four implicit hydrogens, and
 `[C]` fixes zero. `[H][CH3]` has one explicit hydrogen and three fixed implicit
 ones. SMILES bracket notation fixes a count; it does not create hydrogen atoms.
-Molfile atoms fix their count when they declare `HCOUNT` or a valence.
+Molfile atoms fix their count only when they declare a valence (the V2000
+valence field or V3000 `VAL`). The V2000 hydrogen-count field and V3000
+`HCOUNT` are query constraints ("at least n hydrogens"), not hydrogen
+declarations: a nonzero value is unsupported content, rejected by default or
+reported and omitted on request.
 
 Chemical edits invalidate inferred counts and keep fixed ones. After
 reperception, an inferred count can change with bond order or charge. A fixed

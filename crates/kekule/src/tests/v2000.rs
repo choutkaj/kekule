@@ -7,7 +7,7 @@ fn v2000_touching_coordinates_preserve_precision_and_atom_fields() {
     // supplied RDKit BMS-986142_3d_chiral drawing.
     for z in [-1535.5894, -15355.5894] {
         let source = format!(
-            "coordinates\nkekule\n\n  1  0  0  0  0  0            999 V2000\n   -1.1945   -2.2790{z:10.4} F   0  5  0  1  0 15  0  0  0 17  0  0\nM  END\n"
+            "coordinates\nkekule\n\n  1  0  0  0  0  0            999 V2000\n   -1.1945   -2.2790{z:10.4} F   0  5  0  0  0 15  0  0  0 17  0  0\nM  END\n"
         );
         let document = molfile::parse_str(&source).unwrap();
         let interpreted = molfile::interpret(&document).unwrap();
@@ -677,10 +677,10 @@ fn v2000_materializes_omitted_tetrahedral_hydrogen_from_source_valence() {
 }
 
 #[test]
-fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
-    for (declaration_fields, expected_hydrogens) in
-        [("0  0  0  2  0  0", 1), ("0  0  0  0  0  4", 1)]
-    {
+fn v2000_declared_valence_defines_stereo_hydrogen_carriers() {
+    // The hydrogen-count field is a query constraint, not a declaration; see
+    // v2000_query_and_reaction_fields_are_unsupported_content.
+    for (declaration_fields, expected_hydrogens) in [("0  0  0  0  0  4", 1)] {
         for (stereo_code, expected_specified) in [(1, true), (6, true), (4, false)] {
             let input = format!(
                 "declared stereo hydrogen\nkekule\n\n  4  3  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   {declaration_fields}\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0\n  1  2  1  {stereo_code}  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
@@ -1104,10 +1104,35 @@ fn v2000_present_numeric_fields_must_be_numbers() {
 #[test]
 fn v2000_query_and_reaction_fields_are_unsupported_content() {
     use molfile::MolfileUnsupportedContent::{AtomField, BondField};
+    // Per the BIOVIA CTfile Formats specification (2020), a nonzero
+    // hydrogen-count code is the query "at least code - 1 hydrogens", never a
+    // fixed molecular count.
     for (atoms, bonds, expected) in [
         (
-            ["C   0  0  0  0  1  0  0  0  0  0  0  0"].as_slice(),
+            ["C   0  0  0  3  0  0  0  0  0  0  0  0"].as_slice(),
             [].as_slice(),
+            (
+                AtomField {
+                    atom: 0,
+                    field: "hydrogen count".to_owned(),
+                },
+                5,
+            ),
+        ),
+        (
+            &["C   0  0  0  1  0  0  0  0  0  0  0  0"],
+            &[],
+            (
+                AtomField {
+                    atom: 0,
+                    field: "hydrogen count".to_owned(),
+                },
+                5,
+            ),
+        ),
+        (
+            &["C   0  0  0  0  1  0  0  0  0  0  0  0"],
+            &[],
             (
                 AtomField {
                     atom: 0,
@@ -1187,6 +1212,14 @@ fn v2000_query_and_reaction_fields_are_unsupported_content() {
         };
         let interpretation = molfile::interpret_with_options(&document, report).unwrap();
         assert_eq!(interpretation.omitted(), unsupported);
+        let molecule = interpretation.molecules().next().unwrap();
+        assert_eq!(
+            molecule
+                .atoms()
+                .map(|(_, atom)| atom.hydrogens)
+                .collect::<Vec<_>>(),
+            vec![ImplicitHydrogens::Inferred; atoms.len()]
+        );
     }
 }
 

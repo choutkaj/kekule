@@ -571,6 +571,24 @@ fn molfile_unsupported_content_is_rejected_by_default_and_reported_on_request() 
             9,
         ),
         (
+            // HCOUNT is a query constraint: n > 0 is "at least n" and -1 is
+            // "none", never a fixed molecular hydrogen count.
+            v3000_with(" HCOUNT=2", "", ""),
+            Content::AtomOption {
+                atom: 0,
+                key: "HCOUNT".to_owned(),
+            },
+            8,
+        ),
+        (
+            v3000_with(" HCOUNT=-1", "", ""),
+            Content::AtomOption {
+                atom: 0,
+                key: "HCOUNT".to_owned(),
+            },
+            8,
+        ),
+        (
             v3000_with(" RGROUPS=(1 1)", "", ""),
             Content::AtomOption {
                 atom: 0,
@@ -647,7 +665,6 @@ fn molfile_documents_expose_decoded_atoms_bonds_and_stereo_groups() {
         Option<u16>,
         Option<Radical>,
         Option<u8>,
-        Option<u8>,
         Option<u32>,
         Option<Parity>,
         usize,
@@ -664,7 +681,6 @@ fn molfile_documents_expose_decoded_atoms_bonds_and_stereo_groups() {
                     atom.formal_charge(),
                     atom.isotope(),
                     atom.radical(),
-                    atom.hydrogen_count(),
                     atom.valence(),
                     atom.atom_map(),
                     atom.parity(),
@@ -691,9 +707,9 @@ fn molfile_documents_expose_decoded_atoms_bonds_and_stereo_groups() {
     }
 
     // Codes decoded per the BIOVIA CTfile Formats specification (2020):
-    // charge code 3 is +1 and 4 a doublet radical, hydrogen code 2 is H1.
+    // charge code 3 is +1 and 4 a doublet radical.
     let v2000 = molfile::parse_str(
-        "typed\nkekule\n\n  3  2  0  0  1  0            999 V2000\n    0.0000    0.0000    0.0000 N   0  3  0  0  0  0  0  0  0  0  0  0\n    1.5000    0.0000    0.0000 C   0  0  0  2  0  4  0  0  0  7  0  0\n    2.0000    1.0000    0.0000 O   0  4  0  0  0  0  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  2  3  2  0  0  0  0\nM  ISO  1   1  15\nM  END\n",
+        "typed\nkekule\n\n  3  2  0  0  1  0            999 V2000\n    0.0000    0.0000    0.0000 N   0  3  0  0  0  0  0  0  0  0  0  0\n    1.5000    0.0000    0.0000 C   0  0  0  0  0  4  0  0  0  7  0  0\n    2.0000    1.0000    0.0000 O   0  4  0  0  0  0  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  2  3  2  0  0  0  0\nM  ISO  1   1  15\nM  END\n",
     )
     .unwrap();
     assert_eq!(v2000.version(), molfile::MolfileVersion::V2000);
@@ -709,7 +725,6 @@ fn molfile_documents_expose_decoded_atoms_bonds_and_stereo_groups() {
             None,
             None,
             None,
-            None,
             5,
         ),
         (
@@ -718,7 +733,6 @@ fn molfile_documents_expose_decoded_atoms_bonds_and_stereo_groups() {
             0,
             None,
             None,
-            Some(1),
             Some(4),
             Some(7),
             None,
@@ -730,7 +744,6 @@ fn molfile_documents_expose_decoded_atoms_bonds_and_stereo_groups() {
             0,
             None,
             Some(Radical::Doublet),
-            None,
             None,
             None,
             None,
@@ -750,7 +763,7 @@ fn molfile_documents_expose_decoded_atoms_bonds_and_stereo_groups() {
 
     // A continued logical line is located at its first physical line.
     let v3000 = molfile::parse_str(
-        "typed\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 3 2 0 0 1\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0 CFG=2 MASS=13\nM  V30 2 N 1.5 0 0 3 CHG=1 HCOUNT=-1 -\nM  V30 VAL=4\nM  V30 3 O -1 0.5 0 0 RAD=2\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2 CFG=3\nM  V30 2 1 1 3\nM  V30 END BOND\nM  V30 BEGIN COLLECTION\nM  V30 MDLV30/STERAC2 ATOMS=(1 1)\nM  V30 END COLLECTION\nM  V30 END CTAB\nM  END\n",
+        "typed\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 3 2 0 0 1\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0 CFG=2 MASS=13\nM  V30 2 N 1.5 0 0 3 CHG=1 -\nM  V30 VAL=4\nM  V30 3 O -1 0.5 0 0 RAD=2\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2 CFG=3\nM  V30 2 1 1 3\nM  V30 END BOND\nM  V30 BEGIN COLLECTION\nM  V30 MDLV30/STERAC2 ATOMS=(1 1)\nM  V30 END COLLECTION\nM  V30 END CTAB\nM  END\n",
     )
     .unwrap();
     assert_eq!(v3000.version(), molfile::MolfileVersion::V3000);
@@ -764,7 +777,6 @@ fn molfile_documents_expose_decoded_atoms_bonds_and_stereo_groups() {
             None,
             None,
             None,
-            None,
             Some(Parity::Even),
             8,
         ),
@@ -774,7 +786,6 @@ fn molfile_documents_expose_decoded_atoms_bonds_and_stereo_groups() {
             1,
             None,
             None,
-            Some(0),
             Some(4),
             Some(3),
             None,
@@ -786,7 +797,6 @@ fn molfile_documents_expose_decoded_atoms_bonds_and_stereo_groups() {
             0,
             None,
             Some(Radical::Doublet),
-            None,
             None,
             None,
             None,
