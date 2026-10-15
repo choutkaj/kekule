@@ -418,6 +418,54 @@ fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
 }
 
 #[test]
+fn xtc_round_trips_frames_whose_packed_integers_exceed_64_bits() {
+    // At 2^14 per nm, spans of 660 nm give axis sizes near 2^23.4, so a
+    // packed coordinate needs 71 bits; atoms 155 nm apart start the delta
+    // size at magic index 65, so run deltas need 65 bits or more. Powers of
+    // two keep scaling and decoding exact.
+    let topology = topology(12);
+    let positions = (0..12)
+        .map(|atom| {
+            let atom = f64::from(atom);
+            Point3::new(60.0 * atom, 45.0 * atom + 7.0, 600.0 - 50.0 * atom)
+        })
+        .collect::<Vec<_>>();
+    let mut frame = source_frame(&topology, 0.0, 3);
+    frame
+        .frame_mut()
+        .set_positions(Quantity::new(positions.clone(), NANOMETER))
+        .unwrap();
+    for magic in [XtcMagic::Xtc1995, XtcMagic::Xtc2023] {
+        let options = XtcWriteOptions::default()
+            .with_magic(magic)
+            .with_precision(16384.0)
+            .unwrap();
+        let mut writer = XtcWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            options,
+            "wide.xtc",
+        )
+        .unwrap();
+        writer.write_frame(frame.frame_view()).unwrap();
+        let mut reader = XtcReader::new(
+            Cursor::new(writer.finish().unwrap().into_inner()),
+            Arc::clone(&topology),
+            XtcReadOptions::default(),
+        )
+        .unwrap();
+        let mut destination = reader.frame_buffer();
+        assert!(reader.read_next(&mut destination).unwrap());
+        assert_eq!(
+            *destination.positions().values().value(),
+            &positions[..],
+            "{magic:?}"
+        );
+        assert!(!reader.read_next(&mut destination).unwrap());
+    }
+}
+
+#[test]
 fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
     let (topology, bytes) = encoded(12, XtcMagic::Xtc1995);
     let limits = TrajectoryIoLimits {
