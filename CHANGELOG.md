@@ -304,6 +304,12 @@ All notable changes to Kekule are documented in this file.
   atom's count to its declared valence or to inference. A declared valence
   is the only Molfile hydrogen declaration. `MolfileAtom::hydrogen_count` is
   removed.
+- PDB and mmCIF read deuterium and tritium. The element symbols `D` and `T`
+  failed as unknown elements, so neutron structures and heavy water (`DOD`)
+  could not be read; they now read as hydrogen with mass number 2 and 3, as
+  component dictionary entries already did, through one symbol reader shared
+  by the three formats. The mmCIF writer writes these isotopes as `D` and `T`
+  instead of rejecting them, and still rejects isotopes it cannot name.
 - Isomeric and canonical SMILES write explicitly unknown stereo unmarked,
   as RDKit does, instead of refusing the molecule. SMILES has no notation for
   an unknown configuration, so an amidine C=N read with a Molfile "either"

@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::core::Element;
 use crate::geometry::Point3;
 
+use super::super::element_symbol::parse_structure_element_symbol;
 use super::super::mmcif_category::MmcifCategory;
 use super::super::{MmcifBlock, MmcifValue};
 use super::types::{
@@ -218,6 +219,8 @@ pub(super) struct AtomRow {
     pub(super) b_factor: Option<f64>,
     pub(super) point: Option<Point3>,
     pub(super) element: Element,
+    /// The mass number a `D` or `T` symbol states.
+    pub(super) isotope: Option<u16>,
     /// The stated `pdbx_formal_charge`, if any.
     pub(super) formal_charge: Option<i8>,
 }
@@ -248,14 +251,13 @@ pub(super) fn read_atom_rows(
     for row in 0..table.row_count() {
         let type_symbol = required(table, row, fields.type_symbol)?;
         let type_value = fields.type_symbol.lookup(table, row).expect("required");
-        let element = Element::from_symbol(&canonical_mmcif_element_symbol(type_symbol))
-            .ok_or_else(|| {
-                StructureInterpretError::new(
-                    DiagnosticKind::InvalidValue,
-                    Some(type_value.line()),
-                    format!("unknown atom-site element `{type_symbol}`"),
-                )
-            })?;
+        let (element, isotope) = parse_structure_element_symbol(type_symbol).ok_or_else(|| {
+            StructureInterpretError::new(
+                DiagnosticKind::InvalidValue,
+                Some(type_value.line()),
+                format!("unknown atom-site element `{type_symbol}`"),
+            )
+        })?;
         let label_asym_id = optional(table, row, fields.label_asym_id).map(str::to_owned);
         let asym_id = label_asym_id
             .as_deref()
@@ -408,6 +410,7 @@ pub(super) fn read_atom_rows(
             b_factor: optional_f64(table, row, fields.b_factor)?,
             point,
             element,
+            isotope,
             formal_charge,
         });
     }
@@ -428,16 +431,6 @@ fn infer_entity_kind(group_pdb: Option<&str>, comp_id: &str) -> EntityKind {
     } else {
         EntityKind::NonPolymer
     }
-}
-
-pub(super) fn canonical_mmcif_element_symbol(symbol: &str) -> String {
-    let mut chars = symbol.chars();
-    let Some(first) = chars.next() else {
-        return String::new();
-    };
-    let mut canonical = first.to_ascii_uppercase().to_string();
-    canonical.extend(chars.flat_map(char::to_lowercase));
-    canonical
 }
 
 pub(super) fn required<'a>(

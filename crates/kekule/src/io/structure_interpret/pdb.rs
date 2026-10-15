@@ -12,10 +12,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use crate::core::{BondOrder, Element};
 use crate::diagnostics::DiagnosticKind;
 
+use super::super::element_symbol::parse_structure_element_symbol;
 use super::super::structure_connectivity::ConnectivityCatalog;
 use super::super::{PdbAtom, PdbAtomKind, PdbDocument, PdbPartner};
 use super::altloc::inventory;
-use super::atom_site::{canonical_mmcif_element_symbol, is_water, AtomRow};
+use super::atom_site::{is_water, AtomRow};
 use super::connections::{
     AuthorConnectionSelector, ConnectionPartnerSelector, ConnectionRecord, DeclaredBond,
     DeclaredOrder, PartnerSpec,
@@ -275,27 +276,28 @@ fn read_rows(
     for (index, atom) in atoms.iter().enumerate() {
         let residue = &residues[residue_of[index]];
         let line = atom.location().line();
-        let element = match atom.element() {
-            Some(symbol) => Element::from_symbol(&canonical_mmcif_element_symbol(symbol))
-                .ok_or_else(|| {
-                    StructureInterpretError::new(
-                        DiagnosticKind::InvalidValue,
-                        Some(line),
-                        format!("unknown element `{symbol}`"),
-                    )
-                })?,
+        let (element, isotope) = match atom.element() {
+            Some(symbol) => parse_structure_element_symbol(symbol).ok_or_else(|| {
+                StructureInterpretError::new(
+                    DiagnosticKind::InvalidValue,
+                    Some(line),
+                    format!("unknown element `{symbol}`"),
+                )
+            })?,
             None => {
                 inferred.push(line);
-                element_from_atom_name(atom.name_field(), atom.residue_name()).ok_or_else(|| {
-                    StructureInterpretError::new(
-                        DiagnosticKind::InvalidValue,
-                        Some(line),
-                        format!(
-                            "atom `{}` has no element symbol, and its name implies none",
-                            atom.name()
-                        ),
-                    )
-                })?
+                let element = element_from_atom_name(atom.name_field(), atom.residue_name())
+                    .ok_or_else(|| {
+                        StructureInterpretError::new(
+                            DiagnosticKind::InvalidValue,
+                            Some(line),
+                            format!(
+                                "atom `{}` has no element symbol, and its name implies none",
+                                atom.name()
+                            ),
+                        )
+                    })?;
+                (element, None)
             }
         };
         let sequence = atom.residue_sequence().to_string();
@@ -346,6 +348,7 @@ fn read_rows(
             b_factor: atom.temperature_factor(),
             point: Some(atom.position()),
             element,
+            isotope,
             formal_charge: atom.formal_charge(),
         });
     }
@@ -357,7 +360,10 @@ fn read_rows(
 /// hydrogen names fill columns 13-16. A one-atom residue named for its
 /// element, such as `ZN`, is that element.
 fn element_from_atom_name(name_field: &str, residue_name: &str) -> Option<Element> {
-    let symbol = |text: &str| Element::from_symbol(&canonical_mmcif_element_symbol(text));
+    let symbol = |text: &str| match parse_structure_element_symbol(text) {
+        Some((element, None)) => Some(element),
+        _ => None,
+    };
     let name = name_field.trim();
     if name.eq_ignore_ascii_case(residue_name) {
         if let Some(element) = symbol(name) {

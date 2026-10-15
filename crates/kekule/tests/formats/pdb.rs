@@ -1061,6 +1061,81 @@ fn atom_names_imply_elements_without_element_columns() {
     );
 }
 
+/// Atom names, element symbols, and mass numbers, in instance order.
+fn isotopes(result: &StructureInterpretation) -> Vec<(String, &'static str, Option<u16>)> {
+    result
+        .report()
+        .instances()
+        .iter()
+        .flat_map(|instance| instance.atoms())
+        .map(|atom| {
+            let molecule = result
+                .topology()
+                .molecule(atom.atom().molecule())
+                .unwrap()
+                .molecule();
+            let element = molecule.atom(atom.atom().atom()).unwrap();
+            (
+                atom.atom_name().to_owned(),
+                element.element.symbol(),
+                element.isotope,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn hydrogen_isotope_symbols_read_as_isotopes_and_write_back() {
+    // Heavy water as neutron structures write it, with the CCD `DOD` names.
+    let text = entry(
+        &[
+            ("1", " O  ", [0.0, 0.0, 0.0], "O"),
+            ("2", " D1 ", [0.96, 0.0, 0.0], "D"),
+            ("3", " D2 ", [-0.24, 0.93, 0.0], "D"),
+        ]
+        .map(|(serial, name, position, element)| {
+            site("HETATM", serial, name, "DOD", 'W', "1", position, element).line()
+        }),
+    );
+    let interpreted = interpret(&text);
+    let expected = [
+        ("O".to_owned(), "O", None),
+        ("D1".to_owned(), "H", Some(2)),
+        ("D2".to_owned(), "H", Some(2)),
+    ];
+    assert_eq!(isotopes(&interpreted), expected);
+    let template = BondEvidence::Template {
+        component_id: "DOD".to_owned(),
+        variant: None,
+    };
+    assert_eq!(
+        bonds(&interpreted),
+        [
+            (
+                "D1".to_owned(),
+                "O".to_owned(),
+                BondOrder::Single,
+                template.clone()
+            ),
+            ("D2".to_owned(), "O".to_owned(), BondOrder::Single, template),
+        ]
+    );
+
+    let written =
+        kekule::mmcif::write([&interpreted], kekule::mmcif::MmcifWriteOptions::default()).unwrap();
+    let type_symbols = written
+        .lines()
+        .filter(|line| line.starts_with("HETATM"))
+        .map(|line| line.split_whitespace().nth(2).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(type_symbols, ["O", "D", "D"]);
+    let reread = kekule::mmcif::parse_str(&written)
+        .unwrap()
+        .interpret()
+        .unwrap();
+    assert_eq!(isotopes(&reread), expected);
+}
+
 #[test]
 fn pdb_parse_errors_locate_the_record() {
     let oxygen = site("HETATM", "1", " O  ", "HOH", 'W', "1", [0.0, 0.0, 0.0], "O");
