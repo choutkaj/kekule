@@ -69,6 +69,7 @@ impl DerefMut for AtomMut<'_> {
 pub struct BondMut<'a> {
     molecule: &'a mut Molecule,
     id: BondId,
+    pruned_stereo: Option<&'a mut Vec<StereoElementId>>,
 }
 
 impl Deref for BondMut<'_> {
@@ -96,7 +97,10 @@ impl BondMut<'_> {
             .as_mut()
             .expect("validated bond must remain live while borrowed")
             .order = order;
-        self.molecule.prune_stereo_for_bond(self.id);
+        let pruned = self.molecule.prune_stereo_for_bond(self.id);
+        if let Some(log) = self.pruned_stereo.as_mut() {
+            log.extend(pruned);
+        }
     }
 }
 
@@ -137,9 +141,12 @@ impl Molecule {
         Ok(id)
     }
 
-    /// Removes an atom only inside crate-private construction/edit state.
-    pub(crate) fn delete_atom(&mut self, id: AtomId) -> Result<Atom> {
+    /// Removes an atom and its bonds only inside crate-private construction or
+    /// edit state, returning the stereo elements removed because they
+    /// referenced the atom or no longer describe valid stereo.
+    pub(crate) fn delete_atom(&mut self, id: AtomId) -> Result<(Atom, Vec<StereoElementId>)> {
         self.atom(id)?;
+        let mut pruned = Vec::new();
         let incident = self.graph.adjacency[id.index()].clone();
         for bond_id in incident {
             if self
@@ -149,7 +156,7 @@ impl Molecule {
                 .and_then(Option::as_ref)
                 .is_some()
             {
-                self.delete_bond(bond_id)?;
+                pruned.extend(self.delete_bond(bond_id)?.1);
             }
         }
         self.graph.adjacency[id.index()].clear();
@@ -158,9 +165,9 @@ impl Molecule {
             .ok_or(MoleculeError::InvalidAtomId(id))?;
         self.properties.atoms_mut().clear_index(id.index());
         self.properties.owner_mut().clear();
-        self.prune_stereo_for_atom(id);
+        pruned.extend(self.prune_stereo_for_atom(id));
         self.clear_perception();
-        Ok(atom)
+        Ok((atom, pruned))
     }
 
     pub(crate) fn atom_mut(&mut self, id: AtomId) -> Result<AtomMut<'_>> {
@@ -169,6 +176,10 @@ impl Molecule {
     }
 
     /// Inserts a bond into crate-private construction or editing staging.
+    ///
+    /// Existing stereo is left as it is, for transforms that rewrite the
+    /// carriers of the new bond's endpoints themselves; the public
+    /// [`MoleculeEditor::add_bond`] prunes what the bond invalidates.
     pub(crate) fn add_bond(&mut self, a: AtomId, b: AtomId, order: BondOrder) -> Result<BondId> {
         self.atom(a)?;
         self.atom(b)?;
@@ -190,8 +201,9 @@ impl Molecule {
         Ok(id)
     }
 
-    /// Removes a bond only inside crate-private construction/edit state.
-    pub(crate) fn delete_bond(&mut self, id: BondId) -> Result<Bond> {
+    /// Removes a bond only inside crate-private construction/edit state,
+    /// returning the stereo elements it invalidated.
+    pub(crate) fn delete_bond(&mut self, id: BondId) -> Result<(Bond, Vec<StereoElementId>)> {
         let bond = self
             .graph
             .bonds
@@ -203,16 +215,35 @@ impl Molecule {
         // A deleted bond may connect a focus to a carrier even when it is not
         // itself a stereo focus. Ring opening can leave both atoms alive and
         // connected through another path, so live IDs alone are insufficient.
-        self.prune_invalid_stereo();
+        let pruned = self.prune_invalid_stereo_at([bond.a, bond.b], id);
         self.properties.bonds_mut().clear_index(id.index());
         self.properties.owner_mut().clear();
         self.clear_perception();
-        Ok(bond)
+        Ok((bond, pruned))
     }
 
     pub(crate) fn bond_mut(&mut self, id: BondId) -> Result<BondMut<'_>> {
         self.bond(id)?;
-        Ok(BondMut { molecule: self, id })
+        Ok(BondMut {
+            molecule: self,
+            id,
+            pruned_stereo: None,
+        })
+    }
+
+    /// Like [`Self::bond_mut`], recording stereo elements that an order change
+    /// removes in `pruned_stereo`.
+    pub(super) fn bond_mut_recording<'a>(
+        &'a mut self,
+        id: BondId,
+        pruned_stereo: &'a mut Vec<StereoElementId>,
+    ) -> Result<BondMut<'a>> {
+        self.bond(id)?;
+        Ok(BondMut {
+            molecule: self,
+            id,
+            pruned_stereo: Some(pruned_stereo),
+        })
     }
 
     /// Definition-scoped annotations: owner values plus one row per atom and
@@ -1075,40 +1106,57 @@ impl Molecule {
         Ok(())
     }
 
-    fn prune_invalid_stereo(&mut self) {
+    /// Removes the stereo elements that a bond between `atoms` (added, or
+    /// deleted as `bond`) leaves invalid, and returns their IDs.
+    ///
+    /// Validity depends only on the neighbors of focus atoms and on
+    /// carrier-focus adjacency, so the edit can invalidate only elements whose
+    /// focus atoms, axis endpoints, focus bond, or carriers include its
+    /// endpoints. Every other element is untouched, valid or not.
+    pub(super) fn prune_invalid_stereo_at(
+        &mut self,
+        atoms: [AtomId; 2],
+        bond: BondId,
+    ) -> Vec<StereoElementId> {
+        let involves = |element: &StereoElement| {
+            element.references_bond(bond)
+                || atoms.iter().any(|&atom| element.references_atom(atom))
+                || matches!(&element.kind, StereoElementKind::Axis(axis)
+                if self.bond(axis.axis).is_ok_and(|axis| {
+                    atoms.iter().any(|&atom| axis.a() == atom || axis.b() == atom)
+                }))
+        };
         let removed = self
             .stereo_elements()
             .filter_map(|(id, element)| {
-                self.validate_stereo_element_refs(element)
-                    .is_err()
+                (involves(element) && self.validate_stereo_element_refs(element).is_err())
                     .then_some(id)
             })
             .collect::<Vec<_>>();
-        for id in removed {
-            self.graph.stereo_elements[id.index()] = None;
-            self.remove_stereo_element_from_groups(id);
-        }
-        self.invalidate_stereo();
+        self.remove_pruned_stereo(&removed);
+        removed
     }
 
-    fn prune_stereo_for_atom(&mut self, atom: AtomId) {
+    fn prune_stereo_for_atom(&mut self, atom: AtomId) -> Vec<StereoElementId> {
         let removed = self
             .stereo_elements()
             .filter_map(|(id, element)| element.references_atom(atom).then_some(id))
             .collect::<Vec<_>>();
-        for id in removed {
-            self.graph.stereo_elements[id.index()] = None;
-            self.remove_stereo_element_from_groups(id);
-        }
-        self.invalidate_stereo();
+        self.remove_pruned_stereo(&removed);
+        removed
     }
 
-    pub(super) fn prune_stereo_for_bond(&mut self, bond: BondId) {
+    pub(super) fn prune_stereo_for_bond(&mut self, bond: BondId) -> Vec<StereoElementId> {
         let removed = self
             .stereo_elements()
             .filter_map(|(id, element)| element.references_bond(bond).then_some(id))
             .collect::<Vec<_>>();
-        for id in removed {
+        self.remove_pruned_stereo(&removed);
+        removed
+    }
+
+    fn remove_pruned_stereo(&mut self, removed: &[StereoElementId]) {
+        for &id in removed {
             self.graph.stereo_elements[id.index()] = None;
             self.remove_stereo_element_from_groups(id);
         }

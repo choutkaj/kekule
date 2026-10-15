@@ -335,6 +335,18 @@ All notable changes to Kekule are documented in this file.
   Links now apply within each asym that `_pdbx_branch_scheme` lists, only
   within bonding distance; a longer gap is reported as
   `StructureInterpretIssue::ChainBreak`, as for polymer links.
+- `MoleculeEditor` keeps represented stereo valid symmetrically and locally.
+  `add_bond` never pruned, so a bond to a stereo center left an invalid
+  assertion that failed `finish` with `InvalidStereo`, while every
+  `delete_bond` pruned all invalid stereo in the draft, so adding the same
+  bond and deleting any unrelated bond published with the center's assertion
+  silently gone. `add_bond` and `delete_bond` now prune exactly the elements
+  that the edited bond invalidates, among those whose focus, axis endpoints
+  or carriers include its endpoints. The new
+  `MoleculeEditor::pruned_stereo_elements` and `take_pruned_stereo_elements`
+  report every element that structural edits pruned: adding, deleting or
+  rewiring bonds, changing bond orders, deleting atoms, and oxohalogen
+  normalization.
 - Isomeric and canonical SMILES write explicitly unknown stereo unmarked,
   as RDKit does, instead of refusing the molecule. SMILES has no notation for
   an unknown configuration, so an amidine C=N read with a Molfile "either"

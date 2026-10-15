@@ -887,7 +887,21 @@ fn tetrahedral_stereo_requires_complete_explicit_neighbor_coverage() {
     };
     let center = stereo.center;
     let extra = editor.add_atom(carbon()).unwrap();
-    editor.add_bond(center, extra, BondOrder::Single).unwrap();
+    // The public edit prunes the assertion the new neighbor invalidates.
+    let mut pruning = editor.clone();
+    pruning.add_bond(center, extra, BondOrder::Single).unwrap();
+    assert_eq!(pruning.pruned_stereo_elements(), [id]);
+    assert_eq!(pruning.stereo_elements().count(), 0);
+    assert!(matches!(
+        pruning.add_stereo_element(element.clone()),
+        Err(MoleculeError::InvalidStereoReference(_))
+    ));
+    // Crate-internal insertion keeps the assertion for transforms that
+    // rewrite carriers themselves; validation and publication catch it.
+    editor
+        .working_mut()
+        .add_bond(center, extra, BondOrder::Single)
+        .unwrap();
     let before = editor.clone();
     assert!(matches!(
         editor.replace_stereo_element(id, element.clone()),
