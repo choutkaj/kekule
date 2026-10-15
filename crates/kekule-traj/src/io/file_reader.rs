@@ -388,7 +388,7 @@ pub fn open_indexed_trajectory_with_options(
     )?;
     let (inner, metadata, notes) = match detection.format {
         TrajectoryFormat::Xyz => {
-            let reader = xyz::XyzReader::new(
+            let reader = xyz::IndexedXyzReader::new(
                 reader,
                 topology,
                 options
@@ -396,7 +396,6 @@ pub fn open_indexed_trajectory_with_options(
                     .with_limits(options.limits)
                     .with_source_label(label),
             )?;
-            let reader = reader.into_indexed()?;
             let count = reader.frame_count().unwrap_or(0);
             let atom_count = reader.topology().atom_count();
             (
@@ -406,7 +405,7 @@ pub fn open_indexed_trajectory_with_options(
             )
         }
         TrajectoryFormat::Dcd => {
-            let reader = dcd::DcdReader::new(
+            let reader = dcd::IndexedDcdReader::new(
                 reader,
                 topology,
                 options
@@ -414,7 +413,6 @@ pub fn open_indexed_trajectory_with_options(
                     .with_limits(options.limits)
                     .with_source_label(label),
             )?;
-            let reader = reader.into_indexed()?;
             let count = reader.frame_count().unwrap_or(0);
             let metadata = FileTrajectoryMetadata::dcd(reader.header(), Some(count));
             (
@@ -424,7 +422,7 @@ pub fn open_indexed_trajectory_with_options(
             )
         }
         TrajectoryFormat::Trr => {
-            let reader = trr::TrrReader::new(
+            let reader = trr::IndexedTrrReader::new(
                 reader,
                 topology,
                 options
@@ -432,7 +430,6 @@ pub fn open_indexed_trajectory_with_options(
                     .with_limits(options.limits)
                     .with_source_label(label),
             )?;
-            let reader = reader.into_indexed()?;
             let count = reader.frame_count().unwrap_or(0);
             let metadata = FileTrajectoryMetadata::trr(
                 reader.first_header(),
@@ -448,14 +445,13 @@ pub fn open_indexed_trajectory_with_options(
         TrajectoryFormat::Xtc => {
             let cell_policy = options.xtc.cell_policy();
             let xtc_options = options.xtc;
-            let reader = xtc::XtcReader::new(
+            let reader = xtc::IndexedXtcReader::new(
                 reader,
                 topology,
                 xtc_options
                     .with_limits(options.limits)
                     .with_source_label(label),
             )?;
-            let reader = reader.into_indexed()?;
             let count = reader.frame_count().unwrap_or(0);
             let metadata =
                 FileTrajectoryMetadata::xtc(reader.first_info(), cell_policy, Some(count));

@@ -7,10 +7,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use kekule::core::{Atom, BondOrder, Element};
+use kekule::structure::TrajectoryFrame;
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule_traj::{
-    FrameBuffer, TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryFormat,
-    TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorContext, TrajectoryCodecErrorKind,
+    TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader,
 };
 
 /// Reject another topology context without changing its buffer or consuming input.
@@ -98,6 +99,50 @@ pub fn x_coordinates(buffer: &FrameBuffer) -> Vec<f64> {
 
 pub fn buffer_snapshot(buffer: &FrameBuffer) -> String {
     format!("{buffer:#?}")
+}
+
+/// Bytes ahead of a trajectory, so a reader opens partway into its stream.
+pub const LEADING_BYTES: &[u8] = b"bytes before the trajectory";
+
+/// A stream holding [`LEADING_BYTES`] then `trajectory`, positioned at its first frame.
+pub fn cursor_after_leading_bytes(trajectory: &[u8]) -> Cursor<Vec<u8>> {
+    let mut bytes = LEADING_BYTES.to_vec();
+    bytes.extend_from_slice(trajectory);
+    let mut cursor = Cursor::new(bytes);
+    cursor.set_position(LEADING_BYTES.len() as u64);
+    cursor
+}
+
+/// Assert that an indexed reader holds exactly `expected`, maps index `i` to
+/// frame `i` before and after a sequential read, and resumes sequential reads
+/// where they stopped after random reads.
+pub fn assert_indexes_every_frame_from_its_start(
+    reader: &mut impl SeekableTrajectoryReader,
+    expected: &[TrajectoryFrame],
+) {
+    let mut destination = FrameBuffer::new(reader.shared_topology());
+    assert_eq!(reader.frame_count(), Some(expected.len() as u64));
+    assert!(reader.read_next(&mut destination).unwrap());
+    assert_eq!(destination.frame_view().payload(), &expected[0]);
+    for index in (0..expected.len()).rev() {
+        reader.read_frame(index as u64, &mut destination).unwrap();
+        assert_eq!(destination.frame_view().payload(), &expected[index]);
+    }
+    for frame in &expected[1..] {
+        assert!(reader.read_next(&mut destination).unwrap());
+        assert_eq!(destination.frame_view().payload(), frame);
+    }
+    assert!(!reader.read_next(&mut destination).unwrap());
+}
+
+/// Every frame a sequential reader decodes, in order.
+pub fn read_all(reader: &mut impl TrajectoryReader) -> Vec<TrajectoryFrame> {
+    let mut destination = FrameBuffer::new(reader.shared_topology());
+    let mut frames = Vec::new();
+    while reader.read_next(&mut destination).unwrap() {
+        frames.push(destination.frame_view().payload().clone());
+    }
+    frames
 }
 
 /// A seekable test stream whose backing bytes can change between reader calls.

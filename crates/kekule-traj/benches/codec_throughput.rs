@@ -10,12 +10,18 @@ use kekule::core::{Atom, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
-use kekule_traj::io::dcd::{DcdReadOptions, DcdReader, DcdWriteOptions, DcdWriter};
-use kekule_traj::io::trr::{
-    TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrWriteOptions, TrrWriter,
+use kekule_traj::io::dcd::{
+    DcdReadOptions, DcdReader, DcdWriteOptions, DcdWriter, IndexedDcdReader,
 };
-use kekule_traj::io::xtc::{XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
-use kekule_traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
+use kekule_traj::io::trr::{
+    IndexedTrrReader, TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrWriteOptions, TrrWriter,
+};
+use kekule_traj::io::xtc::{
+    IndexedXtcReader, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter,
+};
+use kekule_traj::io::xyz::{
+    IndexedXyzReader, XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter,
+};
 use kekule_traj::io::TrajectoryIoLimits;
 use kekule_traj::{FrameBuffer, SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter};
 
@@ -95,15 +101,13 @@ fn benchmark_xyz(profile: Profile) -> Result<(), Box<dyn Error>> {
             .expect("benchmark XYZ reader")
         },
         || {
-            XyzReader::new(
+            IndexedXyzReader::new(
                 Cursor::new(bytes.as_slice()),
                 Arc::clone(&topology),
                 XyzReadOptions::default()
                     .with_limits(TrajectoryIoLimits::default())
                     .with_source_label("bench.xyz"),
             )
-            .expect("benchmark XYZ reader")
-            .into_indexed()
             .expect("benchmark XYZ index")
         },
     )
@@ -134,15 +138,13 @@ fn benchmark_dcd(profile: Profile) -> Result<(), Box<dyn Error>> {
             .expect("benchmark DCD reader")
         },
         || {
-            DcdReader::new(
+            IndexedDcdReader::new(
                 Cursor::new(bytes.as_slice()),
                 Arc::clone(&topology),
                 DcdReadOptions::default()
                     .with_limits(TrajectoryIoLimits::default())
                     .with_source_label("bench.dcd"),
             )
-            .expect("benchmark DCD reader")
-            .into_indexed()
             .expect("benchmark DCD index")
         },
     )
@@ -174,7 +176,7 @@ fn benchmark_trr(profile: Profile) -> Result<(), Box<dyn Error>> {
             .expect("benchmark TRR reader")
         },
         || {
-            TrrReader::new(
+            IndexedTrrReader::new(
                 Cursor::new(bytes.as_slice()),
                 Arc::clone(&topology),
                 TrrReadOptions::default()
@@ -182,8 +184,6 @@ fn benchmark_trr(profile: Profile) -> Result<(), Box<dyn Error>> {
                     .with_limits(TrajectoryIoLimits::default())
                     .with_source_label("bench.trr"),
             )
-            .expect("benchmark TRR reader")
-            .into_indexed()
             .expect("benchmark TRR index")
         },
     )
@@ -214,15 +214,13 @@ fn benchmark_xtc(profile: Profile) -> Result<(), Box<dyn Error>> {
             .expect("benchmark XTC reader")
         },
         || {
-            XtcReader::new(
+            IndexedXtcReader::new(
                 Cursor::new(bytes.as_slice()),
                 Arc::clone(&topology),
                 XtcReadOptions::default()
                     .with_limits(TrajectoryIoLimits::default())
                     .with_source_label("bench.xtc"),
             )
-            .expect("benchmark XTC reader")
-            .into_indexed()
             .expect("benchmark XTC index")
         },
     )

@@ -6,7 +6,8 @@ use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use kekule_traj::io::xtc::{
-    XtcCellPolicy, XtcMagic, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter,
+    IndexedXtcReader, XtcCellPolicy, XtcMagic, XtcReadOptions, XtcReader, XtcWriteOptions,
+    XtcWriter,
 };
 use kekule_traj::io::TrajectoryIoLimits;
 use kekule_traj::{
@@ -241,6 +242,13 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
                     options(limit),
                 )
             };
+            let open_indexed = |limit| {
+                IndexedXtcReader::new(
+                    Cursor::new(combined.clone()),
+                    Arc::clone(&topology),
+                    options(limit),
+                )
+            };
             let payload_start = if atom_count <= 9 {
                 56
             } else if magic == XtcMagic::Xtc1995 {
@@ -278,11 +286,11 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
                 );
                 assert_eq!(buffer_snapshot(&destination), before);
                 assert_eq!(
-                    codec_kind(&open(total - 1).unwrap().into_indexed().err().unwrap()),
+                    codec_kind(&open_indexed(total - 1).err().unwrap()),
                     Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
                 );
             }
-            let mut indexed = open(total).unwrap().into_indexed().unwrap();
+            let mut indexed = open_indexed(total).unwrap();
             // A smaller frame follows the largest payload, so its retained raw
             // capacity still counts. Random reads must not duplicate any array
             // or reuse cached coordinates for the wrong pending frame.
@@ -302,10 +310,8 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
 fn indexed_xtc_rejects_changed_metadata_when_refreshing_a_pending_frame() {
     let (topology, bytes) = encoded(4, XtcMagic::Xtc1995);
     let stream = support::SharedCursor::new(bytes);
-    let mut reader = XtcReader::new(stream.clone(), topology, XtcReadOptions::default())
-        .unwrap()
-        .into_indexed()
-        .unwrap();
+    let mut reader =
+        IndexedXtcReader::new(stream.clone(), topology, XtcReadOptions::default()).unwrap();
     let mut destination = reader.frame_buffer();
     // Indexing cached the first frame's original box. Random access replaces
     // its coordinate cache; the pending sequential frame must be revalidated.
@@ -314,6 +320,47 @@ fn indexed_xtc_rejects_changed_metadata_when_refreshing_a_pending_frame() {
     let before = buffer_snapshot(&destination);
     assert!(reader.read_next(&mut destination).is_err());
     assert_eq!(buffer_snapshot(&destination), before);
+}
+
+#[test]
+fn indexed_xtc_addresses_frames_from_the_stream_position_it_was_opened_at() {
+    // Ten atoms take the compressed path, whose frames vary in length.
+    let topology = topology(10);
+    let mut writer = XtcWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        XtcWriteOptions::default(),
+        "memory.xtc",
+    )
+    .unwrap();
+    for step in 0..3 {
+        writer
+            .write_frame(source_frame(&topology, 0.5 * step as f64, step).frame_view())
+            .unwrap();
+    }
+    let bytes = writer.finish().unwrap().into_inner();
+    let expected = support::read_all(
+        &mut XtcReader::new(
+            Cursor::new(bytes.clone()),
+            Arc::clone(&topology),
+            XtcReadOptions::default(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        expected
+            .iter()
+            .map(|frame| frame.step())
+            .collect::<Vec<_>>(),
+        [Some(0), Some(1), Some(2)]
+    );
+    let mut indexed = IndexedXtcReader::new(
+        support::cursor_after_leading_bytes(&bytes),
+        topology,
+        XtcReadOptions::default(),
+    )
+    .unwrap();
+    support::assert_indexes_every_frame_from_its_start(&mut indexed, &expected);
 }
 
 #[test]
@@ -351,15 +398,13 @@ fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
         assert_eq!(destination.positions().values().value().as_ptr(), pointer);
         assert!(!reader.read_next(&mut destination).unwrap());
 
-        let mut indexed = XtcReader::new(
+        let mut indexed = IndexedXtcReader::new(
             Cursor::new(bytes),
             Arc::clone(&topology),
             XtcReadOptions::default()
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label("memory.xtc"),
         )
-        .unwrap()
-        .into_indexed()
         .unwrap();
         assert_eq!(indexed.frame_count(), Some(2));
         indexed.read_frame(1, &mut destination).unwrap();
@@ -394,15 +439,13 @@ fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
     assert!(reader.read_next(&mut buffer).unwrap());
     assert!(!reader.read_next(&mut buffer).unwrap());
 
-    let indexed = XtcReader::new(
+    let indexed = IndexedXtcReader::new(
         Cursor::new(bytes),
         Arc::clone(&topology),
         XtcReadOptions::default()
             .with_limits(limits)
             .with_source_label("exact-index-limit.xtc"),
     )
-    .unwrap()
-    .into_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
 }
@@ -534,15 +577,13 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
 fn indexed_xtc_restoration_failure_does_not_publish_or_change_destination() {
     let (topology, bytes) = encoded(12, XtcMagic::Xtc1995);
     let (stream, control) = RestoreSeekFailure::new(bytes);
-    let mut indexed = XtcReader::new(
+    let mut indexed = IndexedXtcReader::new(
         stream,
         Arc::clone(&topology),
         XtcReadOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("restore-failure.xtc"),
     )
-    .unwrap()
-    .into_indexed()
     .unwrap();
     let mut destination = source_frame(&topology, 9.0, 99);
     destination
@@ -617,15 +658,13 @@ fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         },
     ] {
         let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
-        let error = XtcReader::new(
+        let error = IndexedXtcReader::new(
             stream,
             Arc::clone(&topology),
             XtcReadOptions::default()
                 .with_limits(limits)
                 .with_source_label("guarded-index.xtc"),
         )
-        .unwrap()
-        .into_indexed()
         .err()
         .unwrap();
         assert_eq!(
@@ -722,15 +761,13 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
 
     let mut truncated = valid.clone();
     truncated.pop();
-    let error = XtcReader::new(
+    let error = IndexedXtcReader::new(
         Cursor::new(truncated),
         Arc::clone(&topology),
         XtcReadOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("truncated.xtc"),
     )
-    .unwrap()
-    .into_indexed()
     .err()
     .unwrap();
     assert_eq!(

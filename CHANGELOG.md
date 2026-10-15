@@ -100,6 +100,16 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** `kekule-traj` indexed readers are opened directly with
+  `IndexedXyzReader::new`, `IndexedDcdReader::new`, `IndexedTrrReader::new`,
+  and `IndexedXtcReader::new`, which take the same arguments as the
+  sequential constructors. The sequential readers' `into_indexed` is removed:
+  after a sequential read it indexed the wrong frames. TRR and XTC started
+  the index at the current frame, so three frames read once indexed as two
+  and `read_frame(0)` returned frame 1. DCD failed on its declared frame
+  count, and XYZ indexed from byte 0 of the stream instead of the position
+  the reader was opened at. Each indexed reader now takes its opening
+  position as frame 0.
 - **Breaking:** `CoordinateStereoResult` and
   `CoordinateStereoMaterializationReport` gain `disagreements`, the asserted
   stereo elements whose configuration the coordinates contradict. Inference

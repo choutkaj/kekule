@@ -32,7 +32,9 @@
 //! nominally `1 / precision` nanometres.
 //!
 //! Sequential readers retain one file handle and avoid a whole-file scan.
-//! Indexed readers retain one handle, fully verify every frame during an
+//! Indexed readers are opened directly, such as with [`xtc::IndexedXtcReader::new`],
+//! and take the stream position at opening as frame 0. They retain one handle,
+//! fully verify every frame from there during an
 //! O(file-size) index build, store bounded checked offsets with capped geometric
 //! growth, and then decode one complete frame per random read. Decoding
 //! validates into reusable private scratch and publishes transactionally into

@@ -11,8 +11,8 @@ use kekule::units::{
     Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, DIMENSIONLESS, NANOMETER, PICOSECOND,
 };
 use kekule_traj::io::trr::{
-    TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrScalarPrecision, TrrWriteOptions, TrrWriter,
-    TRR_LAMBDA_PROPERTY,
+    IndexedTrrReader, TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrScalarPrecision,
+    TrrWriteOptions, TrrWriter, TRR_LAMBDA_PROPERTY,
 };
 use kekule_traj::io::{
     open_indexed_trajectory_with_options, open_trajectory_with_options, CoordinateEncoding,
@@ -221,6 +221,16 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
             }),
         )
     };
+    let open_indexed = |limit| {
+        IndexedTrrReader::new(
+            Cursor::new(combined.clone()),
+            Arc::clone(&topology),
+            TrrReadOptions::default().with_limits(TrajectoryIoLimits {
+                max_scratch_bytes: limit,
+                ..TrajectoryIoLimits::default()
+            }),
+        )
+    };
     let dense_bytes = topology.atom_count() * std::mem::size_of::<Vector3>() * 3;
     let f32_total = dense_bytes + topology.atom_count() * 3 * std::mem::size_of::<f32>();
     let f64_total = dense_bytes + topology.atom_count() * 3 * std::mem::size_of::<f64>();
@@ -250,7 +260,7 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
         );
         assert_eq!(buffer_snapshot(&destination), before);
         assert_eq!(
-            codec_kind(&open(limit).unwrap().into_indexed().err().unwrap()),
+            codec_kind(&open_indexed(limit).err().unwrap()),
             Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
         );
     }
@@ -260,7 +270,7 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
     while sequential.read_next(&mut destination).unwrap() {
         expected.push(destination.frame_view().payload().clone());
     }
-    let mut indexed = open(f64_total).unwrap().into_indexed().unwrap();
+    let mut indexed = open_indexed(f64_total).unwrap();
     assert_eq!(indexed.frame_count(), Some(3));
     // Indexing retained the largest raw capacity. Mixing reads must not need
     // duplicate scratch, nor publish fields left over from the last read.
@@ -383,15 +393,13 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         );
         assert!(!reader.read_next(&mut destination).unwrap());
 
-        let mut indexed = TrrReader::new(
+        let mut indexed = IndexedTrrReader::new(
             Cursor::new(bytes),
             Arc::clone(&topology),
             TrrReadOptions::default()
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label("memory.trr"),
         )
-        .unwrap()
-        .into_indexed()
         .unwrap();
         assert_eq!(indexed.frame_count(), Some(3));
         indexed.read_frame(1, &mut destination).unwrap();
@@ -437,15 +445,13 @@ fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
     assert!(reader.read_next(&mut buffer).unwrap());
     assert!(!reader.read_next(&mut buffer).unwrap());
 
-    let indexed = TrrReader::new(
+    let indexed = IndexedTrrReader::new(
         Cursor::new(bytes),
         Arc::clone(&topology),
         TrrReadOptions::default()
             .with_limits(limits)
             .with_source_label("exact-index-limit.trr"),
     )
-    .unwrap()
-    .into_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
 }
@@ -467,15 +473,13 @@ fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
         .write_frame(populated_frame(&topology, 1.0, 1).frame_view())
         .unwrap();
     let (stream, control) = RestoreSeekFailure::new(writer.finish().unwrap().into_inner());
-    let mut indexed = TrrReader::new(
+    let mut indexed = IndexedTrrReader::new(
         stream,
         Arc::clone(&topology),
         TrrReadOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("restore-failure.trr"),
     )
-    .unwrap()
-    .into_indexed()
     .unwrap();
     let mut destination = populated_frame(&topology, 9.0, 99);
     destination
@@ -549,15 +553,13 @@ fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         },
     ] {
         let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
-        let error = TrrReader::new(
+        let error = IndexedTrrReader::new(
             stream,
             Arc::clone(&topology),
             TrrReadOptions::default()
                 .with_limits(limits)
                 .with_source_label("guarded-index.trr"),
         )
-        .unwrap()
-        .into_indexed()
         .err()
         .unwrap();
         assert_eq!(
@@ -847,20 +849,58 @@ fn indexed_trr_accepts_per_frame_precision_and_verifies_both_payloads() {
         writer.write_frame(frame.frame_view()).unwrap();
         combined.extend(writer.finish().unwrap().into_inner());
     }
-    let mut reader = TrrReader::new(
+    let mut reader = IndexedTrrReader::new(
         Cursor::new(combined),
         Arc::clone(&topology),
         TrrReadOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("mixed.trr"),
     )
-    .unwrap()
-    .into_indexed()
     .unwrap();
     let mut destination = FrameBuffer::new(topology);
     assert_eq!(reader.frame_count(), Some(2));
     reader.read_frame(1, &mut destination).unwrap();
     assert_xs_close(&destination, &[1.0, 4.0, 7.0]);
+}
+
+#[test]
+fn indexed_trr_addresses_frames_from_the_stream_position_it_was_opened_at() {
+    let topology = topology();
+    let mut writer = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        TrrWriteOptions::default(),
+        "memory.trr",
+    )
+    .unwrap();
+    for step in 0..3 {
+        writer
+            .write_frame(populated_frame(&topology, step as f64, step).frame_view())
+            .unwrap();
+    }
+    let bytes = writer.finish().unwrap().into_inner();
+    let expected = support::read_all(
+        &mut TrrReader::new(
+            Cursor::new(bytes.clone()),
+            Arc::clone(&topology),
+            TrrReadOptions::default(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        expected
+            .iter()
+            .map(|frame| frame.step())
+            .collect::<Vec<_>>(),
+        [Some(0), Some(1), Some(2)]
+    );
+    let mut indexed = IndexedTrrReader::new(
+        support::cursor_after_leading_bytes(&bytes),
+        topology,
+        TrrReadOptions::default(),
+    )
+    .unwrap();
+    support::assert_indexes_every_frame_from_its_start(&mut indexed, &expected);
 }
 
 #[test]
