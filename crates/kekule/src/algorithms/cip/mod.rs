@@ -61,9 +61,10 @@ impl CipRankingError {
                 CipAssignmentIssue::ResourceLimitExceeded { element, max_nodes }
             }
             Self::InvalidStereo { issue } => CipAssignmentIssue::InvalidStereo { issue },
-            Self::UnresolvedPriority | Self::UnknownHydrogenCount { .. } => {
-                CipAssignmentIssue::UnresolvedPriority { element }
+            Self::UnknownHydrogenCount { atom } => {
+                CipAssignmentIssue::UnknownHydrogenCount { atom }
             }
+            Self::UnresolvedPriority => CipAssignmentIssue::UnresolvedPriority { element },
         }
     }
 }
@@ -152,6 +153,11 @@ pub enum CipAssignmentIssue {
         element: StereoElementId,
         max_depth: usize,
     },
+    /// The atom's implicit hydrogen count is inferred but not yet perceived.
+    /// Missing valence perception is not zero hydrogens, so no ranking ran.
+    UnknownHydrogenCount {
+        atom: AtomId,
+    },
 }
 
 /// Assigns CIP descriptors from represented local stereochemistry.
@@ -163,6 +169,12 @@ pub enum CipAssignmentIssue {
 /// Explicit bond configurations are ranked regardless of ring size,
 /// aromaticity, or endpoint elements; those restrictions belong to stereo
 /// perception rather than descriptor assignment.
+///
+/// Ligand expansion counts every implicit hydrogen, so every atom's implicit
+/// hydrogen count must be known: fixed, or inferred by valence perception
+/// (`Molecule::perceive` or the valence facade). Otherwise assignment reports
+/// [`CipAssignmentIssue::UnknownHydrogenCount`] for each such atom, ranks
+/// nothing, and leaves perception unchanged.
 pub fn assign_cip_descriptors(
     mol: &mut Molecule,
 ) -> std::result::Result<CipAssignmentReport, CipAssignmentError> {
@@ -172,7 +184,8 @@ pub fn assign_cip_descriptors(
 /// Assigns CIP descriptors with explicit expansion bounds.
 ///
 /// Exceeding a bound returns an issue and preserves the previous perception;
-/// no label is inferred from a truncated tie.
+/// no label is inferred from a truncated tie. Implicit hydrogen counts must be
+/// known, as for [`assign_cip_descriptors`].
 pub fn assign_cip_descriptors_with_options(
     mol: &mut Molecule,
     options: CipAssignmentOptions,

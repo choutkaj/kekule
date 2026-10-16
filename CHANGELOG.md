@@ -279,6 +279,13 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- CIP assignment no longer ranks an unperceived inferred hydrogen count as
+  zero hydrogens. Unperceived `C[C@@H](O)[CH3]` was labelled R, although the
+  centre carries two methyls. `assign_cip_descriptors` now fails with the new
+  `CipAssignmentIssue::UnknownHydrogenCount { atom }` for every atom whose
+  implicit count is inferred but not perceived, and leaves perception
+  unchanged; run valence perception first. An unknown count found while
+  ranking is reported the same way instead of as `UnresolvedPriority`.
 - Isomeric and canonical SMILES write explicitly unknown stereo unmarked,
   as RDKit does, instead of refusing the molecule. SMILES has no notation for
   an unknown configuration, so an amidine C=N read with a Molfile "either"
