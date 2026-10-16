@@ -1,8 +1,9 @@
 //! Validate represented chemistry and prepare ordered atom/connection rows.
+use super::super::element_symbol::structure_element_symbol;
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
 use super::one_based_serial;
 use super::MmcifWriteError;
-use crate::core::{AtomId, BondOrder, ImplicitHydrogens};
+use crate::core::{Atom, AtomId, BondOrder, ImplicitHydrogens};
 use crate::geometry::Point3;
 use crate::structure::ModelView;
 use crate::topology::{
@@ -129,7 +130,7 @@ fn validate_graph_chemistry(
     }
     for (atom_id, atom) in molecule_definition.atoms() {
         let atom_id = molecule.qualify_atom(atom_id);
-        if atom.isotope.is_some() {
+        if structure_element_symbol(atom.element, atom.isotope).is_none() {
             return Err(MmcifWriteError::UnsupportedAtomField {
                 atom: atom_id,
                 field: "isotope",
@@ -206,7 +207,7 @@ fn collect_macro_rows(
             .metadata
             .type_symbol
             .as_deref()
-            .is_some_and(|value| !value.eq_ignore_ascii_case(atom.element.symbol()))
+            .is_some_and(|value| !value.eq_ignore_ascii_case(type_symbol(atom)))
         {
             return Err(MmcifWriteError::InconsistentAtomSite {
                 atom: qualified,
@@ -231,7 +232,7 @@ fn collect_macro_rows(
             entity_id: assignment.entity_id.clone(),
             asym_id: chain.label_id.clone(),
             group_pdb,
-            type_symbol: atom.element.symbol().to_owned(),
+            type_symbol: type_symbol(atom).to_owned(),
             label_atom_id: label_atom_id.clone(),
             label_alt_id: None,
             label_comp_id: label_comp_id.clone(),
@@ -297,7 +298,7 @@ fn collect_small_rows(
             entity_id: assignment.entity_id.clone(),
             asym_id: assignment.asym_id.clone(),
             group_pdb: normalized_group_pdb(qualified, None, assignment.kind.default_group_pdb())?,
-            type_symbol: atom.element.symbol().to_owned(),
+            type_symbol: type_symbol(atom).to_owned(),
             label_atom_id: atom_name.clone(),
             label_alt_id: None,
             label_comp_id: component_id.to_owned(),
@@ -355,6 +356,13 @@ fn water_atom_name(molecule: &crate::core::Molecule, atom: AtomId) -> String {
         Some(index) => format!("H{}", index + 1),
         None => "O".to_owned(),
     }
+}
+
+/// The atom's `type_symbol`; validation has already rejected isotopes the
+/// format cannot name.
+fn type_symbol(atom: &Atom) -> &'static str {
+    structure_element_symbol(atom.element, atom.isotope)
+        .expect("validated atoms have a structure element symbol")
 }
 
 fn generated_atom_name(symbol: &str, atom: AtomId) -> String {

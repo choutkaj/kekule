@@ -1,4 +1,5 @@
 mod components;
+mod element_symbol;
 mod lines;
 mod mmcif_category;
 mod mmcif_cell;

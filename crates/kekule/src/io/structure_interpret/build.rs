@@ -10,6 +10,7 @@ use crate::topology::{AtomSiteMetadata, Hierarchy};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::{Quantity, ANGSTROM};
 
+use super::super::element_symbol::structure_element_symbol;
 use super::super::staged_coordinates::StagedCoordinates;
 use super::super::structure_connectivity::{record_evidence, BondEvidenceMap, ListedBond};
 use super::atom_site::AtomRow;
@@ -364,6 +365,7 @@ pub(super) fn build_molecule(
         if let Some(&index) = seen_atoms.get(&key) {
             let prior = &representative[index].1;
             if prior.element != row.element
+                || prior.isotope != row.isotope
                 || prior.formal_charge != row.formal_charge
                 || prior.comp_id != row.comp_id
                 || prior.entity_id != row.entity_id
@@ -384,6 +386,7 @@ pub(super) fn build_molecule(
     }
     for (key, row) in &representative {
         let mut atom = Atom::new(row.element);
+        atom.isotope = row.isotope;
         atom.formal_charge = row.formal_charge.unwrap_or_default();
         atoms.insert(key.clone(), editor.add_atom(atom).map_err(graph_error)?);
     }
@@ -481,7 +484,9 @@ pub(super) fn build_molecule(
                 .point
                 .expect("selected mmCIF atom rows have complete positions"),
             stated_charge: row.formal_charge,
-            type_symbol: row.element.symbol().to_owned(),
+            type_symbol: structure_element_symbol(row.element, row.isotope)
+                .expect("read element symbols name their isotope")
+                .to_owned(),
             source_line: row.line,
             source_order: row.site_order,
             atom_site_id: row.atom_site_id.clone(),

@@ -2,9 +2,9 @@
 
 use std::collections::BTreeSet;
 
-use crate::core::Element;
 use crate::diagnostics::{DiagnosticKind, SourceLocation};
 
+use super::super::element_symbol::parse_structure_element_symbol;
 use super::super::mmcif_category::MmcifCategory;
 use super::super::{MmcifBlock, MmcifValue};
 use super::{Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentError};
@@ -51,7 +51,7 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Comp
             ));
         }
         let symbol = required("_chem_comp_atom.type_symbol")?;
-        let (element, isotope) = component_element(symbol).ok_or_else(|| {
+        let (element, isotope) = parse_structure_element_symbol(symbol).ok_or_else(|| {
             error(
                 DiagnosticKind::InvalidValue,
                 field("_chem_comp_atom.type_symbol"),
@@ -191,19 +191,4 @@ fn check_component(id: &str, value: Option<MmcifValue<'_>>) -> Result<(), Compon
 
 fn flag(value: Option<&str>) -> bool {
     value.is_some_and(|value| value.eq_ignore_ascii_case("Y"))
-}
-
-/// Reads a dictionary element symbol, which is upper case and may name a
-/// hydrogen isotope.
-fn component_element(symbol: &str) -> Option<(Element, Option<u16>)> {
-    match symbol.to_ascii_uppercase().as_str() {
-        "D" => Some((Element::from_symbol("H")?, Some(2))),
-        "T" => Some((Element::from_symbol("H")?, Some(3))),
-        upper if upper.is_empty() || !upper.is_ascii() => None,
-        upper => {
-            let mut canonical = upper[..1].to_owned();
-            canonical.push_str(&upper[1..].to_ascii_lowercase());
-            Element::from_symbol(&canonical).map(|element| (element, None))
-        }
-    }
 }
