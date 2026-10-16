@@ -19,6 +19,10 @@ fn canonical_smiles_matches_rdkit_charge_closures_stereo_and_cx_radicals() {
         ("C/C=N/[H]", "[H]/N=C/C"),
         (r"[H]/N=C\C", r"[H]/N=C\C"),
         ("[O-][N+](=O)c1ccccc1", "O=[N+]([O-])c1ccccc1"),
+        // Both Kekule forms of o-xylene; RDKit 2026.03.3 writes each as
+        // `Cc1ccccc1C`.
+        ("CC1=C(C)C=CC=C1", "Cc1ccccc1C"),
+        ("CC1=CC=CC=C1C", "Cc1ccccc1C"),
         (
             "CC12CCC3C(CCC4CC(O)CCC43C)C2CCC1=O",
             "CC12CCC3C(CCC4CC(O)CCC43C)C1CCC2=O",
@@ -53,6 +57,29 @@ fn canonical_smiles_matches_rdkit_charge_closures_stereo_and_cx_radicals() {
         assert_eq!(actual, expected, "{source}");
         assert_eq!(write(&actual), actual, "fixed point: {source}");
     }
+}
+
+#[test]
+fn canonical_smiles_requires_installed_aromaticity() {
+    // Without aromaticity the two Kekule forms of o-xylene were written as two
+    // different "canonical" strings. Any ring needs it; acyclic CCO does not.
+    for source in ["CC1=C(C)C=CC=C1", "CC1=CC=CC=C1C", "C1CC1"] {
+        let molecule = smiles::to_molecules(source).unwrap().remove(0);
+        let error = smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap_err();
+        assert_eq!(
+            (error.kind(), error.message()),
+            (
+                MoleculeWriteErrorKind::MissingPerception,
+                "canonical SMILES requires installed aromaticity perception; perceive the molecule before writing"
+            ),
+            "{source}"
+        );
+    }
+    let acyclic = smiles::to_molecules("OCC").unwrap().remove(0);
+    assert_eq!(
+        smiles::write(&acyclic, smiles::SmilesWriteOptions::canonical()).unwrap(),
+        "CCO"
+    );
 }
 
 #[test]
@@ -264,14 +291,19 @@ fn canonical_smiles_is_invariant_under_atom_bond_and_endpoint_permutations() {
             ],
         ),
     ];
+    let perceived = |mut molecule: Molecule| {
+        molecule.perceive().unwrap();
+        molecule
+    };
     for &(count, edges) in graphs {
         let mut permutation = (0..count).collect::<Vec<_>>();
         let expected = smiles::write(
-            &carbon_graph(count, edges, &permutation, false),
+            &perceived(carbon_graph(count, edges, &permutation, false)),
             smiles::SmilesWriteOptions::canonical(),
         )
         .unwrap();
-        let restored = smiles::to_molecules(&expected).unwrap().pop().unwrap();
+        let mut restored = smiles::to_molecules(&expected).unwrap().pop().unwrap();
+        restored.perceive().unwrap();
         assert_eq!(
             smiles::write(&restored, smiles::SmilesWriteOptions::canonical()).unwrap(),
             expected
@@ -282,7 +314,7 @@ fn canonical_smiles_is_invariant_under_atom_bond_and_endpoint_permutations() {
                 seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
                 permutation.swap(index, (seed as usize) % count);
             }
-            let molecule = carbon_graph(count, edges, &permutation, iteration % 2 == 0);
+            let molecule = perceived(carbon_graph(count, edges, &permutation, iteration % 2 == 0));
             assert_eq!(
                 smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap(),
                 expected,

@@ -286,6 +286,14 @@ All notable changes to Kekule are documented in this file.
   implicit count is inferred but not perceived, and leaves perception
   unchanged; run valence perception first. An unknown count found while
   ranking is reported the same way instead of as `UnresolvedPriority`.
+- Canonical SMILES of a molecule with a ring now requires installed
+  aromaticity perception and otherwise fails with
+  `MoleculeWriteErrorKind::MissingPerception`. Unperceived, the two Kekule
+  forms of o-xylene were written as two different "canonical" strings,
+  `CC1=C(C)C=CC=C1` and `CC1=CC=CC=C1C`; perceived, both are `Cc1ccccc1C`,
+  as RDKit writes them. Acyclic molecules need no aromaticity. A molecule
+  with a stereo center or E/Z endpoint on an aromatic atom is still written
+  in its stored Kekule form, now documented on `SmilesWriteMode::Canonical`.
 - Isomeric and canonical SMILES write explicitly unknown stereo unmarked,
   as RDKit does, instead of refusing the molecule. SMILES has no notation for
   an unknown configuration, so an amidine C=N read with a Molfile "either"
