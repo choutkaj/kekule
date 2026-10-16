@@ -47,7 +47,7 @@ impl<'a> From<&'a NaglModel> for ChargeMethod<'a> {
 /// matching failure.
 pub(crate) fn matching(error: TaggedMatchError) -> Error {
     let kind = match error {
-        TaggedMatchError::Match(SubstructureMatchError::ResourceLimit { .. }) => {
+        TaggedMatchError::Match(SubstructureMatchError::LimitExceeded { .. }) => {
             ErrorKind::ResourceLimit
         }
         TaggedMatchError::Match(_) => ErrorKind::Chemistry,

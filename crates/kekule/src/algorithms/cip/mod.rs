@@ -1,3 +1,4 @@
+use crate::diagnostics::LimitExceeded;
 use std::fmt;
 
 use crate::algorithms::StereoValidationIssue;
@@ -13,12 +14,10 @@ type RankingResult<T> = std::result::Result<T, CipRankingError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CipRankingError {
-    DepthLimitExceeded {
-        max_depth: usize,
-    },
-    ResourceLimitExceeded {
-        max_nodes: usize,
-    },
+    /// Expansion exceeded [`CipAssignmentOptions::max_depth`]
+    /// ([`Resource::DigraphDepth`](crate::diagnostics::Resource::DigraphDepth)) or [`CipAssignmentOptions::max_nodes`]
+    /// ([`Resource::DigraphNodes`](crate::diagnostics::Resource::DigraphNodes)).
+    LimitExceeded(LimitExceeded),
     UnresolvedPriority,
     InvalidStereo {
         issue: StereoValidationIssue,
@@ -33,12 +32,7 @@ pub enum CipRankingError {
 impl fmt::Display for CipRankingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DepthLimitExceeded { max_depth } => {
-                write!(f, "CIP ranking exceeded depth {max_depth}")
-            }
-            Self::ResourceLimitExceeded { max_nodes } => {
-                write!(f, "CIP ranking exceeded {max_nodes} nodes")
-            }
+            Self::LimitExceeded(limit) => write!(f, "CIP ranking {limit}"),
             Self::UnresolvedPriority => f.write_str("CIP ligand priority could not be resolved"),
             Self::InvalidStereo { issue } => write!(f, "invalid stereo for CIP ranking: {issue:?}"),
             Self::UnknownHydrogenCount { atom } => write!(
@@ -54,12 +48,7 @@ impl std::error::Error for CipRankingError {}
 impl CipRankingError {
     fn for_element(self, element: StereoElementId) -> CipAssignmentIssue {
         match self {
-            Self::DepthLimitExceeded { max_depth } => {
-                CipAssignmentIssue::DepthLimitExceeded { element, max_depth }
-            }
-            Self::ResourceLimitExceeded { max_nodes } => {
-                CipAssignmentIssue::ResourceLimitExceeded { element, max_nodes }
-            }
+            Self::LimitExceeded(limit) => CipAssignmentIssue::LimitExceeded { element, limit },
             Self::InvalidStereo { issue } => CipAssignmentIssue::InvalidStereo { issue },
             Self::UnknownHydrogenCount { atom } => {
                 CipAssignmentIssue::UnknownHydrogenCount { atom }
@@ -87,11 +76,18 @@ pub struct CipAssignmentOptions {
     pub max_nodes: usize,
 }
 
+impl CipAssignmentOptions {
+    /// The [`Default`] bound of [`Self::max_depth`].
+    pub const DEFAULT_MAX_DEPTH: usize = 64;
+    /// The [`Default`] bound of [`Self::max_nodes`].
+    pub const DEFAULT_MAX_NODES: usize = 100_000;
+}
+
 impl Default for CipAssignmentOptions {
     fn default() -> Self {
         Self {
-            max_depth: 64,
-            max_nodes: 100_000,
+            max_depth: Self::DEFAULT_MAX_DEPTH,
+            max_nodes: Self::DEFAULT_MAX_NODES,
         }
     }
 }
@@ -145,13 +141,12 @@ pub enum CipAssignmentIssue {
     UnresolvedPriority {
         element: StereoElementId,
     },
-    ResourceLimitExceeded {
+    /// Ranking the element's ligands exceeded a digraph bound.
+    LimitExceeded {
+        /// The stereo element being ranked.
         element: StereoElementId,
-        max_nodes: usize,
-    },
-    DepthLimitExceeded {
-        element: StereoElementId,
-        max_depth: usize,
+        /// The exceeded bound.
+        limit: LimitExceeded,
     },
     /// The atom's implicit hydrogen count is inferred but not yet perceived.
     /// Missing valence perception is not zero hydrogens, so no ranking ran.

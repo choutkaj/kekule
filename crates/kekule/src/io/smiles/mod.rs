@@ -6,6 +6,10 @@ mod parse;
 mod write;
 
 pub(crate) use canonical::write_canonical_smiles;
+pub use canonical::{
+    MAX_CANONICAL_GRAPH_SLOTS, MAX_CANONICAL_INPUT_COMPLEXITY, MAX_CANONICAL_PENDING_LABELS,
+    MAX_CANONICAL_REFINEMENT_WORK, MAX_CANONICAL_SEARCH_STATES,
+};
 pub use cx::{SmilesCxField, SmilesCxFieldKind, SmilesCxStereoGroupKind};
 pub use interpret::{
     SmilesAtomMapping, SmilesBondMapping, SmilesComponentInterpretation, SmilesInterpretOptions,
@@ -16,6 +20,7 @@ pub use parse::{
     SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind, SmilesParseOptions, SmilesRecords,
 };
 pub(crate) use write::{write_isomeric_smiles, write_smiles};
+pub use write::{MAX_DIRECTIONAL_COMBINATIONS, MAX_DIRECTIONAL_VISITS};
 
 pub(crate) fn write_topology(
     topology: &crate::topology::Topology,

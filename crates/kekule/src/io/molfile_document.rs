@@ -4,7 +4,8 @@
 use std::fmt;
 
 use crate::diagnostics::{
-    normalize_line_endings, read_bounded, DiagnosticKind, Format, FormatError, SourceLocation,
+    normalize_line_endings, read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded,
+    Resource, SourceLocation,
 };
 use crate::geometry::Point3;
 
@@ -27,13 +28,24 @@ pub struct MolfileParseOptions {
     pub max_v3000_logical_line_bytes: usize,
 }
 
+impl MolfileParseOptions {
+    /// The [`Default`] bound of [`Self::max_input_bytes`].
+    pub const DEFAULT_MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
+    /// The [`Default`] bound of [`Self::max_v3000_atoms`].
+    pub const DEFAULT_MAX_V3000_ATOMS: usize = 1_000_000;
+    /// The [`Default`] bound of [`Self::max_v3000_bonds`].
+    pub const DEFAULT_MAX_V3000_BONDS: usize = 2_000_000;
+    /// The [`Default`] bound of [`Self::max_v3000_logical_line_bytes`].
+    pub const DEFAULT_MAX_V3000_LOGICAL_LINE_BYTES: usize = 1024 * 1024;
+}
+
 impl Default for MolfileParseOptions {
     fn default() -> Self {
         Self {
-            max_input_bytes: 64 * 1024 * 1024,
-            max_v3000_atoms: 1_000_000,
-            max_v3000_bonds: 2_000_000,
-            max_v3000_logical_line_bytes: 1024 * 1024,
+            max_input_bytes: Self::DEFAULT_MAX_INPUT_BYTES,
+            max_v3000_atoms: Self::DEFAULT_MAX_V3000_ATOMS,
+            max_v3000_bonds: Self::DEFAULT_MAX_V3000_BONDS,
+            max_v3000_logical_line_bytes: Self::DEFAULT_MAX_V3000_LOGICAL_LINE_BYTES,
         }
     }
 }
@@ -459,7 +471,12 @@ pub(crate) fn parse_molfile_document(
             DiagnosticKind::Limit,
             1,
             "input exceeds configured byte limit",
-        ));
+        )
+        .exceeding(LimitExceeded::new(
+            Resource::InputBytes,
+            options.max_input_bytes,
+            input.len(),
+        )));
     }
     let source = normalize_line_endings(input);
     let lines = source.lines().collect::<Vec<_>>();

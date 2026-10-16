@@ -183,10 +183,9 @@ fn add_hydrogens_is_transactional_for_missing_perception_and_resource_limits() {
     };
     assert_eq!(
         perceived.add_hydrogens(options),
-        Err(HydrogenTransformError::ResourceLimit {
-            requested_hydrogens: 4,
-            limit: 3,
-        })
+        Err(HydrogenTransformError::LimitExceeded(
+            crate::diagnostics::LimitExceeded::new(crate::diagnostics::Resource::Hydrogens, 3, 4)
+        ))
     );
     assert_eq!(perceived, original);
 }

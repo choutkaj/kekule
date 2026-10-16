@@ -2,6 +2,7 @@
 //!
 //! The search follows RDKit 2026.03.3 (Paolo Tosco, 2015), distributed under
 //! the BSD 3-Clause license reproduced in LICENSE-RDKit in this crate.
+use crate::diagnostics::LimitExceeded;
 use crate::molecule::{
     AtomId, BondId, BondOrder, ImplicitHydrogens, Molecule, ResonanceGroup, ResonancePerception,
 };
@@ -58,12 +59,21 @@ pub struct ResonanceOptions {
     /// Exhaustion returns an error without a partial result.
     pub max_total_work: usize,
 }
+impl ResonanceOptions {
+    /// The [`Default`] bound of [`Self::max_structures`].
+    pub const DEFAULT_MAX_STRUCTURES: usize = 1_000;
+    /// The ceiling every [`Self::max_structures`] is clamped to, RDKit's.
+    pub const MAX_STRUCTURES: usize = 1_000_000;
+    /// The [`Default`] bound of [`Self::max_total_work`].
+    pub const DEFAULT_MAX_TOTAL_WORK: usize = 100_000_000;
+}
+
 impl Default for ResonanceOptions {
     fn default() -> Self {
         Self {
             flags: ResonanceFlags::default(),
-            max_structures: 1000,
-            max_total_work: 100_000_000,
+            max_structures: Self::DEFAULT_MAX_STRUCTURES,
+            max_total_work: Self::DEFAULT_MAX_TOTAL_WORK,
         }
     }
 }
@@ -76,7 +86,8 @@ pub enum ResonanceError {
     UnsupportedBond(BondId),
     InvalidElectronCount,
     InvalidStructureLimit,
-    ResourceLimit { limit: usize },
+    /// The enumeration exceeded [`ResonanceOptions::max_total_work`].
+    LimitExceeded(LimitExceeded),
     Materialization(String),
 }
 impl fmt::Display for ResonanceError {
@@ -87,7 +98,7 @@ impl fmt::Display for ResonanceError {
             Self::UnsupportedBond(b) => write!(f, "resonance group contains unsupported bond {b}"),
             Self::InvalidElectronCount => f.write_str("invalid electron count in resonance search"),
             Self::InvalidStructureLimit => f.write_str("RDKit-compatible conjugated enumeration requires a structure limit of zero or at least two"),
-            Self::ResourceLimit { limit } => write!(f, "resonance work limit exceeded ({limit})"),
+            Self::LimitExceeded(limit) => write!(f, "resonance {limit}"),
             Self::Materialization(reason) => {
                 write!(f, "cannot materialize resonance contributor: {reason}")
             }
@@ -235,7 +246,7 @@ pub fn enumerate_resonance(
     mut options: ResonanceOptions,
 ) -> Result<ResonanceStructures<'_>, ResonanceError> {
     options.flags = options.flags.effective();
-    options.max_structures = options.max_structures.min(1_000_000);
+    options.max_structures = options.max_structures.min(ResonanceOptions::MAX_STRUCTURES);
     let groups = match mol.perception().resonance_state() {
         Some(state) => state.groups().to_vec(),
         None => conjugated_groups(mol)?,

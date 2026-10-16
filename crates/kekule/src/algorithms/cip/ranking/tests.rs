@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagnostics::Resource;
 
 fn node_priority(atomic_number: u8, rule1b: u32, isotope: u16) -> NodePriority {
     NodePriority {
@@ -198,7 +199,8 @@ fn auxiliary_ranking_stops_at_a_proven_order_but_never_promotes_a_truncated_tie(
         } else {
             assert!(matches!(
                 result,
-                Err(CipRankingError::DepthLimitExceeded { .. })
+                Err(CipRankingError::LimitExceeded(limit))
+                    if limit.resource() == Resource::DigraphDepth
             ));
         }
     }

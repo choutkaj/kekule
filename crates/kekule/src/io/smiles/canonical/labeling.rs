@@ -7,11 +7,15 @@
 //! the same labeled graph, so choosing either cannot affect emitted SMILES.
 
 use super::*;
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::result::Result;
 
-const MAX_SEARCH_STATES: usize = 100_000;
-const MAX_REFINEMENT_WORK: usize = 50_000_000;
-const MAX_PENDING_ATOMS: usize = 2_000_000;
+/// Maximum search states of complete canonical SMILES labeling.
+pub const MAX_CANONICAL_SEARCH_STATES: usize = 100_000;
+/// Maximum atom, edge and twin visits of canonical SMILES refinement.
+pub const MAX_CANONICAL_REFINEMENT_WORK: usize = 50_000_000;
+/// Maximum pending atom labels of canonical SMILES labeling.
+pub const MAX_CANONICAL_PENDING_LABELS: usize = 2_000_000;
 
 pub(super) struct CanonicalOrder {
     // Writer priorities are ordered initial classes, not chemical symmetries.
@@ -21,7 +25,12 @@ pub(super) struct CanonicalOrder {
 
 impl CanonicalOrder {
     pub(super) fn new(molecule: &Molecule, style: CanonicalAtomStyle) -> Result<Self, FormatError> {
-        Self::with_limits(molecule, style, MAX_SEARCH_STATES, MAX_REFINEMENT_WORK)
+        Self::with_limits(
+            molecule,
+            style,
+            MAX_CANONICAL_SEARCH_STATES,
+            MAX_CANONICAL_REFINEMENT_WORK,
+        )
     }
 
     fn with_limits(
@@ -266,7 +275,7 @@ impl Search {
         loop {
             self.states += 1;
             if self.states > self.max_states {
-                return Err(limit("search states", self.max_states));
+                return Err(limit(Resource::SearchStates, self.max_states, self.states));
             }
             self.refine(&mut colors)?;
             let mut cells = BTreeMap::<usize, Vec<usize>>::new();
@@ -297,9 +306,13 @@ impl Search {
                         choices.push(atom);
                     }
                 }
-                if pending.len().saturating_add(1).saturating_mul(colors.len()) > MAX_PENDING_ATOMS
-                {
-                    return Err(limit("pending atom labels", MAX_PENDING_ATOMS));
+                let labels = pending.len().saturating_add(1).saturating_mul(colors.len());
+                if labels > MAX_CANONICAL_PENDING_LABELS {
+                    return Err(limit(
+                        Resource::Labels,
+                        MAX_CANONICAL_PENDING_LABELS,
+                        labels,
+                    ));
                 }
                 pending.push(Frame {
                     colors,
@@ -514,7 +527,7 @@ impl Search {
     fn charge_work(&mut self, cost: usize) -> Result<(), FormatError> {
         self.work = self.work.saturating_add(cost);
         if self.work > self.max_work {
-            Err(limit("refinement work", self.max_work))
+            Err(limit(Resource::Work, self.max_work, self.work))
         } else {
             Ok(())
         }
@@ -637,7 +650,7 @@ impl Search {
                         .len()
                         .saturating_add(1)
                         .saturating_mul(order.len())
-                        <= MAX_PENDING_ATOMS
+                        <= MAX_CANONICAL_PENDING_LABELS
                 {
                     self.automorphisms.push(permutation);
                 }
@@ -653,10 +666,11 @@ impl Search {
     }
 }
 
-fn limit(resource: &str, bound: usize) -> FormatError {
-    SMILES_WRITE.resource_limit(format!(
-        "canonical SMILES {resource} limit {bound} exceeded before canonical labeling completed"
-    ))
+fn limit(resource: Resource, bound: usize, observed: usize) -> FormatError {
+    SMILES_WRITE.resource_limit(
+        "canonical SMILES labeling",
+        LimitExceeded::new(resource, bound, observed),
+    )
 }
 
 #[cfg(test)]
@@ -670,21 +684,29 @@ mod tests {
             &molecule,
             CanonicalAtomStyle::Aromatic,
             1,
-            MAX_REFINEMENT_WORK,
+            MAX_CANONICAL_REFINEMENT_WORK,
         )
         .err()
         .expect("search is incomplete");
         assert_eq!(error.kind(), crate::diagnostics::DiagnosticKind::Limit);
-        assert!(error.message().contains("search states"));
+        assert_eq!(
+            error.limit_exceeded(),
+            Some(LimitExceeded::new(Resource::SearchStates, 1, 2))
+        );
         let error = CanonicalOrder::with_limits(
             &molecule,
             CanonicalAtomStyle::Aromatic,
-            MAX_SEARCH_STATES,
+            MAX_CANONICAL_SEARCH_STATES,
             1,
         )
         .err()
         .expect("refinement is incomplete");
         assert_eq!(error.kind(), crate::diagnostics::DiagnosticKind::Limit);
-        assert!(error.message().contains("refinement work"));
+        assert_eq!(
+            error
+                .limit_exceeded()
+                .map(|limit| (limit.resource(), limit.limit())),
+            Some((Resource::Work, 1))
+        );
     }
 }

@@ -3,7 +3,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::diagnostics::{
-    normalize_line_endings, read_bounded, DiagnosticKind, Format, FormatError, SourceLocation,
+    normalize_line_endings, read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded,
+    Resource, SourceLocation,
 };
 
 use super::structure_interpret::{
@@ -36,14 +37,26 @@ pub struct MmcifParseOptions {
     pub max_atom_site_rows: usize,
 }
 
+impl MmcifParseOptions {
+    /// The [`Default`] bound of [`Self::max_input_bytes`].
+    pub const DEFAULT_MAX_INPUT_BYTES: usize = 1024 * 1024 * 1024;
+    /// The [`Default`] bound of [`Self::max_atom_site_rows`].
+    pub const DEFAULT_MAX_ATOM_SITE_ROWS: usize = 5_000_000;
+    /// The [`Default`] bound of [`Self::max_tokens`]: room for the default
+    /// atom-site rows plus 20,000,000 other values.
+    pub const DEFAULT_MAX_TOKENS: usize =
+        Self::DEFAULT_MAX_ATOM_SITE_ROWS * TYPICAL_ATOM_SITE_COLUMNS + 20_000_000;
+    /// The [`Default`] bound of [`Self::max_token_bytes`].
+    pub const DEFAULT_MAX_TOKEN_BYTES: usize = 16 * 1024 * 1024;
+}
+
 impl Default for MmcifParseOptions {
     fn default() -> Self {
-        let max_atom_site_rows = 5_000_000;
         Self {
-            max_input_bytes: 1024 * 1024 * 1024,
-            max_tokens: max_atom_site_rows * TYPICAL_ATOM_SITE_COLUMNS + 20_000_000,
-            max_token_bytes: 16 * 1024 * 1024,
-            max_atom_site_rows,
+            max_input_bytes: Self::DEFAULT_MAX_INPUT_BYTES,
+            max_tokens: Self::DEFAULT_MAX_TOKENS,
+            max_token_bytes: Self::DEFAULT_MAX_TOKEN_BYTES,
+            max_atom_site_rows: Self::DEFAULT_MAX_ATOM_SITE_ROWS,
         }
     }
 }
@@ -378,14 +391,24 @@ pub(crate) fn parse_mmcif_str(
             DiagnosticKind::Limit,
             1,
             "input exceeds configured byte limit",
-        ));
+        )
+        .exceeding(LimitExceeded::new(
+            Resource::InputBytes,
+            options.max_input_bytes,
+            input.len(),
+        )));
     }
     if u32::try_from(input.len()).is_err() {
         return Err(mmcif_parse_error(
             DiagnosticKind::Limit,
             1,
             "input exceeds the 4 GiB addressable mmCIF limit",
-        ));
+        )
+        .exceeding(LimitExceeded::new(
+            Resource::InputBytes,
+            u32::MAX as usize,
+            input.len(),
+        )));
     }
     let source: Arc<str> = normalize_line_endings(input).into();
     let mut tokens = Tokens {
@@ -478,7 +501,8 @@ fn parse_blocks(
                     DiagnosticKind::Limit,
                     item.value.line as usize,
                     "atom-site row count exceeds configured limit",
-                ));
+                )
+                .exceeding(LimitExceeded::first_beyond(Resource::Rows, 0)));
             }
         }
         blocks.push(MmcifBlock {
@@ -540,7 +564,11 @@ fn parse_loop(
                 DiagnosticKind::Limit,
                 token.line as usize,
                 "atom-site row count exceeds configured limit",
-            ));
+            )
+            .exceeding(LimitExceeded::first_beyond(
+                Resource::Rows,
+                max_atom_site_rows,
+            )));
         }
         tokens.next()?;
         values.push(token);
@@ -742,7 +770,12 @@ impl<'a> Tokenizer<'a> {
                     DiagnosticKind::Limit,
                     opening_line,
                     "semicolon value exceeds configured token limit",
-                ));
+                )
+                .exceeding(LimitExceeded::new(
+                    Resource::ValueBytes,
+                    self.options.max_token_bytes,
+                    end - text_start,
+                )));
             }
             next = end + 1;
             line += 1;
@@ -753,7 +786,12 @@ impl<'a> Tokenizer<'a> {
                 DiagnosticKind::Limit,
                 opening_line,
                 "semicolon value exceeds configured token limit",
-            ));
+            )
+            .exceeding(LimitExceeded::new(
+                Resource::ValueBytes,
+                self.options.max_token_bytes,
+                text_end - text_start,
+            )));
         }
         // A closing delimiter can be followed by more tokens on its line.
         if self
@@ -796,14 +834,23 @@ impl<'a> Tokenizer<'a> {
                 DiagnosticKind::Limit,
                 line,
                 "value exceeds configured token limit",
-            ));
+            )
+            .exceeding(LimitExceeded::new(
+                Resource::ValueBytes,
+                self.options.max_token_bytes,
+                end - start,
+            )));
         }
         if self.count >= self.options.max_tokens {
             return Err(mmcif_parse_error(
                 DiagnosticKind::Limit,
                 line,
                 "input exceeds configured token count",
-            ));
+            )
+            .exceeding(LimitExceeded::first_beyond(
+                Resource::Values,
+                self.options.max_tokens,
+            )));
         }
         self.count += 1;
         let narrow = |value: usize| u32::try_from(value).expect("input length fits u32");

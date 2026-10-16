@@ -274,23 +274,30 @@ fn pack(
     );
     let extents = [half.x, half.y, half.z];
     let mut ranges = [(0_i64, 0_i64); 3];
+    // Unrepresentable tilings examine more candidates than any limit allows.
+    let exceeded = |observed: usize| {
+        SolvationError::LimitExceeded(LimitExceeded::new(
+            Resource::Positions,
+            limit,
+            observed.max(limit.saturating_add(1)),
+        ))
+    };
     let mut count = 895_usize;
     for i in 0..3 {
         let low = (-extents[i] / SEED_WIDTH).floor();
         let high = (extents[i] / SEED_WIDTH).floor();
         if !low.is_finite() || !high.is_finite() || low.abs().max(high.abs()) >= 2.0_f64.powi(48) {
-            return Err(SolvationError::CandidateLimit);
+            return Err(exceeded(usize::MAX));
         }
         ranges[i] = (low as i64, high as i64);
         count = count
             .checked_mul(
-                usize::try_from(ranges[i].1 - ranges[i].0 + 1)
-                    .map_err(|_| SolvationError::CandidateLimit)?,
+                usize::try_from(ranges[i].1 - ranges[i].0 + 1).map_err(|_| exceeded(usize::MAX))?,
             )
-            .ok_or(SolvationError::CandidateLimit)?;
+            .ok_or_else(|| exceeded(usize::MAX))?;
     }
     if count > limit {
-        return Err(SolvationError::CandidateLimit);
+        return Err(exceeded(count));
     }
     let mut waters = Vec::new();
     let mut water_search = Neighbors::new(geometry, WATER_RADIUS)?;

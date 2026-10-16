@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagnostics::{LimitExceeded, Resource};
 
 // Independent small-graph oracle: enumerate edge subsets, then recognize a
 // simple cycle by connectedness and degree two. No production ring search,
@@ -165,7 +166,7 @@ fn ring_limits_bound_compact_storage_after_deletions() {
                 max_atoms: 2,
                 ..Default::default()
             },
-            "atoms",
+            Resource::Atoms,
             3,
             2,
         ),
@@ -174,7 +175,7 @@ fn ring_limits_bound_compact_storage_after_deletions() {
                 max_bonds: 2,
                 ..Default::default()
             },
-            "bonds",
+            Resource::Bonds,
             3,
             2,
         ),
@@ -183,18 +184,16 @@ fn ring_limits_bound_compact_storage_after_deletions() {
                 max_total_work: 5,
                 ..Default::default()
             },
-            "total work",
+            Resource::Work,
             6,
             5,
         ),
     ] {
         assert_eq!(
             perceive_rings(&mut molecule, options),
-            Err(RingPerceptionError::ResourceLimit {
-                resource,
-                observed,
-                limit
-            })
+            Err(RingPerceptionError::LimitExceeded(LimitExceeded::new(
+                resource, limit, observed
+            )))
         );
         assert_eq!(molecule.perception(), &previous);
     }
@@ -406,10 +405,7 @@ fn fallback_work_limit_preserves_installed_perception() {
     };
     assert!(matches!(
         perceive_rings(&mut molecule, options),
-        Err(RingPerceptionError::ResourceLimit {
-            resource: "total work",
-            ..
-        })
+        Err(RingPerceptionError::LimitExceeded(limit)) if limit.resource() == Resource::Work
     ));
     assert_eq!(molecule.perception(), &before);
 }
@@ -594,10 +590,7 @@ fn pruning_and_symmetrization_charge_comparison_work() {
     let mut tracker = RingWorkTracker::new(options, 0, 0).unwrap();
     assert!(matches!(
         remove_extra_rings(rings.clone(), 60, &mut tracker),
-        Err(RingPerceptionError::ResourceLimit {
-            resource: "total work",
-            ..
-        })
+        Err(RingPerceptionError::LimitExceeded(limit)) if limit.resource() == Resource::Work
     ));
     let mut tracker = RingWorkTracker::new(options, 0, 0).unwrap();
     let extra = Ring {
@@ -606,10 +599,7 @@ fn pruning_and_symmetrization_charge_comparison_work() {
     };
     assert!(matches!(
         symmetrize_ring_set(rings, vec![extra], 60, &mut tracker),
-        Err(RingPerceptionError::ResourceLimit {
-            resource: "total work",
-            ..
-        })
+        Err(RingPerceptionError::LimitExceeded(limit)) if limit.resource() == Resource::Work
     ));
 }
 
@@ -633,11 +623,11 @@ fn search_and_recovery_charge_setup_before_visiting_paths() {
     let mut tracker = tracker_with_budget(1);
     assert_eq!(
         smallest_rings_bfs(AtomId::new(0), &active, &BTreeSet::new(), &mut tracker),
-        Err(RingPerceptionError::ResourceLimit {
-            resource: "total work",
-            observed: 2,
-            limit: 1,
-        })
+        Err(RingPerceptionError::LimitExceeded(LimitExceeded::new(
+            Resource::Work,
+            1,
+            2
+        )))
     );
     assert_eq!(tracker.path_expansions, 1);
 
@@ -658,11 +648,11 @@ fn search_and_recovery_charge_setup_before_visiting_paths() {
             &mut invariants,
             &mut tracker,
         ),
-        Err(RingPerceptionError::ResourceLimit {
-            resource: "total work",
-            observed: 18,
-            limit: 17,
-        })
+        Err(RingPerceptionError::LimitExceeded(LimitExceeded::new(
+            Resource::Work,
+            17,
+            18
+        )))
     );
     assert_eq!(tracker.path_expansions, 0);
     assert!(candidates.is_empty());
@@ -682,11 +672,11 @@ fn search_and_recovery_charge_setup_before_visiting_paths() {
             &mut discovered,
             &mut tracker,
         ),
-        Err(RingPerceptionError::ResourceLimit {
-            resource: "total work",
-            observed: 3,
-            limit: 2,
-        })
+        Err(RingPerceptionError::LimitExceeded(LimitExceeded::new(
+            Resource::Work,
+            2,
+            3
+        )))
     );
     assert_eq!(tracker.path_expansions, 0);
 }

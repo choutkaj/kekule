@@ -1,5 +1,15 @@
 use std::fmt;
 
+use crate::diagnostics::{LimitExceeded, Resource};
+
+/// Maximum nesting depth of recursive SMARTS queries in one query graph.
+pub const MAX_QUERY_RECURSION_DEPTH: usize = 32;
+/// Maximum atoms of one query graph, counting every recursive query.
+pub const MAX_QUERY_TOTAL_ATOMS: usize = 4_096;
+/// Maximum expression nodes of one query graph, counting every recursive
+/// query.
+pub const MAX_QUERY_TOTAL_EXPRESSION_NODES: usize = 65_536;
+
 use super::{
     AtomExpression, AtomPredicate, BondExpression, QueryStereoConstraint, QueryStereoGroup,
 };
@@ -105,12 +115,7 @@ impl QueryGraph {
         let mut atoms = 0usize;
         let mut nodes = 0usize;
         while let Some((query, depth)) = pending.pop() {
-            if depth > 32 {
-                return Err(QueryGraphError::ResourceLimit {
-                    resource: "recursive depth",
-                    limit: 32,
-                });
-            }
+            LimitExceeded::check(Resource::RecursionDepth, MAX_QUERY_RECURSION_DEPTH, depth)?;
             atoms = atoms.saturating_add(query.atom_count());
             for atom in &query.atoms {
                 nodes = nodes.saturating_add(atom.expression.node_count());
@@ -123,12 +128,12 @@ impl QueryGraph {
             for bond in &query.bonds {
                 nodes = nodes.saturating_add(bond.expression.node_count());
             }
-            if atoms > 4096 || nodes > 65536 {
-                return Err(QueryGraphError::ResourceLimit {
-                    resource: "aggregate query complexity",
-                    limit: 65536,
-                });
-            }
+            LimitExceeded::check(Resource::Atoms, MAX_QUERY_TOTAL_ATOMS, atoms)?;
+            LimitExceeded::check(
+                Resource::ExpressionNodes,
+                MAX_QUERY_TOTAL_EXPRESSION_NODES,
+                nodes,
+            )?;
         }
         Ok(())
     }
@@ -263,10 +268,10 @@ impl QueryGraphBuilder {
 
     pub fn add_atom(&mut self, expression: AtomExpression) -> Result<QueryAtomId, QueryGraphError> {
         let raw = crate::molecule::checked_raw_id(self.atoms.len()).map_err(|_| {
-            QueryGraphError::ResourceLimit {
-                resource: "atoms",
-                limit: u32::MAX as usize,
-            }
+            QueryGraphError::LimitExceeded(LimitExceeded::first_beyond(
+                Resource::Atoms,
+                u32::MAX as usize,
+            ))
         })?;
         let id = QueryAtomId::new(raw);
         self.atoms.push(QueryAtom {
@@ -325,10 +330,10 @@ impl QueryGraphBuilder {
             return Err(QueryGraphError::DuplicateBond { a, b });
         }
         let raw = crate::molecule::checked_raw_id(self.bonds.len()).map_err(|_| {
-            QueryGraphError::ResourceLimit {
-                resource: "bonds",
-                limit: u32::MAX as usize,
-            }
+            QueryGraphError::LimitExceeded(LimitExceeded::first_beyond(
+                Resource::Bonds,
+                u32::MAX as usize,
+            ))
         })?;
         let id = QueryBondId::new(raw);
         self.bonds.push(QueryBond { a, b, expression });
@@ -450,10 +455,16 @@ pub enum QueryGraphError {
         a: QueryAtomId,
         b: QueryAtomId,
     },
-    ResourceLimit {
-        resource: &'static str,
-        limit: usize,
-    },
+    /// The query exceeds a built-in bound: [`MAX_QUERY_RECURSION_DEPTH`],
+    /// [`MAX_QUERY_TOTAL_ATOMS`], [`MAX_QUERY_TOTAL_EXPRESSION_NODES`], or the
+    /// identifier range.
+    LimitExceeded(LimitExceeded),
+}
+
+impl From<LimitExceeded> for QueryGraphError {
+    fn from(limit: LimitExceeded) -> Self {
+        Self::LimitExceeded(limit)
+    }
 }
 
 impl fmt::Display for QueryGraphError {
@@ -465,9 +476,7 @@ impl fmt::Display for QueryGraphError {
             Self::InvalidStereo(message) => write!(f, "invalid query stereo: {message}"),
             Self::SelfBond(id) => write!(f, "cannot create a query bond from {id} to itself"),
             Self::DuplicateBond { a, b } => write!(f, "duplicate query bond between {a} and {b}"),
-            Self::ResourceLimit { resource, limit } => {
-                write!(f, "query graph {resource} limit exceeded: limit {limit}")
-            }
+            Self::LimitExceeded(limit) => write!(f, "query graph {limit}"),
         }
     }
 }

@@ -1,3 +1,4 @@
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
@@ -876,9 +877,11 @@ fn add_auxiliary_graph_node(
 ) -> RankingResult<usize> {
     *visited_nodes = visited_nodes.saturating_add(1);
     if *visited_nodes > context.options.max_nodes {
-        return Err(CipRankingError::ResourceLimitExceeded {
-            max_nodes: context.options.max_nodes,
-        });
+        return Err(CipRankingError::LimitExceeded(LimitExceeded::new(
+            Resource::DigraphNodes,
+            context.options.max_nodes,
+            *visited_nodes,
+        )));
     }
 
     let index = graph.nodes.len();
@@ -896,9 +899,11 @@ fn add_auxiliary_graph_node(
         &mut child_nodes,
     );
     if depth >= context.options.max_depth.saturating_add(1) && !child_nodes.is_empty() {
-        return Err(CipRankingError::DepthLimitExceeded {
-            max_depth: context.options.max_depth,
-        });
+        return Err(CipRankingError::LimitExceeded(LimitExceeded::new(
+            Resource::DigraphDepth,
+            context.options.max_depth,
+            depth,
+        )));
     }
     if depth < context.options.max_depth.saturating_add(1) {
         for child in child_nodes {
@@ -925,9 +930,11 @@ fn ligand_tree(
 ) -> RankingResult<LigandTree> {
     *visited_nodes = visited_nodes.saturating_add(1);
     if *visited_nodes > context.options.max_nodes {
-        return Err(CipRankingError::ResourceLimitExceeded {
-            max_nodes: context.options.max_nodes,
-        });
+        return Err(CipRankingError::LimitExceeded(LimitExceeded::new(
+            Resource::DigraphNodes,
+            context.options.max_nodes,
+            *visited_nodes,
+        )));
     }
     let priority = node.priority(context);
     let mut children = Vec::new();

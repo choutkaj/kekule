@@ -1,5 +1,5 @@
 use super::byte_offset;
-use crate::diagnostics::{DiagnosticKind, SourceLocation};
+use crate::diagnostics::{DiagnosticKind, LimitExceeded, Resource, SourceLocation};
 use crate::query::*;
 use crate::smarts::{self, SmartsParseOptions};
 use crate::substructure::{self, *};
@@ -320,10 +320,7 @@ fn query_expressions_normalize_constants_and_enforce_depth_bounds() {
     assert_eq!(deep.depth(), MAX_QUERY_EXPRESSION_DEPTH);
     assert!(matches!(
         deep.negate(),
-        Err(QueryExpressionError::ResourceLimit {
-            resource: "expression depth",
-            ..
-        })
+        Err(QueryExpressionError::LimitExceeded(limit)) if limit.resource() == Resource::ExpressionDepth
     ));
 }
 
@@ -513,6 +510,10 @@ fn smarts_limits_cover_input_topology_and_expressions() {
     )
     .unwrap_err();
     assert_eq!(atom_error.kind(), DiagnosticKind::Limit);
+    assert_eq!(
+        atom_error.limit_exceeded(),
+        Some(LimitExceeded::new(Resource::Atoms, 1, 2))
+    );
 
     let branch_error = smarts::parse_str(
         "C(C(C))",
@@ -523,6 +524,10 @@ fn smarts_limits_cover_input_topology_and_expressions() {
     )
     .unwrap_err();
     assert_eq!(branch_error.kind(), DiagnosticKind::Limit);
+    assert_eq!(
+        branch_error.limit_exceeded(),
+        Some(LimitExceeded::new(Resource::BranchDepth, 1, 2))
+    );
 
     let expression_error = smarts::parse_str(
         "[!C]",
@@ -533,6 +538,27 @@ fn smarts_limits_cover_input_topology_and_expressions() {
     )
     .unwrap_err();
     assert_eq!(expression_error.kind(), DiagnosticKind::Limit);
+    assert_eq!(
+        expression_error
+            .limit_exceeded()
+            .map(|limit| (limit.resource(), limit.limit())),
+        Some((Resource::ExpressionDepth, 2))
+    );
+
+    // A bond expression within its node bound but beyond its depth bound
+    // reports the depth bound.
+    let bond_depth_error = smarts::parse_str(
+        "C!-C",
+        SmartsParseOptions {
+            max_expression_depth: 1,
+            ..SmartsParseOptions::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        bond_depth_error.limit_exceeded(),
+        Some(LimitExceeded::new(Resource::ExpressionDepth, 1, 3))
+    );
 }
 
 #[test]
@@ -949,10 +975,7 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
         .unwrap_err();
     assert!(matches!(
         candidate_error,
-        SubstructureMatchError::ResourceLimit {
-            resource: "candidate pairs",
-            ..
-        }
+        SubstructureMatchError::LimitExceeded { limit, .. } if limit.resource() == Resource::CandidatePairs
     ));
 
     let state_error = substructure::PreparedTarget::new(&target)
@@ -967,10 +990,7 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
         .unwrap_err();
     assert!(matches!(
         state_error,
-        SubstructureMatchError::ResourceLimit {
-            resource: "search states",
-            ..
-        }
+        SubstructureMatchError::LimitExceeded { limit, .. } if limit.resource() == Resource::SearchStates
     ));
 
     assert!(matches!(

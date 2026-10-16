@@ -584,7 +584,10 @@ fn core_periodic_kernel_checks_limits_and_shortest_skew_translation() {
     .unwrap();
     assert!(matches!(
         PeriodicGeometry::new(bad).unwrap().shortest_translation(),
-        Err(PeriodicGeometryError::ImageSearchLimit)
+        Err(PeriodicGeometryError::LimitExceeded(limit))
+            if limit.resource() == kekule::diagnostics::Resource::LatticeImages
+                && limit.limit() == kekule::geometry::MAX_LATTICE_IMAGES
+                && limit.observed() > limit.limit()
     ));
 }
 

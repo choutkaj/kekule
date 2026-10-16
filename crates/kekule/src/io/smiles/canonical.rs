@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::algorithms::{
     allowed_valences, rdkit_default_valence, HydrogenTransformError, RemoveHydrogensReport,
 };
-use crate::diagnostics::FormatError;
+use crate::diagnostics::{FormatError, LimitExceeded, Resource};
 use crate::io::write_error::SMILES_WRITE;
 use crate::molecule::Molecule;
 use crate::molecule::*;
@@ -19,13 +19,23 @@ mod labeling;
 use super::emit::Emission;
 use labeling::CanonicalOrder;
 
-const MAX_INPUT_COMPLEXITY: usize = 50_000_000;
-const MAX_GRAPH_SLOTS: usize = 2_000_000;
+/// Maximum admission score `2*n*(n+2*m)` of canonical SMILES output, for `n`
+/// live atoms and `m` live bonds.
+pub const MAX_CANONICAL_INPUT_COMPLEXITY: usize = 50_000_000;
+/// Maximum combined atom and bond storage slots of canonical SMILES output.
+pub const MAX_CANONICAL_GRAPH_SLOTS: usize = 2_000_000;
+pub use labeling::{
+    MAX_CANONICAL_PENDING_LABELS, MAX_CANONICAL_REFINEMENT_WORK, MAX_CANONICAL_SEARCH_STATES,
+};
 
 pub(crate) fn write_canonical_smiles(
     molecule: &Molecule,
 ) -> std::result::Result<String, FormatError> {
-    write_canonical_smiles_with_limits(molecule, MAX_INPUT_COMPLEXITY, MAX_GRAPH_SLOTS)
+    write_canonical_smiles_with_limits(
+        molecule,
+        MAX_CANONICAL_INPUT_COMPLEXITY,
+        MAX_CANONICAL_GRAPH_SLOTS,
+    )
 }
 
 fn write_canonical_smiles_with_limits(
@@ -39,7 +49,11 @@ fn write_canonical_smiles_with_limits(
 pub(super) fn write_canonical_emission(
     molecule: &Molecule,
 ) -> std::result::Result<Emission, FormatError> {
-    write_canonical_emission_with_limits(molecule, MAX_INPUT_COMPLEXITY, MAX_GRAPH_SLOTS)
+    write_canonical_emission_with_limits(
+        molecule,
+        MAX_CANONICAL_INPUT_COMPLEXITY,
+        MAX_CANONICAL_GRAPH_SLOTS,
+    )
 }
 
 fn write_canonical_emission_with_limits(
@@ -55,9 +69,14 @@ fn write_canonical_emission_with_limits(
         .atom_slot_count()
         .checked_add(molecule.graph.bond_slot_count());
     if slots.is_none_or(|slots| slots > max_graph_slots) {
-        return Err(SMILES_WRITE.resource_limit(format!(
-            "canonical SMILES exceeds the graph storage limit ({max_graph_slots} atom/bond slots)"
-        )));
+        return Err(SMILES_WRITE.resource_limit(
+            "canonical SMILES",
+            LimitExceeded::new(
+                Resource::GraphSlots,
+                max_graph_slots,
+                slots.unwrap_or(usize::MAX),
+            ),
+        ));
     }
     let atoms = molecule.atom_count();
     // This quadratic input-size guard bounds admission to canonicalization,
@@ -70,9 +89,14 @@ fn write_canonical_emission_with_limits(
         .and_then(|visits| visits.checked_mul(atoms))
         .and_then(|visits| visits.checked_mul(2));
     if input_complexity.is_none_or(|score| score > max_input_complexity) {
-        return Err(SMILES_WRITE.resource_limit(format!(
-            "canonical SMILES exceeds the input complexity limit ({max_input_complexity})"
-        )));
+        return Err(SMILES_WRITE.resource_limit(
+            "canonical SMILES input",
+            LimitExceeded::new(
+                Resource::Work,
+                max_input_complexity,
+                input_complexity.unwrap_or(usize::MAX),
+            ),
+        ));
     }
     let molecule = without_unknown_stereo(molecule);
     let molecule = molecule.as_ref();
@@ -165,7 +189,12 @@ fn hydrogen_normalization_error(error: HydrogenTransformError) -> FormatError {
         HydrogenTransformError::MissingValencePerception => {
             SMILES_WRITE.missing_perception(message)
         }
-        HydrogenTransformError::ResourceLimit { .. } => SMILES_WRITE.resource_limit(message),
+        HydrogenTransformError::LimitExceeded(limit) => FormatError::write(
+            crate::diagnostics::Format::Smiles,
+            crate::diagnostics::DiagnosticKind::Limit,
+            message,
+        )
+        .exceeding(*limit),
         HydrogenTransformError::HydrogenCountOverflow { .. }
         | HydrogenTransformError::UnsupportedImplicitAxisHydrogen { .. } => {
             SMILES_WRITE.unsupported(message)
@@ -694,7 +723,10 @@ mod resource_tests {
         );
         let error = write_canonical_smiles_with_limits(&molecule, 15, usize::MAX).unwrap_err();
         assert_eq!(error.kind(), DiagnosticKind::Limit);
-        assert!(error.to_string().contains("input complexity"));
+        assert_eq!(
+            error.limit_exceeded(),
+            Some(LimitExceeded::new(Resource::Work, 15, 16))
+        );
     }
 
     #[test]
@@ -718,6 +750,9 @@ mod resource_tests {
         chain.perceive().unwrap();
         let error = write_canonical_smiles_with_limits(&chain, usize::MAX, 4).unwrap_err();
         assert_eq!(error.kind(), DiagnosticKind::Limit);
-        assert!(error.to_string().contains("graph storage"));
+        assert_eq!(
+            error.limit_exceeded(),
+            Some(LimitExceeded::new(Resource::GraphSlots, 4, 5))
+        );
     }
 }

@@ -415,7 +415,15 @@ fn canonical_input_complexity_is_bounded_before_export() {
     let molecule = editor.finish().unwrap();
     let error = smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Limit);
-    assert!(error.to_string().contains("input complexity"));
+    // The admission score 2*n*(n+2*m) of 4,096 atoms and 4,095 bonds.
+    assert_eq!(
+        error.limit_exceeded(),
+        Some(kekule::diagnostics::LimitExceeded::new(
+            kekule::diagnostics::Resource::Work,
+            smiles::MAX_CANONICAL_INPUT_COMPLEXITY,
+            100_646_912
+        ))
+    );
 }
 
 #[test]

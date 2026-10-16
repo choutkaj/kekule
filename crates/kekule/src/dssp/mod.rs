@@ -7,6 +7,7 @@
 //! Geometry uses single-precision coordinates and arithmetic, matching DSSP 4;
 //! model coordinates are unchanged and result values are exposed as `f64`.
 
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -375,12 +376,21 @@ pub struct DsspLimits {
     pub max_ladders: usize,
 }
 
+impl DsspLimits {
+    /// The [`Default`] bound of [`Self::max_residues`].
+    pub const DEFAULT_MAX_RESIDUES: usize = 1_000_000;
+    /// The [`Default`] bound of [`Self::max_candidate_pairs`].
+    pub const DEFAULT_MAX_CANDIDATE_PAIRS: usize = 50_000_000;
+    /// The [`Default`] bound of [`Self::max_ladders`].
+    pub const DEFAULT_MAX_LADDERS: usize = 1_000_000;
+}
+
 impl Default for DsspLimits {
     fn default() -> Self {
         Self {
-            max_residues: 1_000_000,
-            max_candidate_pairs: 50_000_000,
-            max_ladders: 1_000_000,
+            max_residues: Self::DEFAULT_MAX_RESIDUES,
+            max_candidate_pairs: Self::DEFAULT_MAX_CANDIDATE_PAIRS,
+            max_ladders: Self::DEFAULT_MAX_LADDERS,
         }
     }
 }
@@ -400,14 +410,6 @@ impl Default for DsspOptions {
             limits: DsspLimits::default(),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum DsspResource {
-    Residues,
-    CandidatePairs,
-    Ladders,
 }
 
 /// Structured DSSP assignment failure.
@@ -437,10 +439,8 @@ pub enum DsspError {
         message: String,
     },
     NoAnalyzableProteinResidues,
-    ResourceLimitExceeded {
-        resource: DsspResource,
-        limit: usize,
-    },
+    /// The model exceeds a bound of [`DsspLimits`].
+    LimitExceeded(LimitExceeded),
 }
 
 impl fmt::Display for DsspError {
@@ -467,9 +467,7 @@ impl fmt::Display for DsspError {
             Self::NoAnalyzableProteinResidues => {
                 f.write_str("model contains no residue with a complete N/CA/C/O backbone")
             }
-            Self::ResourceLimitExceeded { resource, limit } => {
-                write!(f, "DSSP {resource:?} resource limit {limit} exceeded")
-            }
+            Self::LimitExceeded(limit) => write!(f, "DSSP {limit}"),
         }
     }
 }

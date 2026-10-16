@@ -1,4 +1,4 @@
-use kekule::diagnostics::{DiagnosticKind, SourceLocation};
+use kekule::diagnostics::{DiagnosticKind, LimitExceeded, Resource, SourceLocation};
 use kekule::{
     molecule::*,
     perception::{
@@ -220,10 +220,7 @@ fn complete_enumeration_never_silently_truncates() {
     assert_eq!(prefix, 1000);
     assert!(matches!(
         PreparedTarget::new(&m).all(&q, capped),
-        Err(SubstructureMatchError::ResourceLimit {
-            resource: "matches",
-            ..
-        })
+        Err(SubstructureMatchError::LimitExceeded { limit, .. }) if limit.resource() == Resource::Matches
     ));
     let mut visits = 0;
     assert_eq!(
@@ -270,7 +267,7 @@ fn recursive_limits_errors_and_prerequisites_survive_negation() {
                 ..options()
             }
         ),
-        Err(SubstructureMatchError::ResourceLimit { .. })
+        Err(SubstructureMatchError::LimitExceeded { .. })
     ));
     for (source, opts) in [
         (
@@ -456,10 +453,7 @@ fn topology_reuses_connected_matches_and_shares_budgets() {
                 ..small_budget
             }
         ),
-        Err(SubstructureMatchError::ResourceLimit {
-            resource: "matches",
-            ..
-        })
+        Err(SubstructureMatchError::LimitExceeded { limit, .. }) if limit.resource() == Resource::Matches
     ));
 }
 
@@ -531,4 +525,13 @@ fn graph_complexity_exhaustion_remains_a_resource_error() {
     .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Limit);
     assert_eq!(error.location(), Some(SourceLocation::at_column(1, 1)));
+    // The aggregate query-atom bound trips, not the expression-node bound.
+    assert_eq!(
+        error.limit_exceeded(),
+        Some(LimitExceeded::new(
+            Resource::Atoms,
+            kekule::query::MAX_QUERY_TOTAL_ATOMS,
+            4097
+        ))
+    );
 }

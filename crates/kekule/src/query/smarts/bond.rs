@@ -11,14 +11,20 @@ pub(super) fn parse(
         direction: None,
     };
     let expression = parser.low_and()?;
-    if expression.node_count() > options.max_expression_nodes
-        || expression.depth() > options.max_expression_depth
-    {
+    if expression.node_count() > options.max_expression_nodes {
         return Err(limit_error(
             start..parser.cursor,
-            "bond expression nodes",
+            Resource::ExpressionNodes,
             expression.node_count(),
             options.max_expression_nodes,
+        ));
+    }
+    if expression.depth() > options.max_expression_depth {
+        return Err(limit_error(
+            start..parser.cursor,
+            Resource::ExpressionDepth,
+            expression.depth(),
+            options.max_expression_depth,
         ));
     }
     Ok((expression, parser.direction, parser.cursor))

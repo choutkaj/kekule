@@ -2,6 +2,7 @@
 // Paolo Tosco. BSD 3-Clause; see LICENSE-RDKit in the crate root.
 use super::*;
 use crate::algorithms::{aromaticity::rdkit_outer_electrons, valence::explicit_valence};
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::VecDeque;
 
 pub(super) struct Work {
@@ -13,7 +14,11 @@ impl Work {
         self.left = self
             .left
             .checked_sub(n)
-            .ok_or(ResonanceError::ResourceLimit { limit: self.limit })?;
+            .ok_or(ResonanceError::LimitExceeded(LimitExceeded::new(
+                Resource::Work,
+                self.limit,
+                (self.limit - self.left).saturating_add(n),
+            )))?;
         Ok(())
     }
 }
@@ -734,7 +739,11 @@ fn build_permutations(
             .checked_mul(levels as usize)?;
         len.checked_mul(building.checked_add(sorting)?)
     })()
-    .ok_or(ResonanceError::ResourceLimit { limit: work.limit })?;
+    .ok_or(ResonanceError::LimitExceeded(LimitExceeded::new(
+        Resource::Work,
+        work.limit,
+        usize::MAX,
+    )))?;
     work.charge(estimate)?;
 
     let mut permutations = Vec::new();
@@ -786,7 +795,8 @@ mod tests {
         };
         assert!(matches!(
             build_permutations(&[2; 20], &vec![vec![2]; 20], 1_000_000, &mut work),
-            Err(ResonanceError::ResourceLimit { limit: 10_000 })
+            Err(ResonanceError::LimitExceeded(limit))
+                if limit.resource() == Resource::Work && limit.limit() == 10_000
         ));
         // Construction alone fits, but construction plus sorting does not.
         let mut work = Work {
@@ -795,7 +805,8 @@ mod tests {
         };
         assert!(matches!(
             build_permutations(&[2, 2], &[vec![1, 1], vec![1, 1]], 4, &mut work),
-            Err(ResonanceError::ResourceLimit { limit: 60 })
+            Err(ResonanceError::LimitExceeded(limit))
+                if limit.resource() == Resource::Work && limit.limit() == 60
         ));
     }
 
@@ -817,7 +828,7 @@ mod tests {
         assert!(work.left < work.limit);
         assert!(matches!(
             build_permutations(&[2], &[vec![2]], usize::MAX, &mut work),
-            Err(ResonanceError::ResourceLimit { .. })
+            Err(ResonanceError::LimitExceeded(_))
         ));
     }
 }

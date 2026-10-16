@@ -149,6 +149,38 @@ All notable changes to Kekule are documented in this file.
   - `Display` is `"<format> <stage> error[ in record N][ at LOCATION]:
     message"` and never repeats the source; causes that used to be formatted
     into messages, such as I/O and graph-construction errors, are `source()`.
+  - Resource exhaustion is one shape: `diagnostics::LimitExceeded`, with
+    `resource()` (`diagnostics::Resource`), `limit()` and `observed()`.
+    It replaces `AromaticityError::ResourceLimit { limit }`,
+    `RingPerceptionError::ResourceLimit { resource, observed, limit }`,
+    `StereoSearchError::ResourceLimit`,
+    `SubstructureMatchError::ResourceLimit` (now `LimitExceeded { limit,
+    work }`), `QueryExpressionError::ResourceLimit`,
+    `QueryGraphError::ResourceLimit`, `HydrogenTransformError::ResourceLimit`,
+    `ResonanceError::ResourceLimit`, `CipRankingError::DepthLimitExceeded`
+    and `ResourceLimitExceeded`, `CipAssignmentIssue::DepthLimitExceeded` and
+    `ResourceLimitExceeded` (now `LimitExceeded { element, limit }`),
+    `SymmetryError::PermutationLimit` and `SearchLimit`,
+    `NormalizationError::AromaticLocalizationLimit { examined_states, .. }`,
+    `DsspError::ResourceLimitExceeded` with `dssp::DsspResource`,
+    `PeriodicGeometryError::ImageSearchLimit`, `SolvationError::CandidateLimit`
+    and `kekule_traj::PeriodicError::ImageSearchLimit`, each now a
+    `LimitExceeded` variant carrying it. A format failure of kind
+    `DiagnosticKind::Limit` carries it as `FormatErrorDetail::LimitExceeded`
+    and `FormatError::limit_exceeded()`.
+  - Two payloads were wrong: a query graph over its 4,096-atom bound
+    reported the 65,536 expression-node bound, and a SMARTS bond expression
+    over its depth bound reported its node count against the node bound.
+  - Default limits are constants: `DEFAULT_*` associated constants on
+    `AromaticityOptions`, `RingPerceptionOptions`, `StereoSearchOptions`,
+    `SubstructureMatchOptions`, `CipAssignmentOptions`, `AddHydrogensOptions`,
+    `ResonanceOptions` (with `MAX_STRUCTURES`), `SymmetryLimits`,
+    `DsspLimits`, `SolventOptions`, and the SMILES, SMARTS, Molfile, SDF,
+    mmCIF and PDB parse options; built-in bounds are
+    `query::{MAX_QUERY_RECURSION_DEPTH, MAX_QUERY_TOTAL_ATOMS,
+    MAX_QUERY_TOTAL_EXPRESSION_NODES}`, `geometry::MAX_LATTICE_IMAGES`, and
+    the canonical and isomeric SMILES writer bounds
+    `smiles::MAX_CANONICAL_*` and `smiles::MAX_DIRECTIONAL_*`.
 - **Breaking:** Public items live in the module of the domain that owns them,
   and every operation has one home. Behaviour is unchanged; callers update
   paths, names, and signatures as listed.

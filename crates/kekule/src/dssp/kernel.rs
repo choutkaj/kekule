@@ -492,10 +492,10 @@ fn extract_chain(
             continue;
         }
         if residues.len() >= limits.max_residues {
-            return Err(DsspError::ResourceLimitExceeded {
-                resource: DsspResource::Residues,
-                limit: limits.max_residues,
-            });
+            return Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
+                Resource::Residues,
+                limits.max_residues,
+            )));
         }
 
         let n = backbone[0].expect("checked complete backbone");
@@ -735,10 +735,10 @@ fn candidate_pairs(
                         if dssp_distance_squared(residues[prior].ca, residue.ca) <= maximum_squared
                         {
                             if pairs.len() >= max_candidate_pairs {
-                                return Err(DsspError::ResourceLimitExceeded {
-                                    resource: DsspResource::CandidatePairs,
-                                    limit: max_candidate_pairs,
-                                });
+                                return Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
+                                    Resource::CandidatePairs,
+                                    max_candidate_pairs,
+                                )));
                             }
                             pairs.push((prior, current));
                         }
@@ -917,10 +917,10 @@ fn calculate_beta_sheets(
         }
         if !extended {
             if bridges.len() >= max_ladders {
-                return Err(DsspError::ResourceLimitExceeded {
-                    resource: DsspResource::Ladders,
-                    limit: max_ladders,
-                });
+                return Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
+                    Resource::Ladders,
+                    max_ladders,
+                )));
             }
             bridges.push(Bridge {
                 bridge_type,
@@ -942,10 +942,11 @@ fn calculate_beta_sheets(
     });
     merge_bulges(residues, &mut bridges);
     if bridges.len() > max_ladders {
-        return Err(DsspError::ResourceLimitExceeded {
-            resource: DsspResource::Ladders,
-            limit: max_ladders,
-        });
+        return Err(DsspError::LimitExceeded(LimitExceeded::new(
+            Resource::Ladders,
+            max_ladders,
+            bridges.len(),
+        )));
     }
     counts.ladders = bridges.len();
     assign_sheets(&mut bridges);
@@ -1484,10 +1485,8 @@ mod tests {
 
         assert!(matches!(
             calculate_beta_sheets(&mut residues, &[(2, 5), (4, 7)], 1),
-            Err(DsspError::ResourceLimitExceeded {
-                resource: DsspResource::Ladders,
-                limit: 1,
-            })
+            Err(DsspError::LimitExceeded(limit))
+                if limit == LimitExceeded::first_beyond(Resource::Ladders, 1)
         ));
     }
 

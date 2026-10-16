@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::rc::Rc;
 
-use crate::diagnostics::{DiagnosticKind, Format, FormatError, SourceLocation};
+use crate::diagnostics::{
+    DiagnosticKind, Format, FormatError, LimitExceeded, Resource, SourceLocation,
+};
 use crate::molecule::{BondOrder, Element};
 
 use super::{
@@ -41,18 +43,39 @@ pub struct SmartsParseOptions {
     pub max_total_expression_nodes: usize,
 }
 
+impl SmartsParseOptions {
+    /// The [`Default`] bound of [`Self::max_input_bytes`].
+    pub const DEFAULT_MAX_INPUT_BYTES: usize = 16_384;
+    /// The [`Default`] bound of [`Self::max_atoms`].
+    pub const DEFAULT_MAX_ATOMS: usize = 256;
+    /// The [`Default`] bound of [`Self::max_bonds`].
+    pub const DEFAULT_MAX_BONDS: usize = 512;
+    /// The [`Default`] bound of [`Self::max_branch_depth`].
+    pub const DEFAULT_MAX_BRANCH_DEPTH: usize = 64;
+    /// The [`Default`] bound of [`Self::max_ring_closures`].
+    pub const DEFAULT_MAX_RING_CLOSURES: usize = 128;
+    /// The [`Default`] bound of [`Self::max_expression_nodes`].
+    pub const DEFAULT_MAX_EXPRESSION_NODES: usize = 512;
+    /// The [`Default`] bound of [`Self::max_expression_depth`].
+    pub const DEFAULT_MAX_EXPRESSION_DEPTH: usize = 32;
+    /// The [`Default`] bound of [`Self::max_recursive_depth`].
+    pub const DEFAULT_MAX_RECURSIVE_DEPTH: usize = 32;
+    /// The [`Default`] bound of [`Self::max_total_expression_nodes`].
+    pub const DEFAULT_MAX_TOTAL_EXPRESSION_NODES: usize = 16_384;
+}
+
 impl Default for SmartsParseOptions {
     fn default() -> Self {
         Self {
-            max_input_bytes: 16_384,
-            max_atoms: 256,
-            max_bonds: 512,
-            max_branch_depth: 64,
-            max_ring_closures: 128,
-            max_expression_nodes: 512,
-            max_expression_depth: 32,
-            max_recursive_depth: 32,
-            max_total_expression_nodes: 16_384,
+            max_input_bytes: Self::DEFAULT_MAX_INPUT_BYTES,
+            max_atoms: Self::DEFAULT_MAX_ATOMS,
+            max_bonds: Self::DEFAULT_MAX_BONDS,
+            max_branch_depth: Self::DEFAULT_MAX_BRANCH_DEPTH,
+            max_ring_closures: Self::DEFAULT_MAX_RING_CLOSURES,
+            max_expression_nodes: Self::DEFAULT_MAX_EXPRESSION_NODES,
+            max_expression_depth: Self::DEFAULT_MAX_EXPRESSION_DEPTH,
+            max_recursive_depth: Self::DEFAULT_MAX_RECURSIVE_DEPTH,
+            max_total_expression_nodes: Self::DEFAULT_MAX_TOTAL_EXPRESSION_NODES,
         }
     }
 }
@@ -77,15 +100,12 @@ fn unsupported_error(span: Range<usize>, message: impl Into<String>) -> FormatEr
 
 fn limit_error(
     span: Range<usize>,
-    resource: &'static str,
+    resource: Resource,
     observed: usize,
     limit: usize,
 ) -> FormatError {
-    smarts_error(
-        DiagnosticKind::Limit,
-        span,
-        format!("SMARTS {resource} limit exceeded: observed {observed}, limit {limit}"),
-    )
+    let exceeded = LimitExceeded::new(resource, limit, observed);
+    smarts_error(DiagnosticKind::Limit, span, exceeded.to_string()).exceeding(exceeded)
 }
 
 /// Parses one SMARTS pattern into a syntax-independent [`QueryGraph`].
@@ -125,7 +145,7 @@ pub fn parse_str(input: &str, options: SmartsParseOptions) -> Result<QueryGraph,
     if input.len() > options.max_input_bytes {
         return Err(limit_error(
             0..input.len(),
-            "input bytes",
+            Resource::InputBytes,
             input.len(),
             options.max_input_bytes,
         ));
@@ -308,12 +328,12 @@ fn charge(
     counter: &Cell<usize>,
     amount: usize,
     limit: usize,
-    name: &'static str,
+    resource: Resource,
     span: Range<usize>,
 ) -> Result<(), FormatError> {
     let observed = counter.get().saturating_add(amount);
     if observed > limit {
-        return Err(limit_error(span, name, observed, limit));
+        return Err(limit_error(span, resource, observed, limit));
     }
     counter.set(observed);
     Ok(())
@@ -393,12 +413,17 @@ impl<'a> Parser<'a> {
         }
         self.stereo.install(&mut self.builder)?;
         self.builder.build().map_err(|error| {
-            let kind = if matches!(error, QueryGraphError::ResourceLimit { .. }) {
-                DiagnosticKind::Limit
-            } else {
-                DiagnosticKind::Syntax
-            };
-            smarts_error(kind, 0..self.input.len(), "invalid query graph").with_source(error)
+            let span = 0..self.input.len();
+            match error {
+                QueryGraphError::LimitExceeded(exceeded) => limit_error(
+                    span,
+                    exceeded.resource(),
+                    exceeded.observed(),
+                    exceeded.limit(),
+                ),
+                error => smarts_error(DiagnosticKind::Syntax, span, "invalid query graph")
+                    .with_source(error),
+            }
         })
     }
 
@@ -423,7 +448,7 @@ impl<'a> Parser<'a> {
         if observed > self.options.max_branch_depth {
             return Err(limit_error(
                 offset..offset + 1,
-                "branch depth",
+                Resource::BranchDepth,
                 observed,
                 self.options.max_branch_depth,
             ));
@@ -486,7 +511,7 @@ impl<'a> Parser<'a> {
             &self.budget.nodes,
             expression.node_count(),
             self.options.max_total_expression_nodes,
-            "total expression nodes",
+            Resource::ExpressionNodes,
             start..end,
         )?;
         self.pending_bond = Some(BondSyntax {
@@ -523,7 +548,7 @@ impl<'a> Parser<'a> {
             if self.ring_closure_count > self.options.max_ring_closures {
                 return Err(limit_error(
                     span,
-                    "ring closures",
+                    Resource::RingClosures,
                     self.ring_closure_count,
                     self.options.max_ring_closures,
                 ));
@@ -532,7 +557,7 @@ impl<'a> Parser<'a> {
             if self.rings.len() >= self.options.max_ring_closures {
                 return Err(limit_error(
                     span,
-                    "open ring labels",
+                    Resource::RingClosures,
                     self.rings.len().saturating_add(1),
                     self.options.max_ring_closures,
                 ));
@@ -619,14 +644,14 @@ impl<'a> Parser<'a> {
             &self.budget.atoms,
             1,
             self.options.max_atoms,
-            "atoms",
+            Resource::Atoms,
             start..self.cursor,
         )?;
         charge(
             &self.budget.nodes,
             expression.node_count(),
             self.options.max_total_expression_nodes,
-            "total expression nodes",
+            Resource::ExpressionNodes,
             start..self.cursor,
         )?;
         let atom = self.builder.add_atom(expression).map_err(|error| {
@@ -740,7 +765,7 @@ impl<'a> Parser<'a> {
             &self.budget.bonds,
             1,
             self.options.max_bonds,
-            "bonds",
+            Resource::Bonds,
             span.clone(),
         )?;
         let is_double = syntax.expression
@@ -804,12 +829,14 @@ fn atom_element_expression(
 }
 
 fn expression_error(span: Range<usize>, error: QueryExpressionError) -> FormatError {
-    smarts_error(
-        DiagnosticKind::Limit,
-        span,
-        "query expression exceeds its bounds",
-    )
-    .with_source(error)
+    match error {
+        QueryExpressionError::LimitExceeded(exceeded) => limit_error(
+            span,
+            exceeded.resource(),
+            exceeded.observed(),
+            exceeded.limit(),
+        ),
+    }
 }
 
 fn parse_element_symbol(input: &str, start: usize) -> Option<(Element, usize)> {
@@ -879,7 +906,7 @@ impl<'a> BracketParser<'a> {
         if expression.node_count() > self.options.max_expression_nodes {
             return Err(limit_error(
                 self.base..self.base + self.bytes.len(),
-                "expression nodes",
+                Resource::ExpressionNodes,
                 expression.node_count(),
                 self.options.max_expression_nodes,
             ));
@@ -887,7 +914,7 @@ impl<'a> BracketParser<'a> {
         if expression.depth() > self.options.max_expression_depth {
             return Err(limit_error(
                 self.base..self.base + self.bytes.len(),
-                "expression depth",
+                Resource::ExpressionDepth,
                 expression.depth(),
                 self.options.max_expression_depth,
             ));
@@ -1130,11 +1157,14 @@ impl<'a> BracketParser<'a> {
                     return Err(self.syntax_here("recursive query requires $(...)"));
                 }
                 let depth = self.recursive_depth + 1;
-                let limit = self.options.max_recursive_depth.min(32);
+                let limit = self
+                    .options
+                    .max_recursive_depth
+                    .min(super::MAX_QUERY_RECURSION_DEPTH);
                 if depth > limit {
                     return Err(limit_error(
                         self.absolute(start..self.cursor),
-                        "recursive depth",
+                        Resource::RecursionDepth,
                         depth,
                         limit,
                     ));

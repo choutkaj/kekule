@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::diagnostics::DiagnosticKind;
+use crate::diagnostics::{DiagnosticKind, LimitExceeded, Resource};
 use crate::geometry::Point3;
 use crate::io::MolfileParseOptions;
 
@@ -143,18 +143,30 @@ pub(super) fn parse_v3000_ctab(
             let parsed = parse_v3000_counts(&record.body)
                 .ok_or_else(|| syntax("invalid V3000 COUNTS line"))?;
             if parsed.atoms > options.max_v3000_atoms {
-                return Err(lines.error(
-                    record.index,
-                    DiagnosticKind::Limit,
-                    "V3000 atom count exceeds configured limit",
-                ));
+                return Err(lines
+                    .error(
+                        record.index,
+                        DiagnosticKind::Limit,
+                        "V3000 atom count exceeds configured limit",
+                    )
+                    .exceeding(LimitExceeded::new(
+                        Resource::Atoms,
+                        options.max_v3000_atoms,
+                        parsed.atoms,
+                    )));
             }
             if parsed.bonds > options.max_v3000_bonds {
-                return Err(lines.error(
-                    record.index,
-                    DiagnosticKind::Limit,
-                    "V3000 bond count exceeds configured limit",
-                ));
+                return Err(lines
+                    .error(
+                        record.index,
+                        DiagnosticKind::Limit,
+                        "V3000 bond count exceeds configured limit",
+                    )
+                    .exceeding(LimitExceeded::new(
+                        Resource::Bonds,
+                        options.max_v3000_bonds,
+                        parsed.bonds,
+                    )));
             }
             ctab.chiral_flag = parsed.chiral;
             counts = Some((parsed, record.index));
@@ -203,11 +215,16 @@ fn collect_v3000_lines(
     options: MolfileParseOptions,
 ) -> std::result::Result<(Vec<V3000Line>, usize), FormatError> {
     let limit = |index| {
-        lines.error(
-            index,
-            DiagnosticKind::Limit,
-            "V3000 logical line exceeds configured byte limit",
-        )
+        lines
+            .error(
+                index,
+                DiagnosticKind::Limit,
+                "V3000 logical line exceeds configured byte limit",
+            )
+            .exceeding(LimitExceeded::first_beyond(
+                Resource::RecordBytes,
+                options.max_v3000_logical_line_bytes,
+            ))
     };
     let mut records = Vec::new();
     let mut index = 4usize;

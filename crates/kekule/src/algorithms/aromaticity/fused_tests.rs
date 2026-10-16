@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagnostics::Resource;
 
 fn neighbors_for_edges(size: usize, edges: &[(usize, usize)]) -> Vec<Vec<usize>> {
     let mut neighbors = vec![Vec::new(); size];
@@ -160,10 +161,11 @@ fn dense_subset_search_returns_a_work_error_instead_of_partial_success() {
         &mut AromaticityWork::new(10_000),
         &mut |_, _| Ok(ControlFlow::Continue(())),
     );
-    assert_eq!(
+    assert!(matches!(
         result,
-        Err(AromaticityError::ResourceLimit { limit: 10_000 })
-    );
+        Err(AromaticityError::LimitExceeded(limit))
+            if limit.resource() == Resource::Work && limit.limit() == 10_000
+    ));
 }
 
 #[test]
@@ -184,12 +186,13 @@ fn fusion_discovery_scales_with_independent_rings_and_bounds_dense_families() {
     assert!(neighbors.iter().all(Vec::is_empty));
 
     let dense = vec![independent[0].clone(); 100];
-    assert_eq!(
+    assert!(matches!(
         rdkit_fused_ring_neighbors(
             &dense,
             &(0..100).collect::<Vec<_>>(),
             &mut AromaticityWork::new(1_000)
         ),
-        Err(AromaticityError::ResourceLimit { limit: 1_000 })
-    );
+        Err(AromaticityError::LimitExceeded(limit))
+            if limit.resource() == Resource::Work && limit.limit() == 1_000
+    ));
 }

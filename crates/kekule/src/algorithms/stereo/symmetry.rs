@@ -4,6 +4,7 @@
 //! Hydrogen expansion is detached and preserves the owner's IDs and declarations.
 use super::eligibility::AtomIdentity;
 use super::*;
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::{BTreeMap, BTreeSet};
 use std::result::Result;
 
@@ -36,11 +37,11 @@ impl AnalysisGraph {
                 .map(|id| usize::from(atom_hydrogen_count(mol, id)))
                 .sum::<usize>();
         if size > options.max_atoms {
-            return Err(StereoSearchError::ResourceLimit {
-                resource: "analysis atoms",
-                observed: size,
-                limit: options.max_atoms,
-            });
+            return Err(StereoSearchError::LimitExceeded(LimitExceeded::new(
+                Resource::Atoms,
+                options.max_atoms,
+                size,
+            )));
         }
         let mut atoms = vec![UNMAPPED; mol.graph.atom_slot_count()];
         let mut signatures = Vec::with_capacity(size);
@@ -569,11 +570,11 @@ impl<'a> Search<'a> {
                 }
                 *work += 1;
                 if *work > limit {
-                    return Err(StereoSearchError::ResourceLimit {
-                        resource: "search states",
-                        observed: *work,
+                    return Err(StereoSearchError::LimitExceeded(LimitExceeded::new(
+                        Resource::SearchStates,
                         limit,
-                    });
+                        *work,
+                    )));
                 }
                 if !self.feasible(atom, target) {
                     continue;

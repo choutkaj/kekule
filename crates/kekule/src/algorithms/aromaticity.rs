@@ -1,3 +1,4 @@
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::ControlFlow;
@@ -23,9 +24,7 @@ pub enum AromaticityError {
     /// MDL requires an identified SSSR-like ring set, not fallback cycles.
     IncompatibleRingBasis,
     /// Aromaticity work was exhausted; no partial assignment is installed.
-    ResourceLimit {
-        limit: usize,
-    },
+    LimitExceeded(LimitExceeded),
 }
 
 /// Independent bounds for ring perception and aromaticity assignment.
@@ -47,12 +46,15 @@ impl Default for AromaticityOptions {
     fn default() -> Self {
         Self {
             ring_options: RingPerceptionOptions::default(),
-            max_total_work: 5_000_000,
+            max_total_work: Self::DEFAULT_MAX_TOTAL_WORK,
         }
     }
 }
 
 impl AromaticityOptions {
+    /// The [`Default`] bound of [`Self::max_total_work`].
+    pub const DEFAULT_MAX_TOTAL_WORK: usize = 5_000_000;
+
     /// The bounds the default perception profile uses for a graph with
     /// `atoms` atom and `bonds` bond storage slots: the [`Default`] bounds,
     /// raised to grow linearly with the graph, as
@@ -91,10 +93,14 @@ impl AromaticityWork {
     }
 
     fn charge(&mut self, amount: usize) -> std::result::Result<(), AromaticityError> {
-        self.remaining = self
-            .remaining
-            .checked_sub(amount)
-            .ok_or(AromaticityError::ResourceLimit { limit: self.limit })?;
+        self.remaining =
+            self.remaining
+                .checked_sub(amount)
+                .ok_or(AromaticityError::LimitExceeded(LimitExceeded::new(
+                    Resource::Work,
+                    self.limit,
+                    (self.limit - self.remaining).saturating_add(amount),
+                )))?;
         Ok(())
     }
 }
@@ -117,7 +123,7 @@ impl fmt::Display for AromaticityError {
                 write!(f, "unsupported aromaticity element at atom {id}")
             }
             Self::RingPerception(error) => write!(f, "{error}"),
-            Self::ResourceLimit { limit } => write!(f, "aromaticity work limit exceeded ({limit})"),
+            Self::LimitExceeded(limit) => write!(f, "aromaticity {limit}"),
         }
     }
 }

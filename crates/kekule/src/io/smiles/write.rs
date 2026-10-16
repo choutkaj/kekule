@@ -2,7 +2,12 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::{compute_ring_membership, ordered_atom_pair};
-use crate::diagnostics::FormatError;
+use crate::diagnostics::{FormatError, LimitExceeded, Resource};
+
+/// Maximum carrier combinations isomeric SMILES directional encoding tries.
+pub const MAX_DIRECTIONAL_COMBINATIONS: usize = 4_096;
+/// Maximum graph visits of isomeric SMILES directional encoding.
+pub const MAX_DIRECTIONAL_VISITS: usize = 50_000_000;
 use crate::io::write_error::SMILES_WRITE;
 use crate::molecule::Molecule;
 use crate::molecule::*;
@@ -729,14 +734,15 @@ fn choose_directional_bonds(
         }
     }
     let mut choices = vec![0; candidates.len()];
-    for attempt in 0usize..4096 {
-        if attempt
+    for attempt in 0..MAX_DIRECTIONAL_COMBINATIONS {
+        let visits = attempt
             .saturating_add(1)
-            .saturating_mul(mol.atom_count().saturating_add(mol.bond_count()))
-            > 50_000_000
-        {
-            return Err(SMILES_WRITE
-                .resource_limit("SMILES directional assignment exceeds 50,000,000 graph visits"));
+            .saturating_mul(mol.atom_count().saturating_add(mol.bond_count()));
+        if visits > MAX_DIRECTIONAL_VISITS {
+            return Err(SMILES_WRITE.resource_limit(
+                "SMILES directional assignment",
+                LimitExceeded::new(Resource::Work, MAX_DIRECTIONAL_VISITS, visits),
+            ));
         }
         let mut constraints = BTreeMap::new();
         for (index, value) in stereo.iter().enumerate() {
@@ -798,8 +804,10 @@ fn choose_directional_bonds(
             return Err(error);
         }
     }
-    Err(SMILES_WRITE
-        .resource_limit("SMILES directional assignment exceeds 4,096 carrier combinations"))
+    Err(SMILES_WRITE.resource_limit(
+        "SMILES directional assignment",
+        LimitExceeded::first_beyond(Resource::Combinations, MAX_DIRECTIONAL_COMBINATIONS),
+    ))
 }
 
 fn implicit_double_bond_printable_carrier_bond(
@@ -1142,7 +1150,8 @@ pub(super) fn write_smiles_component(
                                 .or_else(|| (!canonical).then(|| released.pop()).flatten())
                                 .ok_or_else(|| {
                                     SMILES_WRITE.resource_limit(
-                                        "SMILES requires more than 100 simultaneous ring labels",
+                                        "SMILES",
+                                        LimitExceeded::first_beyond(Resource::RingClosures, 100),
                                     )
                                 })?;
                             available_rings.remove(&number);

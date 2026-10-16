@@ -1,3 +1,4 @@
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -9,8 +10,6 @@ use crate::stereo::{StereoCarrier, StereoElementId, StereoElementKind};
 
 use super::rdkit_inferred_hydrogen_count;
 
-const DEFAULT_MAX_ADDED_HYDROGENS: usize = 1_000_000;
-
 /// Controls which encoded hydrogens are materialized and bounds graph growth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AddHydrogensOptions {
@@ -21,11 +20,16 @@ pub struct AddHydrogensOptions {
     pub max_added_hydrogens: usize,
 }
 
+impl AddHydrogensOptions {
+    /// The [`Default`] bound of [`Self::max_added_hydrogens`].
+    pub const DEFAULT_MAX_ADDED_HYDROGENS: usize = 1_000_000;
+}
+
 impl Default for AddHydrogensOptions {
     fn default() -> Self {
         Self {
             fixed_only: false,
-            max_added_hydrogens: DEFAULT_MAX_ADDED_HYDROGENS,
+            max_added_hydrogens: Self::DEFAULT_MAX_ADDED_HYDROGENS,
         }
     }
 }
@@ -120,10 +124,9 @@ pub struct RemoveHydrogensReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HydrogenTransformError {
     MissingValencePerception,
-    ResourceLimit {
-        requested_hydrogens: usize,
-        limit: usize,
-    },
+    /// The transform would add more hydrogens than
+    /// [`AddHydrogensOptions::max_added_hydrogens`] allows.
+    LimitExceeded(LimitExceeded),
     HydrogenCountOverflow {
         atom: AtomId,
         count: usize,
@@ -146,13 +149,7 @@ impl fmt::Display for HydrogenTransformError {
                 f,
                 "hydrogen transformation requires current valence perception"
             ),
-            Self::ResourceLimit {
-                requested_hydrogens,
-                limit,
-            } => write!(
-                f,
-                "adding {requested_hydrogens} hydrogens exceeds the configured limit of {limit}"
-            ),
+            Self::LimitExceeded(limit) => write!(f, "hydrogen addition {limit}"),
             Self::HydrogenCountOverflow { atom, count } => write!(
                 f,
                 "atom {atom} requires {count} encoded hydrogens, which exceeds the supported count"
@@ -209,10 +206,11 @@ pub(crate) fn add_hydrogens_to_molecule(
         .collect::<Result<Vec<_>, HydrogenTransformError>>()?;
     let requested_hydrogens = plan.iter().map(|(_, count, _)| count).sum::<usize>();
     if requested_hydrogens > options.max_added_hydrogens {
-        return Err(HydrogenTransformError::ResourceLimit {
+        return Err(HydrogenTransformError::LimitExceeded(LimitExceeded::new(
+            Resource::Hydrogens,
+            options.max_added_hydrogens,
             requested_hydrogens,
-            limit: options.max_added_hydrogens,
-        });
+        )));
     }
 
     validate_materialized_stereo_hydrogens(molecule, &plan, options.fixed_only)?;

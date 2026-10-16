@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagnostics::{LimitExceeded, Resource};
 use crate::properties::{PropertyKey, PropertyValue};
 
 // Defensive algorithm validation must also handle invalid internal staging;
@@ -438,11 +439,8 @@ fn default_perception_rolls_back_when_ring_perception_fails_after_valence() {
 
     assert!(matches!(
         error,
-        perception_api::PerceptionError::Rings(RingPerceptionError::ResourceLimit {
-            resource: "cycle size",
-            observed: ATOM_COUNT,
-            limit: 4_096,
-        })
+        perception_api::PerceptionError::Rings(RingPerceptionError::LimitExceeded(limit))
+            if limit == LimitExceeded::new(Resource::RingSize, 4_096, ATOM_COUNT)
     ));
     assert_eq!(molecule, original);
 }

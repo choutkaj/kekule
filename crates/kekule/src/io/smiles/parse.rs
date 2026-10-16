@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufReader, Read};
 use std::ops::Range;
 
-use crate::diagnostics::{read_bounded, DiagnosticKind, Format, FormatError, SourceLocation};
+use crate::diagnostics::{
+    read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded, Resource, SourceLocation,
+};
 
 use super::super::lines::read_line;
 use super::cx::{parse_cx_fields, SmilesCxField};
@@ -209,12 +211,21 @@ pub struct SmilesParseOptions {
     pub max_bonds: usize,
 }
 
+impl SmilesParseOptions {
+    /// The [`Default`] bound of [`Self::max_input_bytes`].
+    pub const DEFAULT_MAX_INPUT_BYTES: usize = 16 * 1024 * 1024;
+    /// The [`Default`] bound of [`Self::max_atoms`].
+    pub const DEFAULT_MAX_ATOMS: usize = 1_000_000;
+    /// The [`Default`] bound of [`Self::max_bonds`].
+    pub const DEFAULT_MAX_BONDS: usize = 2_000_000;
+}
+
 impl Default for SmilesParseOptions {
     fn default() -> Self {
         Self {
-            max_input_bytes: 16 * 1024 * 1024,
-            max_atoms: 1_000_000,
-            max_bonds: 2_000_000,
+            max_input_bytes: Self::DEFAULT_MAX_INPUT_BYTES,
+            max_atoms: Self::DEFAULT_MAX_ATOMS,
+            max_bonds: Self::DEFAULT_MAX_BONDS,
         }
     }
 }
@@ -271,7 +282,12 @@ fn parse_smiles_record_text(
             DiagnosticKind::Limit,
             0,
             "input exceeds configured byte limit",
-        ));
+        )
+        .exceeding(LimitExceeded::new(
+            Resource::InputBytes,
+            options.max_input_bytes,
+            input.len(),
+        )));
     }
     let source = input;
     let record = split_smiles_record(source)?;
@@ -826,7 +842,8 @@ fn next_smiles_atom_index(
             DiagnosticKind::Limit,
             offset,
             "SMILES atom count exceeds configured limit",
-        ));
+        )
+        .exceeding(LimitExceeded::first_beyond(Resource::Atoms, max_atoms)));
     }
     if atom_count > u32::MAX as usize {
         return Err(parse_error(
@@ -854,7 +871,8 @@ fn add_smiles_program_bond(
             DiagnosticKind::Limit,
             offset,
             "SMILES bond count exceeds configured limit",
-        ));
+        )
+        .exceeding(LimitExceeded::first_beyond(Resource::Bonds, max_bonds)));
     }
     if left == right {
         return Err(parse_error(
@@ -1378,6 +1396,10 @@ impl<R: Read> Iterator for SmilesRecords<R> {
                     0,
                     "input exceeds configured byte limit",
                 )
+                .exceeding(LimitExceeded::first_beyond(
+                    Resource::RecordBytes,
+                    self.options.max_input_bytes,
+                ))
                 .on_line(number)));
             }
             let text = match std::str::from_utf8(&self.line) {

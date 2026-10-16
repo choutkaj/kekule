@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagnostics::{LimitExceeded, Resource};
 use crate::molecule::{BondId, RingBasisModel};
 use crate::query::{AtomPredicate, BondPredicate, QueryBond, QueryStereoConstraint};
 use crate::stereo::{DoubleBondOrientation, StereoElementKind};
@@ -150,16 +151,9 @@ struct Context<'a, 't> {
 }
 
 impl Context<'_, '_> {
-    fn limit(
-        &self,
-        resource: &'static str,
-        observed: usize,
-        limit: usize,
-    ) -> SubstructureMatchError {
-        SubstructureMatchError::ResourceLimit {
-            resource,
-            observed,
-            limit,
+    fn limit(&self, resource: Resource, observed: usize, limit: usize) -> SubstructureMatchError {
+        SubstructureMatchError::LimitExceeded {
+            limit: LimitExceeded::new(resource, limit, observed),
             work: self.work,
         }
     }
@@ -167,7 +161,7 @@ impl Context<'_, '_> {
         self.work.search_states = self.work.search_states.saturating_add(1);
         if self.work.search_states > self.options.max_search_states {
             return Err(self.limit(
-                "search states",
+                Resource::SearchStates,
                 self.work.search_states,
                 self.options.max_search_states,
             ));
@@ -177,7 +171,7 @@ impl Context<'_, '_> {
     fn validate(&self, query: &QueryGraph) -> Result<(), SubstructureMatchError> {
         if query.atom_count() > self.options.max_query_atoms {
             return Err(self.limit(
-                "query atoms",
+                Resource::Atoms,
                 query.atom_count(),
                 self.options.max_query_atoms,
             ));
@@ -242,7 +236,7 @@ impl Context<'_, '_> {
             .saturating_add(query.atom_count().saturating_mul(self.data.atoms.len()));
         if self.work.candidate_pairs > self.options.max_candidate_pairs {
             return Err(self.limit(
-                "candidate pairs",
+                Resource::CandidatePairs,
                 self.work.candidate_pairs,
                 self.options.max_candidate_pairs,
             ));
@@ -694,7 +688,7 @@ impl Context<'_, '_> {
         if !state.recursive {
             self.work.matches = state.count;
             if state.complete && state.count > self.options.max_matches {
-                return Err(self.limit("matches", state.count, self.options.max_matches));
+                return Err(self.limit(Resource::Matches, state.count, self.options.max_matches));
             }
         }
         if !(state.visitor)(&mapping) {

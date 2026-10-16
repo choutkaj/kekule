@@ -163,7 +163,10 @@ pub mod smiles {
         SmilesAtomMapping, SmilesBondMapping, SmilesComponentInterpretation, SmilesCxField,
         SmilesCxFieldKind, SmilesCxStereoGroupKind, SmilesDocument, SmilesDocumentToken,
         SmilesDocumentTokenKind, SmilesInterpretOptions, SmilesInterpretation,
-        SmilesInterpretationReport, SmilesParseOptions, SmilesRecords,
+        SmilesInterpretationReport, SmilesParseOptions, SmilesRecords, MAX_CANONICAL_GRAPH_SLOTS,
+        MAX_CANONICAL_INPUT_COMPLEXITY, MAX_CANONICAL_PENDING_LABELS,
+        MAX_CANONICAL_REFINEMENT_WORK, MAX_CANONICAL_SEARCH_STATES, MAX_DIRECTIONAL_COMBINATIONS,
+        MAX_DIRECTIONAL_VISITS,
     };
     use crate::molecule::Molecule;
     use crate::topology::Topology;

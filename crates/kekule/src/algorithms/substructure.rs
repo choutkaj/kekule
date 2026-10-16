@@ -1,3 +1,4 @@
+use crate::diagnostics::LimitExceeded;
 use std::fmt;
 mod engine;
 mod prepared;
@@ -15,7 +16,7 @@ pub const MAX_SUBSTRUCTURE_QUERY_ATOMS: usize = 256;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubstructureMatchOptions {
     /// Maximum matches. Complete enumeration (`all`) reports
-    /// exceeding it as [`SubstructureMatchError::ResourceLimit`]; a visitor
+    /// exceeding it as [`SubstructureMatchError::LimitExceeded`]; a visitor
     /// stops successfully once it is reached.
     pub max_matches: usize,
     /// Maximum candidate assignments visited by backtracking.
@@ -32,13 +33,22 @@ pub struct SubstructureMatchOptions {
     pub use_enhanced_stereo: bool,
 }
 
+impl SubstructureMatchOptions {
+    /// The [`Default`] bound of [`Self::max_matches`].
+    pub const DEFAULT_MAX_MATCHES: usize = 1_000;
+    /// The [`Default`] bound of [`Self::max_search_states`].
+    pub const DEFAULT_MAX_SEARCH_STATES: usize = 1_000_000;
+    /// The [`Default`] bound of [`Self::max_candidate_pairs`].
+    pub const DEFAULT_MAX_CANDIDATE_PAIRS: usize = 2_000_000;
+}
+
 impl Default for SubstructureMatchOptions {
     fn default() -> Self {
         Self {
-            max_matches: 1_000,
-            max_search_states: 1_000_000,
+            max_matches: Self::DEFAULT_MAX_MATCHES,
+            max_search_states: Self::DEFAULT_MAX_SEARCH_STATES,
             max_query_atoms: MAX_SUBSTRUCTURE_QUERY_ATOMS,
-            max_candidate_pairs: 2_000_000,
+            max_candidate_pairs: Self::DEFAULT_MAX_CANDIDATE_PAIRS,
             uniquify: true,
             use_enhanced_stereo: false,
         }
@@ -95,10 +105,11 @@ pub enum SubstructureMatchError {
     InvalidOptions(&'static str),
     MissingPerception(QueryPerception),
     IncompatiblePerception(QueryPerception),
-    ResourceLimit {
-        resource: &'static str,
-        observed: usize,
-        limit: usize,
+    /// A configured bound was exceeded; `work` is the work done before it.
+    LimitExceeded {
+        /// The exceeded bound.
+        limit: LimitExceeded,
+        /// The work done before the bound was exceeded.
         work: SubstructureMatchWork,
     },
 }
@@ -106,7 +117,7 @@ pub enum SubstructureMatchError {
 impl SubstructureMatchError {
     pub fn work(&self) -> Option<SubstructureMatchWork> {
         match self {
-            Self::ResourceLimit { work, .. } => Some(*work),
+            Self::LimitExceeded { work, .. } => Some(*work),
             Self::InvalidOptions(_)
             | Self::MissingPerception(_)
             | Self::IncompatiblePerception(_) => None,
@@ -125,15 +136,7 @@ impl fmt::Display for SubstructureMatchError {
                 f,
                 "substructure query requires current {perception} perception on the target"
             ),
-            Self::ResourceLimit {
-                resource,
-                observed,
-                limit,
-                ..
-            } => write!(
-                f,
-                "substructure {resource} limit exceeded: observed {observed}, limit {limit}"
-            ),
+            Self::LimitExceeded { limit, .. } => write!(f, "substructure search {limit}"),
         }
     }
 }

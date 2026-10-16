@@ -7,7 +7,9 @@
 //! hybrid-36 convention.
 use std::collections::BTreeSet;
 
-use crate::diagnostics::{read_bounded, DiagnosticKind, Format, FormatError, SourceLocation};
+use crate::diagnostics::{
+    read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded, Resource, SourceLocation,
+};
 use crate::geometry::Point3;
 
 use super::structure_interpret::{
@@ -27,11 +29,18 @@ pub struct PdbParseOptions {
     pub max_atom_records: usize,
 }
 
+impl PdbParseOptions {
+    /// The [`Default`] bound of [`Self::max_input_bytes`].
+    pub const DEFAULT_MAX_INPUT_BYTES: usize = 1024 * 1024 * 1024;
+    /// The [`Default`] bound of [`Self::max_atom_records`].
+    pub const DEFAULT_MAX_ATOM_RECORDS: usize = 5_000_000;
+}
+
 impl Default for PdbParseOptions {
     fn default() -> Self {
         Self {
-            max_input_bytes: 1024 * 1024 * 1024,
-            max_atom_records: 5_000_000,
+            max_input_bytes: Self::DEFAULT_MAX_INPUT_BYTES,
+            max_atom_records: Self::DEFAULT_MAX_ATOM_RECORDS,
         }
     }
 }
@@ -516,7 +525,12 @@ pub(crate) fn parse_pdb_str(
             DiagnosticKind::Limit,
             SourceLocation::at_line(1),
             "input exceeds configured byte limit",
-        ));
+        )
+        .exceeding(LimitExceeded::new(
+            Resource::InputBytes,
+            options.max_input_bytes,
+            input.len(),
+        )));
     }
     let mut parser = Parser::default();
     // Every terminator (`\r\n`, `\r`, `\n`) ends one line.
@@ -637,7 +651,11 @@ impl Parser {
                         DiagnosticKind::Limit,
                         at_line,
                         "coordinate records exceed configured limit",
-                    ));
+                    )
+                    .exceeding(LimitExceeded::first_beyond(
+                        Resource::Atoms,
+                        options.max_atom_records,
+                    )));
                 }
                 document.atoms.push(atom);
             }

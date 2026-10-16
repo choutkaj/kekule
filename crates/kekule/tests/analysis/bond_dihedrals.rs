@@ -1,3 +1,4 @@
+use kekule::diagnostics::{LimitExceeded, Resource};
 use std::sync::Arc;
 
 use kekule::{
@@ -321,14 +322,14 @@ fn only_possible_maxima_consume_further_ranking_budget() {
                 max_depth: 1,
                 max_nodes: 7,
             },
-            CipRankingError::DepthLimitExceeded { max_depth: 1 },
+            CipRankingError::LimitExceeded(LimitExceeded::first_beyond(Resource::DigraphDepth, 1)),
         ),
         (
             CipAssignmentOptions {
                 max_depth: 2,
                 max_nodes: 4,
             },
-            CipRankingError::ResourceLimitExceeded { max_nodes: 4 },
+            CipRankingError::LimitExceeded(LimitExceeded::first_beyond(Resource::DigraphNodes, 4)),
         ),
     ] {
         assert!(matches!(
@@ -348,14 +349,14 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
                 max_depth: 0,
                 max_nodes: 100_000,
             },
-            CipRankingError::DepthLimitExceeded { max_depth: 0 },
+            CipRankingError::LimitExceeded(LimitExceeded::first_beyond(Resource::DigraphDepth, 0)),
         ),
         (
             CipAssignmentOptions {
                 max_depth: 64,
                 max_nodes: 1,
             },
-            CipRankingError::ResourceLimitExceeded { max_nodes: 1 },
+            CipRankingError::LimitExceeded(LimitExceeded::first_beyond(Resource::DigraphNodes, 1)),
         ),
     ] {
         assert!(
@@ -402,9 +403,9 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
             }
         ),
         Err(BondDihedralError::Ranking {
-            error: CipRankingError::DepthLimitExceeded { .. },
+            error: CipRankingError::LimitExceeded(limit),
             ..
-        })
+        }) if limit.resource() == Resource::DigraphDepth
     ));
     assert!(measure::bond_dihedrals(unperceived.as_model_view())
         .any(|(_, result)| matches!(result, Err(BondDihedralError::Ranking { .. }))));

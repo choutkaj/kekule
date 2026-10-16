@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagnostics::{LimitExceeded, Resource};
 
 /// Expand molecular paths or existing auxiliary occurrences under the same
 /// bounds. An unfinished constitutional tie cannot advance to later rules.
@@ -88,18 +89,20 @@ fn expand_carriers<N>(
             next_comparison = depth.saturating_mul(2).max(1);
         }
         if depth == context.options.max_depth {
-            return Err(CipRankingError::DepthLimitExceeded {
-                max_depth: context.options.max_depth,
-            });
+            return Err(CipRankingError::LimitExceeded(LimitExceeded::first_beyond(
+                Resource::DigraphDepth,
+                context.options.max_depth,
+            )));
         }
         // A discarded ligand must not consume the remaining node budget.
         if !entries
             .iter()
             .all(|(_, _, expansion)| expansion.next_shell_fits(context.options.max_nodes))
         {
-            return Err(CipRankingError::ResourceLimitExceeded {
-                max_nodes: context.options.max_nodes,
-            });
+            return Err(CipRankingError::LimitExceeded(LimitExceeded::first_beyond(
+                Resource::DigraphNodes,
+                context.options.max_nodes,
+            )));
         }
         for (_, signature, expansion) in &mut entries {
             expansion.extend(context, signature, &describe)?;
@@ -194,9 +197,10 @@ impl<N> LigandExpansion<N> {
         describe: &impl Fn(N) -> (NodePriority, Vec<N>),
     ) -> RankingResult<(LigandTree, Vec<N>)> {
         if self.nodes >= context.options.max_nodes {
-            return Err(CipRankingError::ResourceLimitExceeded {
-                max_nodes: context.options.max_nodes,
-            });
+            return Err(CipRankingError::LimitExceeded(LimitExceeded::first_beyond(
+                Resource::DigraphNodes,
+                context.options.max_nodes,
+            )));
         }
         self.nodes += 1;
         let (priority, children) = describe(node);

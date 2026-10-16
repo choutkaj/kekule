@@ -103,9 +103,13 @@ pub enum PeriodicError {
         atom: TopologyAtomIndex,
         axis: usize,
     },
-    /// An ill-conditioned cell requires more than the bounded nearest-image search permits.
-    ImageSearchLimit {
+    /// An ill-conditioned cell requires more lattice images than the bounded
+    /// nearest-image search examines.
+    LimitExceeded {
+        /// The frame whose cell is ill-conditioned.
         frame: usize,
+        /// The exceeded bound of lattice images.
+        limit: kekule::diagnostics::LimitExceeded,
     },
     NumericalFailure {
         frame: usize,
@@ -130,7 +134,7 @@ impl fmt::Display for PeriodicError {
             Self::InconsistentBondImages { frame, bond } => write!(f, "frame {frame} has inconsistent periodic images around bond {bond}"),
             Self::PeriodicAxesChanged { frame } => write!(f, "periodic axes change at frame {frame}"),
             Self::AmbiguousDisplacement { frame, atom, axis } => write!(f, "frame {frame}, atom {atom}, cell axis {axis}: ambiguous half-cell displacement"),
-            Self::ImageSearchLimit { frame } => write!(f, "frame {frame}: cell geometry exceeds the nearest-image search limit"),
+            Self::LimitExceeded { frame, limit } => write!(f, "frame {frame}: nearest-image search {limit}"),
             Self::NumericalFailure { frame } => write!(f, "frame {frame}: periodic coordinate calculation exceeds numerical precision or range"),
             Self::Position { frame, source } => write!(f, "frame {frame}: {source}"),
             Self::Publication(source) => write!(f, "cannot publish periodic coordinates: {source}"),
@@ -431,9 +435,10 @@ fn geometry_error(error: kekule::geometry::PeriodicGeometryError, frame: usize) 
         kekule::geometry::PeriodicGeometryError::NumericalFailure => {
             PeriodicError::NumericalFailure { frame }
         }
-        kekule::geometry::PeriodicGeometryError::ImageSearchLimit => {
-            PeriodicError::ImageSearchLimit { frame }
+        kekule::geometry::PeriodicGeometryError::LimitExceeded(limit) => {
+            PeriodicError::LimitExceeded { frame, limit }
         }
+        _ => PeriodicError::NumericalFailure { frame },
     }
 }
 fn checked_image(value: f64, frame: usize) -> Result<f64, PeriodicError> {
@@ -539,7 +544,8 @@ mod tests {
         let lattice = Lattice::new(Some(cell), 7).unwrap();
         assert!(matches!(
             lattice.nearest_image(Vector3::new(0.49, 0.49, 0.0)),
-            Err(PeriodicError::ImageSearchLimit { frame: 7 })
+            Err(PeriodicError::LimitExceeded { frame: 7, limit })
+                if limit.resource() == kekule::diagnostics::Resource::LatticeImages
         ));
         assert!(matches!(
             lattice.nearest_image(Vector3::new(1.0e100, 0.0, 0.0)),

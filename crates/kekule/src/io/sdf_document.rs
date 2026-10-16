@@ -1,7 +1,9 @@
 use std::io::{BufReader, Read};
 use std::sync::Arc;
 
-use crate::diagnostics::{read_bounded, DiagnosticKind, Format, FormatError, SourceLocation};
+use crate::diagnostics::{
+    read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded, Resource, SourceLocation,
+};
 use crate::molecule::Molecule;
 use crate::structure::Model;
 use crate::topology::Topology;
@@ -26,13 +28,22 @@ pub struct SdfParseOptions {
     pub max_record_bytes: usize,
 }
 
+impl SdfParseOptions {
+    /// The [`Default`] bound of [`Self::max_input_bytes`].
+    pub const DEFAULT_MAX_INPUT_BYTES: usize = 256 * 1024 * 1024;
+    /// The [`Default`] bound of [`Self::max_records`].
+    pub const DEFAULT_MAX_RECORDS: usize = 1_000_000;
+    /// The [`Default`] bound of [`Self::max_record_bytes`].
+    pub const DEFAULT_MAX_RECORD_BYTES: usize = 64 * 1024 * 1024;
+}
+
 impl Default for SdfParseOptions {
     fn default() -> Self {
         Self {
             allow_missing_final_delimiter: false,
-            max_input_bytes: 256 * 1024 * 1024,
-            max_records: 1_000_000,
-            max_record_bytes: 64 * 1024 * 1024,
+            max_input_bytes: Self::DEFAULT_MAX_INPUT_BYTES,
+            max_records: Self::DEFAULT_MAX_RECORDS,
+            max_record_bytes: Self::DEFAULT_MAX_RECORD_BYTES,
         }
     }
 }
@@ -283,7 +294,12 @@ pub(crate) fn parse_sdf_document(
             DiagnosticKind::Limit,
             1,
             "input exceeds configured byte limit",
-        ));
+        )
+        .exceeding(LimitExceeded::new(
+            Resource::InputBytes,
+            options.max_input_bytes,
+            input.len(),
+        )));
     }
     let records = SdfRecords::new(input.as_bytes(), options).collect::<Result<_, _>>()?;
     Ok(SdfDocument { records })
@@ -340,11 +356,16 @@ impl<R: Read> SdfRecords<R> {
     fn finish(&mut self, first_line: usize) -> Result<usize, FormatError> {
         if self.records >= self.options.max_records {
             self.done = true;
-            return Err(self.record_error(
-                DiagnosticKind::Limit,
-                first_line,
-                "SDF record count exceeds configured limit",
-            ));
+            return Err(self
+                .record_error(
+                    DiagnosticKind::Limit,
+                    first_line,
+                    "SDF record count exceeds configured limit",
+                )
+                .exceeding(LimitExceeded::first_beyond(
+                    Resource::Records,
+                    self.options.max_records,
+                )));
         }
         self.records += 1;
         Ok(self.records)
@@ -418,11 +439,18 @@ impl<R: Read> Iterator for SdfRecords<R> {
             }
             bytes = bytes.saturating_add(self.line.len() + 1);
             if truncated || bytes > self.options.max_record_bytes {
-                failure = Some(self.record_error(
-                    DiagnosticKind::Limit,
-                    number,
-                    "SDF record exceeds configured byte limit",
-                ));
+                failure = Some(
+                    self.record_error(
+                        DiagnosticKind::Limit,
+                        number,
+                        "SDF record exceeds configured byte limit",
+                    )
+                    .exceeding(LimitExceeded::new(
+                        Resource::RecordBytes,
+                        self.options.max_record_bytes,
+                        bytes.max(self.options.max_record_bytes.saturating_add(1)),
+                    )),
+                );
                 continue;
             }
             match std::str::from_utf8(&self.line) {

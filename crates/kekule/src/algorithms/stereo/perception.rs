@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::borrow::Cow;
 use std::result::Result;
 
@@ -11,11 +12,18 @@ pub struct StereoSearchOptions {
     pub max_search_states: usize,
 }
 
+impl StereoSearchOptions {
+    /// The [`Default`] bound of [`Self::max_atoms`].
+    pub const DEFAULT_MAX_ATOMS: usize = 4_096;
+    /// The [`Default`] bound of [`Self::max_search_states`].
+    pub const DEFAULT_MAX_SEARCH_STATES: usize = 1_000_000;
+}
+
 impl Default for StereoSearchOptions {
     fn default() -> Self {
         Self {
-            max_atoms: 4096,
-            max_search_states: 1_000_000,
+            max_atoms: Self::DEFAULT_MAX_ATOMS,
+            max_search_states: Self::DEFAULT_MAX_SEARCH_STATES,
         }
     }
 }
@@ -26,11 +34,9 @@ pub enum StereoSearchError {
     InvalidOptions(&'static str),
     Perception(crate::chemistry::PerceptionError),
     InvalidStereo(StereoValidationError),
-    ResourceLimit {
-        resource: &'static str,
-        observed: usize,
-        limit: usize,
-    },
+    /// The search exceeded [`StereoSearchOptions::max_atoms`] or
+    /// [`StereoSearchOptions::max_search_states`].
+    LimitExceeded(LimitExceeded),
 }
 
 impl fmt::Display for StereoSearchError {
@@ -41,14 +47,7 @@ impl fmt::Display for StereoSearchError {
             }
             Self::Perception(error) => error.fmt(f),
             Self::InvalidStereo(error) => error.fmt(f),
-            Self::ResourceLimit {
-                resource,
-                observed,
-                limit,
-            } => write!(
-                f,
-                "stereo {resource} limit exceeded: observed {observed}, limit {limit}"
-            ),
+            Self::LimitExceeded(limit) => write!(f, "stereo search {limit}"),
         }
     }
 }
@@ -112,11 +111,11 @@ pub fn detect_stereo_candidates(
         return Err(StereoSearchError::InvalidOptions("limits must be positive"));
     }
     if mol.atom_count() > options.max_atoms {
-        return Err(StereoSearchError::ResourceLimit {
-            resource: "analysis atoms",
-            observed: mol.atom_count(),
-            limit: options.max_atoms,
-        });
+        return Err(StereoSearchError::LimitExceeded(LimitExceeded::new(
+            Resource::Atoms,
+            options.max_atoms,
+            mol.atom_count(),
+        )));
     }
     validate_stereo(mol).map_err(StereoSearchError::InvalidStereo)?;
     let perceived = prepared(mol)?;

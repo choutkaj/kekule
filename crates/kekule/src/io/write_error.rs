@@ -1,5 +1,5 @@
 //! Failures of the molecule-encoding writers (SMILES and Molfile CTABs).
-use crate::diagnostics::{DiagnosticKind, Format, FormatError};
+use crate::diagnostics::{DiagnosticKind, Format, FormatError, LimitExceeded};
 
 /// Constructors of write-stage [`FormatError`]s for one format, following the
 /// writer failure taxonomy: cannot encode, missing perception, limit,
@@ -22,9 +22,11 @@ impl WriteErrors {
         FormatError::write(self.0, DiagnosticKind::MissingPerception, message)
     }
 
-    /// A bounded writer calculation could not complete within its work limit.
-    pub(crate) fn resource_limit(self, message: impl Into<String>) -> FormatError {
-        FormatError::write(self.0, DiagnosticKind::Limit, message)
+    /// A bounded writer calculation, described by `what`, could not complete
+    /// within `limit`.
+    pub(crate) fn resource_limit(self, what: &str, limit: LimitExceeded) -> FormatError {
+        FormatError::write(self.0, DiagnosticKind::Limit, format!("{what} {limit}"))
+            .exceeding(limit)
     }
 
     /// The source is internally inconsistent or incomplete, for example a

@@ -3,6 +3,7 @@ mod neighbors;
 mod packing;
 pub use boxes::{add_periodic_box, BoxShape, PeriodicBoxError, PeriodicBoxOptions};
 
+use crate::diagnostics::{LimitExceeded, Resource};
 use crate::structure::{Model, ModelBuildError, PositionError};
 use crate::{
     geometry::{PeriodicGeometryError, Point3},
@@ -103,6 +104,11 @@ pub struct SolventOptions {
     /// Bound on tiled candidate waters examined, before cropping and clash removal.
     pub max_candidates: usize,
 }
+impl SolventOptions {
+    /// The [`Default`] bound of [`Self::max_candidates`].
+    pub const DEFAULT_MAX_CANDIDATES: usize = 10_000_000;
+}
+
 impl Default for SolventOptions {
     fn default() -> Self {
         Self {
@@ -115,7 +121,7 @@ impl Default for SolventOptions {
             ion_separation: Quantity::new(0.5, NANOMETER),
             solute_radii: None,
             net_charge: None,
-            max_candidates: 10_000_000,
+            max_candidates: Self::DEFAULT_MAX_CANDIDATES,
         }
     }
 }
@@ -150,10 +156,15 @@ pub enum SolvationError {
     MissingElementRadius(InstanceAtomId),
     InvalidIonicStrength,
     InvalidIonSeparation,
-    CandidateLimit,
+    /// Tiling would examine more candidate waters than
+    /// [`SolventOptions::max_candidates`] allows.
+    LimitExceeded(LimitExceeded),
     CapacityOverflow,
     NoSolventSpace,
-    InsufficientIonSites { requested: usize, placed: usize },
+    InsufficientIonSites {
+        requested: usize,
+        placed: usize,
+    },
     Unit(UnitError),
     Geometry(PeriodicGeometryError),
     Position(PositionError),
@@ -179,9 +190,7 @@ impl fmt::Display for SolvationError {
                 f.write_str("ionic strength must be finite and nonnegative")
             }
             Self::InvalidIonSeparation => f.write_str("ion separation must be finite and positive"),
-            Self::CandidateLimit => {
-                f.write_str("solvent tiling exceeds the configured candidate limit")
-            }
+            Self::LimitExceeded(limit) => write!(f, "solvent tiling {limit}"),
             Self::CapacityOverflow => f.write_str("solvation count or allocation exceeds capacity"),
             Self::NoSolventSpace => f.write_str("no nonclashing water sites fit in this cell"),
             Self::InsufficientIonSites { requested, placed } => write!(

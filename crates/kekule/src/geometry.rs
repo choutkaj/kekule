@@ -2,7 +2,7 @@
 //! trajectory, and modelling code.
 
 mod periodic;
-pub use periodic::{PeriodicGeometry, PeriodicGeometryError};
+pub use periodic::{PeriodicGeometry, PeriodicGeometryError, MAX_LATTICE_IMAGES};
 
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
