@@ -66,12 +66,12 @@
 //! | Construct or edit one connected molecule | [`molecule::MoleculeEditor`] | `finish()` |
 //! | Assemble complete molecules and reusable instances | [`topology::TopologyBuilder`] | `build()` |
 //! | Assemble a system with explicit geometry | [`structure::ModelBuilder`] | `build()` |
-//! | Edit system atoms, bonds, components, and hierarchy | [`topology::TopologyEditor`] | `finish()` |
+//! | Edit system atoms, bonds, components, and hierarchy | [`topology::edit::TopologyEditor`] | `finish()` |
 //! | Edit a system together with its coordinates | [`structure::ModelEditor`] | `finish()` |
 //! | Change geometry or structure annotations | [`structure::Model`] setters | Immediate checked update |
 //!
 //! Builders and editors offer non-consuming `validate()` and recoverable
-//! `try_build()` / `try_finish()`. Use `edit()` for a detached draft or
+//! `try_build()` / `try_finish()`. Use `to_editor()` for a detached draft or
 //! `into_editor()` to move an owner into one. System editors resolve source IDs
 //! to stable draft-only editing handles and publish completed values through
 //! `finish()`. A bond deletion can split a system molecule;
@@ -130,6 +130,7 @@ mod io;
 pub mod molecule;
 pub mod properties;
 pub mod query;
+pub mod solvation;
 pub mod structure;
 pub mod topology;
 pub mod units;
@@ -473,6 +474,19 @@ pub mod smiles {
             .write_all(line.as_bytes())
             .map_err(MoleculeWriteError::io)
     }
+}
+
+/// SMARTS parsing into syntax-independent substructure queries.
+///
+/// [`smarts::parse_str`] returns a [`query::QueryGraph`], the canonical query
+/// representation that [`substructure`] matching consumes. Parsing a query and
+/// matching it are separate operations; matching does not perceive the target
+/// implicitly. The dialect, including its explicit exclusions, is documented on
+/// [`query`].
+pub mod smarts {
+    pub use crate::query::smarts::{
+        parse_str, SmartsParseError, SmartsParseErrorKind, SmartsParseOptions,
+    };
 }
 
 /// Molfile parsing, interpretation, and V2000/V3000 writing.
@@ -1090,53 +1104,6 @@ pub mod stereo {
             cleanup_stereo, detect_stereo_candidates, detect_stereo_candidates_with_options,
             StereoCandidate, StereoCleanupReport,
         };
-    }
-}
-
-/// Canonical atom ranking for represented molecular graphs.
-///
-/// Ranking is a graph-derived result and does not reorder or mutate a molecule.
-pub mod canon {
-    pub use crate::algorithms::CanonicalAtomRanking;
-
-    use crate::molecule::Molecule;
-
-    /// Computes deterministic canonical equivalence classes without mutation.
-    ///
-    /// Hydrogen comparison uses declared counts plus installed implicit counts;
-    /// equal totals are equivalent regardless of how the counts are stored.
-    /// Run valence perception first to include inferred hydrogens. Without it,
-    /// only declared hydrogens contribute. Source declarations remain unchanged.
-    pub fn atom_ranking(molecule: &Molecule) -> CanonicalAtomRanking {
-        crate::algorithms::canonical_atom_ranking(molecule)
-    }
-}
-
-/// Read-only rotatable-bond detection.
-///
-/// This facade identifies configurable represented single-bond axes in
-/// canonical chemistry. It does not mutate the molecule or install perception
-/// state.
-pub mod rotatable_bonds {
-    pub use crate::algorithms::{RotatableBondOptions, RotatableBondSet};
-
-    use crate::chemistry::PerceptionError;
-    use crate::molecule::Molecule;
-
-    /// Detects rotatable bonds using the supplied options.
-    ///
-    /// Resonance exclusions reuse installed RDKit-like valence and aromaticity
-    /// with the default Figueras ring model, or compute the default profile on
-    /// a temporary copy. Strict valence validation applies in either case.
-    /// Model-neutral, incomplete, or incompatible perception is not reused.
-    /// Valence and resource failures are returned without changing the source
-    /// graph or its perception. Disabling resonance exclusions requires only
-    /// graph ring membership and does not run chemical perception.
-    pub fn detect(
-        molecule: &Molecule,
-        options: RotatableBondOptions,
-    ) -> Result<RotatableBondSet, PerceptionError> {
-        crate::algorithms::detect_rotatable_bonds(molecule, options)
     }
 }
 

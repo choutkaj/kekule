@@ -1,9 +1,5 @@
 use crate::{parameters::*, Error, ErrorKind, ModelIdentity, Result};
-use kekule::{
-    query::{parse_smarts, QueryGraph},
-    substructure::TaggedQuery,
-    units::*,
-};
+use kekule::{query::QueryGraph, smarts, substructure::TaggedQuery, units::*};
 use roxmltree::Node;
 use std::{collections::BTreeSet, path::Path};
 
@@ -551,7 +547,8 @@ impl ForceField {
             )?);
         }
         for n in optional_children(sections.library, "LibraryCharge")? {
-            let query = parse_smarts(attr(n, "smirks")?).map_err(invalid)?;
+            let query =
+                smarts::parse_str(attr(n, "smirks")?, Default::default()).map_err(invalid)?;
             let size = TaggedQuery::new(&query).map_err(invalid)?.tags().len();
             if size == 0
                 || n.attributes()
@@ -782,7 +779,7 @@ fn identity(n: Node<'_, '_>) -> Result<ParameterIdentity> {
     })
 }
 fn rule<P>(n: Node<'_, '_>, size: usize, parameter: P) -> Result<Rule<P>> {
-    let query = parse_smarts(attr(n, "smirks")?).map_err(invalid)?;
+    let query = smarts::parse_str(attr(n, "smirks")?, Default::default()).map_err(invalid)?;
     let tagged = TaggedQuery::new(&query).map_err(invalid)?;
     if tagged.tags().iter().map(|(t, _)| *t).ne(1..=size as u32) {
         return Err(error("SMIRKS tags must be exactly 1..N"));

@@ -5,7 +5,7 @@ use kekule::{
         rings::{RingBasisModel, RingBasisState},
         Perception,
     },
-    query::*,
+    smarts::{self, SmartsParseErrorKind, SmartsParseOptions},
     smiles,
     substructure::*,
     topology::Topology,
@@ -18,7 +18,7 @@ fn connected_query_extensions_scale_with_local_adjacency() {
     // Visiting length-three windows must not retry every remote atom at each
     // extension. This bounded test used to exhaust its search-state budget.
     let m = smiles::to_molecules(&"C".repeat(1500)).unwrap().remove(0);
-    let q = parse_smarts("[#6:1]~[#6:2]~[#6:3]").unwrap();
+    let q = smarts::parse_str("[#6:1]~[#6:2]~[#6:3]", Default::default()).unwrap();
     let matches = find_matches_with_options(
         &m,
         &q,
@@ -58,7 +58,7 @@ fn options() -> SubstructureMatchOptions {
 fn count(source: &str, pattern: &str) -> usize {
     find_matches_with_options(
         &molecule(source),
-        &parse_smarts(pattern).unwrap(),
+        &smarts::parse_str(pattern, Default::default()).unwrap(),
         options(),
     )
     .unwrap()
@@ -117,9 +117,13 @@ fn hydrogen_valence_and_ring_primitives_are_distinct() {
     m.perceive().unwrap();
     for (q, n) in [("[h0]", 5), ("[H4]", 1), ("[H:1]", 4), ("[v4]", 1)] {
         assert_eq!(
-            find_matches_with_options(&m, &parse_smarts(q).unwrap(), options())
-                .unwrap()
-                .len(),
+            find_matches_with_options(
+                &m,
+                &smarts::parse_str(q, Default::default()).unwrap(),
+                options()
+            )
+            .unwrap()
+            .len(),
             n,
             "{q}"
         );
@@ -129,7 +133,7 @@ fn hydrogen_valence_and_ring_primitives_are_distinct() {
 #[test]
 fn tags_are_outputs_and_do_not_match_target_map_values() {
     let m = molecule("[CH3:99][OH:88]");
-    let q = parse_smarts("[#6:20]-[#8:3]").unwrap();
+    let q = smarts::parse_str("[#6:20]-[#8:3]", Default::default()).unwrap();
     let tagged = TaggedQuery::new(&q).unwrap();
     assert_eq!(
         tagged.tags().iter().map(|(t, _)| *t).collect::<Vec<_>>(),
@@ -145,11 +149,11 @@ fn tags_are_outputs_and_do_not_match_target_map_values() {
         ("CC", TaggedMatchError::MissingTags),
     ] {
         assert_eq!(
-            TaggedQuery::new(&parse_smarts(source).unwrap()).unwrap_err(),
+            TaggedQuery::new(&smarts::parse_str(source, Default::default()).unwrap()).unwrap_err(),
             error
         );
     }
-    let q = parse_smarts("[$([C:9]):1]").unwrap();
+    let q = smarts::parse_str("[$([C:9]):1]", Default::default()).unwrap();
     assert_eq!(TaggedQuery::new(&q).unwrap().tags().len(), 1);
 }
 
@@ -157,7 +161,7 @@ fn tags_are_outputs_and_do_not_match_target_map_values() {
 fn tagged_automorphisms_preserve_roles_but_can_deduplicate_context() {
     let m = molecule("CCC");
     let p = PreparedTarget::new(&m);
-    let q = parse_smarts("[C:1][C:2]").unwrap();
+    let q = smarts::parse_str("[C:1][C:2]", Default::default()).unwrap();
     assert_eq!(
         TaggedQuery::new(&q)
             .unwrap()
@@ -166,7 +170,7 @@ fn tagged_automorphisms_preserve_roles_but_can_deduplicate_context() {
             .len(),
         4
     );
-    let q = parse_smarts("[C:1](C)C").unwrap();
+    let q = smarts::parse_str("[C:1](C)C", Default::default()).unwrap();
     let tagged = TaggedQuery::new(&q).unwrap();
     assert_eq!(tagged.find_matches(&p, options(), false).unwrap().len(), 2);
     assert_eq!(tagged.find_matches(&p, options(), true).unwrap().len(), 1);
@@ -175,7 +179,7 @@ fn tagged_automorphisms_preserve_roles_but_can_deduplicate_context() {
 #[test]
 fn complete_enumeration_never_silently_truncates() {
     let m = molecule(&"C".repeat(34));
-    let q = parse_smarts("[#6].[#6]").unwrap();
+    let q = smarts::parse_str("[#6].[#6]", Default::default()).unwrap();
     assert_eq!(
         find_matches_with_options(&m, &q, options()).unwrap().len(),
         34 * 33
@@ -235,7 +239,7 @@ fn complete_enumeration_never_silently_truncates() {
 
 #[test]
 fn recursive_limits_errors_and_prerequisites_survive_negation() {
-    let q = parse_smarts("[!$([H3])]").unwrap();
+    let q = smarts::parse_str("[!$([H3])]", Default::default()).unwrap();
     let unperceived = smiles::to_molecules("CC").unwrap().pop().unwrap();
     assert!(matches!(
         find_match(&unperceived, &q),
@@ -285,14 +289,14 @@ fn recursive_limits_errors_and_prerequisites_survive_negation() {
         ),
     ] {
         assert_eq!(
-            parse_smarts_with_options(source, opts).unwrap_err().kind(),
+            smarts::parse_str(source, opts).unwrap_err().kind(),
             SmartsParseErrorKind::ResourceLimit
         );
     }
     for source in [
         "[$()]", "[$([C)]", "[$(C)", "[C:]", "[C:1:2]", "C-,C", "C;&C",
     ] {
-        let e = parse_smarts(source).unwrap_err();
+        let e = smarts::parse_str(source, Default::default()).unwrap_err();
         assert!(
             e.span().start <= e.span().end && e.span().end <= source.len(),
             "{source}: {e}"
@@ -305,7 +309,7 @@ fn topology_disconnected_queries_keep_occurrences_and_snapshot() {
     let molecules = vec![molecule("CC"), molecule("C")];
     let topology = Arc::new(Topology::from_molecules(molecules.clone()).unwrap());
     let prepared = PreparedTopologyTarget::new(&topology);
-    let q = parse_smarts("[#6:1].[#6:2]").unwrap();
+    let q = smarts::parse_str("[#6:1].[#6:2]", Default::default()).unwrap();
     let matches = prepared.find_matches_with_options(&q, options()).unwrap();
     assert_eq!(matches.len(), 6);
     assert!(matches.iter().all(|m| Arc::ptr_eq(m.topology(), &topology)));
@@ -316,7 +320,7 @@ fn topology_disconnected_queries_keep_occurrences_and_snapshot() {
             .count(),
         4
     );
-    let q = parse_smarts("[#6]-[#6]").unwrap();
+    let q = smarts::parse_str("[#6]-[#6]", Default::default()).unwrap();
     assert_eq!(
         prepared
             .find_matches_with_options(&q, options())
@@ -356,9 +360,13 @@ fn mdl_aromaticity_is_explicit_and_does_not_rewrite_chemistry() {
             Some(AromaticityModel::Mdl)
         );
         assert_eq!(
-            find_matches_with_options(&m, &parse_smarts("[a]").unwrap(), options())
-                .unwrap()
-                .len(),
+            find_matches_with_options(
+                &m,
+                &smarts::parse_str("[a]", Default::default()).unwrap(),
+                options()
+            )
+            .unwrap()
+            .len(),
             expected,
             "{source}"
         );
@@ -378,7 +386,7 @@ fn incompatible_ring_models_fail_and_mdl_failure_is_transactional() {
         m.install_perception(state).unwrap();
         let before = m.perception().clone();
         assert!(matches!(
-            find_match(&m, &parse_smarts("[R1]").unwrap()),
+            find_match(&m, &smarts::parse_str("[R1]", Default::default()).unwrap()),
             Err(SubstructureMatchError::IncompatiblePerception(
                 QueryPerception::RingBasis
             ))
@@ -386,9 +394,13 @@ fn incompatible_ring_models_fail_and_mdl_failure_is_transactional() {
         assert!(aromaticity::perceive_aromaticity(&mut m, AromaticityModel::Mdl).is_err());
         assert_eq!(m.perception(), &before);
         assert_eq!(
-            find_matches_with_options(&m, &parse_smarts("[R]").unwrap(), options())
-                .unwrap()
-                .len(),
+            find_matches_with_options(
+                &m,
+                &smarts::parse_str("[R]", Default::default()).unwrap(),
+                options()
+            )
+            .unwrap()
+            .len(),
             3
         );
     }
@@ -404,7 +416,7 @@ fn topology_reuses_connected_matches_and_shares_budgets() {
         builder.add_instance(definition).unwrap();
     }
     let topology = Arc::new(builder.build().unwrap());
-    let query = parse_smarts("[#6:1]-[#6:2]").unwrap();
+    let query = smarts::parse_str("[#6:1]-[#6:2]", Default::default()).unwrap();
     let small_budget = SubstructureMatchOptions {
         max_candidate_pairs: 4,
         max_search_states: 20,
@@ -436,7 +448,7 @@ fn topology_reuses_connected_matches_and_shares_budgets() {
 fn recursive_disconnected_environment_can_span_topology_instances() {
     let topology =
         Arc::new(Topology::from_molecules([molecule("C"), molecule("C")].clone()).unwrap());
-    let query = parse_smarts("[$(C.C)]").unwrap();
+    let query = smarts::parse_str("[$(C.C)]", Default::default()).unwrap();
     assert_eq!(
         find_topology_matches_with_options(&topology, &query, options())
             .unwrap()
@@ -458,7 +470,7 @@ fn directional_alternatives_keep_boolean_context() {
 
 #[test]
 fn prepared_results_follow_identity_after_source_atom_reordering() {
-    let q = parse_smarts("[#6:1]-[#8:2]").unwrap();
+    let q = smarts::parse_str("[#6:1]-[#8:2]", Default::default()).unwrap();
     let tagged = TaggedQuery::new(&q).unwrap();
     for source in ["[CH3:4][CH2:5][OH:6]", "[OH:6][CH2:5][CH3:4]"] {
         let m = molecule(source);
@@ -483,7 +495,7 @@ fn prepared_results_follow_identity_after_source_atom_reordering() {
 #[test]
 fn graph_complexity_exhaustion_remains_a_resource_error() {
     let input = "*".repeat(4097);
-    let error = parse_smarts_with_options(
+    let error = smarts::parse_str(
         &input,
         SmartsParseOptions {
             max_atoms: 5000,

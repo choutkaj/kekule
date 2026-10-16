@@ -2,10 +2,11 @@ use kekule::{
     geometry::{PeriodicCell, PeriodicGeometry, PeriodicGeometryError, Point3, Vector3},
     molecule::{Element, VanDerWaalsRadiusSource},
     properties::{PropertyKey, PropertyValue},
-    structure::{
-        BoxShape, Model, NegativeIon, PeriodicBoxError, PeriodicBoxOptions, Positions, PositiveIon,
+    solvation::{
+        self, BoxShape, NegativeIon, PeriodicBoxError, PeriodicBoxOptions, PositiveIon,
         SolvationChargeBasis, SolvationError, SolvationRadii, SolventOptions,
     },
+    structure::{Model, Positions},
     topology::{AtomSiteMetadata, MoleculeClass, ResidueClass},
     units::{Quantity, ANGSTROM, METER, MOLAR, MOLE, NANOMETER},
 };
@@ -17,10 +18,10 @@ fn model(smiles: &str) -> Model {
 }
 fn boxed(smiles: &str) -> Model {
     let mut m = model(smiles);
-    m.add_periodic_box(&PeriodicBoxOptions::Dimensions(Quantity::new(
-        Vector3::new(3.0, 3.0, 3.0),
-        NANOMETER,
-    )))
+    solvation::add_periodic_box(
+        &mut m,
+        &PeriodicBoxOptions::Dimensions(Quantity::new(Vector3::new(3.0, 3.0, 3.0), NANOMETER)),
+    )
     .unwrap();
     m
 }
@@ -59,10 +60,13 @@ fn box_shapes_units_padding_and_snapshot_identity() {
         (BoxShape::Dodecahedron, 2.0_f64.sqrt() / 2.0),
         (BoxShape::Octahedron, 4.0 / (3.0 * 3.0_f64.sqrt())),
     ] {
-        m.add_periodic_box(&PeriodicBoxOptions::Padding {
-            padding: Quantity::new(10.0, ANGSTROM),
-            shape,
-        })
+        solvation::add_periodic_box(
+            &mut m,
+            &PeriodicBoxOptions::Padding {
+                padding: Quantity::new(10.0, ANGSTROM),
+                shape,
+            },
+        )
         .unwrap();
         assert!((m.cell().unwrap().signed_volume() - 27.0 * ratio).abs() < 1e-12);
         assert_eq!(m.positions(), source.positions());
@@ -71,12 +75,14 @@ fn box_shapes_units_padding_and_snapshot_identity() {
         assert!((geometry.shortest_translation().unwrap().norm() - 3.0).abs() < 1e-12);
     }
     let mut single = model("[Na+]");
-    single
-        .add_periodic_box(&PeriodicBoxOptions::Padding {
+    solvation::add_periodic_box(
+        &mut single,
+        &PeriodicBoxOptions::Padding {
             padding: Quantity::new(1.0, NANOMETER),
             shape: BoxShape::Cube,
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     assert_eq!(single.cell().unwrap().signed_volume(), 8.0);
     let cell = PeriodicCell::new(
         Quantity::new(
@@ -90,12 +96,12 @@ fn box_shapes_units_padding_and_snapshot_identity() {
         [true; 3],
     )
     .unwrap();
-    m.add_periodic_box(&PeriodicBoxOptions::Cell(cell)).unwrap();
+    solvation::add_periodic_box(&mut m, &PeriodicBoxOptions::Cell(cell)).unwrap();
     assert_eq!(m.cell(), Some(&cell));
-    m.add_periodic_box(&PeriodicBoxOptions::Dimensions(Quantity::new(
-        Vector3::new(20.0, 30.0, 40.0),
-        ANGSTROM,
-    )))
+    solvation::add_periodic_box(
+        &mut m,
+        &PeriodicBoxOptions::Dimensions(Quantity::new(Vector3::new(20.0, 30.0, 40.0), ANGSTROM)),
+    )
     .unwrap();
     assert!((m.cell().unwrap().signed_volume() - 24.0).abs() < 1e-12);
 }
@@ -104,33 +110,36 @@ fn invalid_box_inputs_are_atomic() {
     let mut m = boxed("C");
     let before = m.clone();
     for padding in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-        assert!(m
-            .add_periodic_box(&PeriodicBoxOptions::Padding {
+        assert!(solvation::add_periodic_box(
+            &mut m,
+            &PeriodicBoxOptions::Padding {
                 padding: Quantity::new(padding, NANOMETER),
                 shape: BoxShape::Cube
-            })
-            .is_err());
+            }
+        )
+        .is_err());
         assert_eq!(m, before);
     }
-    assert!(m
-        .add_periodic_box(&PeriodicBoxOptions::Padding {
+    assert!(solvation::add_periodic_box(
+        &mut m,
+        &PeriodicBoxOptions::Padding {
             padding: Quantity::new(1.0, MOLAR),
             shape: BoxShape::Cube
-        })
-        .is_err());
-    assert!(m
-        .add_periodic_box(&PeriodicBoxOptions::Dimensions(Quantity::new(
-            Vector3::new(0.0, 1.0, 1.0),
-            NANOMETER
-        )))
-        .is_err());
+        }
+    )
+    .is_err());
+    assert!(solvation::add_periodic_box(
+        &mut m,
+        &PeriodicBoxOptions::Dimensions(Quantity::new(Vector3::new(0.0, 1.0, 1.0), NANOMETER))
+    )
+    .is_err());
     let cell = PeriodicCell::orthorhombic(
         Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
         [true, false, true],
     )
     .unwrap();
     assert!(matches!(
-        m.add_periodic_box(&PeriodicBoxOptions::Cell(cell)),
+        solvation::add_periodic_box(&mut m, &PeriodicBoxOptions::Cell(cell)),
         Err(PeriodicBoxError::NotFullyPeriodic)
     ));
     assert_eq!(m, before);
@@ -146,13 +155,16 @@ fn waters_are_whole_shared_classified_and_periodically_nonclashing() {
     let water_radius = 0.315_075_240_657_512_4 * 0.5612310241546865;
     for shape in [BoxShape::Cube, BoxShape::Dodecahedron, BoxShape::Octahedron] {
         let mut m = model("C");
-        m.add_periodic_box(&PeriodicBoxOptions::Padding {
-            padding: Quantity::new(1.0, NANOMETER),
-            shape,
-        })
+        solvation::add_periodic_box(
+            &mut m,
+            &PeriodicBoxOptions::Padding {
+                padding: Quantity::new(1.0, NANOMETER),
+                shape,
+            },
+        )
         .unwrap();
         let old = m.clone();
-        let report = m.add_solvent(&options()).unwrap();
+        let report = solvation::solvate(&mut m, &options()).unwrap();
         assert!(report.waters_added > 100);
         assert_eq!(m.atom_count(), 1 + 3 * report.waters_added);
         assert_eq!(m.topology().bond_count(), 2 * report.waters_added);
@@ -205,15 +217,17 @@ fn charge_salt_rounding_and_seeded_ion_placement() {
     for (source, charge) in [("[Na+]", 1_i64), ("[Cl-]", -1), ("[Mg+2]", 2), ("C", 0)] {
         let initial = boxed(source);
         let mut water_only = initial.clone();
-        let nw = water_only.add_solvent(&options()).unwrap().waters_added;
+        let nw = solvation::solvate(&mut water_only, &options())
+            .unwrap()
+            .waters_added;
         let opts = SolventOptions {
             ionic_strength: Quantity::new(0.2, MOLAR),
             ..Default::default()
         };
         let mut a = initial.clone();
         let mut b = initial.clone();
-        let report = a.add_solvent(&opts).unwrap();
-        assert_eq!(b.add_solvent(&opts).unwrap(), report);
+        let report = solvation::solvate(&mut a, &opts).unwrap();
+        assert_eq!(solvation::solvate(&mut b, &opts).unwrap(), report);
         assert_eq!(a.positions(), b.positions());
         let pairs =
             (((nw - charge.unsigned_abs() as usize) as f64 * 0.2 / 55.4) + 0.5).floor() as usize;
@@ -250,9 +264,7 @@ fn charge_salt_rounding_and_seeded_ion_placement() {
             }
         }
         let mut changed = initial;
-        changed
-            .add_solvent(&SolventOptions { seed: 42, ..opts })
-            .unwrap();
+        solvation::solvate(&mut changed, &SolventOptions { seed: 42, ..opts }).unwrap();
         assert_ne!(changed.positions(), a.positions());
     }
 }
@@ -267,10 +279,13 @@ fn overrides_validate_topology_units_charge_and_ion_species() {
         SolvationRadii::new(other.shared_topology(), Quantity::new(vec![0.2], NANOMETER)).unwrap();
     let before = m.clone();
     assert!(matches!(
-        m.add_solvent(&SolventOptions {
-            solute_radii: Some(wrong),
-            ..Default::default()
-        }),
+        solvation::solvate(
+            &mut m,
+            &SolventOptions {
+                solute_radii: Some(wrong),
+                ..Default::default()
+            }
+        ),
         Err(SolvationError::RadiusTopologyMismatch)
     ));
     assert_eq!(m, before);
@@ -288,16 +303,18 @@ fn overrides_validate_topology_units_charge_and_ion_species() {
         (PositiveIon::Cesium, NegativeIon::Chloride),
     ] {
         let mut m = before.clone();
-        let report = m
-            .add_solvent(&SolventOptions {
+        let report = solvation::solvate(
+            &mut m,
+            &SolventOptions {
                 solute_radii: Some(radii.clone()),
                 net_charge: Some(-2),
                 positive_ion: pos,
                 negative_ion: neg,
                 ionic_strength: Quantity::new(0.1, MOLAR),
                 ..Default::default()
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         assert_eq!(report.positive_ions_added, report.negative_ions_added + 2);
         assert_eq!(report.charge_basis, SolvationChargeBasis::Override);
         assert_eq!(m.topology().atoms().next().unwrap().formal_charge, 0);
@@ -317,7 +334,7 @@ fn errors_leave_every_part_of_model_unchanged() {
     let mut no_cell = model("C");
     let before = no_cell.clone();
     assert!(matches!(
-        no_cell.add_solvent(&options()),
+        solvation::solvate(&mut no_cell, &options()),
         Err(SolvationError::MissingCell)
     ));
     assert_eq!(no_cell, before);
@@ -359,7 +376,7 @@ fn errors_leave_every_part_of_model_unchanged() {
         },
     ];
     for opts in bad {
-        assert!(m.add_solvent(&opts).is_err());
+        assert!(solvation::solvate(&mut m, &opts).is_err());
         assert_eq!(m, before);
     }
     m.set_cell(Some(
@@ -371,7 +388,7 @@ fn errors_leave_every_part_of_model_unchanged() {
     ));
     let before = m.clone();
     assert!(matches!(
-        m.add_solvent(&options()),
+        solvation::solvate(&mut m, &options()),
         Err(SolvationError::NotFullyPeriodic)
     ));
     assert_eq!(m, before);
@@ -384,7 +401,7 @@ fn errors_leave_every_part_of_model_unchanged() {
     ));
     let before = m.clone();
     assert!(matches!(
-        m.add_solvent(&options()),
+        solvation::solvate(&mut m, &options()),
         Err(SolvationError::NoSolventSpace)
     ));
     assert_eq!(m, before);
@@ -428,13 +445,13 @@ fn original_entities_properties_and_existing_water_survive() {
         .atoms_mut()
         .set_value(key("atom_note"), row, Some(PropertyValue::Int(3)))
         .unwrap();
-    m.add_periodic_box(&PeriodicBoxOptions::Dimensions(Quantity::new(
-        Vector3::new(3.0, 3.0, 3.0),
-        NANOMETER,
-    )))
+    solvation::add_periodic_box(
+        &mut m,
+        &PeriodicBoxOptions::Dimensions(Quantity::new(Vector3::new(3.0, 3.0, 3.0), NANOMETER)),
+    )
     .unwrap();
     let before = m.clone();
-    let report = m.add_solvent(&options()).unwrap();
+    let report = solvation::solvate(&mut m, &options()).unwrap();
     assert_eq!(&m.topology().atom_ids()[..ids.len()], ids);
     assert_eq!(&points(&m)[..ids.len()], points(&before));
     assert_eq!(
@@ -474,12 +491,15 @@ fn externally_supplied_solute_and_increasing_boxes() {
     let mut previous = 0;
     for size in [3.0, 4.0, 6.0] {
         let mut m = solute.clone();
-        m.add_periodic_box(&PeriodicBoxOptions::Dimensions(Quantity::new(
-            Vector3::new(size, size, size),
-            NANOMETER,
-        )))
+        solvation::add_periodic_box(
+            &mut m,
+            &PeriodicBoxOptions::Dimensions(Quantity::new(
+                Vector3::new(size, size, size),
+                NANOMETER,
+            )),
+        )
         .unwrap();
-        let report = m.add_solvent(&options()).unwrap();
+        let report = solvation::solvate(&mut m, &options()).unwrap();
         assert!(report.waters_added > previous);
         let density = report.waters_added as f64 / size.powi(3);
         assert!((25.0..35.0).contains(&density), "density={density}");
@@ -508,8 +528,8 @@ fn rotated_skewed_and_left_handed_cells_fill_without_moving_solute() {
         m.set_atom_positions([(atom, Quantity::new(position, NANOMETER))])
             .unwrap();
         let cell = PeriodicCell::new(Quantity::new(vectors, NANOMETER), [true; 3]).unwrap();
-        m.add_periodic_box(&PeriodicBoxOptions::Cell(cell)).unwrap();
-        let report = m.add_solvent(&options()).unwrap();
+        solvation::add_periodic_box(&mut m, &PeriodicBoxOptions::Cell(cell)).unwrap();
+        let report = solvation::solvate(&mut m, &options()).unwrap();
         assert!(report.waters_added > 100);
         assert_eq!(m.position(atom).unwrap().into_value(), position);
         let geometry = PeriodicGeometry::new(cell).unwrap();
@@ -566,23 +586,29 @@ fn absent_elemental_radius_requires_an_explicit_override() {
     let mut m = boxed("[Lv]");
     let before = m.clone();
     assert!(matches!(
-        m.add_solvent(&options()),
+        solvation::solvate(&mut m, &options()),
         Err(SolvationError::MissingElementRadius(_))
     ));
     assert_eq!(m, before);
     let radii =
         SolvationRadii::new(m.shared_topology(), Quantity::new(vec![0.2], NANOMETER)).unwrap();
-    m.add_solvent(&SolventOptions {
-        solute_radii: Some(radii.clone()),
-        ..options()
-    })
+    solvation::solvate(
+        &mut m,
+        &SolventOptions {
+            solute_radii: Some(radii.clone()),
+            ..options()
+        },
+    )
     .unwrap();
     let after = m.clone();
     assert!(matches!(
-        m.add_solvent(&SolventOptions {
-            solute_radii: Some(radii),
-            ..options()
-        }),
+        solvation::solvate(
+            &mut m,
+            &SolventOptions {
+                solute_radii: Some(radii),
+                ..options()
+            }
+        ),
         Err(SolvationError::RadiusTopologyMismatch)
     ));
     assert_eq!(m, after);
@@ -592,15 +618,19 @@ fn absent_elemental_radius_requires_an_explicit_override() {
 fn all_candidate_waters_can_be_replaced_without_unused_definitions() {
     let initial = boxed("C");
     let mut water_only = initial.clone();
-    let count = water_only.add_solvent(&options()).unwrap().waters_added;
+    let count = solvation::solvate(&mut water_only, &options())
+        .unwrap()
+        .waters_added;
     let mut m = initial;
-    let report = m
-        .add_solvent(&SolventOptions {
+    let report = solvation::solvate(
+        &mut m,
+        &SolventOptions {
             net_charge: Some(count as i64),
             ion_separation: Quantity::new(0.01, NANOMETER),
             ..Default::default()
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     assert_eq!(report.waters_added, 0);
     assert_eq!(report.negative_ions_added, count);
     assert_eq!(m.topology().definition_count(), 2);
@@ -616,7 +646,7 @@ fn translation_that_loses_water_geometry_is_rejected_atomically() {
         .unwrap();
     let before = m.clone();
     assert!(matches!(
-        m.add_solvent(&options()),
+        solvation::solvate(&mut m, &options()),
         Err(SolvationError::Geometry(
             PeriodicGeometryError::NumericalFailure
         ))
@@ -628,34 +658,42 @@ fn translation_that_loses_water_geometry_is_rejected_atomically() {
 fn salt_rounds_half_up_and_molarity_accepts_composed_units() {
     let initial = boxed("C");
     let mut water_only = initial.clone();
-    let count = water_only.add_solvent(&options()).unwrap().waters_added;
+    let count = solvation::solvate(&mut water_only, &options())
+        .unwrap()
+        .waters_added;
     for (fraction, expected) in [(0.49, 0), (0.5, 1), (1.49, 1), (1.5, 2)] {
         let concentration = fraction * 55.4 / count as f64;
         let mut m = initial.clone();
-        let report = m
-            .add_solvent(&SolventOptions {
+        let report = solvation::solvate(
+            &mut m,
+            &SolventOptions {
                 ionic_strength: Quantity::new(concentration, MOLAR),
                 ..options()
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         assert_eq!(report.positive_ions_added, expected);
         assert_eq!(report.negative_ions_added, expected);
     }
     let composed = MOLE.try_div(METER.try_powi(3).unwrap()).unwrap();
     let mut a = initial.clone();
     let mut b = initial;
-    let a_report = a
-        .add_solvent(&SolventOptions {
+    let a_report = solvation::solvate(
+        &mut a,
+        &SolventOptions {
             ionic_strength: Quantity::new(150.0, composed),
             ..options()
-        })
-        .unwrap();
-    let b_report = b
-        .add_solvent(&SolventOptions {
+        },
+    )
+    .unwrap();
+    let b_report = solvation::solvate(
+        &mut b,
+        &SolventOptions {
             ionic_strength: Quantity::new(0.15, MOLAR),
             ..options()
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     assert_eq!(a_report, b_report);
     assert_eq!(a.positions(), b.positions());
 }

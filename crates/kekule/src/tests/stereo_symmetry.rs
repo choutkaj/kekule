@@ -51,7 +51,7 @@ fn nitrogen_cleanup_distinguishes_inverting_centers_from_unclassified_radicals()
         ("C[N@+]1CC1C", 0, 1),
     ] {
         let molecule = read_smiles(source).unwrap();
-        let mut editor = molecule.edit();
+        let mut editor = molecule.to_editor();
         let report = stereo_api::cleanup::cleanup_stereo(&mut editor, Default::default()).unwrap();
         assert_eq!(report.removed_elements.len(), removed, "{source}");
         assert_eq!(report.unclassified_elements.len(), unclassified, "{source}");
@@ -223,7 +223,7 @@ fn stereo_cleanup_is_explicit_transactional_and_preserves_surviving_groups() {
         .stereo_elements()
         .map(|(id, element)| (id, element.clone()))
         .collect();
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     for options in [
         stereo_api::StereoSearchOptions {
             max_atoms: 1,
@@ -282,7 +282,7 @@ fn stereo_cleanup_removes_assertions_on_perceived_aromatic_bonds() {
     let mut molecule = editor.finish().unwrap();
     molecule.perceive().unwrap();
     assert!(molecule.stereo_element(id).is_ok());
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     assert_eq!(
         stereo_api::cleanup::cleanup_stereo(&mut editor, Default::default())
             .unwrap()
@@ -297,7 +297,7 @@ fn stereo_cleanup_removes_assertions_on_perceived_aromatic_bonds() {
 fn stereo_cleanup_preserves_and_reports_unclassified_geometry() {
     let molecule = read_smiles("C([Sb@](F)Cl)([Sb@@](F)Cl)(Br)I").unwrap();
     let before = molecule.clone();
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     let result = stereo_api::cleanup::cleanup_stereo(&mut editor, Default::default()).unwrap();
     assert!(result.removed_elements.is_empty());
     assert_eq!(result.unclassified_elements.len(), 2);

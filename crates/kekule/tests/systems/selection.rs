@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use kekule::{
     molecule::BondOrder,
-    query::parse_smarts,
-    smiles,
+    smarts, smiles,
     substructure::{find_topology_matches_with_options, SubstructureMatchOptions},
     topology::{
         AtomSelection, BondSelection, BondSelectionMode, InstanceAtomId, InstanceBondId,
@@ -366,7 +365,7 @@ fn predicates_and_graph_expansion_respect_membership_and_instance_boundaries() {
 #[test]
 fn topology_query_match_conversion_checks_provenance_before_selecting() {
     let top = Arc::new(topology().perceived().unwrap());
-    let query = parse_smarts("[#6]=[#8]").unwrap();
+    let query = smarts::parse_str("[#6]=[#8]", Default::default()).unwrap();
     let matches =
         find_topology_matches_with_options(&top, &query, SubstructureMatchOptions::default())
             .unwrap();

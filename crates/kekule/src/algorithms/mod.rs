@@ -16,8 +16,7 @@ pub use aromaticity::{
     perceive_aromaticity, perceive_aromaticity_with_options,
     perceive_aromaticity_with_ring_options, AromaticityError, AromaticityOptions,
 };
-pub(crate) use canonical::canonical_atom_ranking;
-pub use canonical::CanonicalAtomRanking;
+pub use canonical::{canonical_atom_ranking, CanonicalAtomRanking};
 pub(crate) use cip::bond_reference_atoms;
 pub use cip::{
     assign_cip_descriptors, assign_cip_descriptors_with_options, CipAssignment, CipAssignmentError,
@@ -42,8 +41,7 @@ pub use rings::{
     perceive_ring_membership, perceive_ring_set, perceive_ring_set_with_options,
     RingPerceptionError, RingPerceptionOptions,
 };
-pub(crate) use rotatable_bonds::detect_rotatable_bonds;
-pub use rotatable_bonds::{RotatableBondOptions, RotatableBondSet};
+pub use rotatable_bonds::{rotatable_bonds, RotatableBondOptions, RotatableBondSet};
 pub(crate) use stereo::{
     atom_axis_carriers, atom_hydrogen_count, atom_is_atropisomeric_sp2_endpoint,
     coordinates_are_planar, coordinates_contradict, double_bond_endpoint_carriers,

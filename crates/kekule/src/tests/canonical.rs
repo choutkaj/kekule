@@ -5,7 +5,7 @@ fn canonical_ranking_groups_symmetric_atoms() {
     let mut molecule = read_smiles("CC(C)C").expect("isobutane parses");
     perceive(&mut molecule).expect("isobutane perceives");
 
-    let ranking = canon::atom_ranking(&molecule);
+    let ranking = descriptors::canonical_atom_ranking(&molecule);
 
     assert_eq!(ranking.rank_count(), 2);
     assert_eq!(
@@ -48,8 +48,8 @@ fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
         .expect("bond should be valid");
     perceive(second.working_mut()).expect("propane perceives");
 
-    let first_ranking = canon::atom_ranking(first.working());
-    let second_ranking = canon::atom_ranking(second.working());
+    let first_ranking = descriptors::canonical_atom_ranking(first.working());
+    let second_ranking = descriptors::canonical_atom_ranking(second.working());
 
     assert_eq!(
         first_ranking.rank_of(first_center),
@@ -70,7 +70,7 @@ fn canonical_ranking_uses_isotope_hydrogens_and_atom_maps() {
     let mut molecule = read_smiles("[13CH3:7][CH3]").expect("mapped isotope molecule parses");
     perceive(&mut molecule).expect("mapped isotope molecule perceives");
 
-    let ranking = canon::atom_ranking(&molecule);
+    let ranking = descriptors::canonical_atom_ranking(&molecule);
 
     assert_ne!(
         ranking.rank_of(AtomId::new(0)),
@@ -89,14 +89,14 @@ fn canonical_ranking_uses_current_hydrogen_counts_without_changing_declarations(
         .add_bond(fixed, inferred, BondOrder::Single)
         .expect("bond");
     let mut molecule = builder.finish().expect("connected graph");
-    let unperceived = canon::atom_ranking(&molecule);
+    let unperceived = descriptors::canonical_atom_ranking(&molecule);
     assert_ne!(unperceived.rank_of(fixed), unperceived.rank_of(inferred));
     perceive(&mut molecule).expect("ethane-like graph perceives");
 
     assert_eq!(molecule.perception().inferred_hydrogens(fixed), Some(0));
     assert_eq!(molecule.perception().inferred_hydrogens(inferred), Some(3));
     let before = molecule.clone();
-    let ranking = canon::atom_ranking(&molecule);
+    let ranking = descriptors::canonical_atom_ranking(&molecule);
     assert_eq!(ranking.rank_of(fixed), ranking.rank_of(inferred));
     assert_eq!(molecule, before);
     assert_eq!(
@@ -112,15 +112,15 @@ fn canonical_ranking_preserves_radical_spin_assertions() {
     let left = AtomId::new(0);
     let right = AtomId::new(2);
     assert_eq!(
-        canon::atom_ranking(&molecule).rank_of(left),
-        canon::atom_ranking(&molecule).rank_of(right)
+        descriptors::canonical_atom_ranking(&molecule).rank_of(left),
+        descriptors::canonical_atom_ranking(&molecule).rank_of(right)
     );
     molecule.atom_mut(left).unwrap().radical = AtomRadical::new(2, Some(1));
     molecule.atom_mut(right).unwrap().radical = AtomRadical::new(2, Some(3));
-    let ranks = canon::atom_ranking(&molecule);
+    let ranks = descriptors::canonical_atom_ranking(&molecule);
     assert_ne!(ranks.rank_of(left), ranks.rank_of(right));
     molecule.atom_mut(right).unwrap().radical = AtomRadical::new(2, None);
-    let ranks = canon::atom_ranking(&molecule);
+    let ranks = descriptors::canonical_atom_ranking(&molecule);
     assert_ne!(ranks.rank_of(left), ranks.rank_of(right));
 }
 
@@ -129,7 +129,7 @@ fn canonical_ranking_propagates_chemical_equivalence_across_hydrogen_spellings()
     for source in ["[CH3]CC", "C[CH2]C", "CC[CH3]"] {
         let mut molecule = read_smiles(source).expect("propane parses");
         perceive(&mut molecule).expect("propane perceives");
-        let ranking = canon::atom_ranking(&molecule);
+        let ranking = descriptors::canonical_atom_ranking(&molecule);
         assert_eq!(ranking.rank_count(), 2, "{source}");
         assert_eq!(
             ranking.rank_of(AtomId::new(0)),
@@ -139,7 +139,7 @@ fn canonical_ranking_propagates_chemical_equivalence_across_hydrogen_spellings()
     }
     let mut molecule = read_smiles("[CH2]CC").expect("different hydrogen count parses");
     perceive(&mut molecule).expect("different hydrogen count perceives");
-    let ranking = canon::atom_ranking(&molecule);
+    let ranking = descriptors::canonical_atom_ranking(&molecule);
     assert_eq!(ranking.rank_count(), 3);
 }
 
@@ -148,7 +148,7 @@ fn canonical_ranking_ignores_kekule_choice_for_perceived_aromatic_bonds() {
     let mut molecule = read_smiles("c1ccc2ccccc2c1").expect("naphthalene parses");
     perceive(&mut molecule).expect("naphthalene perceives");
 
-    let ranking = canon::atom_ranking(&molecule);
+    let ranking = descriptors::canonical_atom_ranking(&molecule);
 
     assert_eq!(ranking.rank_count(), 3);
 }

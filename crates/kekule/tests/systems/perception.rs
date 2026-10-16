@@ -389,7 +389,7 @@ fn topology_model_and_ensemble_failure_preserve_complete_previous_state() {
 #[test]
 fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     use kekule::substructure::{find_topology_matches_with_options, SubstructureMatchOptions};
-    use kekule::topology::TopologyEditor;
+    use kekule::topology::edit::TopologyEditor;
 
     let source = smiles::to_topology("c1ccccc1.[Na+]").unwrap();
     let perceived = Arc::new(source.perceived().unwrap());
@@ -415,7 +415,7 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     )
     .unwrap();
     assert!(!republished.shares_layout(&source));
-    let unchanged = perceived.edit().finish().unwrap();
+    let unchanged = perceived.to_editor().finish().unwrap();
     assert!(Arc::ptr_eq(&unchanged, &perceived));
     let mut editor = TopologyEditor::from_topology(Arc::clone(&perceived));
     let sodium = editor.atom_handle(perceived.atom_ids()[6]).unwrap();
@@ -441,7 +441,7 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
 
     // Perception-dependent matches keep their exact snapshot but select atoms
     // by layout.
-    let query = kekule::query::parse_smarts("c").unwrap();
+    let query = kekule::smarts::parse_str("c", Default::default()).unwrap();
     let matches =
         find_topology_matches_with_options(&perceived, &query, SubstructureMatchOptions::default())
             .unwrap();

@@ -24,7 +24,7 @@ Ownership does not imply cost: opening an indexed reader scans input, and extrac
 molecules from shared topology may clone definitions. Likewise,
 `document.to_model()` retains the document, while
 `document.interpret()?.into_model()` consumes the temporary interpretation.
-`model.edit()` creates a detached draft; `model.into_editor()` moves the model
+`model.to_editor()` creates a detached draft; `model.into_editor()` moves the model
 into its draft.
 
 Public API regressions verify source retention, conversions of non-cloneable

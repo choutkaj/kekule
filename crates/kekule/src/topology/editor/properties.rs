@@ -266,7 +266,7 @@ impl TopologyEditor {
         value: Option<PropertyValue>,
     ) -> Result<(), TopologyEditError> {
         let loc = self.atom_location(id)?;
-        let mut staged = self.molecule(loc.group).edit();
+        let mut staged = self.molecule(loc.group).to_editor();
         let row = loc.local;
         staged
             .properties_mut()
@@ -293,7 +293,7 @@ impl TopologyEditor {
         value: Option<PropertyValue>,
     ) -> Result<(), TopologyEditError> {
         let loc = self.bond_location(id)?;
-        let mut staged = self.molecule(loc.group).edit();
+        let mut staged = self.molecule(loc.group).to_editor();
         let row = loc.local;
         staged
             .properties_mut()

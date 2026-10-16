@@ -710,7 +710,7 @@ fn molfile_conformation_writes_no_e_z_at_ineligible_double_bonds() {
     }
 
     let mut asserted = interpretation.molecules().next().unwrap().clone();
-    let mut editor = asserted.edit();
+    let mut editor = asserted.to_editor();
     editor
         .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
             DoubleBondStereo {

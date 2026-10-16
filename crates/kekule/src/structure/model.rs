@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::geometry::{PeriodicCell, Point3};
 use crate::molecule::Molecule;
 use crate::properties::{StructureProperties, TopologyPropertiesMut};
-use crate::topology::transform::TopologySubsetError;
+use crate::topology::TopologySubsetError;
 use crate::topology::{
     AtomSelection, Hierarchy, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeDefinitionId,
     MoleculeInstanceId, ResidueClass, ResidueId, Topology, TopologyAtomIndex, TopologyBuildError,

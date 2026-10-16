@@ -81,7 +81,7 @@ pub(crate) fn normalize_valence(input: &Molecule) -> Result<Molecule> {
                         .then_some((next, bond))
                 });
             if let Some((next, bond)) = found {
-                let mut editor = copy.edit();
+                let mut editor = copy.to_editor();
                 editor.atom_mut(id).map_err(Error::chemistry)?.formal_charge = 1;
                 editor
                     .atom_mut(next)
@@ -156,7 +156,7 @@ pub(crate) fn normalize_phosphorus(input: &Molecule) -> Result<Molecule> {
     if edits.is_empty() {
         return Ok(input.clone());
     }
-    let mut editor = input.edit();
+    let mut editor = input.to_editor();
     for (p, o, bond) in edits {
         editor.atom_mut(p).map_err(Error::chemistry)?.formal_charge = 1;
         editor.atom_mut(o).map_err(Error::chemistry)?.formal_charge = -1;

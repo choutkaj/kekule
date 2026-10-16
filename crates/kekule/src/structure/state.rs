@@ -12,7 +12,7 @@ use std::fmt;
 
 use crate::geometry::{PeriodicCell, PeriodicCellError, RigidTransform};
 use crate::properties::{PropertyError, StructureProperties};
-use crate::topology::transform::TopologySubset;
+use crate::topology::TopologySubset;
 use crate::topology::{Topology, TopologyAtomIndex};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 

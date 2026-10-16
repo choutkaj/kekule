@@ -107,7 +107,7 @@ fn oxohalogen_cleanup_matches_rdkit_for_ester_and_declared_hydrogen_forms() {
         );
         assert_eq!(molecule, represented, "perception must preserve {source}");
         assert_eq!(
-            molecule.edit().finish().unwrap(),
+            molecule.to_editor().finish().unwrap(),
             represented,
             "idempotent {source}"
         );

@@ -185,7 +185,7 @@ impl ResonanceStructures<'_> {
         let contributor = self.contributors.get(index).ok_or_else(|| {
             ResonanceError::Materialization("contributor index out of bounds".into())
         })?;
-        let mut editor = self.source.edit();
+        let mut editor = self.source.to_editor();
         for (id, _) in self.source.atoms() {
             let h = self
                 .source

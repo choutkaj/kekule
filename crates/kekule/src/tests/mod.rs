@@ -10,7 +10,8 @@ use crate::sdf::{SdfDataField, SdfParseOptions, SdfRecord, SdfRecordInterpretati
 use crate::smiles::*;
 use crate::structure::{Model, Positions};
 use crate::{
-    canon, molfile, perception as perception_api, sdf, smiles as smiles_api, stereo as stereo_api,
+    descriptors, molfile, perception as perception_api, sdf, smiles as smiles_api,
+    stereo as stereo_api,
     stereo::{cip::*, cleanup::*, coordinates::*, *},
 };
 

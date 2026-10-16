@@ -120,7 +120,7 @@ fn default_perception_does_not_assign_coordinate_only_stereo() {
     assert_eq!(inferred.elements.len(), 1);
     assert_eq!(molecule.stereo_elements().count(), 0);
 
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     let materialized =
         stereo_api::coordinates::materialize_coordinate_stereo(&mut editor, &positions)
             .expect("explicit coordinate materialization should succeed");

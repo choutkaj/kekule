@@ -65,7 +65,6 @@ mod model_editor;
 mod model_state;
 mod positions;
 mod scalars;
-mod solvation;
 mod state;
 mod trajectory;
 
@@ -82,10 +81,6 @@ pub use model_editor::{
     ModelAppend, ModelAppendReport, ModelEditError, ModelEditor, ModelFinishError,
 };
 pub use positions::{PositionError, Positions};
-pub use solvation::{
-    BoxShape, NegativeIon, PeriodicBoxError, PeriodicBoxOptions, PositiveIon, SolvationChargeBasis,
-    SolvationError, SolvationRadii, SolvationReport, SolventOptions, WaterModel,
-};
 pub use state::StructureError;
 pub use trajectory::{
     Trajectory, TrajectoryError, TrajectoryFrame, TrajectoryFrameMut, TrajectoryFrameView,

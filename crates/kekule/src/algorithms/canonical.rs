@@ -28,7 +28,14 @@ impl CanonicalAtomRanking {
     }
 }
 
-pub(crate) fn canonical_atom_ranking(mol: &Molecule) -> CanonicalAtomRanking {
+/// Computes deterministic canonical equivalence classes without mutation.
+///
+/// Ranking is a graph-derived result and does not reorder or mutate a molecule.
+/// Hydrogen comparison uses declared counts plus installed implicit counts;
+/// equal totals are equivalent regardless of how the counts are stored.
+/// Run valence perception first to include inferred hydrogens. Without it,
+/// only declared hydrogens contribute. Source declarations remain unchanged.
+pub fn canonical_atom_ranking(mol: &Molecule) -> CanonicalAtomRanking {
     let atoms = mol.atom_ids().collect::<Vec<_>>();
     let mut ranks = initial_ranks(mol, &atoms);
 

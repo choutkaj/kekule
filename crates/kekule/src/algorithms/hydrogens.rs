@@ -217,7 +217,7 @@ pub(crate) fn add_hydrogens_to_molecule(
 
     validate_materialized_stereo_hydrogens(molecule, &plan, options.fixed_only)?;
 
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     let hydrogen = Element::from_atomic_number(1).expect("hydrogen is a periodic-table element");
     let mut report = AddHydrogensReport::default();
     let mut added_by_parent = BTreeMap::<AtomId, Vec<AtomId>>::new();
@@ -328,7 +328,7 @@ pub(crate) fn remove_hydrogens_keeping(
         })
     }));
     let stereo_bindings = stereo_hydrogen_bindings(molecule, &removable);
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     for (parent, hydrogens) in &by_parent {
         for hydrogen in hydrogens {
             collapse_stereo_hydrogen_carrier(

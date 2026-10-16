@@ -1,5 +1,5 @@
 #![no_main]
-use kekule::{query, smiles, substructure::*};
+use kekule::{smarts, smiles, substructure::*};
 use libfuzzer_sys::fuzz_target;
 use std::ops::ControlFlow;
 
@@ -13,9 +13,9 @@ fuzz_target!(|data: &[u8]| {
     if source.len() > 512 {
         return;
     }
-    let Ok(query) = query::parse_smarts_with_options(
+    let Ok(query) = smarts::parse_str(
         pattern,
-        query::SmartsParseOptions {
+        smarts::SmartsParseOptions {
             max_input_bytes: 1024,
             max_atoms: 32,
             max_recursive_depth: 4,

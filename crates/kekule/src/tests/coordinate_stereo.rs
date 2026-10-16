@@ -323,7 +323,7 @@ fn coordinate_stereo_skips_overcoordinated_double_bond_endpoints() {
         Point3::new(1.0, 0.0, 0.0),
         Point3::new(1.0, -1.0, 0.0),
     ]);
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     stereo_api::coordinates::materialize_coordinate_stereo(&mut editor, &positions).unwrap();
     assert_eq!(editor.finish().unwrap().stereo_elements().count(), 0);
 }

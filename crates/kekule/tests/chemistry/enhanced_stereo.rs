@@ -74,7 +74,7 @@ fn topology_export_has_one_extension_and_record_global_indices() {
 
 #[test]
 fn relative_flag_does_not_weaken_ungrouped_absolute_centers() {
-    let mut edit = molecule("F[C@H](Cl)[C@@H](Br)I |o1:1|").edit();
+    let mut edit = molecule("F[C@H](Cl)[C@@H](Br)I |o1:1|").to_editor();
     let (id, mut group) = edit
         .stereo_groups()
         .next()
@@ -105,7 +105,7 @@ fn relative_flag_does_not_weaken_ungrouped_absolute_centers() {
 
 fn matches(target: &str, query: &str) -> bool {
     use kekule::substructure::{find_matches_with_options, SubstructureMatchOptions};
-    let query = kekule::query::parse_smarts(query).unwrap();
+    let query = kekule::smarts::parse_str(query, Default::default()).unwrap();
     !find_matches_with_options(
         &molecule(target),
         &query,
@@ -151,8 +151,8 @@ fn matching_preserves_group_correlation_and_sample_semantics() {
 #[test]
 fn cxsmarts_groups_validate_indices_and_syntax_without_panicking() {
     assert_eq!(
-        kekule::query::parse_smarts("C ||").unwrap(),
-        kekule::query::parse_smarts("C").unwrap()
+        kekule::smarts::parse_str("C ||", Default::default()).unwrap(),
+        kekule::smarts::parse_str("C", Default::default()).unwrap()
     );
     for query in [
         "C |",
@@ -164,9 +164,13 @@ fn cxsmarts_groups_validate_indices_and_syntax_without_panicking() {
         "F[C@H](Cl)Br |o1:1,|",
         "F[C@H](Cl)Br |r,r|",
     ] {
-        assert!(kekule::query::parse_smarts(query).is_err(), "{query}");
+        assert!(
+            kekule::smarts::parse_str(query, Default::default()).is_err(),
+            "{query}"
+        );
     }
-    let query = kekule::query::parse_smarts("F[C@H](Cl)[C@@H](Br)I |a:1,r|").unwrap();
+    let query =
+        kekule::smarts::parse_str("F[C@H](Cl)[C@@H](Br)I |a:1,r|", Default::default()).unwrap();
     assert_eq!(query.stereo_groups().len(), 2);
     assert_eq!(query.to_builder().build().unwrap(), query);
 }
@@ -177,7 +181,7 @@ fn topology_edits_reject_separating_correlated_groups() {
     for tag in ["a", "o1", "&1"] {
         let original = molecule(&format!("F[C@H](Cl)CCC[C@H](Br)I |{tag}:1,6|"));
         let source = Arc::new(Topology::from_molecule(original.clone()).unwrap());
-        let mut edit = source.edit();
+        let mut edit = source.to_editor();
         let instance = source.molecules().next().unwrap().id();
         let local = original
             .bond_between(AtomId::new(3), AtomId::new(4))
@@ -229,7 +233,7 @@ fn group_aware_symmetry_cleanup_compares_whole_relationships() {
         ("a:1,o1:4", 3),
     ] {
         let source = molecule(&format!("[C@]([C@H](F)Cl)([C@@H](F)Cl)(Br)I |{fields}|"));
-        let mut edit = source.edit();
+        let mut edit = source.to_editor();
         let report =
             kekule::stereo::cleanup::cleanup_stereo(&mut edit, Default::default()).unwrap();
         assert_eq!(report.removed_elements.len(), 3 - count, "{fields}");
@@ -276,7 +280,7 @@ fn hydrogen_transforms_preserve_membership_and_configuration() {
 
 #[test]
 fn topology_matching_does_not_correlate_reused_definitions() {
-    use kekule::{query::parse_smarts, substructure::*, topology::TopologyBuilder};
+    use kekule::{smarts, substructure::*, topology::TopologyBuilder};
     use std::sync::Arc;
     let mol = molecule("F[C@H](Cl)Br |o1:1|");
     let mut builder = TopologyBuilder::new();
@@ -286,7 +290,7 @@ fn topology_matching_does_not_correlate_reused_definitions() {
     let topology = Arc::new(builder.build().unwrap());
     // Each occurrence can choose its own orientation even though the definition
     // and its local group ID are shared.
-    let query = parse_smarts("F[C@H](Cl)Br.F[C@@H](Cl)Br").unwrap();
+    let query = smarts::parse_str("F[C@H](Cl)Br.F[C@@H](Cl)Br", Default::default()).unwrap();
     let matches = find_topology_matches_with_options(
         &topology,
         &query,
@@ -378,7 +382,7 @@ fn canonical_groups_are_invariant_to_atom_bond_element_and_group_numbering() {
 fn unencodable_group_semantics_fail_explicitly() {
     let source = molecule("F[C@H](Cl)[C@@H](Br)I |o1:1,o2:3|");
     for kind in [StereoGroupKind::Relative, StereoGroupKind::Racemic] {
-        let mut edit = source.edit();
+        let mut edit = source.to_editor();
         for (id, mut group) in source.stereo_groups().map(|(id, g)| (id, g.clone())) {
             group.kind = kind;
             edit.replace_stereo_group(id, group).unwrap();
@@ -440,7 +444,7 @@ fn enhanced_matching_respects_boolean_and_partial_carrier_queries() {
     }
     assert!(!matches("NC(F)(Cl)Br", "N[C!@](F)(Cl)Br |o1:1|"));
     assert!(!matches(target, "N[C@,C@@](F)(Cl)Br |&1:1|"));
-    let query = kekule::query::parse_smarts("N[C@@](F)(Cl)Br").unwrap();
+    let query = kekule::smarts::parse_str("N[C@@](F)(Cl)Br", Default::default()).unwrap();
     assert!(kekule::substructure::find_match(&molecule(target), &query)
         .unwrap()
         .is_none());
@@ -450,7 +454,7 @@ fn enhanced_matching_respects_boolean_and_partial_carrier_queries() {
 fn canonical_projection_merges_absolute_sets_and_shields_relative_groups() {
     let source = molecule("C[C@H](O)[C@@H](O)[C@H](O)[C@@H](O)C |o1:1,o2:3,o3:5,o4:7|");
     for relative in [false, true] {
-        let mut edit = source.edit();
+        let mut edit = source.to_editor();
         for (i, (id, group)) in source.stereo_groups().enumerate() {
             let mut group = group.clone();
             group.kind = if relative && i == 0 {

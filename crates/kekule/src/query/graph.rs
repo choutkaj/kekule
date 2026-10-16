@@ -69,7 +69,7 @@ impl QueryBond {
 ///
 /// Query graphs describe matching predicates rather than represented molecular
 /// chemistry. Construct one programmatically with [`QueryGraphBuilder`] or parse
-/// SMARTS through [`super::parse_smarts`].
+/// SMARTS through [`crate::smarts::parse_str`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryGraph {
     atoms: Vec<QueryAtom>,

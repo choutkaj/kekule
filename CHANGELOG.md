@@ -134,6 +134,42 @@ All notable changes to Kekule are documented in this file.
     `PerceptionComponent`, and `PerceptionInstallError` move from
     `kekule::core` to `kekule::perception`, and `MalformedRingReason` to
     `kekule::perception::rings`.
+  - SMARTS is a format module: `smarts::parse_str(input, options)` replaces
+    `query::parse_smarts` and `query::parse_smarts_with_options` and returns
+    a `query::QueryGraph`. `SmartsParseOptions`, `SmartsParseError`, and
+    `SmartsParseErrorKind` move from `kekule::query` to `kekule::smarts`.
+  - Solvation is a module of its own. `kekule::solvation` holds
+    `SolventOptions`, `SolvationReport`, `SolvationRadii`,
+    `SolvationChargeBasis`, `SolvationError`, `WaterModel`, `PositiveIon`,
+    `NegativeIon`, `BoxShape`, `PeriodicBoxOptions`, and `PeriodicBoxError`,
+    formerly in `kekule::structure`. `Model::add_solvent(&options)` is
+    `solvation::solvate(&mut model, &options)` and
+    `Model::add_periodic_box(&options)` is
+    `solvation::add_periodic_box(&mut model, &options)`; both still edit the
+    model in place and are atomic.
+  - The topology editor moves to `kekule::topology::edit`: `TopologyEditor`,
+    `EditAtomId`, `EditBondId`, `EditChainId`, `EditResidueId`,
+    `EditAtomSiteId`, `EditBond`, `EditMolecule`, `EditChain`,
+    `EditResidue`, `EditAtomSite`, `EditCorrespondence`, `TopologyEditError`,
+    and `TopologyFinishError`.
+  - `kekule::topology::transform` is no longer a module. `TopologySubset`,
+    `TopologySubsetCorrespondence`, and `TopologySubsetError` are in
+    `kekule::topology`. `transform::retain_instances`,
+    `transform::remove_instances`, and `TopologyTransformError` are removed;
+    `Topology::subset` with `AtomSelection::for_instances` (and its
+    `complement()`) selects whole instances.
+  - `topology::MoleculeInstanceView` is `topology::InstanceView`.
+    `topology::MoleculeInstance` is no longer public:
+    `InstanceView::instance()` is removed (use `id()` and
+    `definition_id()`), and `TopologyBuilder::instances()` yields
+    `(MoleculeInstanceId, MoleculeDefinitionId)` pairs.
+  - `kekule::canon` and `kekule::rotatable_bonds` are removed.
+    `canon::atom_ranking` is `descriptors::canonical_atom_ranking`, and
+    `rotatable_bonds::detect` is `descriptors::rotatable_bonds`.
+    `CanonicalAtomRanking`, `RotatableBondOptions`, and `RotatableBondSet`
+    move to `kekule::descriptors`.
+  - `Molecule::edit`, `Model::edit`, and `Topology::edit`, which copy the
+    owner into a draft, are `to_editor`; `into_editor` is unchanged.
 - **Breaking:** Every public module is an explicit list of re-exports, and
   every public item has exactly one public path; only `prelude` repeats items.
   No item is renamed and no behaviour changes, so callers only update imports.

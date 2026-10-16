@@ -222,7 +222,7 @@ impl std::error::Error for StereoPublicationError {}
 
 impl Molecule {
     /// Starts a detached transaction from this published molecule.
-    pub fn edit(&self) -> MoleculeEditor {
+    pub fn to_editor(&self) -> MoleculeEditor {
         self.clone().into_editor()
     }
 
@@ -259,7 +259,7 @@ impl Molecule {
 ///
 /// | Task | Operations |
 /// | --- | --- |
-/// | Start | [`Self::new`], [`Molecule::edit`], [`Molecule::into_editor`] |
+/// | Start | [`Self::new`], [`Molecule::to_editor`], [`Molecule::into_editor`] |
 /// | Inspect | [`Graph`] reads through `Deref` ([`Graph::atoms`], [`Graph::bonds`], [`Graph::neighbors`]), [`Self::connected_components`] |
 /// | Change graph | [`Self::replace_atom`], [`Self::replace_bond`], [`Self::delete_atoms`], [`Self::retain_atoms`] |
 /// | Combine fragments | [`Self::append_molecule`] with returned ID mappings |
@@ -1103,7 +1103,7 @@ mod tests {
         let molecule = builder.finish().expect("connected molecule");
         let before = molecule.clone();
 
-        let mut editor = molecule.edit();
+        let mut editor = molecule.to_editor();
         editor.delete_bond(bond).expect("delete in working copy");
         assert_eq!(
             editor.finish(),
@@ -1128,7 +1128,7 @@ mod tests {
             .expect("second bond");
         let molecule = builder.finish().expect("connected molecule");
 
-        let mut editor = molecule.edit();
+        let mut editor = molecule.to_editor();
         editor.delete_bond(ab).expect("temporary disconnect");
         editor
             .add_bond(a, c, BondOrder::Single)
@@ -1147,7 +1147,7 @@ mod tests {
             .expect("initial bond");
         let molecule = builder.finish().expect("initial molecule");
 
-        let mut editor = molecule.edit();
+        let mut editor = molecule.to_editor();
         let oxo = editor.add_atom(atom("O")).expect("oxo oxygen");
         editor
             .add_bond(chlorine, oxo, BondOrder::Double)
@@ -1177,7 +1177,7 @@ mod tests {
         let oxo_bond = builder.add_bond(chlorine, oxo, BondOrder::Single).unwrap();
         let molecule = builder.finish().unwrap();
 
-        let mut editor = molecule.edit();
+        let mut editor = molecule.to_editor();
         editor
             .bond_mut(oxo_bond)
             .unwrap()
@@ -1205,7 +1205,7 @@ mod tests {
             .unwrap();
         builder.add_bond(right, bromine, BondOrder::Single).unwrap();
         let molecule = builder.finish().unwrap();
-        let mut editor = molecule.edit();
+        let mut editor = molecule.to_editor();
         let element = editor
             .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
                 DoubleBondStereo {
@@ -1220,7 +1220,7 @@ mod tests {
             .unwrap();
         let molecule = editor.finish().unwrap();
 
-        let mut editor = molecule.edit();
+        let mut editor = molecule.to_editor();
         let fluorine = editor.add_atom(atom("F")).unwrap();
         editor.add_bond(left, fluorine, BondOrder::Single).unwrap();
         let molecule = editor.finish().expect("canonical edit publication");
@@ -1254,7 +1254,7 @@ mod tests {
         let molecule = builder.finish().unwrap();
         let before = molecule.clone();
 
-        let mut editor = molecule.edit();
+        let mut editor = molecule.to_editor();
         for &bond in &oxo_bonds {
             editor.bond_mut(bond).unwrap().set_order(BondOrder::Double);
         }

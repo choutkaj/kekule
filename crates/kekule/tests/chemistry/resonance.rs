@@ -290,7 +290,7 @@ fn present_empty_sections_and_prerequisite_invalidation() {
     assert!(!m.perception().has_resonance());
     m.perceive().unwrap();
     perceive_resonance(&mut m).unwrap();
-    let mut edit = m.edit();
+    let mut edit = m.to_editor();
     edit.atom_mut(a).unwrap().isotope = Some(13);
     let edited = edit.finish().unwrap();
     assert!(!edited.perception().has_conjugation());

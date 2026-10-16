@@ -1,8 +1,8 @@
 use kekule::molecule::{Atom, Element, MoleculeEditor};
 use kekule::topology::{
-    AtomSite, AtomSiteId, AtomSiteMetadata, AtomSiteView, Chain, ChainId, ChainView, Hierarchy,
-    HierarchyError, HierarchyIdKind, InstanceAtomId, MoleculeClass, Residue, ResidueId,
-    ResidueView, TopologyBuilder, TopologyEditor,
+    edit::TopologyEditor, AtomSite, AtomSiteId, AtomSiteMetadata, AtomSiteView, Chain, ChainId,
+    ChainView, Hierarchy, HierarchyError, HierarchyIdKind, InstanceAtomId, MoleculeClass, Residue,
+    ResidueId, ResidueView, TopologyBuilder,
 };
 
 fn atom(symbol: &str) -> Atom {
@@ -90,7 +90,7 @@ fn editor_hierarchy_membership_stays_aligned_during_bulk_assembly_and_site_edits
             .count(),
         256
     );
-    let mut imported = topology.edit();
+    let mut imported = topology.to_editor();
     let site = imported.atom_sites().next().unwrap().0;
     imported.delete_atom_site(site).unwrap();
     assert_eq!(

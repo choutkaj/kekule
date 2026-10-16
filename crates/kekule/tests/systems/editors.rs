@@ -3,7 +3,8 @@ use kekule::molecule::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Model, ModelEditor, Positions};
 use kekule::topology::{
-    AtomSiteMetadata, InstanceAtomId, MoleculeClass, Topology, TopologyBuilder, TopologyEditor,
+    edit::TopologyEditor, AtomSiteMetadata, InstanceAtomId, MoleculeClass, Topology,
+    TopologyBuilder,
 };
 use kekule::units::{Quantity, ANGSTROM, BOHR, NANOMETER};
 use std::sync::Arc;
@@ -81,7 +82,7 @@ fn split_then_merge_preserves_handles_geometry_and_hierarchy() {
             .unwrap();
     }
     let source = Model::new(builder.build().unwrap(), positions(&[1.0, 2.0, 3.0])).unwrap();
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let handles = source
         .topology()
         .atom_ids()
@@ -139,7 +140,7 @@ fn merging_fragments_of_two_split_occurrences_keeps_their_annotations() {
         h2
     };
     let source = Arc::new(Topology::from_molecules([tagged(1), tagged(3)]).unwrap());
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let handles = source
         .atom_ids()
         .iter()
@@ -223,7 +224,7 @@ fn cross_instance_bond_merges_but_preserves_distinct_chains() {
         .insert(key("instance"), PropertyColumn::Int(vec![Some(1), Some(2)]))
         .unwrap();
     let source = Model::new(builder.build().unwrap(), positions(&[2.0, 6.0])).unwrap();
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let handles = editor.atom_ids().collect::<Vec<_>>();
     editor
         .add_bond(handles[0], handles[1], BondOrder::Single)
@@ -264,7 +265,7 @@ fn editing_one_reused_occurrence_preserves_others_and_their_perception() {
     }
     let topology = Arc::new(builder.build().unwrap());
     let source_atoms = topology.atom_ids().to_vec();
-    let mut editor = topology.edit();
+    let mut editor = topology.to_editor();
     let changed = editor.atom_handle(source_atoms[1]).unwrap();
     editor.replace_atom(changed, atom("N")).unwrap();
     let result = editor.finish().unwrap();
@@ -314,10 +315,10 @@ fn no_op_and_geometry_only_keep_exact_source_topology() {
         .insert(key("label"), PropertyValue::Int(9))
         .unwrap();
     let topology = source.shared_topology();
-    let no_op = source.edit().finish().unwrap();
+    let no_op = source.to_editor().finish().unwrap();
     assert_eq!(no_op, source);
     assert!(Arc::ptr_eq(&no_op.shared_topology(), &topology));
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let id = editor.atom_ids().next().unwrap();
     editor
         .replace_atom(id, editor.atom(id).unwrap().clone())
@@ -376,7 +377,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
         .owner_mut()
         .insert(key("energy"), PropertyValue::Int(10))
         .unwrap();
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let removed = editor.atom_handle(source_atoms[0]).unwrap();
     editor.delete_atom(removed).unwrap();
     assert!(editor.position(removed).is_err());
@@ -444,7 +445,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
 #[test]
 fn finish_and_try_finish_publish_the_same_split_model_and_topology() {
     let source = model("CCC");
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let bonds = editor.bond_ids().collect::<Vec<_>>();
     editor
         .set_bond_property(bonds[1], key("dynamic"), Some(PropertyValue::Int(17)))
@@ -506,7 +507,7 @@ fn finish_and_try_finish_publish_the_same_split_model_and_topology() {
 #[test]
 fn failures_are_atomic_and_empty_publication_is_recoverable() {
     let source = model("CC");
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let handles = editor.atom_ids().collect::<Vec<_>>();
     let mut foreign = ModelEditor::new();
     let invalid = foreign
@@ -548,7 +549,7 @@ fn append_preserves_sparse_local_ids_dense_order_and_definition_order() {
     molecule.delete_atom(removed).unwrap();
     let source =
         Model::from_molecule(molecule.finish().unwrap().clone(), &positions(&[3.0, 7.0])).unwrap();
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     editor
         .add_molecule((self::molecule("O")).clone(), &positions(&[8.0]))
         .unwrap();
@@ -627,7 +628,7 @@ fn unchanged_molecule_publication_keeps_perception_and_columns_round_trip() {
     let mut source = molecule("CCC");
     source.perceive().unwrap();
     assert_eq!(
-        source.edit().finish().unwrap().perception(),
+        source.to_editor().finish().unwrap().perception(),
         source.perception()
     );
     let mut editor = source.into_editor();
@@ -681,7 +682,7 @@ fn classification_overrides_are_occurrence_and_component_local() {
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     let source = Arc::new(builder.build().unwrap());
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let atoms = editor.atom_ids().collect::<Vec<_>>();
     editor
         .set_molecule_class(atoms[0], MoleculeClass::Other)
@@ -724,7 +725,7 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
         .bonds_mut()
         .set_value(key("dynamic"), row, Some(PropertyValue::Int(10)))
         .unwrap();
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let atoms = editor.atom_ids().collect::<Vec<_>>();
     let bond = editor.bond_handle(source_bond).unwrap();
     editor
@@ -793,7 +794,7 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
 
 #[test]
 fn bond_replacement_rolls_back_failed_group_merges_and_preserves_the_handle() {
-    use kekule::topology::EditBond;
+    use kekule::topology::edit::EditBond;
 
     let source = model("CC.O");
     let mut editor = TopologyEditor::from_topology(source.shared_topology());
@@ -1290,7 +1291,7 @@ fn unchanged_setters_keep_topology_snapshot_and_perception() {
     let mut carbon = molecule("CC");
     carbon.perceive().unwrap();
     let bond = carbon.bond_ids().next().unwrap();
-    let mut molecule_editor = carbon.edit();
+    let mut molecule_editor = carbon.to_editor();
     molecule_editor
         .set_bond_order(bond, BondOrder::Single)
         .unwrap();
@@ -1299,7 +1300,7 @@ fn unchanged_setters_keep_topology_snapshot_and_perception() {
         carbon.perception()
     );
     let source = Arc::new(Topology::from_molecule(carbon.clone()).unwrap());
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let a = editor.atom_ids().next().unwrap();
     let b = editor.bond_ids().next().unwrap();
     editor
@@ -1319,7 +1320,7 @@ fn unchanged_setters_keep_topology_snapshot_and_perception() {
 #[test]
 fn split_publication_preserves_surviving_stereo_and_prunes_changed_centers() {
     let source = model("F[C@](Cl)(Br)CC");
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let terminal = editor
         .atoms()
         .find(|(id, a)| a.element.symbol() == "C" && editor.neighbors(*id).unwrap().count() == 1)
@@ -1356,8 +1357,8 @@ fn split_publication_preserves_surviving_stereo_and_prunes_changed_centers() {
 #[test]
 fn independently_created_or_cleared_drafts_never_accept_foreign_handles() {
     let source = model("C");
-    let mut first = source.edit();
-    let mut second = source.edit();
+    let mut first = source.to_editor();
+    let mut second = source.to_editor();
     let a = first.atom_ids().next().unwrap();
     let b = second.atom_ids().next().unwrap();
     assert_ne!(a, b);
@@ -1406,7 +1407,7 @@ fn publication_correspondence_tracks_reordering_deletion_and_bonds() {
     }
     let (id, index) = map.bond(bond).unwrap();
     assert_eq!(model.topology().bond_ids()[index.index()], id);
-    let mut next = model.edit();
+    let mut next = model.to_editor();
     let handle = next.bond_handle(id).unwrap();
     next.delete_bond(handle).unwrap();
     let (split, second) = next.finish_with_correspondence().unwrap();
@@ -1451,7 +1452,7 @@ fn stereo_replacement_is_occurrence_local_and_rejects_changed_source() {
         .molecules()
         .map(|m| m.id())
         .collect::<Vec<_>>();
-    let mut editor = original.edit();
+    let mut editor = original.to_editor();
     editor
         .replace_source_instance_stereo(instances[0], &[])
         .unwrap();
@@ -1466,7 +1467,7 @@ fn stereo_replacement_is_occurrence_local_and_rejects_changed_source() {
         .topology()
         .molecules()
         .all(|m| m.molecule().stereo_elements().count() == 1));
-    let mut changed = original.edit();
+    let mut changed = original.to_editor();
     let id = changed
         .atom_handle(original.topology().atom_ids()[0])
         .unwrap();

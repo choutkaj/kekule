@@ -4,9 +4,17 @@ use std::sync::Arc;
 
 use crate::molecule::{Atom, BondOrder, Element};
 use crate::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use crate::query;
 use crate::substructure;
 use crate::topology::AtomSiteMetadata;
+
+/// The topology of the complete `instances`, as a whole-instance subset.
+fn instance_subset(
+    source: &Arc<Topology>,
+    instances: impl IntoIterator<Item = MoleculeInstanceId>,
+) -> Result<Arc<Topology>, Box<dyn std::error::Error>> {
+    let selection = AtomSelection::for_instances(source, instances)?;
+    Ok(source.subset(&selection)?.shared_topology())
+}
 
 fn perceived_molecule(smiles: &str) -> Molecule {
     let mut molecule = crate::tests::read_smiles(smiles).expect("SMILES should parse");
@@ -854,7 +862,7 @@ fn selections_distinguish_instances_elements_and_queries() {
         AtomSelection::for_elements(&topology, [Element::from_symbol("O").unwrap()]).unwrap();
     assert_eq!(oxygen.indices().len(), 1);
 
-    let query = query::parse_smarts("O").unwrap();
+    let query = crate::smarts::parse_str("O", Default::default()).unwrap();
     let matches = substructure::find_matches(&water, &query).unwrap();
     let from_query =
         AtomSelection::from_query_matches(&topology, water_instance, &matches).unwrap();
@@ -1073,7 +1081,7 @@ fn compact_subset_projects_properties_bonds_and_model_positions() {
     use crate::units::{Quantity, NANOMETER};
 
     let (molecule, carbon, oxygen, bond) = edited_molecule();
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     let tail = editor
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .unwrap();
@@ -1546,7 +1554,7 @@ fn retaining_one_whole_instance_projects_exactly_one_instance_property_row() {
         .unwrap();
     let source = Arc::new(builder.build().unwrap());
 
-    let retained = transform::retain_instances(&source, [second]).unwrap();
+    let retained = instance_subset(&source, [second]).unwrap();
     assert_eq!(retained.instance_count(), 1);
     assert_eq!(
         retained.properties().molecule_instances().get(&key),

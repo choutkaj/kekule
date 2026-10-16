@@ -91,10 +91,11 @@ impl TopologyBuilder {
     ) -> impl ExactSizeIterator<Item = (MoleculeDefinitionId, &MoleculeDefinition)> {
         self.definitions.iter().map(|d| (d.id(), d))
     }
+    /// Staged instances and the definitions they reference, in instance order.
     pub fn instances(
         &self,
-    ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &MoleculeInstance)> {
-        self.instances.iter().map(|i| (i.id(), i))
+    ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, MoleculeDefinitionId)> + '_ {
+        self.instances.iter().map(|i| (i.id(), i.definition()))
     }
     /// Staged qualified atom IDs in current dense order.
     pub fn atom_ids(&self) -> &[InstanceAtomId] {

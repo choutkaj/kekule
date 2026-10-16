@@ -624,7 +624,7 @@ mod tests {
             charges: vec![0.0],
         };
         modified.library.push(Rule {
-            query: kekule::query::parse_smarts(&h.source.smirks).unwrap(),
+            query: kekule::smarts::parse_str(&h.source.smirks, Default::default()).unwrap(),
             parameter: h,
         });
         assert_eq!(

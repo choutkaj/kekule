@@ -3,10 +3,28 @@ use std::sync::Arc;
 use kekule::molecule::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::topology::{
-    transform, AtomSelection, AtomSiteMetadata, EditAtomId, Hierarchy, InstanceAtomId,
-    MoleculeClass, MoleculeDefinitionId, ResidueClass, ResidueId, Topology, TopologyBuilder,
-    TopologyEditor,
+    edit::{EditAtomId, TopologyEditor},
+    AtomSelection, AtomSiteMetadata, Hierarchy, InstanceAtomId, MoleculeClass,
+    MoleculeDefinitionId, MoleculeInstanceId, ResidueClass, ResidueId, Topology, TopologyBuilder,
 };
+
+/// The topology of the complete `instances`, as a whole-instance subset.
+fn instance_subset(
+    source: &Arc<Topology>,
+    instances: impl IntoIterator<Item = MoleculeInstanceId>,
+) -> Result<Arc<Topology>, Box<dyn std::error::Error>> {
+    let selection = AtomSelection::for_instances(source, instances)?;
+    Ok(source.subset(&selection)?.shared_topology())
+}
+
+/// The topology of every instance except `instances`.
+fn instance_complement(
+    source: &Arc<Topology>,
+    instances: impl IntoIterator<Item = MoleculeInstanceId>,
+) -> Result<Arc<Topology>, Box<dyn std::error::Error>> {
+    let selection = AtomSelection::for_instances(source, instances)?.complement();
+    Ok(source.subset(&selection)?.shared_topology())
+}
 
 fn atom(symbol: &str) -> Atom {
     Atom::new(Element::from_symbol(symbol).unwrap())
@@ -282,11 +300,9 @@ fn instance_filters_reclassify_partial_residues_and_preserve_complete_assignment
             source.residues().next().unwrap().class(),
             ResidueClass::Water
         );
-        let retained =
-            transform::retain_instances(&source, [atoms[0].molecule(), instance]).unwrap();
+        let retained = instance_subset(&source, [atoms[0].molecule(), instance]).unwrap();
         let removed =
-            transform::remove_instances(&source, [atoms[1].molecule(), atoms[2].molecule()])
-                .unwrap();
+            instance_complement(&source, [atoms[1].molecule(), atoms[2].molecule()]).unwrap();
         let subset = source
             .subset(&AtomSelection::from_atoms(&source, [atoms[0], nitrogen_atom]).unwrap())
             .unwrap();
@@ -296,7 +312,7 @@ fn instance_filters_reclassify_partial_residues_and_preserve_complete_assignment
                 vec![ResidueClass::Other, ResidueClass::Carbohydrate]
             );
         }
-        let mut editor = retained.edit();
+        let mut editor = retained.to_editor();
         let whole = editor.residue_handle(whole).unwrap();
         editor
             .set_residue_component_ids(whole, Some("UNK".into()), None)
@@ -422,7 +438,7 @@ fn uninformative_and_unrelated_appends_preserve_complete_entity_cached_classes()
     // The retained class deliberately remembers the complete source definition.
     // Adding an uninformative occurrence must not recompute it from just HOH.
     for component in [None, Some("UNK")] {
-        let retained = transform::retain_instances(&source, [retained]).unwrap();
+        let retained = instance_subset(&source, [retained]).unwrap();
         assert_eq!(
             retained.definition(definition).unwrap().class(),
             MoleculeClass::Other
@@ -518,7 +534,7 @@ fn explicit_classes_survive_changed_component_evidence_and_rebuilding() {
     let source = Arc::new(builder.build().unwrap());
     let inferred = water_builder("HOH").0.build().unwrap();
     assert!(source.same_layout(&inferred));
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let residue_handle = editor.residue_handle(residue).unwrap();
     editor
         .set_residue_component_ids(residue_handle, Some("UNK".into()), None)
@@ -546,8 +562,8 @@ fn explicit_classes_survive_changed_component_evidence_and_rebuilding() {
 #[test]
 fn no_op_and_append_preserve_untouched_classes_and_explicit_intent() {
     let source = Arc::new(water_builder("HOH").0.build().unwrap());
-    assert!(Arc::ptr_eq(&source, &source.edit().finish().unwrap()));
-    let mut editor = source.edit();
+    assert!(Arc::ptr_eq(&source, &source.to_editor().finish().unwrap()));
+    let mut editor = source.to_editor();
     editor.add_molecule(oxygen().clone()).unwrap();
     let appended = editor.finish().unwrap();
     assert_eq!(water_classes(&appended), water_classes(&source));
@@ -564,7 +580,7 @@ fn no_op_and_append_preserve_untouched_classes_and_explicit_intent() {
 #[test]
 fn hierarchy_edits_reinfer_source_molecule_classes_and_preserve_shared_snapshot() {
     let source = Arc::new(Topology::from_molecule(oxygen().clone()).unwrap());
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let atom = editor.atom_ids().next().unwrap();
     let chain = editor.add_chain("A", None).unwrap();
     let residue = editor.add_residue(chain, "HOH", None, None, None).unwrap();
@@ -581,7 +597,7 @@ fn hierarchy_edits_reinfer_source_molecule_classes_and_preserve_shared_snapshot(
         MoleculeClass::SmallMolecule
     );
     assert!(source.hierarchy().is_empty());
-    let mut editor = result.edit();
+    let mut editor = result.to_editor();
     let residue = editor.residues().next().unwrap().0;
     editor
         .set_residue_component_ids(residue, Some("UNK".into()), None)
@@ -597,7 +613,7 @@ fn transformations_do_not_promote_inferred_classes_to_explicit_overrides() {
     let source = Arc::new(water_builder("HOH").0.build().unwrap());
     let subset = source.subset(&AtomSelection::all(&source)).unwrap();
     let (target, _) = subset.into_parts();
-    let mut editor = target.edit();
+    let mut editor = target.to_editor();
     let residue = editor.residues().next().unwrap().0;
     editor
         .set_residue_component_ids(residue, Some("UNK".into()), None)
@@ -640,12 +656,12 @@ fn preserved_inferred_class_survives_no_op_rebuilding_until_its_evidence_changes
         source.molecules().next().unwrap().class(),
         MoleculeClass::Other
     );
-    let retained = kekule::topology::transform::retain_instances(&source, [first]).unwrap();
+    let retained = instance_subset(&source, [first]).unwrap();
     assert_eq!(
         water_classes(&retained),
         (MoleculeClass::Other, ResidueClass::Water)
     );
-    let mut editor = retained.edit();
+    let mut editor = retained.to_editor();
     editor
         .insert_property(PropertyKey::new("label").unwrap(), PropertyValue::Int(1))
         .unwrap();
@@ -653,7 +669,7 @@ fn preserved_inferred_class_survives_no_op_rebuilding_until_its_evidence_changes
         water_classes(&editor.finish().unwrap()),
         water_classes(&retained)
     );
-    let mut editor = retained.edit();
+    let mut editor = retained.to_editor();
     let site = editor.atom_sites().next().unwrap().0;
     let mut metadata = editor.atom_site(site).unwrap().metadata().clone();
     metadata.type_symbol = Some("O".into());

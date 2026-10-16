@@ -71,7 +71,7 @@ its rotatable bonds, then write canonical and isomeric SMILES:
 use std::error::Error;
 
 use kekule::{
-    rotatable_bonds::{self, RotatableBondOptions},
+    descriptors::{self, RotatableBondOptions},
     smiles::{self, SmilesWriteOptions},
     stereo,
 };
@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     
     // Assign and print rotatable bonds
-    let rotatable = rotatable_bonds::detect(&molecule, RotatableBondOptions::STRICT)?;
+    let rotatable = descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT)?;
     for &bond_id in rotatable.bond_ids() {
         let bond = molecule.bond(bond_id)?;
         println!("rotatable bond {bond_id}: {}-{}", bond.a(), bond.b());

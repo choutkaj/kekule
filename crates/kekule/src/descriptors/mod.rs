@@ -1,6 +1,8 @@
-//! Read-only small-molecule formula and mass descriptors.
+//! Read-only small-molecule descriptors: formula and masses, canonical atom
+//! ranking, and rotatable bonds.
 //!
-//! Descriptor calculation never mutates or perceives the input.
+//! Descriptor calculation never mutates or perceives the input; a descriptor
+//! that needs perception it cannot reuse computes it on a temporary copy.
 //! Callers select explicitly whether installed inferred-hydrogen state is part
 //! of the calculation.
 //!
@@ -13,6 +15,11 @@
 //! structured errors; no mass-number substitute is used.
 
 mod data;
+
+pub use crate::algorithms::{
+    canonical_atom_ranking, rotatable_bonds, CanonicalAtomRanking, RotatableBondOptions,
+    RotatableBondSet,
+};
 
 /// Neutral atomic mass used for inertia and vibrational analysis. Unlabeled
 /// elements use standard atomic weights; labeled atoms use exact isotope masses.

@@ -23,7 +23,7 @@ fn changed_bond_orders_prune_stereo_through_all_molecular_mutators() {
         .0;
     let (a, b) = source.bond(bond).unwrap().endpoints();
     for operation in 0..3 {
-        let mut editor = source.edit();
+        let mut editor = source.to_editor();
         match operation {
             0 => editor.set_bond_order(bond, BondOrder::Single).unwrap(),
             1 => editor.bond_mut(bond).unwrap().set_order(BondOrder::Single),
@@ -72,7 +72,7 @@ fn order_changes_update_stereo_groups_without_removing_unrelated_assertions() {
         })
         .unwrap();
     let source = editor.finish().unwrap();
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     editor.set_bond_order(bonds[0], BondOrder::Double).unwrap();
     assert_eq!(editor.clone().finish().unwrap(), source);
     editor.set_bond_order(bonds[0], BondOrder::Single).unwrap();
@@ -97,7 +97,7 @@ fn checked_stereo_insertion_and_replacement_reject_single_bond_focus() {
     };
     let focus = stereo.bond;
     let retained_element = elements[1].0;
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     editor.set_bond_order(focus, BondOrder::Single).unwrap();
     let before = format!("{editor:?}");
     assert!(editor.add_stereo_element(invalid.clone()).is_err());
@@ -112,7 +112,7 @@ fn checked_stereo_insertion_and_replacement_reject_single_bond_focus() {
 fn topology_order_changes_publish_without_stale_double_bond_stereo() {
     for replacement in [false, true] {
         let source = Arc::new(Topology::from_molecule((molecule("F/C=C/F")).clone()).unwrap());
-        let mut editor = source.edit();
+        let mut editor = source.to_editor();
         let (id, bond) = editor
             .bonds()
             .find(|(_, bond)| bond.order == BondOrder::Double)
@@ -121,7 +121,7 @@ fn topology_order_changes_publish_without_stale_double_bond_stereo() {
             editor
                 .replace_bond(
                     id,
-                    kekule::topology::EditBond::new(bond.a(), bond.b(), BondOrder::Single),
+                    kekule::topology::edit::EditBond::new(bond.a(), bond.b(), BondOrder::Single),
                 )
                 .unwrap();
         } else {
@@ -160,7 +160,7 @@ fn bond_edits_prune_exactly_the_stereo_they_invalidate() {
         (3, Some(4), vec![]),
         (1, Some(3), vec![]),
     ] {
-        let mut editor = source.edit();
+        let mut editor = source.to_editor();
         let oxygen = editor
             .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
             .unwrap();
@@ -210,7 +210,7 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
         .unwrap()
         .unwrap();
     for batch in [false, true] {
-        let mut editor = source.edit();
+        let mut editor = source.to_editor();
         if batch {
             editor.delete_bonds([removed]).unwrap();
         } else {
@@ -230,7 +230,7 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
         let result = editor.try_finish().unwrap();
         // Enhanced groups have a separate export capability; test carrier export
         // on an ungrouped copy after asserting the preserved group above.
-        let mut ungrouped = result.edit();
+        let mut ungrouped = result.to_editor();
         ungrouped.remove_stereo_group(group).unwrap();
         // Deleting the bond leaves the fixed-H carbon under-coordinated without
         // asserting a radical. Explicitly cap that site for the export check.
@@ -245,7 +245,7 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
     }
     let topology = Arc::new(Topology::from_molecule(source.clone()).unwrap());
     let instance = topology.molecules().next().unwrap().id();
-    let mut editor = topology.edit();
+    let mut editor = topology.to_editor();
     let bond = editor
         .bond_handle(InstanceBondId::new(instance, removed))
         .unwrap();
@@ -253,7 +253,7 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
     let result = editor.finish().unwrap();
     let result = result.molecules().next().unwrap();
     assert_eq!(result.molecule().stereo_elements().count(), 1);
-    let mut ungrouped = result.molecule().edit();
+    let mut ungrouped = result.molecule().to_editor();
     for group in result.molecule().stereo_groups().map(|(id, _)| id) {
         ungrouped.remove_stereo_group(group).unwrap();
     }
@@ -295,7 +295,7 @@ fn checked_stereo_boundaries_reject_nonadjacent_carriers_transactionally() {
                 stereo.carriers[0] = StereoCarrier::Atom(source.bond(stereo.axis).unwrap().a())
             }
         }
-        let mut editor = source.edit();
+        let mut editor = source.to_editor();
         let before = format!("{editor:?}");
         assert!(matches!(
             editor.add_stereo_element(invalid.clone()),

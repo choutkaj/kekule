@@ -31,7 +31,7 @@ fn represented_equality_ignores_adjacency_history_but_not_bond_chemistry() {
     let molecule = kekule::smiles::to_molecules("CCC").unwrap().pop().unwrap();
     let atoms = molecule.atom_ids().collect::<Vec<_>>();
     let bond = molecule.bond_ids().next().unwrap();
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     editor.set_bond_endpoints(bond, atoms[0], atoms[2]).unwrap();
     assert_ne!(editor.clone().finish().unwrap(), molecule);
     editor.set_bond_endpoints(bond, atoms[0], atoms[1]).unwrap();

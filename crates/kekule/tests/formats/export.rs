@@ -254,7 +254,7 @@ fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_cou
         // preserve the unspecified spin of under-coordinated bracket atoms.
         let original = molecule(source);
         let ids = original.atom_ids().collect::<Vec<_>>();
-        let mut editor = original.edit();
+        let mut editor = original.to_editor();
         for id in ids {
             editor.atom_mut(id).unwrap().radical = None;
         }

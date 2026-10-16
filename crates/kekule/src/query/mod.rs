@@ -1,7 +1,7 @@
-//! Syntax-independent molecular queries and SMARTS parsing.
+//! Syntax-independent molecular queries.
 //!
-//! [`QueryGraph`] is the canonical query representation. Use [`parse_smarts`]
-//! to construct one from SMARTS syntax, then pass it to the
+//! [`QueryGraph`] is the canonical query representation. Use
+//! [`crate::smarts::parse_str`] to construct one from SMARTS syntax, then pass it to the
 //! [`crate::substructure`] matching facade. Parsing a query and matching it
 //! against a molecule are separate operations; matching does not perceive the
 //! target implicitly.
@@ -13,11 +13,11 @@
 //! An achiral query places no restriction on the target's stereochemistry.
 //!
 //! ```
-//! use kekule::{query::parse_smarts, smiles, substructure};
+//! use kekule::{smarts, smiles, substructure};
 //!
 //! let mut target = smiles::to_molecules("CCO")?.pop().unwrap();
 //! target.perceive()?;
-//! let query = parse_smarts("[#6]-[#8]")?;
+//! let query = smarts::parse_str("[#6]-[#8]", Default::default())?;
 //! let matched = substructure::find_match(&target, &query)?;
 //! assert!(matched.is_some());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -27,7 +27,7 @@
 
 mod expression;
 mod graph;
-mod smarts;
+pub(crate) mod smarts;
 mod stereo;
 
 pub use expression::{
@@ -36,9 +36,5 @@ pub use expression::{
 };
 pub use graph::{
     QueryAtom, QueryAtomId, QueryBond, QueryBondId, QueryGraph, QueryGraphBuilder, QueryGraphError,
-};
-pub use smarts::{
-    parse_smarts, parse_smarts_with_options, SmartsParseError, SmartsParseErrorKind,
-    SmartsParseOptions,
 };
 pub use stereo::{QueryStereoConstraint, QueryStereoGroup};

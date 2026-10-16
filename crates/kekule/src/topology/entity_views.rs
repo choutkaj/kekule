@@ -4,8 +4,8 @@ use crate::molecule::{Atom, Bond};
 use crate::properties::{PropertyKey, PropertyValue, PropertyValueRef};
 
 use super::{
-    AtomSiteView, ChainView, InstanceAtomId, InstanceBondId, MoleculeInstanceView, ResidueView,
-    Topology, TopologyAtomIndex, TopologyBondIndex,
+    AtomSiteView, ChainView, InstanceAtomId, InstanceBondId, InstanceView, ResidueView, Topology,
+    TopologyAtomIndex, TopologyBondIndex,
 };
 
 /// One topology atom: its instance-qualified identity, dense index, and
@@ -70,8 +70,8 @@ impl<'a> AtomView<'a> {
     }
 
     /// The molecule occurrence containing this atom.
-    pub fn molecule(self) -> MoleculeInstanceView<'a> {
-        MoleculeInstanceView::new(self.topology, self.id.molecule())
+    pub fn molecule(self) -> InstanceView<'a> {
+        InstanceView::new(self.topology, self.id.molecule())
     }
 
     /// Bonded neighbors in local adjacency order.
@@ -226,8 +226,8 @@ impl<'a> BondView<'a> {
         self.bond
     }
 
-    pub fn molecule(self) -> MoleculeInstanceView<'a> {
-        MoleculeInstanceView::new(self.topology, self.id.molecule())
+    pub fn molecule(self) -> InstanceView<'a> {
+        InstanceView::new(self.topology, self.id.molecule())
     }
 
     /// Both endpoint atoms in stored bond order.

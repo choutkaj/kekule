@@ -100,16 +100,18 @@ impl RotatableBondSet {
     }
 }
 
-/// Detects rotatable bonds using the supplied options without mutating the molecule.
+/// Detects rotatable bonds, the configurable represented single-bond axes of
+/// canonical chemistry, without mutating the molecule or installing perception.
 ///
-/// Ring membership is reused or computed on demand. When resonance exclusions
-/// are enabled, compatible default valence, ring and aromaticity perception is
-/// reused. Otherwise the default profile is computed on a temporary copy, with
-/// valence and resource failures returned to the caller. Model-neutral or partial
-/// installed perception never changes the selected chemistry model. Neither
-/// represented chemistry nor installed perception on the source is modified.
-/// Strict valence validation also applies when reusing cached perception.
-pub(crate) fn detect_rotatable_bonds(
+/// Ring membership is reused or computed on demand. Resonance exclusions reuse
+/// installed RDKit-like valence and aromaticity with the default Figueras ring
+/// model, or compute the default profile on a temporary copy. Strict valence
+/// validation applies in either case. Model-neutral, incomplete, or
+/// incompatible perception is not reused. Valence and resource failures are
+/// returned without changing the source graph or its perception. Disabling
+/// resonance exclusions requires only graph ring membership and does not run
+/// chemical perception.
+pub fn rotatable_bonds(
     molecule: &Molecule,
     options: RotatableBondOptions,
 ) -> Result<RotatableBondSet, PerceptionError> {

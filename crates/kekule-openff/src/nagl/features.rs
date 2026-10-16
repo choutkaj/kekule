@@ -5,7 +5,8 @@ use crate::{Error, ErrorKind, Result};
 use kekule::{
     molecule::{AtomId, BondOrder, Molecule},
     perception::rings::RingBasisModel,
-    query::{parse_smarts, QueryGraph},
+    query::QueryGraph,
+    smarts,
     substructure::{PreparedTarget, TaggedQuery},
 };
 use serde::Deserialize;
@@ -43,7 +44,8 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
             .into_iter()
             .map(|data| {
                 Ok(Normalization {
-                    query: parse_smarts(&data.query).map_err(Error::chemistry)?,
+                    query: smarts::parse_str(&data.query, Default::default())
+                        .map_err(Error::chemistry)?,
                     data,
                 })
             })
@@ -75,7 +77,7 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
                 break;
             };
             let mapping: BTreeMap<_, _> = tags.iter().copied().zip(first.iter().copied()).collect();
-            let mut editor = molecule.edit();
+            let mut editor = molecule.to_editor();
             let mut changed = false;
             for (tag, charge) in &rule.data.charges {
                 let id = mapping[tag];

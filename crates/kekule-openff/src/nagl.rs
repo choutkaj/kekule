@@ -5,7 +5,8 @@ mod network;
 use crate::{explicit, identity, Error, ErrorKind, Result};
 use kekule::{
     molecule::Molecule,
-    query::{parse_smarts, QueryGraph},
+    query::QueryGraph,
+    smarts,
     substructure::find_match,
     units::{Quantity, ELEMENTARY_CHARGE},
 };
@@ -45,7 +46,7 @@ pub(crate) fn lookup_molecule(input: &Molecule) -> Result<Molecule> {
     if !input.atoms().any(|(_, a)| a.isotope.is_some()) {
         return explicit(input);
     }
-    let mut editor = input.edit();
+    let mut editor = input.to_editor();
     for (id, atom) in input.atoms() {
         if atom.isotope.is_some() {
             editor.atom_mut(id).map_err(Error::chemistry)?.isotope = None;
@@ -143,7 +144,10 @@ impl NaglModel {
             .domain
             .forbidden_patterns
             .iter()
-            .map(|p| parse_smarts(p).map_err(|e| Error::wrap(ErrorKind::Model, e)))
+            .map(|p| {
+                smarts::parse_str(p, Default::default())
+                    .map_err(|e| Error::wrap(ErrorKind::Model, e))
+            })
             .collect::<Result<Vec<_>>>()?;
         let lookup: Vec<_> = bundle.lookup.into_values().collect();
         let max_lookup_atoms = lookup.iter().map(|e| e.charges.len()).max().unwrap_or(0);

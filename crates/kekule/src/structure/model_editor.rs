@@ -10,9 +10,12 @@ use crate::properties::{
     OwnerProperties, PropertyColumn, PropertyError, PropertyKey, PropertyValue, RawPropertyTable,
 };
 use crate::topology::{
-    AtomSiteMetadata, EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId, EditChain,
-    EditChainId, EditMolecule, EditResidue, EditResidueId, MoleculeClass, MoleculeInstanceId,
-    ResidueClass, TopologyAtomIndex, TopologyBondIndex, TopologyEditError, TopologyEditor,
+    edit::{
+        EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId, EditChain, EditChainId,
+        EditMolecule, EditResidue, EditResidueId, TopologyEditError, TopologyEditor,
+    },
+    AtomSiteMetadata, MoleculeClass, MoleculeInstanceId, ResidueClass, TopologyAtomIndex,
+    TopologyBondIndex,
 };
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 use std::fmt;
@@ -58,7 +61,8 @@ impl std::ops::Deref for ModelEditor {
 }
 
 impl Model {
-    pub fn edit(&self) -> ModelEditor {
+    /// Starts a detached draft from a copy of this model.
+    pub fn to_editor(&self) -> ModelEditor {
         self.clone().into_editor()
     }
     /// Moves the structure state into a draft while retaining the shared
@@ -569,7 +573,7 @@ impl ModelEditor {
     /// Publishes the model and maps surviving draft atom/bond handles to its layout.
     pub fn finish_with_correspondence(
         self,
-    ) -> Result<(Model, crate::topology::EditCorrespondence), ModelEditError> {
+    ) -> Result<(Model, crate::topology::edit::EditCorrespondence), ModelEditError> {
         let (published, correspondence) = self.topology.into_mapped_publication()?;
         let mut state = self
             .slots

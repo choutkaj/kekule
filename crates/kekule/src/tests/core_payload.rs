@@ -680,7 +680,7 @@ fn checked_stereo_rejects_invalid_carrier_shapes_transactionally() {
     stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
     let (id, element) = molecule.stereo_elements().next().unwrap();
     let element = element.clone();
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     for duplicate in [false, true] {
         let mut invalid = element.clone();
         let StereoElementKind::Tetrahedral(stereo) = &mut invalid.kind else {
@@ -727,7 +727,7 @@ fn axis_stereo_rejects_duplicate_and_same_endpoint_references() {
             StereoCarrier::Atom(AtomId::new(4)),
         ],
     ] {
-        let mut editor = molecule.edit();
+        let mut editor = molecule.to_editor();
         let invalid = StereoElement::new(StereoElementKind::Axis(AxisStereo {
             axis,
             carriers,
