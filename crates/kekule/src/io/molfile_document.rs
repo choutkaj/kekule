@@ -109,7 +109,6 @@ pub struct MolfileAtom {
     pub(super) isotope: Option<u16>,
     pub(super) mass_difference: Option<i8>,
     pub(super) radical: Option<MolfileRadical>,
-    pub(super) hydrogen_count: Option<u8>,
     pub(super) valence: Option<u8>,
     pub(super) atom_map: Option<u32>,
     pub(super) parity: Option<MolfileAtomParity>,
@@ -125,7 +124,6 @@ impl MolfileAtom {
             isotope: None,
             mass_difference: None,
             radical: None,
-            hydrogen_count: None,
             valence: None,
             atom_map: None,
             parity: None,
@@ -161,11 +159,6 @@ impl MolfileAtom {
 
     pub const fn radical(&self) -> Option<MolfileRadical> {
         self.radical
-    }
-
-    /// Declared hydrogen count: the V2000 hydrogen-count field or V3000 `HCOUNT`.
-    pub const fn hydrogen_count(&self) -> Option<u8> {
-        self.hydrogen_count
     }
 
     /// Declared total valence: the V2000 valence field or V3000 `VAL`.
@@ -286,14 +279,15 @@ pub enum MolfileUnsupportedContent {
     /// (`A`), atom value (`V`), or group abbreviation (`G`), or a V3000 CTAB
     /// record such as `LINKNODE`.
     Record(String),
-    /// A V3000 atom option other than `CFG`, `CHG`, `MASS`, `RAD`, `HCOUNT`,
-    /// and `VAL`. `atom` indexes [`MolfileDocument::atoms`].
+    /// A V3000 atom option other than `CFG`, `CHG`, `MASS`, `RAD`, and `VAL`,
+    /// including a nonzero `HCOUNT`, which is a query constraint. `atom`
+    /// indexes [`MolfileDocument::atoms`].
     AtomOption { atom: usize, key: String },
     /// A V3000 bond option other than `CFG`. `bond` indexes
     /// [`MolfileDocument::bonds`].
     BondOption { bond: usize, key: String },
-    /// A nonzero V2000 atom-block query or reaction field: stereo care, H0
-    /// designator, inversion/retention or exact change. `atom` indexes
+    /// A nonzero V2000 atom-block query or reaction field: hydrogen count,
+    /// stereo care, H0 designator, inversion/retention or exact change. `atom` indexes
     /// [`MolfileDocument::atoms`].
     AtomField { atom: usize, field: String },
     /// A nonzero V2000 bond-block ring/chain topology or reacting-center

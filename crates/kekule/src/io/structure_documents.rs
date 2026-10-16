@@ -126,8 +126,10 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, MolfileInterpretError> {
         MolfileRadical::Doublet => AtomRadical::new(1, Some(2)),
         MolfileRadical::Triplet => AtomRadical::new(2, Some(3)),
     });
-    value.hydrogens = if atom.hydrogen_count.is_some() || atom.valence.is_some() {
-        ImplicitHydrogens::Fixed(atom.hydrogen_count.unwrap_or(0))
+    // A declared valence fixes the count, which is resolved once bonds exist.
+    // Query hydrogen counts are unsupported content, never a declaration.
+    value.hydrogens = if atom.valence.is_some() {
+        ImplicitHydrogens::Fixed(0)
     } else {
         ImplicitHydrogens::Inferred
     };
@@ -181,21 +183,6 @@ fn apply_molfile_declared_valence(
                 format!("declared {version_name} valence is below represented bond valence"),
             )
         })?;
-    if let Some(declared_hydrogens) = declaration.hydrogen_count {
-        if inferred_hydrogens != usize::from(declared_hydrogens) {
-            let message = match version {
-                MolfileVersion::V2000 => "V2000 hydrogen-count and valence declarations conflict",
-                MolfileVersion::V3000 => "V3000 HCOUNT and VAL declarations conflict",
-            };
-            return Err(MolfileInterpretError::at(
-                DiagnosticKind::Inconsistent,
-                location,
-                message,
-            ));
-        }
-        return Ok(());
-    }
-
     let explicit = u8::try_from(inferred_hydrogens).map_err(|_| {
         MolfileInterpretError::at(
             DiagnosticKind::InvalidValue,

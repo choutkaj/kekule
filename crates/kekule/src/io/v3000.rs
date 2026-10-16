@@ -378,8 +378,21 @@ fn parse_v3000_atom(
                     _ => return Err(invalid("RAD")),
                 };
             }
+            // HCOUNT is a query constraint ("at least n"), not a molecular
+            // hydrogen declaration; only a nonzero value states one.
             "HCOUNT" => {
-                atom.hydrogen_count = parse_v3000_count(value).ok_or_else(|| invalid("HCOUNT"))?;
+                if parse_v3000_count(value)
+                    .ok_or_else(|| invalid("HCOUNT"))?
+                    .is_some()
+                {
+                    unsupported.push(MolfileUnsupported {
+                        content: MolfileUnsupportedContent::AtomOption {
+                            atom: position,
+                            key: key.to_owned(),
+                        },
+                        location: lines.location(row.index),
+                    });
+                }
             }
             "VAL" => atom.valence = parse_v3000_count(value).ok_or_else(|| invalid("VAL"))?,
             _ => unsupported.push(MolfileUnsupported {

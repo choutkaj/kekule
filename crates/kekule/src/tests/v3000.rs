@@ -885,7 +885,7 @@ kekule
 M  V30 BEGIN CTAB
 M  V30 COUNTS 4 3 0 0 0
 M  V30 BEGIN ATOM
-M  V30 1 C 0 0 0 0 HCOUNT=1
+M  V30 1 C 0 0 0 0 VAL=4
 M  V30 2 F 1 0 0 0
 M  V30 3 Cl -1 0 0 0
 M  V30 4 Br 0 1 0 0
@@ -1025,7 +1025,7 @@ M  END
     assert_eq!(carbon.hydrogens, ImplicitHydrogens::Fixed(4));
     assert!(!molecule.perception().has_valence());
 
-    let zero_declarations = valence.replace("VAL=4", "HCOUNT=-1 VAL=-1");
+    let zero_declarations = valence.replace("VAL=4", "VAL=-1");
     let document =
         molfile::parse_str(&zero_declarations).expect("zero-count sentinels are valid syntax");
     let molecule = molfile::interpret(&document)
