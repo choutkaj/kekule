@@ -277,9 +277,9 @@ Occupancy and B factors are typed site fields of models and ensemble members,
 with checked semantics independent of any generic property with the same name. Positions, cells,
 weights, energies, time, steps, velocities, and forces retain their dedicated APIs.
 
-Kekule uses one runtime unit system across all crates. Public boundaries accept
-compatible `Quantity` units; internal numerical state uses the library-wide
-canonical units. Mass and amount remain distinct dimensions, with molecular mass
+Kekule uses one runtime unit system across all crates. Every public value with a
+physical dimension, accepted or returned, is a `Quantity` in a compatible unit;
+internal numerical state uses the library-wide canonical units. Mass and amount remain distinct dimensions, with molecular mass
 and energy conventions chosen coherently. Unit composition and conversion reject
 unrepresentable dimensions or scales; checked numerical storage rejects nonfinite
 values. Exact units, tolerances, and conversion policies belong with
@@ -442,9 +442,10 @@ does not support is rejected by default; an explicit option downgrades it to typ
 report entries that name the record and the kind of content omitted. A deliberately
 lossy projection, such as base-only SMILES, says so in its name.
 
-Every stage reports through one diagnostics model. Parse and interpretation
-errors carry a structured kind and a source location relative to the original
-input, so callers can match on failures and map them to the source without
+Every stage reports through one diagnostics model. Parse, interpretation, and
+write failures of every format are one `diagnostics::FormatError` carrying a
+structured kind and a source location relative to the original input, so
+callers can match on failures and map them to the source without
 format-specific arithmetic. Non-fatal report issues carry a structured kind and
 identify the source records they concern.
 
@@ -647,21 +648,144 @@ native persistence and must not weaken these boundaries. See
 
 ## API and maintenance rules
 
-Use `as_*` for cheap borrowed views, `to_*` for owned conversion while retaining
-the source, and `into_*` for consuming conversion. Consuming does not promise zero
-allocation, but should transfer compatible storage. Constructors that take
-ownership of chemistry accept values (`Molecule`, `Model`), and callers clone
-explicitly. Lookups by identity return `Option`; fallible operations return a
-typed error. Keep mutation on appropriate editors, `*_mut` guards, and semantic
-owner APIs. Each read lives once on its owner and is reached through `Deref`
-or a view rather than forwarded. Use full `properties` names and avoid redundant
-owner wrappers, compatibility aliases, and generic target/remapping abstractions.
+The public API of every crate follows the rules below. Code that predates them
+is being migrated for 0.4.0 and is not a precedent; new and changed code follows
+them.
+
+### Publication and module layout
+
+Implementation modules are private. Each public module is an explicit list of
+re-exports: no glob re-exports and no public implementation files. Every public
+item has exactly one public path; `prelude` is the only module that repeats
+items. An item that no public path reaches is `pub(crate)`. Workspace lints
+(`unreachable_pub`, `missing_docs`, `missing_debug_implementations`) enforce
+this.
+
+The public modules of `kekule`, by domain:
+
+| Domain | Modules |
+| --- | --- |
+| Foundations | `units`, `geometry`, `properties`, `diagnostics` |
+| Chemistry | `molecule`, `stereo` (`cip`, `coordinates`, `cleanup`), `perception` (`valence`, `rings`, `aromaticity`, `conjugation`, `resonance`), `hydrogens`, `descriptors` |
+| Queries | `query`, `substructure` |
+| Systems and structures | `topology` (`edit`), `structure` (`measure`), `solvation` |
+| Analysis | `alignment`, `clustering`, `dssp` |
+| Formats | `smiles`, `smarts`, `molfile`, `sdf`, `mmcif`, `pdb`, `macromolecular`, `components` |
+
+A type lives in the module of the domain that owns it:
+
+- perception state with its perception step;
+- represented stereo in `stereo`;
+- descriptors and other derived per-molecule results in `descriptors`;
+- interpretation types shared by mmCIF and PDB in `macromolecular` only;
+- the shared failure vocabulary in `diagnostics`.
+
+Format modules stay at the crate root. The foundational crate has no optional
+features.
+
+### Names, conversions, and identifiers
+
+- **Conversions.** Use `as_*` for cheap borrowed views, `to_*` for owned
+  conversion while retaining the source, and `into_*` for consuming
+  conversion. Consuming does not promise zero allocation, but should transfer
+  compatible storage.
+- **Ownership.** Constructors that take ownership of chemistry accept values
+  (`Molecule`, `Model`), and callers clone explicitly.
+- **Getters.** No `get_` prefix. Counts are `*_count()`; `len()` belongs only
+  to collection types.
+- **Molecule vocabulary.** An *instance* is an occurrence of a molecule in a
+  topology and a *definition* is its reusable chemistry. A method named
+  `molecule()` returns a `Molecule`.
+- **Properties.** Use full `properties` names.
+- **Units.** No public name carries a unit (`_angstrom`, `_degrees`).
+- **Identifiers.** Semantic IDs and dense indices are distinct types, and
+  dense atom and bond indices are `TopologyAtomIndex` and `TopologyBondIndex`.
+  Frame indices are `usize`; `u64` is used only for byte offsets.
+  Identifiers display in one style.
+
+### Entry points
+
+Every operation has exactly one home.
+
+- **Lifecycle operations** of an owner are its methods: perception and
+  hydrogen transforms on `Molecule`, drafts on owners, interpretation on
+  format documents, projections on interpretations.
+- **Expert algorithms** are free functions in their domain module.
+- **Formats** provide parsing and writing as free functions of the format
+  module.
+- **Options** are always an explicit parameter, and `Default` reproduces the
+  documented default behaviour. There are no `*_with_options` twins.
+- **Shortcuts.** The only one-call shortcuts that compose several steps are
+  `smiles::to_molecules`, `smiles::to_topology`, and `Molecule::perceive`.
+- **Reusable work** is prepared explicitly: substructure search, for example,
+  runs only on prepared targets.
+- **Reads** live once on their owner and are reached through `Deref` or a
+  view, never through forwarding wrappers.
+- **Mutation** stays on editors, `*_mut` guards, and semantic owner APIs.
+- **Avoid** redundant owner wrappers, compatibility aliases, and generic
+  target or remapping abstractions.
+
+### Options, results, and enums
+
+- **Options structs** have private fields, `Default`, `#[must_use]` chainable
+  `with_*` setters that validate their argument, and getters. Named presets
+  are constructors such as `SmilesWriteOptions::canonical()`.
+- **Results and reports** have private fields with accessors, have no
+  `Default`, and return collections as slices or `ExactSizeIterator`s.
+- **Public enums** are `#[non_exhaustive]` unless their documentation
+  declares them closed, which is reserved for variant sets fixed by
+  definition: orientations, sides, byte order, base dimensions.
+
+### Lookups, errors, and panics
+
+**Lookups.**
+- Identity lookups return `Option`.
+- Searches by name or label return `Result`, with typed not-found and
+  ambiguous cases.
+- No API returns `Result<Option<_>>`.
+
+**Errors.**
+- Each functional area has one error type with typed payloads, never
+  `&'static str` reasons or stringified causes.
+- `source()` returns the underlying cause, and `Display` does not repeat it.
+- Every format's parse, interpretation, and write failures, SMARTS included,
+  are one `diagnostics::FormatError`. It carries the stage, a
+  `DiagnosticKind`, the format, the source location, and the record.
+- Resource exhaustion is reported everywhere as
+  `diagnostics::LimitExceeded`, naming the resource, the limit, and the
+  observed value. Default limits are exported as constants.
+- A recoverable draft (`try_build`, `try_finish`) fails with
+  `DraftError<D, E>`, which returns the draft with the error. It is the only
+  generic error wrapper.
+
+**Panics.** Public functions do not panic on any input their types allow.
+Internal invariants may use `expect`, and the message names the invariant.
+
+### Units, topology handles, and traits
+
+**Units.** Every public value with a physical dimension, input or output, is a
+`Quantity` (see Properties and units).
+
+**Topology handles.**
+- Owners and views expose `topology() -> &Topology` and
+  `shared_topology() -> Arc<Topology>`.
+- Arguments take `&Topology` when only layout identity is checked, and
+  `impl Into<Arc<Topology>>` when the topology is stored.
+- Layout compatibility uses `shares_layout` or `same_layout`, never pointer
+  identity.
+
+**Traits.** Traits that are not extension points are sealed. An extension
+trait documents the contract its implementors must keep.
+
+### Maintenance
 
 When adding state, choose its owner from the ownership map. Substantial derived
 results deserve their own concrete types. Format metadata stays with the format
 unless deliberate promotion defines its canonical meaning and validity scope.
 Keep API inventories and algorithm-specific policies beside the implementation;
 update this document when ownership or cross-module invariants change.
+
+### Companion packages
 
 The unpublished `kekule-bench` workspace package (`benchmarks/observer`) reports
 what Kekule's public APIs compute, keyed by source positions, for comparison
