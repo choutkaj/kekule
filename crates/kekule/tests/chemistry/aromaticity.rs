@@ -1,6 +1,5 @@
 use kekule::perception::aromaticity::{
-    perceive_aromaticity, perceive_aromaticity_with_options, AromaticityError, AromaticityModel,
-    AromaticityOptions,
+    perceive_aromaticity, AromaticityError, AromaticityModel, AromaticityOptions,
 };
 use kekule::perception::rings::RingPerceptionOptions;
 use kekule::smiles;
@@ -103,7 +102,12 @@ fn standalone_aromaticity_uses_the_same_charged_hydrogen_rules_as_default_percep
         .bonds()
         .all(|(bond, _)| complete.bond_is_aromatic(bond).unwrap() == Some(true)));
 
-    perceive_aromaticity(&mut standalone, AromaticityModel::RdkitLike).unwrap();
+    perceive_aromaticity(
+        &mut standalone,
+        AromaticityModel::RdkitLike,
+        Default::default(),
+    )
+    .unwrap();
 
     assert_eq!(
         standalone.perception().aromaticity_state(),
@@ -123,7 +127,12 @@ fn standalone_aromaticity_preserves_partial_installed_hydrogen_assignments() {
         .build();
     molecule.install_perception(installed.clone()).unwrap();
 
-    perceive_aromaticity(&mut molecule, AromaticityModel::RdkitLike).unwrap();
+    perceive_aromaticity(
+        &mut molecule,
+        AromaticityModel::RdkitLike,
+        Default::default(),
+    )
+    .unwrap();
 
     // An expert-installed zero takes precedence over the model's inferred one.
     assert_eq!(
@@ -142,7 +151,7 @@ fn standalone_aromaticity_preserves_partial_installed_hydrogen_assignments() {
 fn aromaticity_work_failures_restore_both_missing_and_installed_perception() {
     let mut perceived = molecule("F[C@H](Cl)c1ccccc1-c1ccccc1");
     perceived.perceive().unwrap();
-    assign_cip_descriptors(&mut perceived).unwrap();
+    assign_cip_descriptors(&mut perceived, Default::default()).unwrap();
     for original in [molecule("F[C@H](Cl)c1ccccc1-c1ccccc1"), perceived] {
         let mut failures = 0;
         let mut successes = 0;
@@ -154,11 +163,7 @@ fn aromaticity_work_failures_restore_both_missing_and_installed_perception() {
                 max_total_work,
                 ..Default::default()
             };
-            match perceive_aromaticity_with_options(
-                &mut actual,
-                AromaticityModel::RdkitLike,
-                options,
-            ) {
+            match perceive_aromaticity(&mut actual, AromaticityModel::RdkitLike, options) {
                 Err(error) => {
                     assert_eq!(
                         error,
@@ -204,10 +209,10 @@ fn installed_rings_skip_enumeration_limits_but_not_aromaticity_limits() {
         },
         ..Default::default()
     };
-    perceive_aromaticity_with_options(&mut actual, AromaticityModel::RdkitLike, options).unwrap();
+    perceive_aromaticity(&mut actual, AromaticityModel::RdkitLike, options).unwrap();
     let before = actual.perception().clone();
     assert!(matches!(
-        perceive_aromaticity_with_options(
+        perceive_aromaticity(
             &mut actual,
             AromaticityModel::RdkitLike,
             AromaticityOptions {

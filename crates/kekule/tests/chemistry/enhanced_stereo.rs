@@ -6,9 +6,9 @@ use kekule::{
 };
 
 fn molecule(text: &str) -> Molecule {
-    let mut mol = smiles::parse_str(text)
+    let mut mol = smiles::parse_str(text, Default::default())
         .unwrap()
-        .interpret()
+        .interpret(Default::default())
         .unwrap()
         .into_molecule()
         .unwrap();
@@ -104,18 +104,18 @@ fn relative_flag_does_not_weaken_ungrouped_absolute_centers() {
 }
 
 fn matches(target: &str, query: &str) -> bool {
-    use kekule::substructure::{find_matches_with_options, SubstructureMatchOptions};
+    use kekule::substructure::{PreparedTarget, SubstructureMatchOptions};
     let query = kekule::smarts::parse_str(query, Default::default()).unwrap();
-    !find_matches_with_options(
-        &molecule(target),
-        &query,
-        SubstructureMatchOptions {
-            use_enhanced_stereo: true,
-            ..Default::default()
-        },
-    )
-    .unwrap()
-    .is_empty()
+    !PreparedTarget::new(&molecule(target))
+        .all(
+            &query,
+            SubstructureMatchOptions {
+                use_enhanced_stereo: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .is_empty()
 }
 
 #[test]
@@ -257,7 +257,7 @@ fn hydrogen_transforms_preserve_membership_and_configuration() {
             .stereo_groups()
             .map(|(id, g)| (id, g.clone()))
             .collect::<Vec<_>>();
-        mol.add_hydrogens().unwrap();
+        mol.add_hydrogens(Default::default()).unwrap();
         mol.perceive().unwrap();
         assert_eq!(
             smiles::write(&mol, smiles::SmilesWriteOptions::canonical()).unwrap(),
@@ -291,15 +291,15 @@ fn topology_matching_does_not_correlate_reused_definitions() {
     // Each occurrence can choose its own orientation even though the definition
     // and its local group ID are shared.
     let query = smarts::parse_str("F[C@H](Cl)Br.F[C@@H](Cl)Br", Default::default()).unwrap();
-    let matches = find_topology_matches_with_options(
-        &topology,
-        &query,
-        SubstructureMatchOptions {
-            use_enhanced_stereo: true,
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let matches = PreparedTopologyTarget::new(&topology)
+        .all(
+            &query,
+            SubstructureMatchOptions {
+                use_enhanced_stereo: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     assert!(!matches.is_empty());
 }
 
@@ -445,7 +445,8 @@ fn enhanced_matching_respects_boolean_and_partial_carrier_queries() {
     assert!(!matches("NC(F)(Cl)Br", "N[C!@](F)(Cl)Br |o1:1|"));
     assert!(!matches(target, "N[C@,C@@](F)(Cl)Br |&1:1|"));
     let query = kekule::smarts::parse_str("N[C@@](F)(Cl)Br", Default::default()).unwrap();
-    assert!(kekule::substructure::find_match(&molecule(target), &query)
+    assert!(kekule::substructure::PreparedTarget::new(&molecule(target))
+        .first(&query, Default::default())
         .unwrap()
         .is_none());
 }

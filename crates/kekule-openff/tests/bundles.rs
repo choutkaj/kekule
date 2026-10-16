@@ -69,7 +69,7 @@ fn exported_ash_layout_loads_like_the_bundled_model_and_rejects_corruption() {
     );
     let mut ethanol = kekule::smiles::to_molecules("CCO").unwrap().remove(0);
     ethanol.perceive().unwrap();
-    ethanol.add_hydrogens().unwrap();
+    ethanol.add_hydrogens(Default::default()).unwrap();
     assert_eq!(
         kekule_openff::diagnostics::infer_charges(&loaded, &ethanol).unwrap(),
         kekule_openff::diagnostics::infer_charges(&bundled, &ethanol).unwrap()
@@ -129,7 +129,7 @@ fn exported_ash_layout_loads_like_the_bundled_model_and_rejects_corruption() {
     let methane = kekule_openff::diagnostics::lookup_key(&bundled, &{
         let mut methane = kekule::smiles::to_molecules("C").unwrap().remove(0);
         methane.perceive().unwrap();
-        methane.add_hydrogens().unwrap();
+        methane.add_hydrogens(Default::default()).unwrap();
         methane
     })
     .unwrap()
@@ -143,7 +143,7 @@ fn exported_ash_layout_loads_like_the_bundled_model_and_rejects_corruption() {
     let broken = NaglModel::load(&scratch.0).unwrap();
     let mut molecule = kekule::smiles::to_molecules("C").unwrap().remove(0);
     molecule.perceive().unwrap();
-    molecule.add_hydrogens().unwrap();
+    molecule.add_hydrogens(Default::default()).unwrap();
     let error = broken.assign_charges(&molecule).unwrap_err();
     assert_eq!(error.kind(), ErrorKind::Model);
 

@@ -17,8 +17,8 @@
 //! use kekule::{mmcif, topology::AtomSelection};
 //! use kekule_traj::{io::read_trajectory, periodic};
 //!
-//! let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
-//! let topology = document.interpret()?.into_topology();
+//! let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?, Default::default())?;
+//! let topology = document.interpret(Default::default())?.into_topology();
 //! let mut trajectory = read_trajectory("trajectory.xtc", topology.clone())?;
 //! periodic::make_molecules_whole(&mut trajectory)?;
 //!
@@ -29,7 +29,7 @@
 //! // A separate per-frame view with molecules centered around selected anchors.
 //! let anchors = AtomSelection::all(&topology); // Or select the solute's atoms.
 //! periodic::image_molecules(&mut trajectory, &anchors)?;
-//! trajectory.superpose(0, &anchors)?;
+//! trajectory.superpose(0, &anchors, Default::default())?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -41,8 +41,8 @@
 //!     io::open_trajectory, periodic::{MoleculeImager, TrajectoryUnwrapper},
 //!     TrajectoryReader,
 //! };
-//! let topology = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?
-//!     .interpret()?.into_topology();
+//! let topology = mmcif::parse_str(&std::fs::read_to_string("system.cif")?, Default::default())?
+//!     .interpret(Default::default())?.into_topology();
 //! let mut reader = open_trajectory("trajectory.xtc", topology.clone())?;
 //! let mut frame = reader.frame_buffer();
 //! let imager = MoleculeImager::new(topology.clone());

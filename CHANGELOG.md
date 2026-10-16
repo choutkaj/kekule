@@ -170,6 +170,72 @@ All notable changes to Kekule are documented in this file.
     move to `kekule::descriptors`.
   - `Molecule::edit`, `Model::edit`, and `Topology::edit`, which copy the
     owner into a draft, are `to_editor`; `into_editor` is unchanged.
+  - Every operation takes its options as a parameter, and the
+    `*_with_options` twins are removed; pass `Default::default()` for the
+    former plain behaviour. This applies to `perception::valence::perceive_valence`,
+    `perception::aromaticity::perceive_aromaticity`,
+    `stereo::cip::assign_cip_descriptors`, `stereo::cleanup::detect_stereo_candidates`,
+    `stereo::coordinates::infer_coordinate_stereo` and
+    `materialize_coordinate_stereo`, `Molecule::add_hydrogens`,
+    `alignment::rmsd`, `Ensemble` and `Trajectory` `superpose`, `rmsd`, and
+    `aligned_rmsd`, and `Ensemble::cluster_by_radius`.
+  - `perception::rings::perceive_rings(mol, options)` replaces
+    `perceive_ring_membership`, `perceive_ring_set`, and
+    `perceive_ring_set_with_options`. It installs ring perception and returns
+    `()`, like the other perception steps; read the result through
+    `Molecule::ring_membership` and `Molecule::ring_set`. The new
+    `RingPerceptionOptions::scope` field (`RingPerceptionScope::Basis` by
+    default) selects membership-only perception with
+    `RingPerceptionScope::Membership`, or `RingPerceptionOptions::membership_only()`,
+    which ignores the bounds and cannot fail.
+    `perceive_aromaticity_with_ring_options(mol, model, ring_options)` is
+    `perceive_aromaticity(mol, model, AromaticityOptions { ring_options, .. })`.
+  - `RingPerceptionOptions::default()` and `AromaticityOptions::default()`
+    keep their fixed bounds. The bounds the former plain `perceive_ring_set`
+    and `perceive_aromaticity` used, which grow with the molecule, come from
+    the now public `RingPerceptionOptions::for_molecule` and
+    `AromaticityOptions::for_molecule`; the two differ only for molecules
+    above about 5,000 atom and bond slots.
+  - Substructure search runs only on prepared targets. The free functions
+    `substructure::find_match`, `find_matches`, `find_matches_with_options`,
+    `visit_matches`, `visit_matches_with_options`, `find_topology_matches`,
+    and `find_topology_matches_with_options` are removed.
+    `PreparedTarget` and `PreparedTopologyTarget` provide
+    `first(query, options)`, `all(query, options)`, and
+    `visit(query, options, visitor)`, replacing `find_match`, `find_matches`,
+    `find_matches_with_options`, `visit_matches`, and
+    `visit_matches_with_options`; `PreparedTopologyTarget::first` is new.
+    `TaggedQuery::find_matches` takes `substructure::TupleMode::All` or
+    `TupleMode::Distinct` instead of a `bool`.
+  - `alignment::kabsch` and `kabsch_with_options` are `alignment::fit`. The
+    new free `alignment::aligned_rmsd` fits one view on one set of pairs and
+    measures another, as the collection method does per item.
+    `Ensemble::pairwise_rmsd` and `pairwise_rmsd_with_options` are
+    `Ensemble::pairwise_fitted_rmsd(atoms, options)`.
+  - `dssp::assign(model, options)` takes any `&impl AsModelView`, replacing
+    `dssp::assign(view, options)` and `dssp::assign_model(&model, options)`.
+  - `structure::measure::distance`, `angle`, and `dihedral` take a
+    `ConnectivityCheck`, replacing their `*_with_connectivity` variants;
+    `ConnectivityCheck::Unrestricted` is the former plain behaviour.
+  - Format parsing takes options: `parse_str(input, options)` and
+    `parse_reader(reader, options)` in `smiles`, `molfile`, `sdf`, `mmcif`,
+    and `pdb`, and `records(reader, options)` in `smiles` and `sdf`. The new
+    `smiles::parse_reader` reads one record within the byte limit.
+  - Interpretation is a document method taking options:
+    `doc.interpret(options)` and `doc.interpret_ensemble(options)` on
+    `SmilesDocument`, `MolfileDocument`, `SdfRecord`, `MmcifDocument`,
+    `MmcifBlock`, and `PdbDocument`, replacing the plain and
+    `*_with_options` methods. The free functions `smiles::interpret`,
+    `interpret_with_options`, and `interpret_base`, `molfile::interpret` and
+    `interpret_with_options`, and `mmcif::` and `pdb::interpret`,
+    `interpret_with_options`, `interpret_ensemble`,
+    `interpret_ensemble_with_options`, and `interpret_conformations` are
+    removed; call the document method instead.
+  - The document shortcuts `to_molecules`, `to_topology`, and `to_model`, and
+    their `*_with_options` variants, are removed from every format document;
+    use `doc.interpret(options)?.into_molecules()` (or `into_topology`,
+    `into_model`). `smiles::to_molecules` and `smiles::to_topology` remain
+    the one-call SMILES shortcuts.
 - **Breaking:** Every public module is an explicit list of re-exports, and
   every public item has exactly one public path; only `prelude` repeats items.
   No item is renamed and no behaviour changes, so callers only update imports.

@@ -31,9 +31,10 @@ pub(crate) fn read_molecule(input: &str, directory: &Path) -> Molecule {
         Some(file) => {
             let text = std::fs::read_to_string(directory.join(file))
                 .unwrap_or_else(|error| panic!("{file}: {error}"));
-            let document = sdf::parse_str(&text).unwrap_or_else(|error| panic!("{file}: {error}"));
+            let document = sdf::parse_str(&text, Default::default())
+                .unwrap_or_else(|error| panic!("{file}: {error}"));
             document.records()[0]
-                .interpret()
+                .interpret(Default::default())
                 .unwrap_or_else(|error| panic!("{file}: {error}"))
                 .into_molecules()
         }
@@ -219,8 +220,8 @@ pub(crate) fn cip_labels(molecule: &mut Molecule) -> BTreeMap<StereoFocus, Strin
 pub(crate) fn try_cip_labels(
     molecule: &mut Molecule,
 ) -> Result<BTreeMap<StereoFocus, String>, String> {
-    let report =
-        stereo::cip::assign_cip_descriptors(molecule).map_err(|error| format!("{error:?}"))?;
+    let report = stereo::cip::assign_cip_descriptors(molecule, Default::default())
+        .map_err(|error| format!("{error:?}"))?;
     Ok(report
         .assigned
         .iter()

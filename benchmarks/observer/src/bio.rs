@@ -25,7 +25,8 @@ pub(crate) fn observe(
             format!("bio tasks read mmCIF, not {format:?}"),
         ));
     }
-    let document = mmcif::parse_str(text).map_err(|e| Failure::new("parse", e))?;
+    let document =
+        mmcif::parse_str(text, Default::default()).map_err(|e| Failure::new("parse", e))?;
     match task {
         "cif.syntax" => syntax(&document),
         "hierarchy" => hierarchy(&document),
@@ -94,14 +95,12 @@ fn syntax(document: &MmcifDocument) -> Result<Facts, Failure> {
 fn first_model(
     document: &MmcifDocument,
 ) -> Result<macromolecular::StructureInterpretation, Failure> {
-    mmcif::interpret_with_options(
-        document,
-        StructureInterpretOptions {
+    document
+        .interpret(StructureInterpretOptions {
             model_selection: ModelSelection::First,
             ..Default::default()
-        },
-    )
-    .map_err(|e| Failure::new("interpret", e))
+        })
+        .map_err(|e| Failure::new("interpret", e))
 }
 
 /// Site identity for every atom an interpretation kept.
@@ -268,10 +267,7 @@ fn partner(
 /// label chain and sequence number as mkdssp reports them.
 fn secondary_structure(document: &MmcifDocument) -> Result<Facts, Failure> {
     let interpretation = first_model(document)?;
-    let result = match dssp::assign(
-        interpretation.model().as_model_view(),
-        DsspOptions::default(),
-    ) {
+    let result = match dssp::assign(interpretation.model(), DsspOptions::default()) {
         Ok(result) => result,
         Err(dssp::DsspError::NoAnalyzableProteinResidues) => return Ok(Facts::new()),
         Err(error) => return Err(Failure::new("dssp", error)),
@@ -317,8 +313,9 @@ fn secondary_structure(document: &MmcifDocument) -> Result<Facts, Failure> {
 
 /// Cα RMSD of every coordinate model after fitting it onto the first.
 fn superposition(document: &MmcifDocument) -> Result<Facts, Failure> {
-    let interpretation =
-        mmcif::interpret_ensemble(document).map_err(|e| Failure::new("interpret", e))?;
+    let interpretation = document
+        .interpret_ensemble(Default::default())
+        .map_err(|e| Failure::new("interpret", e))?;
     let ensemble = interpretation.ensemble();
     let topology: Arc<_> = ensemble.shared_topology();
     let first = &interpretation.reports()[0];
@@ -338,7 +335,7 @@ fn superposition(document: &MmcifDocument) -> Result<Facts, Failure> {
     let selection =
         AtomSelection::from_atoms(&topology, alpha).map_err(|e| Failure::new("selection", e))?;
     let rmsd = ensemble
-        .aligned_rmsd(0usize, &selection, &selection)
+        .aligned_rmsd(0usize, &selection, &selection, Default::default())
         .map_err(|e| Failure::new("superposition", e))?
         .value_in(ANGSTROM)
         .map_err(|e| Failure::new("units", e))?;

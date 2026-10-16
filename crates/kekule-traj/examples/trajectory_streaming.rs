@@ -28,8 +28,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(usage.into());
     }
 
-    let topology = mmcif::parse_str(&fs::read_to_string(topology_path)?)?
-        .interpret()?
+    let topology = mmcif::parse_str(&fs::read_to_string(topology_path)?, Default::default())?
+        .interpret(Default::default())?
         .into_topology();
     let mut reader = open_trajectory(input, topology.clone())?;
     let mut buffer = reader.frame_buffer();

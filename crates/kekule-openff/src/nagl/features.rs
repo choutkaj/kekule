@@ -7,7 +7,7 @@ use kekule::{
     perception::rings::RingBasisModel,
     query::QueryGraph,
     smarts,
-    substructure::{PreparedTarget, TaggedQuery},
+    substructure::{PreparedTarget, TaggedQuery, TupleMode},
 };
 use serde::Deserialize;
 use std::{
@@ -69,7 +69,7 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
                 .find_matches(
                     &PreparedTarget::new(&molecule),
                     crate::assignment::options(molecule.atom_count()),
-                    true,
+                    TupleMode::Distinct,
                 )
                 .map_err(crate::assignment::matching)?;
             let Some(first) = matches.first() else {
@@ -498,7 +498,7 @@ mod tests {
     fn explicit_hydrogens(smiles: &str) -> kekule::molecule::Molecule {
         let mut molecule = kekule::smiles::to_molecules(smiles).unwrap().remove(0);
         molecule.perceive().unwrap();
-        molecule.add_hydrogens().unwrap();
+        molecule.add_hydrogens(Default::default()).unwrap();
         molecule
     }
 

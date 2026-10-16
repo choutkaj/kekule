@@ -482,8 +482,10 @@ mod tests {
 
     #[test]
     fn no_carbon_formula_and_charge_are_reported_per_connected_entity() {
-        let document = crate::smiles::parse_str("[NH4+].[Cl-]").expect("salt parses");
-        let components = crate::smiles::interpret(&document)
+        let document =
+            crate::smiles::parse_str("[NH4+].[Cl-]", Default::default()).expect("salt parses");
+        let components = document
+            .interpret(Default::default())
             .expect("salt interprets")
             .into_molecules();
         let formulas = components

@@ -242,10 +242,11 @@ fn should_refine_ring_topology(mol: &Molecule, atoms: &[AtomId], ranks: &[u32]) 
         ring_set
     } else {
         let mut staged = mol.clone();
-        let Ok(ring_set) = super::rings::perceive_ring_set(&mut staged) else {
+        let options = super::RingPerceptionOptions::for_molecule(&staged);
+        if super::rings::perceive_rings(&mut staged, options).is_err() {
             return false;
-        };
-        computed_ring_set.insert(ring_set)
+        }
+        computed_ring_set.insert(staged.ring_set().expect("rings installed").clone())
     };
     let mut ring_counts = vec![0usize; mol.graph.atom_slot_count()];
     for ring in ring_set.rings() {

@@ -213,7 +213,9 @@ fn superposition_streams_the_same_transforms_and_metadata_and_reports_source_ind
     let topology = trajectory.shared_topology();
     let selection = AtomSelection::all(&topology);
     let mut expected = trajectory.clone();
-    let reports = expected.superpose(0, &selection).unwrap();
+    let reports = expected
+        .superpose(0, &selection, Default::default())
+        .unwrap();
     let reference = trajectory.get(0).unwrap();
     let superposer = FrameSuperposer::new(&reference, &selection);
     let mut buffer = FrameBuffer::new(topology.clone());
@@ -274,9 +276,7 @@ fn correspondence_streaming_matches_loaded_superposition_and_keeps_failed_buffer
         ..AlignmentOptions::default()
     };
     let mut loaded = trajectory.clone();
-    loaded
-        .superpose_with_options(&reference, &fit, options)
-        .unwrap();
+    loaded.superpose(&reference, &fit, options).unwrap();
     let superposer = FrameSuperposer::with_options(&reference, &fit, options);
     let mut reader = MemoryTrajectoryReader::new(&trajectory);
     let mut buffer = reader.frame_buffer();

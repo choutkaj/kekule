@@ -50,8 +50,8 @@ fn v3000_fixed_hydrogens_use_molecular_valence_not_query_constraints() {
 #[test]
 fn v3000_model_writers_preserve_free_format_coordinate_precision() {
     let source = "precision\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0.709510123456789 -0.242001234567891 0.000000123456789 1000\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n";
-    let document = molfile::parse_str(source).unwrap();
-    let interpreted = molfile::interpret(&document).unwrap();
+    let document = molfile::parse_str(source, Default::default()).unwrap();
+    let interpreted = document.interpret(Default::default()).unwrap();
     let model = interpreted.model();
     let expected = model
         .position(model.topology().atom_ids()[0])
@@ -92,8 +92,8 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
         },
     )
     .unwrap();
-    let parsed = molfile::parse_str(&direct).unwrap();
-    check(molfile::interpret(&parsed).unwrap().model());
+    let parsed = molfile::parse_str(&direct, Default::default()).unwrap();
+    check(parsed.interpret(Default::default()).unwrap().model());
     for version in [
         molfile::MolfileWriteVersion::V3000,
         molfile::MolfileWriteVersion::Auto,
@@ -107,8 +107,8 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
         let mut sink = Vec::new();
         molfile::write_to(&mut sink, model, options).unwrap();
         assert_eq!(sink, text.as_bytes());
-        let parsed = molfile::parse_str(&text).unwrap();
-        check(molfile::interpret(&parsed).unwrap().model());
+        let parsed = molfile::parse_str(&text, Default::default()).unwrap();
+        check(parsed.interpret(Default::default()).unwrap().model());
         let text = sdf::write(
             [model],
             sdf::SdfWriteOptions {
@@ -117,16 +117,21 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
             },
         )
         .unwrap();
-        let parsed = sdf::parse_str(&text).unwrap();
-        check(parsed.records()[0].interpret().unwrap().model());
+        let parsed = sdf::parse_str(&text, Default::default()).unwrap();
+        check(
+            parsed.records()[0]
+                .interpret(Default::default())
+                .unwrap()
+                .model(),
+        );
     }
 }
 
 #[test]
 fn v3000_stereo_projection_uses_unrounded_coordinates() {
     let source = "small drawing\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 4 3 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 F -0.00001 0.00001 0 0\nM  V30 2 C 0 0 0 0\nM  V30 3 C 0.00001 0 0 0\nM  V30 4 F 0.00002 -0.00001 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2\nM  V30 2 2 2 3\nM  V30 3 1 3 4\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n";
-    let document = molfile::parse_str(source).unwrap();
-    let interpreted = molfile::interpret(&document).unwrap();
+    let document = molfile::parse_str(source, Default::default()).unwrap();
+    let interpreted = document.interpret(Default::default()).unwrap();
     let molecule = interpreted.molecules().next().unwrap();
     let expected = &molecule.stereo_elements().next().unwrap().1.kind;
     assert!(
@@ -201,7 +206,8 @@ fn v3000_atom_cfg_preserves_parity_unknown_and_atom_block_order() {
                 cfg == 3
             );
             perceive(&mut molecule).unwrap();
-            let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
+            let assigned =
+                stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
             if cfg == 3 {
                 assert!(assigned.assigned.is_empty());
             } else {
@@ -214,8 +220,8 @@ fn v3000_atom_cfg_preserves_parity_unknown_and_atom_block_order() {
                 };
                 assert_eq!(assigned.assigned[0].descriptor, expected);
             }
-            let document = molfile::parse_str(&source).unwrap();
-            let interpreted = molfile::interpret(&document).unwrap();
+            let document = molfile::parse_str(&source, Default::default()).unwrap();
+            let interpreted = document.interpret(Default::default()).unwrap();
             for output in [
                 molfile::write(
                     interpreted.model(),
@@ -237,7 +243,7 @@ fn v3000_atom_cfg_preserves_parity_unknown_and_atom_block_order() {
                 let mut reread = read_molfile(&output).unwrap();
                 perceive(&mut reread).unwrap();
                 assert_eq!(
-                    stereo_api::cip::assign_cip_descriptors(&mut reread)
+                    stereo_api::cip::assign_cip_descriptors(&mut reread, Default::default())
                         .unwrap()
                         .assigned,
                     assigned.assigned
@@ -247,7 +253,8 @@ fn v3000_atom_cfg_preserves_parity_unknown_and_atom_block_order() {
     }
     for cfg in ["4", "-1", "1 CFG=1"] {
         assert!(molfile::parse_str(
-            &atom_cfg_tetrahedron(1, None).replace("CFG=1", &format!("CFG={cfg}"))
+            &atom_cfg_tetrahedron(1, None).replace("CFG=1", &format!("CFG={cfg}")),
+            Default::default()
         )
         .is_err());
     }
@@ -275,7 +282,8 @@ fn v3000_atom_cfg_yields_to_contradicting_3d_coordinates() {
         let (mut molecule, report) = read_molfile_with_report(&source(cfg)).unwrap();
         assert_eq!(report.warnings(), warnings, "CFG={cfg}");
         perceive(&mut molecule).unwrap();
-        let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
+        let assigned =
+            stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
         assert_eq!(
             assigned
                 .assigned
@@ -292,8 +300,8 @@ fn v3000_atom_cfg_yields_to_contradicting_3d_coordinates() {
 fn v3000_atom_cfg_checks_redundant_wedges_and_unknown_precedence() {
     let source = atom_cfg_tetrahedron(1, None);
     let molecule = read_molfile(&source).unwrap();
-    let document = molfile::parse_str(&source).unwrap();
-    let interpreted = molfile::interpret(&document).unwrap();
+    let document = molfile::parse_str(&source, Default::default()).unwrap();
+    let interpreted = document.interpret(Default::default()).unwrap();
     let wedged = molfile::write(
         interpreted.model(),
         molfile::MolfileWriteOptions {
@@ -367,7 +375,7 @@ fn v3000_atom_cfg_numbers_explicit_hydrogen_last_regardless_of_atom_row() {
         let mut molecule = read_molfile(&reordered).unwrap();
         perceive(&mut molecule).unwrap();
         assert_eq!(
-            stereo_api::cip::assign_cip_descriptors(&mut molecule)
+            stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
                 .unwrap()
                 .assigned[0]
                 .descriptor,
@@ -415,7 +423,7 @@ fn molfile_model_preserves_drawn_e_z_and_rejects_inconsistent_or_degenerate_outp
             assert!(!reread.perception().has_valence());
             perceive(&mut reread).unwrap();
             assert_eq!(
-                stereo_api::cip::assign_cip_descriptors(&mut reread)
+                stereo_api::cip::assign_cip_descriptors(&mut reread, Default::default())
                     .unwrap()
                     .assigned[0]
                     .descriptor,
@@ -617,10 +625,12 @@ fn molfile_model_does_not_promote_unasserted_alkene_geometry_to_specified_stereo
             .1
             .is_explicitly_unknown());
         perceive(&mut reread).unwrap();
-        assert!(stereo_api::cip::assign_cip_descriptors(&mut reread)
-            .unwrap()
-            .assigned
-            .is_empty());
+        assert!(
+            stereo_api::cip::assign_cip_descriptors(&mut reread, Default::default())
+                .unwrap()
+                .assigned
+                .is_empty()
+        );
     }
     assert_eq!(molecule.stereo_elements().count(), 0);
 }
@@ -686,9 +696,9 @@ fn molfile_conformation_specifies_e_z_only_at_locally_eligible_double_bonds() {
 fn molfile_conformation_writes_no_e_z_at_ineligible_double_bonds() {
     // A conformation neither invents an unknown mark for the methylene nor
     // carries an E/Z assertion there, which its coordinates cannot express.
-    let interpretation = molfile::parse_str(&drawn_propene(false, 0.1))
+    let interpretation = molfile::parse_str(&drawn_propene(false, 0.1), Default::default())
         .unwrap()
-        .interpret()
+        .interpret(Default::default())
         .unwrap();
     for version in [
         molfile::MolfileWriteVersion::V2000,
@@ -741,7 +751,7 @@ fn molfile_model_e_z_preserves_explicit_carrier_pairs_and_explicit_hydrogen() {
     for smiles in ["F/C(Cl)=C(Br)/I", "[H]/C(F)=C(Cl)/Br"] {
         let mut molecule = read_smiles(smiles).unwrap();
         perceive(&mut molecule).unwrap();
-        let expected = stereo_api::cip::assign_cip_descriptors(&mut molecule)
+        let expected = stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
             .unwrap()
             .assigned;
         let model = Model::from_molecule(
@@ -777,7 +787,7 @@ fn molfile_model_e_z_preserves_explicit_carrier_pairs_and_explicit_hydrogen() {
             let mut reread = read_molfile(&output).unwrap();
             perceive(&mut reread).unwrap();
             assert_eq!(
-                stereo_api::cip::assign_cip_descriptors(&mut reread)
+                stereo_api::cip::assign_cip_descriptors(&mut reread, Default::default())
                     .unwrap()
                     .assigned,
                 expected
@@ -858,9 +868,9 @@ M  V30 END CTAB
 M  END
 $$$$
 ";
-    let document = sdf::parse_str(input).expect("V3000 SDF parses");
+    let document = sdf::parse_str(input, Default::default()).expect("V3000 SDF parses");
     let interpretation = document.records()[0]
-        .interpret()
+        .interpret(Default::default())
         .expect("V3000 SDF interprets");
     assert_eq!(interpretation.molecules().count(), 1);
     assert_eq!(interpretation.report().molfile_components().len(), 1);
@@ -922,8 +932,8 @@ M  END
             expected_specified
         );
 
-        let document = molfile::parse_str(&input).unwrap();
-        let interpreted = molfile::interpret(&document).unwrap();
+        let document = molfile::parse_str(&input, Default::default()).unwrap();
+        let interpreted = document.interpret(Default::default()).unwrap();
         let written = molfile::write(
             interpreted.model(),
             molfile::MolfileWriteOptions {
@@ -1017,8 +1027,10 @@ M  V30 END BOND
 M  V30 END CTAB
 M  END
 ";
-    let document = molfile::parse_str(valence).expect("VAL is valid V3000 syntax");
-    let molecule = molfile::interpret(&document)
+    let document =
+        molfile::parse_str(valence, Default::default()).expect("VAL is valid V3000 syntax");
+    let molecule = document
+        .interpret(Default::default())
         .expect("VAL can be interpreted from source semantics")
         .into_molecule();
     let carbon = molecule.atom(AtomId::new(0)).expect("carbon");
@@ -1026,17 +1038,20 @@ M  END
     assert!(!molecule.perception().has_valence());
 
     let zero_declarations = valence.replace("VAL=4", "VAL=-1");
-    let document =
-        molfile::parse_str(&zero_declarations).expect("zero-count sentinels are valid syntax");
-    let molecule = molfile::interpret(&document)
+    let document = molfile::parse_str(&zero_declarations, Default::default())
+        .expect("zero-count sentinels are valid syntax");
+    let molecule = document
+        .interpret(Default::default())
         .expect("zero-count sentinels have exact source semantics")
         .into_molecule();
     let carbon = molecule.atom(AtomId::new(0)).expect("carbon");
     assert_eq!(carbon.hydrogens, ImplicitHydrogens::Fixed(0));
 
     let undeclared = valence.replace(" VAL=4", "");
-    let document = molfile::parse_str(&undeclared).expect("undeclared atom is valid syntax");
-    let molecule = molfile::interpret(&document)
+    let document = molfile::parse_str(&undeclared, Default::default())
+        .expect("undeclared atom is valid syntax");
+    let molecule = document
+        .interpret(Default::default())
         .expect("undeclared hydrogen policy interprets")
         .into_molecule();
     assert_eq!(
@@ -1045,8 +1060,10 @@ M  END
     );
 
     let unsupported = valence.replace("1 C 0 0 0 0 VAL=4", "1 Xx 0 0 0 0");
-    let document = molfile::parse_str(&unsupported).expect("unknown symbol remains valid syntax");
-    assert!(molfile::interpret(&document)
+    let document = molfile::parse_str(&unsupported, Default::default())
+        .expect("unknown symbol remains valid syntax");
+    assert!(document
+        .interpret(Default::default())
         .expect_err("core element support belongs to interpretation")
         .message()
         .contains("unsupported element"));
@@ -1215,7 +1232,7 @@ fn mol_v3000_bond_block_is_optional_without_declared_bonds() {
         (methane, vec![0], vec![]),
         (highlighted.as_str(), vec![0], vec![hilite]),
     ] {
-        let document = molfile::parse_str(input).unwrap();
+        let document = molfile::parse_str(input, Default::default()).unwrap();
         assert!(document.bonds().is_empty(), "{input}");
         assert_eq!(
             document
@@ -1226,14 +1243,12 @@ fn mol_v3000_bond_block_is_optional_without_declared_bonds() {
             charges
         );
         assert_eq!(document.unsupported(), unsupported);
-        let model = molfile::interpret_with_options(
-            &document,
-            molfile::MolfileInterpretOptions {
+        let model = document
+            .interpret(molfile::MolfileInterpretOptions {
                 unsupported: UnsupportedContent::Report,
-            },
-        )
-        .unwrap()
-        .into_model();
+            })
+            .unwrap()
+            .into_model();
         assert_eq!(model.topology().instance_count(), charges.len());
         assert_eq!(model.topology().bond_count(), 0);
     }
@@ -1257,7 +1272,7 @@ M  V30 END CTAB
 M  END
 ";
 
-    let input_error = molfile::parse_str_with_options(
+    let input_error = molfile::parse_str(
         input,
         molfile::MolfileParseOptions {
             max_input_bytes: input.len() - 1,
@@ -1267,7 +1282,7 @@ M  END
     .expect_err("Molfile input limit should apply");
     assert!(input_error.message().contains("input"));
 
-    let atom_error = molfile::parse_str_with_options(
+    let atom_error = molfile::parse_str(
         input,
         molfile::MolfileParseOptions {
             max_v3000_atoms: 0,
@@ -1277,7 +1292,7 @@ M  END
     .expect_err("V3000 atom limit should apply");
     assert!(atom_error.message().contains("atom count"));
 
-    let line_error = molfile::parse_str_with_options(
+    let line_error = molfile::parse_str(
         input,
         molfile::MolfileParseOptions {
             max_v3000_logical_line_bytes: 4,

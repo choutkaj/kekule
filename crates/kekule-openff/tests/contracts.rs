@@ -136,17 +136,17 @@ fn native_charges_match_external_reference() {
     // Isotope masses do not change the reference toolkit's charge lookup.
     let mut isotope = molecule("[2H]OC");
     isotope.perceive().unwrap();
-    isotope.add_hydrogens().unwrap();
+    isotope.add_hydrogens(Default::default()).unwrap();
     let mut ordinary = molecule("[H]OC");
     ordinary.perceive().unwrap();
-    ordinary.add_hydrogens().unwrap();
+    ordinary.add_hydrogens(Default::default()).unwrap();
     let q = model.assign_charges(&isotope).unwrap();
     let expected = model.assign_charges(&ordinary).unwrap();
     assert_eq!(q.source, expected.source);
     assert_eq!(q.charges, expected.charges);
     let mut large = molecule(&"C".repeat(350));
     large.perceive().unwrap();
-    large.add_hydrogens().unwrap();
+    large.add_hydrogens(Default::default()).unwrap();
     assert!(large.atom_count() > 1024);
     let assignment = model.assign_charges(&large).unwrap();
     assert!(matches!(
@@ -163,7 +163,7 @@ fn native_charges_match_external_reference() {
     // Regression: inference had a 4096-atom cap.
     let mut oversized = molecule(&"C".repeat(1500));
     oversized.perceive().unwrap();
-    oversized.add_hydrogens().unwrap();
+    oversized.add_hydrogens(Default::default()).unwrap();
     assert!(oversized.atom_count() > 4096);
     let assignment = model.assign_charges(&oversized).unwrap();
     assert_eq!(assignment.charges.value().len(), oversized.atom_count());

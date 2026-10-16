@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::algorithms::{
-    perceive_aromaticity_in_place, perceive_ring_set, perceive_valence, AromaticityError,
-    RingPerceptionError, ValenceError,
+    perceive_aromaticity_in_place, perceive_rings, perceive_valence, AromaticityError,
+    RingPerceptionError, RingPerceptionOptions, ValenceError, ValenceOptions,
 };
 use crate::algorithms::{perceive_conjugation, ConjugationError};
 use crate::molecule::ConjugationModel;
@@ -57,8 +57,10 @@ pub(crate) fn perceive_molecule(molecule: &mut Molecule) -> Result<(), Perceptio
 }
 
 pub(crate) fn perceive_molecule_in_place(molecule: &mut Molecule) -> Result<(), PerceptionError> {
-    perceive_valence(molecule, ValenceModel::RdkitLike).map_err(PerceptionError::Valence)?;
-    perceive_ring_set(molecule).map_err(PerceptionError::Rings)?;
+    perceive_valence(molecule, ValenceModel::RdkitLike, ValenceOptions::default())
+        .map_err(PerceptionError::Valence)?;
+    let ring_options = RingPerceptionOptions::for_molecule(molecule);
+    perceive_rings(molecule, ring_options).map_err(PerceptionError::Rings)?;
     perceive_aromaticity_in_place(molecule, AromaticityModel::RdkitLike)
         .map_err(PerceptionError::Aromaticity)?;
     perceive_conjugation(molecule, ConjugationModel::RdkitLike)

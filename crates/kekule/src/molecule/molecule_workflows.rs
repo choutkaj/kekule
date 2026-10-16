@@ -18,15 +18,11 @@ impl Molecule {
         perceive_molecule(self)
     }
 
-    /// Convert resolved implicit hydrogens into explicit graph atoms.
+    /// Convert resolved implicit hydrogens into explicit graph atoms under the
+    /// count and growth policy of `options`.
     /// Fixed counts require no perception; inference-enabled counts must be
     /// perceived first. Success invalidates perception but preserves composition.
-    pub fn add_hydrogens(&mut self) -> Result<AddHydrogensReport, HydrogenTransformError> {
-        self.add_hydrogens_with_options(AddHydrogensOptions::default())
-    }
-
-    /// Materialize hydrogens under the supplied count and growth policy.
-    pub fn add_hydrogens_with_options(
+    pub fn add_hydrogens(
         &mut self,
         options: AddHydrogensOptions,
     ) -> Result<AddHydrogensReport, HydrogenTransformError> {

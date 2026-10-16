@@ -57,25 +57,15 @@ impl fmt::Display for ValenceError {
 impl std::error::Error for ValenceError {}
 
 /// Installs inferred-hydrogen assignments from localized bonds and represented
-/// atom state using the selected model's strict valence rules.
+/// atom state using the selected model's valence rules.
 ///
-/// Success replaces installed valence and clears dependent aromaticity and CIP
-/// assignments while retaining ring perception. Failure preserves all previously
-/// installed perception. Neither outcome changes represented graph chemistry.
+/// The default options apply strict validation. With `options.strict ==
+/// false`, RDKit's permissive property-cache rules assign zero additional
+/// hydrogens to excess occupancy. Success replaces installed valence and clears
+/// dependent aromaticity and CIP assignments while retaining ring perception.
+/// Failure preserves all previously installed perception. Neither outcome
+/// changes represented graph chemistry.
 pub fn perceive_valence(
-    mol: &mut Molecule,
-    model: ValenceModel,
-) -> std::result::Result<(), ValenceError> {
-    perceive_valence_with_options(mol, model, ValenceOptions::default())
-}
-
-/// Installs valence with explicit control over strict validation.
-///
-/// With `options.strict == false`, RDKit's permissive property-cache rules assign
-/// zero additional hydrogens to excess occupancy. As with [`perceive_valence`],
-/// installation is transactional and invalidates aromaticity and CIP only on
-/// success; represented chemistry and ring perception are preserved.
-pub fn perceive_valence_with_options(
     mol: &mut Molecule,
     model: ValenceModel,
     options: ValenceOptions,

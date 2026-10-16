@@ -863,7 +863,9 @@ fn selections_distinguish_instances_elements_and_queries() {
     assert_eq!(oxygen.indices().len(), 1);
 
     let query = crate::smarts::parse_str("O", Default::default()).unwrap();
-    let matches = substructure::find_matches(&water, &query).unwrap();
+    let matches = substructure::PreparedTarget::new(&water)
+        .all(&query, Default::default())
+        .unwrap();
     let from_query =
         AtomSelection::from_query_matches(&topology, water_instance, &matches).unwrap();
     assert_eq!(

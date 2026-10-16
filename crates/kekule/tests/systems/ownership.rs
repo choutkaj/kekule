@@ -253,13 +253,19 @@ fn consuming_quantity_conversions_support_values_that_cannot_be_cloned() {
 
 #[test]
 fn borrowed_document_conversion_keeps_source_and_consuming_interpretation_moves_storage() {
-    let document = smiles::parse_str("CC").unwrap();
-    let first = document.to_molecules().unwrap();
-    let second = document.to_molecules().unwrap();
+    let document = smiles::parse_str("CC", Default::default()).unwrap();
+    let first = document
+        .interpret(Default::default())
+        .unwrap()
+        .into_molecules();
+    let second = document
+        .interpret(Default::default())
+        .unwrap()
+        .into_molecules();
     assert_eq!(first, second);
     assert_eq!(document.source(), "CC");
 
-    let interpretation = document.interpret().unwrap();
+    let interpretation = document.interpret(Default::default()).unwrap();
     let id = interpretation
         .molecule()
         .unwrap()

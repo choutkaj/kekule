@@ -677,7 +677,7 @@ fn topology_deletions_prune_referencing_stereo_state() {
 fn checked_stereo_rejects_invalid_carrier_shapes_transactionally() {
     let mut molecule = read_smiles("F[C@](Cl)(Br)I").unwrap();
     perceive(&mut molecule).unwrap();
-    stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
+    stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
     let (id, element) = molecule.stereo_elements().next().unwrap();
     let element = element.clone();
     let mut editor = molecule.to_editor();
@@ -767,7 +767,7 @@ fn stereo_focus_is_unique_and_rejection_preserves_groups_and_perception() {
         })
         .unwrap();
     perceive(editor.working_mut()).unwrap();
-    stereo_api::cip::assign_cip_descriptors(editor.working_mut()).unwrap();
+    stereo_api::cip::assign_cip_descriptors(editor.working_mut(), Default::default()).unwrap();
     let first = editor.stereo_element(ids[0]).unwrap().clone();
     for unknown in [false, true] {
         let mut duplicate = first.clone();
@@ -1042,7 +1042,11 @@ fn perception_owned_chemistry_edits_invalidate_dependent_state() {
         .expect("atom identifier capacity");
     mark_all_fresh(methane.working_mut());
 
-    let report = valence_api::perceive_valence(methane.working_mut(), ValenceModel::RdkitLike);
+    let report = valence_api::perceive_valence(
+        methane.working_mut(),
+        ValenceModel::RdkitLike,
+        Default::default(),
+    );
 
     assert!(report.is_ok());
     assert!(methane.perception().has_valence());
@@ -1063,8 +1067,12 @@ fn perception_owned_chemistry_edits_invalidate_dependent_state() {
     );
     mark_all_fresh(&mut benzene);
 
-    aromaticity_api::perceive_aromaticity(&mut benzene, AromaticityModel::RdkitLike)
-        .expect("benzene should be supported");
+    aromaticity_api::perceive_aromaticity(
+        &mut benzene,
+        AromaticityModel::RdkitLike,
+        Default::default(),
+    )
+    .expect("benzene should be supported");
 
     assert!(benzene.perception().has_valence());
     assert!(benzene.perception().has_rings());

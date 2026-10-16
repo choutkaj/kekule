@@ -78,7 +78,9 @@ pub(super) fn prepared(mol: &Molecule) -> Result<Cow<'_, Molecule>, StereoSearch
     }
 }
 
-/// Finds stereo candidates with explicit search bounds.
+/// Finds tetrahedral and double-bond candidates using exact symmetry checks
+/// bounded by `options`. This operation never modifies represented chemistry
+/// or installs perception on the source molecule.
 ///
 /// Complete installed valence/ring/aromaticity perception is reused; otherwise the
 /// default profile is computed on a temporary copy. Graph hydrogens and known
@@ -102,7 +104,7 @@ pub(super) fn prepared(mol: &Molecule) -> Result<Cow<'_, Molecule>, StereoSearch
 /// Axial assertions and groups containing unclassified members are conservatively
 /// held fixed; these cannot provide a proof based on only part of a relationship.
 /// Exhaustion is an error, never evidence of equivalence or stereogenicity.
-pub fn detect_stereo_candidates_with_options(
+pub fn detect_stereo_candidates(
     mol: &Molecule,
     options: StereoSearchOptions,
 ) -> Result<Vec<StereoCandidate>, StereoSearchError> {
@@ -146,7 +148,7 @@ pub fn cleanup_stereo(
     editor: &mut MoleculeEditor,
     options: StereoSearchOptions,
 ) -> Result<StereoCleanupReport, StereoSearchError> {
-    let candidates = detect_stereo_candidates_with_options(editor.working(), options)?;
+    let candidates = detect_stereo_candidates(editor.working(), options)?;
     let perceived = prepared(editor.working())?;
     let mut unclassified_elements = Vec::new();
     let removed_elements: Vec<_> = editor

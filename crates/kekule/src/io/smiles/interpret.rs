@@ -911,7 +911,8 @@ mod tests {
 
     #[test]
     fn dot_smiles_interprets_as_connected_molecules() {
-        let document = parse_smiles_document("CC(=O)[O-].[Na+]").expect("valid salt");
+        let document =
+            parse_smiles_document("CC(=O)[O-].[Na+]", Default::default()).expect("valid salt");
         let interpretation =
             interpret_smiles_document(&document, SmilesInterpretOptions::default())
                 .expect("interpret salt");
@@ -925,7 +926,8 @@ mod tests {
 
     #[test]
     fn component_mappings_retain_document_offsets() {
-        let document = parse_smiles_document("C.[Na+]").expect("valid components");
+        let document =
+            parse_smiles_document("C.[Na+]", Default::default()).expect("valid components");
         let interpretation =
             interpret_smiles_document(&document, SmilesInterpretOptions::default())
                 .expect("interpret components");
@@ -937,7 +939,7 @@ mod tests {
 
     #[test]
     fn single_component_convenience_rejects_dot_smiles_without_panicking() {
-        let document = parse_smiles_document("C.O").expect("valid components");
+        let document = parse_smiles_document("C.O", Default::default()).expect("valid components");
         let error = interpret_smiles_document(&document, SmilesInterpretOptions::default())
             .expect("interpret components")
             .into_molecule()

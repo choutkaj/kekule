@@ -7,7 +7,7 @@ use kekule::{
     molecule::Molecule,
     query::QueryGraph,
     smarts,
-    substructure::find_match,
+    substructure::PreparedTarget,
     units::{Quantity, ELEMENTARY_CHARGE},
 };
 use std::{collections::BTreeSet, path::Path};
@@ -269,7 +269,8 @@ impl NaglModel {
             }
         }
         for pattern in &self.forbidden {
-            if find_match(molecule, pattern)
+            if PreparedTarget::new(molecule)
+                .first(pattern, Default::default())
                 .map_err(Error::chemistry)?
                 .is_some()
             {
@@ -330,7 +331,7 @@ mod tests {
             .unwrap()
             .remove(0);
         input.perceive().unwrap();
-        input.add_hydrogens().unwrap();
+        input.add_hydrogens(Default::default()).unwrap();
         let before = input.clone();
         let prepared = lookup_molecule(&input).unwrap();
         assert!(prepared.atoms().all(|(_, a)| a.isotope.is_none()));

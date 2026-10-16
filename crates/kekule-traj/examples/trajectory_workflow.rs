@@ -46,8 +46,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let document = mmcif::parse_str(&fs::read_to_string(topology_path)?)?;
-    let topology = document.interpret()?.into_topology();
+    let document = mmcif::parse_str(&fs::read_to_string(topology_path)?, Default::default())?;
+    let topology = document.interpret(Default::default())?.into_topology();
     let mut trajectory = read_trajectory(trajectory_path, topology.clone())?;
 
     println!("Frames: {}", trajectory.len());
@@ -80,8 +80,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Fit all atoms; substitute a protein/backbone selection for a solvated system.
     let fit = AtomSelection::all(&topology);
-    trajectory.superpose(0, &fit)?;
-    let rmsd = trajectory.rmsd(0, &fit)?.value_in(ANGSTROM)?;
+    trajectory.superpose(0, &fit, Default::default())?;
+    let rmsd = trajectory
+        .rmsd(0, &fit, Default::default())?
+        .value_in(ANGSTROM)?;
 
     for (index, (frame, rmsd)) in trajectory.iter().zip(rmsd).enumerate() {
         let time_ps = frame

@@ -439,7 +439,7 @@ mod syntax_tests {
             looped.to_owned(),
             crate::tests::mmcif_syntax::singleton_loops_as_scalars(looped),
         ] {
-            let doc = crate::mmcif::parse_str(&input).unwrap();
+            let doc = crate::mmcif::parse_str(&input, Default::default()).unwrap();
             let order = super::polymer_asym_order(&doc.blocks()[0]).unwrap();
             assert_eq!(order.len(), 1);
             assert_eq!(order["Z"], 0);

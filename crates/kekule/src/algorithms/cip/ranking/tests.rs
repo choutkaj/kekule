@@ -143,8 +143,10 @@ fn auxiliary_ranking_stops_at_a_proven_order_but_never_promotes_a_truncated_tie(
             false,
         ),
     ] {
-        let document = crate::smiles::parse_str(smiles).expect("auxiliary ligand regression");
-        let mut molecule = crate::smiles::interpret(&document)
+        let document = crate::smiles::parse_str(smiles, Default::default())
+            .expect("auxiliary ligand regression");
+        let mut molecule = document
+            .interpret(Default::default())
             .expect("interpret")
             .into_molecules()
             .remove(0);
@@ -204,8 +206,10 @@ fn auxiliary_ranking_stops_at_a_proven_order_but_never_promotes_a_truncated_tie(
 
 #[test]
 fn auxiliary_traversal_visits_each_occurrence_once_from_every_root() {
-    let document = crate::smiles::parse_str("CC1=CCC(C)CC1").expect("cyclic branched ligand");
-    let mut molecule = crate::smiles::interpret(&document)
+    let document = crate::smiles::parse_str("CC1=CCC(C)CC1", Default::default())
+        .expect("cyclic branched ligand");
+    let mut molecule = document
+        .interpret(Default::default())
         .expect("interpret")
         .into_molecules()
         .remove(0);
@@ -251,15 +255,15 @@ fn auxiliary_traversal_visits_each_occurrence_once_from_every_root() {
 #[test]
 fn symmetric_stereo_assertions_do_not_create_cip_centers() {
     let smiles = "C1[C@H]2C[C@H]3C[C@@H]1C[C@@H](C2)C3";
-    let document = crate::smiles::parse_str(smiles).expect("SMILES");
-    let mut molecule = crate::smiles::interpret(&document)
+    let document = crate::smiles::parse_str(smiles, Default::default()).expect("SMILES");
+    let mut molecule = document
+        .interpret(Default::default())
         .expect("interpret")
         .into_molecules()
         .remove(0);
     molecule.perceive().expect("perceive");
     let report =
-        super::assign_cip_descriptors_with_options(&mut molecule, CipAssignmentOptions::default())
-            .expect("CIP");
+        super::assign_cip_descriptors(&mut molecule, CipAssignmentOptions::default()).expect("CIP");
     assert!(
         report.assigned.is_empty(),
         "{smiles}: {:?}",
@@ -270,9 +274,13 @@ fn symmetric_stereo_assertions_do_not_create_cip_centers() {
 #[test]
 fn trogers_base_retains_the_published_bridged_nitrogen_configuration() {
     // Hanson validation suite VS132 specifies 6S,14S (one-based atom numbers).
-    let document =
-        crate::smiles::parse_str("CC=1C=CC=2[N@@]3CC=4C=C(C=CC4[N@](CC2C1)C3)C").expect("SMILES");
-    let mut molecule = crate::smiles::interpret(&document)
+    let document = crate::smiles::parse_str(
+        "CC=1C=CC=2[N@@]3CC=4C=C(C=CC4[N@](CC2C1)C3)C",
+        Default::default(),
+    )
+    .expect("SMILES");
+    let mut molecule = document
+        .interpret(Default::default())
         .expect("interpret")
         .into_molecules()
         .remove(0);
@@ -325,8 +333,7 @@ fn trogers_base_retains_the_published_bridged_nitrogen_configuration() {
         );
     }
     let report =
-        super::assign_cip_descriptors_with_options(&mut molecule, CipAssignmentOptions::default())
-            .expect("CIP");
+        super::assign_cip_descriptors(&mut molecule, CipAssignmentOptions::default()).expect("CIP");
     assert_eq!(
         report
             .assigned

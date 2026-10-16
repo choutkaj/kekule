@@ -245,7 +245,7 @@ fn molfile_v3000_continues_records_past_80_columns() {
         [first.as_str(), "M  V30 CHG=-1 MASS=13 VAL=3"],
         "{text}"
     );
-    let reread = molfile::parse_str(&text).unwrap();
+    let reread = molfile::parse_str(&text, Default::default()).unwrap();
     let atom = &reread.atoms()[0];
     assert_eq!(atom.formal_charge(), -1);
     assert_eq!(atom.isotope(), Some(13));
@@ -279,7 +279,7 @@ fn molfile_chiral_flag_states_whether_stereo_is_absolute() {
             },
         )
         .unwrap();
-        let document = molfile::parse_str(&text).unwrap();
+        let document = molfile::parse_str(&text, Default::default()).unwrap();
         assert_eq!(
             document.chiral_flag(),
             chiral,
@@ -328,7 +328,9 @@ fn molfile_model_flattens_disconnected_topology_and_preserves_coordinates() {
     let text = molfile::write(&model, MolfileWriteOptions::default()).unwrap();
     assert!(text.contains("V2000"));
 
-    let interpreted = molfile::interpret(&molfile::parse_str(&text).unwrap()).unwrap();
+    let interpreted = (molfile::parse_str(&text, Default::default()).unwrap())
+        .interpret(Default::default())
+        .unwrap();
     let round_trip_model = interpreted.into_model();
     assert_eq!(round_trip_model.topology().instance_count(), 2);
     for (index, expected) in [
@@ -375,7 +377,8 @@ fn molfile_version_policy_promotes_counts_and_explicit_v2000_fails() {
     assert!(promoted.contains("V3000"));
     assert!(promoted.contains("M  V30 COUNTS 1000 0 0 0 0"));
     assert_eq!(
-        molfile::interpret(&molfile::parse_str(&promoted).unwrap())
+        (molfile::parse_str(&promoted, Default::default()).unwrap())
+            .interpret(Default::default())
             .unwrap()
             .into_model()
             .topology()
@@ -476,7 +479,7 @@ fn molfile_writes_a_marked_flat_drawing_on_the_z_zero_plane() {
             Some(DRAWING_HEADER),
             "{version:?}\n{text}"
         );
-        let document = molfile::parse_str(&text).unwrap();
+        let document = molfile::parse_str(&text, Default::default()).unwrap();
         let z = document
             .atoms()
             .iter()
@@ -489,7 +492,7 @@ fn molfile_writes_a_marked_flat_drawing_on_the_z_zero_plane() {
             .filter(|bond| bond.stereo().is_some())
             .count();
         assert_eq!(marked, 1, "{version:?}\n{text}");
-        let written = molfile::interpret(&document).unwrap().into_model();
+        let written = document.interpret(Default::default()).unwrap().into_model();
         assert_eq!(
             canonical(written.topology()),
             "C[C@H](N)O",
@@ -499,11 +502,11 @@ fn molfile_writes_a_marked_flat_drawing_on_the_z_zero_plane() {
 }
 
 fn interpret_records(text: &str) -> Vec<SdfRecordInterpretation> {
-    sdf::parse_str(text)
+    sdf::parse_str(text, Default::default())
         .unwrap()
         .records()
         .iter()
-        .map(|record| record.interpret().unwrap())
+        .map(|record| record.interpret(Default::default()).unwrap())
         .collect()
 }
 
@@ -686,9 +689,9 @@ fn mmcif_rejects_ensemble_weights_and_energies_it_cannot_carry() {
         },
     )
     .unwrap();
-    let reread = mmcif::parse_str(&omitted)
+    let reread = mmcif::parse_str(&omitted, Default::default())
         .unwrap()
-        .interpret_ensemble()
+        .interpret_ensemble(Default::default())
         .unwrap();
     assert_eq!(
         member_metadata(reread.ensemble()),
@@ -757,9 +760,9 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
 #[test]
 fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
     let cell_of = |text: &str| {
-        mmcif::parse_str(text)
+        mmcif::parse_str(text, Default::default())
             .unwrap()
-            .interpret()
+            .interpret(Default::default())
             .unwrap()
             .model()
             .cell()
@@ -797,9 +800,9 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
 
     let mut ensemble = Ensemble::from_models([boxed.clone(), boxed]).unwrap();
     let text = mmcif::write([&ensemble], MmcifWriteOptions::default()).unwrap();
-    let members = mmcif::parse_str(&text)
+    let members = mmcif::parse_str(&text, Default::default())
         .unwrap()
-        .interpret_ensemble()
+        .interpret_ensemble(Default::default())
         .unwrap()
         .ensemble()
         .iter()
@@ -910,11 +913,13 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
         MmcifWriteOptions::default(),
     )
     .unwrap();
-    let independent_document = mmcif::parse_str(&independent).unwrap();
+    let independent_document = mmcif::parse_str(&independent, Default::default()).unwrap();
     assert_eq!(independent_document.blocks().len(), 2);
     assert!(independent.starts_with("data_model_1\n"));
     assert!(independent.contains("data_model_2\n"));
-    assert!(mmcif::interpret_ensemble(&independent_document).is_err());
+    assert!(independent_document
+        .interpret_ensemble(Default::default())
+        .is_err());
 
     let shared = first.shared_topology();
     let second = Model::new(
@@ -933,9 +938,11 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
         MmcifWriteOptions::default(),
     )
     .unwrap();
-    let ensemble_document = mmcif::parse_str(&ensemble_text).unwrap();
+    let ensemble_document = mmcif::parse_str(&ensemble_text, Default::default()).unwrap();
     assert_eq!(ensemble_document.blocks().len(), 1);
-    let parsed = mmcif::interpret_ensemble(&ensemble_document).unwrap();
+    let parsed = ensemble_document
+        .interpret_ensemble(Default::default())
+        .unwrap();
     assert_eq!(parsed.ensemble().len(), 2);
     assert!(
         (parsed
@@ -969,7 +976,9 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
     );
 
     let round_trip = mmcif::write([&parsed], MmcifWriteOptions::default()).unwrap();
-    let reparsed = mmcif::interpret_ensemble(&mmcif::parse_str(&round_trip).unwrap()).unwrap();
+    let reparsed = (mmcif::parse_str(&round_trip, Default::default()).unwrap())
+        .interpret_ensemble(Default::default())
+        .unwrap();
     assert_eq!(reparsed.ensemble().len(), 2);
 }
 
@@ -983,7 +992,13 @@ fn mmcif_model_is_one_block_with_coordinate_model_one_and_automatic_classificati
         MmcifWriteOptions::default(),
     )
     .unwrap();
-    assert_eq!(mmcif::parse_str(&text).unwrap().blocks().len(), 1);
+    assert_eq!(
+        mmcif::parse_str(&text, Default::default())
+            .unwrap()
+            .blocks()
+            .len(),
+        1
+    );
     assert!(text.lines().any(|line| line.ends_with(" 1")));
 }
 
@@ -1041,7 +1056,7 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
             .unwrap();
     }
     let text = mmcif::write([&model], MmcifWriteOptions::default()).unwrap();
-    let document = mmcif::parse_str(&text).unwrap();
+    let document = mmcif::parse_str(&text, Default::default()).unwrap();
     let rows = document.blocks()[0].loop_with_tag("_atom_site.id").unwrap();
     assert_eq!(rows.row_count(), 4);
     // Rows follow dense atom order, not hierarchy order, so coordinate files
@@ -1084,7 +1099,7 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
             .unwrap(),
         4.0
     );
-    let reread = mmcif::interpret(&document).unwrap();
+    let reread = document.interpret(Default::default()).unwrap();
     assert_eq!(
         reread
             .model()
@@ -1162,10 +1177,13 @@ fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
     .unwrap();
     assert_eq!(streamed_models.bytes, expected_models.as_bytes());
     assert_eq!(
-        mmcif::parse_str(std::str::from_utf8(&streamed_models.bytes).unwrap())
-            .unwrap()
-            .blocks()
-            .len(),
+        mmcif::parse_str(
+            std::str::from_utf8(&streamed_models.bytes).unwrap(),
+            Default::default()
+        )
+        .unwrap()
+        .blocks()
+        .len(),
         2
     );
 
@@ -1198,11 +1216,15 @@ fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
     .unwrap();
     assert_eq!(streamed_ensemble.bytes, expected_ensemble.as_bytes());
 
-    let document =
-        mmcif::parse_str(std::str::from_utf8(&streamed_ensemble.bytes).unwrap()).unwrap();
+    let document = mmcif::parse_str(
+        std::str::from_utf8(&streamed_ensemble.bytes).unwrap(),
+        Default::default(),
+    )
+    .unwrap();
     assert_eq!(document.blocks().len(), 1);
     assert_eq!(
-        mmcif::interpret_ensemble(&document)
+        document
+            .interpret_ensemble(Default::default())
             .unwrap()
             .ensemble()
             .len(),

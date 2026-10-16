@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut molecule = molecules.remove(0);
     molecule.perceive()?;
-    molecule.add_hydrogens()?;
+    molecule.add_hydrogens(Default::default())?;
     let atoms = molecule.atom_count();
     let model = match directory {
         Some(directory) => NaglModel::load(directory)?,

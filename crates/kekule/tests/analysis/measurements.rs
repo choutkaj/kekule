@@ -40,28 +40,41 @@ fn named_measurements_have_units_and_a_defined_dihedral_sign() {
         );
         let [a, b, c, d] = <[InstanceAtomId; 4]>::try_from(model.topology().atom_ids()).unwrap();
         close(
-            measure::distance(model.as_model_view(), a, b)
+            measure::distance(model.as_model_view(), a, b, ConnectivityCheck::Unrestricted)
                 .unwrap()
                 .value_in(ANGSTROM)
                 .unwrap(),
             1.0,
         );
         close(
-            measure::angle(model.as_model_view(), a, b, c)
-                .unwrap()
-                .value_in(DEGREE)
-                .unwrap(),
+            measure::angle(
+                model.as_model_view(),
+                a,
+                b,
+                c,
+                ConnectivityCheck::Unrestricted,
+            )
+            .unwrap()
+            .value_in(DEGREE)
+            .unwrap(),
             90.0,
         );
         close(
-            measure::dihedral(model.as_model_view(), a, b, c, d)
-                .unwrap()
-                .value_in(DEGREE)
-                .unwrap(),
+            measure::dihedral(
+                model.as_model_view(),
+                a,
+                b,
+                c,
+                d,
+                ConnectivityCheck::Unrestricted,
+            )
+            .unwrap()
+            .value_in(DEGREE)
+            .unwrap(),
             -90.0,
         );
         close(
-            measure::distance(model.as_model_view(), a, a)
+            measure::distance(model.as_model_view(), a, a, ConnectivityCheck::Unrestricted)
                 .unwrap()
                 .into_value(),
             0.0,
@@ -70,10 +83,17 @@ fn named_measurements_have_units_and_a_defined_dihedral_sign() {
     let reflected = model(right_angle().map(|p| Point3::new(p.x, p.y, -p.z)), ANGSTROM);
     let a = reflected.topology().atom_ids();
     close(
-        measure::dihedral(reflected.as_model_view(), a[0], a[1], a[2], a[3])
-            .unwrap()
-            .value_in(DEGREE)
-            .unwrap(),
+        measure::dihedral(
+            reflected.as_model_view(),
+            a[0],
+            a[1],
+            a[2],
+            a[3],
+            ConnectivityCheck::Unrestricted,
+        )
+        .unwrap()
+        .value_in(DEGREE)
+        .unwrap(),
         90.0,
     );
 }
@@ -92,26 +112,32 @@ fn consecutive_bonds_preserve_measurements_in_both_directions() {
     reversed.reverse();
     for [a, b, c, d] in [ids, reversed] {
         assert_eq!(
-            measure::distance_with_connectivity(
+            measure::distance(
                 model.as_model_view(),
                 a,
                 b,
                 ConnectivityCheck::ConsecutiveBonds
             ),
-            measure::distance(model.as_model_view(), a, b)
+            measure::distance(model.as_model_view(), a, b, ConnectivityCheck::Unrestricted)
         );
         assert_eq!(
-            measure::angle_with_connectivity(
+            measure::angle(
                 model.as_model_view(),
                 a,
                 b,
                 c,
                 ConnectivityCheck::ConsecutiveBonds
             ),
-            measure::angle(model.as_model_view(), a, b, c)
+            measure::angle(
+                model.as_model_view(),
+                a,
+                b,
+                c,
+                ConnectivityCheck::Unrestricted
+            )
         );
         assert_eq!(
-            measure::dihedral_with_connectivity(
+            measure::dihedral(
                 model.as_model_view(),
                 a,
                 b,
@@ -119,7 +145,14 @@ fn consecutive_bonds_preserve_measurements_in_both_directions() {
                 d,
                 ConnectivityCheck::ConsecutiveBonds
             ),
-            measure::dihedral(model.as_model_view(), a, b, c, d)
+            measure::dihedral(
+                model.as_model_view(),
+                a,
+                b,
+                c,
+                d,
+                ConnectivityCheck::Unrestricted
+            )
         );
     }
 }
@@ -134,7 +167,7 @@ fn optional_connectivity_reports_each_missing_consecutive_pair() {
     );
     for [x, y] in [[a, c], [a, a]] {
         assert_eq!(
-            measure::distance_with_connectivity(
+            measure::distance(
                 model.as_model_view(),
                 x,
                 y,
@@ -142,22 +175,18 @@ fn optional_connectivity_reports_each_missing_consecutive_pair() {
             ),
             Err(MeasurementError::MissingBond { a: x, b: y })
         );
-        let unrestricted = measure::distance(model.as_model_view(), x, y).unwrap();
+        let unrestricted =
+            measure::distance(model.as_model_view(), x, y, ConnectivityCheck::Unrestricted)
+                .unwrap();
         assert_eq!(
-            measure::distance_with_connectivity(
-                model.as_model_view(),
-                x,
-                y,
-                ConnectivityCheck::default()
-            )
-            .unwrap(),
+            measure::distance(model.as_model_view(), x, y, ConnectivityCheck::default()).unwrap(),
             unrestricted
         );
     }
     for (atoms, missing) in [([a, c, d], [a, c]), ([a, b, d], [b, d])] {
         let [x, y, z] = atoms;
         assert_eq!(
-            measure::angle_with_connectivity(
+            measure::angle(
                 model.as_model_view(),
                 x,
                 y,
@@ -169,16 +198,16 @@ fn optional_connectivity_reports_each_missing_consecutive_pair() {
                 b: missing[1]
             })
         );
-        let unrestricted = measure::angle(model.as_model_view(), x, y, z).unwrap();
+        let unrestricted = measure::angle(
+            model.as_model_view(),
+            x,
+            y,
+            z,
+            ConnectivityCheck::Unrestricted,
+        )
+        .unwrap();
         assert_eq!(
-            measure::angle_with_connectivity(
-                model.as_model_view(),
-                x,
-                y,
-                z,
-                ConnectivityCheck::default()
-            )
-            .unwrap(),
+            measure::angle(model.as_model_view(), x, y, z, ConnectivityCheck::default()).unwrap(),
             unrestricted
         );
     }
@@ -189,7 +218,7 @@ fn optional_connectivity_reports_each_missing_consecutive_pair() {
     ] {
         let [w, x, y, z] = atoms;
         assert_eq!(
-            measure::dihedral_with_connectivity(
+            measure::dihedral(
                 model.as_model_view(),
                 w,
                 x,
@@ -202,9 +231,17 @@ fn optional_connectivity_reports_each_missing_consecutive_pair() {
                 b: missing[1]
             })
         );
-        let unrestricted = measure::dihedral(model.as_model_view(), w, x, y, z).unwrap();
+        let unrestricted = measure::dihedral(
+            model.as_model_view(),
+            w,
+            x,
+            y,
+            z,
+            ConnectivityCheck::Unrestricted,
+        )
+        .unwrap();
         assert_eq!(
-            measure::dihedral_with_connectivity(
+            measure::dihedral(
                 model.as_model_view(),
                 w,
                 x,
@@ -240,7 +277,7 @@ fn reused_definitions_do_not_create_bonds_between_instances() {
     let [a, b, c, d] = <[InstanceAtomId; 4]>::try_from(model.topology().atom_ids()).unwrap();
     let missing = Err(MeasurementError::MissingBond { a: b, b: c });
     assert_eq!(
-        measure::distance_with_connectivity(
+        measure::distance(
             model.as_model_view(),
             b,
             c,
@@ -249,7 +286,7 @@ fn reused_definitions_do_not_create_bonds_between_instances() {
         missing
     );
     assert_eq!(
-        measure::angle_with_connectivity(
+        measure::angle(
             model.as_model_view(),
             a,
             b,
@@ -259,7 +296,7 @@ fn reused_definitions_do_not_create_bonds_between_instances() {
         missing
     );
     assert_eq!(
-        measure::dihedral_with_connectivity(
+        measure::dihedral(
             model.as_model_view(),
             a,
             b,
@@ -269,14 +306,10 @@ fn reused_definitions_do_not_create_bonds_between_instances() {
         ),
         missing
     );
-    assert!(measure::distance_with_connectivity(
-        model.as_model_view(),
-        b,
-        c,
-        ConnectivityCheck::Unrestricted
-    )
-    .is_ok());
-    assert!(measure::angle_with_connectivity(
+    assert!(
+        measure::distance(model.as_model_view(), b, c, ConnectivityCheck::Unrestricted).is_ok()
+    );
+    assert!(measure::angle(
         model.as_model_view(),
         a,
         b,
@@ -284,7 +317,7 @@ fn reused_definitions_do_not_create_bonds_between_instances() {
         ConnectivityCheck::Unrestricted
     )
     .is_ok());
-    assert!(measure::dihedral_with_connectivity(
+    assert!(measure::dihedral(
         model.as_model_view(),
         a,
         b,
@@ -305,7 +338,7 @@ fn connectivity_checks_reject_invalid_ids_before_missing_bonds() {
     ] {
         let error = Err(MeasurementError::InvalidAtomId(invalid));
         assert_eq!(
-            measure::distance_with_connectivity(
+            measure::distance(
                 model.as_model_view(),
                 a,
                 invalid,
@@ -314,7 +347,7 @@ fn connectivity_checks_reject_invalid_ids_before_missing_bonds() {
             error
         );
         assert_eq!(
-            measure::angle_with_connectivity(
+            measure::angle(
                 model.as_model_view(),
                 a,
                 c,
@@ -324,7 +357,7 @@ fn connectivity_checks_reject_invalid_ids_before_missing_bonds() {
             error
         );
         assert_eq!(
-            measure::dihedral_with_connectivity(
+            measure::dihedral(
                 model.as_model_view(),
                 a,
                 c,
@@ -350,7 +383,7 @@ fn bonded_geometry_is_still_checked_independently() {
     );
     let [a, b, c, d] = <[InstanceAtomId; 4]>::try_from(line.topology().atom_ids()).unwrap();
     close(
-        measure::angle_with_connectivity(
+        measure::angle(
             line.as_model_view(),
             a,
             b,
@@ -363,7 +396,7 @@ fn bonded_geometry_is_still_checked_independently() {
         180.0,
     );
     assert_eq!(
-        measure::dihedral_with_connectivity(
+        measure::dihedral(
             line.as_model_view(),
             a,
             b,
@@ -375,7 +408,7 @@ fn bonded_geometry_is_still_checked_independently() {
     );
     // Nonconsecutive repeats are allowed when the geometry remains defined.
     close(
-        measure::angle_with_connectivity(
+        measure::angle(
             line.as_model_view(),
             a,
             b,
@@ -390,7 +423,7 @@ fn bonded_geometry_is_still_checked_independently() {
     let coincident = model([Point3::origin(); 4], NANOMETER);
     let [a, b, c, d] = <[InstanceAtomId; 4]>::try_from(coincident.topology().atom_ids()).unwrap();
     assert_eq!(
-        measure::distance_with_connectivity(
+        measure::distance(
             coincident.as_model_view(),
             a,
             b,
@@ -401,7 +434,7 @@ fn bonded_geometry_is_still_checked_independently() {
         0.0
     );
     assert_eq!(
-        measure::angle_with_connectivity(
+        measure::angle(
             coincident.as_model_view(),
             a,
             b,
@@ -411,7 +444,7 @@ fn bonded_geometry_is_still_checked_independently() {
         Err(MeasurementError::DegenerateGeometry)
     );
     assert_eq!(
-        measure::dihedral_with_connectivity(
+        measure::dihedral(
             coincident.as_model_view(),
             a,
             b,
@@ -431,17 +464,30 @@ fn tiny_finite_geometry_normalizes_without_reciprocal_overflow() {
     );
     let a = tiny.topology().atom_ids();
     close(
-        measure::angle(tiny.as_model_view(), a[0], a[1], a[2])
-            .unwrap()
-            .value_in(DEGREE)
-            .unwrap(),
+        measure::angle(
+            tiny.as_model_view(),
+            a[0],
+            a[1],
+            a[2],
+            ConnectivityCheck::Unrestricted,
+        )
+        .unwrap()
+        .value_in(DEGREE)
+        .unwrap(),
         90.0,
     );
     close(
-        measure::dihedral(tiny.as_model_view(), a[0], a[1], a[2], a[3])
-            .unwrap()
-            .value_in(DEGREE)
-            .unwrap(),
+        measure::dihedral(
+            tiny.as_model_view(),
+            a[0],
+            a[1],
+            a[2],
+            a[3],
+            ConnectivityCheck::Unrestricted,
+        )
+        .unwrap()
+        .value_in(DEGREE)
+        .unwrap(),
         -90.0,
     );
 }
@@ -459,23 +505,47 @@ fn undefined_geometry_and_numerical_overflow_reject_without_nan_results() {
     );
     let a = line.topology().atom_ids();
     close(
-        measure::angle(line.as_model_view(), a[0], a[1], a[2])
-            .unwrap()
-            .value_in(DEGREE)
-            .unwrap(),
+        measure::angle(
+            line.as_model_view(),
+            a[0],
+            a[1],
+            a[2],
+            ConnectivityCheck::Unrestricted,
+        )
+        .unwrap()
+        .value_in(DEGREE)
+        .unwrap(),
         180.0,
     );
     assert_eq!(
-        measure::angle(line.as_model_view(), a[0], a[0], a[1]),
+        measure::angle(
+            line.as_model_view(),
+            a[0],
+            a[0],
+            a[1],
+            ConnectivityCheck::Unrestricted
+        ),
         Err(MeasurementError::DegenerateGeometry)
     );
     assert_eq!(
-        measure::dihedral(line.as_model_view(), a[0], a[1], a[2], a[3]),
+        measure::dihedral(
+            line.as_model_view(),
+            a[0],
+            a[1],
+            a[2],
+            a[3],
+            ConnectivityCheck::Unrestricted
+        ),
         Err(MeasurementError::DegenerateGeometry)
     );
     let invalid = InstanceAtomId::new(a[0].molecule(), kekule::molecule::AtomId::new(99));
     assert!(matches!(
-        measure::distance(line.as_model_view(), invalid, a[0]),
+        measure::distance(
+            line.as_model_view(),
+            invalid,
+            a[0],
+            ConnectivityCheck::Unrestricted
+        ),
         Err(MeasurementError::InvalidAtomId(_))
     ));
     let huge = model(
@@ -489,7 +559,12 @@ fn undefined_geometry_and_numerical_overflow_reject_without_nan_results() {
     );
     let a = huge.topology().atom_ids();
     assert_eq!(
-        measure::distance(huge.as_model_view(), a[0], a[1]),
+        measure::distance(
+            huge.as_model_view(),
+            a[0],
+            a[1],
+            ConnectivityCheck::Unrestricted
+        ),
         Err(MeasurementError::NumericalFailure)
     );
     let large = model(
@@ -503,10 +578,16 @@ fn undefined_geometry_and_numerical_overflow_reject_without_nan_results() {
     );
     let a = large.topology().atom_ids();
     close(
-        measure::angle(large.as_model_view(), a[0], a[1], a[2])
-            .unwrap()
-            .value_in(DEGREE)
-            .unwrap(),
+        measure::angle(
+            large.as_model_view(),
+            a[0],
+            a[1],
+            a[2],
+            ConnectivityCheck::Unrestricted,
+        )
+        .unwrap()
+        .value_in(DEGREE)
+        .unwrap(),
         90.0,
     );
 }
@@ -667,10 +748,15 @@ fn spatial_selection_is_inclusive_unit_aware_and_specific_to_each_view() {
         .unwrap(),
     ));
     close(
-        measure::distance(model.as_model_view(), ids[0], ids[1])
-            .unwrap()
-            .value_in(NANOMETER)
-            .unwrap(),
+        measure::distance(
+            model.as_model_view(),
+            ids[0],
+            ids[1],
+            ConnectivityCheck::Unrestricted,
+        )
+        .unwrap()
+        .value_in(NANOMETER)
+        .unwrap(),
         10.0,
     );
 }

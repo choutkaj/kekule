@@ -43,7 +43,7 @@ fn hydrogen_collapse_preserves_a_double_bond_with_only_hydrogen_references() {
     assert_eq!(molecule.stereo_group(group).unwrap().members, vec![id]);
 
     perceive(&mut molecule).unwrap();
-    molecule.add_hydrogens().unwrap();
+    molecule.add_hydrogens(Default::default()).unwrap();
     let restored = molecule.stereo_elements().next().unwrap().1;
     let StereoElementKind::DoubleBond(stereo) = &restored.kind else {
         unreachable!()
@@ -56,10 +56,10 @@ fn hydrogen_collapse_preserves_a_double_bond_with_only_hydrogen_references() {
 #[test]
 fn hydrogen_collapse_keeps_all_tetrahedral_centers_complete_during_remapping() {
     let mut molecule = perceived_smiles("F[C@H](Cl)[C@H](F)Cl");
-    let expected = stereo_api::cip::assign_cip_descriptors(&mut molecule)
+    let expected = stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
         .unwrap()
         .assigned;
-    molecule.add_hydrogens().unwrap();
+    molecule.add_hydrogens(Default::default()).unwrap();
     let ids = molecule.stereo_element_ids().collect::<Vec<_>>();
     assert_eq!(ids.len(), 2);
     let mut editor = molecule.into_editor();
@@ -82,7 +82,7 @@ fn hydrogen_collapse_keeps_all_tetrahedral_centers_complete_during_remapping() {
     }
     perceive(&mut molecule).unwrap();
     assert_eq!(
-        stereo_api::cip::assign_cip_descriptors(&mut molecule)
+        stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
             .unwrap()
             .assigned,
         expected
@@ -95,7 +95,9 @@ fn add_hydrogens_materializes_perceived_counts_and_invalidates_perception() {
     let carbon = molecule.atom_ids().next().expect("carbon");
     assert_eq!(molecule.implicit_hydrogens(carbon), Ok(Some(4)));
 
-    let report = molecule.add_hydrogens().expect("materialize hydrogens");
+    let report = molecule
+        .add_hydrogens(Default::default())
+        .expect("materialize hydrogens");
 
     assert_eq!(report.added.len(), 4);
     assert!(report
@@ -137,7 +139,7 @@ fn added_hydrogens_use_ordinary_atom_defaults_and_do_not_expand_again() {
                 fixed_only,
                 ..Default::default()
             };
-            let added = molecule.add_hydrogens_with_options(options).unwrap();
+            let added = molecule.add_hydrogens(options).unwrap();
             for entry in &added.added {
                 let atom = molecule.atom(entry.hydrogen).unwrap();
                 assert_eq!(atom.hydrogens, ImplicitHydrogens::default(), "{source}");
@@ -156,11 +158,7 @@ fn added_hydrogens_use_ordinary_atom_defaults_and_do_not_expand_again() {
             }
             let atom_count = molecule.atom_count();
             let bond_count = molecule.bond_count();
-            assert!(molecule
-                .add_hydrogens_with_options(options)
-                .unwrap()
-                .added
-                .is_empty());
+            assert!(molecule.add_hydrogens(options).unwrap().added.is_empty());
             assert_eq!(molecule.atom_count(), atom_count);
             assert_eq!(molecule.bond_count(), bond_count);
         }
@@ -172,7 +170,7 @@ fn add_hydrogens_is_transactional_for_missing_perception_and_resource_limits() {
     let mut unperceived = read_smiles("C").expect("methane");
     let original = unperceived.clone();
     assert_eq!(
-        unperceived.add_hydrogens(),
+        unperceived.add_hydrogens(Default::default()),
         Err(HydrogenTransformError::MissingValencePerception)
     );
     assert_eq!(unperceived, original);
@@ -184,7 +182,7 @@ fn add_hydrogens_is_transactional_for_missing_perception_and_resource_limits() {
         ..AddHydrogensOptions::default()
     };
     assert_eq!(
-        perceived.add_hydrogens_with_options(options),
+        perceived.add_hydrogens(options),
         Err(HydrogenTransformError::ResourceLimit {
             requested_hydrogens: 4,
             limit: 3,
@@ -198,7 +196,7 @@ fn fixed_only_materializes_bracket_counts_without_inferred_hydrogens() {
     let mut molecule = perceived_smiles("[CH3]");
     let carbon = molecule.atom_ids().next().expect("carbon");
     let report = molecule
-        .add_hydrogens_with_options(AddHydrogensOptions {
+        .add_hydrogens(AddHydrogensOptions {
             fixed_only: true,
             ..AddHydrogensOptions::default()
         })
@@ -231,7 +229,7 @@ fn fixed_only_leaves_inferred_counts_implicit_without_perception() {
     assert!(!molecule.perception().has_valence());
 
     let report = molecule
-        .add_hydrogens_with_options(AddHydrogensOptions {
+        .add_hydrogens(AddHydrogensOptions {
             fixed_only: true,
             ..AddHydrogensOptions::default()
         })
@@ -264,7 +262,9 @@ fn fixed_only_leaves_inferred_counts_implicit_without_perception() {
 fn add_and_remove_hydrogens_round_trip_methane_semantics() {
     let mut molecule = perceived_smiles("C");
     let carbon = molecule.atom_ids().next().expect("carbon");
-    let added = molecule.add_hydrogens().expect("add hydrogens");
+    let added = molecule
+        .add_hydrogens(Default::default())
+        .expect("add hydrogens");
     perceive(&mut molecule).expect("re-perceive explicit methane");
 
     let removed = molecule.remove_hydrogens().expect("remove hydrogens");
@@ -314,7 +314,9 @@ fn remove_and_add_hydrogens_round_trip_graph_methane() {
     );
 
     perceive(&mut molecule).expect("collapsed methane perceives");
-    let added = molecule.add_hydrogens().expect("methane materializes");
+    let added = molecule
+        .add_hydrogens(Default::default())
+        .expect("methane materializes");
     assert_eq!(added.added.len(), 4);
     assert_eq!(molecule.atom_count(), 5);
     assert_eq!(molecule.bond_count(), 4);
@@ -332,7 +334,7 @@ fn remove_hydrogens_preserves_aromatic_bracket_hydrogen_counts() {
         .find_map(|(id, atom)| (atom.element.symbol() == "N").then_some(id))
         .expect("nitrogen");
     let added = molecule
-        .add_hydrogens_with_options(AddHydrogensOptions {
+        .add_hydrogens(AddHydrogensOptions {
             fixed_only: true,
             ..AddHydrogensOptions::default()
         })
@@ -387,7 +389,14 @@ fn hydrogen_collapse_fixes_counts_that_inference_cannot_reproduce() {
         );
         perceive(&mut molecule).unwrap();
         assert_eq!(molecule.implicit_hydrogens(parent), Ok(Some(count)));
-        assert_eq!(molecule.add_hydrogens().unwrap().added.len(), count);
+        assert_eq!(
+            molecule
+                .add_hydrogens(Default::default())
+                .unwrap()
+                .added
+                .len(),
+            count
+        );
         assert_eq!(molecule.atom_count(), count + 1);
         assert_eq!(molecule.bond_count(), count);
     }
@@ -406,7 +415,9 @@ fn hydrogen_materialization_and_collapse_preserve_tetrahedral_stereo_carriers() 
         _ => panic!("expected tetrahedral stereo"),
     };
 
-    let added = molecule.add_hydrogens().expect("materialize hydrogen");
+    let added = molecule
+        .add_hydrogens(Default::default())
+        .expect("materialize hydrogen");
     let hydrogen = added
         .added
         .iter()
@@ -486,7 +497,11 @@ fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
         .add_bond(second_carbon, third_carbon, BondOrder::Single)
         .expect("second carbon link");
 
-    let _ = valence_api::perceive_valence(graph.working_mut(), ValenceModel::RdkitLike);
+    let _ = valence_api::perceive_valence(
+        graph.working_mut(),
+        ValenceModel::RdkitLike,
+        Default::default(),
+    );
     let mut molecule = graph;
     let report = molecule
         .working_mut()
@@ -520,7 +535,7 @@ fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
     graph
         .add_bond(parent, hydrogen, BondOrder::Single)
         .expect("hydrogen bond");
-    valence_api::perceive_valence_with_options(
+    valence_api::perceive_valence(
         graph.working_mut(),
         ValenceModel::RdkitLike,
         ValenceOptions { strict: false },
@@ -571,7 +586,11 @@ fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
     graph
         .add_bond(right, bromine, BondOrder::Single)
         .expect("bromine bond");
-    let _ = valence_api::perceive_valence(graph.working_mut(), ValenceModel::RdkitLike);
+    let _ = valence_api::perceive_valence(
+        graph.working_mut(),
+        ValenceModel::RdkitLike,
+        Default::default(),
+    );
     let stereo = graph
         .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
             DoubleBondStereo {
@@ -670,7 +689,7 @@ fn hydrogen_collapse_retains_a_double_bond_reference_beside_another_hydrogen() {
             }],
         });
         assert_eq!(
-            stereo_api::cip::assign_cip_descriptors(&mut molecule),
+            stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default()),
             nonstereogenic
         );
 
@@ -704,10 +723,17 @@ fn hydrogen_collapse_retains_a_double_bond_reference_beside_another_hydrogen() {
             Ok(Some(1))
         );
         assert_eq!(
-            stereo_api::cip::assign_cip_descriptors(&mut molecule),
+            stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default()),
             nonstereogenic
         );
-        assert_eq!(molecule.add_hydrogens().unwrap().added.len(), 2);
+        assert_eq!(
+            molecule
+                .add_hydrogens(Default::default())
+                .unwrap()
+                .added
+                .len(),
+            2
+        );
     }
 }
 

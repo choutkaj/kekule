@@ -11,7 +11,7 @@ use kekule_openff::{ForceField, NaglModel};
 
 let mut molecule = smiles::to_molecules("CCO")?.remove(0);
 molecule.perceive()?;
-molecule.add_hydrogens()?;
+molecule.add_hydrogens(Default::default())?;
 let model = NaglModel::ash()?;
 let parameters = ForceField::rosemary()?.parameterize_molecule(molecule, &model)?;
 println!("{} bonds, charges {:?}", parameters.bonds().len(), parameters.charges().value());

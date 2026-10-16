@@ -471,8 +471,9 @@ fn property_and_coordinate_edits_preserve_computed_state() {
         &["C", "C", "C"],
         &[BondOrder::Single, BondOrder::Single, BondOrder::Single],
     );
-    rings_api::perceive_ring_set(&mut mol).expect("ring perception should succeed");
-    let _ = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
+    rings_api::perceive_rings(&mut mol, RingPerceptionOptions::default())
+        .expect("ring perception should succeed");
+    let _ = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default());
     mol.begin_aromaticity(AromaticityModel::RdkitLike);
     let before = mol.perception().clone();
 

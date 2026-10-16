@@ -8,15 +8,13 @@ use kekule::structure::Model;
 use crate::support::fixture;
 
 fn interpret(text: &str) -> (Model, macromolecular::StructureInterpretationReport) {
-    mmcif::interpret_with_options(
-        &mmcif::parse_str(text).unwrap(),
-        StructureInterpretOptions {
+    (mmcif::parse_str(text, Default::default()).unwrap())
+        .interpret(StructureInterpretOptions {
             model_selection: ModelSelection::First,
             ..StructureInterpretOptions::default()
-        },
-    )
-    .unwrap()
-    .into_parts()
+        })
+        .unwrap()
+        .into_parts()
 }
 
 /// Atoms, bonds, hierarchy labels, coordinates at the written precision, and
@@ -91,7 +89,7 @@ fn mmcif_round_trip_preserves_topology_coordinates_and_secondary_structure() {
         }
 
         let secondary_structure = |model: &Model| {
-            dssp::assign(model.as_model_view(), DsspOptions::default())
+            dssp::assign(model, DsspOptions::default())
                 .unwrap()
                 .residues()
                 .map(|residue| residue.secondary_structure().code())

@@ -282,10 +282,14 @@ fn aromatic_smiles_is_localized_during_interpretation_then_perceived() {
         3
     );
 
-    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
+    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
         .expect("localized valence should be perceived");
-    aromaticity_api::perceive_aromaticity(&mut molecule, AromaticityModel::RdkitLike)
-        .expect("localized aromaticity should be perceived");
+    aromaticity_api::perceive_aromaticity(
+        &mut molecule,
+        AromaticityModel::RdkitLike,
+        Default::default(),
+    )
+    .expect("localized aromaticity should be perceived");
 
     assert_eq!(
         molecule.perception().aromaticity_model(),
@@ -368,13 +372,17 @@ fn aromaticity_perception_preserves_complete_primary_representation() {
     .expect("valid positions");
     assert!(molecule.stereo_elements().next().is_some());
     assert_eq!(positions.len(), molecule.atom_count());
-    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
+    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
         .expect("valence perception");
 
     let mut represented_before = molecule.clone();
     clear_test_derived_state(&mut represented_before);
-    aromaticity_api::perceive_aromaticity(&mut molecule, AromaticityModel::RdkitLike)
-        .expect("aromaticity perception");
+    aromaticity_api::perceive_aromaticity(
+        &mut molecule,
+        AromaticityModel::RdkitLike,
+        Default::default(),
+    )
+    .expect("aromaticity perception");
     let mut represented_after = molecule.clone();
     clear_test_derived_state(&mut represented_after);
 
@@ -417,8 +425,11 @@ fn normalization_does_not_invent_large_oxohalogen_charges() {
         assert!(bonds
             .iter()
             .all(|&bond| molecule.bond(bond).unwrap().order == BondOrder::Double));
-        assert!(
-            valence_api::perceive_valence(molecule.working_mut(), ValenceModel::RdkitLike).is_err()
-        );
+        assert!(valence_api::perceive_valence(
+            molecule.working_mut(),
+            ValenceModel::RdkitLike,
+            Default::default()
+        )
+        .is_err());
     }
 }

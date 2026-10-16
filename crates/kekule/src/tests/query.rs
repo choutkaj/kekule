@@ -54,7 +54,10 @@ fn tetrahedral_smarts_matches_local_carrier_order_and_partial_environments() {
         let target = perceived(target);
         let query_graph = smarts::parse_str(query, Default::default()).unwrap();
         assert_eq!(
-            find_match(&target, &query_graph).unwrap().is_some(),
+            PreparedTarget::new(&target)
+                .first(&query_graph, Default::default())
+                .unwrap()
+                .is_some(),
             expected,
             "{query}"
         );
@@ -89,7 +92,10 @@ fn directional_smarts_matches_selected_carriers_in_either_endpoint_order() {
         let target = perceived(target);
         let query_graph = smarts::parse_str(query, Default::default()).unwrap();
         assert_eq!(
-            find_match(&target, &query_graph).unwrap().is_some(),
+            PreparedTarget::new(&target)
+                .first(&query_graph, Default::default())
+                .unwrap()
+                .is_some(),
             expected,
             "{query}"
         );
@@ -101,22 +107,34 @@ fn stereo_mapping_filter_precedes_uniqueness_and_match_limit() {
     let query = smarts::parse_str("[*@](*)(*)(*)*", Default::default()).unwrap();
     for input in ["[C@](N)(F)(Cl)Br", "[C@@](N)(F)(Cl)Br"] {
         let target = perceived(input);
-        let all = find_matches_with_options(
-            &target,
-            &query,
-            SubstructureMatchOptions {
-                uniquify: false,
-                ..SubstructureMatchOptions::default()
-            },
-        )
-        .unwrap();
+        let all = PreparedTarget::new(&target)
+            .all(
+                &query,
+                SubstructureMatchOptions {
+                    uniquify: false,
+                    ..SubstructureMatchOptions::default()
+                },
+            )
+            .unwrap();
         assert_eq!(
             all.len(),
             12,
             "half of the 24 carrier permutations satisfy parity"
         );
-        assert_eq!(find_matches(&target, &query).unwrap().len(), 1);
-        assert_eq!(find_match(&target, &query).unwrap().unwrap(), all[0]);
+        assert_eq!(
+            PreparedTarget::new(&target)
+                .all(&query, Default::default())
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            PreparedTarget::new(&target)
+                .first(&query, Default::default())
+                .unwrap()
+                .unwrap(),
+            all[0]
+        );
     }
 }
 
@@ -175,7 +193,10 @@ fn query_stereo_builder_checks_ownership_and_revalidates_later_topology() {
     // Matching represented stereo needs no perception when other predicates do not.
     let query = builder.clone().build().unwrap();
     let target = read_smiles("N[C@H](F)Cl").unwrap();
-    assert!(find_match(&target, &query).unwrap().is_some());
+    assert!(PreparedTarget::new(&target)
+        .first(&query, Default::default())
+        .unwrap()
+        .is_some());
     let extra = builder.add_atom(AtomExpression::always()).unwrap();
     builder
         .add_bond(center, extra, BondExpression::always())
@@ -226,10 +247,12 @@ fn double_bond_query_builder_requires_live_adjacent_carriers() {
         })
         .unwrap();
     let query = builder.build().unwrap();
-    assert!(find_match(&read_smiles("F/C=C/Cl").unwrap(), &query)
+    assert!(PreparedTarget::new(&read_smiles("F/C=C/Cl").unwrap())
+        .first(&query, Default::default())
         .unwrap()
         .is_some());
-    assert!(find_match(&read_smiles("F/C=C\\Cl").unwrap(), &query)
+    assert!(PreparedTarget::new(&read_smiles("F/C=C\\Cl").unwrap())
+        .first(&query, Default::default())
         .unwrap()
         .is_none());
 }
@@ -324,7 +347,8 @@ fn smarts_logical_precedence_matches_daylight_operator_order() {
     // High-precedence &: C OR (N AND H2). Both atoms match in methylamine.
     let high_and = smarts::parse_str("[C,N&H2]", Default::default()).unwrap();
     assert_eq!(
-        substructure::find_matches(&target, &high_and)
+        substructure::PreparedTarget::new(&target)
+            .all(&high_and, Default::default())
             .unwrap()
             .len(),
         2
@@ -332,7 +356,9 @@ fn smarts_logical_precedence_matches_daylight_operator_order() {
 
     // Low-precedence ;: (C OR N) AND H2. Only nitrogen matches.
     let low_and = smarts::parse_str("[C,N;H2]", Default::default()).unwrap();
-    let matches = substructure::find_matches(&target, &low_and).unwrap();
+    let matches = substructure::PreparedTarget::new(&target)
+        .all(&low_and, Default::default())
+        .unwrap();
     assert_eq!(matches.len(), 1);
     assert_eq!(
         target.atom(matches[0].atoms()[0]).unwrap().element.symbol(),
@@ -352,7 +378,10 @@ fn unbracketed_smarts_elements_do_not_consume_a_following_aromatic_atom() {
         let query = smarts::parse_str(input, Default::default()).unwrap();
         assert_eq!(query.atom_count(), atoms, "{input}");
         assert!(
-            find_match(&perceived(input), &query).unwrap().is_some(),
+            PreparedTarget::new(&perceived(input))
+                .first(&query, Default::default())
+                .unwrap()
+                .is_some(),
             "{input}"
         );
     }
@@ -377,18 +406,22 @@ fn smarts_hydrogen_primitive_disambiguation_matches_rdkit() {
     for (smarts, expected) in [("[H,D]", 2), ("[C,H]", 3), ("[!H]", 2)] {
         let query = smarts::parse_str(smarts, Default::default()).unwrap();
         assert_eq!(
-            substructure::find_matches(&ethanol, &query).unwrap().len(),
+            substructure::PreparedTarget::new(&ethanol)
+                .all(&query, Default::default())
+                .unwrap()
+                .len(),
             expected,
             "{smarts}"
         );
     }
 
     let mut methane = perceived("C");
-    methane.add_hydrogens().unwrap();
+    methane.add_hydrogens(Default::default()).unwrap();
     perceive(&mut methane).unwrap();
     let elemental_hydrogen = smarts::parse_str("[H]", Default::default()).unwrap();
     assert_eq!(
-        substructure::find_matches(&methane, &elemental_hydrogen)
+        substructure::PreparedTarget::new(&methane)
+            .all(&elemental_hydrogen, Default::default())
             .unwrap()
             .len(),
         4
@@ -519,7 +552,9 @@ fn matcher_handles_elements_bonds_hydrogens_degree_and_negation() {
         ("[#6]-[#8]", 1),
     ] {
         let query = smarts::parse_str(smarts, Default::default()).unwrap();
-        let matches = substructure::find_matches(&ethanol, &query).unwrap();
+        let matches = substructure::PreparedTarget::new(&ethanol)
+            .all(&query, Default::default())
+            .unwrap();
         assert_eq!(matches.len(), expected, "{smarts}: {matches:?}");
     }
 }
@@ -545,7 +580,9 @@ fn total_connectivity_counts_graph_declared_and_inferred_hydrogens() {
     ] {
         let molecule = perceived(target);
         let query = smarts::parse_str(smarts, Default::default()).unwrap();
-        let matches = find_matches(&molecule, &query).unwrap();
+        let matches = PreparedTarget::new(&molecule)
+            .all(&query, Default::default())
+            .unwrap();
         assert_eq!(matches.len(), expected, "{target} / {smarts}");
     }
 }
@@ -564,21 +601,23 @@ fn connectivity_includes_zero_and_dative_graph_neighbors() {
         let mut molecule = editor.try_finish().unwrap();
         perceive(&mut molecule).unwrap();
         for (smarts, expected) in [("[X4]", nitrogen), ("[X]", copper)] {
-            let matches = find_matches(
-                &molecule,
-                &smarts::parse_str(smarts, Default::default()).unwrap(),
-            )
-            .unwrap();
+            let matches = PreparedTarget::new(&molecule)
+                .all(
+                    &smarts::parse_str(smarts, Default::default()).unwrap(),
+                    Default::default(),
+                )
+                .unwrap();
             assert_eq!(matches.len(), 1, "{order:?} / {smarts}");
             assert_eq!(matches[0].atoms(), &[expected]);
         }
         assert_eq!(
-            find_matches(
-                &molecule,
-                &smarts::parse_str("[x0]", Default::default()).unwrap()
-            )
-            .unwrap()
-            .len(),
+            PreparedTarget::new(&molecule)
+                .all(
+                    &smarts::parse_str("[x0]", Default::default()).unwrap(),
+                    Default::default()
+                )
+                .unwrap()
+                .len(),
             2
         );
     }
@@ -600,21 +639,23 @@ fn connectivity_and_hydrogen_queries_survive_hydrogen_materialization() {
         let before: Vec<_> = queries
             .iter()
             .map(|smarts| {
-                find_matches(
-                    &molecule,
-                    &smarts::parse_str(smarts, Default::default()).unwrap(),
-                )
-                .unwrap()
+                PreparedTarget::new(&molecule)
+                    .all(
+                        &smarts::parse_str(smarts, Default::default()).unwrap(),
+                        Default::default(),
+                    )
+                    .unwrap()
             })
             .collect();
-        molecule.add_hydrogens().unwrap();
+        molecule.add_hydrogens(Default::default()).unwrap();
         perceive(&mut molecule).unwrap();
         for (smarts, expected) in queries.into_iter().zip(before) {
-            let actual = find_matches(
-                &molecule,
-                &smarts::parse_str(smarts, Default::default()).unwrap(),
-            )
-            .unwrap();
+            let actual = PreparedTarget::new(&molecule)
+                .all(
+                    &smarts::parse_str(smarts, Default::default()).unwrap(),
+                    Default::default(),
+                )
+                .unwrap();
             assert_eq!(actual, expected, "{target} / {smarts}");
         }
     }
@@ -633,26 +674,32 @@ fn ring_bond_count_uses_cycle_membership_without_a_selected_ring_basis() {
         ("C12C3C4C1C5C2C3C45", [0, 0, 0, 8, 0]),
     ] {
         let mut molecule = read_smiles(target).unwrap();
-        crate::perception::rings::perceive_ring_membership(&mut molecule);
+        crate::perception::rings::perceive_rings(
+            &mut molecule,
+            RingPerceptionOptions::membership_only(),
+        )
+        .expect("membership perception cannot fail");
         assert!(molecule.ring_set().is_none());
         for (count, expected) in counts.into_iter().enumerate() {
             let smarts = format!("[x{count}]");
-            let actual = find_matches(
-                &molecule,
-                &smarts::parse_str(&smarts, Default::default()).unwrap(),
-            )
-            .unwrap();
+            let actual = PreparedTarget::new(&molecule)
+                .all(
+                    &smarts::parse_str(&smarts, Default::default()).unwrap(),
+                    Default::default(),
+                )
+                .unwrap();
             assert_eq!(actual.len(), expected, "{target} / {smarts}");
         }
         for (smarts, expected) in [
             ("[x]", molecule.atom_count() - counts[0]),
             ("[!x]", counts[0]),
         ] {
-            let actual = find_matches(
-                &molecule,
-                &smarts::parse_str(smarts, Default::default()).unwrap(),
-            )
-            .unwrap();
+            let actual = PreparedTarget::new(&molecule)
+                .all(
+                    &smarts::parse_str(smarts, Default::default()).unwrap(),
+                    Default::default(),
+                )
+                .unwrap();
             assert_eq!(actual.len(), expected, "{target} / {smarts}");
         }
     }
@@ -684,31 +731,36 @@ fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
     let benzene = perceived("c1ccccc1");
     let query = smarts::parse_str("c1ccccc1", Default::default()).unwrap();
     assert_eq!(
-        substructure::find_matches(&benzene, &query).unwrap().len(),
+        substructure::PreparedTarget::new(&benzene)
+            .all(&query, Default::default())
+            .unwrap()
+            .len(),
         1
     );
-    let embeddings = substructure::find_matches_with_options(
-        &benzene,
-        &query,
-        SubstructureMatchOptions {
-            uniquify: false,
-            ..SubstructureMatchOptions::default()
-        },
-    )
-    .unwrap();
+    let embeddings = substructure::PreparedTarget::new(&benzene)
+        .all(
+            &query,
+            SubstructureMatchOptions {
+                uniquify: false,
+                ..SubstructureMatchOptions::default()
+            },
+        )
+        .unwrap();
     assert_eq!(embeddings.len(), 12);
 
     let cyclohexane = perceived("C1CCCCC1");
     let ring_atoms = smarts::parse_str("[#6;R]", Default::default()).unwrap();
     assert_eq!(
-        substructure::find_matches(&cyclohexane, &ring_atoms)
+        substructure::PreparedTarget::new(&cyclohexane)
+            .all(&ring_atoms, Default::default())
             .unwrap()
             .len(),
         6
     );
     let ring_bond = smarts::parse_str("C@C", Default::default()).unwrap();
     assert_eq!(
-        substructure::find_matches(&cyclohexane, &ring_bond)
+        substructure::PreparedTarget::new(&cyclohexane)
+            .all(&ring_bond, Default::default())
             .unwrap()
             .len(),
         6
@@ -719,14 +771,17 @@ fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
 fn matcher_supports_disconnected_queries_and_non_induced_subgraphs() {
     let connected_target = perceived("OCO");
     let query = smarts::parse_str("[#8].[#8]", Default::default()).unwrap();
-    let matches = substructure::find_matches(&connected_target, &query).unwrap();
+    let matches = substructure::PreparedTarget::new(&connected_target)
+        .all(&query, Default::default())
+        .unwrap();
     assert_eq!(matches.len(), 1);
     assert_ne!(matches[0].atoms()[0], matches[0].atoms()[1]);
 
     let cyclopropane = perceived("C1CC1");
     let edge = smarts::parse_str("C-C", Default::default()).unwrap();
     assert_eq!(
-        substructure::find_matches(&cyclopropane, &edge)
+        substructure::PreparedTarget::new(&cyclopropane)
+            .all(&edge, Default::default())
             .unwrap()
             .len(),
         3
@@ -747,33 +802,35 @@ fn smarts_bonds_distinguish_aromatic_types_from_localized_orders() {
         let target = perceived(source);
         for (smarts, count) in queries.into_iter().zip(expected) {
             let query = smarts::parse_str(smarts, Default::default()).unwrap();
-            let matches = find_matches_with_options(
-                &target,
-                &query,
-                SubstructureMatchOptions {
-                    uniquify: false,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+            let matches = PreparedTarget::new(&target)
+                .all(
+                    &query,
+                    SubstructureMatchOptions {
+                        uniquify: false,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
             assert_eq!(matches.len(), count, "{source}: {smarts}");
         }
     }
     let aryne = perceived("C1=CC=CC#C1");
-    assert!(find_matches(
-        &aryne,
-        &smarts::parse_str("c1ccccc1", Default::default()).unwrap()
-    )
-    .unwrap()
-    .is_empty());
-    let benzene = perceived("c1ccccc1");
-    for smarts in ["c1ccccc-1", "c-1ccccc1"] {
-        assert!(find_matches(
-            &benzene,
-            &smarts::parse_str(smarts, Default::default()).unwrap()
+    assert!(PreparedTarget::new(&aryne)
+        .all(
+            &smarts::parse_str("c1ccccc1", Default::default()).unwrap(),
+            Default::default()
         )
         .unwrap()
         .is_empty());
+    let benzene = perceived("c1ccccc1");
+    for smarts in ["c1ccccc-1", "c-1ccccc1"] {
+        assert!(PreparedTarget::new(&benzene)
+            .all(
+                &smarts::parse_str(smarts, Default::default()).unwrap(),
+                Default::default()
+            )
+            .unwrap()
+            .is_empty());
     }
     assert!(smarts::parse_str("C=1CCCCC-1", Default::default()).is_err());
 }
@@ -791,16 +848,29 @@ fn programmatic_bond_predicates_keep_their_represented_meaning() {
     };
     let mut raw = read_smiles("CC").unwrap();
     let order = make_query(BondPredicate::Order(BondOrder::Single));
-    assert_eq!(find_matches(&raw, &order).unwrap().len(), 1);
     assert_eq!(
-        find_matches(&raw, &smarts::parse_str("*-*", Default::default()).unwrap()),
+        PreparedTarget::new(&raw)
+            .all(&order, Default::default())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        PreparedTarget::new(&raw).all(
+            &smarts::parse_str("*-*", Default::default()).unwrap(),
+            Default::default()
+        ),
         Err(SubstructureMatchError::MissingPerception(
             QueryPerception::Aromaticity
         ))
     );
     perceive(&mut raw).unwrap();
     assert_eq!(
-        find_matches(&raw, &smarts::parse_str("*-*", Default::default()).unwrap())
+        PreparedTarget::new(&raw)
+            .all(
+                &smarts::parse_str("*-*", Default::default()).unwrap(),
+                Default::default()
+            )
             .unwrap()
             .len(),
         1
@@ -808,18 +878,31 @@ fn programmatic_bond_predicates_keep_their_represented_meaning() {
 
     let aryne = perceived("C1=CC=CC#C1");
     let membership = make_query(BondPredicate::Aromatic(true));
-    assert_eq!(find_matches(&aryne, &membership).unwrap().len(), 6);
     assert_eq!(
-        find_matches(
-            &aryne,
-            &smarts::parse_str("*:*", Default::default()).unwrap()
-        )
-        .unwrap()
-        .len(),
+        PreparedTarget::new(&aryne)
+            .all(&membership, Default::default())
+            .unwrap()
+            .len(),
+        6
+    );
+    assert_eq!(
+        PreparedTarget::new(&aryne)
+            .all(
+                &smarts::parse_str("*:*", Default::default()).unwrap(),
+                Default::default()
+            )
+            .unwrap()
+            .len(),
         5
     );
     let benzene = perceived("c1ccccc1");
-    assert_eq!(find_matches(&benzene, &order).unwrap().len(), 3);
+    assert_eq!(
+        PreparedTarget::new(&benzene)
+            .all(&order, Default::default())
+            .unwrap()
+            .len(),
+        3
+    );
 }
 
 #[test]
@@ -830,7 +913,8 @@ fn matcher_requires_only_the_perception_used_by_the_ir() {
     raw.add_bond(first, second, BondOrder::Single).unwrap();
     let elemental = manual_element_query("C");
     assert_eq!(
-        substructure::find_matches(raw.working(), &elemental)
+        substructure::PreparedTarget::new(raw.working())
+            .all(&elemental, Default::default())
             .unwrap()
             .len(),
         2
@@ -847,7 +931,7 @@ fn matcher_requires_only_the_perception_used_by_the_ir() {
     ] {
         let query = smarts::parse_str(smarts, Default::default()).unwrap();
         assert_eq!(
-            substructure::find_matches(raw.working(), &query),
+            substructure::PreparedTarget::new(raw.working()).all(&query, Default::default()),
             Err(SubstructureMatchError::MissingPerception(perception)),
             "{smarts}"
         );
@@ -858,15 +942,15 @@ fn matcher_requires_only_the_perception_used_by_the_ir() {
 fn matcher_search_and_candidate_limits_are_hard_failures() {
     let target = perceived("CCCC");
     let query = smarts::parse_str("[#6]", Default::default()).unwrap();
-    let candidate_error = substructure::find_matches_with_options(
-        &target,
-        &query,
-        SubstructureMatchOptions {
-            max_candidate_pairs: 3,
-            ..SubstructureMatchOptions::default()
-        },
-    )
-    .unwrap_err();
+    let candidate_error = substructure::PreparedTarget::new(&target)
+        .all(
+            &query,
+            SubstructureMatchOptions {
+                max_candidate_pairs: 3,
+                ..SubstructureMatchOptions::default()
+            },
+        )
+        .unwrap_err();
     assert!(matches!(
         candidate_error,
         SubstructureMatchError::ResourceLimit {
@@ -875,16 +959,16 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
         }
     ));
 
-    let state_error = substructure::find_matches_with_options(
-        &target,
-        &query,
-        SubstructureMatchOptions {
-            max_search_states: 1,
-            max_matches: 4,
-            ..SubstructureMatchOptions::default()
-        },
-    )
-    .unwrap_err();
+    let state_error = substructure::PreparedTarget::new(&target)
+        .all(
+            &query,
+            SubstructureMatchOptions {
+                max_search_states: 1,
+                max_matches: 4,
+                ..SubstructureMatchOptions::default()
+            },
+        )
+        .unwrap_err();
     assert!(matches!(
         state_error,
         SubstructureMatchError::ResourceLimit {
@@ -894,13 +978,12 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
     ));
 
     assert!(matches!(
-        substructure::find_matches_with_options(
-            &target,
+        substructure::PreparedTarget::new(&target).all(
             &query,
             SubstructureMatchOptions {
                 max_query_atoms: MAX_SUBSTRUCTURE_QUERY_ATOMS + 1,
                 ..SubstructureMatchOptions::default()
-            },
+            }
         ),
         Err(SubstructureMatchError::InvalidOptions(_))
     ));

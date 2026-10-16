@@ -16,7 +16,7 @@ impl<'a> PreparedTarget<'a> {
         }
     }
 
-    pub(super) fn visit(
+    pub(super) fn visit_atoms(
         &self,
         query: &QueryGraph,
         options: SubstructureMatchOptions,
@@ -32,33 +32,32 @@ impl<'a> PreparedTarget<'a> {
         })
     }
     /// The first match in search order, if any.
-    pub fn find_match(
+    ///
+    /// Stops at the first embedding, so the match cap never applies.
+    pub fn first(
         &self,
         query: &QueryGraph,
+        options: SubstructureMatchOptions,
     ) -> Result<Option<QueryMatch>, SubstructureMatchError> {
         let mut first = None;
-        self.visit_matches(query, |matched| {
+        self.visit(query, options, |matched| {
             first = Some(matched.clone());
             ControlFlow::Break(())
         })?;
         Ok(first)
     }
 
-    pub fn find_matches(
-        &self,
-        query: &QueryGraph,
-    ) -> Result<Vec<QueryMatch>, SubstructureMatchError> {
-        self.find_matches_with_options(query, SubstructureMatchOptions::default())
-    }
-
-    /// Every match; exceeding the match cap is an error, never a partial list.
-    pub fn find_matches_with_options(
+    /// Every match, retaining every embedding unless `uniquify` is requested.
+    ///
+    /// The match cap is a resource bound: exceeding it returns an error, never
+    /// a partial list. To stop early, use [`Self::visit`].
+    pub fn all(
         &self,
         query: &QueryGraph,
         options: SubstructureMatchOptions,
     ) -> Result<Vec<QueryMatch>, SubstructureMatchError> {
         let mut matches = Vec::new();
-        self.visit(query, options, true, &mut |atoms| {
+        self.visit_atoms(query, options, true, &mut |atoms| {
             matches.push(QueryMatch {
                 atoms: atoms.to_vec(),
             });
@@ -67,21 +66,16 @@ impl<'a> PreparedTarget<'a> {
         Ok(matches)
     }
 
-    pub fn visit_matches(
-        &self,
-        query: &QueryGraph,
-        visitor: impl FnMut(&QueryMatch) -> ControlFlow<()>,
-    ) -> Result<MatchCompletion, SubstructureMatchError> {
-        self.visit_matches_with_options(query, SubstructureMatchOptions::default(), visitor)
-    }
-
-    pub fn visit_matches_with_options(
+    /// Streams matches until the visitor breaks. Delivered matches remain
+    /// provisional until `Complete` is returned; a resource error may follow
+    /// earlier callbacks.
+    pub fn visit(
         &self,
         query: &QueryGraph,
         options: SubstructureMatchOptions,
         mut visitor: impl FnMut(&QueryMatch) -> ControlFlow<()>,
     ) -> Result<MatchCompletion, SubstructureMatchError> {
-        self.visit(query, options, true, &mut |atoms| {
+        self.visit_atoms(query, options, true, &mut |atoms| {
             visitor(&QueryMatch {
                 atoms: atoms.to_vec(),
             })
@@ -110,6 +104,16 @@ impl fmt::Display for TaggedMatchError {
     }
 }
 impl std::error::Error for TaggedMatchError {}
+
+/// Which tagged tuples [`TaggedQuery::find_matches`] returns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TupleMode {
+    /// Every tuple of every embedding, including repeated tuples.
+    All,
+    /// Identical ordered tuples collapse to one; tag permutations remain
+    /// distinct.
+    Distinct,
+}
 
 /// Validated positive, unique top-level tags in ascending numeric order.
 /// Tags inside recursive atom predicates describe local subqueries and are not outputs.
@@ -152,25 +156,26 @@ impl<'a> TaggedQuery<'a> {
             .map(|(_, a)| matched.atoms[a.index()])
             .collect())
     }
-    /// Complete enumeration without atom-set deduplication. Optional deduplication
-    /// collapses only identical ordered tagged tuples, never tag permutations.
+    /// Complete enumeration without atom-set deduplication.
+    /// [`TupleMode::Distinct`] collapses only identical ordered tagged tuples,
+    /// never tag permutations.
     pub fn find_matches(
         &self,
         target: &PreparedTarget<'_>,
         mut options: SubstructureMatchOptions,
-        deduplicate_tuples: bool,
+        tuples: TupleMode,
     ) -> Result<Vec<Vec<AtomId>>, TaggedMatchError> {
         options.uniquify = false;
         let mut result = Vec::new();
         let mut seen = BTreeSet::new();
         target
-            .visit(self.query, options, true, &mut |atoms| {
+            .visit_atoms(self.query, options, true, &mut |atoms| {
                 let tuple = self
                     .tags
                     .iter()
                     .map(|(_, a)| atoms[a.index()])
                     .collect::<Vec<_>>();
-                if !deduplicate_tuples || seen.insert(tuple.clone()) {
+                if tuples == TupleMode::All || seen.insert(tuple.clone()) {
                     result.push(tuple);
                 }
                 true

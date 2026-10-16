@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use kekule::alignment::{
-    kabsch, rmsd, AlignedRmsdOptions, AlignmentError, AlignmentGeometry, AlignmentOptions,
+    self, rmsd, AlignedRmsdOptions, AlignmentError, AlignmentGeometry, AlignmentOptions,
     AtomCorrespondence, AtomCorrespondenceError, CorrespondenceSide, PeriodicPolicy, Reference,
     SymmetricSelection, Weighting,
 };
@@ -122,13 +122,13 @@ fn direct_rmsd_does_not_fit_and_explicit_weights_follow_pair_order() {
         Trajectory::from_items(Arc::clone(&topology), [frame(&reference), frame(&moving)]).unwrap();
     let all = AtomSelection::all(&topology);
 
-    let uniform = trajectory.rmsd(0, &all).unwrap();
+    let uniform = trajectory.rmsd(0, &all, Default::default()).unwrap();
     assert_eq!(uniform.unit(), CANONICAL_LENGTH_UNIT);
     assert_close(uniform.value()[0], 0.0, 1.0e-14);
     assert_close(uniform.value()[1], 5.0_f64.sqrt(), 1.0e-14);
 
     let weighted = trajectory
-        .rmsd_with_options(
+        .rmsd(
             0,
             &all,
             AlignmentOptions {
@@ -139,7 +139,7 @@ fn direct_rmsd_does_not_fit_and_explicit_weights_follow_pair_order() {
         .unwrap();
     assert_close(weighted.value()[1], 3.0_f64.sqrt(), 1.0e-14);
     let scaled = trajectory
-        .rmsd_with_options(
+        .rmsd(
             0,
             &all,
             AlignmentOptions {
@@ -162,12 +162,27 @@ fn split_and_fused_fit_measure_workflows_agree_for_distinct_selections() {
     let fit = selection(&topology, &[0, 1, 2]);
     let measured = selection(&topology, &[3]);
 
-    let fused = trajectory.aligned_rmsd(0, &fit, &measured).unwrap();
+    let fused = trajectory
+        .aligned_rmsd(0, &fit, &measured, Default::default())
+        .unwrap();
     assert_close(fused.value()[0], 0.0, 1.0e-12);
     assert_close(fused.value()[1], 2.0, 2.0e-12);
+    // The single-view form computes each collection value exactly.
+    let first = trajectory.get(0).unwrap();
+    for (frame, fused) in trajectory.iter().zip(fused.value()) {
+        let single = alignment::aligned_rmsd(
+            frame.as_model_view(),
+            first.as_model_view(),
+            &fit,
+            &measured,
+            AlignedRmsdOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(single.into_value(), *fused);
+    }
 
     let mut split = trajectory.clone();
-    let report = split.superpose(0, &fit).unwrap();
+    let report = split.superpose(0, &fit, Default::default()).unwrap();
     assert_eq!(report.reference_index(), Some(0));
     assert_eq!(report.len(), 2);
     assert_close(
@@ -175,7 +190,7 @@ fn split_and_fused_fit_measure_workflows_agree_for_distinct_selections() {
         0.0,
         1.0e-12,
     );
-    let split = split.rmsd(0, &measured).unwrap();
+    let split = split.rmsd(0, &measured, Default::default()).unwrap();
     for (split, fused) in split.value().iter().zip(fused.value()) {
         assert_close(*split, *fused, 2.0e-12);
     }
@@ -251,7 +266,7 @@ fn superposition_rotates_complete_geometric_state_and_preserves_metadata() {
     let expected_properties = trajectory.get(1).unwrap().properties().clone();
 
     let report = trajectory
-        .superpose(0, &AtomSelection::all(&topology))
+        .superpose(0, &AtomSelection::all(&topology), Default::default())
         .unwrap();
     assert_eq!(report.alignments().len(), 2);
     let aligned = trajectory.get(1).unwrap();
@@ -303,12 +318,12 @@ fn superposition_failure_leaves_the_complete_collection_unchanged() {
     let all = AtomSelection::all(&topology);
 
     assert_eq!(
-        trajectory.superpose(3, &all),
+        trajectory.superpose(3, &all, Default::default()),
         Err(AlignmentError::ReferenceOutOfRange { index: 3, len: 3 })
     );
     // The last item fails after earlier items fitted; nothing is published.
     assert_eq!(
-        trajectory.superpose(0, &all),
+        trajectory.superpose(0, &all, Default::default()),
         Err(AlignmentError::Item {
             index: 2,
             source: Box::new(AlignmentError::DegenerateGeometry {
@@ -317,7 +332,7 @@ fn superposition_failure_leaves_the_complete_collection_unchanged() {
         })
     );
     assert_eq!(
-        trajectory.superpose(0, &selection(&topology, &[0, 1])),
+        trajectory.superpose(0, &selection(&topology, &[0, 1]), Default::default()),
         Err(AlignmentError::InsufficientSelectedAtoms {
             selected: 2,
             minimum: 3,
@@ -341,20 +356,20 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
     let all = AtomSelection::all(&topology);
 
     assert_eq!(
-        trajectory.rmsd(1, &all),
+        trajectory.rmsd(1, &all, Default::default()),
         Err(AlignmentError::ReferenceOutOfRange { index: 1, len: 1 })
     );
     // Collection-wide failures are reported once, not per item.
     assert_eq!(
-        trajectory.rmsd(0, &selection(&topology, &[])),
+        trajectory.rmsd(0, &selection(&topology, &[]), Default::default()),
         Err(AlignmentError::EmptySelection)
     );
     assert_eq!(
-        trajectory.rmsd(0, &AtomSelection::all(&chain(4))),
+        trajectory.rmsd(0, &AtomSelection::all(&chain(4)), Default::default()),
         Err(AlignmentError::SelectionTopologyMismatch)
     );
     let with_weights = |weights: &[f64]| {
-        trajectory.rmsd_with_options(
+        trajectory.rmsd(
             0,
             &all,
             AlignmentOptions {
@@ -379,7 +394,7 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
         Err(AlignmentError::NonPositiveWeight { selection_index: 2 })
     );
     assert_eq!(
-        trajectory.rmsd_with_options(
+        trajectory.rmsd(
             0,
             &all,
             AlignmentOptions {
@@ -395,7 +410,13 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
             }),
         })
     );
-    assert_eq!(trajectory.rmsd(0, &all).unwrap().value(), &[0.0]);
+    assert_eq!(
+        trajectory
+            .rmsd(0, &all, Default::default())
+            .unwrap()
+            .value(),
+        &[0.0]
+    );
 }
 
 #[test]
@@ -409,7 +430,7 @@ fn aligned_rmsd_reports_the_failing_item_without_mutating_input() {
     let before = payloads(&trajectory);
     let all = AtomSelection::all(&topology);
     assert_eq!(
-        trajectory.aligned_rmsd(0, &all, &all),
+        trajectory.aligned_rmsd(0, &all, &all, Default::default()),
         Err(AlignmentError::Item {
             index: 1,
             source: Box::new(AlignmentError::DegenerateGeometry {
@@ -450,15 +471,9 @@ fn split_and_fused_workflows_keep_collection_and_item_properties() {
         ..AlignmentOptions::default()
     };
 
-    assert!(
-        trajectory
-            .rmsd_with_options(0, &all, reject)
-            .unwrap()
-            .value()[1]
-            > 0.4
-    );
+    assert!(trajectory.rmsd(0, &all, reject).unwrap().value()[1] > 0.4);
     let fused = trajectory
-        .aligned_rmsd_with_options(
+        .aligned_rmsd(
             0,
             &all,
             &all,
@@ -470,11 +485,17 @@ fn split_and_fused_workflows_keep_collection_and_item_properties() {
         .unwrap();
     assert!(fused.value()[1] < 1.0e-12);
 
-    trajectory.superpose(0, &all).unwrap();
+    trajectory.superpose(0, &all, Default::default()).unwrap();
     assert!(Arc::ptr_eq(&topology, &trajectory.shared_topology()));
     assert_eq!(trajectory.properties(), &owner_properties);
     assert_eq!(trajectory.get(1).unwrap().properties(), &item_properties);
-    assert!(trajectory.rmsd(0, &all).unwrap().value()[1] < 1.0e-12);
+    assert!(
+        trajectory
+            .rmsd(0, &all, Default::default())
+            .unwrap()
+            .value()[1]
+            < 1.0e-12
+    );
 }
 
 #[test]
@@ -491,11 +512,11 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
     moving.set_cell(Some(periodic_cell(1.0)));
     let original = Trajectory::from_items(Arc::clone(&topology), [reference, moving]).unwrap();
     let all = AtomSelection::all(&topology);
-    assert!(original.rmsd(0, &all).unwrap().value()[1] > 0.3);
+    assert!(original.rmsd(0, &all, Default::default()).unwrap().value()[1] > 0.3);
 
     let mut weighted = original.clone();
     weighted
-        .superpose_with_options(
+        .superpose(
             0,
             &all,
             AlignmentOptions {
@@ -504,11 +525,11 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
             },
         )
         .unwrap();
-    assert!(weighted.rmsd(0, &all).unwrap().value()[1] < 1.0e-12);
+    assert!(weighted.rmsd(0, &all, Default::default()).unwrap().value()[1] < 1.0e-12);
 
     let mut rejected = original.clone();
     assert!(rejected
-        .superpose_with_options(
+        .superpose(
             0,
             &all,
             AlignmentOptions {
@@ -518,7 +539,7 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
         )
         .is_err());
     assert_eq!(payloads(&rejected), payloads(&original));
-    rejected.superpose(0, &all).unwrap();
+    rejected.superpose(0, &all, Default::default()).unwrap();
     for (actual, expected) in rejected.iter().zip(weighted.iter()) {
         for (a, b) in actual
             .positions()
@@ -563,15 +584,35 @@ fn ensembles_share_the_collection_contract_and_keep_weights() {
     )
     .unwrap();
     let all = AtomSelection::all(&topology);
-    assert!(ensemble.rmsd(&model, &all).unwrap().value()[0] > 1.0);
-    let report = ensemble.superpose(&model, &all).unwrap();
+    assert!(
+        ensemble
+            .rmsd(&model, &all, Default::default())
+            .unwrap()
+            .value()[0]
+            > 1.0
+    );
+    let report = ensemble
+        .superpose(&model, &all, Default::default())
+        .unwrap();
     assert_eq!(report.reference_index(), None);
-    assert!(ensemble.rmsd(&model, &all).unwrap().value()[0] < 1.0e-12);
+    assert!(
+        ensemble
+            .rmsd(&model, &all, Default::default())
+            .unwrap()
+            .value()[0]
+            < 1.0e-12
+    );
     assert_eq!(ensemble.get(0).unwrap().weight(), 0.25);
 
     // The free kernel and collection items share one view contract.
     let item = ensemble.get(0).unwrap();
-    let fit = kabsch(item.as_model_view(), model.as_model_view(), &all).unwrap();
+    let fit = alignment::fit(
+        item.as_model_view(),
+        model.as_model_view(),
+        &all,
+        Default::default(),
+    )
+    .unwrap();
     assert!(fit.rmsd().into_value() < 1.0e-12);
     let reference: Reference<'_> = (&model).into();
     assert!(matches!(reference, Reference::View(_)));
@@ -685,7 +726,7 @@ fn correspondence_superposition_keeps_identity_and_transforms_every_vector_field
     let weights = [8.0, 1.0, 4.0, 2.0];
     let mut aligned = trajectory.clone();
     let report = aligned
-        .superpose_with_options(
+        .superpose(
             &reference,
             &fit,
             AlignmentOptions {
@@ -734,13 +775,17 @@ fn correspondence_superposition_keeps_identity_and_transforms_every_vector_field
 fn correspondence_fit_and_measurement_are_independent_and_weighted_in_pair_order() {
     let (trajectory, reference, fit, measurement) = correspondence_fixture();
     let fused = trajectory
-        .aligned_rmsd(&reference, &fit, &measurement)
+        .aligned_rmsd(&reference, &fit, &measurement, Default::default())
         .unwrap();
     assert!(fused.value()[0].abs() < 1.0e-12);
     assert!((fused.value()[1] - 1.0).abs() < 1.0e-12);
     let mut loaded = trajectory.clone();
-    loaded.superpose(&reference, &fit).unwrap();
-    let split = loaded.rmsd(&reference, &measurement).unwrap();
+    loaded
+        .superpose(&reference, &fit, Default::default())
+        .unwrap();
+    let split = loaded
+        .rmsd(&reference, &measurement, Default::default())
+        .unwrap();
     for (a, b) in fused.value().iter().zip(split.value()) {
         assert!((a - b).abs() < 1.0e-12);
     }
@@ -757,7 +802,7 @@ fn correspondence_fit_and_measurement_are_independent_and_weighted_in_pair_order
     )
     .unwrap();
     let weighted = trajectory
-        .aligned_rmsd_with_options(
+        .aligned_rmsd(
             &reference,
             &fit,
             &measured,
@@ -768,7 +813,21 @@ fn correspondence_fit_and_measurement_are_independent_and_weighted_in_pair_order
         )
         .unwrap();
     assert!((weighted.value()[1] - 0.75_f64.sqrt()).abs() < 1.0e-12);
-    let direct = trajectory.rmsd(&reference, &measured).unwrap();
+    let single = alignment::aligned_rmsd(
+        trajectory.get(1).unwrap().as_model_view(),
+        reference.as_model_view(),
+        &fit,
+        &measured,
+        AlignedRmsdOptions {
+            measurement_weighting: Weighting::Explicit(&[3.0, 1.0]),
+            ..AlignedRmsdOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(single.into_value(), weighted.value()[1]);
+    let direct = trajectory
+        .rmsd(&reference, &measured, Default::default())
+        .unwrap();
     for (frame, actual) in trajectory.iter().zip(direct.value()) {
         let expected = measured
             .index_pairs()
@@ -794,18 +853,18 @@ fn correspondence_failures_preserve_whole_collections() {
         .unwrap();
     let before = payloads(&trajectory);
     assert!(matches!(
-        trajectory.superpose(&reference, &fit),
+        trajectory.superpose(&reference, &fit, Default::default()),
         Err(AlignmentError::Item { index: 2, source })
             if matches!(*source, AlignmentError::DegenerateGeometry { .. })
     ));
     assert_eq!(payloads(&trajectory), before);
     assert!(matches!(
-        trajectory.aligned_rmsd(&reference, &fit, &measurement),
+        trajectory.aligned_rmsd(&reference, &fit, &measurement, Default::default()),
         Err(AlignmentError::Item { index: 2, .. })
     ));
     let wrong = chain_model(reference.positions().values().value());
     assert_eq!(
-        trajectory.rmsd(&wrong, &measurement),
+        trajectory.rmsd(&wrong, &measurement, Default::default()),
         Err(AlignmentError::Correspondence(
             AtomCorrespondenceError::TopologyMismatch {
                 side: CorrespondenceSide::Reference
@@ -814,7 +873,7 @@ fn correspondence_failures_preserve_whole_collections() {
     );
     let mut empty = Trajectory::new(wrong.shared_topology());
     assert_eq!(
-        empty.superpose(&reference, &fit),
+        empty.superpose(&reference, &fit, Default::default()),
         Err(AlignmentError::Correspondence(
             AtomCorrespondenceError::TopologyMismatch {
                 side: CorrespondenceSide::Moving
@@ -833,11 +892,11 @@ fn correspondence_measurement_validates_weights_empty_pairs_and_periodic_policy(
     )
     .unwrap();
     assert_eq!(
-        trajectory.rmsd(&reference, &empty),
+        trajectory.rmsd(&reference, &empty, Default::default()),
         Err(AlignmentError::EmptySelection)
     );
     assert!(matches!(
-        trajectory.rmsd_with_options(
+        trajectory.rmsd(
             &reference,
             &measurement,
             AlignmentOptions {
@@ -852,12 +911,12 @@ fn correspondence_measurement_validates_weights_empty_pairs_and_periodic_policy(
         ..AlignmentOptions::default()
     };
     assert!(matches!(
-        trajectory.rmsd_with_options(&reference, &measurement, reject),
+        trajectory.rmsd(&reference, &measurement, reject),
         Err(AlignmentError::Item { index: 0, source })
             if matches!(*source, AlignmentError::PeriodicCoordinates { moving: true, reference: false })
     ));
     assert!(matches!(
-        trajectory.aligned_rmsd_with_options(
+        trajectory.aligned_rmsd(
             &reference,
             &fit,
             &measurement,
@@ -912,20 +971,28 @@ fn symmetric_rmsd_pairs_equivalent_atoms_with_their_closest_counterparts() {
 
     // Each oxygen is 0.25 nm from its label, so the plain RMSD over four
     // atoms is sqrt(2 * 0.25^2 / 4); exchanging the oxygens removes it.
-    let plain = rmsd(swapped.as_model_view(), reference.as_model_view(), &all).unwrap();
+    let plain = rmsd(
+        swapped.as_model_view(),
+        reference.as_model_view(),
+        &all,
+        Default::default(),
+    )
+    .unwrap();
     assert_eq!(plain, Quantity::new(0.03125_f64.sqrt(), NANOMETER));
     let corrected = rmsd(
         swapped.as_model_view(),
         reference.as_model_view(),
         &symmetric,
+        Default::default(),
     )
     .unwrap();
     assert_eq!(corrected, Quantity::new(0.0, NANOMETER));
 
-    let fit = kabsch(
+    let fit = alignment::fit(
         swapped.as_model_view(),
         reference.as_model_view(),
         &symmetric,
+        Default::default(),
     )
     .unwrap();
     assert_close(fit.rmsd().into_value(), 0.0, 1.0e-12);
@@ -936,7 +1003,12 @@ fn symmetric_rmsd_pairs_equivalent_atoms_with_their_closest_counterparts() {
     ))
     .unwrap();
     assert_eq!(
-        rmsd(swapped.as_model_view(), reference.as_model_view(), &foreign),
+        rmsd(
+            swapped.as_model_view(),
+            reference.as_model_view(),
+            &foreign,
+            Default::default()
+        ),
         Err(AlignmentError::SelectionTopologyMismatch)
     );
 }
@@ -961,21 +1033,25 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
 
     // The best fit exchanges the oxygens; a measurement that may not
     // exchange them then sees each 0.25 nm from its label.
-    let plain_oxygens = ensemble.aligned_rmsd(0, &symmetric, &oxygens).unwrap();
+    let plain_oxygens = ensemble
+        .aligned_rmsd(0, &symmetric, &oxygens, Default::default())
+        .unwrap();
     assert_close(plain_oxygens.value()[0], 0.0, 1.0e-12);
     assert_close(plain_oxygens.value()[1], 0.25, 1.0e-12);
     let corrected = ensemble
-        .aligned_rmsd(0, &symmetric, &symmetric_oxygens)
+        .aligned_rmsd(0, &symmetric, &symmetric_oxygens, Default::default())
         .unwrap();
     assert_close(corrected.value()[0], 0.0, 1.0e-12);
     assert_close(corrected.value()[1], 0.0, 1.0e-12);
 
-    ensemble.superpose(0, &symmetric).unwrap();
+    ensemble
+        .superpose(0, &symmetric, Default::default())
+        .unwrap();
     let superposed = nanometers(ensemble.get(1).unwrap().positions());
     for (actual, expected) in superposed.iter().zip(acetate_points(true)) {
         assert_vector_close(*actual - expected, Vector3::new(0.0, 0.0, 0.0), 1.0e-12);
     }
-    let direct = ensemble.rmsd(0, &symmetric).unwrap();
+    let direct = ensemble.rmsd(0, &symmetric, Default::default()).unwrap();
     assert_eq!(direct.value()[0], 0.0);
     assert_close(direct.value()[1], 0.0, 1.0e-12);
 
@@ -985,7 +1061,9 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
         [frame(&reference), frame(&moved_swapped)],
     )
     .unwrap();
-    let report = trajectory.superpose(0, &symmetric).unwrap();
+    let report = trajectory
+        .superpose(0, &symmetric, Default::default())
+        .unwrap();
     assert_close(
         report.alignment(1).unwrap().rmsd().into_value(),
         0.0,
@@ -997,7 +1075,7 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
     let foreign = SymmetricSelection::new(&AtomSelection::all(&foreign)).unwrap();
     let model = acetate_model(&topology, &reference);
     assert_eq!(
-        Ensemble::new(Arc::clone(&topology)).rmsd(&model, &foreign),
+        Ensemble::new(Arc::clone(&topology)).rmsd(&model, &foreign, Default::default()),
         Err(AlignmentError::SelectionTopologyMismatch)
     );
 }

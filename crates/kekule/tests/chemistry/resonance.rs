@@ -91,7 +91,12 @@ fn group_preparation_is_separate_and_transactional() {
         Err(ResonanceError::ResourceLimit { .. })
     ));
     assert_eq!(m.perception(), &before);
-    perception::aromaticity::perceive_aromaticity(&mut m, AromaticityModel::Mdl).unwrap();
+    perception::aromaticity::perceive_aromaticity(
+        &mut m,
+        AromaticityModel::Mdl,
+        Default::default(),
+    )
+    .unwrap();
     assert!(!m.perception().has_conjugation());
     assert!(!m.perception().has_resonance());
     perceive_conjugation(&mut m, ConjugationModel::RdkitLike).unwrap();
@@ -239,8 +244,8 @@ fn canonical_aromatic_seed_retains_aryne_triple_bonds() {
 fn explicit_preparation_preserves_chemistry_aromaticity_cip_and_output() {
     for model in [AromaticityModel::RdkitLike, AromaticityModel::Mdl] {
         let mut m = molecule("N[C@@H](C)c1ccccc1");
-        perception::aromaticity::perceive_aromaticity(&mut m, model).unwrap();
-        kekule::stereo::cip::assign_cip_descriptors(&mut m).unwrap();
+        perception::aromaticity::perceive_aromaticity(&mut m, model, Default::default()).unwrap();
+        kekule::stereo::cip::assign_cip_descriptors(&mut m, Default::default()).unwrap();
         let chemistry = m.clone();
         let before = m.perception().clone();
         let text = smiles::write(&m, smiles::SmilesWriteOptions::canonical()).unwrap();
@@ -285,7 +290,8 @@ fn present_empty_sections_and_prerequisite_invalidation() {
         .unwrap()
         .groups()
         .is_empty());
-    perception::valence::perceive_valence(&mut m, ValenceModel::RdkitLike).unwrap();
+    perception::valence::perceive_valence(&mut m, ValenceModel::RdkitLike, Default::default())
+        .unwrap();
     assert!(!m.perception().has_conjugation());
     assert!(!m.perception().has_resonance());
     m.perceive().unwrap();
@@ -412,7 +418,7 @@ fn explicit_hydrogens_and_atom_renumbering_preserve_membership() {
             .unwrap()
             .contributors()
             .len();
-        explicit.add_hydrogens().unwrap();
+        explicit.add_hydrogens(Default::default()).unwrap();
         explicit.perceive().unwrap();
         assert_eq!(
             explicit

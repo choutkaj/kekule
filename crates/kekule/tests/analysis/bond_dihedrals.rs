@@ -9,7 +9,7 @@ use kekule::{
         StereoDescriptor, StereoElementKind,
     },
     structure::{
-        measure::{self, BondDihedral, BondDihedralError, MeasurementError},
+        measure::{self, BondDihedral, BondDihedralError, ConnectivityCheck, MeasurementError},
         Ensemble, EnsembleMember, Model, Positions,
     },
     topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId},
@@ -80,7 +80,17 @@ fn references_follow_cip_elements_isotopes_deep_ligands_and_rings() {
         );
         assert_eq!(
             selected.measure(model.as_model_view()).unwrap(),
-            Some(measure::dihedral(model.as_model_view(), ids[a], ids[b], ids[c], ids[d]).unwrap())
+            Some(
+                measure::dihedral(
+                    model.as_model_view(),
+                    ids[a],
+                    ids[b],
+                    ids[c],
+                    ids[d],
+                    ConnectivityCheck::Unrestricted
+                )
+                .unwrap()
+            )
         );
         assert_eq!(
             topology
@@ -112,7 +122,15 @@ fn tied_references_are_smallest_ids_and_do_not_follow_coordinates() {
             .set_position(id, Quantity::new(point, NANOMETER))
             .unwrap();
     }
-    assert!(measure::dihedral(model.as_model_view(), ids[2], ids[1], ids[3], ids[4]).is_ok());
+    assert!(measure::dihedral(
+        model.as_model_view(),
+        ids[2],
+        ids[1],
+        ids[3],
+        ids[4],
+        ConnectivityCheck::Unrestricted
+    )
+    .is_ok());
     assert_eq!(selected.measure(model.as_model_view()).unwrap(), None);
     assert_eq!(definition(&model, 1, 3).atoms(), selected.atoms());
     assert_eq!(
@@ -456,7 +474,7 @@ fn represented_remote_stereo_distinguishes_constitutionally_tied_ligands() {
                 .unwrap()
                 .molecule()
                 .clone();
-            assign_cip_descriptors(&mut labelled).unwrap();
+            assign_cip_descriptors(&mut labelled, Default::default()).unwrap();
             let (id, _) = labelled.stereo_elements().find(|(_, element)| matches!(&element.kind, StereoElementKind::Tetrahedral(stereo) if stereo.center == atoms[0].atom())).unwrap();
             assert_eq!(
                 labelled.cip_descriptor(id).unwrap(),

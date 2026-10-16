@@ -96,7 +96,7 @@ use kekule_openff::{ChargeMethod, ForceField, NaglModel};
 
 let mut molecule = smiles::to_molecules("CCO")?.remove(0);
 molecule.perceive()?;
-molecule.add_hydrogens()?;
+molecule.add_hydrogens(Default::default())?;
 let model = NaglModel::ash()?;
 let rosemary = ForceField::rosemary()?;
 let parameters = rosemary.parameterize_molecule(molecule, &model)?;

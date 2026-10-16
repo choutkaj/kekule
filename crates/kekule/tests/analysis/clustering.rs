@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use kekule::alignment::{
-    kabsch, AlignmentError, AlignmentGeometry, AtomCorrespondence, FitAtoms, SymmetricSelection,
+    self, AlignmentError, AlignmentGeometry, AtomCorrespondence, FitAtoms, SymmetricSelection,
 };
 use kekule::clustering::{
     ClusterOrder, ClusteringError, ClusteringOptions, Cut, Dendrogram, DistanceMatrix,
@@ -72,10 +72,11 @@ fn two_shapes() -> (Arc<Topology>, Ensemble) {
 
 /// The fitted RMSD between the two shapes.
 fn shape_distance(ensemble: &Ensemble, atoms: &AtomSelection) -> f64 {
-    kabsch(
+    alignment::fit(
         ensemble.get(0).unwrap().as_model_view(),
         ensemble.get(2).unwrap().as_model_view(),
         atoms,
+        Default::default(),
     )
     .unwrap()
     .rmsd()
@@ -95,12 +96,16 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
 
     // By descending weight the moved A (3) leads, then B (2) founds its own
     // cluster; the remaining members join the cluster of their shape.
-    let clusters = ensemble.cluster_by_radius(radius(0.5), &atoms).unwrap();
+    let clusters = ensemble
+        .cluster_by_radius(radius(0.5), &atoms, Default::default())
+        .unwrap();
     assert_eq!(clusters, partition(&[0, 0, 1, 1], &[1, 2]));
     assert_eq!(clusters.members(1).collect::<Vec<_>>(), [2, 3]);
     // A radius reaching the other shape leaves one cluster.
     assert_eq!(
-        ensemble.cluster_by_radius(radius(2.0), &atoms).unwrap(),
+        ensemble
+            .cluster_by_radius(radius(2.0), &atoms, Default::default())
+            .unwrap(),
         partition(&[0, 0, 0, 0], &[1])
     );
 
@@ -118,13 +123,13 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
     };
     assert_eq!(
         ensemble
-            .cluster_by_radius_with_options(radius(0.5), &atoms, by_energy)
+            .cluster_by_radius(radius(0.5), &atoms, by_energy)
             .unwrap(),
         partition(&[0, 0, 1, 1], &[0, 2])
     );
     ensemble.get_mut(3).unwrap().set_energy(None).unwrap();
     assert_eq!(
-        ensemble.cluster_by_radius_with_options(radius(0.5), &atoms, by_energy),
+        ensemble.cluster_by_radius(radius(0.5), &atoms, by_energy),
         Err(ClusteringError::Ensemble(Box::new(
             EnsembleError::MissingEnergy { index: 3 }
         )))
@@ -132,7 +137,9 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
 
     let empty = Ensemble::new(Arc::clone(&topology));
     assert_eq!(
-        empty.cluster_by_radius(radius(0.5), &atoms).unwrap(),
+        empty
+            .cluster_by_radius(radius(0.5), &atoms, Default::default())
+            .unwrap(),
         partition(&[], &[])
     );
 }
@@ -143,12 +150,12 @@ fn radius_clustering_rejects_invalid_radii_and_unfittable_members() {
     let atoms = AtomSelection::all(&topology);
     for value in [-1.0, f64::NAN, f64::INFINITY] {
         assert_eq!(
-            ensemble.cluster_by_radius(Quantity::new(value, NANOMETER), &atoms),
+            ensemble.cluster_by_radius(Quantity::new(value, NANOMETER), &atoms, Default::default()),
             Err(ClusteringError::InvalidRadius)
         );
     }
     assert_eq!(
-        ensemble.cluster_by_radius(Quantity::new(1.0, KELVIN), &atoms),
+        ensemble.cluster_by_radius(Quantity::new(1.0, KELVIN), &atoms, Default::default()),
         Err(ClusteringError::Unit(Box::new(
             UnitError::IncompatibleUnits {
                 from: KELVIN,
@@ -160,7 +167,7 @@ fn radius_clustering_rejects_invalid_radii_and_unfittable_members() {
     let two_atoms =
         AtomSelection::from_atoms(&topology, topology.atom_ids()[..2].iter().copied()).unwrap();
     assert_eq!(
-        ensemble.cluster_by_radius(radius, &two_atoms),
+        ensemble.cluster_by_radius(radius, &two_atoms, Default::default()),
         Err(ClusteringError::Alignment(Box::new(
             AlignmentError::InsufficientSelectedAtoms {
                 selected: 2,
@@ -179,7 +186,7 @@ fn radius_clustering_rejects_invalid_radii_and_unfittable_members() {
     )
     .unwrap();
     assert_eq!(
-        degenerate.cluster_by_radius(radius, &atoms),
+        degenerate.cluster_by_radius(radius, &atoms, Default::default()),
         Err(ClusteringError::Alignment(Box::new(AlignmentError::Item {
             index: 1,
             source: Box::new(AlignmentError::DegenerateGeometry {
@@ -213,11 +220,15 @@ fn symmetric_radius_clustering_merges_rotamers() {
     let all = AtomSelection::all(&topology);
     let radius = Quantity::new(0.01, NANOMETER);
     assert_eq!(
-        ensemble.cluster_by_radius(radius, &all).unwrap(),
+        ensemble
+            .cluster_by_radius(radius, &all, Default::default())
+            .unwrap(),
         partition(&[0, 1], &[0, 1])
     );
     let symmetric = SymmetricSelection::new(&all).unwrap();
-    let rotamers = ensemble.cluster_by_radius(radius, &symmetric).unwrap();
+    let rotamers = ensemble
+        .cluster_by_radius(radius, &symmetric, Default::default())
+        .unwrap();
     assert_eq!(rotamers, partition(&[0, 0], &[0]));
     let collapsed = ensemble.collapse(&rotamers).unwrap();
     assert_eq!(collapsed.len(), 1);
@@ -520,14 +531,17 @@ fn dendrogram_cuts_apply_merges_by_height_or_cluster_count() {
 fn pairwise_rmsd_fits_every_unordered_pair_once() {
     let (topology, ensemble) = two_shapes();
     let atoms = AtomSelection::all(&topology);
-    let matrix = ensemble.pairwise_rmsd(&atoms).unwrap();
+    let matrix = ensemble
+        .pairwise_fitted_rmsd(&atoms, Default::default())
+        .unwrap();
     assert_eq!(matrix.len(), 4);
     for first in 0..4 {
         for second in first + 1..4 {
-            let fit = kabsch(
+            let fit = alignment::fit(
                 ensemble.get(first).unwrap().as_model_view(),
                 ensemble.get(second).unwrap().as_model_view(),
                 &atoms,
+                Default::default(),
             )
             .unwrap();
             assert_eq!(matrix.get(first, second), Some(fit.rmsd()));
@@ -536,7 +550,7 @@ fn pairwise_rmsd_fits_every_unordered_pair_once() {
     }
 
     let empty = Ensemble::new(Arc::clone(&topology))
-        .pairwise_rmsd(&atoms)
+        .pairwise_fitted_rmsd(&atoms, Default::default())
         .unwrap();
     assert!(empty.is_empty());
 
@@ -549,7 +563,7 @@ fn pairwise_rmsd_fits_every_unordered_pair_once() {
     )
     .unwrap();
     assert_eq!(
-        degenerate.pairwise_rmsd(&atoms),
+        degenerate.pairwise_fitted_rmsd(&atoms, Default::default()),
         Err(ClusteringError::PairFit {
             first: 0,
             second: 1,
@@ -616,7 +630,9 @@ fn hierarchical_clusters_are_represented_by_weighted_medoids() {
     let (topology, shapes) = two_shapes();
     let atoms = AtomSelection::all(&topology);
     let distance = shape_distance(&shapes, &atoms);
-    let matrix = shapes.pairwise_rmsd(&atoms).unwrap();
+    let matrix = shapes
+        .pairwise_fitted_rmsd(&atoms, Default::default())
+        .unwrap();
     let clusters = shapes
         .cluster_hierarchical(
             &matrix,
@@ -634,8 +650,12 @@ fn member_distances_do_not_depend_on_member_order() {
     let all = AtomSelection::all(&topology);
     let symmetric = SymmetricSelection::new(&all).unwrap();
     for atoms in [FitAtoms::from(&all), FitAtoms::from(&symmetric)] {
-        let forward = ensemble.pairwise_rmsd(atoms).unwrap();
-        let backward = reversed.pairwise_rmsd(atoms).unwrap();
+        let forward = ensemble
+            .pairwise_fitted_rmsd(atoms, Default::default())
+            .unwrap();
+        let backward = reversed
+            .pairwise_fitted_rmsd(atoms, Default::default())
+            .unwrap();
         for first in 0..4 {
             for second in 0..4 {
                 let a = forward.get(first, second).unwrap().into_value();
@@ -661,16 +681,20 @@ fn member_distances_do_not_depend_on_member_order() {
     )
     .unwrap();
     assert_eq!(
-        ensemble.pairwise_rmsd(&exchanged),
+        ensemble.pairwise_fitted_rmsd(&exchanged, Default::default()),
         Err(ClusteringError::DirectedCorrespondence)
     );
     assert_eq!(
-        ensemble.cluster_by_radius(Quantity::new(0.1, NANOMETER), &exchanged),
+        ensemble.cluster_by_radius(
+            Quantity::new(0.1, NANOMETER),
+            &exchanged,
+            Default::default()
+        ),
         Err(ClusteringError::DirectedCorrespondence)
     );
     // The pairing is rejected before members are examined.
     assert_eq!(
-        Ensemble::new(Arc::clone(&topology)).pairwise_rmsd(&exchanged),
+        Ensemble::new(Arc::clone(&topology)).pairwise_fitted_rmsd(&exchanged, Default::default()),
         Err(ClusteringError::DirectedCorrespondence)
     );
 }
@@ -773,7 +797,7 @@ fn k_medoids_rejects_invalid_cluster_counts_and_matrices() {
     // Fitted RMSDs separate the two shapes into two medoid clusters.
     let (topology, shapes) = two_shapes();
     let matrix = shapes
-        .pairwise_rmsd(&AtomSelection::all(&topology))
+        .pairwise_fitted_rmsd(&AtomSelection::all(&topology), Default::default())
         .unwrap();
     assert_eq!(
         shapes.cluster_k_medoids(&matrix, 2).unwrap().assignments(),

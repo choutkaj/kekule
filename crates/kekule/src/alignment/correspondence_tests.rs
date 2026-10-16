@@ -64,17 +64,19 @@ fn independent_layouts_align_without_changing_identity_or_coordinates() {
     assert!(!correspondence.is_empty());
     let selection = AtomSelection::all(&moving.shared_topology());
     assert_eq!(
-        kabsch(
+        crate::alignment::fit(
             moving.as_model_view(),
             reference.as_model_view(),
-            &selection
+            &selection,
+            Default::default()
         ),
         Err(AlignmentError::TopologyMismatch)
     );
-    let fit = kabsch(
+    let fit = crate::alignment::fit(
         moving.as_model_view(),
         reference.as_model_view(),
         &correspondence,
+        Default::default(),
     )
     .unwrap();
     assert!(fit.rmsd().value_in(ANGSTROM).unwrap() < 1e-10);
@@ -122,10 +124,11 @@ fn explicit_pairs_preserve_order_and_fit_reordered_partial_models_in_mixed_units
             reference.topology().atom_ids()[b]
         ))
     );
-    let fit = kabsch(
+    let fit = crate::alignment::fit(
         moving.as_model_view(),
         reference.as_model_view(),
         &correspondence,
+        Default::default(),
     )
     .unwrap();
     assert_eq!(fit.selected_atom_count(), 4);
@@ -147,7 +150,7 @@ fn correspondence_weights_follow_pairs_and_share_existing_numerical_kernel() {
         weighting: Weighting::Explicit(&weights),
         ..Default::default()
     };
-    let fit = kabsch_with_options(
+    let fit = crate::alignment::fit(
         moving.as_model_view(),
         reference.as_model_view(),
         &correspondence,
@@ -157,7 +160,7 @@ fn correspondence_weights_follow_pairs_and_share_existing_numerical_kernel() {
     let reference_on_shared_topology =
         Model::new(moving.shared_topology(), reference.positions().clone()).unwrap();
     let reordered_weights = [1., 2., 4., 8.];
-    let expected = kabsch_with_options(
+    let expected = crate::alignment::fit(
         moving.as_model_view(),
         reference_on_shared_topology.as_model_view(),
         &AtomSelection::all(&moving.shared_topology()),
@@ -176,7 +179,7 @@ fn correspondence_weights_follow_pairs_and_share_existing_numerical_kernel() {
     }
     assert!(fit.rmsd().into_value() > 0.01);
     for weights in [&[1., 2.][..], &[1., 0., 1., 1.], &[1., f64::NAN, 1., 1.]] {
-        assert!(kabsch_with_options(
+        assert!(crate::alignment::fit(
             moving.as_model_view(),
             reference.as_model_view(),
             &correspondence,
@@ -245,10 +248,11 @@ fn correspondence_accepts_perceived_snapshots_but_rejects_independent_layouts() 
     assert!(moving
         .topology()
         .shares_layout(correspondence.moving_topology()));
-    assert!(kabsch(
+    assert!(crate::alignment::fit(
         moving.as_model_view(),
         reference.as_model_view(),
-        &correspondence
+        &correspondence,
+        Default::default()
     )
     .is_ok());
 
@@ -258,10 +262,11 @@ fn correspondence_accepts_perceived_snapshots_but_rejects_independent_layouts() 
         .topology()
         .same_layout(correspondence.moving_topology()));
     assert!(matches!(
-        kabsch(
+        crate::alignment::fit(
             rebuilt.as_model_view(),
             reference.as_model_view(),
-            &correspondence
+            &correspondence,
+            Default::default()
         ),
         Err(AlignmentError::Correspondence(
             AtomCorrespondenceError::TopologyMismatch {
@@ -270,10 +275,11 @@ fn correspondence_accepts_perceived_snapshots_but_rejects_independent_layouts() 
         ))
     ));
     assert!(matches!(
-        kabsch(
+        crate::alignment::fit(
             moving.as_model_view(),
             rebuilt.as_model_view(),
-            &correspondence
+            &correspondence,
+            Default::default()
         ),
         Err(AlignmentError::Correspondence(
             AtomCorrespondenceError::TopologyMismatch {
@@ -289,22 +295,33 @@ fn correspondence_retains_alignment_geometry_and_periodic_rejections() {
     let reference = model(&[Point3::new(0., 0., 0.); 4]);
     let correspondence = pairs(&moving, &reference, &[(0, 0), (1, 1), (2, 2), (3, 3)]);
     assert!(matches!(
-        kabsch(
+        crate::alignment::fit(
             moving.as_model_view(),
             reference.as_model_view(),
-            &correspondence
+            &correspondence,
+            Default::default()
         ),
         Err(AlignmentError::DegenerateGeometry { .. })
     ));
     let short = pairs(&moving, &reference, &[(0, 0), (1, 1)]);
     assert!(matches!(
-        kabsch(moving.as_model_view(), reference.as_model_view(), &short),
+        crate::alignment::fit(
+            moving.as_model_view(),
+            reference.as_model_view(),
+            &short,
+            Default::default()
+        ),
         Err(AlignmentError::InsufficientSelectedAtoms { selected: 2, .. })
     ));
     let empty = pairs(&moving, &reference, &[]);
     assert!(empty.is_empty());
     assert!(matches!(
-        kabsch(moving.as_model_view(), reference.as_model_view(), &empty),
+        crate::alignment::fit(
+            moving.as_model_view(),
+            reference.as_model_view(),
+            &empty,
+            Default::default()
+        ),
         Err(AlignmentError::InsufficientSelectedAtoms { selected: 0, .. })
     ));
     moving.set_cell(Some(
@@ -322,7 +339,7 @@ fn correspondence_retains_alignment_geometry_and_periodic_rejections() {
         .unwrap(),
     ));
     assert!(matches!(
-        kabsch_with_options(
+        crate::alignment::fit(
             moving.as_model_view(),
             reference.as_model_view(),
             &correspondence,

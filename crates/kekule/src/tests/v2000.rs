@@ -9,8 +9,8 @@ fn v2000_touching_coordinates_preserve_precision_and_atom_fields() {
         let source = format!(
             "coordinates\nkekule\n\n  1  0  0  0  0  0            999 V2000\n   -1.1945   -2.2790{z:10.4} F   0  5  0  0  0 15  0  0  0 17  0  0\nM  END\n"
         );
-        let document = molfile::parse_str(&source).unwrap();
-        let interpreted = molfile::interpret(&document).unwrap();
+        let document = molfile::parse_str(&source, Default::default()).unwrap();
+        let interpreted = document.interpret(Default::default()).unwrap();
         let point = interpreted
             .model()
             .positions()
@@ -32,7 +32,8 @@ fn v2000_touching_coordinates_preserve_precision_and_atom_fields() {
 #[test]
 fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
     let molfile_text = "Header title\nprogram line\ncomment line\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nX  UNSUPPORTED\nM  END\n";
-    let document = molfile::parse_str(molfile_text).expect("Molfile document parses");
+    let document =
+        molfile::parse_str(molfile_text, Default::default()).expect("Molfile document parses");
     assert_eq!(document.header().title(), "Header title");
     let unsupported = [molfile::MolfileUnsupported::new(
         molfile::MolfileUnsupportedContent::Record("X".to_owned()),
@@ -42,8 +43,7 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
     let report = molfile::MolfileInterpretOptions {
         unsupported: UnsupportedContent::Report,
     };
-    let interpretation =
-        molfile::interpret_with_options(&document, report).expect("Molfile interprets");
+    let interpretation = document.interpret(report).expect("Molfile interprets");
     let molecule = interpretation.molecule();
     assert!(molecule
         .properties()
@@ -54,12 +54,12 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
     assert_eq!(interpretation.omitted(), unsupported);
 
     let sdf_text = format!("{molfile_text}>  <FIELD>\nvalue\n\n$$$$\n");
-    let document = sdf::parse_str(&sdf_text).expect("SDF parses");
+    let document = sdf::parse_str(&sdf_text, Default::default()).expect("SDF parses");
     let field = &document.records()[0].data_fields()[0];
     assert_eq!(field.value(), "value");
     assert_eq!(field.location(), Some(SourceLocation::at_line(8)));
     let record = document.records()[0]
-        .interpret_with_options(report)
+        .interpret(report)
         .expect("SDF interprets");
     assert_eq!(record.title(), "Header title");
     assert_eq!(record.data_fields()[0].name(), "FIELD");
@@ -75,7 +75,7 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
 #[test]
 fn molfile_document_reports_nonempty_content_after_m_end_as_unsupported() {
     let input = "Header title\nprogram line\ncomment line\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\ntrailing content\n";
-    let document = molfile::parse_str(input).expect("Molfile document parses");
+    let document = molfile::parse_str(input, Default::default()).expect("Molfile document parses");
     assert_eq!(
         document.unsupported(),
         [molfile::MolfileUnsupported::new(
@@ -83,7 +83,9 @@ fn molfile_document_reports_nonempty_content_after_m_end_as_unsupported() {
             SourceLocation::at_line(7),
         )]
     );
-    let error = molfile::interpret(&document).expect_err("trailing content is not discarded");
+    let error = document
+        .interpret(Default::default())
+        .expect_err("trailing content is not discarded");
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert_eq!(error.location(), Some(SourceLocation::at_line(7)));
     assert_eq!(error.message(), "unsupported content after `M  END`");
@@ -102,13 +104,14 @@ fn molfile_and_sdf_documents_parse_adjacent_three_digit_counts() {
     molfile_text.push_str("999  1  1  0  0  0  0\n");
     molfile_text.push_str("M  END\n");
 
-    let document = molfile::parse_str(&molfile_text).expect("fixed-width counts parse");
+    let document =
+        molfile::parse_str(&molfile_text, Default::default()).expect("fixed-width counts parse");
     assert_eq!(document.atoms().len(), 999);
     assert_eq!(document.bonds().len(), 999);
 
     let sdf_text = format!("{molfile_text}$$$$\n");
-    let document =
-        sdf::parse_str(&sdf_text).expect("SDF delegates to fixed-width Molfile counts parsing");
+    let document = sdf::parse_str(&sdf_text, Default::default())
+        .expect("SDF delegates to fixed-width Molfile counts parsing");
     assert_eq!(document.records()[0].molfile().atoms().len(), 999);
     assert_eq!(document.records()[0].molfile().bonds().len(), 999);
 }
@@ -117,15 +120,15 @@ fn molfile_and_sdf_documents_parse_adjacent_three_digit_counts() {
 fn molfile_document_parser_validates_declared_atom_and_bond_records() {
     let invalid_atom =
         "Bad\nprogram\ncomment\n  1  0  0  0  0  0            999 V2000\natom record\nM  END\n";
-    let error =
-        molfile::parse_str(invalid_atom).expect_err("invalid atom syntax must fail parsing");
+    let error = molfile::parse_str(invalid_atom, Default::default())
+        .expect_err("invalid atom syntax must fail parsing");
     assert_eq!(error.kind(), DiagnosticKind::Syntax);
     assert_eq!(error.location(), SourceLocation::at_line(5));
     assert_eq!(error.message(), "invalid V2000 atom line");
 
     let invalid_bond = "Bad\nprogram\ncomment\n  2  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.0000    0.0000    0.0000 C   0  0  0  0  0  0\nbond record\nM  END\n";
-    let error =
-        molfile::parse_str(invalid_bond).expect_err("invalid bond syntax must fail parsing");
+    let error = molfile::parse_str(invalid_bond, Default::default())
+        .expect_err("invalid bond syntax must fail parsing");
     assert_eq!(error.kind(), DiagnosticKind::Syntax);
     assert_eq!(error.location(), SourceLocation::at_line(7));
     assert_eq!(error.message(), "invalid V2000 bond line");
@@ -248,12 +251,12 @@ M  END
 ";
     let input = format!("{complete}{unterminated}");
 
-    let error = sdf::parse_str(&input)
+    let error = sdf::parse_str(&input, Default::default())
         .expect_err("a previous delimiter must not waive the final delimiter");
     assert_eq!(error.record(), 2);
     assert!(error.message().contains("missing final"));
 
-    let document = sdf::parse_str_with_options(
+    let document = sdf::parse_str(
         &input,
         SdfParseOptions {
             allow_missing_final_delimiter: true,
@@ -275,17 +278,17 @@ One
 M  END
 ";
     let stray = format!("{molfile}orphan text\n$$$$\n");
-    let error =
-        sdf::parse_str(&stray).expect_err("unstructured post-CTAB content must not be discarded");
+    let error = sdf::parse_str(&stray, Default::default())
+        .expect_err("unstructured post-CTAB content must not be discarded");
     assert!(error.message().contains("unexpected content"));
 
     let delimited_field = format!("{molfile}>  <FIELD>\nvalue\n$$$$\n");
-    let document = sdf::parse_str(&delimited_field)
+    let document = sdf::parse_str(&delimited_field, Default::default())
         .expect("the record delimiter unambiguously terminates the final field");
     assert_eq!(document.records()[0].data_fields()[0].value(), "value");
 
     let unterminated_field = format!("{molfile}>  <FIELD>\nvalue\n");
-    let error = sdf::parse_str_with_options(
+    let error = sdf::parse_str(
         &unterminated_field,
         SdfParseOptions {
             allow_missing_final_delimiter: true,
@@ -309,7 +312,7 @@ $$$$
 ";
     let two_records = format!("{record}{record}");
 
-    let input_error = sdf::parse_str_with_options(
+    let input_error = sdf::parse_str(
         record,
         SdfParseOptions {
             max_input_bytes: record.len() - 1,
@@ -319,7 +322,7 @@ $$$$
     .expect_err("input byte limit should apply before parsing");
     assert!(input_error.message().contains("input"));
 
-    let record_count_error = sdf::parse_str_with_options(
+    let record_count_error = sdf::parse_str(
         &two_records,
         SdfParseOptions {
             max_records: 1,
@@ -330,7 +333,7 @@ $$$$
     assert_eq!(record_count_error.record(), 2);
     assert!(record_count_error.message().contains("record count"));
 
-    let record_size_error = sdf::parse_str_with_options(
+    let record_size_error = sdf::parse_str(
         record,
         SdfParseOptions {
             max_record_bytes: 1,
@@ -632,8 +635,10 @@ fn v2000_bond_stereo_requires_enough_source_context_to_canonicalize() {
         let input = format!(
                 "stereo\nkekule\n\n  2  1  0  0  0  0            999 V2000\n   -1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n    1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n  1  2  {order_code}  {stereo_code}  0  0  0\nM  END\n"
             );
-        let document = molfile::parse_str(&input).expect("bond stereo syntax should parse");
-        let error = molfile::interpret(&document)
+        let document = molfile::parse_str(&input, Default::default())
+            .expect("bond stereo syntax should parse");
+        let error = document
+            .interpret(Default::default())
             .expect_err("under-specified stereo must not publish a molecule");
         assert_eq!(error.kind(), DiagnosticKind::Chemistry);
         assert_eq!(error.location(), Some(SourceLocation::at_line(7)));
@@ -686,8 +691,11 @@ fn v2000_declared_valence_defines_stereo_hydrogen_carriers() {
                 "declared stereo hydrogen\nkekule\n\n  4  3  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   {declaration_fields}\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0\n  1  2  1  {stereo_code}  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
             );
 
-            let document = molfile::parse_str(&input).expect("source syntax parses");
-            let interpreted = molfile::interpret(&document).expect("source declaration interprets");
+            let document =
+                molfile::parse_str(&input, Default::default()).expect("source syntax parses");
+            let interpreted = document
+                .interpret(Default::default())
+                .expect("source declaration interprets");
             assert_eq!(interpreted.report().created_stereo_elements().len(), 1);
             let written = molfile::write(
                 interpreted.model(),
@@ -749,18 +757,19 @@ fn v2000_declared_valence_defines_stereo_hydrogen_carriers() {
 #[test]
 fn molfile_and_sdf_parse_supported_syntax_before_chemistry_interpretation() {
     let molfile_source = "unknown element\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 Xx  0  0  0  0  0  0\nM  END\n";
-    let document = molfile::parse_str(molfile_source)
+    let document = molfile::parse_str(molfile_source, Default::default())
         .expect("a syntactically valid atom record should parse independently");
-    assert!(molfile::interpret(&document)
+    assert!(document
+        .interpret(Default::default())
         .expect_err("unsupported core elements belong to interpretation")
         .message()
         .contains("unsupported element"));
 
     let sdf_source = format!("{molfile_source}$$$$\n");
-    let document =
-        sdf::parse_str(&sdf_source).expect("SDF record structure should parse independently");
+    let document = sdf::parse_str(&sdf_source, Default::default())
+        .expect("SDF record structure should parse independently");
     let error = document.records()[0]
-        .interpret()
+        .interpret(Default::default())
         .expect_err("SDF delegates chemistry interpretation to Molfile");
     assert_eq!(error.record(), 1);
     assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
@@ -1047,9 +1056,9 @@ fn v2000_atom_fields_are_read_from_their_ctfile_columns() {
             },
         )
         .unwrap();
-        let document = molfile::parse_str(&written).unwrap();
+        let document = molfile::parse_str(&written, Default::default()).unwrap();
         assert_eq!(document.atoms()[0].atom_map(), Some(atom_map), "{written}");
-        let reread = molfile::interpret(&document).unwrap();
+        let reread = document.interpret(Default::default()).unwrap();
         let (_, atom) = reread.molecules().next().unwrap().atoms().next().unwrap();
         assert_eq!(atom.atom_map, Some(atom_map));
     }
@@ -1089,7 +1098,8 @@ fn v2000_present_numeric_fields_must_be_numbers() {
             "invalid V2000 bond stereo field",
         ),
     ] {
-        let error = molfile::parse_str(&v2000_ctab(atoms, bonds, &[])).unwrap_err();
+        let error =
+            molfile::parse_str(&v2000_ctab(atoms, bonds, &[]), Default::default()).unwrap_err();
         assert_eq!(
             (error.kind(), error.location(), error.message()),
             (
@@ -1197,20 +1207,21 @@ fn v2000_query_and_reaction_fields_are_unsupported_content() {
             ),
         ),
     ] {
-        let document = molfile::parse_str(&v2000_ctab(atoms, bonds, &[])).unwrap();
+        let document =
+            molfile::parse_str(&v2000_ctab(atoms, bonds, &[]), Default::default()).unwrap();
         let unsupported = [molfile::MolfileUnsupported::new(
             expected.0,
             SourceLocation::at_line(expected.1),
         )];
         assert_eq!(document.unsupported(), unsupported);
         assert_eq!(
-            molfile::interpret(&document).unwrap_err().kind(),
+            document.interpret(Default::default()).unwrap_err().kind(),
             DiagnosticKind::Unsupported
         );
         let report = molfile::MolfileInterpretOptions {
             unsupported: UnsupportedContent::Report,
         };
-        let interpretation = molfile::interpret_with_options(&document, report).unwrap();
+        let interpretation = document.interpret(report).unwrap();
         assert_eq!(interpretation.omitted(), unsupported);
         let molecule = interpretation.molecules().next().unwrap();
         assert_eq!(
@@ -1256,8 +1267,8 @@ fn v2000_mass_difference_sets_the_isotope_unless_m_iso_replaces_it() {
         ),
     ] {
         let source = v2000_ctab(atoms, &[], properties);
-        let document = molfile::parse_str(&source).unwrap();
-        let result = molfile::interpret(&document)
+        let document = molfile::parse_str(&source, Default::default()).unwrap();
+        let result = document.interpret(Default::default())
             .map(|interpretation| {
                 interpretation
                     .molecules()
@@ -1271,7 +1282,11 @@ fn v2000_mass_difference_sets_the_isotope_unless_m_iso_replaces_it() {
             "{source}"
         );
     }
-    let error = molfile::parse_str(&v2000_ctab(&["C   5  0  0  0  0  0"], &[], &[])).unwrap_err();
+    let error = molfile::parse_str(
+        &v2000_ctab(&["C   5  0  0  0  0  0"], &[], &[]),
+        Default::default(),
+    )
+    .unwrap_err();
     assert_eq!(
         (error.kind(), error.message()),
         (

@@ -1,16 +1,14 @@
 //! Streaming superposition and trajectory reductions.
 //!
 //! In-memory superposition and RMSD are trajectory and ensemble methods in
-//! [`kekule::alignment`] (`trajectory.superpose(0, &selection)`,
-//! `trajectory.rmsd(&reference, &correspondence)`, ...). This module adds the
-//! streaming counterpart, [`FrameSuperposer`], and per-atom trajectory
+//! [`kekule::alignment`] (`trajectory.superpose(0, &selection, options)`,
+//! `trajectory.rmsd(&reference, &correspondence, options)`, ...). This module
+//! adds the streaming counterpart, [`FrameSuperposer`], and per-atom trajectory
 //! reductions, in which every frame counts once, that run either over a loaded
 //! trajectory ([`rmsf`], [`contact_occupancy`]) or frame by frame through
 //! accumulators.
 
-use kekule::alignment::{
-    kabsch_with_options, AlignmentError, AlignmentOptions, FitAtoms, RigidAlignment,
-};
+use kekule::alignment::{self, AlignmentError, AlignmentOptions, FitAtoms, RigidAlignment};
 use kekule::structure::{AsModelView, ModelView};
 
 use crate::FrameBuffer;
@@ -92,7 +90,7 @@ impl<'a> FrameSuperposer<'a> {
     }
 
     fn fit(&self, buffer: &mut FrameBuffer) -> Result<RigidAlignment, AlignmentError> {
-        let alignment = kabsch_with_options(
+        let alignment = alignment::fit(
             buffer.as_model_view(),
             self.reference,
             self.atoms,

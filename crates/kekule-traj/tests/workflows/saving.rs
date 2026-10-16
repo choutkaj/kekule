@@ -495,7 +495,7 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     let mut expected = loaded;
     periodic::make_molecules_whole(&mut expected).unwrap();
     periodic::unwrap(&mut expected).unwrap();
-    expected.superpose(0, &atoms).unwrap();
+    expected.superpose(0, &atoms, Default::default()).unwrap();
     let loaded_output = directory.file("loaded.trr");
     write_trajectory_with_options(&loaded_output, &expected, options.clone()).unwrap();
 

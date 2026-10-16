@@ -21,7 +21,9 @@ fn ring_set_reports_symmetric_cycles_for_fused_rings() {
     mol.add_bond(b, AtomId::new(3), BondOrder::Single)
         .expect("bond");
 
-    let ring_set = rings_api::perceive_ring_set(&mut mol).expect("ring perception should succeed");
+    let ring_options = RingPerceptionOptions::for_molecule(&mol);
+    rings_api::perceive_rings(&mut mol, ring_options).expect("ring perception should succeed");
+    let ring_set = mol.ring_set().expect("rings installed").clone();
 
     assert_eq!(ring_set.len(), 3);
     assert!(ring_set.rings().iter().all(|ring| ring.atoms.len() >= 4));
@@ -43,8 +45,14 @@ fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
         previous = atom;
     }
 
-    let ring_set = rings_api::perceive_ring_set(molecule.working_mut())
+    let ring_options = RingPerceptionOptions::for_molecule(molecule.working());
+    rings_api::perceive_rings(molecule.working_mut(), ring_options)
         .expect("long chain should perceive rings");
+    let ring_set = molecule
+        .working()
+        .ring_set()
+        .expect("rings installed")
+        .clone();
     assert!(ring_set.is_empty());
 
     let written = smiles_api::write(
@@ -100,7 +108,7 @@ fn ring_input_and_work_limits_return_actionable_errors() {
             &["C", "C", "C"],
             &[BondOrder::Single, BondOrder::Single, BondOrder::Single],
         );
-        let error = rings_api::perceive_ring_set_with_options(&mut molecule, options)
+        let error = rings_api::perceive_rings(&mut molecule, options)
             .expect_err("configured ring resource limit should fail");
         assert_eq!(
             error,
@@ -129,7 +137,7 @@ fn symmetric_cage_returns_named_candidate_limit_error() {
                 .expect("cage bond should be valid");
         }
     }
-    let error = rings_api::perceive_ring_set_with_options(
+    let error = rings_api::perceive_rings(
         mol.working_mut(),
         RingPerceptionOptions {
             max_candidates: 2,
@@ -168,14 +176,18 @@ fn theta_graph_with_acyclic_tail_is_deterministic() {
     mol.add_bond(tail_a, tail_b, BondOrder::Single)
         .expect("tail bond");
 
-    let first =
-        rings_api::perceive_ring_set(mol.working_mut()).expect("theta graph should perceive rings");
+    let ring_options = RingPerceptionOptions::for_molecule(mol.working());
+    rings_api::perceive_rings(mol.working_mut(), ring_options)
+        .expect("theta graph should perceive rings");
+    let first = mol.working().ring_set().expect("rings installed").clone();
     let first_rings = first.rings().to_vec();
     assert_eq!(first.len(), 3);
     assert!(first.rings().iter().all(|ring| ring.atoms.len() == 4));
 
-    let second =
-        rings_api::perceive_ring_set(mol.working_mut()).expect("repeat should perceive rings");
+    let ring_options = RingPerceptionOptions::for_molecule(mol.working());
+    rings_api::perceive_rings(mol.working_mut(), ring_options)
+        .expect("repeat should perceive rings");
+    let second = mol.working().ring_set().expect("rings installed").clone();
     assert_eq!(second.rings(), first_rings);
 }
 
@@ -202,8 +214,10 @@ fn decorated_theta_graph_does_not_overenumerate_equal_path_cycles() {
             .expect("decorated theta edge");
     }
 
-    let ring_set = rings_api::perceive_ring_set(mol.working_mut())
+    let ring_options = RingPerceptionOptions::for_molecule(mol.working());
+    rings_api::perceive_rings(mol.working_mut(), ring_options)
         .expect("decorated theta graph should perceive rings");
+    let ring_set = mol.working().ring_set().expect("rings installed").clone();
     let mut atom_sets = ring_set
         .rings()
         .iter()
@@ -231,7 +245,7 @@ fn cycle_size_limit_returns_structured_error() {
         &["C", "C", "C", "C", "C", "C", "C", "C", "C", "C"],
         &[BondOrder::Single; 10],
     );
-    let error = rings_api::perceive_ring_set_with_options(
+    let error = rings_api::perceive_rings(
         &mut mol,
         RingPerceptionOptions {
             max_cycle_size: 5,
@@ -270,7 +284,7 @@ fn focused_ring_resource_errors_are_transactional() {
         max_path_expansions: 0,
         ..RingPerceptionOptions::default()
     };
-    let error = rings_api::perceive_ring_set_with_options(molecule.working_mut(), ring_options)
+    let error = rings_api::perceive_rings(molecule.working_mut(), ring_options)
         .expect_err("ring limit should fail focused perception");
     assert!(matches!(error, RingPerceptionError::ResourceLimit { .. }));
     assert_eq!(molecule, original);
@@ -279,12 +293,15 @@ fn focused_ring_resource_errors_are_transactional() {
     aromatic
         .canonicalize_fixture()
         .expect("benzene should normalize");
-    let error = aromaticity_api::perceive_aromaticity_with_ring_options(
+    let error = aromaticity_api::perceive_aromaticity(
         &mut aromatic,
         AromaticityModel::RdkitLike,
-        RingPerceptionOptions {
-            max_atoms: 0,
-            ..RingPerceptionOptions::default()
+        AromaticityOptions {
+            ring_options: RingPerceptionOptions {
+                max_atoms: 0,
+                ..RingPerceptionOptions::default()
+            },
+            ..AromaticityOptions::default()
         },
     )
     .expect_err("aromaticity should propagate ring limit");
@@ -294,17 +311,21 @@ fn focused_ring_resource_errors_are_transactional() {
 #[test]
 fn standalone_aromaticity_reuses_an_installed_ring_set() {
     let mut molecule = read_smiles("C1=CC=CC=C1").expect("benzene should parse");
-    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
+    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
         .expect("valence perception");
-    let installed =
-        rings_api::perceive_ring_set(&mut molecule).expect("ring perception should succeed");
+    let ring_options = RingPerceptionOptions::for_molecule(&molecule);
+    rings_api::perceive_rings(&mut molecule, ring_options).expect("ring perception should succeed");
+    let installed = molecule.ring_set().expect("rings installed").clone();
 
-    aromaticity_api::perceive_aromaticity_with_ring_options(
+    aromaticity_api::perceive_aromaticity(
         &mut molecule,
         AromaticityModel::RdkitLike,
-        RingPerceptionOptions {
-            max_atoms: 0,
-            ..RingPerceptionOptions::default()
+        AromaticityOptions {
+            ring_options: RingPerceptionOptions {
+                max_atoms: 0,
+                ..RingPerceptionOptions::default()
+            },
+            ..AromaticityOptions::default()
         },
     )
     .expect("installed rings should bypass the impossible ring limit");
@@ -316,19 +337,24 @@ fn standalone_aromaticity_reuses_an_installed_ring_set() {
 #[test]
 fn standalone_aromaticity_computes_a_missing_ring_set() {
     let mut baseline = read_smiles("C1=CC=CC=C1").expect("benzene should parse");
-    valence_api::perceive_valence(&mut baseline, ValenceModel::RdkitLike)
+    valence_api::perceive_valence(&mut baseline, ValenceModel::RdkitLike, Default::default())
         .expect("valence perception");
 
     for membership_only in [false, true] {
         let mut molecule = baseline.clone();
         if membership_only {
-            rings_api::perceive_ring_membership(&mut molecule);
+            rings_api::perceive_rings(&mut molecule, RingPerceptionOptions::membership_only())
+                .expect("membership perception cannot fail");
             assert!(molecule.ring_membership().is_some());
             assert!(molecule.ring_set().is_none());
         }
 
-        aromaticity_api::perceive_aromaticity(&mut molecule, AromaticityModel::RdkitLike)
-            .expect("aromaticity should compute a missing ring basis");
+        aromaticity_api::perceive_aromaticity(
+            &mut molecule,
+            AromaticityModel::RdkitLike,
+            Default::default(),
+        )
+        .expect("aromaticity should compute a missing ring basis");
 
         assert_eq!(molecule.ring_set().expect("computed ring basis").len(), 1);
         assert!(molecule.perception().has_aromaticity());

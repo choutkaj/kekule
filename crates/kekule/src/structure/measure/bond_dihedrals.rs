@@ -5,7 +5,7 @@ use crate::structure::ModelView;
 use crate::topology::{InstanceAtomId, InstanceBondId, Topology};
 use crate::units::Quantity;
 
-use super::{dihedral, MeasurementError};
+use super::{dihedral, ConnectivityCheck, MeasurementError};
 
 /// Failure to prepare or measure a deterministic bond dihedral.
 #[derive(Debug, Clone, PartialEq)]
@@ -135,7 +135,7 @@ impl BondDihedral {
         let Some([a, b, c, d]) = self.atoms else {
             return Ok(None);
         };
-        match dihedral(view, a, b, c, d) {
+        match dihedral(view, a, b, c, d, ConnectivityCheck::Unrestricted) {
             Ok(angle) => Ok(Some(angle)),
             Err(MeasurementError::DegenerateGeometry) => Ok(None),
             Err(error) => Err(BondDihedralError::Measurement(error)),

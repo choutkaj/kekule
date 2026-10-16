@@ -47,7 +47,9 @@ fn selections_buffers_and_accumulators_survive_trajectory_perception() {
 
     // In-memory analysis accepts the selection made before perception.
     let perceived = trajectory.shared_topology();
-    trajectory.superpose(0, &selection).unwrap();
+    trajectory
+        .superpose(0, &selection, Default::default())
+        .unwrap();
     assert!(Arc::ptr_eq(&perceived, &trajectory.shared_topology()));
     for (index, frame) in trajectory.iter().enumerate() {
         rmsf.observe(index, &frame).unwrap();

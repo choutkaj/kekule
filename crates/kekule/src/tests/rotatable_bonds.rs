@@ -89,7 +89,9 @@ fn resonance_restriction_does_not_require_a_neutral_double_bond_partner() {
         for materialize in [false, true] {
             if materialize {
                 molecule.perceive().expect("valid valence");
-                molecule.add_hydrogens().expect("materialize hydrogens");
+                molecule
+                    .add_hydrogens(Default::default())
+                    .expect("materialize hydrogens");
             }
             assert!(
                 descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT)
@@ -223,7 +225,7 @@ fn detection_is_hydrogen_invariant_and_survives_tombstoned_slots() {
 
     molecule.perceive().expect("ether should perceive");
     molecule
-        .add_hydrogens()
+        .add_hydrogens(Default::default())
         .expect("ether hydrogens should materialize");
     assert_eq!(
         descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT)
@@ -254,7 +256,11 @@ fn detection_reuses_or_computes_rings_without_mutating_perception() {
     assert_eq!(molecule.perception(), &before);
     assert!(!molecule.perception().has_rings());
 
-    crate::perception::rings::perceive_ring_membership(&mut molecule);
+    crate::perception::rings::perceive_rings(
+        &mut molecule,
+        RingPerceptionOptions::membership_only(),
+    )
+    .expect("membership perception cannot fail");
     assert!(molecule.perception().has_rings());
     let installed = descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap();
     assert_eq!(installed, detached);
@@ -311,14 +317,19 @@ fn strict_detection_reports_valence_failures_even_with_permissive_cached_state()
         error,
         crate::chemistry::PerceptionError::Valence(_)
     ));
-    crate::algorithms::perceive_valence_with_options(
+    crate::algorithms::perceive_valence(
         &mut molecule,
         ValenceModel::RdkitLike,
         crate::algorithms::ValenceOptions { strict: false },
     )
     .unwrap();
-    crate::algorithms::perceive_ring_set(&mut molecule).unwrap();
-    crate::algorithms::perceive_aromaticity(&mut molecule, AromaticityModel::RdkitLike).unwrap();
+    crate::algorithms::perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
+    crate::algorithms::perceive_aromaticity(
+        &mut molecule,
+        AromaticityModel::RdkitLike,
+        Default::default(),
+    )
+    .unwrap();
     let before = molecule.clone();
     assert_eq!(
         descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap_err(),

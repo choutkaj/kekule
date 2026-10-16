@@ -25,7 +25,7 @@ use assignment::{
     tetrahedral_descriptor_from_ranked, CipElementAssignment,
 };
 
-pub(super) fn assign_cip_descriptors_with_options(
+pub(super) fn assign_cip_descriptors(
     mol: &mut Molecule,
     options: CipAssignmentOptions,
 ) -> std::result::Result<CipAssignmentReport, CipAssignmentError> {

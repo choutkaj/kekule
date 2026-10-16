@@ -1005,7 +1005,11 @@ pub(super) fn molfile_coordinate_tetrahedra(
     }
     let positions = Positions::from_vec(Quantity::new(points, ANGSTROM))
         .map_err(MolfileInterpretError::chemistry)?;
-    let inferred = match crate::algorithms::infer_coordinate_stereo(molecule, &positions) {
+    let inferred = match crate::algorithms::infer_coordinate_stereo(
+        molecule,
+        &positions,
+        Default::default(),
+    ) {
         Ok(inferred) => inferred,
         Err(crate::algorithms::CoordinateStereoError::Perception(
             crate::algorithms::StereoSearchError::Perception(

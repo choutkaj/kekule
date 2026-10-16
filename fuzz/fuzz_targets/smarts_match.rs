@@ -38,9 +38,9 @@ fuzz_target!(|data: &[u8]| {
             uniquify: false,
             ..Default::default()
         };
-        let collected = find_matches_with_options(&target, &query, options);
+        let collected = PreparedTarget::new(&target).all(&query, options);
         let mut streamed = Vec::new();
-        let completion = visit_matches_with_options(&target, &query, options, |m| {
+        let completion = PreparedTarget::new(&target).visit(&query, options, |m| {
             streamed.push(m.clone());
             ControlFlow::Continue(())
         });

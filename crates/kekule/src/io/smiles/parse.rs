@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{BufReader, Read};
 use std::ops::Range;
 
-use crate::diagnostics::{DiagnosticKind, SourceLocation};
+use crate::diagnostics::{read_bounded, DiagnosticKind, SourceLocation};
 
 use super::super::lines::read_line;
 use super::cx::{parse_cx_fields, SmilesCxField};
@@ -94,16 +94,9 @@ impl SmilesDocument {
     /// delegate to the same implementation.
     /// Supports CX radical declarations, tetrahedral enhanced stereo groups,
     /// and the record-level relative configuration flag. Other fields fail
-    /// with [`DiagnosticKind::Unsupported`]; no extension is silently discarded.
+    /// with [`DiagnosticKind::Unsupported`] unless `options` omits and reports
+    /// them; no extension is silently discarded.
     pub fn interpret(
-        &self,
-    ) -> Result<super::interpret::SmilesInterpretation, super::interpret::SmilesInterpretError>
-    {
-        self.interpret_with_options(super::interpret::SmilesInterpretOptions::default())
-    }
-
-    /// Interprets this document with an explicit unsupported-content policy.
-    pub fn interpret_with_options(
         &self,
         options: super::interpret::SmilesInterpretOptions,
     ) -> Result<super::interpret::SmilesInterpretation, super::interpret::SmilesInterpretError>
@@ -121,16 +114,6 @@ impl SmilesDocument {
     ) -> Result<super::interpret::SmilesInterpretation, super::interpret::SmilesInterpretError>
     {
         super::interpret::interpret_base_smiles_document(self)
-    }
-
-    /// Interprets this source document as connected canonical molecules.
-    ///
-    /// Components follow connectivity, including ring bonds across dots. No
-    /// general chemical perception runs implicitly.
-    pub fn to_molecules(
-        &self,
-    ) -> Result<Vec<crate::molecule::Molecule>, super::interpret::SmilesInterpretError> {
-        Ok(self.interpret()?.into_molecules())
     }
 }
 
@@ -298,15 +281,18 @@ impl std::error::Error for SmilesParseError {}
 
 pub(crate) fn parse_smiles_document(
     input: &str,
-) -> std::result::Result<SmilesDocument, SmilesParseError> {
-    parse_smiles_document_with_options(input, SmilesParseOptions::default())
-}
-
-pub(crate) fn parse_smiles_document_with_options(
-    input: &str,
     options: SmilesParseOptions,
 ) -> std::result::Result<SmilesDocument, SmilesParseError> {
     parse_smiles_record(input, 1, options)
+}
+
+pub(crate) fn parse_smiles_reader(
+    reader: impl Read,
+    options: SmilesParseOptions,
+) -> std::result::Result<SmilesDocument, SmilesParseError> {
+    let input = read_bounded(reader, options.max_input_bytes)
+        .map_err(|(kind, message)| SmilesParseError::new(kind, 0, message))?;
+    parse_smiles_document(&input, options)
 }
 
 /// Parses one record located on `line` of its input.

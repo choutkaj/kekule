@@ -14,7 +14,7 @@ use super::{undirected, ClusteringError, EnsemblePartition};
 /// The condensed order lists the pairs `(i, j)` with `i < j` row by row:
 /// `(0, 1), (0, 2), ..., (0, n - 1), (1, 2), ...`, the order SciPy's
 /// `squareform` uses. Build one from fitted RMSDs with
-/// [`Ensemble::pairwise_rmsd`] or from any other distances with
+/// [`Ensemble::pairwise_fitted_rmsd`] or from any other distances with
 /// [`Self::from_condensed`]. It stores `n (n - 1) / 2` values, so memory
 /// grows quadratically with the member count.
 #[derive(Debug, Clone, PartialEq)]
@@ -284,18 +284,9 @@ impl Dendrogram {
 }
 
 impl Ensemble {
-    /// Fitted RMSD between every pair of members.
-    ///
-    /// See [`Self::pairwise_rmsd_with_options`]; fits use uniform weights.
-    pub fn pairwise_rmsd<'a>(
-        &self,
-        atoms: impl Into<FitAtoms<'a>>,
-    ) -> Result<DistanceMatrix, ClusteringError> {
-        self.pairwise_rmsd_with_options(atoms, AlignmentOptions::default())
-    }
-
     /// Fitted RMSD between every pair of members, after a
-    /// [`kabsch`](crate::alignment::kabsch) fit over `atoms`.
+    /// [`fit`](crate::alignment::fit) over `atoms` with the weights and
+    /// periodic policy of `options`.
     ///
     /// `atoms` is a selection or a
     /// [`SymmetricSelection`](crate::alignment::SymmetricSelection) of this
@@ -304,7 +295,7 @@ impl Ensemble {
     /// is rejected. Each unordered pair is fitted once, lower member moving,
     /// so the cost is `n (n - 1) / 2` fits (times symmetry permutations). A
     /// failed fit names both members.
-    pub fn pairwise_rmsd_with_options<'a>(
+    pub fn pairwise_fitted_rmsd<'a>(
         &self,
         atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'_>,

@@ -23,7 +23,7 @@ view. Ordinary getters and operations use semantic names. Copyable views may tak
 Ownership does not imply cost: opening an indexed reader scans input, and extracting
 molecules from shared topology may clone definitions. Likewise,
 `document.to_model()` retains the document, while
-`document.interpret()?.into_model()` consumes the temporary interpretation.
+`document.interpret(Default::default())?.into_model()` consumes the temporary interpretation.
 `model.to_editor()` creates a detached draft; `model.into_editor()` moves the model
 into its draft.
 

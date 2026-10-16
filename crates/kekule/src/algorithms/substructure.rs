@@ -3,11 +3,8 @@ mod engine;
 mod prepared;
 mod stereo;
 mod topology;
-pub use prepared::{PreparedTarget, TaggedMatchError, TaggedQuery};
-pub use topology::{
-    find_topology_matches, find_topology_matches_with_options, PreparedTopologyTarget,
-    TopologyQueryMatch,
-};
+pub use prepared::{PreparedTarget, TaggedMatchError, TaggedQuery, TupleMode};
+pub use topology::{PreparedTopologyTarget, TopologyQueryMatch};
 
 use crate::molecule::{AtomId, Molecule};
 use crate::query::{QueryAtomId, QueryGraph};
@@ -17,7 +14,7 @@ pub const MAX_SUBSTRUCTURE_QUERY_ATOMS: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubstructureMatchOptions {
-    /// Maximum matches. Complete enumeration (`find_matches`) reports
+    /// Maximum matches. Complete enumeration (`all`) reports
     /// exceeding it as [`SubstructureMatchError::ResourceLimit`]; a visitor
     /// stops successfully once it is reached.
     pub max_matches: usize,
@@ -148,57 +145,6 @@ impl std::error::Error for SubstructureMatchError {}
 pub enum MatchCompletion {
     Complete,
     Stopped,
-}
-
-/// The first match in search order, if any.
-///
-/// Stops at the first embedding, so the match cap never applies.
-pub fn find_match(
-    target: &Molecule,
-    query: &QueryGraph,
-) -> Result<Option<QueryMatch>, SubstructureMatchError> {
-    PreparedTarget::new(target).find_match(query)
-}
-
-/// Every match with default options. See [`find_matches_with_options`].
-pub fn find_matches(
-    target: &Molecule,
-    query: &QueryGraph,
-) -> Result<Vec<QueryMatch>, SubstructureMatchError> {
-    find_matches_with_options(target, query, SubstructureMatchOptions::default())
-}
-
-/// Every match, retaining every embedding unless `uniquify` is requested.
-///
-/// The match cap is a resource bound: exceeding it returns an error, never a
-/// partial list. To stop early, use [`visit_matches`].
-pub fn find_matches_with_options(
-    target: &Molecule,
-    query: &QueryGraph,
-    options: SubstructureMatchOptions,
-) -> Result<Vec<QueryMatch>, SubstructureMatchError> {
-    PreparedTarget::new(target).find_matches_with_options(query, options)
-}
-
-/// Streams matches with default options. See [`visit_matches_with_options`].
-pub fn visit_matches(
-    target: &Molecule,
-    query: &QueryGraph,
-    visitor: impl FnMut(&QueryMatch) -> std::ops::ControlFlow<()>,
-) -> Result<MatchCompletion, SubstructureMatchError> {
-    visit_matches_with_options(target, query, SubstructureMatchOptions::default(), visitor)
-}
-
-/// Streams matches until the visitor breaks. Delivered matches remain
-/// provisional until `Complete` is returned; a resource error may follow
-/// earlier callbacks.
-pub fn visit_matches_with_options(
-    target: &Molecule,
-    query: &QueryGraph,
-    options: SubstructureMatchOptions,
-    visitor: impl FnMut(&QueryMatch) -> std::ops::ControlFlow<()>,
-) -> Result<MatchCompletion, SubstructureMatchError> {
-    PreparedTarget::new(target).visit_matches_with_options(query, options, visitor)
 }
 
 fn validate_options(options: SubstructureMatchOptions) -> Result<(), SubstructureMatchError> {

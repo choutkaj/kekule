@@ -191,7 +191,8 @@ fn stereo_candidates_use_normalized_and_perceived_hydrogen_state_without_cip_ass
     perceive(&mut molecule).expect("molecule should perceive");
 
     stereo_api::validate_stereo(&molecule).expect("stored stereo should be valid");
-    let candidates = stereo_api::cleanup::detect_stereo_candidates(&molecule).unwrap();
+    let candidates =
+        stereo_api::cleanup::detect_stereo_candidates(&molecule, Default::default()).unwrap();
 
     assert!(candidates.iter().any(|candidate| matches!(
         candidate,
@@ -219,7 +220,7 @@ fn stereo_candidates_exclude_repeated_hydrogen_ligands_but_preserve_isotopes() {
         let mut molecule = read_smiles(input).unwrap();
         perceive(&mut molecule).unwrap();
         assert_eq!(
-            stereo_api::cleanup::detect_stereo_candidates(&molecule)
+            stereo_api::cleanup::detect_stereo_candidates(&molecule, Default::default())
                 .unwrap()
                 .len(),
             expected,
@@ -244,7 +245,8 @@ fn stereo_candidates_include_pyramidal_pnictogens_and_tetracoordinate_multiple_b
     ] {
         let mut molecule = read_smiles(input).unwrap();
         perceive(&mut molecule).unwrap();
-        let candidates = stereo_api::cleanup::detect_stereo_candidates(&molecule).unwrap();
+        let candidates =
+            stereo_api::cleanup::detect_stereo_candidates(&molecule, Default::default()).unwrap();
         let carriers = candidates.iter().find_map(|candidate| match candidate {
             StereoCandidate::Tetrahedral { center, carriers } if *center == AtomId::new(0) => {
                 Some(carriers)
@@ -288,17 +290,17 @@ fn terminal_ligand_equivalence_is_hydrogen_representation_invariant() {
         perceive(&mut molecule).unwrap();
         let before = molecule.clone();
         assert_eq!(
-            stereo_api::cleanup::detect_stereo_candidates(&molecule)
+            stereo_api::cleanup::detect_stereo_candidates(&molecule, Default::default())
                 .unwrap()
                 .len(),
             expected,
             "{input}"
         );
         assert_eq!(molecule, before, "candidate detection must be read-only");
-        molecule.add_hydrogens().unwrap();
+        molecule.add_hydrogens(Default::default()).unwrap();
         perceive(&mut molecule).unwrap();
         assert_eq!(
-            stereo_api::cleanup::detect_stereo_candidates(&molecule)
+            stereo_api::cleanup::detect_stereo_candidates(&molecule, Default::default())
                 .unwrap()
                 .len(),
             expected,
@@ -318,7 +320,7 @@ fn ring_double_bond_eligibility_depends_on_size_not_carbon_endpoints() {
     ] {
         let mut molecule = read_smiles(input).unwrap();
         perceive(&mut molecule).unwrap();
-        let doubles = stereo_api::cleanup::detect_stereo_candidates(&molecule)
+        let doubles = stereo_api::cleanup::detect_stereo_candidates(&molecule, Default::default())
             .unwrap()
             .into_iter()
             .filter(|candidate| matches!(candidate, StereoCandidate::DoubleBond { .. }))
@@ -337,7 +339,7 @@ fn ring_double_bond_eligibility_depends_on_size_not_carbon_endpoints() {
 fn perception_installation_rejects_a_descriptor_for_the_wrong_stereo_geometry() {
     let (axis, positions, _) = coordinate_axis_graph(true);
     let mut editor = axis.into_editor();
-    stereo_api::coordinates::materialize_coordinate_stereo_with_options(
+    stereo_api::coordinates::materialize_coordinate_stereo(
         &mut editor,
         &positions,
         CoordinateStereoOptions {

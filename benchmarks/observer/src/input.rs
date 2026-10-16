@@ -28,12 +28,16 @@ pub(crate) fn read(format: &str, text: &str) -> Result<Vec<Component>, Failure> 
     match format {
         "smiles" => read_smiles(text),
         "mol" => {
-            let document = molfile::parse_str(text).map_err(|e| Failure::new("parse", e))?;
-            let interpretation = document.interpret().map_err(|e| Failure::new("parse", e))?;
+            let document = molfile::parse_str(text, Default::default())
+                .map_err(|e| Failure::new("parse", e))?;
+            let interpretation = document
+                .interpret(Default::default())
+                .map_err(|e| Failure::new("parse", e))?;
             from_model(interpretation.model())
         }
         "sdf" => {
-            let document = sdf::parse_str(text).map_err(|e| Failure::new("parse", e))?;
+            let document =
+                sdf::parse_str(text, Default::default()).map_err(|e| Failure::new("parse", e))?;
             let [record] = document.records() else {
                 return Err(Failure::new(
                     "request",
@@ -43,7 +47,9 @@ pub(crate) fn read(format: &str, text: &str) -> Result<Vec<Component>, Failure> 
                     ),
                 ));
             };
-            let interpretation = record.interpret().map_err(|e| Failure::new("parse", e))?;
+            let interpretation = record
+                .interpret(Default::default())
+                .map_err(|e| Failure::new("parse", e))?;
             from_model(interpretation.model())
         }
         other => Err(Failure::new("request", format!("unknown format {other:?}"))),
@@ -52,8 +58,11 @@ pub(crate) fn read(format: &str, text: &str) -> Result<Vec<Component>, Failure> 
 
 fn read_smiles(text: &str) -> Result<Vec<Component>, Failure> {
     let line = text.lines().next().unwrap_or_default().trim();
-    let document = smiles::parse_str(line).map_err(|e| Failure::new("parse", e))?;
-    let interpretation = document.interpret().map_err(|e| Failure::new("parse", e))?;
+    let document =
+        smiles::parse_str(line, Default::default()).map_err(|e| Failure::new("parse", e))?;
+    let interpretation = document
+        .interpret(Default::default())
+        .map_err(|e| Failure::new("parse", e))?;
     Ok(interpretation
         .components()
         .iter()

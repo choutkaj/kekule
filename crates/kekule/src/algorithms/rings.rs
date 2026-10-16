@@ -47,17 +47,6 @@ pub(crate) fn compute_ring_membership(mol: &Molecule) -> RingMembership {
     membership
 }
 
-/// Installs graph-theoretic cycle membership, excluding zero and dative bonds.
-///
-/// This linear-time traversal is independent of the model's selected rings.
-/// Recomputing membership preserves valence and clears the ring set,
-/// aromaticity, and dependent stereo perception.
-pub fn perceive_ring_membership(mol: &mut Molecule) -> RingMembership {
-    let membership = compute_ring_membership(mol);
-    mol.install_ring_membership(membership.clone());
-    membership
-}
-
 pub(crate) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_size: usize) -> bool {
     let Ok(bond) = mol.bond(bond_id) else {
         return false;
@@ -152,13 +141,34 @@ fn ring_dfs_iterative(
     }
 }
 
+/// The ring state [`perceive_rings`] derives and installs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RingPerceptionScope {
+    /// Graph-theoretic cycle membership only, excluding zero and dative bonds.
+    ///
+    /// This linear-time traversal is independent of the model's selected
+    /// rings, never consults the resource bounds, and cannot fail.
+    Membership,
+    /// Membership and the RDKit-like Figueras ring basis with symmetric
+    /// alternatives. This is the default.
+    #[default]
+    Basis,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Resource bounds for selected-ring perception.
+/// What ring perception installs, and resource bounds for selecting a ring
+/// basis.
 ///
 /// Total work includes search workspace initialization, search visits,
 /// candidate generation, recovery graph and path copies, repeated recovery
 /// bond scans, and ring comparisons during pruning and symmetrization.
+///
+/// [`Default`] gives fixed bounds. The default perception profile, which
+/// [`Molecule::perceive`] installs, uses [`Self::for_molecule`], whose bounds
+/// grow with the molecule.
 pub struct RingPerceptionOptions {
+    /// The ring state to install.
+    pub scope: RingPerceptionScope,
     /// Maximum atom storage slots, including deleted atoms.
     pub max_atoms: usize,
     /// Maximum bond storage slots, including deleted bonds.
@@ -173,6 +183,7 @@ pub struct RingPerceptionOptions {
 impl Default for RingPerceptionOptions {
     fn default() -> Self {
         Self {
+            scope: RingPerceptionScope::Basis,
             max_atoms: 1_000_000,
             max_bonds: 2_000_000,
             max_candidates: 100_000,
@@ -185,6 +196,14 @@ impl Default for RingPerceptionOptions {
 }
 
 impl RingPerceptionOptions {
+    /// Membership-only perception; see [`RingPerceptionScope::Membership`].
+    pub fn membership_only() -> Self {
+        Self {
+            scope: RingPerceptionScope::Membership,
+            ..Self::default()
+        }
+    }
+
     /// The bounds the default perception profile uses for a graph with
     /// `atoms` atom and `bonds` bond storage slots.
     ///
@@ -197,6 +216,7 @@ impl RingPerceptionOptions {
         let size = atoms.saturating_add(bonds);
         let default = Self::default();
         Self {
+            scope: default.scope,
             max_atoms: default.max_atoms.max(atoms),
             max_bonds: default.max_bonds.max(bonds),
             max_candidates: default.max_candidates.max(size.saturating_mul(4)),
@@ -209,7 +229,9 @@ impl RingPerceptionOptions {
         }
     }
 
-    pub(crate) fn for_molecule(molecule: &Molecule) -> Self {
+    /// The bounds the default perception profile uses for `molecule`:
+    /// [`Self::for_graph`] over its atom and bond storage slots.
+    pub fn for_molecule(molecule: &Molecule) -> Self {
         Self::for_graph(
             molecule.graph.atom_slot_count(),
             molecule.graph.bond_slot_count(),
@@ -261,26 +283,31 @@ impl fmt::Display for RingPerceptionError {
 
 impl std::error::Error for RingPerceptionError {}
 
-/// Installs RDKit-like Figueras rings and symmetric alternatives.
+/// Installs ring perception: cycle membership and, unless `options` selects
+/// [`RingPerceptionScope::Membership`], the RDKit-like Figueras rings and
+/// symmetric alternatives. Read the result through
+/// [`Molecule::ring_membership`] and [`Molecule::ring_set`].
 ///
-/// Incomplete candidate searches use deterministic depth-first cycles. This
-/// selected-ring model does not promise a mathematical minimum or full-rank
-/// cycle basis. Zero and dative bonds are excluded throughout.
+/// Cycle membership is a linear-time traversal, independent of the selected
+/// rings. Incomplete candidate searches use deterministic depth-first cycles.
+/// This selected-ring model does not promise a mathematical minimum or
+/// full-rank cycle basis. Zero and dative bonds are excluded throughout.
 ///
-/// Successful perception preserves valence and clears aromaticity and dependent
-/// stereo. Failure preserves the previously installed perception state. Bounds
-/// grow with the molecule; see [`RingPerceptionOptions::for_graph`].
-pub fn perceive_ring_set(mol: &mut Molecule) -> std::result::Result<RingSet, RingPerceptionError> {
-    let options = RingPerceptionOptions::for_molecule(mol);
-    perceive_ring_set_with_options(mol, options)
-}
-
-/// Like [`perceive_ring_set`], with explicit resource bounds for every search
-/// phase and ring comparison. Bound failures never install partial state.
-pub fn perceive_ring_set_with_options(
+/// The bounds in `options` limit every search phase and ring comparison; pass
+/// [`RingPerceptionOptions::for_molecule`] for the default profile's bounds,
+/// which grow with the molecule. Successful perception preserves valence and
+/// clears aromaticity and dependent stereo; membership-only perception also
+/// clears the ring set. Failure preserves the previously installed perception
+/// state, and bound failures never install partial state.
+pub fn perceive_rings(
     mol: &mut Molecule,
     options: RingPerceptionOptions,
-) -> std::result::Result<RingSet, RingPerceptionError> {
+) -> std::result::Result<(), RingPerceptionError> {
+    if options.scope == RingPerceptionScope::Membership {
+        let membership = compute_ring_membership(mol);
+        mol.install_ring_membership(membership);
+        return Ok(());
+    }
     let mut tracker = RingWorkTracker::new(
         options,
         mol.graph.atom_slot_count(),
@@ -301,7 +328,6 @@ pub fn perceive_ring_set_with_options(
         }
     }
     let rings = symmetrize_ring_set(rings, extras, mol.graph.bond_slot_count(), &mut tracker)?;
-    let ring_set = RingSet::from_rings(rings);
     mol.install_ring_basis(
         membership,
         if tracker.used_fallback {
@@ -309,9 +335,9 @@ pub fn perceive_ring_set_with_options(
         } else {
             RingBasisModel::FiguerasSssrLike
         },
-        ring_set.clone(),
+        RingSet::from_rings(rings),
     );
-    Ok(ring_set)
+    Ok(())
 }
 
 #[derive(Clone)]

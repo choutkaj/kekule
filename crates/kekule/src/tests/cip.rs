@@ -1,12 +1,14 @@
 use super::*;
 
 fn assign_cip(mol: &mut Molecule) -> CipAssignmentReport {
-    stereo_api::cip::assign_cip_descriptors(mol).expect("CIP assignment should succeed")
+    stereo_api::cip::assign_cip_descriptors(mol, Default::default())
+        .expect("CIP assignment should succeed")
 }
 
 /// Installs inferred hydrogen counts, which CIP ranking requires to be known.
 fn perceive_hydrogens(mol: &mut Molecule) {
-    valence_api::perceive_valence(mol, ValenceModel::RdkitLike).expect("valence perceives");
+    valence_api::perceive_valence(mol, ValenceModel::RdkitLike, Default::default())
+        .expect("valence perceives");
 }
 
 fn installed_cip_descriptors(mol: &Molecule) -> Vec<(StereoElementId, StereoDescriptor)> {
@@ -212,16 +214,15 @@ fn cip_skips_axis_with_equivalent_endpoint_ligands_as_nonstereogenic() {
 fn cip_assigns_axis_descriptor_after_coordinate_stereo_materialization() {
     let (molecule, positions, _axis) = coordinate_axis_graph(true);
     let mut mol = molecule.to_editor();
-    let materialization_report =
-        stereo_api::coordinates::materialize_coordinate_stereo_with_options(
-            &mut mol,
-            &positions,
-            CoordinateStereoOptions {
-                infer_axes: true,
-                ..Default::default()
-            },
-        )
-        .expect("coordinate axis materialization");
+    let materialization_report = stereo_api::coordinates::materialize_coordinate_stereo(
+        &mut mol,
+        &positions,
+        CoordinateStereoOptions {
+            infer_axes: true,
+            ..Default::default()
+        },
+    )
+    .expect("coordinate axis materialization");
     assert_eq!(materialization_report.created_elements.len(), 1);
 
     let mut mol = mol.finish().expect("materialized molecule publishes");
@@ -297,7 +298,7 @@ fn cip_default_depth_resolves_a_remote_constitutional_difference() {
     let mut molecule = read_smiles(&smiles).expect("long acyclic ligands");
     perceive(&mut molecule).expect("perceive");
     let previous = molecule.perception().clone();
-    let error = stereo_api::cip::assign_cip_descriptors_with_options(
+    let error = stereo_api::cip::assign_cip_descriptors(
         &mut molecule,
         CipAssignmentOptions {
             max_depth: 32,
@@ -331,7 +332,7 @@ fn cip_stops_at_the_first_distinguishing_shell_within_the_node_budget() {
         perceive(&mut molecule).expect("perceive");
         let expected = assign_cip(&mut molecule);
         assert_eq!(expected.assigned.len(), 1);
-        let actual = stereo_api::cip::assign_cip_descriptors_with_options(
+        let actual = stereo_api::cip::assign_cip_descriptors(
             &mut molecule,
             CipAssignmentOptions {
                 max_depth: 32,
@@ -341,7 +342,7 @@ fn cip_stops_at_the_first_distinguishing_shell_within_the_node_budget() {
         .expect("ten ligand nodes suffice to reach the distinguishing oxygen");
         assert_eq!(actual, expected);
         let previous = molecule.perception().clone();
-        let error = stereo_api::cip::assign_cip_descriptors_with_options(
+        let error = stereo_api::cip::assign_cip_descriptors(
             &mut molecule,
             CipAssignmentOptions {
                 max_depth: 32,
@@ -367,7 +368,7 @@ fn cip_depth_limit_cannot_promote_isotope_rule_or_claim_nonstereogenicity() {
         perceive(&mut molecule).expect("perceive");
         assign_cip(&mut molecule);
         let previous = molecule.perception().clone();
-        let error = stereo_api::cip::assign_cip_descriptors_with_options(
+        let error = stereo_api::cip::assign_cip_descriptors(
             &mut molecule,
             CipAssignmentOptions {
                 max_depth: 0,
@@ -1841,7 +1842,7 @@ fn cip_requires_known_implicit_hydrogen_counts() {
         let element = StereoElementId::new(0);
         if !unknown.is_empty() {
             assert_eq!(
-                stereo_api::cip::assign_cip_descriptors(&mut molecule),
+                stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default()),
                 Err(CipAssignmentError {
                     issues: unknown
                         .iter()
@@ -1868,7 +1869,7 @@ fn failed_cip_resource_limit_restores_previous_stereo_section() {
     let before = installed_cip_descriptors(&molecule);
     let before_state = molecule.perception().stereo_state().cloned();
 
-    let error = stereo_api::cip::assign_cip_descriptors_with_options(
+    let error = stereo_api::cip::assign_cip_descriptors(
         &mut molecule,
         CipAssignmentOptions {
             max_nodes: 1,
@@ -1900,7 +1901,7 @@ fn failed_cip_resource_limit_restores_previous_stereo_section() {
     molecule
         .install_perception(present_empty.clone())
         .expect("present-empty baseline");
-    stereo_api::cip::assign_cip_descriptors_with_options(
+    stereo_api::cip::assign_cip_descriptors(
         &mut molecule,
         CipAssignmentOptions {
             max_nodes: 1,
@@ -1924,7 +1925,7 @@ fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
     first_only
         .remove_stereo_element(StereoElementId::new(1))
         .expect("second stereo element exists");
-    let report = stereo_api::cip::assign_cip_descriptors_with_options(&mut first_only, options)
+    let report = stereo_api::cip::assign_cip_descriptors(&mut first_only, options)
         .expect("the first center is assignable within the resource limit");
     assert_eq!(
         report.assigned,
@@ -1936,7 +1937,7 @@ fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
 
     let mut molecule = read_smiles(FIXTURE).expect("fixture parses");
     perceive(&mut molecule).expect("fixture perceives");
-    let error = stereo_api::cip::assign_cip_descriptors_with_options(&mut molecule, options)
+    let error = stereo_api::cip::assign_cip_descriptors(&mut molecule, options)
         .expect_err("the later center should exceed the resource limit");
     assert_eq!(
         error.issues,
@@ -1991,7 +1992,7 @@ fn failed_cip_validation_preserves_previous_stereo_section() {
         .install_cip_descriptor(element, StereoDescriptor::R);
     let before = installed_cip_descriptors(mol.working());
 
-    let error = stereo_api::cip::assign_cip_descriptors(mol.working_mut())
+    let error = stereo_api::cip::assign_cip_descriptors(mol.working_mut(), Default::default())
         .expect_err("invalid stored stereo should reject CIP assignment");
 
     assert!(error
@@ -2011,7 +2012,7 @@ fn failed_cip_validation_preserves_previous_stereo_section() {
     mol.working_mut()
         .install_perception(present_empty.clone())
         .expect("valid empty stereo section");
-    stereo_api::cip::assign_cip_descriptors(mol.working_mut())
+    stereo_api::cip::assign_cip_descriptors(mol.working_mut(), Default::default())
         .expect_err("invalid stored stereo should still reject CIP assignment");
     assert_eq!(mol.perception(), &present_empty);
     assert!(mol.perception().has_stereo());

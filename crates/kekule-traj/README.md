@@ -25,8 +25,8 @@ use kekule_traj::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
-    let topology = document.interpret()?.into_topology();
+    let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?, Default::default())?;
+    let topology = document.interpret(Default::default())?.into_topology();
     let mut trajectory = read_trajectory("trajectory.xtc", topology.clone())?;
 
     println!("Frames: {}", trajectory.len());
@@ -39,8 +39,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Fit all atoms onto frame 0, or use a protein/backbone selection for a
     // solvated system. Superposition changes the trajectory in place.
     let fit = AtomSelection::all(&topology);
-    trajectory.superpose(0, &fit)?;
-    let rmsd = trajectory.rmsd(0, &fit)?.value_in(ANGSTROM)?;
+    trajectory.superpose(0, &fit, Default::default())?;
+    let rmsd = trajectory.rmsd(0, &fit, Default::default())?.value_in(ANGSTROM)?;
     for (index, value) in rmsd.iter().enumerate() {
         println!("Frame {index}: fitted RMSD = {value:.3} A");
     }

@@ -90,7 +90,9 @@ fn cycles_and_membership_match_an_independent_oracle_under_numbering_changes() {
                             .unwrap();
                     }
                     let mut molecule = editor.finish().unwrap();
-                    let membership = perceive_ring_membership(&mut molecule);
+                    perceive_rings(&mut molecule, RingPerceptionOptions::membership_only())
+                        .expect("membership perception cannot fail");
+                    let membership = molecule.ring_membership().expect("rings installed").clone();
                     for (index, &bond) in bonds.iter().enumerate() {
                         assert_eq!(
                             membership.bond_in_ring(bond),
@@ -103,7 +105,8 @@ fn cycles_and_membership_match_an_independent_oracle_under_numbering_changes() {
                         });
                         assert_eq!(membership.atom_in_ring(atom), expected);
                     }
-                    let rings = perceive_ring_set(&mut molecule).unwrap();
+                    perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
+                    let rings = molecule.ring_set().expect("rings installed").clone();
                     assert_eq!(molecule.ring_membership(), Some(&membership));
                     let mut selected_cycles = BTreeSet::new();
                     for ring in rings.rings() {
@@ -154,7 +157,7 @@ fn ring_limits_bound_compact_storage_after_deletions() {
     // Publication drops the deleted slots, so scratch storage equals live counts.
     assert_eq!(molecule.graph().atom_slot_count(), 3);
     assert_eq!(molecule.graph().bond_slot_count(), 3);
-    perceive_ring_set(&mut molecule).unwrap();
+    perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
     let previous = molecule.perception().clone();
     for (options, resource, observed, limit) in [
         (
@@ -186,7 +189,7 @@ fn ring_limits_bound_compact_storage_after_deletions() {
         ),
     ] {
         assert_eq!(
-            perceive_ring_set_with_options(&mut molecule, options),
+            perceive_rings(&mut molecule, options),
             Err(RingPerceptionError::ResourceLimit {
                 resource,
                 observed,
@@ -290,7 +293,9 @@ fn excluded_bonds_do_not_close_cycles_or_connect_ring_components() {
             .collect::<BTreeSet<_>>();
         let cyclic_edges = cycles.iter().fold(0_u64, |all, cycle| all | cycle);
         let mut molecule = editor.finish().unwrap();
-        let membership = perceive_ring_membership(&mut molecule);
+        perceive_rings(&mut molecule, RingPerceptionOptions::membership_only())
+            .expect("membership perception cannot fail");
+        let membership = molecule.ring_membership().expect("rings installed").clone();
         for (index, &(a, b)) in edges.iter().enumerate() {
             let bond = molecule.bond_between(atoms[a], atoms[b]).unwrap().unwrap();
             assert_eq!(
@@ -298,7 +303,8 @@ fn excluded_bonds_do_not_close_cycles_or_connect_ring_components() {
                 cyclic_edges & (1 << index) != 0
             );
         }
-        let rings = perceive_ring_set(&mut molecule).unwrap();
+        perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
+        let rings = molecule.ring_set().expect("rings installed").clone();
         let mut covered = 0_u64;
         for ring in rings.rings() {
             let selected = ring
@@ -319,7 +325,8 @@ fn high_degree_graph_uses_rdkit_depth_first_fallback() {
         .flat_map(|left| (left + 1..5).map(move |right| (left, right)))
         .collect::<Vec<_>>();
     let mut molecule = graph(5, &edges);
-    let rings = perceive_ring_set(&mut molecule).unwrap();
+    perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
+    let rings = molecule.ring_set().expect("rings installed").clone();
     // RDKit 2026.03.3 falls back when every remaining vertex has degree four.
     assert_eq!(
         atom_sets(&rings),
@@ -372,7 +379,8 @@ fn fallback_preserves_coverage_when_rdkit_selected_rings_omit_a_cyclic_bond() {
             .unwrap()
             .is_some());
     }
-    let rings = perceive_ring_set(&mut molecule).unwrap();
+    perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
+    let rings = molecule.ring_set().expect("rings installed").clone();
     assert!(molecule.ring_membership().unwrap().bond_in_ring(omitted));
     assert!(rings
         .rings()
@@ -389,14 +397,15 @@ fn fallback_work_limit_preserves_installed_perception() {
         .flat_map(|left| (left + 1..5).map(move |right| (left, right)))
         .collect::<Vec<_>>();
     let mut molecule = graph(5, &edges);
-    perceive_ring_membership(&mut molecule);
+    perceive_rings(&mut molecule, RingPerceptionOptions::membership_only())
+        .expect("membership perception cannot fail");
     let before = molecule.perception().clone();
     let options = RingPerceptionOptions {
         max_total_work: 20,
         ..RingPerceptionOptions::default()
     };
     assert!(matches!(
-        perceive_ring_set_with_options(&mut molecule, options),
+        perceive_rings(&mut molecule, options),
         Err(RingPerceptionError::ResourceLimit {
             resource: "total work",
             ..
@@ -424,7 +433,8 @@ fn candidate_count_at_cyclomatic_number_is_not_pruned() {
             (2, 5),
         ],
     );
-    let rings = perceive_ring_set(&mut molecule).unwrap();
+    perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
+    let rings = molecule.ring_set().expect("rings installed").clone();
     assert_eq!(
         atom_sets(&rings),
         vec![
@@ -485,7 +495,8 @@ fn pubchem_125634_ring_scaffold_keeps_the_central_six_membered_ring() {
             (25, 27),
         ],
     );
-    let rings = perceive_ring_set(&mut molecule).unwrap();
+    perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
+    let rings = molecule.ring_set().expect("rings installed").clone();
     assert_eq!(
         atom_sets(&rings),
         vec![
@@ -777,8 +788,8 @@ fn ring_rich_polymers_perceive_with_default_bounds() {
     let mut molecule = crate::smiles::to_molecules(&format!("C{}", "C(c1ccccc1)".repeat(1000)))
         .unwrap()
         .remove(0);
-    let rings =
-        perceive_ring_set_with_options(&mut molecule, RingPerceptionOptions::default()).unwrap();
+    perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
+    let rings = molecule.ring_set().expect("rings installed").clone();
     assert_eq!(rings.rings().len(), 1000);
     molecule.perceive().unwrap();
 }

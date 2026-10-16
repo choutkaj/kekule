@@ -175,20 +175,13 @@ pub enum CipAssignmentIssue {
 /// (`Molecule::perceive` or the valence facade). Otherwise assignment reports
 /// [`CipAssignmentIssue::UnknownHydrogenCount`] for each such atom, ranks
 /// nothing, and leaves perception unchanged.
-pub fn assign_cip_descriptors(
-    mol: &mut Molecule,
-) -> std::result::Result<CipAssignmentReport, CipAssignmentError> {
-    assign_cip_descriptors_with_options(mol, CipAssignmentOptions::default())
-}
-
-/// Assigns CIP descriptors with explicit expansion bounds.
 ///
-/// Exceeding a bound returns an issue and preserves the previous perception;
-/// no label is inferred from a truncated tie. Implicit hydrogen counts must be
-/// known, as for [`assign_cip_descriptors`].
-pub fn assign_cip_descriptors_with_options(
+/// `options` bounds the expansion. Exceeding a bound returns an issue and
+/// preserves the previous perception; no label is inferred from a truncated
+/// tie.
+pub fn assign_cip_descriptors(
     mol: &mut Molecule,
     options: CipAssignmentOptions,
 ) -> std::result::Result<CipAssignmentReport, CipAssignmentError> {
-    ranking::assign_cip_descriptors_with_options(mol, options)
+    ranking::assign_cip_descriptors(mol, options)
 }

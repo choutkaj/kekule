@@ -196,8 +196,8 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
 /// use kekule::mmcif;
 /// use kekule_traj::io::read_trajectory;
 ///
-/// let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
-/// let topology = document.interpret()?.into_topology();
+/// let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?, Default::default())?;
+/// let topology = document.interpret(Default::default())?.into_topology();
 /// let trajectory = read_trajectory("trajectory.xtc", topology)?;
 /// println!("{} frames, {} atoms", trajectory.len(), trajectory.topology().atom_count());
 /// # Ok::<(), Box<dyn std::error::Error>>(())

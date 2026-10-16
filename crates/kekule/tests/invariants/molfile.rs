@@ -120,15 +120,23 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
         let expected_labels = cip_labels(&mut expected);
         for (format, text) in outputs {
             let reread = if format == "SDF" {
-                sdf::parse_str(&text)
+                sdf::parse_str(&text, Default::default())
                     .map_err(|e| e.to_string())
                     .and_then(|document| {
-                        document.records()[0].to_model().map_err(|e| e.to_string())
+                        document.records()[0]
+                            .interpret(Default::default())
+                            .map(|interpretation| interpretation.into_model())
+                            .map_err(|e| e.to_string())
                     })
             } else {
-                molfile::parse_str(&text)
+                molfile::parse_str(&text, Default::default())
                     .map_err(|e| e.to_string())
-                    .and_then(|document| document.to_model().map_err(|e| e.to_string()))
+                    .and_then(|document| {
+                        document
+                            .interpret(Default::default())
+                            .map(|interpretation| interpretation.into_model())
+                            .map_err(|e| e.to_string())
+                    })
             };
             let reread = match reread {
                 Ok(model) => model,

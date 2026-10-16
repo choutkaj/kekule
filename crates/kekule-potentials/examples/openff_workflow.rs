@@ -24,12 +24,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => NaglModel::ash()?,
     };
 
-    let document = sdf::parse_str(&fs::read_to_string(path)?)?;
+    let document = sdf::parse_str(&fs::read_to_string(path)?, Default::default())?;
     let record = document
         .records()
         .first()
         .ok_or("the SDF document has no records")?;
-    let model = record.to_model()?;
+    let model = record.interpret(Default::default())?.into_model();
 
     // Parameterization binds the model's exact topology snapshot.
     let parameters = ForceField::rosemary()?.parameterize(model.shared_topology(), &nagl)?;

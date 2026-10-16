@@ -20,7 +20,7 @@ const WATER: &str = r#"<SMIRNOFF version="0.3" aromaticity_model="OEAroModel_MDL
 fn molecule(text: &str) -> kekule::molecule::Molecule {
     let mut m = smiles::to_molecules(text).unwrap().remove(0);
     m.perceive().unwrap();
-    m.add_hydrogens().unwrap();
+    m.add_hydrogens(Default::default()).unwrap();
     m
 }
 

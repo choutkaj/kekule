@@ -31,7 +31,10 @@ C C2 GLY A 1 1 1.0 0.0 0.0
 /// The cell of an interpreted model as its diagonal in angstroms, when the
 /// cell is orthorhombic, and the report's cell omissions.
 fn orthorhombic_cell(text: &str) -> (Option<[f64; 3]>, Vec<StructureInterpretIssue>) {
-    let interpreted = mmcif::parse_str(text).unwrap().interpret().unwrap();
+    let interpreted = mmcif::parse_str(text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
     let omissions = interpreted
         .report()
         .issues()
@@ -121,9 +124,9 @@ fn mmcif_cell_is_the_model_cell_only_for_a_whole_unit_cell() {
         &format!("data_demo\n{}", cell("20 abc 40")),
         1,
     );
-    let error = mmcif::parse_str(&malformed)
+    let error = mmcif::parse_str(&malformed, Default::default())
         .unwrap()
-        .interpret()
+        .interpret(Default::default())
         .unwrap_err();
     assert_eq!(error.message(), "invalid _cell.length_b `abc`");
 }
@@ -151,22 +154,25 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         self, MmcifBlock, MmcifEntityClassifications, MmcifWriteError, MmcifWriteOptions,
     };
 
-    let document = mmcif::parse_str(MINIMAL_MMCIF)?;
+    let document = mmcif::parse_str(MINIMAL_MMCIF, Default::default())?;
     assert_eq!(
         document,
-        mmcif::parse_str_with_options(MINIMAL_MMCIF, mmcif::MmcifParseOptions::default())?
+        mmcif::parse_str(MINIMAL_MMCIF, mmcif::MmcifParseOptions::default())?
     );
-    let interpreted = mmcif::interpret(&document)?;
+    let interpreted = document.interpret(Default::default())?;
     let block: &MmcifBlock = &document.blocks()[0];
-    let block_interpreted = block.interpret()?;
-    let method_default = block.interpret()?;
-    let method_explicit = block.interpret_with_options(StructureInterpretOptions::default())?;
+    let block_interpreted = block.interpret(Default::default())?;
+    let method_default = block.interpret(Default::default())?;
+    let method_explicit = block.interpret(StructureInterpretOptions::default())?;
 
     assert_eq!(document.blocks().len(), 1);
     assert_eq!(interpreted.report().block_name(), "demo");
     assert_eq!(block_interpreted.report(), interpreted.report());
     assert_eq!(method_default.report(), method_explicit.report());
-    assert_eq!(document.interpret()?.report(), method_default.report());
+    assert_eq!(
+        document.interpret(Default::default())?.report(),
+        method_default.report()
+    );
     assert!(block_interpreted
         .topology()
         .same_layout(interpreted.topology()));
@@ -196,41 +202,52 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         owned_molecules.iter().collect::<Vec<_>>()
     );
     assert!(block
-        .to_topology()?
-        .same_layout(block.to_model()?.topology()));
-    assert_eq!(block.to_molecules()?.len(), 1);
+        .interpret(Default::default())?
+        .into_topology()
+        .same_layout(block.interpret(Default::default())?.into_model().topology()));
+    assert_eq!(
+        block.interpret(Default::default())?.into_molecules().len(),
+        1
+    );
     // Every format namespace pairs `interpret(document)` with
     // `interpret_with_options`, and a single-block document projects like
     // its block.
-    let explicit = mmcif::interpret_with_options(&document, StructureInterpretOptions::default())?;
+    let explicit = document.interpret(StructureInterpretOptions::default())?;
     assert_eq!(explicit.report(), interpreted.report());
     for from_document in [
-        document.to_model()?,
-        document.to_model_with_options(StructureInterpretOptions::default())?,
+        document.interpret(Default::default())?.into_model(),
+        document
+            .interpret(StructureInterpretOptions::default())?
+            .into_model(),
     ] {
-        let from_block = block.to_model()?;
+        let from_block = block.interpret(Default::default())?.into_model();
         assert!(from_document.topology().same_layout(from_block.topology()));
         assert_eq!(from_document.positions(), from_block.positions());
     }
-    assert_eq!(document.to_molecules()?, block.to_molecules()?);
-    assert!(document
-        .to_topology()?
-        .same_layout(block.to_model()?.topology()));
     assert_eq!(
-        mmcif::interpret_ensemble(&document)?.reports(),
-        mmcif::interpret_ensemble_with_options(
-            &document,
-            macromolecular::StructureEnsembleInterpretOptions::default()
-        )?
-        .reports()
+        document.interpret(Default::default())?.into_molecules(),
+        block.interpret(Default::default())?.into_molecules()
     );
-    let two_blocks = mmcif::parse_str(&format!(
-        "{MINIMAL_MMCIF}{}",
-        MINIMAL_MMCIF.replace("demo", "other")
-    ))?;
+    assert!(document
+        .interpret(Default::default())?
+        .into_topology()
+        .same_layout(block.interpret(Default::default())?.into_model().topology()));
     assert_eq!(
-        two_blocks.to_model().unwrap_err(),
-        mmcif::interpret(&two_blocks).unwrap_err()
+        document.interpret_ensemble(Default::default())?.reports(),
+        document
+            .interpret_ensemble(macromolecular::StructureEnsembleInterpretOptions::default())?
+            .reports()
+    );
+    let two_blocks = mmcif::parse_str(
+        &format!("{MINIMAL_MMCIF}{}", MINIMAL_MMCIF.replace("demo", "other")),
+        Default::default(),
+    )?;
+    assert_eq!(
+        two_blocks
+            .interpret(Default::default())
+            .map(|interpretation| interpretation.into_model())
+            .unwrap_err(),
+        two_blocks.interpret(Default::default()).unwrap_err()
     );
     assert_eq!(interpreted.report().selected_model(), Some("1"));
     assert_eq!(interpreted.report().instances().len(), 1);
@@ -253,7 +270,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         MmcifWriteOptions::default(),
     )?;
     assert!(written.starts_with("data_model\n"));
-    assert!(mmcif::parse_str(&written).is_ok());
+    assert!(mmcif::parse_str(&written, Default::default()).is_ok());
     let custom_written = mmcif::write(
         [mmcif::MmcifBlockSource::model(interpreted.model())
             .with_reports(std::slice::from_ref(interpreted.report()))],
@@ -291,10 +308,11 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
 fn duplicate_agreeing_authoritative_bond_evidence_is_idempotent() {
     use kekule::mmcif;
 
-    let document = mmcif::parse_str(&with_struct_conn("sing"))
+    let document = mmcif::parse_str(&with_struct_conn("sing"), Default::default())
         .expect("duplicate agreeing connectivity parses");
-    let interpreted =
-        mmcif::interpret(&document).expect("duplicate agreeing connectivity is accepted");
+    let interpreted = document
+        .interpret(Default::default())
+        .expect("duplicate agreeing connectivity is accepted");
     let graph = interpreted
         .model()
         .topology()
@@ -311,9 +329,10 @@ fn duplicate_conflicting_authoritative_bond_evidence_is_rejected() {
     use kekule::macromolecular::StructureInterpretError;
     use kekule::mmcif;
 
-    let document = mmcif::parse_str(&with_struct_conn("doub"))
+    let document = mmcif::parse_str(&with_struct_conn("doub"), Default::default())
         .expect("duplicate conflicting connectivity parses");
-    let error: StructureInterpretError = mmcif::interpret(&document)
+    let error: StructureInterpretError = document
+        .interpret(Default::default())
         .expect_err("conflicting authoritative bond orders must be rejected");
 
     assert_eq!(error.location(), None);
@@ -333,7 +352,7 @@ fn mmcif_loop_accessors_reject_out_of_range_indices_in_all_build_profiles() {
         for column in 0..columns {
             input.push_str(&format!("v{column} "));
         }
-        let document = mmcif::parse_str(&input).unwrap();
+        let document = mmcif::parse_str(&input, Default::default()).unwrap();
         let table = document.blocks()[0].loop_with_tag("_x.c0").unwrap();
         assert_eq!(table.row_count(), 1);
         assert_eq!(table.row(0).unwrap().len(), columns);
@@ -355,7 +374,7 @@ fn mmcif_loop_accessors_reject_out_of_range_indices_in_all_build_profiles() {
         }
         assert!(table.value(0, "_x.missing").is_none());
     }
-    let document = mmcif::parse_str("data_empty\nloop_\n_x.a\n").unwrap();
+    let document = mmcif::parse_str("data_empty\nloop_\n_x.a\n", Default::default()).unwrap();
     let table = document.blocks()[0].loop_with_tag("_x.a").unwrap();
     assert_eq!(table.row_count(), 0);
     assert!(table.row(0).is_none());
@@ -420,7 +439,9 @@ fn mmcif_connectivity_matches_an_independent_reference() {
             } else {
                 text.to_owned()
             };
-            let interpreted = mmcif::interpret(&mmcif::parse_str(&source).unwrap()).unwrap();
+            let interpreted = (mmcif::parse_str(&source, Default::default()).unwrap())
+                .interpret(Default::default())
+                .unwrap();
             let topology = interpreted.topology();
             let mut sizes = topology
                 .molecules()

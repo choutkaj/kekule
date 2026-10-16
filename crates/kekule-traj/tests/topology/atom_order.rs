@@ -72,7 +72,9 @@ fn row_x(points: &[Point3]) -> Vec<f64> {
 
 #[test]
 fn mmcif_topology_reads_external_coordinates_in_atom_site_order() {
-    let interpretation = mmcif::interpret(&mmcif::parse_str(LINKED_ROWS).unwrap()).unwrap();
+    let interpretation = (mmcif::parse_str(LINKED_ROWS, Default::default()).unwrap())
+        .interpret(Default::default())
+        .unwrap();
     let topology = interpretation.model().shared_topology();
     assert_eq!(topology.instance_count(), 2);
     let instances = topology

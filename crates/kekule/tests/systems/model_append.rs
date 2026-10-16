@@ -81,7 +81,7 @@ fn annotated(conflict: Option<&str>) -> Model {
         .pop()
         .unwrap();
     molecule.perceive().unwrap();
-    kekule::stereo::cip::assign_cip_descriptors(&mut molecule).unwrap();
+    kekule::stereo::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
     let mut chemistry = molecule.to_editor();
     chemistry
         .properties_mut()
