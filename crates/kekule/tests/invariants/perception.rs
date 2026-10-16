@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use kekule::core::{AtomId, Perception};
 use kekule::smiles::{self, SmilesWriteOptions};
+use kekule::{molecule::AtomId, perception::Perception};
 
 use crate::corpus::{assert_invariant, molecules};
 use crate::support::{cip_labels, try_cip_labels};
@@ -52,7 +52,7 @@ fn explicit_hydrogen_round_trip_preserves_identity() {
         // Addition keeps every existing atom ID, so the foci are unchanged.
         let mut explicit = original.clone();
         explicit
-            .add_hydrogens()
+            .add_hydrogens(Default::default())
             .unwrap_or_else(|error| panic!("{}: {error}", sample.label));
         explicit.perceive().unwrap();
         let mut collapsed = explicit.clone();

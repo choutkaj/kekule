@@ -12,7 +12,7 @@ fn quadruple_bonds_contribute_four_to_both_endpoint_valences() {
     let mut molecule = editor.finish().unwrap();
     let represented = represented_molecule_snapshot(&molecule);
 
-    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
+    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
         .expect("RDKit accepts valence four at each endpoint");
 
     assert_eq!(molecule.perception().inferred_hydrogens(left), Some(0));
@@ -67,7 +67,8 @@ fn singlet_and_triplet_two_electron_centers_have_the_same_valence_occupancy() {
     ] {
         let (mut molecule, atom) =
             isolated_valence_state("C", 0, radical, ImplicitHydrogens::Inferred);
-        valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike).unwrap();
+        valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
+            .unwrap();
         assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(2));
         assert_eq!(molecule.atom(atom).unwrap().radical, radical);
     }
@@ -90,7 +91,11 @@ fn disabling_inferred_hydrogens_skips_radical_occupancy_checks() {
         ),
     ] {
         let represented = represented_molecule_snapshot(&molecule);
-        let result = valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike);
+        let result = valence_api::perceive_valence(
+            &mut molecule,
+            ValenceModel::RdkitLike,
+            Default::default(),
+        );
         assert_eq!(result.is_ok(), succeeds);
         assert_eq!(represented_molecule_snapshot(&molecule), represented);
         if succeeds {
@@ -125,8 +130,12 @@ fn strict_valence_rejects_excess_occupancy_even_without_bonds_or_declared_hydrog
         ("P", -8, None, ImplicitHydrogens::Fixed(0), 8, 5),
     ] {
         let (mut molecule, atom) = isolated_valence_state(symbol, charge, radical, hydrogens);
-        let error = valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
-            .expect_err("RDKit rejects the occupancy even when represented valence is zero");
+        let error = valence_api::perceive_valence(
+            &mut molecule,
+            ValenceModel::RdkitLike,
+            Default::default(),
+        )
+        .expect_err("RDKit rejects the occupancy even when represented valence is zero");
         assert_eq!(
             error.issues,
             [ValenceIssue::ValenceOccupancyExceeded {
@@ -138,7 +147,7 @@ fn strict_valence_rejects_excess_occupancy_even_without_bonds_or_declared_hydrog
             }]
         );
         assert_eq!(molecule.perception(), &Perception::default());
-        valence_api::perceive_valence_with_options(
+        valence_api::perceive_valence(
             &mut molecule,
             ValenceModel::RdkitLike,
             ValenceOptions { strict: false },
@@ -152,7 +161,7 @@ fn strict_valence_rejects_excess_occupancy_even_without_bonds_or_declared_hydrog
 fn original_unrestricted_and_noble_gas_valences_do_not_gain_radical_limits() {
     for (symbol, radical) in [("Li", None), ("He", AtomRadical::new(1, Some(2)))] {
         let (mut molecule, atom) = valence_state_with_graph_hydrogens(symbol, 1, radical, 1);
-        valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
+        valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
             .expect("RDKit preserves the original-element implicit-valence exemption");
         assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
     }
@@ -163,8 +172,12 @@ fn isolated_hydrogen_charge_validation_is_specific_to_hydrogen_inference() {
     for charge in [-2, 2] {
         let (mut molecule, atom) =
             isolated_valence_state("H", charge, None, ImplicitHydrogens::Inferred);
-        let error =
-            valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike).unwrap_err();
+        let error = valence_api::perceive_valence(
+            &mut molecule,
+            ValenceModel::RdkitLike,
+            Default::default(),
+        )
+        .unwrap_err();
         assert_eq!(
             error.issues,
             [ValenceIssue::InvalidFormalCharge {
@@ -172,7 +185,7 @@ fn isolated_hydrogen_charge_validation_is_specific_to_hydrogen_inference() {
                 formal_charge: charge
             }]
         );
-        valence_api::perceive_valence_with_options(
+        valence_api::perceive_valence(
             &mut molecule,
             ValenceModel::RdkitLike,
             ValenceOptions { strict: false },
@@ -182,7 +195,8 @@ fn isolated_hydrogen_charge_validation_is_specific_to_hydrogen_inference() {
 
         let (mut fixed, atom) =
             isolated_valence_state("H", charge, None, ImplicitHydrogens::Fixed(0));
-        valence_api::perceive_valence(&mut fixed, ValenceModel::RdkitLike).unwrap();
+        valence_api::perceive_valence(&mut fixed, ValenceModel::RdkitLike, Default::default())
+            .unwrap();
         assert_eq!(fixed.perception().inferred_hydrogens(atom), Some(0));
     }
 }
@@ -192,7 +206,8 @@ fn hypervalent_anions_mapping_to_unrestricted_elements_do_not_infer_hydrogen() {
     for symbol in ["S", "Se"] {
         let (mut molecule, atom) =
             isolated_valence_state(symbol, -5, None, ImplicitHydrogens::Inferred);
-        valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike).unwrap();
+        valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
+            .unwrap();
         assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
     }
 }
@@ -202,7 +217,8 @@ fn extreme_charge_adjustments_are_bounded_without_overflow() {
     for charge in [i8::MIN, i8::MAX] {
         let (mut molecule, atom) =
             isolated_valence_state("C", charge, None, ImplicitHydrogens::Inferred);
-        valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike).unwrap();
+        valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
+            .unwrap();
         assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
     }
 }
@@ -216,9 +232,13 @@ fn hydride_explicit_valence_compatibility_does_not_override_implicit_valence_rul
         ),
         (valence_state_with_graph_hydrogens("H", -1, None, 2), false),
     ] {
-        let result = valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike);
+        let result = valence_api::perceive_valence(
+            &mut molecule,
+            ValenceModel::RdkitLike,
+            Default::default(),
+        );
         assert_eq!(result.is_ok(), succeeds);
-        valence_api::perceive_valence_with_options(
+        valence_api::perceive_valence(
             &mut molecule,
             ValenceModel::RdkitLike,
             ValenceOptions { strict: false },
@@ -246,7 +266,7 @@ fn valence_accepts_aromatic_input_localized_during_interpretation() {
         3
     );
 
-    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
+    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
         .expect("localized benzene valence should succeed");
     assert!(molecule
         .atom_ids()
@@ -274,7 +294,7 @@ fn localized_aromatic_valence_replaces_previous_valence_transactionally() {
     molecule
         .install_perception(previous.clone())
         .expect("valid previous perception");
-    valence_api::perceive_valence_with_options(
+    valence_api::perceive_valence(
         &mut molecule,
         ValenceModel::RdkitLike,
         ValenceOptions { strict: false },
@@ -320,7 +340,7 @@ fn assert_aromatic_valence_pipeline_for_molecule(
         .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double)));
     assert_eq!(molecule.perception(), &Perception::default(), "{smiles}");
 
-    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
+    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
         .unwrap_or_else(|error| panic!("localized valence should succeed: {smiles}: {error}"));
     assert!(molecule.perception().has_valence(), "{smiles}");
     assert!(!molecule.perception().has_rings(), "{smiles}");
@@ -339,10 +359,14 @@ fn assert_aromatic_valence_pipeline_for_molecule(
         "{smiles}"
     );
 
-    rings_api::perceive_ring_set(&mut molecule)
+    rings_api::perceive_rings(&mut molecule, RingPerceptionOptions::default())
         .unwrap_or_else(|error| panic!("ring perception should succeed: {smiles}: {error}"));
-    aromaticity_api::perceive_aromaticity(&mut molecule, AromaticityModel::RdkitLike)
-        .unwrap_or_else(|error| panic!("aromaticity perception should succeed: {smiles}: {error}"));
+    aromaticity_api::perceive_aromaticity(
+        &mut molecule,
+        AromaticityModel::RdkitLike,
+        Default::default(),
+    )
+    .unwrap_or_else(|error| panic!("aromaticity perception should succeed: {smiles}: {error}"));
     assert_eq!(
         molecule
             .atom_ids()
@@ -393,7 +417,7 @@ fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
         .expect("pyrrole nitrogen")
         .clone();
 
-    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
+    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
         .expect("pyrrole valence should succeed without aromaticity");
 
     let nitrogen = molecule.atom(AtomId::new(0)).expect("pyrrole nitrogen");
@@ -406,9 +430,14 @@ fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
     assert!(!molecule.perception().has_aromaticity());
     assert_eq!(represented_molecule_snapshot(&molecule), represented);
 
-    rings_api::perceive_ring_set(&mut molecule).expect("pyrrole ring perception");
-    aromaticity_api::perceive_aromaticity(&mut molecule, AromaticityModel::RdkitLike)
-        .expect("pyrrole aromaticity perception");
+    rings_api::perceive_rings(&mut molecule, RingPerceptionOptions::default())
+        .expect("pyrrole ring perception");
+    aromaticity_api::perceive_aromaticity(
+        &mut molecule,
+        AromaticityModel::RdkitLike,
+        Default::default(),
+    )
+    .expect("pyrrole aromaticity perception");
 
     assert_eq!(represented_molecule_snapshot(&molecule), represented);
     assert_eq!(
@@ -454,10 +483,18 @@ fn valence_ignores_preinstalled_semantic_aromaticity() {
         .install_perception(previous)
         .expect("valid perception state");
 
-    valence_api::perceive_valence(&mut without_aromaticity, ValenceModel::RdkitLike)
-        .expect("valence without aromaticity");
-    valence_api::perceive_valence(&mut with_aromaticity, ValenceModel::RdkitLike)
-        .expect("valence with preinstalled aromaticity");
+    valence_api::perceive_valence(
+        &mut without_aromaticity,
+        ValenceModel::RdkitLike,
+        Default::default(),
+    )
+    .expect("valence without aromaticity");
+    valence_api::perceive_valence(
+        &mut with_aromaticity,
+        ValenceModel::RdkitLike,
+        Default::default(),
+    )
+    .expect("valence with preinstalled aromaticity");
 
     let without = without_aromaticity
         .atom_ids()
@@ -478,7 +515,7 @@ fn fused_aromatic_valence_comes_from_localized_bond_orders() {
         .canonicalize_fixture()
         .expect("naphthalene should normalize");
 
-    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
+    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
         .expect("naphthalene valence should run first");
 
     let mut peripheral = 0;
@@ -507,9 +544,14 @@ fn fused_aromatic_valence_comes_from_localized_bond_orders() {
     }
     assert_eq!((peripheral, fused), (8, 2));
 
-    rings_api::perceive_ring_set(&mut molecule).expect("naphthalene rings");
-    aromaticity_api::perceive_aromaticity(&mut molecule, AromaticityModel::RdkitLike)
-        .expect("naphthalene aromaticity");
+    rings_api::perceive_rings(&mut molecule, RingPerceptionOptions::default())
+        .expect("naphthalene rings");
+    aromaticity_api::perceive_aromaticity(
+        &mut molecule,
+        AromaticityModel::RdkitLike,
+        Default::default(),
+    )
+    .expect("naphthalene aromaticity");
     assert_eq!(
         molecule
             .atom_ids()

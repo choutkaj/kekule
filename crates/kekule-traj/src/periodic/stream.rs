@@ -105,7 +105,7 @@ impl MoleculeImager {
 /// change neither the caller's buffer nor the unwrapping state, so a corrected
 /// frame can be retried. Use [`Self::reset`] for a new independent sequence.
 /// Available times must not decrease; missing times are allowed. This follows the
-/// scientific convention and sampling assumptions of [`super::unwrap`].
+/// scientific convention and sampling assumptions of [`super::unwrap_trajectory`].
 pub struct TrajectoryUnwrapper {
     topology: Arc<Topology>,
     previous: Option<PreviousFrame>,

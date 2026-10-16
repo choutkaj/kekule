@@ -11,8 +11,8 @@ use crate::components::{
     Component, ComponentBond as TemplateBond, ComponentBondOrder as TemplateOrder,
     ComponentLibrary, ComponentLinking,
 };
-use crate::core::{AtomId, BondOrder, Element, Molecule, MoleculeEditor};
 use crate::geometry::Point3;
+use crate::molecule::{AtomId, BondOrder, Element, Molecule, MoleculeEditor};
 
 use super::mmcif_category::MmcifCategory;
 use super::structure_interpret as raw;
@@ -407,7 +407,7 @@ fn is_carbon(element: Element) -> bool {
 struct Resolver<'r, 'g> {
     catalog: &'r ConnectivityCatalog,
     graph: &'g mut Molecule,
-    source_aromatic_bonds: &'g mut BTreeSet<crate::core::BondId>,
+    source_aromatic_bonds: &'g mut BTreeSet<crate::molecule::BondId>,
     evidence: &'g mut BondEvidenceMap,
     issues: &'g mut Vec<raw::StructureInterpretIssue>,
     model_id: &'r str,
@@ -1244,7 +1244,7 @@ fn add_bond_if_missing(
     left: AtomId,
     right: AtomId,
     source_order: SourceBondOrder,
-    source_aromatic_bonds: &mut BTreeSet<crate::core::BondId>,
+    source_aromatic_bonds: &mut BTreeSet<crate::molecule::BondId>,
 ) -> Result<(), raw::StructureInterpretError> {
     let existing = graph.bond_between(left, right).map_err(interpret_error)?;
     let Some(existing) = existing else {
@@ -1492,10 +1492,13 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
     fn singleton_connectivity_categories_are_syntax_independent() {
         for (input, bonds) in [(PEPTIDE, 7), (BRANCH, 3)] {
             let scalar = crate::tests::mmcif_syntax::singleton_loops_as_scalars(input);
-            let a = crate::mmcif::parse_str(input).unwrap().interpret().unwrap();
-            let b = crate::mmcif::parse_str(&scalar)
+            let a = crate::mmcif::parse_str(input, Default::default())
                 .unwrap()
-                .interpret()
+                .interpret(Default::default())
+                .unwrap();
+            let b = crate::mmcif::parse_str(&scalar, Default::default())
+                .unwrap()
+                .interpret(Default::default())
                 .unwrap();
             assert_eq!(b.topology().bond_count(), bonds);
             assert_eq!(b.topology().instance_count(), 1);
@@ -1511,7 +1514,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             source.to_owned(),
             crate::tests::mmcif_syntax::singleton_loops_as_scalars(source),
         ] {
-            let doc = crate::mmcif::parse_str(&input).unwrap();
+            let doc = crate::mmcif::parse_str(&input, Default::default()).unwrap();
             let catalog = ConnectivityCatalog::from_block(
                 &doc.blocks()[0],
                 &raw::ConnectivityOptions::default(),
@@ -1755,7 +1758,10 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
     }
 
     fn interpret(text: &str) -> StructureInterpretation {
-        crate::mmcif::parse_str(text).unwrap().interpret().unwrap()
+        crate::mmcif::parse_str(text, Default::default())
+            .unwrap()
+            .interpret(Default::default())
+            .unwrap()
     }
 
     /// Report issues other than the entity kinds these minimal blocks omit.
@@ -2168,9 +2174,9 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             },
             ..Default::default()
         };
-        let error = crate::mmcif::parse_str(&text)
+        let error = crate::mmcif::parse_str(&text, Default::default())
             .unwrap()
-            .interpret_with_options(strict.clone())
+            .interpret(strict.clone())
             .unwrap_err();
         assert_eq!(error.kind(), DiagnosticKind::Unsupported);
         assert_eq!(
@@ -2182,6 +2188,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         let library = ComponentLibrary::from_mmcif(
             &crate::mmcif::parse_str(
                 "data_XYZ\n_chem_comp.id XYZ\n_chem_comp.type NON-POLYMER\nloop_\n_chem_comp_atom.comp_id\n_chem_comp_atom.atom_id\n_chem_comp_atom.type_symbol\n_chem_comp_atom.charge\nXYZ C1 C 0\nXYZ C2 C 0\nXYZ O1 O 0\nloop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\nXYZ C1 C2 SING\nXYZ C2 O1 DOUB\n",
+                Default::default(),
             )
             .unwrap(),
         )
@@ -2193,9 +2200,9 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             },
             ..strict
         };
-        let templated = crate::mmcif::parse_str(&text)
+        let templated = crate::mmcif::parse_str(&text, Default::default())
             .unwrap()
-            .interpret_with_options(with_library)
+            .interpret(with_library)
             .unwrap();
         assert_eq!(
             bonds(&templated),
@@ -2304,9 +2311,9 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
              C CX GLY A 1 2.0 1.4 0.0",
             "",
         );
-        let error = crate::mmcif::parse_str(&unknown_atom)
+        let error = crate::mmcif::parse_str(&unknown_atom, Default::default())
             .unwrap()
-            .interpret()
+            .interpret(Default::default())
             .unwrap_err();
         assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
         assert_eq!(

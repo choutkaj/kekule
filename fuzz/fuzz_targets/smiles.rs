@@ -1,6 +1,6 @@
 #![no_main]
 
-use kekule::smiles::{interpret, parse_str, write, SmilesWriteOptions};
+use kekule::smiles::{parse_str, write, SmilesWriteOptions};
 use libfuzzer_sys::fuzz_target;
 
 #[path = "../../crates/kekule/tests/support/smiles_contract.rs"]
@@ -10,14 +10,17 @@ fuzz_target!(|data: &[u8]| {
     let Ok(input) = std::str::from_utf8(data) else {
         return;
     };
-    if let Ok(document) = parse_str(input) {
-        let Ok(interpreted) = interpret(&document) else {
+    if let Ok(document) = parse_str(input, Default::default()) {
+        let Ok(interpreted) = document.interpret(Default::default()) else {
             return;
         };
         for molecule in interpreted.molecules() {
             if let Ok(output) = write(molecule, SmilesWriteOptions::ordinary()) {
-                let document = parse_str(&output).expect("writer output must parse");
-                interpret(&document).expect("writer output must interpret");
+                let document =
+                    parse_str(&output, Default::default()).expect("writer output must parse");
+                document
+                    .interpret(Default::default())
+                    .expect("writer output must interpret");
             }
             // Bound repeated canonical searches independently of parser limits.
             // Larger records still exercise the parsing/plain-writing path above.

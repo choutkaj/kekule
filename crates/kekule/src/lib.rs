@@ -5,8 +5,8 @@
 //!
 //! Kekule keeps chemical identity, system organization, and geometry separate:
 //!
-//! - [`core::Molecule`] is one non-empty connected molecular graph. It owns
-//!   represented chemistry, derived [`core::Perception`], and
+//! - [`molecule::Molecule`] is one non-empty connected molecular graph. It owns
+//!   represented chemistry, derived [`perception::Perception`], and
 //!   geometry-independent properties.
 //! - [`topology::Topology`] is one coordinate-free system containing one or
 //!   more explicit molecule instances plus an optional biological hierarchy.
@@ -18,7 +18,7 @@
 //!
 //! A disconnected salt, solvent box, or protein-ligand complex is therefore a
 //! [`topology::Topology`] containing several connected molecules, not one
-//! disconnected [`core::Molecule`].
+//! disconnected [`molecule::Molecule`].
 //!
 //! # Typical workflow
 //!
@@ -63,15 +63,15 @@
 //!
 //! | Task | Interface | Publication |
 //! | --- | --- | --- |
-//! | Construct or edit one connected molecule | [`core::MoleculeEditor`] | `finish()` |
+//! | Construct or edit one connected molecule | [`molecule::MoleculeEditor`] | `finish()` |
 //! | Assemble complete molecules and reusable instances | [`topology::TopologyBuilder`] | `build()` |
 //! | Assemble a system with explicit geometry | [`structure::ModelBuilder`] | `build()` |
-//! | Edit system atoms, bonds, components, and hierarchy | [`topology::TopologyEditor`] | `finish()` |
+//! | Edit system atoms, bonds, components, and hierarchy | [`topology::edit::TopologyEditor`] | `finish()` |
 //! | Edit a system together with its coordinates | [`structure::ModelEditor`] | `finish()` |
 //! | Change geometry or structure annotations | [`structure::Model`] setters | Immediate checked update |
 //!
 //! Builders and editors offer non-consuming `validate()` and recoverable
-//! `try_build()` / `try_finish()`. Use `edit()` for a detached draft or
+//! `try_build()` / `try_finish()`. Use `to_editor()` for a detached draft or
 //! `into_editor()` to move an owner into one. System editors resolve source IDs
 //! to stable draft-only editing handles and publish completed values through
 //! `finish()`. A bond deletion can split a system molecule;
@@ -122,14 +122,15 @@ mod algorithms;
 pub mod alignment;
 mod chemistry;
 pub mod clustering;
-pub mod core;
 pub mod descriptors;
 pub mod diagnostics;
 pub mod dssp;
 pub mod geometry;
 mod io;
+pub mod molecule;
 pub mod properties;
 pub mod query;
+pub mod solvation;
 pub mod structure;
 pub mod topology;
 pub mod units;
@@ -140,26 +141,24 @@ pub mod units;
 /// it never invokes parsing, interpretation, or perception implicitly.
 pub mod substructure {
     pub use crate::algorithms::{
-        find_match, find_matches, find_matches_with_options, find_topology_matches,
-        find_topology_matches_with_options, visit_matches, visit_matches_with_options,
         MatchCompletion, PreparedTarget, PreparedTopologyTarget, QueryMatch, QueryPerception,
         SubstructureMatchError, SubstructureMatchOptions, SubstructureMatchWork, TaggedMatchError,
-        TaggedQuery, TopologyQueryMatch, MAX_SUBSTRUCTURE_QUERY_ATOMS,
+        TaggedQuery, TopologyQueryMatch, TupleMode, MAX_SUBSTRUCTURE_QUERY_ATOMS,
     };
 }
 
 /// SMILES parsing, interpretation, and molecule/topology writing.
 ///
 /// [`smiles::parse_str`] preserves source syntax in a
-/// [`smiles::SmilesDocument`], while [`smiles::interpret`] publishes canonical
-/// connected molecules. [`smiles::to_molecules`] is the concise
+/// [`smiles::SmilesDocument`], while
+/// [`SmilesDocument::interpret`](smiles::SmilesDocument::interpret) publishes
+/// canonical connected molecules. [`smiles::to_molecules`] is the concise
 /// parse-and-interpret path. Dot-separated components remain separate molecules
 /// and perception is never run implicitly.
 pub mod smiles {
     use std::fmt;
     use std::sync::Arc;
 
-    use crate::core::Molecule;
     use crate::io::MoleculeWriteError;
     pub use crate::io::{
         SmilesAtomMapping, SmilesBondMapping, SmilesComponentCountError,
@@ -168,6 +167,7 @@ pub mod smiles {
         SmilesInterpretOptions, SmilesInterpretation, SmilesInterpretationReport, SmilesParseError,
         SmilesParseOptions, SmilesRecords,
     };
+    use crate::molecule::Molecule;
     use crate::topology::{Topology, TopologyBuildError};
 
     /// SMILES output policy of [`write()`].
@@ -305,78 +305,47 @@ pub mod smiles {
     }
 
     /// Parses one record: base SMILES, an optional CX extension with its fields
-    /// typed, and an optional name.
-    pub fn parse_str(input: &str) -> Result<SmilesDocument, SmilesParseError> {
-        crate::io::parse_smiles_document(input)
-    }
-
-    /// Parses source text with explicit syntax and resource-limit options.
-    pub fn parse_str_with_options(
+    /// typed, and an optional name. `options` bounds the input and the parsed
+    /// graph.
+    pub fn parse_str(
         input: &str,
         options: SmilesParseOptions,
     ) -> Result<SmilesDocument, SmilesParseError> {
-        crate::io::parse_smiles_document_with_options(input, options)
+        crate::io::parse_smiles_document(input, options)
+    }
+
+    /// Reads and parses one record from `reader`, as [`parse_str`] parses the
+    /// same text. Use [`records`] for line-delimited multi-record input.
+    ///
+    /// The configured byte limit is enforced while reading; non-UTF-8 input
+    /// fails with [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
+    pub fn parse_reader(
+        reader: impl std::io::Read,
+        options: SmilesParseOptions,
+    ) -> Result<SmilesDocument, SmilesParseError> {
+        crate::io::parse_smiles_reader(reader, options)
     }
 
     /// Streams the records of a multi-record SMILES input such as a `.smi`
-    /// file, one record per line.
+    /// file, one record per line, each bounded by `options`.
     ///
     /// Blank lines are skipped. Each item is one record or the failure of one
     /// line, located at its input line; reading continues after a malformed
     /// line. Memory is bounded by one line.
-    pub fn records<R: std::io::Read>(reader: R) -> SmilesRecords<R> {
-        records_with_options(reader, SmilesParseOptions::default())
-    }
-
-    /// Streams SMILES records with explicit per-record resource limits.
-    pub fn records_with_options<R: std::io::Read>(
-        reader: R,
-        options: SmilesParseOptions,
-    ) -> SmilesRecords<R> {
+    pub fn records<R: std::io::Read>(reader: R, options: SmilesParseOptions) -> SmilesRecords<R> {
         SmilesRecords::new(reader, options)
-    }
-
-    /// Interprets parsed syntax as canonical represented chemistry.
-    ///
-    /// Bracket atoms have fixed hydrogen counts. After localizing source aromatic
-    /// bonds, their valence deficits determine radical-electron occupancy using
-    /// the RDKit-like octet/duet and allowed-valence conventions. This does not
-    /// assert a spin multiplicity. No perception is installed implicitly.
-    /// Explicit CX radical declarations override inferred occupancy and preserve
-    /// specified spin. CX absolute, AND and OR groups reference source atom
-    /// indices; the `r` flag relates otherwise ungrouped tetrahedral centers.
-    /// Stereo relationships across disconnected molecules are not representable.
-    /// Unsupported CX fields return an error instead of being discarded; see
-    /// [`interpret_with_options`] to omit and report them instead.
-    pub fn interpret(
-        document: &SmilesDocument,
-    ) -> Result<SmilesInterpretation, SmilesInterpretError> {
-        document.interpret()
-    }
-
-    /// Interprets parsed syntax with an explicit unsupported-content policy.
-    pub fn interpret_with_options(
-        document: &SmilesDocument,
-        options: SmilesInterpretOptions,
-    ) -> Result<SmilesInterpretation, SmilesInterpretError> {
-        document.interpret_with_options(options)
-    }
-
-    /// Explicitly interprets only the base SMILES and records the omitted CX extension.
-    /// This projection can lose chemical information, including stereochemical groups.
-    pub fn interpret_base(
-        document: &SmilesDocument,
-    ) -> Result<SmilesInterpretation, SmilesInterpretError> {
-        document.interpret_base()
     }
 
     /// Parses and interprets one SMILES record into source-ordered connected components.
     ///
-    /// This is the concise form of [`parse_str`] followed by [`interpret`].
+    /// This is the concise form of [`parse_str`] followed by
+    /// [`SmilesDocument::interpret`], both with default options.
     /// Dot-delimited components remain separate, and no perception is run implicitly.
     pub fn to_molecules(input: &str) -> Result<Vec<Molecule>, SmilesReadError> {
-        let document = parse_str(input)?;
-        Ok(document.interpret()?.into_molecules())
+        let document = parse_str(input, SmilesParseOptions::default())?;
+        Ok(document
+            .interpret(SmilesInterpretOptions::default())?
+            .into_molecules())
     }
 
     /// Parses and interprets one SMILES record as a shared coordinate-free
@@ -385,8 +354,12 @@ pub mod smiles {
     /// Every connected component becomes one explicit molecule
     /// occurrence in source order. No hierarchy or perception is fabricated.
     pub fn to_topology(input: &str) -> Result<Arc<Topology>, SmilesReadError> {
-        let document = parse_str(input)?;
-        Ok(Arc::new(document.interpret()?.into_topology()?))
+        let document = parse_str(input, SmilesParseOptions::default())?;
+        Ok(Arc::new(
+            document
+                .interpret(SmilesInterpretOptions::default())?
+                .into_topology()?,
+        ))
     }
 
     /// What one SMILES record describes: one connected molecule, or every
@@ -475,6 +448,19 @@ pub mod smiles {
     }
 }
 
+/// SMARTS parsing into syntax-independent substructure queries.
+///
+/// [`smarts::parse_str`] returns a [`query::QueryGraph`], the canonical query
+/// representation that [`substructure`] matching consumes. Parsing a query and
+/// matching it are separate operations; matching does not perceive the target
+/// implicitly. The dialect, including its explicit exclusions, is documented on
+/// [`query`].
+pub mod smarts {
+    pub use crate::query::smarts::{
+        parse_str, SmartsParseError, SmartsParseErrorKind, SmartsParseOptions,
+    };
+}
+
 /// Molfile parsing, interpretation, and V2000/V3000 writing.
 ///
 /// A parsed [`molfile::MolfileDocument`] is format state. Its interpretation can
@@ -493,58 +479,24 @@ pub mod molfile {
     };
 
     /// Parses one V2000 or V3000 Molfile into its typed connection table
-    /// without assigning canonical meaning.
-    pub fn parse_str(input: &str) -> Result<MolfileDocument, MolfileParseError> {
-        crate::io::parse_molfile_document(input)
-    }
-
-    /// Parses one Molfile with explicit syntax and resource-limit options.
-    pub fn parse_str_with_options(
+    /// without assigning canonical meaning. `options` bounds the input and the
+    /// parsed table.
+    pub fn parse_str(
         input: &str,
         options: MolfileParseOptions,
     ) -> Result<MolfileDocument, MolfileParseError> {
-        crate::io::parse_molfile_document_with_options(input, options)
+        crate::io::parse_molfile_document(input, options)
     }
 
     /// Reads and parses one Molfile from `reader`.
     ///
     /// The configured byte limit is enforced while reading; non-UTF-8 input
     /// fails with [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
-    pub fn parse_reader(reader: impl std::io::Read) -> Result<MolfileDocument, MolfileParseError> {
-        parse_reader_with_options(reader, MolfileParseOptions::default())
-    }
-
-    /// Reads and parses one Molfile with explicit syntax and resource limits.
-    pub fn parse_reader_with_options(
+    pub fn parse_reader(
         reader: impl std::io::Read,
         options: MolfileParseOptions,
     ) -> Result<MolfileDocument, MolfileParseError> {
         crate::io::parse_molfile_reader(reader, options)
-    }
-
-    /// Interprets a parsed Molfile into canonical molecules, geometry, and a report.
-    /// Unmarked tetrahedral configurations in 3D coordinates use the shared
-    /// chemical eligibility and symmetry model, and 3D coordinates give E/Z
-    /// only to double bonds eligible before symmetry analysis, so a `=CH2`
-    /// drawn with its hydrogens has none. Explicit unknown assertions
-    /// remain unknown; derived perception is not installed on the result.
-    /// Valence outside that model is reported as a warning without discarding
-    /// the represented graph. Resource exhaustion remains an error.
-    ///
-    /// [`MolfileDocument::unsupported`] content fails interpretation; see
-    /// [`interpret_with_options`] to omit and report it instead.
-    pub fn interpret(
-        document: &MolfileDocument,
-    ) -> Result<MolfileInterpretation, MolfileInterpretError> {
-        document.interpret()
-    }
-
-    /// Interprets a parsed Molfile with an explicit unsupported-content policy.
-    pub fn interpret_with_options(
-        document: &MolfileDocument,
-        options: MolfileInterpretOptions,
-    ) -> Result<MolfileInterpretation, MolfileInterpretError> {
-        document.interpret_with_options(options)
     }
 
     /// Writes one CTAB from a molecule (zero coordinates) or a model.
@@ -600,34 +552,19 @@ pub mod sdf {
         crate::io::sdf_ensemble(records)
     }
 
-    /// Streams the records of an SDF input from `reader`.
+    /// Streams the records of an SDF input from `reader`, each bounded by
+    /// `options`.
     ///
     /// Each item is one record or the failure of one record; reading resumes at
     /// the next `$$$$` delimiter after a malformed, oversized, or non-UTF-8
     /// record. Memory is bounded by one record.
-    pub fn records<R: std::io::Read>(reader: R) -> SdfRecords<R> {
-        records_with_options(reader, SdfParseOptions::default())
-    }
-
-    /// Streams SDF records with explicit record-boundary and resource options.
-    pub fn records_with_options<R: std::io::Read>(
-        reader: R,
-        options: SdfParseOptions,
-    ) -> SdfRecords<R> {
+    pub fn records<R: std::io::Read>(reader: R, options: SdfParseOptions) -> SdfRecords<R> {
         SdfRecords::new(reader, options)
     }
 
     /// Parses every record of an SDF input, failing on the first malformed
     /// record. Use [`records`] to skip past malformed records instead.
-    pub fn parse_str(input: &str) -> Result<SdfDocument, SdfParseError> {
-        parse_str_with_options(input, SdfParseOptions::default())
-    }
-
-    /// Parses an SDF document with explicit syntax and resource-limit options.
-    pub fn parse_str_with_options(
-        input: &str,
-        options: SdfParseOptions,
-    ) -> Result<SdfDocument, SdfParseError> {
+    pub fn parse_str(input: &str, options: SdfParseOptions) -> Result<SdfDocument, SdfParseError> {
         crate::io::parse_sdf_document(input, options)
     }
 
@@ -635,12 +572,7 @@ pub mod sdf {
     ///
     /// The configured byte limit is enforced while reading; non-UTF-8 input
     /// fails with [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
-    pub fn parse_reader(reader: impl std::io::Read) -> Result<SdfDocument, SdfParseError> {
-        parse_reader_with_options(reader, SdfParseOptions::default())
-    }
-
-    /// Reads and parses an SDF document with explicit options.
-    pub fn parse_reader_with_options(
+    pub fn parse_reader(
         reader: impl std::io::Read,
         options: SdfParseOptions,
     ) -> Result<SdfDocument, SdfParseError> {
@@ -728,19 +660,10 @@ pub mod mmcif {
         MmcifItem, MmcifLoopTable, MmcifParseError, MmcifParseOptions, MmcifValue, MmcifWriteError,
         MmcifWriteOptions,
     };
-    use crate::macromolecular::{
-        StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
-        StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretOptions,
-        StructureInterpretation,
-    };
 
-    /// Parses a structural mmCIF data document without assigning molecular meaning.
-    pub fn parse_str(input: &str) -> Result<MmcifDocument, MmcifParseError> {
-        parse_str_with_options(input, MmcifParseOptions::default())
-    }
-
-    /// Parses CIF/mmCIF source text with explicit syntax and resource limits.
-    pub fn parse_str_with_options(
+    /// Parses a structural mmCIF data document without assigning molecular
+    /// meaning. `options` sets the syntax and resource limits.
+    pub fn parse_str(
         input: &str,
         options: MmcifParseOptions,
     ) -> Result<MmcifDocument, MmcifParseError> {
@@ -752,69 +675,11 @@ pub mod mmcif {
     /// The configured byte limit is enforced while reading, before the input
     /// is held in memory; non-UTF-8 input fails with
     /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
-    pub fn parse_reader(reader: impl std::io::Read) -> Result<MmcifDocument, MmcifParseError> {
-        parse_reader_with_options(reader, MmcifParseOptions::default())
-    }
-
-    /// Reads and parses CIF/mmCIF text with explicit syntax and resource limits.
-    pub fn parse_reader_with_options(
+    pub fn parse_reader(
         reader: impl std::io::Read,
         options: MmcifParseOptions,
     ) -> Result<MmcifDocument, MmcifParseError> {
         crate::io::parse_mmcif_reader(reader, options)
-    }
-
-    /// Interprets a document containing exactly one atom-site block as one
-    /// selected coordinate model, using default policy.
-    ///
-    /// Interpret a block of a document with several atom-site blocks through
-    /// its own methods, such as [`MmcifBlock::interpret`]; sibling blocks are
-    /// independent interpretation scopes.
-    pub fn interpret(
-        document: &MmcifDocument,
-    ) -> Result<StructureInterpretation, StructureInterpretError> {
-        document.interpret()
-    }
-
-    /// Interprets the exactly one atom-site block with explicit model and
-    /// alternate-location policy.
-    pub fn interpret_with_options(
-        document: &MmcifDocument,
-        options: StructureInterpretOptions,
-    ) -> Result<StructureInterpretation, StructureInterpretError> {
-        document.interpret_with_options(options)
-    }
-
-    /// Interprets every coordinate model of the exactly one atom-site block as
-    /// an ensemble.
-    ///
-    /// mmCIF carries no statistical model weights, so every coordinate model
-    /// becomes an equally weighted member (weight `1.0`); occupancy is not
-    /// converted into a weight. Use [`MmcifBlock::interpret_ensemble`] for one
-    /// block of a document with several atom-site blocks.
-    pub fn interpret_ensemble(
-        document: &MmcifDocument,
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
-        document.interpret_ensemble()
-    }
-
-    /// Interprets selected coordinate models of the exactly one atom-site
-    /// block as an ensemble of equally weighted members.
-    pub fn interpret_ensemble_with_options(
-        document: &MmcifDocument,
-        options: StructureEnsembleInterpretOptions,
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
-        document.interpret_ensemble_with_options(options)
-    }
-
-    /// Builds an unweighted ensemble from explicit coordinate-model and altloc
-    /// selections. No alternate configurations are enumerated automatically.
-    /// Selections must produce identical atom identities and compatible topology.
-    pub fn interpret_conformations(
-        document: &MmcifDocument,
-        selections: &[StructureInterpretOptions],
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
-        document.interpret_conformations(selections)
     }
 
     /// Writes one data block per source.
@@ -884,22 +749,10 @@ pub mod pdb {
         PdbAtom, PdbAtomKind, PdbConect, PdbCryst1, PdbDocument, PdbLink, PdbModel, PdbParseError,
         PdbParseOptions, PdbPartner, PdbRecord, PdbSsbond, PdbTer,
     };
-    use crate::macromolecular::{
-        StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
-        StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretOptions,
-        StructureInterpretation,
-    };
 
-    /// Parses a PDB entry into typed records without assigning molecular meaning.
-    pub fn parse_str(input: &str) -> Result<PdbDocument, PdbParseError> {
-        parse_str_with_options(input, PdbParseOptions::default())
-    }
-
-    /// Parses a PDB entry with explicit resource limits.
-    pub fn parse_str_with_options(
-        input: &str,
-        options: PdbParseOptions,
-    ) -> Result<PdbDocument, PdbParseError> {
+    /// Parses a PDB entry into typed records without assigning molecular
+    /// meaning. `options` sets the resource limits.
+    pub fn parse_str(input: &str, options: PdbParseOptions) -> Result<PdbDocument, PdbParseError> {
         crate::io::parse_pdb_str(input, options)
     }
 
@@ -908,65 +761,17 @@ pub mod pdb {
     /// The configured byte limit is enforced while reading, before the input
     /// is held in memory; non-UTF-8 input fails with
     /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
-    pub fn parse_reader(reader: impl std::io::Read) -> Result<PdbDocument, PdbParseError> {
-        parse_reader_with_options(reader, PdbParseOptions::default())
-    }
-
-    /// Reads and parses a PDB entry with explicit resource limits.
-    pub fn parse_reader_with_options(
+    pub fn parse_reader(
         reader: impl std::io::Read,
         options: PdbParseOptions,
     ) -> Result<PdbDocument, PdbParseError> {
         crate::io::parse_pdb_reader(reader, options)
     }
-
-    /// Interprets one selected coordinate model using default policy.
-    pub fn interpret(
-        document: &PdbDocument,
-    ) -> Result<StructureInterpretation, StructureInterpretError> {
-        document.interpret()
-    }
-
-    /// Interprets one coordinate model with explicit model, alternate-location,
-    /// and connectivity policy.
-    pub fn interpret_with_options(
-        document: &PdbDocument,
-        options: StructureInterpretOptions,
-    ) -> Result<StructureInterpretation, StructureInterpretError> {
-        document.interpret_with_options(options)
-    }
-
-    /// Interprets every coordinate model as an ensemble of equally weighted
-    /// members (weight `1.0`); occupancy is not converted into a weight.
-    pub fn interpret_ensemble(
-        document: &PdbDocument,
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
-        document.interpret_ensemble()
-    }
-
-    /// Interprets selected coordinate models as an ensemble of equally
-    /// weighted members.
-    pub fn interpret_ensemble_with_options(
-        document: &PdbDocument,
-        options: StructureEnsembleInterpretOptions,
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
-        document.interpret_ensemble_with_options(options)
-    }
-
-    /// Builds an unweighted ensemble from explicit coordinate-model and altloc
-    /// selections. No alternate configurations are enumerated automatically.
-    /// Selections must produce identical atom identities and compatible topology.
-    pub fn interpret_conformations(
-        document: &PdbDocument,
-        selections: &[StructureInterpretOptions],
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
-        document.interpret_conformations(selections)
-    }
 }
 
 /// Derived valence, rings, aromaticity, conjugation and explicit resonance work.
 ///
-/// [`crate::core::Molecule::perceive`] installs Kekule's default transactional perception
+/// [`crate::molecule::Molecule::perceive`] installs Kekule's default transactional perception
 /// profile. The nested modules expose the individual expert algorithms.
 /// Perception does not alter represented graph chemistry and is invalidated by
 /// relevant graph edits.
@@ -977,14 +782,18 @@ pub mod perception {
             enumerate_resonance, perceive_resonance, ResonanceContributor, ResonanceError,
             ResonanceFlags, ResonanceOptions, ResonanceStructures,
         };
-        pub use crate::core::delocalization::{ResonanceGroup, ResonancePerception};
+        pub use crate::molecule::delocalization::{ResonanceGroup, ResonancePerception};
     }
     /// Bond conjugation, including aromatic bonds, without contributor enumeration.
     pub mod conjugation {
         pub use crate::algorithms::{perceive_conjugation, ConjugationError};
-        pub use crate::core::delocalization::{ConjugationModel, ConjugationPerception};
+        pub use crate::molecule::delocalization::{ConjugationModel, ConjugationPerception};
     }
     pub use crate::chemistry::PerceptionError;
+    pub use crate::molecule::perception::{
+        Perception, PerceptionBuildError, PerceptionBuilder, PerceptionComponent,
+        PerceptionInstallError,
+    };
 
     /// Expert valence perception for canonical represented chemistry.
     ///
@@ -995,10 +804,9 @@ pub mod perception {
     /// reached.
     pub mod valence {
         pub use crate::algorithms::{
-            perceive_valence, perceive_valence_with_options, represented_valence, ValenceError,
-            ValenceIssue, ValenceOptions,
+            perceive_valence, represented_valence, ValenceError, ValenceIssue, ValenceOptions,
         };
-        pub use crate::core::perception::{ValenceModel, ValencePerception};
+        pub use crate::molecule::perception::{ValenceModel, ValencePerception};
     }
 
     /// Ring membership and deterministic ring-basis perception.
@@ -1007,11 +815,11 @@ pub mod perception {
     /// bond orders.
     pub mod rings {
         pub use crate::algorithms::{
-            perceive_ring_membership, perceive_ring_set, perceive_ring_set_with_options,
-            RingPerceptionError, RingPerceptionOptions,
+            perceive_rings, RingPerceptionError, RingPerceptionOptions, RingPerceptionScope,
         };
-        pub use crate::core::perception::{
-            Ring, RingBasisModel, RingBasisState, RingMembership, RingPerception, RingSet,
+        pub use crate::molecule::perception::{
+            MalformedRingReason, Ring, RingBasisModel, RingBasisState, RingMembership,
+            RingPerception, RingSet,
         };
     }
 
@@ -1020,79 +828,65 @@ pub mod perception {
     /// Aromatic membership is derived state; Kekule does not store an aromatic
     /// bond order in represented graph chemistry.
     pub mod aromaticity {
-        pub use crate::algorithms::{
-            perceive_aromaticity, perceive_aromaticity_with_options,
-            perceive_aromaticity_with_ring_options, AromaticityError, AromaticityOptions,
-        };
-        pub use crate::core::perception::{AromaticityModel, AromaticityPerception};
+        pub use crate::algorithms::{perceive_aromaticity, AromaticityError, AromaticityOptions};
+        pub use crate::molecule::perception::{AromaticityModel, AromaticityPerception};
     }
 }
 
-/// Focused stereochemistry validation, inference, transforms, and CIP assignment.
+/// Represented stereochemistry, its validation, and stereo algorithms.
 ///
-/// Coordinate inference and candidate detection are read-only. Coordinate
-/// materialization is an explicitly named representation transform, while CIP
-/// descriptors remain opt-in derived state. CIP assignment requires known
-/// implicit hydrogen counts: run valence perception first, or it reports
-/// `CipAssignmentIssue::UnknownHydrogenCount` instead of ranking with none.
+/// The root holds the stereo elements and groups a [`Molecule`](crate::molecule::Molecule)
+/// represents, their validation, and the shared symmetry-search bounds.
+/// Expert algorithms live in submodules: [`cip`](crate::stereo::cip) assigns
+/// opt-in CIP descriptors, [`coordinates`](crate::stereo::coordinates) infers
+/// and materializes stereo from coordinates, and
+/// [`cleanup`](crate::stereo::cleanup) detects stereogenic candidates and removes
+/// ineligible assertions. Coordinate inference and candidate detection are
+/// read-only; coordinate materialization is an explicitly named representation
+/// transform.
 pub mod stereo {
     pub use crate::algorithms::{
-        assign_cip_descriptors, assign_cip_descriptors_with_options, cleanup_stereo,
-        detect_stereo_candidates, detect_stereo_candidates_with_options, infer_coordinate_stereo,
-        infer_coordinate_stereo_with_options, materialize_coordinate_stereo,
-        materialize_coordinate_stereo_with_options, validate_stereo, CipAssignment,
-        CipAssignmentError, CipAssignmentIssue, CipAssignmentOptions, CipAssignmentReport,
-        CipRankingError, CipSkipped, CipSkippedReason, CoordinateStereoError,
-        CoordinateStereoMaterializationReport, CoordinateStereoOptions, CoordinateStereoResult,
-        StereoCandidate, StereoCleanupReport, StereoPerceptionError, StereoPerceptionOptions,
-        StereoValidationError, StereoValidationIssue,
+        validate_stereo, StereoSearchError, StereoSearchOptions, StereoValidationError,
+        StereoValidationIssue,
     };
-}
+    pub use crate::molecule::ids::{StereoElementId, StereoGroupId};
+    pub use crate::molecule::stereo::{
+        AxisOrientation, AxisStereo, DoubleBondOrientation, DoubleBondStereo, StereoCarrier,
+        StereoDescriptor, StereoElement, StereoElementKind, StereoGroup, StereoGroupKind,
+        TetrahedralOrientation, TetrahedralStereo,
+    };
 
-/// Canonical atom ranking for represented molecular graphs.
-///
-/// Ranking is a graph-derived result and does not reorder or mutate a molecule.
-pub mod canon {
-    pub use crate::algorithms::CanonicalAtomRanking;
-
-    use crate::core::Molecule;
-
-    /// Computes deterministic canonical equivalence classes without mutation.
+    /// CIP descriptor assignment and its installed perception state.
     ///
-    /// Hydrogen comparison uses declared counts plus installed implicit counts;
-    /// equal totals are equivalent regardless of how the counts are stored.
-    /// Run valence perception first to include inferred hydrogens. Without it,
-    /// only declared hydrogens contribute. Source declarations remain unchanged.
-    pub fn atom_ranking(molecule: &Molecule) -> CanonicalAtomRanking {
-        crate::algorithms::canonical_atom_ranking(molecule)
+    /// CIP descriptors remain opt-in derived state. Assignment requires known
+    /// implicit hydrogen counts: run valence perception first, or it reports
+    /// [`CipAssignmentIssue::UnknownHydrogenCount`](crate::stereo::cip::CipAssignmentIssue::UnknownHydrogenCount)
+    /// instead of ranking with
+    /// none.
+    pub mod cip {
+        pub use crate::algorithms::{
+            assign_cip_descriptors, CipAssignment, CipAssignmentError, CipAssignmentIssue,
+            CipAssignmentOptions, CipAssignmentReport, CipRankingError, CipSkipped,
+            CipSkippedReason,
+        };
+        pub use crate::molecule::perception::CipPerception;
     }
-}
 
-/// Read-only rotatable-bond detection.
-///
-/// This facade identifies configurable represented single-bond axes in
-/// canonical chemistry. It does not mutate the molecule or install perception
-/// state.
-pub mod rotatable_bonds {
-    pub use crate::algorithms::{RotatableBondOptions, RotatableBondSet};
+    /// Read-only stereo inference from coordinates and its explicit
+    /// materialization into represented stereo.
+    pub mod coordinates {
+        pub use crate::algorithms::{
+            infer_coordinate_stereo, materialize_coordinate_stereo, CoordinateStereoError,
+            CoordinateStereoMaterializationReport, CoordinateStereoOptions, CoordinateStereoResult,
+        };
+    }
 
-    use crate::chemistry::PerceptionError;
-    use crate::core::Molecule;
-
-    /// Detects rotatable bonds using the supplied options.
-    ///
-    /// Resonance exclusions reuse installed RDKit-like valence and aromaticity
-    /// with the default Figueras ring model, or compute the default profile on
-    /// a temporary copy. Strict valence validation applies in either case.
-    /// Model-neutral, incomplete, or incompatible perception is not reused.
-    /// Valence and resource failures are returned without changing the source
-    /// graph or its perception. Disabling resonance exclusions requires only
-    /// graph ring membership and does not run chemical perception.
-    pub fn detect(
-        molecule: &Molecule,
-        options: RotatableBondOptions,
-    ) -> Result<RotatableBondSet, PerceptionError> {
-        crate::algorithms::detect_rotatable_bonds(molecule, options)
+    /// Stereogenic candidate detection and chemical cleanup of represented
+    /// stereo assertions.
+    pub mod cleanup {
+        pub use crate::algorithms::{
+            cleanup_stereo, detect_stereo_candidates, StereoCandidate, StereoCleanupReport,
+        };
     }
 }
 
@@ -1149,7 +943,7 @@ pub mod hydrogens {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub mod prelude {
-    pub use crate::core::{
+    pub use crate::molecule::{
         Atom, Bond, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeEditor,
     };
     pub use crate::structure::{Model, Positions};

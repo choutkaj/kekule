@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::geometry::{PeriodicCell, RigidTransform};
 use crate::properties::{OwnerProperties, StructureProperties, TopologyPropertiesMut};
-use crate::topology::transform::TopologySubsetError;
+use crate::topology::TopologySubsetError;
 use crate::topology::{AtomSelection, Topology, TopologyPerceptionError};
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
 

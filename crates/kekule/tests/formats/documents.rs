@@ -1,6 +1,9 @@
-use kekule::core::{Element, Molecule, Perception};
 use kekule::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
 use kekule::geometry::Point3;
+use kekule::{
+    molecule::{Element, Molecule},
+    perception::Perception,
+};
 use kekule::{molfile, sdf, smiles};
 
 const DISCONNECTED_MOLFILE: &str = "salt-like\nkekule\n\n  2  0  0  0  0  0            999 V2000\n    1.2500    2.5000    3.7500 Na  0  3  0  0  0  0  0  0  0  0  0  0\n   -4.0000    5.5000   -6.2500 Cl  0  5  0  0  0  0  0  0  0  0  0  0\nM  END\n";
@@ -9,9 +12,9 @@ const INTERLEAVED_COMPONENT_MOLFILE: &str = "interleaved\nkekule\n\n  4  1  0  0
 
 #[test]
 fn molfile_projections_retain_the_interpreted_model_and_reports() {
-    let interpretation = molfile::parse_str(INTERLEAVED_COMPONENT_MOLFILE)
+    let interpretation = molfile::parse_str(INTERLEAVED_COMPONENT_MOLFILE, Default::default())
         .unwrap()
-        .interpret()
+        .interpret(Default::default())
         .unwrap();
     let topology = interpretation.model().shared_topology();
     let positions = interpretation.model().positions().values().value().as_ptr();
@@ -46,12 +49,20 @@ fn molfile_projections_retain_the_interpreted_model_and_reports() {
 #[test]
 fn empty_molfile_fails_at_interpretation_before_any_projection() {
     let source = "empty\nkekule\n\n  0  0  0  0  0  0            999 V2000\nM  END\n";
-    let document = molfile::parse_str(source).unwrap();
-    assert!(document.interpret().is_err());
-    assert!(document.to_molecules().is_err());
-    assert!(document.to_model().is_err());
-    let sdf_document = sdf::parse_str(&format!("{source}$$$$\n")).unwrap();
-    let error = sdf_document.records()[0].interpret().unwrap_err();
+    let document = molfile::parse_str(source, Default::default()).unwrap();
+    assert!(document.interpret(Default::default()).is_err());
+    assert!(document
+        .interpret(Default::default())
+        .map(|interpretation| interpretation.into_molecules())
+        .is_err());
+    assert!(document
+        .interpret(Default::default())
+        .map(|interpretation| interpretation.into_model())
+        .is_err());
+    let sdf_document = sdf::parse_str(&format!("{source}$$$$\n"), Default::default()).unwrap();
+    let error = sdf_document.records()[0]
+        .interpret(Default::default())
+        .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Chemistry);
     assert_eq!(error.record(), 1);
 }
@@ -59,8 +70,11 @@ fn empty_molfile_fails_at_interpretation_before_any_projection() {
 #[test]
 fn sdf_model_can_install_perception_without_losing_source_order_or_geometry() {
     let text = format!("{INTERLEAVED_COMPONENT_MOLFILE}$$$$\n");
-    let document = sdf::parse_str(&text).unwrap();
-    let mut model = document.records()[0].to_model().unwrap();
+    let document = sdf::parse_str(&text, Default::default()).unwrap();
+    let mut model = document.records()[0]
+        .interpret(Default::default())
+        .unwrap()
+        .into_model();
     let original = model.clone();
     let positions_ptr = model.positions().values().value().as_ptr();
     assert!(model_molecules(&model)
@@ -121,8 +135,11 @@ fn assert_points_close(actual: &[Point3], expected: &[Point3]) {
 
 #[test]
 fn parsed_smiles_document_converts_components_in_source_order() {
-    let document = smiles::parse_str("[Na+].[Cl-]").expect("SMILES parses");
-    let molecules = document.to_molecules().expect("SMILES interprets");
+    let document = smiles::parse_str("[Na+].[Cl-]", Default::default()).expect("SMILES parses");
+    let molecules = document
+        .interpret(Default::default())
+        .expect("SMILES interprets")
+        .into_molecules();
 
     assert_eq!(molecules.len(), 2);
     assert_eq!(element(&molecules[0]).symbol(), "Na");
@@ -135,16 +152,19 @@ fn parsed_smiles_document_converts_components_in_source_order() {
 
 #[test]
 fn molfile_document_model_retains_published_component_geometry() {
-    let document = molfile::parse_str(DISCONNECTED_MOLFILE).expect("Molfile parses");
+    let document =
+        molfile::parse_str(DISCONNECTED_MOLFILE, Default::default()).expect("Molfile parses");
     assert_eq!(
         document,
-        molfile::parse_str_with_options(
+        molfile::parse_str(
             DISCONNECTED_MOLFILE,
             molfile::MolfileParseOptions::default(),
         )
         .expect("explicit default Molfile parse")
     );
-    let interpretation = document.interpret().expect("Molfile report interpretation");
+    let interpretation = document
+        .interpret(Default::default())
+        .expect("Molfile report interpretation");
     let expected = [
         Point3::new(0.125, 0.25, 0.375),
         Point3::new(-0.4, 0.55, -0.625),
@@ -176,9 +196,18 @@ fn molfile_document_model_retains_published_component_geometry() {
             expected,
         );
     }
-    let molecules = document.to_molecules().expect("Molfile interprets");
-    let topology = document.to_topology().expect("Molfile topology builds");
-    let model = document.to_model().expect("Molfile model builds");
+    let molecules = document
+        .interpret(Default::default())
+        .expect("Molfile interprets")
+        .into_molecules();
+    let topology = document
+        .interpret(Default::default())
+        .expect("Molfile topology builds")
+        .into_topology();
+    let model = document
+        .interpret(Default::default())
+        .expect("Molfile model builds")
+        .into_model();
 
     assert_eq!(molecules.len(), 2);
     assert_eq!(model.topology().instance_count(), 2);
@@ -219,9 +248,16 @@ fn molfile_document_model_retains_published_component_geometry() {
 
 #[test]
 fn molfile_model_keeps_interleaved_source_atom_order() {
-    let document = molfile::parse_str(INTERLEAVED_COMPONENT_MOLFILE).expect("Molfile parses");
-    let molecules = document.to_molecules().expect("Molfile interprets");
-    let model = document.to_model().expect("Molfile model builds");
+    let document = molfile::parse_str(INTERLEAVED_COMPONENT_MOLFILE, Default::default())
+        .expect("Molfile parses");
+    let molecules = document
+        .interpret(Default::default())
+        .expect("Molfile interprets")
+        .into_molecules();
+    let model = document
+        .interpret(Default::default())
+        .expect("Molfile model builds")
+        .into_model();
 
     assert_eq!(molecules.len(), 3);
     assert_eq!(model.topology().instance_count(), 3);
@@ -271,10 +307,10 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
     let input = format!(
         "{DISCONNECTED_MOLFILE}>  <ROLE>\nions\n\n$$$$\nsecond\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    9.0000    8.0000    7.0000 N   0  0  0  0  0  0  0  0  0  0  0  0\nM  END\n$$$$\n"
     );
-    let document = sdf::parse_str(&input).expect("SDF parses");
+    let document = sdf::parse_str(&input, Default::default()).expect("SDF parses");
     assert_eq!(
         document,
-        sdf::parse_str_with_options(&input, sdf::SdfParseOptions::default())
+        sdf::parse_str(&input, sdf::SdfParseOptions::default())
             .expect("explicit default SDF parse")
     );
     let records: &[sdf::SdfRecord] = document.records();
@@ -286,7 +322,9 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
     assert_eq!(records[1].location(), SourceLocation::at_line(12));
     assert_eq!(records[0].data_fields()[0].value(), "ions");
 
-    let first_interpretation = records[0].interpret().expect("rich record interpretation");
+    let first_interpretation = records[0]
+        .interpret(Default::default())
+        .expect("rich record interpretation");
     assert_eq!(first_interpretation.title(), "salt-like");
     assert_eq!(first_interpretation.data_fields()[0].value(), "ions");
     assert_eq!(first_interpretation.report().record(), 1);
@@ -316,10 +354,22 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
     assert_eq!(projected_topology.hierarchy().chains().count(), 1);
     assert_eq!(projected_topology.hierarchy().residues().count(), 2);
 
-    let first_molecules = records[0].to_molecules().expect("first record interprets");
-    let first_model = records[0].to_model().expect("first record model builds");
-    let second_molecules = records[1].to_molecules().expect("second record interprets");
-    let second_model = records[1].to_model().expect("second record model builds");
+    let first_molecules = records[0]
+        .interpret(Default::default())
+        .expect("first record interprets")
+        .into_molecules();
+    let first_model = records[0]
+        .interpret(Default::default())
+        .expect("first record model builds")
+        .into_model();
+    let second_molecules = records[1]
+        .interpret(Default::default())
+        .expect("second record interprets")
+        .into_molecules();
+    let second_model = records[1]
+        .interpret(Default::default())
+        .expect("second record model builds")
+        .into_model();
 
     assert_eq!(first_molecules.len(), 2);
     assert_eq!(first_model.topology().instance_count(), 2);
@@ -353,7 +403,7 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
     let interpretations = document
         .records()
         .iter()
-        .map(sdf::SdfRecord::interpret)
+        .map(|record| record.interpret(Default::default()))
         .collect::<Result<Vec<_>, _>>()
         .expect("every record interprets on its own");
     assert_eq!(interpretations[0].report().record(), 1);
@@ -371,9 +421,10 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
         },
     )
     .expect("single-component rich record writes");
-    let round_trip_document = sdf::parse_str(&written).expect("written record parses");
+    let round_trip_document =
+        sdf::parse_str(&written, Default::default()).expect("written record parses");
     let round_trip = round_trip_document.records()[0]
-        .interpret()
+        .interpret(Default::default())
         .expect("written record interprets");
     assert_eq!(round_trip.title(), "second");
     assert_points_close(
@@ -390,8 +441,9 @@ fn smiles_convenience_preserves_cardinality_and_matches_explicit_pipeline() {
     let salt = smiles::to_molecules("[Na+].[Cl-]").expect("salt interprets");
     assert_eq!(salt.len(), 2);
 
-    let document = smiles::parse_str("[Na+].[Cl-]").expect("salt parses");
-    let explicit = smiles::interpret(&document)
+    let document = smiles::parse_str("[Na+].[Cl-]", Default::default()).expect("salt parses");
+    let explicit = document
+        .interpret(Default::default())
         .expect("salt interprets explicitly")
         .into_molecules();
     assert_eq!(salt, explicit);
@@ -399,8 +451,10 @@ fn smiles_convenience_preserves_cardinality_and_matches_explicit_pipeline() {
 
 #[test]
 fn component_interpretation_types_are_nameable_through_format_facades() {
-    let smiles_document = smiles::parse_str("CC.O").expect("SMILES parses");
-    let smiles_interpretation = smiles_document.interpret().expect("SMILES interprets");
+    let smiles_document = smiles::parse_str("CC.O", Default::default()).expect("SMILES parses");
+    let smiles_interpretation = smiles_document
+        .interpret(Default::default())
+        .expect("SMILES interprets");
     let smiles_components: &[smiles::SmilesComponentInterpretation] =
         smiles_interpretation.components();
     assert_eq!(smiles_components.len(), 2);
@@ -410,8 +464,11 @@ fn component_interpretation_types_are_nameable_through_format_facades() {
     assert_eq!(count_error.actual(), 2);
 
     let molfile_source = "two components\nkekule\n\n  2  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.0000    0.0000    0.0000 O   0  0  0  0  0  0\nM  END\n";
-    let molfile_document = kekule::molfile::parse_str(molfile_source).expect("Molfile parses");
-    let molfile_interpretation = molfile_document.interpret().expect("Molfile interprets");
+    let molfile_document =
+        kekule::molfile::parse_str(molfile_source, Default::default()).expect("Molfile parses");
+    let molfile_interpretation = molfile_document
+        .interpret(Default::default())
+        .expect("Molfile interprets");
     let reports: &[kekule::molfile::MolfileInterpretationReport] = molfile_interpretation.reports();
     assert_eq!(reports.len(), 2);
     assert_eq!(molfile_interpretation.model().atom_count(), 2);
@@ -422,9 +479,10 @@ fn component_interpretation_types_are_nameable_through_format_facades() {
 fn sdf_interpretation_errors_carry_record_kind_and_input_location() {
     let valid = "valid\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\n$$$$\n";
     let unknown = "unknown element\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 Xx  0  0  0  0  0  0\nM  END\n$$$$\n";
-    let document = sdf::parse_str(&format!("{valid}{unknown}")).expect("SDF syntax parses");
+    let document = sdf::parse_str(&format!("{valid}{unknown}"), Default::default())
+        .expect("SDF syntax parses");
     let error = document.records()[1]
-        .interpret()
+        .interpret(Default::default())
         .expect_err("unsupported element fails Molfile interpretation");
 
     assert_eq!(error.record(), 2);
@@ -444,17 +502,19 @@ fn sdf_interpretation_errors_carry_record_kind_and_input_location() {
 
 #[test]
 fn smiles_default_options_and_topology_projection_are_consistent() {
-    let default_document = smiles::parse_str("CCO.[Na+]").expect("default parse");
-    let explicit_document =
-        smiles::parse_str_with_options("CCO.[Na+]", smiles::SmilesParseOptions::default())
-            .expect("explicit default parse");
+    let default_document =
+        smiles::parse_str("CCO.[Na+]", Default::default()).expect("default parse");
+    let explicit_document = smiles::parse_str("CCO.[Na+]", smiles::SmilesParseOptions::default())
+        .expect("explicit default parse");
     assert_eq!(default_document, explicit_document);
 
-    let interpretation = default_document.interpret().expect("document interprets");
+    let interpretation = default_document
+        .interpret(Default::default())
+        .expect("document interprets");
     assert_eq!(interpretation.molecules().count(), 2);
     assert!(interpretation
         .molecules()
-        .all(|molecule| molecule.perception() == &kekule::core::Perception::default()));
+        .all(|molecule| molecule.perception() == &kekule::perception::Perception::default()));
 
     let topology = interpretation.into_topology().expect("topology builds");
     assert_eq!(topology.instance_count(), 2);
@@ -483,9 +543,15 @@ fn many_smiles_components_preserve_source_mappings_and_stereo() {
     // Branches interleave disconnected atoms and ring closures reconnect
     // source fragments. Components cannot be obtained by merely splitting '.'.
     let block = "C1(O.F)CC1.N[C@@H](C)C(=O)O.F/C=C/Cl.c1ccncc1";
-    let expected = smiles::parse_str(block).unwrap().interpret().unwrap();
+    let expected = smiles::parse_str(block, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
     let source = vec![block; 256].join(".");
-    let actual = smiles::parse_str(&source).unwrap().interpret().unwrap();
+    let actual = smiles::parse_str(&source, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
     assert_eq!(actual.components().len(), 256 * expected.components().len());
     for (index, component) in actual.components().iter().enumerate() {
         let baseline = &expected.components()[index % expected.components().len()];
@@ -636,16 +702,18 @@ fn molfile_unsupported_content_is_rejected_by_default_and_reported_on_request() 
             content.clone(),
             SourceLocation::at_line(line),
         )];
-        let document = molfile::parse_str(&input).expect("unsupported content parses");
+        let document =
+            molfile::parse_str(&input, Default::default()).expect("unsupported content parses");
         assert_eq!(document.unsupported(), expected, "{content}");
 
-        let error = molfile::interpret(&document).expect_err("rejected by default");
+        let error = document
+            .interpret(Default::default())
+            .expect_err("rejected by default");
         assert_eq!(error.kind(), DiagnosticKind::Unsupported, "{content}");
         assert_eq!(error.location(), Some(SourceLocation::at_line(line)));
         assert_eq!(error.message(), format!("unsupported {content}"));
 
-        let interpretation =
-            molfile::interpret_with_options(&document, report).expect("reported on request");
+        let interpretation = document.interpret(report).expect("reported on request");
         assert_eq!(interpretation.omitted(), expected, "{content}");
         assert_eq!(interpretation.model().atom_count(), 2, "{content}");
         assert_eq!(interpretation.topology().instance_count(), 1, "{content}");
@@ -710,6 +778,7 @@ fn molfile_documents_expose_decoded_atoms_bonds_and_stereo_groups() {
     // charge code 3 is +1 and 4 a doublet radical.
     let v2000 = molfile::parse_str(
         "typed\nkekule\n\n  3  2  0  0  1  0            999 V2000\n    0.0000    0.0000    0.0000 N   0  3  0  0  0  0  0  0  0  0  0  0\n    1.5000    0.0000    0.0000 C   0  0  0  0  0  4  0  0  0  7  0  0\n    2.0000    1.0000    0.0000 O   0  4  0  0  0  0  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  2  3  2  0  0  0  0\nM  ISO  1   1  15\nM  END\n",
+        Default::default(),
     )
     .unwrap();
     assert_eq!(v2000.version(), molfile::MolfileVersion::V2000);
@@ -764,6 +833,7 @@ fn molfile_documents_expose_decoded_atoms_bonds_and_stereo_groups() {
     // A continued logical line is located at its first physical line.
     let v3000 = molfile::parse_str(
         "typed\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 3 2 0 0 1\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0 CFG=2 MASS=13\nM  V30 2 N 1.5 0 0 3 CHG=1 -\nM  V30 VAL=4\nM  V30 3 O -1 0.5 0 0 RAD=2\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2 CFG=3\nM  V30 2 1 1 3\nM  V30 END BOND\nM  V30 BEGIN COLLECTION\nM  V30 MDLV30/STERAC2 ATOMS=(1 1)\nM  V30 END COLLECTION\nM  V30 END CTAB\nM  END\n",
+        Default::default(),
     )
     .unwrap();
     assert_eq!(v3000.version(), molfile::MolfileVersion::V3000);
@@ -852,7 +922,7 @@ fn sdf_record_stream_isolates_malformed_records_and_resumes() {
 
     // Each record occupies seven lines.
     assert_eq!(
-        stream(sdf::records(input.as_slice())),
+        stream(sdf::records(input.as_slice(), Default::default())),
         [
             Ok((1, 1, "first".to_owned())),
             Err((2, DiagnosticKind::Syntax, 12)),
@@ -874,7 +944,7 @@ fn sdf_record_stream_isolates_malformed_records_and_resumes() {
         ..sdf::SdfParseOptions::default()
     };
     assert_eq!(
-        stream(sdf::records_with_options(input.as_bytes(), options)),
+        stream(sdf::records(input.as_bytes(), options)),
         [
             Ok((1, 1, "first".to_owned())),
             Err((2, DiagnosticKind::Limit, 8)),
@@ -888,7 +958,7 @@ fn sdf_record_stream_isolates_malformed_records_and_resumes() {
         ..sdf::SdfParseOptions::default()
     };
     assert_eq!(
-        stream(sdf::records_with_options(input.as_bytes(), options)),
+        stream(sdf::records(input.as_bytes(), options)),
         [
             Ok((1, 1, "first".to_owned())),
             Err((2, DiagnosticKind::Limit, 8)),
@@ -896,7 +966,11 @@ fn sdf_record_stream_isolates_malformed_records_and_resumes() {
     );
 
     // The strict document parser fails on the first malformed record.
-    let error = sdf::parse_str(&format!("{}{malformed}", carbon_record("first"))).unwrap_err();
+    let error = sdf::parse_str(
+        &format!("{}{malformed}", carbon_record("first")),
+        Default::default(),
+    )
+    .unwrap_err();
     assert_eq!(
         (error.record(), error.kind(), error.location()),
         (2, DiagnosticKind::Syntax, SourceLocation::at_line(12))
@@ -908,7 +982,7 @@ fn sdf_and_molfile_locations_count_lines_of_the_original_input() {
     let unknown = "unknown\nkekule\n\n  2  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.0000    0.0000    0.0000 Xx  0  0  0  0  0  0\n  1  2  1  0  0  0  0\nM  END\n>  <NAME>\nvalue\n\n$$$$\n";
     let lf = format!("{}{unknown}", carbon_record("first"));
     for input in [lf.clone(), lf.replace('\n', "\r\n"), lf.replace('\n', "\r")] {
-        let document = sdf::parse_str(&input).unwrap();
+        let document = sdf::parse_str(&input, Default::default()).unwrap();
         let record = &document.records()[1];
         assert_eq!(record.location(), SourceLocation::at_line(8));
         assert_eq!(
@@ -923,17 +997,20 @@ fn sdf_and_molfile_locations_count_lines_of_the_original_input() {
             record.data_fields()[0].location(),
             Some(SourceLocation::at_line(16))
         );
-        let error = record.interpret().unwrap_err();
+        let error = record.interpret(Default::default()).unwrap_err();
         assert_eq!(error.location(), Some(SourceLocation::at_line(13)));
 
-        let streamed = sdf::records(input.as_bytes())
+        let streamed = sdf::records(input.as_bytes(), Default::default())
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(streamed, document.records());
     }
 
     let molfile = "lone CR\rkekule\r\r  1  0  0  0  0  0            999 V2000\r    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\rM  END\r";
-    let interpretation = molfile::parse_str(molfile).unwrap().interpret().unwrap();
+    let interpretation = molfile::parse_str(molfile, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
     assert_eq!(
         interpretation.reports()[0].atom_mappings()[0].location(),
         SourceLocation::at_line(5)
@@ -941,34 +1018,51 @@ fn sdf_and_molfile_locations_count_lines_of_the_original_input() {
 }
 
 #[test]
-fn molfile_and_sdf_readers_match_string_parsing_and_enforce_limits() {
+fn format_readers_match_string_parsing_and_enforce_limits() {
+    let smiles_text = "CC(=O)O acetic acid";
+    assert_eq!(
+        smiles::parse_reader(smiles_text.as_bytes(), Default::default()).unwrap(),
+        smiles::parse_str(smiles_text, Default::default()).unwrap()
+    );
+    let limited = smiles::SmilesParseOptions {
+        max_input_bytes: smiles_text.len() - 1,
+        ..smiles::SmilesParseOptions::default()
+    };
+    let error = smiles::parse_reader(smiles_text.as_bytes(), limited).unwrap_err();
+    assert_eq!(
+        (error.kind(), error.location()),
+        (DiagnosticKind::Limit, SourceLocation::at_column(1, 1))
+    );
+    let error = smiles::parse_reader(b"\xff\xfe".as_slice(), Default::default()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Io);
+
     let molfile = "reader\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\n";
     assert_eq!(
-        molfile::parse_reader(molfile.as_bytes()).unwrap(),
-        molfile::parse_str(molfile).unwrap()
+        molfile::parse_reader(molfile.as_bytes(), Default::default()).unwrap(),
+        molfile::parse_str(molfile, Default::default()).unwrap()
     );
     let limited = molfile::MolfileParseOptions {
         max_input_bytes: molfile.len() - 1,
         ..molfile::MolfileParseOptions::default()
     };
-    let error = molfile::parse_reader_with_options(molfile.as_bytes(), limited).unwrap_err();
+    let error = molfile::parse_reader(molfile.as_bytes(), limited).unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
         (DiagnosticKind::Limit, SourceLocation::at_line(1))
     );
-    let error = molfile::parse_reader(b"\xff\xfe".as_slice()).unwrap_err();
+    let error = molfile::parse_reader(b"\xff\xfe".as_slice(), Default::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Io);
 
     let sdf_text = format!("{molfile}$$$$\n");
     assert_eq!(
-        sdf::parse_reader(sdf_text.as_bytes()).unwrap(),
-        sdf::parse_str(&sdf_text).unwrap()
+        sdf::parse_reader(sdf_text.as_bytes(), Default::default()).unwrap(),
+        sdf::parse_str(&sdf_text, Default::default()).unwrap()
     );
     let limited = sdf::SdfParseOptions {
         max_input_bytes: sdf_text.len() - 1,
         ..sdf::SdfParseOptions::default()
     };
-    let error = sdf::parse_reader_with_options(sdf_text.as_bytes(), limited).unwrap_err();
+    let error = sdf::parse_reader(sdf_text.as_bytes(), limited).unwrap_err();
     assert_eq!(
         (error.record(), error.kind(), error.location()),
         (1, DiagnosticKind::Limit, SourceLocation::at_line(1))

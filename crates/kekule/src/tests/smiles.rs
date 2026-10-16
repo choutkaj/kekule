@@ -1,7 +1,7 @@
 use super::*;
 
 fn assigned_descriptors(molecule: &mut Molecule) -> Vec<StereoDescriptor> {
-    stereo_api::assign_cip_descriptors(molecule)
+    stereo_api::cip::assign_cip_descriptors(molecule, Default::default())
         .unwrap()
         .assigned
         .into_iter()
@@ -82,7 +82,7 @@ fn smiles_ring_direction_is_relative_to_each_written_endpoint() {
         perceive(&mut restored).unwrap();
         assert_eq!(assigned_descriptors(&mut restored), descriptors, "{output}");
     }
-    assert!(smiles_api::parse_str("C/1=C/CCCCCC/1").is_err());
+    assert!(smiles_api::parse_str("C/1=C/CCCCCC/1", Default::default()).is_err());
 }
 
 #[test]
@@ -143,14 +143,16 @@ fn phosphine_smiles_preserve_bracket_hydrogen_and_lone_pair() {
         assert!(stereo.carriers.contains(&StereoCarrier::ImplicitHydrogen));
         assert!(stereo.carriers.contains(&StereoCarrier::ImplicitLonePair));
         perceive(&mut molecule).unwrap();
-        let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+        let assigned =
+            stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
         assert_eq!(assigned.assigned[0].descriptor, expected, "{source}");
 
         let written = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::isomeric())
             .expect("phosphine writes");
         let mut reparsed = read_smiles(&written).expect("phosphine output interprets");
         perceive(&mut reparsed).unwrap();
-        let assigned = stereo_api::assign_cip_descriptors(&mut reparsed).unwrap();
+        let assigned =
+            stereo_api::cip::assign_cip_descriptors(&mut reparsed, Default::default()).unwrap();
         assert_eq!(assigned.assigned[0].descriptor, expected, "{written}");
     }
 }
@@ -183,7 +185,7 @@ fn aromatic_bond_count(molecule: &Molecule) -> usize {
 
 #[test]
 fn smiles_parse_options_bound_input_atoms_and_bonds() {
-    let input_error = smiles_api::parse_str_with_options(
+    let input_error = smiles_api::parse_str(
         "CC",
         SmilesParseOptions {
             max_input_bytes: 1,
@@ -193,7 +195,7 @@ fn smiles_parse_options_bound_input_atoms_and_bonds() {
     .expect_err("SMILES input byte limit should apply");
     assert!(input_error.message().contains("input"));
 
-    let atom_error = smiles_api::parse_str_with_options(
+    let atom_error = smiles_api::parse_str(
         "CC",
         SmilesParseOptions {
             max_atoms: 1,
@@ -203,7 +205,7 @@ fn smiles_parse_options_bound_input_atoms_and_bonds() {
     .expect_err("SMILES atom limit should apply");
     assert!(atom_error.message().contains("atom count"));
 
-    let bond_error = smiles_api::parse_str_with_options(
+    let bond_error = smiles_api::parse_str(
         "CC",
         SmilesParseOptions {
             max_bonds: 0,
@@ -217,7 +219,7 @@ fn smiles_parse_options_bound_input_atoms_and_bonds() {
 #[test]
 fn smiles_record_preserves_name_extension_and_original_byte_spans() {
     let source = " \t[Na+].[Cl-]\t|$ion&#124;label;$,unknown:0|  sůl | sample\t ";
-    let document = smiles_api::parse_str(source).unwrap();
+    let document = smiles_api::parse_str(source, Default::default()).unwrap();
     assert_eq!(document.source(), source);
     assert_eq!(document.base_smiles(), "[Na+].[Cl-]");
     assert_eq!(document.base_smiles_span(), 2..13);
@@ -239,15 +241,18 @@ fn smiles_record_preserves_name_extension_and_original_byte_spans() {
             .collect::<Vec<_>>(),
         ["[Na+]", ".", "[Cl-]"]
     );
-    let error = document.interpret().unwrap_err();
+    let error = document.interpret(Default::default()).unwrap_err();
     assert_eq!(
         error.offset(),
         document.cx_extension_span().unwrap().start + 1
     );
     assert!(error.message().contains("CXSMILES"));
-    assert!(document.to_molecules().is_err());
+    assert!(document
+        .interpret(Default::default())
+        .map(|interpretation| interpretation.into_molecules())
+        .is_err());
 
-    let projected = smiles_api::interpret_base(&document).unwrap();
+    let projected = document.interpret_base().unwrap();
     assert_eq!(projected, document.interpret_base().unwrap());
     assert_eq!(projected.name(), document.name());
     assert_eq!(projected.cx_extension(), document.cx_extension());
@@ -273,13 +278,16 @@ fn smiles_record_metadata_does_not_change_source_atom_order_or_connectivity() {
         ("C1.C1", vec![vec![0, 1]]),
     ] {
         let source = format!("\t{base}  molécula\twith a name ");
-        let document = smiles_api::parse_str(&source).unwrap();
-        let interpreted = document.interpret().unwrap();
+        let document = smiles_api::parse_str(&source, Default::default()).unwrap();
+        let interpreted = document.interpret(Default::default()).unwrap();
         assert_eq!(interpreted, document.interpret_base().unwrap());
         assert_eq!(interpreted.name(), Some("molécula\twith a name"));
         assert_eq!(interpreted.cx_extension(), None);
         assert_eq!(interpreted.omitted_cx_extension_span(), None);
-        let bare = smiles_api::parse_str(base).unwrap().interpret().unwrap();
+        let bare = smiles_api::parse_str(base, Default::default())
+            .unwrap()
+            .interpret(Default::default())
+            .unwrap();
         for ((component, expected_indices), bare_component) in interpreted
             .components()
             .iter()
@@ -310,8 +318,8 @@ fn smiles_record_metadata_does_not_change_source_atom_order_or_connectivity() {
 fn smiles_full_interpretation_never_silently_drops_unsupported_cx_extensions() {
     for extension in ["|a:0|", "|(0,0,0)|", "|futureField:0|", "|r:0|"] {
         let source = format!("C {extension} name");
-        let document = smiles_api::parse_str(&source).unwrap();
-        assert!(document.interpret().is_err(), "{source}");
+        let document = smiles_api::parse_str(&source, Default::default()).unwrap();
+        assert!(document.interpret(Default::default()).is_err(), "{source}");
         assert!(smiles_api::to_molecules(&source).is_err(), "{source}");
         let projection = document.interpret_base().unwrap();
         assert_eq!(projection.cx_extension(), Some(extension));
@@ -321,9 +329,12 @@ fn smiles_full_interpretation_never_silently_drops_unsupported_cx_extensions() {
         );
     }
     for source in ["C ||", "C | \t | name"] {
-        let document = smiles_api::parse_str(source).unwrap();
+        let document = smiles_api::parse_str(source, Default::default()).unwrap();
         assert_eq!(
-            document.interpret().unwrap().omitted_cx_extension_span(),
+            document
+                .interpret(Default::default())
+                .unwrap()
+                .omitted_cx_extension_span(),
             None
         );
         assert_eq!(
@@ -349,7 +360,10 @@ fn cxsmiles_radicals_preserve_electron_occupancy_and_explicit_spin() {
     ] {
         for base in ["C".to_owned(), format!("[CH{}]", 4 - electrons)] {
             let source = format!("{base} |^{code}:0| radical");
-            let interpretation = smiles_api::parse_str(&source).unwrap().interpret().unwrap();
+            let interpretation = smiles_api::parse_str(&source, Default::default())
+                .unwrap()
+                .interpret(Default::default())
+                .unwrap();
             assert_eq!(interpretation.omitted_cx_extension_span(), None);
             let mut molecule = interpretation.into_molecule().unwrap();
             let atom = molecule.atom(AtomId::new(0)).unwrap();
@@ -371,7 +385,10 @@ fn cxsmiles_radicals_preserve_electron_occupancy_and_explicit_spin() {
         }
     }
     let source = "C(.O)N |^1:2,^2:1|";
-    let interpreted = smiles_api::parse_str(source).unwrap().interpret().unwrap();
+    let interpreted = smiles_api::parse_str(source, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
     assert_eq!(
         interpreted.components()[0]
             .molecule()
@@ -396,7 +413,7 @@ fn cxsmiles_radicals_preserve_electron_occupancy_and_explicit_spin() {
             .radical,
         None
     );
-    let document = smiles_api::parse_str("C |^1:0|").unwrap();
+    let document = smiles_api::parse_str("C |^1:0|", Default::default()).unwrap();
     assert_eq!(
         document
             .interpret_base()
@@ -519,7 +536,10 @@ fn cxsmiles_enhanced_groups_preserve_members_and_legacy_relative_configuration()
 #[test]
 fn cxsmiles_stereo_references_use_source_indices_and_respect_component_ownership() {
     let source = "F(.O)[C@H:17](Cl)Br |o1:2|";
-    let interpreted = smiles_api::parse_str(source).unwrap().interpret().unwrap();
+    let interpreted = smiles_api::parse_str(source, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
     let molecule = interpreted.components()[0].molecule();
     let group = molecule.stereo_groups().next().unwrap().1;
     let StereoElementKind::Tetrahedral(stereo) =
@@ -538,23 +558,26 @@ fn cxsmiles_stereo_references_use_source_indices_and_respect_component_ownership
     );
 
     let base = "F[C@H](Cl)Br.F[C@H](Cl)I";
-    let document = smiles_api::parse_str(&format!("{base} |a:1,5|")).unwrap();
-    let absolute = document.interpret().unwrap();
+    let document = smiles_api::parse_str(&format!("{base} |a:1,5|"), Default::default()).unwrap();
+    let absolute = document.interpret(Default::default()).unwrap();
     assert!(absolute
         .molecules()
         .all(|molecule| molecule.stereo_groups().count() == 1));
     for field in ["&1:1,5", "o1:1,5", "r"] {
-        let document = smiles_api::parse_str(&format!("{base} |{field}|")).unwrap();
+        let document =
+            smiles_api::parse_str(&format!("{base} |{field}|"), Default::default()).unwrap();
         assert!(document
-            .interpret()
+            .interpret(Default::default())
             .unwrap_err()
             .message()
             .contains("disconnected"));
     }
-    assert!(smiles_api::parse_str(&format!("{base} |&1:1,o1:5|"))
-        .unwrap()
-        .interpret()
-        .is_ok());
+    assert!(
+        smiles_api::parse_str(&format!("{base} |&1:1,o1:5|"), Default::default())
+            .unwrap()
+            .interpret(Default::default())
+            .is_ok()
+    );
 }
 
 #[test]
@@ -586,7 +609,7 @@ fn cxsmiles_rejects_ambiguous_invalid_and_unsupported_chemical_fields() {
         ("(0,0,0)", Interpret, Unsupported, 14),
     ] {
         let source = format!("F[C@H](Cl)Br |{fields}|");
-        let document = match smiles_api::parse_str(&source) {
+        let document = match smiles_api::parse_str(&source, Default::default()) {
             Err(error) => {
                 assert_eq!(
                     (Parse, error.kind(), error.offset()),
@@ -597,7 +620,7 @@ fn cxsmiles_rejects_ambiguous_invalid_and_unsupported_chemical_fields() {
             }
             Ok(document) => document,
         };
-        let error = document.interpret().unwrap_err();
+        let error = document.interpret(Default::default()).unwrap_err();
         assert_eq!(
             (Interpret, error.kind(), error.offset()),
             (stage, kind, offset),
@@ -614,7 +637,7 @@ fn cxsmiles_rejects_ambiguous_invalid_and_unsupported_chemical_fields() {
 #[test]
 fn unsupported_cxsmiles_fields_are_typed_and_reported_on_request() {
     let source = "C/C=C/[C@H](F)Cl |c:1,t:3,&1:3,$_AV:;;x$| name";
-    let document = smiles_api::parse_str(source).unwrap();
+    let document = smiles_api::parse_str(source, Default::default()).unwrap();
     let fields = document
         .cx_fields()
         .iter()
@@ -639,7 +662,7 @@ fn unsupported_cxsmiles_fields_are_typed_and_reported_on_request() {
         ]
     );
 
-    let error = document.interpret().unwrap_err();
+    let error = document.interpret(Default::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert_eq!(error.location(), SourceLocation::at_column(1, 19));
     assert_eq!(error.message(), "unsupported CXSMILES field `c:1`");
@@ -647,7 +670,7 @@ fn unsupported_cxsmiles_fields_are_typed_and_reported_on_request() {
     let report = SmilesInterpretOptions {
         unsupported: UnsupportedContent::Report,
     };
-    let interpretation = smiles_api::interpret_with_options(&document, report).unwrap();
+    let interpretation = document.interpret(report).unwrap();
     let omitted = interpretation
         .omitted_cx_fields()
         .iter()
@@ -668,7 +691,7 @@ fn unsupported_cxsmiles_fields_are_typed_and_reported_on_request() {
 #[test]
 fn smiles_record_stream_locates_records_and_isolates_malformed_lines() {
     let input = b"CCO ethanol\r\n\r\nC1CC bad ring\nc1ccccc1 benzene\rO\xff water\n[Na+].[Cl-] |^1:9| salt\n";
-    let records = smiles_api::records(input.as_slice())
+    let records = smiles_api::records(input.as_slice(), Default::default())
         .map(|record| match record {
             Ok(document) => Ok((
                 document.location().line(),
@@ -689,11 +712,11 @@ fn smiles_record_stream_locates_records_and_isolates_malformed_lines() {
     );
 
     // Interpretation failures are located at the record's input line.
-    let document = smiles_api::records(input.as_slice())
+    let document = smiles_api::records(input.as_slice(), Default::default())
         .last()
         .unwrap()
         .unwrap();
-    let error = document.interpret().unwrap_err();
+    let error = document.interpret(Default::default()).unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
         (
@@ -706,7 +729,7 @@ fn smiles_record_stream_locates_records_and_isolates_malformed_lines() {
         max_input_bytes: 8,
         ..SmilesParseOptions::default()
     };
-    let limited = smiles_api::records_with_options(b"CCO\nCCCCCCCCCCCC\nO\n".as_slice(), options)
+    let limited = smiles_api::records(b"CCO\nCCCCCCCCCCCC\nO\n".as_slice(), options)
         .map(|record| record.map(|document| document.base_smiles().to_owned()))
         .map(|record| record.map_err(|error| (error.kind(), error.location())))
         .collect::<Vec<_>>();
@@ -731,11 +754,11 @@ fn smiles_record_rejects_malformed_framing_and_multiple_records() {
         ("C |$line\nbreak$|", 8),
         ("C name\rnext", 6),
     ] {
-        let error = smiles_api::parse_str(source).unwrap_err();
+        let error = smiles_api::parse_str(source, Default::default()).unwrap_err();
         assert_eq!(error.offset(), offset, "{source:?}: {error}");
     }
-    assert!(smiles_api::parse_str("C|r|").is_err());
-    let named = smiles_api::parse_str("C a name |with literal bars|").unwrap();
+    assert!(smiles_api::parse_str("C|r|", Default::default()).is_err());
+    let named = smiles_api::parse_str("C a name |with literal bars|", Default::default()).unwrap();
     assert_eq!(named.cx_extension(), None);
     assert_eq!(named.name(), Some("a name |with literal bars|"));
 }
@@ -748,7 +771,7 @@ fn smiles_record_limits_cover_metadata_and_syntax_errors_point_into_base() {
         max_atoms: 2,
         max_bonds: 1,
     };
-    assert!(smiles_api::parse_str_with_options(source, options).is_ok());
+    assert!(smiles_api::parse_str(source, options).is_ok());
     for (options, message) in [
         (
             SmilesParseOptions {
@@ -772,30 +795,44 @@ fn smiles_record_limits_cover_metadata_and_syntax_errors_point_into_base() {
             "bond count",
         ),
     ] {
-        assert!(smiles_api::parse_str_with_options(source, options)
+        assert!(smiles_api::parse_str(source, options)
             .unwrap_err()
             .message()
             .contains(message));
     }
-    assert_eq!(smiles_api::parse_str("\tC( title").unwrap_err().offset(), 3);
     assert_eq!(
-        smiles_api::parse_str("\t[CH3 title").unwrap_err().offset(),
+        smiles_api::parse_str("\tC( title", Default::default())
+            .unwrap_err()
+            .offset(),
+        3
+    );
+    assert_eq!(
+        smiles_api::parse_str("\t[CH3 title", Default::default())
+            .unwrap_err()
+            .offset(),
         1
     );
-    assert_eq!(smiles_api::parse_str("\tC. title").unwrap_err().offset(), 3);
+    assert_eq!(
+        smiles_api::parse_str("\tC. title", Default::default())
+            .unwrap_err()
+            .offset(),
+        3
+    );
 }
 
 #[test]
 fn smiles_document_preserves_spans_and_dot_boundaries_before_interpretation() {
     let input = "[Na+].[Cl-]";
-    let document = smiles_api::parse_str(input).expect("document parses");
+    let document = smiles_api::parse_str(input, Default::default()).expect("document parses");
     assert_eq!(document.source(), input);
     assert_eq!(document.fragment_token_ranges().len(), 2);
     assert!(document.tokens().iter().all(|token| {
         let span = token.span();
         span.start <= span.end && span.end <= input.len()
     }));
-    let interpretation = smiles_api::interpret(&document).expect("document interprets");
+    let interpretation = document
+        .interpret(Default::default())
+        .expect("document interprets");
     let error = interpretation
         .molecule()
         .expect_err("multi-component SMILES is not one molecule");
@@ -1007,7 +1044,7 @@ fn malformed_smiles_grammar_is_rejected_by_the_document_parser() {
         ("[si]1ccccc1", DiagnosticKind::Unsupported, 2),
         ("Cé", DiagnosticKind::Syntax, 1),
     ] {
-        let parsed = std::panic::catch_unwind(|| smiles_api::parse_str(input))
+        let parsed = std::panic::catch_unwind(|| smiles_api::parse_str(input, Default::default()))
             .unwrap_or_else(|_| panic!("`{input}` panicked"));
         let error = parsed.expect_err("malformed SMILES must fail document parsing");
         assert_eq!(
@@ -1018,7 +1055,9 @@ fn malformed_smiles_grammar_is_rejected_by_the_document_parser() {
         assert_eq!(error.location(), SourceLocation::at_column(1, offset + 1));
     }
     assert_eq!(
-        smiles_api::parse_str("C(").unwrap_err().to_string(),
+        smiles_api::parse_str("C(", Default::default())
+            .unwrap_err()
+            .to_string(),
         "SMILES parse error at line 1, column 3: unclosed branch"
     );
 }
@@ -1269,9 +1308,9 @@ fn smiles_interpretation_rejects_inconsistent_source_aromaticity() {
     ];
 
     for (source, offset, message) in cases {
-        let document = smiles_api::parse_str(source)
+        let document = smiles_api::parse_str(source, Default::default())
             .unwrap_or_else(|_| panic!("source syntax should parse: {source}"));
-        let error = match smiles_api::interpret(&document) {
+        let error = match document.interpret(Default::default()) {
             Ok(_) => panic!("inconsistent source aromaticity should fail: {source}"),
             Err(error) => error,
         };
@@ -1344,7 +1383,7 @@ fn canonical_smiles_brackets_atoms_whose_hydrogens_are_not_inferred() {
 
 #[test]
 fn smiles_writer_rejects_lossy_bonds_and_stereo() {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let a = molecule
         .add_atom(carbon())
         .expect("atom identifier capacity");
@@ -1472,7 +1511,7 @@ fn all_smiles_writers_require_perception_for_bracketed_inferred_hydrogens() {
     // The isotope forces a bracket, which must spell out the inferred count.
     let mut atom = carbon();
     atom.isotope = Some(13);
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     graph.add_atom(atom).expect("carbon");
     let molecule = graph.finish().expect("single atom molecule");
 
@@ -1587,8 +1626,10 @@ fn bracket_atoms_interpret_radical_electrons_without_asserting_spin() {
         );
     }
 
-    let document = smiles_api::parse_str("[Xx]").expect("element spelling is valid syntax");
-    assert!(smiles_api::interpret(&document)
+    let document = smiles_api::parse_str("[Xx]", Default::default())
+        .expect("element spelling is valid syntax");
+    assert!(document
+        .interpret(Default::default())
         .expect_err("unsupported core element belongs to interpretation")
         .message()
         .contains("unsupported element"));
@@ -1879,16 +1920,16 @@ fn isomeric_smiles_preserves_pubchem_fused_quaternary_center() {
     let mut molecule = read_smiles("C[C@]12CCCC(C1CCC3=CC(=C(C=C23)C(=O)OC)C(=O)OC)(C)C")
         .expect("fused quaternary center should parse");
     perceive(&mut molecule).expect("fused quaternary center should perceive");
-    let report =
-        stereo_api::assign_cip_descriptors(&mut molecule).expect("CIP assignment should succeed");
+    let report = stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
+        .expect("CIP assignment should succeed");
     assert_eq!(report.assigned[0].descriptor, StereoDescriptor::S);
 
     let written = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::isomeric())
         .expect("fused quaternary center should write");
     let mut reparsed = read_smiles(&written).expect("isomeric fused center output should parse");
     perceive(&mut reparsed).expect("isomeric fused center output should perceive");
-    let report =
-        stereo_api::assign_cip_descriptors(&mut reparsed).expect("CIP reassignment should succeed");
+    let report = stereo_api::cip::assign_cip_descriptors(&mut reparsed, Default::default())
+        .expect("CIP reassignment should succeed");
 
     assert_eq!(report.assigned[0].descriptor, StereoDescriptor::S);
 }
@@ -1909,7 +1950,7 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
             DoubleBondOrientation::Opposite,
         ),
     ] {
-        let mut molecule = crate::core::MoleculeEditor::new();
+        let mut molecule = crate::molecule::MoleculeEditor::new();
         let left = molecule
             .add_atom(carbon())
             .expect("atom identifier capacity");
@@ -1972,7 +2013,7 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
 
 #[test]
 fn smiles_writer_reuses_ring_labels_after_closure() {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let atoms = (0..16)
         .map(|_| {
             molecule
@@ -2063,7 +2104,7 @@ fn smiles_canonicalization_retains_supplied_nonstereogenic_assertions() {
 #[test]
 fn smiles_percent_ring_tokens_consume_exactly_two_digits() {
     let source = "C%123CCCCC%12CCC3";
-    let document = smiles_api::parse_str(source).unwrap();
+    let document = smiles_api::parse_str(source, Default::default()).unwrap();
     let rings = document
         .tokens()
         .iter()
@@ -2071,7 +2112,12 @@ fn smiles_percent_ring_tokens_consume_exactly_two_digits() {
         .map(|token| &source[token.span()])
         .collect::<Vec<_>>();
     assert_eq!(rings, ["%12", "3", "%12", "3"]);
-    let molecule = document.to_molecules().unwrap().pop().unwrap();
+    let molecule = document
+        .interpret(Default::default())
+        .unwrap()
+        .into_molecules()
+        .pop()
+        .unwrap();
     assert_eq!(molecule.atom_count(), 9);
     assert_eq!(molecule.bond_count(), 10);
 }

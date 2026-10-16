@@ -24,18 +24,19 @@ fn nitrogen_stereo_requires_constrained_unconjugated_pyramidal_geometry() {
         for expanded in [false, true] {
             if expanded {
                 molecule.perceive().unwrap();
-                molecule.add_hydrogens().unwrap();
+                molecule.add_hydrogens(Default::default()).unwrap();
             }
             let before = molecule.clone();
-            let count = stereo_api::detect_stereo_candidates(&molecule)
-                .unwrap()
-                .iter()
-                .filter(|candidate| {
-                    matches!(candidate,
+            let count =
+                stereo_api::cleanup::detect_stereo_candidates(&molecule, Default::default())
+                    .unwrap()
+                    .iter()
+                    .filter(|candidate| {
+                        matches!(candidate,
                     StereoCandidate::Tetrahedral { center, .. }
                     if molecule.atom(*center).unwrap().element.symbol() == "N")
-                })
-                .count();
+                    })
+                    .count();
             assert_eq!(count, expected, "{source}, expanded={expanded}");
             assert_eq!(molecule, before);
         }
@@ -51,8 +52,8 @@ fn nitrogen_cleanup_distinguishes_inverting_centers_from_unclassified_radicals()
         ("C[N@+]1CC1C", 0, 1),
     ] {
         let molecule = read_smiles(source).unwrap();
-        let mut editor = molecule.edit();
-        let report = stereo_api::cleanup_stereo(&mut editor, Default::default()).unwrap();
+        let mut editor = molecule.to_editor();
+        let report = stereo_api::cleanup::cleanup_stereo(&mut editor, Default::default()).unwrap();
         assert_eq!(report.removed_elements.len(), removed, "{source}");
         assert_eq!(report.unclassified_elements.len(), unclassified, "{source}");
         assert_eq!(molecule.stereo_elements().count(), 1);
@@ -87,10 +88,12 @@ fn stereo_symmetry_resolves_branches_rings_and_configuration_dependencies() {
         for expanded in [false, true] {
             if expanded {
                 molecule.perceive().unwrap();
-                molecule.add_hydrogens().unwrap();
+                molecule.add_hydrogens(Default::default()).unwrap();
             }
             let before = molecule.clone();
-            let candidates = stereo_api::detect_stereo_candidates(&molecule).unwrap();
+            let candidates =
+                stereo_api::cleanup::detect_stereo_candidates(&molecule, Default::default())
+                    .unwrap();
             assert_eq!(molecule, before, "read-only analysis: {source}");
             assert_eq!(
                 candidates
@@ -117,9 +120,9 @@ fn stereo_symmetry_does_not_enumerate_unconstrained_hydrogen_permutations() {
     for tail in ["CCC", "CCCCCC", "CCCCCCCCC"] {
         let source = format!("{tail}[N+]12CC[N+](CC1)(CC2){tail}");
         let molecule = read_smiles(&source).unwrap();
-        let candidates = stereo_api::detect_stereo_candidates_with_options(
+        let candidates = stereo_api::cleanup::detect_stereo_candidates(
             &molecule,
-            stereo_api::StereoPerceptionOptions {
+            stereo_api::StereoSearchOptions {
                 max_search_states: 20_000,
                 ..Default::default()
             },
@@ -143,7 +146,8 @@ fn stereo_symmetry_is_invariant_to_atom_and_bond_numbering() {
         "O=CN1CC1C",
     ] {
         let original = read_smiles(source).unwrap();
-        let expected = stereo_api::detect_stereo_candidates(&original).unwrap();
+        let expected =
+            stereo_api::cleanup::detect_stereo_candidates(&original, Default::default()).unwrap();
         for shift in [1, 3] {
             let mut order: Vec<_> = original.atoms().collect();
             order.reverse();
@@ -196,14 +200,15 @@ fn stereo_symmetry_is_invariant_to_atom_and_bond_numbering() {
                     StereoCandidate::DoubleBond { bond, .. } => (1, bonds[bond].raw()),
                 })
                 .collect();
-            let actual: BTreeSet<_> = stereo_api::detect_stereo_candidates(&reordered)
-                .unwrap()
-                .iter()
-                .map(|candidate| match candidate {
-                    StereoCandidate::Tetrahedral { center, .. } => (0, center.raw()),
-                    StereoCandidate::DoubleBond { bond, .. } => (1, bond.raw()),
-                })
-                .collect();
+            let actual: BTreeSet<_> =
+                stereo_api::cleanup::detect_stereo_candidates(&reordered, Default::default())
+                    .unwrap()
+                    .iter()
+                    .map(|candidate| match candidate {
+                        StereoCandidate::Tetrahedral { center, .. } => (0, center.raw()),
+                        StereoCandidate::DoubleBond { bond, .. } => (1, bond.raw()),
+                    })
+                    .collect();
             assert_eq!(actual, expected, "{source}, shift={shift}");
         }
     }
@@ -223,24 +228,24 @@ fn stereo_cleanup_is_explicit_transactional_and_preserves_surviving_groups() {
         .stereo_elements()
         .map(|(id, element)| (id, element.clone()))
         .collect();
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     for options in [
-        stereo_api::StereoPerceptionOptions {
+        stereo_api::StereoSearchOptions {
             max_atoms: 1,
             ..Default::default()
         },
-        stereo_api::StereoPerceptionOptions {
+        stereo_api::StereoSearchOptions {
             max_search_states: 1,
             ..Default::default()
         },
     ] {
         assert!(matches!(
-            stereo_api::cleanup_stereo(&mut editor, options),
-            Err(stereo_api::StereoPerceptionError::ResourceLimit { .. })
+            stereo_api::cleanup::cleanup_stereo(&mut editor, options),
+            Err(stereo_api::StereoSearchError::ResourceLimit { .. })
         ));
         assert_eq!(editor.working(), &before);
     }
-    let report = stereo_api::cleanup_stereo(&mut editor, Default::default()).unwrap();
+    let report = stereo_api::cleanup::cleanup_stereo(&mut editor, Default::default()).unwrap();
     assert_eq!(report.removed_elements, vec![elements[0].0]);
     let (cleaned, ids) = editor.finish_with_correspondence().unwrap();
     assert_eq!(cleaned.stereo_elements().count(), 1);
@@ -282,9 +287,9 @@ fn stereo_cleanup_removes_assertions_on_perceived_aromatic_bonds() {
     let mut molecule = editor.finish().unwrap();
     molecule.perceive().unwrap();
     assert!(molecule.stereo_element(id).is_ok());
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     assert_eq!(
-        stereo_api::cleanup_stereo(&mut editor, Default::default())
+        stereo_api::cleanup::cleanup_stereo(&mut editor, Default::default())
             .unwrap()
             .removed_elements,
         vec![id]
@@ -297,12 +302,13 @@ fn stereo_cleanup_removes_assertions_on_perceived_aromatic_bonds() {
 fn stereo_cleanup_preserves_and_reports_unclassified_geometry() {
     let molecule = read_smiles("C([Sb@](F)Cl)([Sb@@](F)Cl)(Br)I").unwrap();
     let before = molecule.clone();
-    let mut editor = molecule.edit();
-    let result = stereo_api::cleanup_stereo(&mut editor, Default::default()).unwrap();
+    let mut editor = molecule.to_editor();
+    let result = stereo_api::cleanup::cleanup_stereo(&mut editor, Default::default()).unwrap();
     assert!(result.removed_elements.is_empty());
     assert_eq!(result.unclassified_elements.len(), 2);
     assert_eq!(editor.finish().unwrap(), before);
-    let candidates = stereo_api::detect_stereo_candidates(&molecule).unwrap();
+    let candidates =
+        stereo_api::cleanup::detect_stereo_candidates(&molecule, Default::default()).unwrap();
     assert!(candidates.iter().any(|candidate| matches!(candidate,
         StereoCandidate::Tetrahedral { center, .. } if *center == AtomId::new(0))));
 }

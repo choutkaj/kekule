@@ -1,4 +1,4 @@
-use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
+use kekule::molecule::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::molfile::MoleculeWriteErrorKind;
 use kekule::smiles;
 

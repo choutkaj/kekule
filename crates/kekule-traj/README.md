@@ -25,9 +25,9 @@ use kekule_traj::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
-    let topology = document.interpret()?.into_topology();
-    let mut trajectory = read_trajectory("trajectory.xtc", topology.clone())?;
+    let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?, Default::default())?;
+    let topology = document.interpret(Default::default())?.into_topology();
+    let mut trajectory = read_trajectory("trajectory.xtc", topology.clone(), Default::default())?;
 
     println!("Frames: {}", trajectory.len());
     println!("Atoms: {}", topology.atom_count());
@@ -39,15 +39,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Fit all atoms onto frame 0, or use a protein/backbone selection for a
     // solvated system. Superposition changes the trajectory in place.
     let fit = AtomSelection::all(&topology);
-    trajectory.superpose(0, &fit)?;
-    let rmsd = trajectory.rmsd(0, &fit)?.value_in(ANGSTROM)?;
+    trajectory.superpose(0, &fit, Default::default())?;
+    let rmsd = trajectory.rmsd(0, &fit, Default::default())?.value_in(ANGSTROM)?;
     for (index, value) in rmsd.iter().enumerate() {
         println!("Frame {index}: fitted RMSD = {value:.3} A");
     }
 
     // Frame selection preserves the original times and simulation steps.
     let sampled = trajectory.select((0..trajectory.len()).step_by(10))?;
-    write_trajectory("aligned.xtc", &sampled)?;
+    write_trajectory("aligned.xtc", &sampled, Default::default())?;
     Ok(())
 }
 ```
@@ -59,8 +59,8 @@ unwrapping are explicit preprocessing steps; unwrap before discarding
 intermediate frames.
 
 Saving infers the format from the extension, protects existing files, and rejects
-unsupported metadata. Use `read_trajectory_with_options` or
-`write_trajectory_with_options` for explicit codec policies and precision.
+unsupported metadata. Use `read_trajectory` or
+`write_trajectory` for explicit codec policies and precision.
 
 For more, see the [loaded workflow](examples/trajectory_workflow.rs) and
 [streaming workflow](examples/trajectory_streaming.rs) examples. Streaming uses

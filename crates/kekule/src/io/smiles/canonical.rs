@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::algorithms::{
     allowed_valences, rdkit_default_valence, HydrogenTransformError, RemoveHydrogensReport,
 };
-use crate::core::Molecule;
-use crate::core::*;
 use crate::io::MoleculeWriteError;
+use crate::molecule::Molecule;
+use crate::molecule::*;
 
 use super::write::{
     smiles_atom, smiles_atom_requires_brackets, smiles_incident_bonds_for_style,

@@ -47,7 +47,9 @@ fn selections_buffers_and_accumulators_survive_trajectory_perception() {
 
     // In-memory analysis accepts the selection made before perception.
     let perceived = trajectory.shared_topology();
-    trajectory.superpose(0, &selection).unwrap();
+    trajectory
+        .superpose(0, &selection, Default::default())
+        .unwrap();
     assert!(Arc::ptr_eq(&perceived, &trajectory.shared_topology()));
     for (index, frame) in trajectory.iter().enumerate() {
         rmsf.observe(index, &frame).unwrap();
@@ -60,8 +62,9 @@ fn selections_buffers_and_accumulators_survive_trajectory_perception() {
         "kekule-perception-bindings-{}.xyz",
         std::process::id()
     )));
-    write_trajectory(&path.0, &trajectory).unwrap();
-    let mut reader = open_trajectory(&path.0, trajectory.shared_topology()).unwrap();
+    write_trajectory(&path.0, &trajectory, Default::default()).unwrap();
+    let mut reader =
+        open_trajectory(&path.0, trajectory.shared_topology(), Default::default()).unwrap();
     let mut frames = 0;
     while reader.read_next(&mut buffer).unwrap() {
         frames += 1;

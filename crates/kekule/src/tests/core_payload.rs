@@ -149,7 +149,7 @@ fn bond_new_sets_endpoints_and_order() {
 
 #[test]
 fn stereo_elements_and_groups_live_on_molecule() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -196,7 +196,7 @@ fn stereo_elements_and_groups_live_on_molecule() {
 
 #[test]
 fn stereo_replacement_and_group_creation_preserve_graph_references() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -252,7 +252,7 @@ fn stereo_replacement_and_group_creation_preserve_graph_references() {
 
 #[test]
 fn tetrahedral_stereo_storage_canonicalizes_carrier_permutations() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let carriers = ["F", "Cl", "Br", "I"]
         .into_iter()
@@ -343,7 +343,7 @@ fn tetrahedral_stereo_storage_canonicalizes_carrier_permutations() {
 
 #[test]
 fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let left_reference = mol
@@ -441,7 +441,7 @@ fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
 
 #[test]
 fn axis_stereo_storage_canonicalizes_reference_carriers() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let left_reference = mol
@@ -537,7 +537,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
 
 #[test]
 fn stereo_element_group_membership_is_transactional_and_relation_owned() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -617,7 +617,7 @@ fn stereo_element_group_membership_is_transactional_and_relation_owned() {
 
 #[test]
 fn topology_deletions_prune_referencing_stereo_state() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(oxygen()).expect("atom identifier capacity");
@@ -677,10 +677,10 @@ fn topology_deletions_prune_referencing_stereo_state() {
 fn checked_stereo_rejects_invalid_carrier_shapes_transactionally() {
     let mut molecule = read_smiles("F[C@](Cl)(Br)I").unwrap();
     perceive(&mut molecule).unwrap();
-    stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+    stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
     let (id, element) = molecule.stereo_elements().next().unwrap();
     let element = element.clone();
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     for duplicate in [false, true] {
         let mut invalid = element.clone();
         let StereoElementKind::Tetrahedral(stereo) = &mut invalid.kind else {
@@ -727,7 +727,7 @@ fn axis_stereo_rejects_duplicate_and_same_endpoint_references() {
             StereoCarrier::Atom(AtomId::new(4)),
         ],
     ] {
-        let mut editor = molecule.edit();
+        let mut editor = molecule.to_editor();
         let invalid = StereoElement::new(StereoElementKind::Axis(AxisStereo {
             axis,
             carriers,
@@ -767,7 +767,7 @@ fn stereo_focus_is_unique_and_rejection_preserves_groups_and_perception() {
         })
         .unwrap();
     perceive(editor.working_mut()).unwrap();
-    stereo_api::assign_cip_descriptors(editor.working_mut()).unwrap();
+    stereo_api::cip::assign_cip_descriptors(editor.working_mut(), Default::default()).unwrap();
     let first = editor.stereo_element(ids[0]).unwrap().clone();
     for unknown in [false, true] {
         let mut duplicate = first.clone();
@@ -993,7 +993,7 @@ fn stereo_bond_endpoints_reject_more_than_two_explicit_substituents() {
 
 #[test]
 fn mutable_payload_access_invalidates_fresh_perception() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let bond = mol
@@ -1013,7 +1013,7 @@ fn mutable_payload_access_invalidates_fresh_perception() {
 
 #[test]
 fn atom_map_only_mutation_invalidates_perception_and_owner_properties() {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let atom = molecule
         .add_atom(carbon())
         .expect("atom identifier capacity");
@@ -1036,13 +1036,17 @@ fn atom_map_only_mutation_invalidates_perception_and_owner_properties() {
 
 #[test]
 fn perception_owned_chemistry_edits_invalidate_dependent_state() {
-    let mut methane = crate::core::MoleculeEditor::new();
+    let mut methane = crate::molecule::MoleculeEditor::new();
     methane
         .add_atom(carbon())
         .expect("atom identifier capacity");
     mark_all_fresh(methane.working_mut());
 
-    let report = valence_api::perceive_valence(methane.working_mut(), ValenceModel::RdkitLike);
+    let report = valence_api::perceive_valence(
+        methane.working_mut(),
+        ValenceModel::RdkitLike,
+        Default::default(),
+    );
 
     assert!(report.is_ok());
     assert!(methane.perception().has_valence());
@@ -1063,8 +1067,12 @@ fn perception_owned_chemistry_edits_invalidate_dependent_state() {
     );
     mark_all_fresh(&mut benzene);
 
-    aromaticity_api::perceive_aromaticity(&mut benzene, AromaticityModel::RdkitLike)
-        .expect("benzene should be supported");
+    aromaticity_api::perceive_aromaticity(
+        &mut benzene,
+        AromaticityModel::RdkitLike,
+        Default::default(),
+    )
+    .expect("benzene should be supported");
 
     assert!(benzene.perception().has_valence());
     assert!(benzene.perception().has_rings());

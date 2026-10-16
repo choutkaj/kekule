@@ -1,7 +1,7 @@
 use std::fmt;
 
 use super::QueryGraph;
-use crate::core::{BondOrder, Element};
+use crate::molecule::{BondOrder, Element};
 
 /// Maximum size of one programmatically constructed query expression.
 pub const MAX_QUERY_EXPRESSION_NODES: usize = 4_096;

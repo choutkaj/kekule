@@ -1,5 +1,5 @@
-use kekule::core::{Atom, Element, ImplicitHydrogens, Molecule, MoleculeEditor};
 use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
+use kekule::molecule::{Atom, Element, ImplicitHydrogens, Molecule, MoleculeEditor};
 use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles;
@@ -197,9 +197,15 @@ fn molfile_control_text_in_positional_headers_is_not_a_terminator() {
         for header in 0..3 {
             let mut lines = written.lines().collect::<Vec<_>>();
             lines[header] = "M  END";
-            let document = molfile::parse_str(&lines.join("\n")).unwrap();
+            let document = molfile::parse_str(&lines.join("\n"), Default::default()).unwrap();
             assert_eq!(
-                document.to_molecules().unwrap().pop().unwrap().atom_count(),
+                document
+                    .interpret(Default::default())
+                    .unwrap()
+                    .into_molecules()
+                    .pop()
+                    .unwrap()
+                    .atom_count(),
                 2
             );
         }
@@ -216,7 +222,11 @@ fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
         },
     )
     .unwrap();
-    let model = molfile::parse_str(&mol).unwrap().to_model().unwrap();
+    let model = molfile::parse_str(&mol, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+        .into_model();
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
         let options = SdfWriteOptions {
             version,
@@ -224,13 +234,14 @@ fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
         };
         let record = SdfRecordInterpretation::new("M  END", model.clone(), Vec::new());
         let written = sdf::write(&[record], options).unwrap();
-        let document = sdf::parse_str(&written).unwrap();
+        let document = sdf::parse_str(&written, Default::default()).unwrap();
         assert_eq!(document.records().len(), 1);
         assert_eq!(document.records()[0].title(), "M  END");
         assert_eq!(
             document.records()[0]
-                .to_model()
+                .interpret(Default::default())
                 .unwrap()
+                .into_model()
                 .topology()
                 .atom_count(),
             2
@@ -254,7 +265,7 @@ fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_cou
         // preserve the unspecified spin of under-coordinated bracket atoms.
         let original = molecule(source);
         let ids = original.atom_ids().collect::<Vec<_>>();
-        let mut editor = original.edit();
+        let mut editor = original.to_editor();
         for id in ids {
             editor.atom_mut(id).unwrap().radical = None;
         }
@@ -267,10 +278,11 @@ fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_cou
             },
         )
         .unwrap();
-        let mut restored = molfile::parse_str(&written)
+        let mut restored = molfile::parse_str(&written, Default::default())
             .unwrap()
-            .to_molecules()
+            .interpret(Default::default())
             .unwrap()
+            .into_molecules()
             .pop()
             .unwrap();
         assert_eq!(original, restored, "{source} -> {written}");
@@ -302,10 +314,15 @@ fn automatic_molfile_and_sdf_promotion_preserve_zero_hydrogens_on_reused_instanc
     let sdf = sdf::write(&[model], sdf::SdfWriteOptions::default()).unwrap();
     assert!(molfile.contains("V3000"));
     assert!(sdf.contains("V3000"));
-    let molfile_model = molfile::parse_str(&molfile).unwrap().to_model().unwrap();
-    let sdf_model = sdf::parse_str(&sdf).unwrap().records()[0]
-        .to_model()
-        .unwrap();
+    let molfile_model = molfile::parse_str(&molfile, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+        .into_model();
+    let sdf_model = sdf::parse_str(&sdf, Default::default()).unwrap().records()[0]
+        .interpret(Default::default())
+        .unwrap()
+        .into_model();
     for mut restored in [molfile_model, sdf_model] {
         assert_eq!(restored.topology().instance_count(), 1_000);
         assert!(restored

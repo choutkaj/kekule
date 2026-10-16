@@ -1,9 +1,9 @@
 //! Reads an mmCIF data block into the source-neutral interpretation input.
 use std::collections::BTreeMap;
 
-use crate::core::BondOrder;
 use crate::diagnostics::DiagnosticKind;
 use crate::geometry::PeriodicCell;
+use crate::molecule::BondOrder;
 
 use super::super::mmcif_category::MmcifCategory;
 use super::super::mmcif_cell::stated_cell;
@@ -439,7 +439,7 @@ mod syntax_tests {
             looped.to_owned(),
             crate::tests::mmcif_syntax::singleton_loops_as_scalars(looped),
         ] {
-            let doc = crate::mmcif::parse_str(&input).unwrap();
+            let doc = crate::mmcif::parse_str(&input, Default::default()).unwrap();
             let order = super::polymer_asym_order(&doc.blocks()[0]).unwrap();
             assert_eq!(order.len(), 1);
             assert_eq!(order["Z"], 0);

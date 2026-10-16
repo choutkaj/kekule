@@ -5,8 +5,9 @@
 //! geometry, and units.
 //!
 //! Start with [`read_trajectory`] to load an entire file into an in-memory
-//! [`kekule::structure::Trajectory`], and [`write_trajectory`] to save it atomically. Use
-//! their `_with_options` variants for explicit codec and field policies.
+//! [`kekule::structure::Trajectory`], and [`write_trajectory`] to save it
+//! atomically. Every operation takes its options, which set the codec and
+//! field policies; the defaults detect the format.
 //! Use [`open_trajectory`] for sequential processing with
 //! a reusable frame buffer, [`open_indexed_trajectory`] for verified random access, or
 //! [`create_trajectory_writer`] for atomic path-backed writing. Each operation
@@ -25,8 +26,7 @@
 //! Readers accept an owned topology or a shared `Arc<Topology>`. File coordinate
 //! index `i` means topology dense atom index `i`. Counts and available metadata
 //! (including XYZ element order) are checked automatically; matching counts
-//! alone cannot establish atom identity. [`crate::validate_atom_order`] can check
-//! an independently supplied sequence of semantic atom IDs. Native units are converted once
+//! alone cannot establish atom identity. Native units are converted once
 //! at the codec boundary: DCD and default XYZ use angstrom, while TRR/XTC use
 //! GROMACS nanometre/picosecond conventions. XTC coordinate resolution is
 //! nominally `1 / precision` nanometres.
@@ -71,13 +71,12 @@ pub mod xtc;
 pub mod xyz;
 
 pub use file_reader::{
-    open_indexed_trajectory, open_indexed_trajectory_with_options, open_trajectory,
-    open_trajectory_with_options, read_trajectory, read_trajectory_with_options,
-    IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
+    open_indexed_trajectory, open_trajectory, read_trajectory, IndexedFileTrajectoryReader,
+    SequentialFileTrajectoryReader,
 };
 pub use file_writer::{
-    create_trajectory_writer, write_trajectory, write_trajectory_with_options,
-    FileTrajectoryWriter, OverwritePolicy, TrajectoryWriteOptions,
+    create_trajectory_writer, write_trajectory, FileTrajectoryWriter, OverwritePolicy,
+    TrajectoryWriteOptions,
 };
 pub use limits::TrajectoryIoLimits;
 pub use metadata::{

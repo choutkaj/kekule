@@ -139,9 +139,16 @@ fn dihedral_scan_uses_current_coordinates_and_matches_measurement_sign() {
     ] {
         edit.apply(&mut model, Quantity::new(target, DEGREE))
             .unwrap();
-        let actual = measure::dihedral(model.as_model_view(), a, b, c, d)
-            .unwrap()
-            .into_value();
+        let actual = measure::dihedral(
+            model.as_model_view(),
+            a,
+            b,
+            c,
+            d,
+            measure::ConnectivityCheck::Unrestricted,
+        )
+        .unwrap()
+        .into_value();
         close(signed_angle(actual - target.to_radians()), 0.0);
         for atom in [a, b, c] {
             assert_eq!(point(&model, atom), point(&baseline, atom));
@@ -172,10 +179,17 @@ fn dihedral_scan_uses_current_coordinates_and_matches_measurement_sign() {
         .set_dihedral(d, c, b, a, Quantity::new(-90.0, DEGREE))
         .unwrap();
     close(
-        measure::dihedral(reversed.as_model_view(), a, b, c, d)
-            .unwrap()
-            .value_in(DEGREE)
-            .unwrap(),
+        measure::dihedral(
+            reversed.as_model_view(),
+            a,
+            b,
+            c,
+            d,
+            measure::ConnectivityCheck::Unrestricted,
+        )
+        .unwrap()
+        .value_in(DEGREE)
+        .unwrap(),
         -90.0,
     );
     assert_eq!(point(&reversed, d), point(&baseline, d));
@@ -692,9 +706,14 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
             .set_distance(b, c, Quantity::new(1.75 * scale, NANOMETER))
             .unwrap();
         close(
-            measure::distance(model.as_model_view(), b, c)
-                .unwrap()
-                .into_value()
+            measure::distance(
+                model.as_model_view(),
+                b,
+                c,
+                measure::ConnectivityCheck::Unrestricted,
+            )
+            .unwrap()
+            .into_value()
                 / scale,
             1.75,
         );
@@ -702,20 +721,33 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
             .set_angle(a, b, c, Quantity::new(47.0, DEGREE))
             .unwrap();
         close(
-            measure::angle(model.as_model_view(), a, b, c)
-                .unwrap()
-                .value_in(DEGREE)
-                .unwrap(),
+            measure::angle(
+                model.as_model_view(),
+                a,
+                b,
+                c,
+                measure::ConnectivityCheck::Unrestricted,
+            )
+            .unwrap()
+            .value_in(DEGREE)
+            .unwrap(),
             47.0,
         );
         model
             .set_dihedral(a, b, c, d, Quantity::new(-139.0, DEGREE))
             .unwrap();
         close(
-            measure::dihedral(model.as_model_view(), a, b, c, d)
-                .unwrap()
-                .value_in(DEGREE)
-                .unwrap(),
+            measure::dihedral(
+                model.as_model_view(),
+                a,
+                b,
+                c,
+                d,
+                measure::ConnectivityCheck::Unrestricted,
+            )
+            .unwrap()
+            .value_in(DEGREE)
+            .unwrap(),
             -139.0,
         );
         assert_eq!(point(&model, a), point(&before, a));

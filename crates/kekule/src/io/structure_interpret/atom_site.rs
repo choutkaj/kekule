@@ -1,8 +1,8 @@
 use crate::diagnostics::DiagnosticKind;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::core::Element;
 use crate::geometry::Point3;
+use crate::molecule::Element;
 
 use super::super::element_symbol::parse_structure_element_symbol;
 use super::super::mmcif_category::MmcifCategory;

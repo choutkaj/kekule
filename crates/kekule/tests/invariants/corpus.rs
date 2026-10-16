@@ -6,8 +6,8 @@
 
 use std::path::Path;
 
-use kekule::core::{Molecule, StereoElementKind};
 use kekule::structure::Model;
+use kekule::{molecule::Molecule, stereo::StereoElementKind};
 use kekule::{molfile, sdf, smiles};
 
 use crate::support::{aromaticity_cases, corpus, fixture};
@@ -197,14 +197,17 @@ pub(crate) fn regression_mixtures() -> Vec<(String, Vec<Molecule>)> {
 pub(crate) fn read_model(path: &Path) -> Result<Model, String> {
     let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
     if path.extension().is_some_and(|extension| extension == "sdf") {
-        let document = sdf::parse_str(&text).map_err(|error| error.to_string())?;
+        let document =
+            sdf::parse_str(&text, Default::default()).map_err(|error| error.to_string())?;
         document.records()[0]
-            .to_model()
+            .interpret(Default::default())
+            .map(|interpretation| interpretation.into_model())
             .map_err(|error| error.to_string())
     } else {
-        molfile::parse_str(&text)
+        molfile::parse_str(&text, Default::default())
             .map_err(|error| error.to_string())?
-            .to_model()
+            .interpret(Default::default())
+            .map(|interpretation| interpretation.into_model())
             .map_err(|error| error.to_string())
     }
 }

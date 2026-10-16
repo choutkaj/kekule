@@ -11,7 +11,7 @@ pub use interpret::{
     SmilesAtomMapping, SmilesBondMapping, SmilesComponentCountError, SmilesComponentInterpretation,
     SmilesInterpretError, SmilesInterpretOptions, SmilesInterpretation, SmilesInterpretationReport,
 };
-pub(crate) use parse::{parse_smiles_document, parse_smiles_document_with_options};
+pub(crate) use parse::{parse_smiles_document, parse_smiles_reader};
 pub use parse::{
     SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind, SmilesParseError,
     SmilesParseOptions, SmilesRecords,

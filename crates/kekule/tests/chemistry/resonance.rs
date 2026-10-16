@@ -1,7 +1,8 @@
 use kekule::{
-    core::*,
+    molecule::*,
     perception::{
         self, aromaticity::AromaticityModel, conjugation::*, resonance::*, valence::ValenceModel,
+        Perception,
     },
     smiles,
 };
@@ -90,7 +91,12 @@ fn group_preparation_is_separate_and_transactional() {
         Err(ResonanceError::ResourceLimit { .. })
     ));
     assert_eq!(m.perception(), &before);
-    perception::aromaticity::perceive_aromaticity(&mut m, AromaticityModel::Mdl).unwrap();
+    perception::aromaticity::perceive_aromaticity(
+        &mut m,
+        AromaticityModel::Mdl,
+        Default::default(),
+    )
+    .unwrap();
     assert!(!m.perception().has_conjugation());
     assert!(!m.perception().has_resonance());
     perceive_conjugation(&mut m, ConjugationModel::RdkitLike).unwrap();
@@ -238,8 +244,8 @@ fn canonical_aromatic_seed_retains_aryne_triple_bonds() {
 fn explicit_preparation_preserves_chemistry_aromaticity_cip_and_output() {
     for model in [AromaticityModel::RdkitLike, AromaticityModel::Mdl] {
         let mut m = molecule("N[C@@H](C)c1ccccc1");
-        perception::aromaticity::perceive_aromaticity(&mut m, model).unwrap();
-        kekule::stereo::assign_cip_descriptors(&mut m).unwrap();
+        perception::aromaticity::perceive_aromaticity(&mut m, model, Default::default()).unwrap();
+        kekule::stereo::cip::assign_cip_descriptors(&mut m, Default::default()).unwrap();
         let chemistry = m.clone();
         let before = m.perception().clone();
         let text = smiles::write(&m, smiles::SmilesWriteOptions::canonical()).unwrap();
@@ -284,12 +290,13 @@ fn present_empty_sections_and_prerequisite_invalidation() {
         .unwrap()
         .groups()
         .is_empty());
-    perception::valence::perceive_valence(&mut m, ValenceModel::RdkitLike).unwrap();
+    perception::valence::perceive_valence(&mut m, ValenceModel::RdkitLike, Default::default())
+        .unwrap();
     assert!(!m.perception().has_conjugation());
     assert!(!m.perception().has_resonance());
     m.perceive().unwrap();
     perceive_resonance(&mut m).unwrap();
-    let mut edit = m.edit();
+    let mut edit = m.to_editor();
     edit.atom_mut(a).unwrap().isotope = Some(13);
     let edited = edit.finish().unwrap();
     assert!(!edited.perception().has_conjugation());
@@ -411,7 +418,7 @@ fn explicit_hydrogens_and_atom_renumbering_preserve_membership() {
             .unwrap()
             .contributors()
             .len();
-        explicit.add_hydrogens().unwrap();
+        explicit.add_hydrogens(Default::default()).unwrap();
         explicit.perceive().unwrap();
         assert_eq!(
             explicit
@@ -478,7 +485,10 @@ fn edited_ids_compact_before_reconstruction_and_enumeration() {
     // Deleted draft slots do not survive publication.
     assert_eq!((ids.atom(dead), ids.bond(removed)), (None, None));
     let [a, b, c, d] = [a, b, c, d].map(|atom| ids.atom(atom).unwrap());
-    assert_eq!([a, b, c, d], [0, 1, 2, 3].map(kekule::core::AtomId::new));
+    assert_eq!(
+        [a, b, c, d],
+        [0, 1, 2, 3].map(kekule::molecule::AtomId::new)
+    );
     m.perceive().unwrap();
     perceive_resonance(&mut m).unwrap();
     let state = m.perception().clone();
@@ -498,8 +508,8 @@ fn edited_ids_compact_before_reconstruction_and_enumeration() {
         .unwrap()
         .with_conjugation(
             ConjugationModel::RdkitLike,
-            vec![a, kekule::core::AtomId::new(4)],
-            vec![kekule::core::BondId::new(3)],
+            vec![a, kekule::molecule::AtomId::new(4)],
+            vec![kekule::molecule::BondId::new(3)],
         )
         .unwrap()
         .build();

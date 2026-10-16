@@ -500,7 +500,7 @@ fn potentials_are_shareable_trait_objects() {
 
 #[test]
 fn atom_parameters_follow_an_interleaved_dense_order() {
-    use kekule::core::AtomId;
+    use kekule::molecule::AtomId;
     use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
 
     let ordered = topology(2);

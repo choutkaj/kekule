@@ -14,7 +14,7 @@
 // 2022 CODATA electron rest mass in unified atomic mass units:
 //   https://physics.nist.gov/cgi-bin/cuu/Value?meu
 
-use crate::core::Element;
+use crate::molecule::Element;
 
 pub(super) const ELECTRON_MASS_DA: f64 = 5.485_799_090_441e-4;
 

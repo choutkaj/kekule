@@ -60,7 +60,7 @@ handles. The owning topology or structure translates semantic IDs to dense
 indices and validates every associated array and property column.
 
 See the [crate overview](crates/kekule/src/lib.rs),
-[molecular owner](crates/kekule/src/core/molecule.rs),
+[molecular owner](crates/kekule/src/molecule/owner.rs),
 [topology types](crates/kekule/src/topology/mod.rs),
 [structure types](crates/kekule/src/structure/mod.rs),
 [ensembles](crates/kekule/src/structure/ensemble.rs),
@@ -122,9 +122,9 @@ prepared potentials, and streaming bindings stay attached to their original
 snapshot and remain usable with the new one. Failure leaves all definitions and
 structure state intact.
 
-See [graph storage](crates/kekule/src/core/graph.rs),
-[represented stereo](crates/kekule/src/core/stereo.rs),
-[perception state and validation](crates/kekule/src/core/perception.rs),
+See [graph storage](crates/kekule/src/molecule/graph.rs),
+[represented stereo](crates/kekule/src/molecule/stereo.rs),
+[perception state and validation](crates/kekule/src/molecule/perception.rs),
 [chemical perception](crates/kekule/src/chemistry/perception.rs), and
 [stereo algorithms](crates/kekule/src/algorithms/stereo.rs).
 
@@ -235,7 +235,7 @@ definitions. The same operation-specific mapping transfers hierarchy,
 classification, properties, and every structure array. Do not add a universal
 topology remapping or provenance framework.
 
-See [molecular editing](crates/kekule/src/core/molecule_edit.rs),
+See [molecular editing](crates/kekule/src/molecule/molecule_edit.rs),
 [system editing](crates/kekule/src/topology/editor.rs),
 [model editing](crates/kekule/src/structure/model_editor.rs),
 [selections](crates/kekule/src/topology/selection.rs), and

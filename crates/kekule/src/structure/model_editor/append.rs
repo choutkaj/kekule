@@ -37,7 +37,7 @@ impl ModelEditor {
     /// let molecule = smiles::to_molecules("CO")?.pop().unwrap();
     /// let ligand = Model::from_molecule(molecule, &Positions::new(Quantity::new(
     ///     vec![Point3::origin(), Point3::new(1.4, 0.0, 0.0)], ANGSTROM))?)?;
-    /// let mut editor = ligand.edit();
+    /// let mut editor = ligand.to_editor();
     /// let appended = editor.append_model(&ligand)?;
     /// let source_atom = ligand.topology().atom_ids()[0];
     /// let draft_atom = appended.atom(source_atom)?;

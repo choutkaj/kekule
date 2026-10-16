@@ -36,9 +36,13 @@ pub enum OverwritePolicy {
 }
 
 /// Format-agnostic path-writer configuration.
+///
+/// [`Default`] takes the format from the destination extension (`.xyz`,
+/// `.dcd`, `.trr`, or `.xtc`, case-insensitively); [`Self::new`] names it
+/// explicitly. Both forbid overwriting and use each codec's default options.
 #[derive(Debug, Clone)]
 pub struct TrajectoryWriteOptions {
-    format: TrajectoryFormat,
+    format: Option<TrajectoryFormat>,
     overwrite: OverwritePolicy,
     xyz: xyz::XyzWriteOptions,
     dcd: dcd::DcdWriteOptions,
@@ -46,10 +50,25 @@ pub struct TrajectoryWriteOptions {
     xtc: xtc::XtcWriteOptions,
 }
 
+impl Default for TrajectoryWriteOptions {
+    fn default() -> Self {
+        Self {
+            format: None,
+            overwrite: OverwritePolicy::Forbid,
+            xyz: xyz::XyzWriteOptions::default(),
+            dcd: dcd::DcdWriteOptions::default(),
+            trr: trr::TrrWriteOptions::default(),
+            xtc: xtc::XtcWriteOptions::default(),
+        }
+    }
+}
+
 impl TrajectoryWriteOptions {
+    /// Options with an explicit format, which takes precedence over the
+    /// destination extension.
     pub fn new(format: TrajectoryFormat) -> Self {
         Self {
-            format,
+            format: Some(format),
             overwrite: OverwritePolicy::Forbid,
             xyz: xyz::XyzWriteOptions::default(),
             dcd: dcd::DcdWriteOptions::default(),
@@ -286,12 +305,13 @@ impl Drop for FileTrajectoryWriter {
     }
 }
 
-/// Writes a loaded trajectory, choosing the codec from its destination extension.
+/// Writes a loaded trajectory.
 ///
-/// Recognizes `.xyz`, `.dcd`, `.trr`, and `.xtc`, case-insensitively. Unknown
-/// extensions require [`write_trajectory_with_options`] with an explicit format.
-/// Uses the codec's default precision and field policies. Existing files and
-/// unsupported metadata are rejected; no fields are silently discarded. Collection
+/// The codec is the format of `options` or, by default, the one its destination
+/// extension names: `.xyz`, `.dcd`, `.trr`, or `.xtc`, case-insensitively.
+/// Unknown extensions require an explicit format. `options` also sets the
+/// precision, field, and overwrite policies; by default existing files are
+/// rejected. Unsupported metadata is rejected; no fields are silently discarded. Collection
 /// properties are unsupported by these codecs and must be explicitly cleared first.
 /// The destination is published atomically only after every frame and finalization
 /// succeeds. Empty trajectories are rejected by the writer.
@@ -299,28 +319,16 @@ impl Drop for FileTrajectoryWriter {
 /// ```no_run
 /// # use kekule::structure::Trajectory;
 /// # fn save(trajectory: &Trajectory) -> Result<(), kekule_traj::TrajectoryIoError> {
-/// kekule_traj::io::write_trajectory("aligned.trr", trajectory)?;
+/// kekule_traj::io::write_trajectory("aligned.trr", trajectory, Default::default())?;
 /// # Ok(()) }
 /// ```
 pub fn write_trajectory(
     path: impl AsRef<Path>,
     trajectory: &Trajectory,
-) -> Result<(), TrajectoryIoError> {
-    let path = path.as_ref();
-    let format = detect::extension_format(path).ok_or_else(|| codec_context(
-        TrajectoryCodecErrorKind::UnknownFormat, TrajectoryIoOperation::Open, None,
-        &path.display().to_string(), "destination extension does not identify a supported format; supply explicit write options",
-    ))?;
-    write_trajectory_with_options(path, trajectory, TrajectoryWriteOptions::new(format))
-}
-
-/// Writes a loaded trajectory with explicit format, precision, and overwrite policies.
-/// The specified format takes precedence over the path extension.
-pub fn write_trajectory_with_options(
-    path: impl AsRef<Path>,
-    trajectory: &Trajectory,
     options: TrajectoryWriteOptions,
 ) -> Result<(), TrajectoryIoError> {
+    let path = path.as_ref();
+    resolve_format(path, options.format)?;
     if !trajectory.properties().is_empty() {
         return Err(TrajectoryIoError::UnsupportedField("collection properties"));
     }
@@ -331,7 +339,24 @@ pub fn write_trajectory_with_options(
     writer.finish()
 }
 
+/// The explicit format, or the one the destination extension names.
+fn resolve_format(
+    path: &Path,
+    format: Option<TrajectoryFormat>,
+) -> Result<TrajectoryFormat, TrajectoryIoError> {
+    match format {
+        Some(format) => Ok(format),
+        None => detect::extension_format(path).ok_or_else(|| codec_context(
+            TrajectoryCodecErrorKind::UnknownFormat, TrajectoryIoOperation::Open, None,
+            &path.display().to_string(), "destination extension does not identify a supported format; supply explicit write options",
+        )),
+    }
+}
+
 /// Creates a strict path writer backed by a temporary sibling file.
+///
+/// The codec is the format of `options` or, by default, the one the
+/// destination extension names, as for [`write_trajectory`].
 pub fn create_trajectory_writer(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
@@ -339,28 +364,22 @@ pub fn create_trajectory_writer(
 ) -> Result<FileTrajectoryWriter, TrajectoryIoError> {
     let topology = topology.into();
     let destination = path.as_ref().to_path_buf();
+    let format = resolve_format(&destination, options.format)?;
     let label = destination.display().to_string();
     if options.overwrite == OverwritePolicy::Forbid && destination.exists() {
         return Err(io_context(
             TrajectoryIoOperation::Open,
-            Some(options.format),
+            Some(format),
             &label,
             io::Error::new(io::ErrorKind::AlreadyExists, "destination already exists"),
         ));
     }
-    let temporary = create_temporary_sibling(&destination, options.format)?;
+    let temporary = create_temporary_sibling(&destination, format)?;
     let file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&temporary)
-        .map_err(|error| {
-            io_context(
-                TrajectoryIoOperation::Open,
-                Some(options.format),
-                &label,
-                error,
-            )
-        })?;
+        .map_err(|error| io_context(TrajectoryIoOperation::Open, Some(format), &label, error))?;
     if options.overwrite == OverwritePolicy::Forbid {
         if let Err(error) = require_hard_links(&temporary, |from, to| std::fs::hard_link(from, to))
         {
@@ -368,7 +387,7 @@ pub fn create_trajectory_writer(
             return Err(codec_context(
                 TrajectoryCodecErrorKind::UnsupportedVariant,
                 TrajectoryIoOperation::Open,
-                Some(options.format),
+                Some(format),
                 &label,
                 format!(
                     "OverwritePolicy::Forbid publishes through a hard link, which this destination cannot use ({error}); OverwritePolicy::Replace publishes by rename"
@@ -376,7 +395,7 @@ pub fn create_trajectory_writer(
             ));
         }
     }
-    let inner_result = match options.format {
+    let inner_result = match format {
         TrajectoryFormat::Xyz => {
             xyz::XyzWriter::new(BufWriter::new(file), topology, options.xyz, label)
                 .map(FileWriterInner::Xyz)
@@ -403,7 +422,7 @@ pub fn create_trajectory_writer(
     };
     Ok(FileTrajectoryWriter {
         inner: Some(inner),
-        format: options.format,
+        format,
         destination,
         temporary,
         overwrite: options.overwrite,

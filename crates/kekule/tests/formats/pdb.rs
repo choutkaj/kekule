@@ -1,10 +1,10 @@
-use kekule::core::BondOrder;
 use kekule::diagnostics::{DiagnosticKind, SourceLocation};
 use kekule::macromolecular::{
     AltLocPolicy, AltLocResidue, BondEvidence, CellOmissionReason, ConnectionResolutionReason,
     EntityKind, ModelSelection, SourceResidueId, SourceResiduePosition, StructureInterpretIssue,
     StructureInterpretOptions, StructureInterpretation,
 };
+use kekule::molecule::BondOrder;
 use kekule::pdb::{self, PdbAtomKind, PdbParseOptions};
 
 /// One `ATOM` or `HETATM` record in the 80 fixed columns of the PDB format.
@@ -128,7 +128,9 @@ fn entry(lines: &[String]) -> String {
 }
 
 fn interpret(text: &str) -> StructureInterpretation {
-    pdb::interpret(&pdb::parse_str(text).unwrap()).unwrap()
+    (pdb::parse_str(text, Default::default()).unwrap())
+        .interpret(Default::default())
+        .unwrap()
 }
 
 /// Glycine dipeptide of chain A, in records 1-8.
@@ -330,7 +332,7 @@ fn pdb_records_parse_by_fixed_columns() {
     ]
     .join("\r\n")
         + "\rEND\r\n";
-    let document = pdb::parse_str(&text).unwrap();
+    let document = pdb::parse_str(&text, Default::default()).unwrap();
     assert_eq!(document.id_code(), Some("1ABC"));
     assert!(document.models().is_empty());
 
@@ -539,7 +541,7 @@ fn cryst1_is_the_model_cell_only_for_a_whole_unit_cell() {
         cryst1([Some(30.0); 3], "P 1"),
         cryst1([Some(30.0); 3], "P 1"),
     ]);
-    let error = pdb::parse_str(&duplicate).unwrap_err();
+    let error = pdb::parse_str(&duplicate, Default::default()).unwrap_err();
     assert_eq!(
         (error.kind(), error.location(), error.message()),
         (
@@ -855,30 +857,28 @@ fn coordinate_models_become_ensemble_members() {
         ]
         .concat(),
     );
-    let document = pdb::parse_str(&text).unwrap();
+    let document = pdb::parse_str(&text, Default::default()).unwrap();
     let serials = document
         .models()
         .iter()
         .map(|model| model.serial())
         .collect::<Vec<_>>();
     assert_eq!(serials, [1, 2]);
-    let error = pdb::interpret(&document).unwrap_err();
+    let error = document.interpret(Default::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
 
-    let second = pdb::interpret_with_options(
-        &document,
-        StructureInterpretOptions {
+    let second = document
+        .interpret(StructureInterpretOptions {
             model_selection: ModelSelection::Select("2".to_owned()),
             ..StructureInterpretOptions::default()
-        },
-    )
-    .unwrap();
+        })
+        .unwrap();
     assert_eq!(second.report().selected_model(), Some("2"));
     assert_eq!(second.report().ignored_coordinate_models(), ["1"]);
     assert_eq!(second.topology().atom_count(), 3);
     assert_eq!(second.topology().bond_count(), 2);
 
-    let ensemble = pdb::interpret_ensemble(&document).unwrap();
+    let ensemble = document.interpret_ensemble(Default::default()).unwrap();
     assert_eq!(ensemble.ensemble().len(), 2);
     let models = ensemble
         .reports()
@@ -917,7 +917,7 @@ fn recurring_numbers_and_alternate_locations_identify_residues() {
         alternative("4", 'B', 0.6, 12.0),
         "CONECT    3    1".to_owned(),
     ]);
-    let document = pdb::parse_str(&text).unwrap();
+    let document = pdb::parse_str(&text, Default::default()).unwrap();
     let repeated = residue(
         "W",
         SourceResiduePosition::RepeatedAuthor {
@@ -945,14 +945,12 @@ fn recurring_numbers_and_alternate_locations_identify_residues() {
         (AltLocPolicy::SelectLabel("A".to_owned()), "A", vec![], 1),
     ];
     for (policy, label, unresolved, bonds) in cases {
-        let interpreted = pdb::interpret_with_options(
-            &document,
-            StructureInterpretOptions {
+        let interpreted = document
+            .interpret(StructureInterpretOptions {
                 altloc_policy: policy,
                 ..StructureInterpretOptions::default()
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         let [decision] = interpreted.report().alternate_locations() else {
             panic!("one alternate-location decision");
         };
@@ -1104,7 +1102,9 @@ fn a_ter_record_ends_the_residue_it_follows() {
         ]
         .concat(),
     );
-    let ensemble = pdb::interpret_ensemble(&pdb::parse_str(&models).unwrap()).unwrap();
+    let ensemble = (pdb::parse_str(&models, Default::default()).unwrap())
+        .interpret_ensemble(Default::default())
+        .unwrap();
     assert_eq!(ensemble.ensemble().len(), 2);
     let occurrences = ensemble
         .reports()
@@ -1233,9 +1233,9 @@ fn hydrogen_isotope_symbols_read_as_isotopes_and_write_back() {
         .map(|line| line.split_whitespace().nth(2).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(type_symbols, ["O", "D", "D"]);
-    let reread = kekule::mmcif::parse_str(&written)
+    let reread = kekule::mmcif::parse_str(&written, Default::default())
         .unwrap()
-        .interpret()
+        .interpret(Default::default())
         .unwrap();
     assert_eq!(isotopes(&reread), expected);
 }
@@ -1353,9 +1353,9 @@ fn author_chains_holding_ligands_and_water_write_as_separate_mmcif_asyms() {
             ["1", "2", "3", "4"],
         ),
     ] {
-        let reread = kekule::mmcif::parse_str(&written.unwrap())
+        let reread = kekule::mmcif::parse_str(&written.unwrap(), Default::default())
             .unwrap()
-            .interpret()
+            .interpret(Default::default())
             .unwrap();
         assert_eq!(residues(&reread), expected(entities));
         let reread_bonds = bonds(&reread)
@@ -1425,11 +1425,11 @@ fn pdb_parse_errors_locate_the_record() {
         ),
     ];
     for (text, kind, location) in cases {
-        let error = pdb::parse_str(&text).unwrap_err();
+        let error = pdb::parse_str(&text, Default::default()).unwrap_err();
         assert_eq!((error.kind(), error.location()), (kind, location), "{text}");
     }
 
-    let limited = pdb::parse_str_with_options(
+    let limited = pdb::parse_str(
         &format!("{water}\n{water}"),
         PdbParseOptions {
             max_atom_records: 1,
@@ -1477,8 +1477,8 @@ fn pdb_interpretation_rejects_contradictory_records() {
         ),
     ];
     for (text, options, kind, line) in cases {
-        let document = pdb::parse_str(&text).unwrap();
-        let error = pdb::interpret_with_options(&document, options).unwrap_err();
+        let document = pdb::parse_str(&text, Default::default()).unwrap();
+        let error = document.interpret(options).unwrap_err();
         assert_eq!(
             (
                 error.kind(),
@@ -1634,9 +1634,8 @@ fn force_field_libraries_interpret_their_residue_names() {
         ]
         .concat(),
     );
-    let document = pdb::parse_str(&amber).unwrap();
-    let templated =
-        pdb::interpret_with_options(&document, with(ComponentLibrary::amber())).unwrap();
+    let document = pdb::parse_str(&amber, Default::default()).unwrap();
+    let templated = document.interpret(with(ComponentLibrary::amber())).unwrap();
     assert_eq!(templated.topology().bond_count(), 30);
     assert_eq!(
         charges(&templated),
@@ -1644,7 +1643,7 @@ fn force_field_libraries_interpret_their_residue_names() {
     );
     assert_eq!(templated.report().issues(), &[]);
     // The dictionary names neither HIE nor WAT, and its aspartic acid is neutral.
-    let untemplated = pdb::interpret(&document).unwrap();
+    let untemplated = document.interpret(Default::default()).unwrap();
     assert_eq!(inferred_components(&untemplated), ["HIE", "WAT"]);
     assert_eq!(charges(&untemplated), []);
 
@@ -1681,9 +1680,10 @@ fn force_field_libraries_interpret_their_residue_names() {
         ]
         .concat(),
     );
-    let document = pdb::parse_str(&charmm).unwrap();
-    let templated =
-        pdb::interpret_with_options(&document, with(ComponentLibrary::charmm())).unwrap();
+    let document = pdb::parse_str(&charmm, Default::default()).unwrap();
+    let templated = document
+        .interpret(with(ComponentLibrary::charmm()))
+        .unwrap();
     assert_eq!(templated.topology().bond_count(), 23);
     assert_eq!(
         charges(&templated),
@@ -1710,7 +1710,7 @@ fn force_field_libraries_interpret_their_residue_names() {
         .collect::<Vec<_>>();
     assert_eq!(attached, [("HT1", "N"), ("HT2", "N"), ("HT3", "N")]);
     // Without the library, CHARMM chloride meets the dictionary's chlorophyll a.
-    let error = pdb::interpret(&document).unwrap_err();
+    let error = document.interpret(Default::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
 }
 
@@ -1809,18 +1809,16 @@ fn force_field_termini_carry_their_charges() {
         ),
     ];
     for (library, lines, expected_charges, expected_attached) in cases {
-        let document = pdb::parse_str(&entry(&lines)).unwrap();
-        let interpreted = pdb::interpret_with_options(
-            &document,
-            StructureInterpretOptions {
+        let document = pdb::parse_str(&entry(&lines), Default::default()).unwrap();
+        let interpreted = document
+            .interpret(StructureInterpretOptions {
                 connectivity: ConnectivityOptions {
                     components: Some(Arc::new(library)),
                     ..ConnectivityOptions::default()
                 },
                 ..StructureInterpretOptions::default()
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         let attached = interpreted
             .report()
             .issues()
@@ -1931,9 +1929,9 @@ fn pdb_connectivity_matches_an_independent_reference() {
             kekule::mmcif::write([&interpreted], options()),
             kekule::mmcif::write([interpreted.model()], options()),
         ] {
-            let reread = kekule::mmcif::parse_str(&written.unwrap())
+            let reread = kekule::mmcif::parse_str(&written.unwrap(), Default::default())
                 .unwrap()
-                .interpret()
+                .interpret(Default::default())
                 .unwrap();
             let topology = reread.topology();
             assert_eq!(

@@ -5,13 +5,16 @@ use crate::chemistry::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
     NormalizationWarning, SourceStereoBondMark, SourceStereoBondMarkKind,
 };
-use crate::core::{
-    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
-    MoleculeEditor, StereoElement, StereoElementId, StereoElementKind, StereoGroup,
-    StereoGroupKind, TetrahedralOrientation, TetrahedralStereo,
-};
 use crate::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
 use crate::geometry::Point3;
+use crate::molecule::{
+    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
+    MoleculeEditor,
+};
+use crate::stereo::{
+    StereoElement, StereoElementId, StereoElementKind, StereoGroup, StereoGroupKind,
+    TetrahedralOrientation, TetrahedralStereo,
+};
 use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
 use crate::topology::Topology;
 use crate::units::{Quantity, ANGSTROM};
@@ -766,12 +769,12 @@ fn install_v3000_atom_cfg(
             MolfileAtomParity::Even => Some(TetrahedralOrientation::Clockwise),
             MolfileAtomParity::Either => None,
         };
-        let is_hydrogen = |carrier: &crate::core::StereoCarrier| match carrier {
-            crate::core::StereoCarrier::Atom(atom) => molecule
+        let is_hydrogen = |carrier: &crate::stereo::StereoCarrier| match carrier {
+            crate::stereo::StereoCarrier::Atom(atom) => molecule
                 .atom(*atom)
                 .is_ok_and(|atom| atom.element.symbol() == "H"),
-            crate::core::StereoCarrier::ImplicitHydrogen => true,
-            crate::core::StereoCarrier::ImplicitLonePair => false,
+            crate::stereo::StereoCarrier::ImplicitHydrogen => true,
+            crate::stereo::StereoCarrier::ImplicitLonePair => false,
         };
         let hydrogen_swaps = carriers
             .iter()
@@ -980,7 +983,7 @@ pub(super) fn molfile_coordinate_double_bonds(
     }
     match crate::algorithms::locally_eligible_double_bonds(molecule) {
         Ok(bonds) => Ok(Some(bonds)),
-        Err(crate::algorithms::StereoPerceptionError::Perception(
+        Err(crate::algorithms::StereoSearchError::Perception(
             crate::chemistry::PerceptionError::Valence(_),
         )) => Ok(None),
         Err(error) => Err(MolfileInterpretError::chemistry(format!(
@@ -1002,10 +1005,14 @@ pub(super) fn molfile_coordinate_tetrahedra(
     }
     let positions = Positions::from_vec(Quantity::new(points, ANGSTROM))
         .map_err(MolfileInterpretError::chemistry)?;
-    let inferred = match crate::algorithms::infer_coordinate_stereo(molecule, &positions) {
+    let inferred = match crate::algorithms::infer_coordinate_stereo(
+        molecule,
+        &positions,
+        Default::default(),
+    ) {
         Ok(inferred) => inferred,
         Err(crate::algorithms::CoordinateStereoError::Perception(
-            crate::algorithms::StereoPerceptionError::Perception(
+            crate::algorithms::StereoSearchError::Perception(
                 crate::chemistry::PerceptionError::Valence(error),
             ),
         )) => {
@@ -1044,7 +1051,7 @@ fn partition_molfile_staging(
     let mut result = Vec::new();
     for old_atoms in graph.connected_components() {
         let atom_set = old_atoms.iter().copied().collect::<BTreeSet<_>>();
-        let mut editor = crate::core::MoleculeEditor::new();
+        let mut editor = crate::molecule::MoleculeEditor::new();
         let mut atom_map = BTreeMap::new();
         let mut component_geometry =
             StagedCoordinates::with_atom_capacity(old_atoms.len(), geometry.unit())
@@ -1126,7 +1133,7 @@ fn canonicalization_error_location(
 #[cfg(test)]
 mod stereo_group_tests {
     use super::*;
-    use crate::core::{AxisOrientation, AxisStereo, StereoCarrier};
+    use crate::stereo::{AxisOrientation, AxisStereo, StereoCarrier};
 
     #[test]
     fn enhanced_group_rejects_an_endpoint_shared_by_two_axes() {

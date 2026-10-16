@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
-use crate::core::Element;
 use crate::diagnostics::{DiagnosticKind, SourceLocation};
+use crate::molecule::Element;
 
 use super::MmcifDocument;
 

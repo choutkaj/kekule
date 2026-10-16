@@ -1,17 +1,9 @@
-//! Periodic box construction and force-field-independent TIP3P solvation.
-//!
-//! These operations create starting structures, not parameterized or equilibrated
-//! simulation systems. Existing coordinates, chemistry, and entity annotations are
-//! preserved. Solvation publishes one new topology layout; old selections and
-//! parameter assignments remain bound to the original one. Existing owner properties
-//! are cleared under the ordinary append contract and listed in the optional report.
-//!
 mod boxes;
 mod neighbors;
 mod packing;
-pub use boxes::{BoxShape, PeriodicBoxError, PeriodicBoxOptions};
+pub use boxes::{add_periodic_box, BoxShape, PeriodicBoxError, PeriodicBoxOptions};
 
-use super::{Model, ModelBuildError, PositionError};
+use crate::structure::{Model, ModelBuildError, PositionError};
 use crate::{
     geometry::{PeriodicGeometryError, Point3},
     properties::PropertyKey,
@@ -231,47 +223,45 @@ from_error!(PositionError, Position);
 from_error!(ModelBuildError, Build);
 from_error!(HierarchyError, Hierarchy);
 
-impl Model {
-    /// Fills the existing cell with TIP3P water and optional monovalent ions.
-    ///
-    /// Existing positions and cell remain unchanged. Only newly generated waters
-    /// may be replaced by ions. Water oxygen sites are tested against solute atoms
-    /// using the sum of the solute radius and TIP3P oxygen exclusion radius.
-    /// Periodic water-water contacts below that oxygen radius are removed without
-    /// changing the bundled water geometry. Thus boundary cropping may reduce density.
-    ///
-    /// Neutralizing counterions are counted first. Additional salt pairs are
-    /// `floor((water_sites - counterions) * ionic_strength / 55.4 M + 0.5)`.
-    /// Ion sites use a deterministic shuffled greedy search; infeasible placement
-    /// returns an error rather than publishing a partially solvated model.
-    ///
-    /// Publication is atomic. Existing entity IDs/order and annotations survive;
-    /// topology/model owner annotations are cleared as for an ordinary append.
-    /// The new topology invalidates reuse of old snapshot-bound selections and
-    /// parameterizations. The returned report is optional to inspect.
-    ///
-    /// Extremely large coordinate offsets that cannot retain generated positions
-    /// within 1e-8 nm are rejected. This preserves the water's internal geometry.
-    ///
-    /// ```
-    /// use kekule::{smiles, structure::{Model, Positions, PeriodicBoxOptions,
-    ///     BoxShape, SolventOptions}, units::{Quantity, NANOMETER, MOLAR}};
-    /// let mut model = Model::from_molecule(smiles::to_molecules("[Na+]")?.remove(0),
-    ///     &Positions::zeros(1))?;
-    /// model.add_periodic_box(&PeriodicBoxOptions::Padding {
-    ///     padding: Quantity::new(1.0, NANOMETER), shape: BoxShape::Cube,
-    /// })?;
-    /// model.add_solvent(&SolventOptions {
-    ///     ionic_strength: Quantity::new(0.15, MOLAR), ..Default::default()
-    /// })?; // The successful report can simply be discarded.
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn add_solvent(
-        &mut self,
-        options: &SolventOptions,
-    ) -> Result<SolvationReport, SolvationError> {
-        packing::solvate(self, options)
-    }
+/// Fills the existing cell with TIP3P water and optional monovalent ions.
+///
+/// Existing positions and cell remain unchanged. Only newly generated waters
+/// may be replaced by ions. Water oxygen sites are tested against solute atoms
+/// using the sum of the solute radius and TIP3P oxygen exclusion radius.
+/// Periodic water-water contacts below that oxygen radius are removed without
+/// changing the bundled water geometry. Thus boundary cropping may reduce density.
+///
+/// Neutralizing counterions are counted first. Additional salt pairs are
+/// `floor((water_sites - counterions) * ionic_strength / 55.4 M + 0.5)`.
+/// Ion sites use a deterministic shuffled greedy search; infeasible placement
+/// returns an error rather than publishing a partially solvated model.
+///
+/// Publication is atomic. Existing entity IDs/order and annotations survive;
+/// topology/model owner annotations are cleared as for an ordinary append.
+/// The new topology invalidates reuse of old snapshot-bound selections and
+/// parameterizations. The returned report is optional to inspect.
+///
+/// Extremely large coordinate offsets that cannot retain generated positions
+/// within 1e-8 nm are rejected. This preserves the water's internal geometry.
+///
+/// ```
+/// use kekule::{smiles, solvation::{self, BoxShape, PeriodicBoxOptions, SolventOptions},
+///     structure::{Model, Positions}, units::{Quantity, NANOMETER, MOLAR}};
+/// let mut model = Model::from_molecule(smiles::to_molecules("[Na+]")?.remove(0),
+///     &Positions::zeros(1))?;
+/// solvation::add_periodic_box(&mut model, &PeriodicBoxOptions::Padding {
+///     padding: Quantity::new(1.0, NANOMETER), shape: BoxShape::Cube,
+/// })?;
+/// solvation::solvate(&mut model, &SolventOptions {
+///     ionic_strength: Quantity::new(0.15, MOLAR), ..Default::default()
+/// })?; // The successful report can simply be discarded.
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn solvate(
+    model: &mut Model,
+    options: &SolventOptions,
+) -> Result<SolvationReport, SolvationError> {
+    packing::solvate(model, options)
 }
 
 /// Numerically safer bounding-box midpoint than `(min + max) / 2`.

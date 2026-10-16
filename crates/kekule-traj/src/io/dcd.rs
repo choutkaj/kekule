@@ -5,7 +5,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::{
-    FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
+    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
     TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation,
     TrajectoryReader, TrajectoryWriter,
 };
@@ -812,8 +812,7 @@ impl<R: Read + Seek> DcdReader<R> {
         decoded: DcdDecodedFrame,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
-        let mut data =
-            FrameBufferData::new(Quantity::new(positions, ANGSTROM)).with_step(decoded.step);
+        let mut data = FrameData::new(Quantity::new(positions, ANGSTROM)).with_step(decoded.step);
         if let Some(cell) = decoded.cell {
             data = data.with_cell(cell);
         }

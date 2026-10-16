@@ -2,13 +2,9 @@
 //! decoded from its fixed-width fields, codes, and options, before chemistry.
 
 use std::fmt;
-use std::sync::Arc;
 
-use crate::core::Molecule;
 use crate::diagnostics::{normalize_line_endings, read_bounded, DiagnosticKind, SourceLocation};
 use crate::geometry::Point3;
-use crate::structure::Model;
-use crate::topology::Topology;
 
 use super::structure_documents::{
     interpret_molfile_document, MolfileInterpretError, MolfileInterpretOptions,
@@ -395,39 +391,13 @@ impl MolfileDocument {
     }
 
     /// Interprets this document once into connected chemistry with matching
-    /// component geometry and source reports, rejecting unsupported content.
-    pub fn interpret(&self) -> Result<MolfileInterpretation, MolfileInterpretError> {
-        self.interpret_with_options(MolfileInterpretOptions::default())
-    }
-
-    /// Interprets this document with an explicit unsupported-content policy.
-    pub fn interpret_with_options(
+    /// component geometry and source reports. Unsupported content fails or is
+    /// omitted and reported, as `options` selects.
+    pub fn interpret(
         &self,
         options: MolfileInterpretOptions,
     ) -> Result<MolfileInterpretation, MolfileInterpretError> {
         interpret_molfile_document(self, options)
-    }
-
-    /// Interprets this source document as connected canonical molecules.
-    ///
-    /// Coordinates may participate in source-stereo normalization, but are not
-    /// retained in the returned molecules. No chemical perception is run.
-    pub fn to_molecules(&self) -> Result<Vec<Molecule>, MolfileInterpretError> {
-        Ok(self.interpret()?.into_molecules())
-    }
-
-    /// Interprets this source document and projects its complete static model
-    /// layout, including the deterministic synthetic hierarchy.
-    pub fn to_topology(&self) -> Result<Arc<Topology>, MolfileInterpretError> {
-        Ok(self.interpret()?.into_topology())
-    }
-
-    /// Interprets this source document as one geometry-bearing model.
-    ///
-    /// Each disconnected source component becomes one molecule instance in
-    /// the model topology. No chemical perception is run.
-    pub fn to_model(&self) -> Result<Model, MolfileInterpretError> {
-        Ok(self.interpret()?.into_model())
     }
 }
 
@@ -511,11 +481,7 @@ impl<'a> MolfileLines<'a> {
     }
 }
 
-pub(crate) fn parse_molfile_document(input: &str) -> Result<MolfileDocument, MolfileParseError> {
-    parse_molfile_document_with_options(input, MolfileParseOptions::default())
-}
-
-pub(crate) fn parse_molfile_document_with_options(
+pub(crate) fn parse_molfile_document(
     input: &str,
     options: MolfileParseOptions,
 ) -> Result<MolfileDocument, MolfileParseError> {
@@ -552,7 +518,7 @@ pub(crate) fn parse_molfile_reader(
 ) -> Result<MolfileDocument, MolfileParseError> {
     let input = read_bounded(reader, options.max_input_bytes)
         .map_err(|(kind, message)| MolfileParseError::new(kind, 1, message))?;
-    parse_molfile_document_with_options(&input, options)
+    parse_molfile_document(&input, options)
 }
 
 /// Parses the Molfile at the start of `lines` and returns the index of its

@@ -28,10 +28,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(usage.into());
     }
 
-    let topology = mmcif::parse_str(&fs::read_to_string(topology_path)?)?
-        .interpret()?
+    let topology = mmcif::parse_str(&fs::read_to_string(topology_path)?, Default::default())?
+        .interpret(Default::default())?
         .into_topology();
-    let mut reader = open_trajectory(input, topology.clone())?;
+    let mut reader = open_trajectory(input, topology.clone(), Default::default())?;
     let mut buffer = reader.frame_buffer();
     if !reader.read_next(&mut buffer)? {
         return Err("input has no frames".into());
@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Retain one complete reference before the reusable input buffer advances.
     let reference = buffer.frame_view().to_model();
     let atoms = AtomSelection::all(&topology);
-    let superposer = FrameSuperposer::new(&reference, &atoms);
+    let superposer = FrameSuperposer::new(&reference, &atoms, Default::default());
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr)
         .with_trr_options(TrrWriteOptions::default().with_precision(TrrScalarPrecision::Float64));
     let mut writer = create_trajectory_writer(output, topology.clone(), options)?;

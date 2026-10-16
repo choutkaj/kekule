@@ -5,12 +5,12 @@ use std::io::{self, BufRead, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::{
-    FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
+    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
     TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation,
     TrajectoryReader, TrajectoryWriter,
 };
-use kekule::core::Element;
 use kekule::geometry::Point3;
+use kekule::molecule::Element;
 use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
@@ -411,7 +411,7 @@ impl<R: BufRead> XyzReader<R> {
 
     fn publish(&self, destination: &mut FrameBuffer) -> Result<(), TrajectoryIoError> {
         destination
-            .replace_from_data(FrameBufferData::new(Quantity::new(
+            .replace_from_data(FrameData::new(Quantity::new(
                 self.positions.as_slice(),
                 self.options.length_unit,
             )))

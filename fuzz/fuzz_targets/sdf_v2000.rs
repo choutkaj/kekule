@@ -1,7 +1,7 @@
 #![no_main]
 
 use kekule::molfile::MolfileWriteVersion;
-use kekule::sdf::{parse_str, records_with_options, write, SdfParseOptions, SdfWriteOptions};
+use kekule::sdf::{parse_str, records, write, SdfParseOptions, SdfWriteOptions};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -10,18 +10,18 @@ fuzz_target!(|data: &[u8]| {
         allow_missing_final_delimiter: true,
         ..SdfParseOptions::default()
     };
-    let interpreted = records_with_options(data, options)
+    let interpreted = records(data, options)
         .filter_map(Result::ok)
-        .filter_map(|record| record.interpret().ok())
+        .filter_map(|record| record.interpret(Default::default()).ok())
         .collect::<Vec<_>>();
     let options = SdfWriteOptions {
         version: MolfileWriteVersion::V2000,
         ..Default::default()
     };
     if let Ok(output) = write(&interpreted, options) {
-        if let Ok(document) = parse_str(&output) {
+        if let Ok(document) = parse_str(&output, Default::default()) {
             for record in document.records() {
-                let _ = record.interpret();
+                let _ = record.interpret(Default::default());
             }
         }
     }

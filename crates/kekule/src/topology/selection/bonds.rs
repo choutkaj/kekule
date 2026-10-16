@@ -43,7 +43,7 @@ pub enum BondSelectionMode {
 /// let topology = smiles::to_topology("CCC")?;
 /// let selected = BondSelection::from_bonds(&topology, [topology.bond_ids()[0]])?;
 /// selected.ensure_compatible(&topology)?;
-/// let mut editor = topology.edit();
+/// let mut editor = topology.to_editor();
 /// let handles = selected.bond_ids()
 ///     .map(|id| editor.bond_handle(id))
 ///     .collect::<Result<Vec<_>, _>>()?;

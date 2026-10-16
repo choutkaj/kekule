@@ -2,8 +2,8 @@ use std::fmt;
 use std::io::{BufReader, Read};
 use std::sync::Arc;
 
-use crate::core::Molecule;
 use crate::diagnostics::{read_bounded, DiagnosticKind, SourceLocation};
+use crate::molecule::Molecule;
 use crate::structure::Model;
 use crate::topology::Topology;
 
@@ -162,19 +162,15 @@ impl SdfRecord {
     }
 
     /// Interprets this independently meaningful record once into its richest
-    /// canonical one-structure state, rejecting unsupported content.
-    pub fn interpret(&self) -> Result<SdfRecordInterpretation, SdfInterpretError> {
-        self.interpret_with_options(MolfileInterpretOptions::default())
-    }
-
-    /// Interprets this record with an explicit unsupported-content policy.
-    pub fn interpret_with_options(
+    /// canonical one-structure state. Unsupported content fails or is omitted
+    /// and reported, as `options` selects.
+    pub fn interpret(
         &self,
         options: MolfileInterpretOptions,
     ) -> Result<SdfRecordInterpretation, SdfInterpretError> {
         let (model, molfile_components, omitted) = self
             .molfile
-            .interpret_with_options(options)
+            .interpret(options)
             .map_err(|error| SdfInterpretError {
                 record: self.number,
                 error,
@@ -192,29 +188,6 @@ impl SdfRecord {
             data_fields: self.data_fields.clone(),
             report,
         })
-    }
-
-    /// Interprets this record as connected canonical molecules.
-    ///
-    /// Source coordinates may assist stereo normalization, but are not
-    /// retained. No chemical perception is run.
-    pub fn to_molecules(&self) -> Result<Vec<Molecule>, SdfInterpretError> {
-        Ok(self.interpret()?.into_molecules())
-    }
-
-    /// Projects this record's complete static model layout, including the
-    /// deterministic synthetic Molfile hierarchy.
-    pub fn to_topology(&self) -> Result<Arc<Topology>, SdfInterpretError> {
-        Ok(self.interpret()?.into_topology())
-    }
-
-    /// Interprets this record as one model with one instance per component.
-    ///
-    /// SDF data fields remain source metadata and are not copied into the
-    /// canonical model. No chemical perception is run. Call [`Model::perceive`]
-    /// on the returned model to explicitly install the default perception profile.
-    pub fn to_model(&self) -> Result<Model, SdfInterpretError> {
-        Ok(self.interpret()?.into_model())
     }
 }
 

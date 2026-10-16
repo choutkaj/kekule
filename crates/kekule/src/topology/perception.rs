@@ -35,7 +35,7 @@ impl Topology {
     /// Returns a new snapshot with the default molecular perception profile.
     ///
     /// Each reusable definition is perceived once, in definition order, using
-    /// [`crate::core::Molecule::perceive`]: RDKit-like valence and implicit
+    /// [`crate::molecule::Molecule::perceive`]: RDKit-like valence and implicit
     /// hydrogens, the default deterministic ring set, and RDKit-like aromaticity.
     /// Existing perception is recomputed; dependent CIP state is cleared.
     /// Failure identifies the first failing definition and leaves `self` intact.

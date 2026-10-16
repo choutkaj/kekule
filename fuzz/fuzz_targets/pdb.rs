@@ -3,17 +3,14 @@
 use kekule::macromolecular::{
     ModelSelection, StructureEnsembleInterpretOptions, StructureInterpretOptions,
 };
-use kekule::pdb::{
-    interpret_ensemble, interpret_ensemble_with_options, interpret_with_options,
-    parse_str_with_options, PdbParseOptions,
-};
+use kekule::pdb::{parse_str, PdbParseOptions};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(input) = std::str::from_utf8(data) else {
         return;
     };
-    let Ok(document) = parse_str_with_options(
+    let Ok(document) = parse_str(
         input,
         PdbParseOptions {
             max_input_bytes: 64 * 1024,
@@ -31,13 +28,13 @@ fuzz_target!(|data: &[u8]| {
         model_selection: ModelSelection::First,
         ..StructureInterpretOptions::default()
     };
-    if let Ok(interpreted) = interpret_with_options(&document, options) {
+    if let Ok(interpreted) = document.interpret(options) {
         for atom in interpreted.model().topology().atom_ids() {
             let _ = interpreted.model().topology().atom(*atom);
             let _ = interpreted.model().position(*atom);
         }
     }
-    if let Ok(interpreted) = interpret_ensemble(&document) {
+    if let Ok(interpreted) = document.interpret_ensemble(Default::default()) {
         for view in interpreted
             .ensemble()
             .iter()
@@ -49,11 +46,8 @@ fuzz_target!(|data: &[u8]| {
             }
         }
     }
-    let _ = interpret_ensemble_with_options(
-        &document,
-        StructureEnsembleInterpretOptions {
-            model_ids: Some(Vec::new()),
-            ..StructureEnsembleInterpretOptions::default()
-        },
-    );
+    let _ = document.interpret_ensemble(StructureEnsembleInterpretOptions {
+        model_ids: Some(Vec::new()),
+        ..StructureEnsembleInterpretOptions::default()
+    });
 });

@@ -3,10 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
-use crate::core::{
-    AtomId, AtomRadical, MoleculeEditor, StereoElementKind, StereoGroup, StereoGroupKind,
-};
 use crate::diagnostics::{DiagnosticKind, UnsupportedContent};
+use crate::molecule::{AtomId, AtomRadical, MoleculeEditor};
+use crate::stereo::{StereoElementKind, StereoGroup, StereoGroupKind};
 
 use super::interpret::SmilesInterpretError;
 use super::parse::{SmilesDocument, SmilesParseError};

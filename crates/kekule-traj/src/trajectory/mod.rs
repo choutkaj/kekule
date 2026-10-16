@@ -8,10 +8,9 @@
 mod buffer;
 mod stream;
 
-pub use buffer::{FrameBuffer, FrameBufferData};
+pub use buffer::{FrameBuffer, FrameData};
 pub use stream::{
-    validate_atom_order, CoordinateFrameReader, MemoryTrajectoryReader, MemoryTrajectoryWriter,
-    SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter,
+    MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter,
 };
 
 use std::{fmt, io};

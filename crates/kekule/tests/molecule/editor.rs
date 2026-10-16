@@ -1,5 +1,10 @@
-use kekule::core::*;
+use kekule::molecule::*;
+use kekule::perception::Perception;
 use kekule::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
+use kekule::stereo::{
+    AxisOrientation, AxisStereo, StereoCarrier, StereoElement, StereoElementKind, StereoGroup,
+    StereoGroupId, StereoGroupKind, TetrahedralStereo,
+};
 use kekule::units::{ANGSTROM, KELVIN, NANOMETER};
 
 fn atom(symbol: &str) -> Atom {
@@ -44,7 +49,7 @@ fn public_editor_builds_inspects_and_edits_without_a_molecule_view() {
         .unwrap();
     editor.validate().unwrap();
     let published = editor.finish().unwrap();
-    let mut edited = published.edit();
+    let mut edited = published.to_editor();
     edited.atom_mut(a).unwrap().formal_charge = 1;
     assert_eq!(published.atom(a).unwrap().formal_charge, 0);
     assert!(edited.properties().owner().get(&key("label")).is_none());
@@ -645,7 +650,7 @@ fn publication_compacts_every_id_space_and_carries_annotations() {
     let element = source.stereo_element_ids().next().unwrap();
     let (group, _) = source.stereo_groups().next().unwrap();
 
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     // Leave deleted slots in every identifier space before the survivors.
     editor.delete_atom(AtomId::new(0)).unwrap();
     let kind = editor.remove_stereo_group(group).unwrap().kind;
@@ -701,7 +706,7 @@ fn publication_compacts_every_id_space_and_carries_annotations() {
     // Renumbering atoms invalidates perception like the deletion that caused it.
     assert_eq!(published.perception(), &Perception::default());
     // An unchanged draft publishes the identity and retains perception.
-    let (again, identity) = published.edit().finish_with_correspondence().unwrap();
+    let (again, identity) = published.to_editor().finish_with_correspondence().unwrap();
     assert_eq!(identity.atoms().len(), published.atom_count());
     assert!(identity.atoms().iter().all(|(from, to)| from == to));
     assert_eq!(again, published);
@@ -711,7 +716,7 @@ fn publication_compacts_every_id_space_and_carries_annotations() {
 fn editor_enforces_molecule_publication_invariants() {
     assert!(matches!(
         MoleculeEditor::new().finish(),
-        Err(kekule::core::MoleculePublicationError::EmptyGraph)
+        Err(kekule::molecule::MoleculePublicationError::EmptyGraph)
     ));
 
     let mut single_atom = MoleculeEditor::new();
@@ -729,7 +734,7 @@ fn editor_enforces_molecule_publication_invariants() {
         .unwrap();
     assert!(matches!(
         disconnected.finish(),
-        Err(kekule::core::MoleculePublicationError::DisconnectedGraph(_))
+        Err(kekule::molecule::MoleculePublicationError::DisconnectedGraph(_))
     ));
 }
 

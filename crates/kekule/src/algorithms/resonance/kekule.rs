@@ -5,7 +5,7 @@
 // Aromatic seed preparation follows RDKit Kekulize.cpp, Copyright (C)
 // 2001-2021 Greg Landrum and other RDKit contributors, under the same license.
 use super::*;
-use crate::core::{
+use crate::stereo::{
     AxisOrientation, DoubleBondOrientation, StereoCarrier, StereoElementKind,
     TetrahedralOrientation,
 };

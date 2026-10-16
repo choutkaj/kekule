@@ -1,11 +1,11 @@
-//! Topology publication: consuming builders and editors, and transform errors.
+//! Topology publication: consuming builders and editors, and subset errors.
 
 use std::error::Error;
 
-use kekule::core::{Atom, Element, Molecule, MoleculeEditor, MoleculePublicationError};
+use kekule::molecule::{Atom, Element, Molecule, MoleculeEditor, MoleculePublicationError};
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::topology::transform::{TopologySubsetError, TopologyTransformError};
-use kekule::topology::{SelectionError, Topology, TopologyBuildError, TopologyEditor};
+use kekule::topology::TopologySubsetError;
+use kekule::topology::{edit::TopologyEditor, SelectionError, Topology};
 
 fn atom(symbol: &str) -> Atom {
     Atom::new(Element::from_symbol(symbol).unwrap())
@@ -43,7 +43,7 @@ fn consuming_publication_moves_unique_source_definitions_and_modified_drafts() {
         original_pointer
     );
 
-    let mut editor = result.edit();
+    let mut editor = result.to_editor();
     let handle = editor.atom_ids().next().unwrap();
     editor.replace_atom(handle, atom("N")).unwrap();
     let draft_pointer = editor.atom(handle).unwrap() as *const Atom;
@@ -95,15 +95,10 @@ fn consuming_publication_moves_added_molecules_and_preserves_owner_annotations()
 }
 
 #[test]
-fn topology_transform_errors_expose_wrapped_causes() {
-    let error = TopologyTransformError::TopologyBuild(TopologyBuildError::NoMoleculeInstances);
-    assert!(error.source().unwrap().is::<TopologyBuildError>());
+fn topology_subset_errors_expose_wrapped_causes() {
     let error = TopologySubsetError::Selection(SelectionError::TopologyMismatch);
     assert!(error.source().unwrap().is::<SelectionError>());
     let error = TopologySubsetError::Publication(MoleculePublicationError::EmptyGraph);
     assert!(error.source().unwrap().is::<MoleculePublicationError>());
     assert!(TopologySubsetError::EmptySelection.source().is_none());
-    assert!(TopologyTransformError::EmptyTargetTopology
-        .source()
-        .is_none());
 }

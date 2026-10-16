@@ -17,10 +17,10 @@ const WATER: &str = r#"<SMIRNOFF version="0.3" aromaticity_model="OEAroModel_MDL
 <LibraryCharges version="0.3"><LibraryCharge smirks="[#8:1](-[#1:2])-[#1:3]" id="water-charge" charge1="-0.8*elementary_charge" charge2="0.4*elementary_charge" charge3="0.4*elementary_charge"/></LibraryCharges>
 </SMIRNOFF>"#;
 
-fn molecule(text: &str) -> kekule::core::Molecule {
+fn molecule(text: &str) -> kekule::molecule::Molecule {
     let mut m = smiles::to_molecules(text).unwrap().remove(0);
     m.perceive().unwrap();
-    m.add_hydrogens().unwrap();
+    m.add_hydrogens(Default::default()).unwrap();
     m
 }
 

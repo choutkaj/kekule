@@ -7,18 +7,23 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use kekule::core::{
-    AxisOrientation, BondOrder, DoubleBondOrientation, StereoCarrier, StereoDescriptor,
-    StereoElementId, StereoElementKind, StereoGroupKind, TetrahedralOrientation,
-};
 use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
 use kekule::perception::aromaticity::{self, AromaticityModel};
-use kekule::perception::{resonance, rings};
-use kekule::rotatable_bonds::{self, RotatableBondOptions};
-use kekule::stereo::{self, StereoCandidate};
+use kekule::perception::resonance;
+use kekule::perception::rings::{self, RingPerceptionOptions};
+
+use kekule::descriptors::RotatableBondOptions;
+use kekule::stereo::{self, cleanup::StereoCandidate};
 use kekule::substructure::{PreparedTopologyTarget, SubstructureMatchOptions};
 use kekule::topology::Topology;
-use kekule::{canon, molfile, query, sdf, smiles};
+use kekule::{descriptors, molfile, sdf, smiles};
+use kekule::{
+    molecule::BondOrder,
+    stereo::{
+        AxisOrientation, DoubleBondOrientation, StereoCarrier, StereoDescriptor, StereoElementId,
+        StereoElementKind, StereoGroupKind, TetrahedralOrientation,
+    },
+};
 use serde_json::{json, Value};
 
 use crate::input::{self, Component};
@@ -73,13 +78,17 @@ fn prepare(component: &mut Component) -> Result<(), Failure> {
     molecule
         .perceive()
         .map_err(|e| Failure::new("perception", e))?;
-    let mut editor = molecule.edit();
-    stereo::cleanup_stereo(&mut editor, Default::default())
+    let mut editor = molecule.to_editor();
+    stereo::cleanup::cleanup_stereo(&mut editor, Default::default())
         .map_err(|e| Failure::new("stereo", e))?;
     if let Some(positions) = &component.positions {
-        stereo::materialize_coordinate_stereo(&mut editor, positions)
-            .map_err(|e| Failure::new("stereo", e))?;
-        stereo::cleanup_stereo(&mut editor, Default::default())
+        stereo::coordinates::materialize_coordinate_stereo(
+            &mut editor,
+            positions,
+            Default::default(),
+        )
+        .map_err(|e| Failure::new("stereo", e))?;
+        stereo::cleanup::cleanup_stereo(&mut editor, Default::default())
             .map_err(|e| Failure::new("stereo", e))?;
     }
     *molecule = editor.finish().map_err(|e| Failure::new("stereo", e))?;
@@ -89,7 +98,7 @@ fn prepare(component: &mut Component) -> Result<(), Failure> {
 }
 
 /// Bond endpoints as source indices; dative bonds keep their direction.
-fn ends(component: &Component, bond: &kekule::core::Bond) -> [usize; 2] {
+fn ends(component: &Component, bond: &kekule::molecule::Bond) -> [usize; 2] {
     let mut ends = [component.atom(bond.a()), component.atom(bond.b())];
     if bond.order != BondOrder::Dative {
         ends.sort_unstable();
@@ -177,8 +186,8 @@ fn permutation_parity(values: &[i64]) -> u8 {
 /// double-bond and atropisomer reference carriers.
 fn reference_carrier(
     component: &Component,
-    center: kekule::core::AtomId,
-    other: kekule::core::AtomId,
+    center: kekule::molecule::AtomId,
+    other: kekule::molecule::AtomId,
 ) -> Result<i64, Failure> {
     Ok(component
         .molecule
@@ -293,9 +302,24 @@ fn group_kind(kind: StereoGroupKind) -> &'static str {
 fn ring_facts(components: &mut [Component], facts: &mut Facts) -> Result<(), Failure> {
     let mut sizes = BTreeMap::<usize, usize>::new();
     for component in components.iter_mut() {
-        let membership = rings::perceive_ring_membership(&mut component.molecule);
-        let ring_set = rings::perceive_ring_set(&mut component.molecule)
+        rings::perceive_rings(
+            &mut component.molecule,
+            RingPerceptionOptions::membership_only(),
+        )
+        .expect("membership perception cannot fail");
+        let membership = component
+            .molecule
+            .ring_membership()
+            .expect("rings installed")
+            .clone();
+        let ring_options = RingPerceptionOptions::for_molecule(&component.molecule);
+        rings::perceive_rings(&mut component.molecule, ring_options)
             .map_err(|e| Failure::new("rings", e))?;
+        let ring_set = component
+            .molecule
+            .ring_set()
+            .expect("rings installed")
+            .clone();
         for ring in ring_set.rings() {
             *sizes.entry(ring.atoms.len()).or_default() += 1;
         }
@@ -337,7 +361,7 @@ fn aromaticity_facts(
     };
     for component in components.iter_mut() {
         if model != AromaticityModel::RdkitLike {
-            aromaticity::perceive_aromaticity(&mut component.molecule, model)
+            aromaticity::perceive_aromaticity(&mut component.molecule, model, Default::default())
                 .map_err(|e| Failure::new("aromaticity", e))?;
         }
         let molecule = &component.molecule;
@@ -447,8 +471,8 @@ fn resonance_facts(components: &mut [Component], facts: &mut Facts) -> Result<()
 fn candidates(components: &[Component], facts: &mut Facts) -> Result<(), Failure> {
     for component in components {
         let molecule = &component.molecule;
-        for candidate in
-            stereo::detect_stereo_candidates(molecule).map_err(|e| Failure::new("stereo", e))?
+        for candidate in stereo::cleanup::detect_stereo_candidates(molecule, Default::default())
+            .map_err(|e| Failure::new("stereo", e))?
         {
             match candidate {
                 StereoCandidate::Tetrahedral { center, .. } => {
@@ -499,7 +523,7 @@ fn descriptor(descriptor: StereoDescriptor) -> &'static str {
 /// and atropisomeric axes alike, as RDKit labels both on the bond.
 fn cip(components: &mut [Component], facts: &mut Facts) -> Result<(), Failure> {
     for component in components.iter_mut() {
-        stereo::assign_cip_descriptors(&mut component.molecule)
+        stereo::cip::assign_cip_descriptors(&mut component.molecule, Default::default())
             .map_err(|e| Failure::new("cip", e))?;
         let component = &*component;
         let molecule = &component.molecule;
@@ -531,7 +555,7 @@ fn cip(components: &mut [Component], facts: &mut Facts) -> Result<(), Failure> {
 /// Atom equivalence classes within each component.
 fn symmetry(components: &[Component], facts: &mut Facts) {
     for component in components {
-        let ranking = canon::atom_ranking(&component.molecule);
+        let ranking = descriptors::canonical_atom_ranking(&component.molecule);
         let mut classes = BTreeMap::<u32, Vec<usize>>::new();
         for (atom, rank) in ranking.iter() {
             classes.entry(rank).or_default().push(component.atom(atom));
@@ -566,7 +590,7 @@ fn formula(components: &[Component], facts: &mut Facts) -> Result<(), Failure> {
 fn rotatable(components: &[Component], facts: &mut Facts) -> Result<(), Failure> {
     for component in components {
         let molecule = &component.molecule;
-        let detected = rotatable_bonds::detect(molecule, RotatableBondOptions::STRICT)
+        let detected = descriptors::rotatable_bonds(molecule, RotatableBondOptions::STRICT)
             .map_err(|e| Failure::new("rotatable", e))?;
         for &id in detected.bond_ids() {
             let bond = molecule
@@ -601,14 +625,14 @@ fn smarts(components: Vec<Component>, options: &Value, facts: &mut Facts) -> Res
     };
     for (index, smarts) in queries.iter().enumerate() {
         let smarts = smarts.as_str().unwrap_or_default();
-        let graph = match query::parse_smarts(smarts) {
+        let graph = match kekule::smarts::parse_str(smarts, Default::default()) {
             Ok(graph) => graph,
             Err(_) => {
                 facts.push(json!(["query", index, "error", "parse"]));
                 continue;
             }
         };
-        let matches = match target.find_matches_with_options(&graph, match_options) {
+        let matches = match target.all(&graph, match_options) {
             Ok(matches) => matches,
             Err(_) => {
                 facts.push(json!(["query", index, "error", "match"]));
@@ -653,18 +677,19 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
         }
         "molfile-v2000" | "molfile-v3000" | "sdf" => {
             let model = match format {
-                "mol" => molfile::parse_str(text)
+                "mol" => molfile::parse_str(text, Default::default())
                     .map_err(|e| Failure::new("parse", e))?
-                    .interpret()
+                    .interpret(Default::default())
                     .map_err(|e| Failure::new("parse", e))?
                     .into_model(),
                 "sdf" => {
-                    let document = sdf::parse_str(text).map_err(|e| Failure::new("parse", e))?;
+                    let document = sdf::parse_str(text, Default::default())
+                        .map_err(|e| Failure::new("parse", e))?;
                     let [record] = document.records() else {
                         return Err(Failure::new("request", "expected one SDF record"));
                     };
                     record
-                        .interpret()
+                        .interpret(Default::default())
                         .map_err(|e| Failure::new("parse", e))?
                         .into_model()
                 }

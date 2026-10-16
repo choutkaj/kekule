@@ -33,9 +33,7 @@ pub(crate) use mmcif_write::{write_mmcif, write_mmcif_to};
 pub use mmcif_write::{
     MmcifBlockSource, MmcifEntityClassifications, MmcifWriteError, MmcifWriteOptions,
 };
-pub(crate) use molfile_document::{
-    parse_molfile_document, parse_molfile_document_with_options, parse_molfile_reader,
-};
+pub(crate) use molfile_document::{parse_molfile_document, parse_molfile_reader};
 pub use molfile_document::{
     MolfileAtom, MolfileAtomParity, MolfileBond, MolfileBondOrder, MolfileBondStereo,
     MolfileDocument, MolfileHeader, MolfileParseError, MolfileParseOptions, MolfileRadical,
@@ -61,8 +59,8 @@ pub use sdf_write::{
     SdfRecordSource, SdfWriteError, SdfWriteOptions, SDF_ENERGY_FIELD, SDF_WEIGHT_FIELD,
 };
 pub(crate) use smiles::{
-    parse_smiles_document, parse_smiles_document_with_options, write_canonical_smiles,
-    write_isomeric_smiles, write_smiles,
+    parse_smiles_document, parse_smiles_reader, write_canonical_smiles, write_isomeric_smiles,
+    write_smiles,
 };
 pub use smiles::{
     SmilesAtomMapping, SmilesBondMapping, SmilesComponentCountError, SmilesComponentInterpretation,

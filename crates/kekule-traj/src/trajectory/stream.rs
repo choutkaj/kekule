@@ -1,10 +1,8 @@
 use std::fmt;
 use std::sync::Arc;
 
-use kekule::geometry::Point3;
-use kekule::structure::{Positions, StructureError, Trajectory, TrajectoryFrameView};
-use kekule::topology::{InstanceAtomId, Topology};
-use kekule::units::Quantity;
+use kekule::structure::{Trajectory, TrajectoryFrameView};
+use kekule::topology::Topology;
 
 use super::buffer::FrameBuffer;
 use super::TrajectoryIoError;
@@ -61,71 +59,6 @@ pub trait TrajectoryWriter {
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError>;
 }
 
-/// Sequential and seekable reader over an in-memory trajectory.
-pub struct MemoryTrajectoryReader<'a> {
-    trajectory: &'a Trajectory,
-    cursor: usize,
-}
-
-impl fmt::Debug for MemoryTrajectoryReader<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("MemoryTrajectoryReader")
-            .field("frame_count", &self.trajectory.len())
-            .field("cursor", &self.cursor)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<'a> MemoryTrajectoryReader<'a> {
-    pub fn new(trajectory: &'a Trajectory) -> Self {
-        Self {
-            trajectory,
-            cursor: 0,
-        }
-    }
-}
-
-impl TrajectoryReader for MemoryTrajectoryReader<'_> {
-    fn topology(&self) -> &Topology {
-        self.trajectory.topology()
-    }
-
-    fn shared_topology(&self) -> Arc<Topology> {
-        self.trajectory.shared_topology()
-    }
-
-    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
-        let Some(frame) = self.trajectory.get(self.cursor) else {
-            return Ok(false);
-        };
-        destination.copy_from(frame)?;
-        self.cursor += 1;
-        Ok(true)
-    }
-}
-
-impl SeekableTrajectoryReader for MemoryTrajectoryReader<'_> {
-    fn frame_count(&self) -> Option<u64> {
-        u64::try_from(self.trajectory.len()).ok()
-    }
-
-    fn read_frame(
-        &mut self,
-        index: u64,
-        destination: &mut FrameBuffer,
-    ) -> Result<(), TrajectoryIoError> {
-        let index =
-            usize::try_from(index).map_err(|_| TrajectoryIoError::FrameIndexOutOfRange(index))?;
-        let frame = self
-            .trajectory
-            .get(index)
-            .ok_or(TrajectoryIoError::FrameIndexOutOfRange(index as u64))?;
-        destination.copy_from(frame)?;
-        Ok(())
-    }
-}
-
 /// In-memory writer that preserves every core frame field.
 ///
 /// Useful as a [`TrajectoryWriter`] destination for streaming pipelines. To load
@@ -172,91 +105,5 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
     }
 }
 
-/// Checks an independently supplied semantic atom sequence against topology order.
-///
-/// This compares the supplied IDs only; it does not inspect a coordinate file or
-/// infer atom identity from matching counts. Readers interpret coordinate index
-/// `i` as topology dense atom index `i` without requiring this optional check.
-pub fn validate_atom_order(
-    topology: &Topology,
-    atom_order: &[InstanceAtomId],
-) -> Result<(), TrajectoryIoError> {
-    if topology.atom_ids() != atom_order {
-        return Err(TrajectoryIoError::AtomOrderMismatch);
-    }
-    Ok(())
-}
-
-/// Reference reader for a topology-free coordinate source.
-///
-/// Construction collects the source and validates every frame's units and atom
-/// count. Coordinates follow the supplied topology's dense atom order.
-pub struct CoordinateFrameReader {
-    topology: Arc<Topology>,
-    frames: Vec<Vec<Point3>>,
-    cursor: usize,
-}
-
-impl fmt::Debug for CoordinateFrameReader {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("CoordinateFrameReader")
-            .field("atom_count", &self.topology.atom_count())
-            .field("frame_count", &self.frames.len())
-            .field("cursor", &self.cursor)
-            .finish_non_exhaustive()
-    }
-}
-
-impl CoordinateFrameReader {
-    pub fn new(
-        topology: impl Into<Arc<Topology>>,
-        frames: impl IntoIterator<Item = Quantity<Vec<Point3>>>,
-    ) -> Result<Self, TrajectoryIoError> {
-        let topology = topology.into();
-        let frames = frames
-            .into_iter()
-            .map(|frame| {
-                let positions = Positions::new(frame)?;
-                if positions.len() != topology.atom_count() {
-                    return Err(StructureError::AtomCountMismatch {
-                        expected: topology.atom_count(),
-                        actual: positions.len(),
-                    }
-                    .into());
-                }
-                Ok::<_, TrajectoryIoError>(positions.values().value().to_vec())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self {
-            topology,
-            frames,
-            cursor: 0,
-        })
-    }
-}
-
-impl TrajectoryReader for CoordinateFrameReader {
-    fn topology(&self) -> &Topology {
-        &self.topology
-    }
-
-    fn shared_topology(&self) -> Arc<Topology> {
-        Arc::clone(&self.topology)
-    }
-
-    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
-        if !self.topology.shares_layout(destination.topology()) {
-            return Err(TrajectoryIoError::TopologyMismatch);
-        }
-        let Some(frame) = self.frames.get(self.cursor) else {
-            return Ok(false);
-        };
-        destination.replace_from_data(crate::FrameBufferData::new(Quantity::new(
-            frame.as_slice(),
-            kekule::units::CANONICAL_LENGTH_UNIT,
-        )))?;
-        self.cursor += 1;
-        Ok(true)
-    }
-}
+#[cfg(test)]
+mod tests;

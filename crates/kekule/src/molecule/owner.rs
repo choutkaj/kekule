@@ -759,8 +759,8 @@ impl Molecule {
 
     pub(crate) fn replace_stereo_perception(
         &mut self,
-        state: Option<StereoPerception>,
-    ) -> Option<StereoPerception> {
+        state: Option<CipPerception>,
+    ) -> Option<CipPerception> {
         std::mem::replace(&mut self.perception.stereo, state)
     }
 
@@ -1443,7 +1443,7 @@ mod capacity_tests {
 
     #[test]
     fn capacity_rejection_does_not_mutate_molecule_state() {
-        let mut molecule = crate::core::MoleculeEditor::new();
+        let mut molecule = crate::molecule::MoleculeEditor::new();
         let before = molecule.clone();
         assert_eq!(
             molecule.working_mut().add_atom_at_slot(

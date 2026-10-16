@@ -297,7 +297,7 @@ XYZ C1 O1 DOUB
 
 #[test]
 fn component_libraries_read_dictionary_blocks_and_replace_by_identifier() {
-    let document = mmcif::parse_str(TOY_COMPONENT).unwrap();
+    let document = mmcif::parse_str(TOY_COMPONENT, Default::default()).unwrap();
     let library = ComponentLibrary::from_mmcif(&document).unwrap();
     let toy = library.get("xyz").unwrap();
     assert_eq!(
@@ -352,7 +352,7 @@ fn component_definitions_fail_with_structured_kinds_and_lines() {
             Some(11),
         ),
     ] {
-        let document = mmcif::parse_str(&source).unwrap();
+        let document = mmcif::parse_str(&source, Default::default()).unwrap();
         let error = ComponentLibrary::from_mmcif(&document).unwrap_err();
         assert_eq!(
             (error.kind(), error.location()),

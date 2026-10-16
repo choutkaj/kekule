@@ -23,7 +23,7 @@ fn token(value: mmcif::MmcifValue<'_>) -> String {
 }
 
 pub(crate) fn singleton_loops_as_scalars(input: &str) -> String {
-    let doc = mmcif::parse_str(input).unwrap();
+    let doc = mmcif::parse_str(input, Default::default()).unwrap();
     let mut output = String::new();
     for block in doc.blocks() {
         output.push_str(&format!("data_{}\n", block.name()));
@@ -56,16 +56,17 @@ const SINGLE_SITE: &str = "data_x\nloop_\n_entity.id\n_entity.type\n1 water\nloo
 
 #[test]
 fn mmcif_scalar_categories_support_document_block_and_ensemble_paths() {
-    let looped = mmcif::parse_str(SINGLE_SITE).unwrap();
-    let scalar = mmcif::parse_str(&singleton_loops_as_scalars(SINGLE_SITE)).unwrap();
+    let looped = mmcif::parse_str(SINGLE_SITE, Default::default()).unwrap();
+    let scalar =
+        mmcif::parse_str(&singleton_loops_as_scalars(SINGLE_SITE), Default::default()).unwrap();
     assert!(scalar.blocks()[0]
         .loop_with_tag("_atom_site.type_symbol")
         .is_none());
     assert!(scalar.blocks()[0].item("_atom_site.type_symbol").is_some());
-    let expected = looped.interpret().unwrap();
+    let expected = looped.interpret(Default::default()).unwrap();
     for actual in [
-        scalar.interpret().unwrap(),
-        scalar.blocks()[0].interpret().unwrap(),
+        scalar.interpret(Default::default()).unwrap(),
+        scalar.blocks()[0].interpret(Default::default()).unwrap(),
     ] {
         assert!(expected.topology().same_layout(actual.topology()));
         assert_eq!(expected.model().positions(), actual.model().positions());
@@ -74,7 +75,7 @@ fn mmcif_scalar_categories_support_document_block_and_ensemble_paths() {
         assert_eq!(actual.report().solvent_molecules(), 1);
         assert_eq!(actual.model().topology().residues().count(), 1);
     }
-    let ensemble = scalar.interpret_ensemble().unwrap();
+    let ensemble = scalar.interpret_ensemble(Default::default()).unwrap();
     assert_eq!(ensemble.ensemble().len(), 1);
     assert!(ensemble.topology().same_layout(expected.topology()));
     assert_eq!(
@@ -94,7 +95,7 @@ fn mmcif_scalar_categories_support_document_block_and_ensemble_paths() {
         SINGLE_SITE.to_owned(),
         singleton_loops_as_scalars(SINGLE_SITE),
     ] {
-        assert!(mmcif::parse_str_with_options(&input, options)
+        assert!(mmcif::parse_str(&input, options)
             .unwrap_err()
             .message()
             .contains("row count"));
@@ -118,7 +119,7 @@ fn mmcif_present_categories_missing_required_fields_reject_in_both_encodings() {
     ] {
         let source = if matches!(category, "_entity" | "_struct_asym" | "_atom_site") {
             // Remove this category from the valid fixture through document entries.
-            let doc = mmcif::parse_str(SINGLE_SITE).unwrap();
+            let doc = mmcif::parse_str(SINGLE_SITE, Default::default()).unwrap();
             let mut s = String::from("data_x\n");
             for entry in doc.blocks()[0].entries() {
                 if let mmcif::MmcifEntry::Loop(table) = entry {
@@ -141,16 +142,20 @@ fn mmcif_present_categories_missing_required_fields_reject_in_both_encodings() {
             SINGLE_SITE.to_owned()
         };
         let input = format!("{source}loop_\n{category}.{field}\n{value}\n");
-        let loop_error = mmcif::parse_str(&input).unwrap().interpret().unwrap_err();
-        let scalar_doc = mmcif::parse_str(&singleton_loops_as_scalars(&input)).unwrap();
-        let scalar_error = scalar_doc.interpret().unwrap_err();
+        let loop_error = mmcif::parse_str(&input, Default::default())
+            .unwrap()
+            .interpret(Default::default())
+            .unwrap_err();
+        let scalar_doc =
+            mmcif::parse_str(&singleton_loops_as_scalars(&input), Default::default()).unwrap();
+        let scalar_error = scalar_doc.interpret(Default::default()).unwrap_err();
         assert_eq!(loop_error.message(), scalar_error.message(), "{category}");
         assert!(
             scalar_error.message().contains("missing required"),
             "{category}: {scalar_error}"
         );
         assert!(loop_error.location().is_some() && scalar_error.location().is_some());
-        assert!(scalar_doc.interpret_ensemble().is_err());
+        assert!(scalar_doc.interpret_ensemble(Default::default()).is_err());
     }
 }
 
@@ -170,23 +175,24 @@ fn mmcif_category_ambiguity_is_rejected_without_normalizing_the_document() {
             "another category",
         ),
     ] {
-        let doc = mmcif::parse_str(&format!("{SINGLE_SITE}{extra}")).unwrap();
-        let error = doc.interpret().unwrap_err();
+        let doc = mmcif::parse_str(&format!("{SINGLE_SITE}{extra}"), Default::default()).unwrap();
+        let error = doc.interpret(Default::default()).unwrap_err();
         assert!(error.message().contains(message), "{error}");
         assert!(error.location().is_some());
-        assert!(doc.interpret_ensemble().is_err());
+        assert!(doc.interpret_ensemble(Default::default()).is_err());
     }
-    let doc = mmcif::parse_str(&format!(
-        "{SINGLE_SITE}data_broken\n_atom_site.label_atom_id O\n"
-    ))
+    let doc = mmcif::parse_str(
+        &format!("{SINGLE_SITE}data_broken\n_atom_site.label_atom_id O\n"),
+        Default::default(),
+    )
     .unwrap();
     assert!(doc
-        .interpret()
+        .interpret(Default::default())
         .unwrap_err()
         .message()
         .contains("more than one data block"));
     assert!(matches!(
-        doc.interpret_ensemble(),
+        doc.interpret_ensemble(Default::default()),
         Err(macromolecular::StructureEnsembleInterpretError::MultipleAtomSiteBlocks)
     ));
 }
@@ -194,7 +200,7 @@ fn mmcif_category_ambiguity_is_rejected_without_normalizing_the_document() {
 #[test]
 fn mmcif_1ake_preserves_declared_sequence_and_polymer_connectivity() {
     const SOURCE: &str = include_str!("../../tests/fixtures/mmcif/1AKE.cif");
-    let doc = mmcif::parse_str(SOURCE).unwrap();
+    let doc = mmcif::parse_str(SOURCE, Default::default()).unwrap();
     let sequence = doc.blocks()[0]
         .item("_entity_poly.pdbx_seq_one_letter_code_can")
         .unwrap();
@@ -238,8 +244,11 @@ fn mmcif_1ake_preserves_declared_sequence_and_polymer_connectivity() {
         values.join("\n"),
         &SOURCE[end..]
     );
-    let a = doc.interpret().unwrap();
-    let b = mmcif::parse_str(&looped).unwrap().interpret().unwrap();
+    let a = doc.interpret(Default::default()).unwrap();
+    let b = mmcif::parse_str(&looped, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
     assert_eq!(a.model().atom_count(), 3804);
     assert_eq!(a.topology().bond_count(), 3484);
     assert_eq!(a.topology().instance_count(), 382);
@@ -267,14 +276,17 @@ fn mmcif_quoted_values_allow_embedded_delimiters() {
     ] {
         for separator in [" ", "\t", "\n"] {
             let source = format!("data_x\n_x.text {literal}{separator}_x.after yes\n");
-            let document = mmcif::parse_str(&source).unwrap();
+            let document = mmcif::parse_str(&source, Default::default()).unwrap();
             let block = &document.blocks()[0];
             assert_eq!(block.item("_x.text").unwrap().text(), expected);
             assert_eq!(block.item("_x.after").unwrap().text(), "yes");
         }
     }
-    let document =
-        mmcif::parse_str("data_x\nloop_\n_x.text\n_x.id\n'don't stop' 1\n\"a\"b\" 2\n").unwrap();
+    let document = mmcif::parse_str(
+        "data_x\nloop_\n_x.text\n_x.id\n'don't stop' 1\n\"a\"b\" 2\n",
+        Default::default(),
+    )
+    .unwrap();
     let table = document.blocks()[0].loop_with_tag("_x.text").unwrap();
     assert_eq!(table.value(0, "_x.text").unwrap().text(), "don't stop");
     assert_eq!(table.value(1, "_x.text").unwrap().text(), "a\"b");
@@ -285,7 +297,7 @@ fn mmcif_loop_values_on_one_long_line_parse_in_order() {
     let rows = 20_000;
     let values = (0..rows).map(|row| row.to_string()).collect::<Vec<_>>();
     let source = format!("data_x\nloop_\n_test.value\n{} \n", values.join(" "));
-    let document = mmcif::parse_str(&source).unwrap();
+    let document = mmcif::parse_str(&source, Default::default()).unwrap();
     let table = document.blocks()[0].loop_with_tag("_test.value").unwrap();
     assert_eq!(table.row_count(), rows);
     let parsed = (0..rows)
@@ -301,7 +313,8 @@ fn mmcif_loop_values_on_one_long_line_parse_in_order() {
 #[test]
 fn mmcif_quotes_must_close_before_whitespace_or_end_of_line() {
     for literal in ["'value'junk", "\"value\"junk", "'value'#comment"] {
-        let error = mmcif::parse_str(&format!("data_x\n_x.text {literal}\n")).unwrap_err();
+        let error = mmcif::parse_str(&format!("data_x\n_x.text {literal}\n"), Default::default())
+            .unwrap_err();
         assert_eq!(error.location().line(), 2);
         assert!(error.message().contains("unterminated quoted value"));
     }
@@ -326,7 +339,8 @@ fn mmcif_semicolon_text_preserves_opening_content_and_whitespace() {
     ] {
         let input = format!("data_x\n_x.text\n{field}\n_x.after yes\n");
         for newline in ["\n", "\r\n", "\r"] {
-            let document = mmcif::parse_str(&input.replace('\n', newline)).unwrap();
+            let document =
+                mmcif::parse_str(&input.replace('\n', newline), Default::default()).unwrap();
             let value = document.blocks()[0].item("_x.text").unwrap();
             assert_eq!(value.text(), expected);
             assert_eq!(value.line(), 3);
@@ -341,13 +355,22 @@ fn mmcif_semicolon_text_preserves_opening_content_and_whitespace() {
 
 #[test]
 fn mmcif_semicolon_closing_line_preserves_following_tokens() {
-    let doc = mmcif::parse_str("data_x\n_x.text\n;value\n; _x.after yes\n").unwrap();
+    let doc = mmcif::parse_str(
+        "data_x\n_x.text\n;value\n; _x.after yes\n",
+        Default::default(),
+    )
+    .unwrap();
     assert_eq!(doc.blocks()[0].item("_x.text").unwrap().text(), "value");
     assert_eq!(doc.blocks()[0].item("_x.after").unwrap().line(), 4);
-    let error = mmcif::parse_str("data_x\n_x.text\n;value\n;not_delimited\n").unwrap_err();
+    let error = mmcif::parse_str(
+        "data_x\n_x.text\n;value\n;not_delimited\n",
+        Default::default(),
+    )
+    .unwrap_err();
     assert_eq!(error.location().line(), 4);
     assert!(error.message().contains("closing semicolon"));
-    let error = mmcif::parse_str("data_x\n_x.text\n;value\nno end").unwrap_err();
+    let error =
+        mmcif::parse_str("data_x\n_x.text\n;value\nno end", Default::default()).unwrap_err();
     assert_eq!(error.location().line(), 3);
     assert!(error.message().contains("unterminated semicolon"));
 }
@@ -359,13 +382,11 @@ fn mmcif_semicolon_size_limit_counts_opening_line_and_newlines() {
         ..Default::default()
     };
     for field in [";12345678\n;", ";1234\n678\n;"] {
-        let doc =
-            mmcif::parse_str_with_options(&format!("data_x\n_x.v\n{field}\n"), options).unwrap();
+        let doc = mmcif::parse_str(&format!("data_x\n_x.v\n{field}\n"), options).unwrap();
         assert_eq!(doc.blocks()[0].item("_x.v").unwrap().text().len(), 8);
     }
     for field in [";123456789\n;", ";1234\n6789\n;", ";12345678\n\n;"] {
-        let error = mmcif::parse_str_with_options(&format!("data_x\n_x.v\n{field}\n"), options)
-            .unwrap_err();
+        let error = mmcif::parse_str(&format!("data_x\n_x.v\n{field}\n"), options).unwrap_err();
         assert_eq!(error.location().line(), 3);
         assert!(error.message().contains("token limit"));
     }
@@ -382,7 +403,7 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
         ("data_x\nloop_\n_a.b\n_a.c\n1\n", DiagnosticKind::Syntax, 5),
         ("data_x\n_a.b\n;text\n", DiagnosticKind::Syntax, 3),
     ] {
-        let error = mmcif::parse_str(input).unwrap_err();
+        let error = mmcif::parse_str(input, Default::default()).unwrap_err();
         assert_eq!(
             (error.kind(), error.location()),
             (kind, SourceLocation::at_line(line)),
@@ -393,16 +414,16 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
         max_tokens: 2,
         ..MmcifParseOptions::default()
     };
-    let error = mmcif::parse_str_with_options("data_x\n_a.b 1\n_a.c 2\n", limited).unwrap_err();
+    let error = mmcif::parse_str("data_x\n_a.b 1\n_a.c 2\n", limited).unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
         (DiagnosticKind::Limit, SourceLocation::at_line(2))
     );
 
     let unknown_element = SINGLE_SITE.replace("O O HOH", "Xx O HOH");
-    let error = mmcif::parse_str(&unknown_element)
+    let error = mmcif::parse_str(&unknown_element, Default::default())
         .unwrap()
-        .interpret()
+        .interpret(Default::default())
         .unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
@@ -411,17 +432,17 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
             Some(SourceLocation::at_line(19))
         )
     );
-    let error = mmcif::parse_str("data_x\n_cell.length_a 1\n")
+    let error = mmcif::parse_str("data_x\n_cell.length_a 1\n", Default::default())
         .unwrap()
-        .interpret()
+        .interpret(Default::default())
         .unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
         (DiagnosticKind::Inconsistent, None)
     );
-    let error = mmcif::parse_str(SINGLE_SITE)
+    let error = mmcif::parse_str(SINGLE_SITE, Default::default())
         .unwrap()
-        .interpret_ensemble_with_options(macromolecular::StructureEnsembleInterpretOptions {
+        .interpret_ensemble(macromolecular::StructureEnsembleInterpretOptions {
             model_ids: Some(vec!["9".into()]),
             ..Default::default()
         })
@@ -459,7 +480,7 @@ fn mmcif_atom_site_row_limit_stops_at_the_first_excess_row() {
         ),
         ("data_x\nloop_\n_atom_site.id\n1\n'open\n", 0, 4),
     ] {
-        let error = mmcif::parse_str_with_options(input, options(max_rows)).unwrap_err();
+        let error = mmcif::parse_str(input, options(max_rows)).unwrap_err();
         assert_eq!(
             (error.kind(), error.location(), error.message()),
             (
@@ -480,7 +501,7 @@ fn mmcif_atom_site_row_limit_stops_at_the_first_excess_row() {
         ("data_x\nloop_\n_atom_site.id\n", 0, "_atom_site.id", 0),
         ("data_x\nloop_\n_x.id\n1\n2\n", 1, "_x.id", 2),
     ] {
-        let document = mmcif::parse_str_with_options(input, options(max_rows)).unwrap();
+        let document = mmcif::parse_str(input, options(max_rows)).unwrap();
         let table = document.blocks()[0].loop_with_tag(tag).unwrap();
         assert_eq!(table.row_count(), rows, "{input:?}");
     }
@@ -490,25 +511,25 @@ fn mmcif_atom_site_row_limit_stops_at_the_first_excess_row() {
 fn mmcif_readers_enforce_limits_while_reading_and_match_string_parsing() {
     use crate::diagnostics::{DiagnosticKind, SourceLocation};
     assert_eq!(
-        mmcif::parse_reader(SINGLE_SITE.as_bytes()).unwrap(),
-        mmcif::parse_str(SINGLE_SITE).unwrap()
+        mmcif::parse_reader(SINGLE_SITE.as_bytes(), Default::default()).unwrap(),
+        mmcif::parse_str(SINGLE_SITE, Default::default()).unwrap()
     );
     let limited = MmcifParseOptions {
         max_input_bytes: 8,
         ..MmcifParseOptions::default()
     };
-    let error = mmcif::parse_reader_with_options(SINGLE_SITE.as_bytes(), limited).unwrap_err();
+    let error = mmcif::parse_reader(SINGLE_SITE.as_bytes(), limited).unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
         (DiagnosticKind::Limit, SourceLocation::at_line(1))
     );
-    let error = mmcif::parse_reader([b'd', b'a', 0xff].as_slice()).unwrap_err();
+    let error = mmcif::parse_reader([b'd', b'a', 0xff].as_slice(), Default::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Io);
 }
 
 #[test]
 fn mmcif_values_borrow_the_source_and_columns_resolve_once() {
-    let doc = mmcif::parse_str(SINGLE_SITE).unwrap();
+    let doc = mmcif::parse_str(SINGLE_SITE, Default::default()).unwrap();
     let table = doc.blocks()[0].loop_with_tag("_ATOM_SITE.CARTN_Y").unwrap();
     let column = table.column_index("_atom_site.Cartn_y").unwrap();
     assert_eq!(column, 6);

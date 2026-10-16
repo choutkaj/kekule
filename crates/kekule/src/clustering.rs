@@ -7,7 +7,7 @@
 //! summed weight of its cluster.
 //!
 //! [`Ensemble::cluster_hierarchical`] cuts the [`Dendrogram`] of a
-//! [`DistanceMatrix`], such as [`Ensemble::pairwise_rmsd`], at a height or
+//! [`DistanceMatrix`], such as [`Ensemble::pairwise_fitted_rmsd`], at a height or
 //! into a number of clusters, and represents each cluster by its weighted
 //! medoid. Complete linkage cut at height `h` bounds every cluster's
 //! diameter by `h`.
@@ -53,7 +53,7 @@
 //! ensemble.assign_boltzmann_weights(Quantity::new(298.15, KELVIN))?;
 //!
 //! let atoms = SymmetricSelection::new(&AtomSelection::all(&topology))?;
-//! let rotamers = ensemble.cluster_by_radius(Quantity::new(0.125, ANGSTROM), &atoms)?;
+//! let rotamers = ensemble.cluster_by_radius(Quantity::new(0.125, ANGSTROM), &atoms, Default::default())?;
 //! assert_eq!(rotamers.assignments(), [0, 0, 1]);
 //!
 //! let conformers = ensemble.collapse(&rotamers)?;
@@ -169,7 +169,7 @@ pub enum ClusterOrder {
     Energy,
 }
 
-/// Options for [`Ensemble::cluster_by_radius_with_options`].
+/// Options for [`Ensemble::cluster_by_radius`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ClusteringOptions<'a> {
     /// Fit weighting and periodic policy of every pairwise fit.
@@ -179,24 +179,14 @@ pub struct ClusteringOptions<'a> {
 }
 
 impl Ensemble {
-    /// Leader clustering on fitted RMSD within `radius`.
-    ///
-    /// See [`Self::cluster_by_radius_with_options`]; members are visited by
-    /// descending weight with uniform fit weights.
-    pub fn cluster_by_radius<'a>(
-        &self,
-        radius: Quantity<f64>,
-        atoms: impl Into<FitAtoms<'a>>,
-    ) -> Result<EnsemblePartition, ClusteringError> {
-        self.cluster_by_radius_with_options(radius, atoms, ClusteringOptions::default())
-    }
-
     /// Leader clustering on fitted RMSD within `radius`, a finite,
     /// nonnegative length.
     ///
-    /// Members are visited in [`ClusterOrder`]; ties keep member order. Each
-    /// member joins the cluster whose representative is nearest by RMSD
-    /// after a [`kabsch`](crate::alignment::kabsch) fit over `atoms`, if
+    /// Members are visited in the [`ClusterOrder`] of `options`, by default
+    /// descending weight; ties keep member order. Each member joins the
+    /// cluster whose representative is nearest by RMSD after a
+    /// [`fit`](crate::alignment::fit) over `atoms` with the fit weights of
+    /// `options`, by default uniform, if
     /// that RMSD is at most `radius`; ties keep the earlier cluster.
     /// Otherwise it founds a new cluster and represents it. Every member is
     /// therefore within `radius` of its representative, and representatives
@@ -210,7 +200,7 @@ impl Ensemble {
     /// is rejected. Each member is fitted to at most every representative, so
     /// the cost grows with members times clusters (times symmetry
     /// permutations). Fit failures name the member being placed.
-    pub fn cluster_by_radius_with_options<'a>(
+    pub fn cluster_by_radius<'a>(
         &self,
         radius: Quantity<f64>,
         atoms: impl Into<FitAtoms<'a>>,

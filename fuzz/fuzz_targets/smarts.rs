@@ -1,12 +1,12 @@
 #![no_main]
-use kekule::query::{parse_smarts_with_options, SmartsParseOptions};
+use kekule::{smarts, smarts::SmartsParseOptions};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(input) = std::str::from_utf8(data) else {
         return;
     };
-    let result = parse_smarts_with_options(
+    let result = smarts::parse_str(
         input,
         SmartsParseOptions {
             max_input_bytes: 4096,

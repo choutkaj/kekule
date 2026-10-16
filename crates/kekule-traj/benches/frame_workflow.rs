@@ -11,8 +11,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let path = std::env::args_os()
         .nth(1)
         .ok_or("supply an external mmCIF model")?;
-    let model = mmcif::parse_str(&std::fs::read_to_string(path)?)?
-        .interpret()?
+    let model = mmcif::parse_str(&std::fs::read_to_string(path)?, Default::default())?
+        .interpret(Default::default())?
         .into_model();
     let mut frame = TrajectoryFrame::new(model.positions().clone());
     frame.set_cell(model.cell().copied());
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
     for _ in 0..20 {
         let mut aligned = trajectory.clone();
-        black_box(aligned.superpose(0, &atoms)?);
+        black_box(aligned.superpose(0, &atoms, Default::default())?);
         black_box(aligned);
     }
     let superposition_ms = start.elapsed().as_secs_f64() * 1000.0 / 20.0;

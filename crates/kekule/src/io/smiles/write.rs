@@ -2,9 +2,9 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::{compute_ring_membership, ordered_atom_pair};
-use crate::core::Molecule;
-use crate::core::*;
 use crate::io::MoleculeWriteError;
+use crate::molecule::Molecule;
+use crate::molecule::*;
 
 use super::emit::Emission;
 use super::parse::SmilesDirectionToken;

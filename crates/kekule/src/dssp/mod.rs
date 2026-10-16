@@ -1,6 +1,7 @@
 //! DSSP 4-compatible protein secondary-structure assignment.
 //!
-//! Assignment is a read-only analysis of one [`Model`] coordinate snapshot.
+//! Assignment is a read-only analysis of one
+//! [`Model`](crate::structure::Model) coordinate snapshot.
 //! It does not parse structures, choose coordinate models or alternate
 //! locations, repair hierarchy data, or install derived state in the model.
 //! Geometry uses single-precision coordinates and arithmetic, matching DSSP 4;
@@ -9,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::structure::{Model, ModelView};
+use crate::structure::AsModelView;
 use crate::topology::{MoleculeInstanceId, ResidueId};
 
 mod kernel;
@@ -22,13 +23,15 @@ mod kernel;
 /// backbone are eligible without source sequence labels. Each chain uses label
 /// numbering when complete, otherwise numeric author numbering when complete,
 /// otherwise its topology hierarchy order. Insertion codes break numbered ties.
-pub fn assign(model: ModelView<'_>, options: DsspOptions) -> Result<DsspResult, DsspError> {
-    kernel::assign(model, options)
-}
-
-/// Convenience wrapper for assigning one owned model.
-pub fn assign_model(model: &Model, options: DsspOptions) -> Result<DsspResult, DsspError> {
-    assign(model.as_model_view(), options)
+///
+/// `model` is any model view: a [`Model`](crate::structure::Model), an
+/// ensemble member, a trajectory frame, or a borrowed
+/// [`ModelView`](crate::structure::ModelView).
+pub fn assign(
+    model: &(impl AsModelView + ?Sized),
+    options: DsspOptions,
+) -> Result<DsspResult, DsspError> {
+    kernel::assign(model.as_model_view(), options)
 }
 
 /// DSSP 4 summary assignment.

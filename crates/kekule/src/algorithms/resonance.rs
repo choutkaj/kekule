@@ -2,7 +2,7 @@
 //!
 //! The search follows RDKit 2026.03.3 (Paolo Tosco, 2015), distributed under
 //! the BSD 3-Clause license reproduced in LICENSE-RDKit in this crate.
-use crate::core::{
+use crate::molecule::{
     AtomId, BondId, BondOrder, ImplicitHydrogens, Molecule, ResonanceGroup, ResonancePerception,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -185,7 +185,7 @@ impl ResonanceStructures<'_> {
         let contributor = self.contributors.get(index).ok_or_else(|| {
             ResonanceError::Materialization("contributor index out of bounds".into())
         })?;
-        let mut editor = self.source.edit();
+        let mut editor = self.source.to_editor();
         for (id, _) in self.source.atoms() {
             let h = self
                 .source

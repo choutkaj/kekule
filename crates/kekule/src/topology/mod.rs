@@ -13,7 +13,8 @@
 //!
 //! Topology structure is immutable after publication. Use [`TopologyBuilder`]
 //! for assembly, [`Topology::into_builder`] for append-oriented transformation,
-//! and [`transform`] or selections for checked structural subsets. Explicit
+//! [`edit::TopologyEditor`] for structural edits, and [`Topology::subset`]
+//! with selections for checked structural subsets. Explicit
 //! [`Topology::perceived`] derives chemistry in a new snapshot with the same
 //! layout, and [`Topology::properties_mut`] edits annotations without changing
 //! it.
@@ -28,7 +29,7 @@ mod hierarchy;
 mod lookup;
 mod perception;
 mod selection;
-pub mod transform;
+mod transform;
 
 #[cfg(test)]
 mod tests;
@@ -38,7 +39,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::core::{AtomId, BondId, Molecule};
+use crate::molecule::{AtomId, BondId, Molecule};
 use crate::properties::{
     PropertyKey, PropertyValue, PropertyValueRef, TopologyProperties, TopologyPropertiesMut,
 };
@@ -48,11 +49,6 @@ pub use builder::{
 };
 use dense_order::DenseOrder;
 pub(crate) use editor::AppendMapping;
-pub use editor::{
-    EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId, EditChain, EditChainId,
-    EditCorrespondence, EditMolecule, EditResidue, EditResidueId, TopologyEditError,
-    TopologyEditor, TopologyFinishError,
-};
 pub use entity_views::{AtomView, BondView};
 pub use hierarchy::{
     AtomSite, AtomSiteId, AtomSiteMetadata, Chain, ChainId, Hierarchy, HierarchyError,
@@ -61,6 +57,22 @@ pub use hierarchy::{
 pub use lookup::HierarchyLookupError;
 pub use perception::TopologyPerceptionError;
 pub use selection::{AtomSelection, BondSelection, BondSelectionMode, SelectionError};
+pub use transform::{TopologySubset, TopologySubsetCorrespondence, TopologySubsetError};
+
+/// Transactional structural editing of a published topology.
+///
+/// A [`TopologyEditor`](edit::TopologyEditor) resolves source identifiers to stable draft-only
+/// handles, applies atom, bond, molecule, and hierarchy edits, and publishes a
+/// new topology through `finish()` together with an
+/// [`EditCorrespondence`](edit::EditCorrespondence) from source to target
+/// identities.
+pub mod edit {
+    pub use super::editor::{
+        EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId, EditChain, EditChainId,
+        EditCorrespondence, EditMolecule, EditResidue, EditResidueId, TopologyEditError,
+        TopologyEditor, TopologyFinishError,
+    };
+}
 
 fixed_u32_id!(MoleculeDefinitionId, "definition");
 fixed_u32_id!(MoleculeInstanceId, "molecule");
@@ -395,26 +407,22 @@ impl MoleculeDefinition {
 
 /// One explicit occurrence of a reusable molecule definition.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MoleculeInstance {
+pub(crate) struct MoleculeInstance {
     id: MoleculeInstanceId,
     definition: MoleculeDefinitionId,
 }
 
 impl MoleculeInstance {
-    pub const fn id(&self) -> MoleculeInstanceId {
+    pub(crate) const fn id(&self) -> MoleculeInstanceId {
         self.id
     }
 
-    pub const fn definition(&self) -> MoleculeDefinitionId {
+    pub(crate) const fn definition(&self) -> MoleculeDefinitionId {
         self.definition
     }
 
-    pub const fn qualify_atom(&self, atom: AtomId) -> InstanceAtomId {
+    pub(crate) const fn qualify_atom(&self, atom: AtomId) -> InstanceAtomId {
         InstanceAtomId::new(self.id, atom)
-    }
-
-    pub const fn qualify_bond(&self, bond: BondId) -> InstanceBondId {
-        InstanceBondId::new(self.id, bond)
     }
 }
 
@@ -425,22 +433,22 @@ impl MoleculeInstance {
 /// view are qualified by this occurrence's [`MoleculeInstanceId`]. Hierarchy
 /// methods are projections over the one topology-owned hierarchy.
 #[derive(Clone, Copy)]
-pub struct MoleculeInstanceView<'a> {
+pub struct InstanceView<'a> {
     topology: &'a Topology,
     id: MoleculeInstanceId,
 }
 
-impl fmt::Debug for MoleculeInstanceView<'_> {
+impl fmt::Debug for InstanceView<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("MoleculeInstanceView")
+            .debug_struct("InstanceView")
             .field("id", &self.id)
             .field("definition", &self.definition_id())
             .finish()
     }
 }
 
-impl<'a> MoleculeInstanceView<'a> {
+impl<'a> InstanceView<'a> {
     const fn new(topology: &'a Topology, id: MoleculeInstanceId) -> Self {
         Self { topology, id }
     }
@@ -452,12 +460,7 @@ impl<'a> MoleculeInstanceView<'a> {
 
     /// Returns the reusable definition referenced by this occurrence.
     pub fn definition_id(self) -> MoleculeDefinitionId {
-        self.instance().definition()
-    }
-
-    /// Returns the minimal stored instance record.
-    pub fn instance(self) -> &'a MoleculeInstance {
-        &self.topology.instances[self.id.index()]
+        self.topology.instances[self.id.index()].definition()
     }
 
     /// Returns the reusable definition referenced by this occurrence.
@@ -586,7 +589,7 @@ impl<'a> MoleculeInstanceView<'a> {
 /// Attach positions through [`crate::structure::Model`] or another structure
 /// type.
 ///
-/// Local [`crate::core::AtomId`] and [`crate::core::BondId`] values identify
+/// Local [`crate::molecule::AtomId`] and [`crate::molecule::BondId`] values identify
 /// entities inside one definition. At system scope they are qualified with a
 /// [`MoleculeInstanceId`] as [`InstanceAtomId`] and [`InstanceBondId`]. This
 /// distinction matters whenever a definition is reused.
@@ -756,24 +759,24 @@ impl Topology {
     }
 
     /// One instance-qualified molecule occurrence.
-    pub fn molecule(&self, id: MoleculeInstanceId) -> Option<MoleculeInstanceView<'_>> {
-        (id.index() < self.instances.len()).then(|| MoleculeInstanceView::new(self, id))
+    pub fn molecule(&self, id: MoleculeInstanceId) -> Option<InstanceView<'_>> {
+        (id.index() < self.instances.len()).then(|| InstanceView::new(self, id))
     }
 
     /// Molecule occurrences in authoritative instance order.
     pub fn molecules(
         &self,
-    ) -> impl ExactSizeIterator<Item = MoleculeInstanceView<'_>> + DoubleEndedIterator {
+    ) -> impl ExactSizeIterator<Item = InstanceView<'_>> + DoubleEndedIterator {
         self.instances
             .iter()
-            .map(|instance| MoleculeInstanceView::new(self, instance.id))
+            .map(|instance| InstanceView::new(self, instance.id))
     }
 
     /// Occurrences of one definition in instance order.
     pub fn instances_of(
         &self,
         definition: MoleculeDefinitionId,
-    ) -> impl Iterator<Item = MoleculeInstanceView<'_>> {
+    ) -> impl Iterator<Item = InstanceView<'_>> {
         self.molecules()
             .filter(move |molecule| molecule.definition_id() == definition)
     }

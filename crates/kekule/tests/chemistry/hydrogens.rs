@@ -1,9 +1,10 @@
-use kekule::core::{
-    AtomId, BondOrder, ImplicitHydrogens, Molecule, Perception, PerceptionInstallError,
-};
 use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
 use kekule::hydrogens::HydrogenTransformError;
 use kekule::topology::{InstanceAtomId, TopologyBuilder};
+use kekule::{
+    molecule::{AtomId, BondOrder, ImplicitHydrogens, Molecule},
+    perception::{Perception, PerceptionInstallError},
+};
 use kekule::{smiles, stereo};
 
 fn parse(source: &str) -> Molecule {
@@ -43,7 +44,7 @@ fn counts_describe_representation_independently_of_how_implicit_h_were_specified
         assert_eq!(molecule.total_hydrogens(c).unwrap(), Some(4), "{source}");
         let formula = molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived).unwrap();
         assert_eq!(
-            formula.count(kekule::core::Element::from_symbol("H").unwrap()),
+            formula.count(kekule::molecule::Element::from_symbol("H").unwrap()),
             4
         );
     }
@@ -140,7 +141,11 @@ fn conversion_preserves_composition_and_reports_explicit_and_implicit_counts() {
         let formula = molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived).unwrap();
         let original_implicit = molecule.implicit_hydrogens(c).unwrap().unwrap();
         assert_eq!(
-            molecule.add_hydrogens().unwrap().added.len(),
+            molecule
+                .add_hydrogens(Default::default())
+                .unwrap()
+                .added
+                .len(),
             original_implicit
         );
         molecule.perceive().unwrap();
@@ -165,11 +170,14 @@ fn conversion_preserves_composition_and_reports_explicit_and_implicit_counts() {
 #[test]
 fn fixed_counts_materialize_without_perception_but_unresolved_counts_fail_atomically() {
     let mut fixed = parse("[CH4]");
-    assert_eq!(fixed.add_hydrogens().unwrap().added.len(), 4);
+    assert_eq!(
+        fixed.add_hydrogens(Default::default()).unwrap().added.len(),
+        4
+    );
     let mut inferred = parse("C");
     let before = smiles::write(&inferred, smiles::SmilesWriteOptions::isomeric()).unwrap();
     assert_eq!(
-        inferred.add_hydrogens(),
+        inferred.add_hydrogens(Default::default()),
         Err(HydrogenTransformError::MissingValencePerception)
     );
     assert_eq!(
@@ -184,15 +192,15 @@ fn stereo_and_smiles_round_trips_use_complete_implicit_counts() {
         let mut molecule = parse(source);
         molecule.perceive().unwrap();
         let formula = molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived).unwrap();
-        let cip = stereo::assign_cip_descriptors(&mut molecule)
+        let cip = stereo::cip::assign_cip_descriptors(&mut molecule, Default::default())
             .unwrap()
             .assigned;
-        molecule.add_hydrogens().unwrap();
+        molecule.add_hydrogens(Default::default()).unwrap();
         molecule.perceive().unwrap();
         molecule.remove_hydrogens().unwrap();
         molecule.perceive().unwrap();
         assert_eq!(
-            stereo::assign_cip_descriptors(&mut molecule)
+            stereo::cip::assign_cip_descriptors(&mut molecule, Default::default())
                 .unwrap()
                 .assigned,
             cip
@@ -274,7 +282,7 @@ fn incomplete_perception_cannot_silently_drop_hydrogens_during_materialization()
     assert_eq!(molecule.implicit_hydrogens(atoms[1]).unwrap(), None);
     let before = molecule.perception().clone();
     assert_eq!(
-        molecule.add_hydrogens(),
+        molecule.add_hydrogens(Default::default()),
         Err(HydrogenTransformError::MissingValencePerception)
     );
     assert_eq!(molecule.atom_count(), 2);

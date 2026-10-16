@@ -7,13 +7,9 @@
 //! hybrid-36 convention.
 use std::collections::BTreeSet;
 use std::fmt;
-use std::sync::Arc;
 
-use crate::core::Molecule;
 use crate::diagnostics::{read_bounded, DiagnosticKind, SourceLocation};
 use crate::geometry::Point3;
-use crate::structure::Model;
-use crate::topology::Topology;
 
 use super::structure_interpret::{
     interpret_pdb, interpret_pdb_conformations, interpret_pdb_ensemble, pdb_alternate_locations,
@@ -491,61 +487,19 @@ impl PdbDocument {
         &self.other_records
     }
 
-    /// Interprets one selected coordinate model using default policy.
-    pub fn interpret(&self) -> Result<StructureInterpretation, StructureInterpretError> {
-        self.interpret_with_options(StructureInterpretOptions::default())
-    }
-
-    /// Interprets one selected coordinate model using explicit policy.
-    pub fn interpret_with_options(
+    /// Interprets one selected coordinate model under the model,
+    /// alternate-location, and connectivity policy of `options`.
+    pub fn interpret(
         &self,
         options: StructureInterpretOptions,
     ) -> Result<StructureInterpretation, StructureInterpretError> {
         interpret_pdb(self, options)
     }
 
-    pub fn to_molecules(&self) -> Result<Vec<Molecule>, StructureInterpretError> {
-        Ok(self.interpret()?.into_molecules())
-    }
-
-    pub fn to_molecules_with_options(
-        &self,
-        options: StructureInterpretOptions,
-    ) -> Result<Vec<Molecule>, StructureInterpretError> {
-        Ok(self.interpret_with_options(options)?.into_molecules())
-    }
-
-    pub fn to_topology(&self) -> Result<Arc<Topology>, StructureInterpretError> {
-        Ok(self.interpret()?.into_topology())
-    }
-
-    pub fn to_topology_with_options(
-        &self,
-        options: StructureInterpretOptions,
-    ) -> Result<Arc<Topology>, StructureInterpretError> {
-        Ok(self.interpret_with_options(options)?.into_topology())
-    }
-
-    pub fn to_model(&self) -> Result<Model, StructureInterpretError> {
-        Ok(self.interpret()?.into_model())
-    }
-
-    pub fn to_model_with_options(
-        &self,
-        options: StructureInterpretOptions,
-    ) -> Result<Model, StructureInterpretError> {
-        Ok(self.interpret_with_options(options)?.into_model())
-    }
-
-    /// Interprets all coordinate models using default policy.
+    /// Interprets the coordinate models that `options` selects, by default
+    /// all of them, as an ensemble of equally weighted members (weight `1.0`);
+    /// occupancy is not converted into a weight.
     pub fn interpret_ensemble(
-        &self,
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
-        self.interpret_ensemble_with_options(StructureEnsembleInterpretOptions::default())
-    }
-
-    /// Interprets selected coordinate models using explicit policy.
-    pub fn interpret_ensemble_with_options(
         &self,
         options: StructureEnsembleInterpretOptions,
     ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {

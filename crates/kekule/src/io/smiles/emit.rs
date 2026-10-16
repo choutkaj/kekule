@@ -1,8 +1,9 @@
 //! Structured SMILES emission; CX atom indices are assigned after traversal.
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::core::{AtomId, Molecule, StereoElementKind, StereoGroupKind};
 use crate::io::MoleculeWriteError;
+use crate::molecule::{AtomId, Molecule};
+use crate::stereo::{StereoElementKind, StereoGroupKind};
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct Emission {

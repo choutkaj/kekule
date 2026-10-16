@@ -4,8 +4,8 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kekule::core::{Atom, BondOrder, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::topology::TopologyBuilder;
 use kekule::units::{
@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .nth(1)
         .map(PathBuf::from)
         .ok_or("usage: trr_interop_writer OUTPUT.trr")?;
-    let mut molecule = kekule::core::MoleculeEditor::new();
+    let mut molecule = kekule::molecule::MoleculeEditor::new();
     let mut atoms = Vec::new();
     for symbol in ["C", "H", "O"] {
         atoms.push(molecule.add_atom(Atom::new(

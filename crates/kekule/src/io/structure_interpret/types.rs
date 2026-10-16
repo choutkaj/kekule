@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use super::altloc::{AltLocDecision, AltLocPolicy, SourceResidueId};
 use crate::components::ComponentLibrary;
-use crate::core::Molecule;
 use crate::diagnostics::{DiagnosticKind, SourceLocation};
+use crate::molecule::Molecule;
 use crate::structure::{Ensemble, EnsembleError, Model};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 

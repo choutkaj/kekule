@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use crate::algorithms::{validate_stereo, RingMembership};
-use crate::core::*;
+use crate::molecule::*;
 
 use super::super::rings::compute_ring_membership;
 use super::super::{atom_hydrogen_count, double_bond_endpoint_carriers};
@@ -25,7 +25,7 @@ use assignment::{
     tetrahedral_descriptor_from_ranked, CipElementAssignment,
 };
 
-pub(super) fn assign_cip_descriptors_with_options(
+pub(super) fn assign_cip_descriptors(
     mol: &mut Molecule,
     options: CipAssignmentOptions,
 ) -> std::result::Result<CipAssignmentReport, CipAssignmentError> {
@@ -80,7 +80,7 @@ pub(super) fn assign_cip_descriptors_with_options(
         }
     }
     if issues.is_empty() {
-        mol.replace_stereo_perception(Some(StereoPerception::default()));
+        mol.replace_stereo_perception(Some(CipPerception::default()));
         for assignment in &report.assigned {
             set_stereo_descriptor(mol, assignment.element, assignment.descriptor);
         }

@@ -2,18 +2,36 @@
 
 use std::sync::Arc;
 
-use kekule::core::{Atom, AtomId, BondOrder, Element};
 use kekule::geometry::Point3;
+use kekule::molecule::{Atom, AtomId, BondOrder, Element};
 use kekule::properties::{PropertyColumn, PropertyKey};
 use kekule::smiles;
 use kekule::structure::{Model, ModelBuilder, Positions};
 use kekule::topology::{
-    transform, AtomSelection, InstanceAtomId, MoleculeInstanceId, Topology, TopologyAtomIndex,
+    AtomSelection, InstanceAtomId, MoleculeInstanceId, Topology, TopologyAtomIndex,
     TopologyBuildError, TopologyBuilder,
 };
 use kekule::units::{Quantity, ANGSTROM};
 
-fn molecule(source: &str) -> kekule::core::Molecule {
+/// The topology of the complete `instances`, as a whole-instance subset.
+fn instance_subset(
+    source: &Arc<Topology>,
+    instances: impl IntoIterator<Item = MoleculeInstanceId>,
+) -> Result<Arc<Topology>, Box<dyn std::error::Error>> {
+    let selection = AtomSelection::for_instances(source, instances)?;
+    Ok(source.subset(&selection)?.shared_topology())
+}
+
+/// The topology of every instance except `instances`.
+fn instance_complement(
+    source: &Arc<Topology>,
+    instances: impl IntoIterator<Item = MoleculeInstanceId>,
+) -> Result<Arc<Topology>, Box<dyn std::error::Error>> {
+    let selection = AtomSelection::for_instances(source, instances)?.complement();
+    Ok(source.subset(&selection)?.shared_topology())
+}
+
+fn molecule(source: &str) -> kekule::molecule::Molecule {
     smiles::to_molecules(source).unwrap().remove(0)
 }
 
@@ -169,7 +187,7 @@ fn smiles_topology_keeps_source_order_across_dot_separated_components() {
 fn editors_keep_surviving_atoms_in_source_order_and_append_new_atoms() {
     let (model, [carbon, water_oxygen, oxygen]) = interleaved();
     // Editing handles follow dense order, so editor and model positions agree.
-    let editor = model.edit();
+    let editor = model.to_editor();
     assert_eq!(editor.positions(), *model.positions());
     let unchanged = editor.finish().unwrap();
     assert!(Arc::ptr_eq(
@@ -177,7 +195,7 @@ fn editors_keep_surviving_atoms_in_source_order_and_append_new_atoms() {
         &model.shared_topology()
     ));
 
-    let mut editor = model.edit();
+    let mut editor = model.to_editor();
     let [carbon, water_oxygen, oxygen] =
         [carbon, water_oxygen, oxygen].map(|atom| editor.atom_handle(atom).unwrap());
     // Merging the water into methanol keeps every atom in place.
@@ -201,7 +219,7 @@ fn editors_keep_surviving_atoms_in_source_order_and_append_new_atoms() {
         assert_eq!(ids.atom(handle).unwrap().1.index(), dense);
     }
 
-    let mut editor = model.edit();
+    let mut editor = model.to_editor();
     let water_oxygen = editor.atom_handle(model.topology().atom_ids()[1]).unwrap();
     editor.delete_atom(water_oxygen).unwrap();
     let removed = editor.finish().unwrap();
@@ -254,7 +272,7 @@ fn subsets_and_instance_filters_keep_relative_source_order() {
     let sliced = model.subset(&selection).unwrap();
     assert_eq!(xs(&sliced), [1.0, 2.0]);
 
-    let methanol = transform::retain_instances(&topology, [carbon.molecule()]).unwrap();
+    let methanol = instance_subset(&topology, [carbon.molecule()]).unwrap();
     assert_eq!(
         methanol
             .atoms()
@@ -262,6 +280,6 @@ fn subsets_and_instance_filters_keep_relative_source_order() {
             .collect::<Vec<_>>(),
         ["C", "O"]
     );
-    let water = transform::remove_instances(&topology, [carbon.molecule()]).unwrap();
+    let water = instance_complement(&topology, [carbon.molecule()]).unwrap();
     assert_eq!(water.atom_count(), 1);
 }

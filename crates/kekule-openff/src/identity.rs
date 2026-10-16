@@ -7,7 +7,8 @@
 //! forms that upstream's identifier merges fall back to inference.
 use crate::{Error, ErrorKind, Result};
 
-use kekule::core::*;
+use kekule::molecule::*;
+use kekule::stereo::{StereoCarrier, StereoElementKind};
 use std::collections::{BTreeMap, HashMap};
 
 fn error(detail: impl std::fmt::Display) -> Error {

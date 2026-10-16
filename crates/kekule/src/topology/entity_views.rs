@@ -1,11 +1,11 @@
 use std::fmt;
 
-use crate::core::{Atom, Bond};
+use crate::molecule::{Atom, Bond};
 use crate::properties::{PropertyKey, PropertyValue, PropertyValueRef};
 
 use super::{
-    AtomSiteView, ChainView, InstanceAtomId, InstanceBondId, MoleculeInstanceView, ResidueView,
-    Topology, TopologyAtomIndex, TopologyBondIndex,
+    AtomSiteView, ChainView, InstanceAtomId, InstanceBondId, InstanceView, ResidueView, Topology,
+    TopologyAtomIndex, TopologyBondIndex,
 };
 
 /// One topology atom: its instance-qualified identity, dense index, and
@@ -70,8 +70,8 @@ impl<'a> AtomView<'a> {
     }
 
     /// The molecule occurrence containing this atom.
-    pub fn molecule(self) -> MoleculeInstanceView<'a> {
-        MoleculeInstanceView::new(self.topology, self.id.molecule())
+    pub fn molecule(self) -> InstanceView<'a> {
+        InstanceView::new(self.topology, self.id.molecule())
     }
 
     /// Bonded neighbors in local adjacency order.
@@ -112,7 +112,7 @@ impl<'a> AtomView<'a> {
             .expect("published topology atoms are live")
     }
 
-    /// Implicit hydrogens; see [`crate::core::Molecule::implicit_hydrogens`].
+    /// Implicit hydrogens; see [`crate::molecule::Molecule::implicit_hydrogens`].
     pub fn implicit_hydrogens(self) -> Option<usize> {
         self.molecule()
             .molecule()
@@ -120,7 +120,7 @@ impl<'a> AtomView<'a> {
             .expect("published topology atoms are live")
     }
 
-    /// Explicit plus implicit hydrogens; see [`crate::core::Molecule::total_hydrogens`].
+    /// Explicit plus implicit hydrogens; see [`crate::molecule::Molecule::total_hydrogens`].
     pub fn total_hydrogens(self) -> Option<usize> {
         self.molecule()
             .molecule()
@@ -226,8 +226,8 @@ impl<'a> BondView<'a> {
         self.bond
     }
 
-    pub fn molecule(self) -> MoleculeInstanceView<'a> {
-        MoleculeInstanceView::new(self.topology, self.id.molecule())
+    pub fn molecule(self) -> InstanceView<'a> {
+        InstanceView::new(self.topology, self.id.molecule())
     }
 
     /// Both endpoint atoms in stored bond order.

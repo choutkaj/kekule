@@ -1,7 +1,6 @@
 use std::error::Error;
 use std::sync::{Arc, Weak};
 
-use kekule::core::{Atom, BondOrder, Element, ImplicitHydrogens, MoleculeEditor, Perception};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Ensemble, EnsembleMember, Model, Positions};
@@ -10,6 +9,10 @@ use kekule::topology::{
     ResidueClass, SelectionError, Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuilder,
 };
 use kekule::units::{Quantity, NANOMETER};
+use kekule::{
+    molecule::{Atom, BondOrder, Element, ImplicitHydrogens, MoleculeEditor},
+    perception::Perception,
+};
 use kekule::{perception, smiles, stereo};
 
 fn key() -> PropertyKey {
@@ -37,7 +40,7 @@ fn failing_topology() -> Arc<Topology> {
         .unwrap()
         .remove(0);
     good.perceive().unwrap();
-    stereo::assign_cip_descriptors(&mut good).unwrap();
+    stereo::cip::assign_cip_descriptors(&mut good, Default::default()).unwrap();
     perception::resonance::perceive_resonance(&mut good).unwrap();
     assert!(good.perception().has_cip_descriptors());
     assert!(good.perception().has_resonance());
@@ -48,7 +51,11 @@ fn failing_topology() -> Arc<Topology> {
     carbon.hydrogens = ImplicitHydrogens::Fixed(5);
     editor.add_atom(carbon).unwrap();
     let mut bad = editor.finish().unwrap();
-    perception::rings::perceive_ring_membership(&mut bad);
+    perception::rings::perceive_rings(
+        &mut bad,
+        perception::rings::RingPerceptionOptions::membership_only(),
+    )
+    .expect("membership perception cannot fail");
     Arc::new(Topology::from_molecules([good, bad].clone()).unwrap())
 }
 
@@ -247,7 +254,7 @@ fn reperception_replaces_even_a_uniquely_owned_snapshot_and_clears_cip() {
         .unwrap()
         .remove(0);
     molecule.perceive().unwrap();
-    stereo::assign_cip_descriptors(&mut molecule).unwrap();
+    stereo::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
     assert!(molecule.perception().has_stereo());
     let mut model =
         Model::from_molecule(molecule.clone(), &Positions::zeros(molecule.atom_count())).unwrap();
@@ -385,8 +392,8 @@ fn topology_model_and_ensemble_failure_preserve_complete_previous_state() {
 
 #[test]
 fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
-    use kekule::substructure::{find_topology_matches_with_options, SubstructureMatchOptions};
-    use kekule::topology::TopologyEditor;
+    use kekule::substructure::{PreparedTopologyTarget, SubstructureMatchOptions};
+    use kekule::topology::edit::TopologyEditor;
 
     let source = smiles::to_topology("c1ccccc1.[Na+]").unwrap();
     let perceived = Arc::new(source.perceived().unwrap());
@@ -412,7 +419,7 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     )
     .unwrap();
     assert!(!republished.shares_layout(&source));
-    let unchanged = perceived.edit().finish().unwrap();
+    let unchanged = perceived.to_editor().finish().unwrap();
     assert!(Arc::ptr_eq(&unchanged, &perceived));
     let mut editor = TopologyEditor::from_topology(Arc::clone(&perceived));
     let sodium = editor.atom_handle(perceived.atom_ids()[6]).unwrap();
@@ -438,10 +445,10 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
 
     // Perception-dependent matches keep their exact snapshot but select atoms
     // by layout.
-    let query = kekule::query::parse_smarts("c").unwrap();
-    let matches =
-        find_topology_matches_with_options(&perceived, &query, SubstructureMatchOptions::default())
-            .unwrap();
+    let query = kekule::smarts::parse_str("c", Default::default()).unwrap();
+    let matches = PreparedTopologyTarget::new(&perceived)
+        .all(&query, SubstructureMatchOptions::default())
+        .unwrap();
     assert_eq!(matches.len(), 6);
     assert!(matches
         .iter()

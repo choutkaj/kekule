@@ -1,6 +1,6 @@
 use crate::chemistry::AtomPositionSource;
-use crate::core::*;
 use crate::geometry::{Point3, Vector3};
+use crate::molecule::*;
 use crate::structure::Positions;
 use std::fmt;
 
@@ -15,8 +15,8 @@ use eligibility::{
 };
 use perception::prepared;
 pub use perception::{
-    cleanup_stereo, detect_stereo_candidates_with_options, StereoCleanupReport,
-    StereoPerceptionError, StereoPerceptionOptions,
+    cleanup_stereo, detect_stereo_candidates, StereoCleanupReport, StereoSearchError,
+    StereoSearchOptions,
 };
 
 struct MoleculePositions<'a> {
@@ -60,7 +60,7 @@ pub struct CoordinateStereoOptions {
     /// tetrahedral and double-bond stereo.
     pub infer_axes: bool,
     /// Bounds for chemical candidate perception before coordinate inference.
-    pub perception: StereoPerceptionOptions,
+    pub perception: StereoSearchOptions,
 }
 
 /// Coordinate-derived stereo for the foci the molecule leaves unasserted, and
@@ -217,7 +217,7 @@ impl std::error::Error for StereoValidationError {}
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoordinateStereoError {
-    Perception(StereoPerceptionError),
+    Perception(StereoSearchError),
     PositionCountMismatch { expected: usize, actual: usize },
     InvalidStereo(StereoValidationError),
     CouldNotCreateElement(MoleculeError),
@@ -269,16 +269,6 @@ pub fn validate_stereo(mol: &Molecule) -> std::result::Result<(), StereoValidati
     }
 }
 
-/// Finds tetrahedral and double-bond candidates using bounded exact symmetry
-/// checks. See [`detect_stereo_candidates_with_options`] for the chemical and
-/// dependency policy. This operation never modifies represented chemistry or
-/// installs perception on the source molecule.
-pub fn detect_stereo_candidates(
-    mol: &Molecule,
-) -> std::result::Result<Vec<StereoCandidate>, StereoPerceptionError> {
-    detect_stereo_candidates_with_options(mol, StereoPerceptionOptions::default())
-}
-
 /// Infers coordinate-derived stereo without changing the molecule.
 ///
 /// Only foci without a stereo element are inferred: an asserted center,
@@ -287,20 +277,11 @@ pub fn detect_stereo_candidates(
 /// configurations the coordinates contradict are reported in
 /// [`CoordinateStereoResult::disagreements`] rather than overridden.
 ///
-/// `positions` must be dense and follow the molecule's atom iteration order.
-pub fn infer_coordinate_stereo(
-    mol: &Molecule,
-    positions: &Positions,
-) -> std::result::Result<CoordinateStereoResult, CoordinateStereoError> {
-    infer_coordinate_stereo_with_options(mol, positions, CoordinateStereoOptions::default())
-}
-
-/// Infers coordinate-derived stereo with an explicit axis policy. See
-/// [`infer_coordinate_stereo`] for which foci are inferred. Asserted axes are
-/// compared with the coordinates whether or not axis inference is enabled.
+/// `options` selects whether axes are inferred. Asserted axes are compared
+/// with the coordinates whether or not axis inference is enabled.
 ///
 /// `positions` must be dense and follow the molecule's atom iteration order.
-pub fn infer_coordinate_stereo_with_options(
+pub fn infer_coordinate_stereo(
     mol: &Molecule,
     positions: &Positions,
     options: CoordinateStereoOptions,
@@ -314,7 +295,7 @@ pub fn infer_coordinate_stereo_with_options(
     validate_stereo(mol)?;
     let perceived = perception::prepared(mol).map_err(CoordinateStereoError::Perception)?;
     let mol = perceived.as_ref();
-    let candidates = detect_stereo_candidates_with_options(mol, options.perception)
+    let candidates = detect_stereo_candidates(mol, options.perception)
         .map_err(CoordinateStereoError::Perception)?;
     let source = MoleculePositions::new(mol, positions);
     let disagreements = mol
@@ -334,29 +315,17 @@ pub fn infer_coordinate_stereo_with_options(
 /// configurations the coordinates contradict, is left unchanged and the
 /// contradictions are reported. See [`infer_coordinate_stereo`].
 ///
+/// `options` selects whether axes are inferred, as for
+/// [`infer_coordinate_stereo`].
+///
 /// `positions` must be dense and follow the edited molecule's atom iteration
 /// order.
 pub fn materialize_coordinate_stereo(
     editor: &mut MoleculeEditor,
     positions: &Positions,
-) -> std::result::Result<CoordinateStereoMaterializationReport, CoordinateStereoError> {
-    materialize_coordinate_stereo_with_options(
-        editor,
-        positions,
-        CoordinateStereoOptions::default(),
-    )
-}
-
-/// Materializes inferred coordinate stereo with an explicit axis policy.
-///
-/// `positions` must be dense and follow the edited molecule's atom iteration
-/// order.
-pub fn materialize_coordinate_stereo_with_options(
-    editor: &mut MoleculeEditor,
-    positions: &Positions,
     options: CoordinateStereoOptions,
 ) -> std::result::Result<CoordinateStereoMaterializationReport, CoordinateStereoError> {
-    let inferred = infer_coordinate_stereo_with_options(editor.working(), positions, options)?;
+    let inferred = infer_coordinate_stereo(editor.working(), positions, options)?;
     let mut staged = editor.clone();
     let mut created_elements = Vec::with_capacity(inferred.elements.len());
     for element in inferred.elements {
@@ -710,7 +679,7 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
 /// candidate set, this does not depend on the molecule's stereo elements.
 pub(crate) fn locally_eligible_double_bonds(
     mol: &Molecule,
-) -> std::result::Result<std::collections::BTreeSet<BondId>, StereoPerceptionError> {
+) -> std::result::Result<std::collections::BTreeSet<BondId>, StereoSearchError> {
     let perceived = prepared(mol)?;
     Ok(double_bond_candidates(&perceived)
         .into_iter()

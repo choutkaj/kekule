@@ -1,7 +1,7 @@
 //! Shared by deterministic regressions and the SMILES fuzz target.
 use std::collections::BTreeMap;
 
-use kekule::{core::Molecule, smiles};
+use kekule::{molecule::Molecule, smiles};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct AtomIdentity {
@@ -49,9 +49,10 @@ fn composition(molecule: &Molecule) -> BTreeMap<AtomIdentity, usize> {
 }
 
 pub(crate) fn assert_output(source: &Molecule, written: &str, canonical: Option<&str>) {
-    let document = smiles::parse_str(written).expect("successful writer output must parse");
+    let document = smiles::parse_str(written, Default::default())
+        .expect("successful writer output must parse");
     let mut restored = document
-        .interpret()
+        .interpret(Default::default())
         .expect("writer output must interpret")
         .into_molecule()
         .expect("one molecule must remain one component");

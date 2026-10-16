@@ -4,14 +4,14 @@ use std::result::Result;
 
 /// Bounds for exact graph-symmetry searches used by stereo perception.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StereoPerceptionOptions {
+pub struct StereoSearchOptions {
     /// Maximum analysis vertices, including non-graph hydrogens.
     pub max_atoms: usize,
     /// Maximum trial atom mappings across all sites and refinement rounds.
     pub max_search_states: usize,
 }
 
-impl Default for StereoPerceptionOptions {
+impl Default for StereoSearchOptions {
     fn default() -> Self {
         Self {
             max_atoms: 4096,
@@ -22,7 +22,7 @@ impl Default for StereoPerceptionOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum StereoPerceptionError {
+pub enum StereoSearchError {
     InvalidOptions(&'static str),
     Perception(crate::chemistry::PerceptionError),
     InvalidStereo(StereoValidationError),
@@ -33,7 +33,7 @@ pub enum StereoPerceptionError {
     },
 }
 
-impl fmt::Display for StereoPerceptionError {
+impl fmt::Display for StereoSearchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidOptions(message) => {
@@ -53,7 +53,7 @@ impl fmt::Display for StereoPerceptionError {
     }
 }
 
-impl std::error::Error for StereoPerceptionError {
+impl std::error::Error for StereoSearchError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Perception(error) => Some(error),
@@ -63,7 +63,7 @@ impl std::error::Error for StereoPerceptionError {
     }
 }
 
-pub(super) fn prepared(mol: &Molecule) -> Result<Cow<'_, Molecule>, StereoPerceptionError> {
+pub(super) fn prepared(mol: &Molecule) -> Result<Cow<'_, Molecule>, StereoSearchError> {
     if mol.perception().has_valence()
         && mol.perception().has_aromaticity()
         && mol.ring_set().is_some()
@@ -73,12 +73,14 @@ pub(super) fn prepared(mol: &Molecule) -> Result<Cow<'_, Molecule>, StereoPercep
         let mut perceived = mol.clone();
         perceived
             .perceive()
-            .map_err(StereoPerceptionError::Perception)?;
+            .map_err(StereoSearchError::Perception)?;
         Ok(Cow::Owned(perceived))
     }
 }
 
-/// Finds stereo candidates with explicit search bounds.
+/// Finds tetrahedral and double-bond candidates using exact symmetry checks
+/// bounded by `options`. This operation never modifies represented chemistry
+/// or installs perception on the source molecule.
 ///
 /// Complete installed valence/ring/aromaticity perception is reused; otherwise the
 /// default profile is computed on a temporary copy. Graph hydrogens and known
@@ -102,23 +104,21 @@ pub(super) fn prepared(mol: &Molecule) -> Result<Cow<'_, Molecule>, StereoPercep
 /// Axial assertions and groups containing unclassified members are conservatively
 /// held fixed; these cannot provide a proof based on only part of a relationship.
 /// Exhaustion is an error, never evidence of equivalence or stereogenicity.
-pub fn detect_stereo_candidates_with_options(
+pub fn detect_stereo_candidates(
     mol: &Molecule,
-    options: StereoPerceptionOptions,
-) -> Result<Vec<StereoCandidate>, StereoPerceptionError> {
+    options: StereoSearchOptions,
+) -> Result<Vec<StereoCandidate>, StereoSearchError> {
     if options.max_atoms == 0 || options.max_search_states == 0 {
-        return Err(StereoPerceptionError::InvalidOptions(
-            "limits must be positive",
-        ));
+        return Err(StereoSearchError::InvalidOptions("limits must be positive"));
     }
     if mol.atom_count() > options.max_atoms {
-        return Err(StereoPerceptionError::ResourceLimit {
+        return Err(StereoSearchError::ResourceLimit {
             resource: "analysis atoms",
             observed: mol.atom_count(),
             limit: options.max_atoms,
         });
     }
-    validate_stereo(mol).map_err(StereoPerceptionError::InvalidStereo)?;
+    validate_stereo(mol).map_err(StereoSearchError::InvalidStereo)?;
     let perceived = prepared(mol)?;
     let mol = perceived.as_ref();
     let mut candidates = tetrahedral_candidates(mol);
@@ -146,9 +146,9 @@ pub struct StereoCleanupReport {
 /// Failure leaves the editor, its properties and installed perception untouched.
 pub fn cleanup_stereo(
     editor: &mut MoleculeEditor,
-    options: StereoPerceptionOptions,
-) -> Result<StereoCleanupReport, StereoPerceptionError> {
-    let candidates = detect_stereo_candidates_with_options(editor.working(), options)?;
+    options: StereoSearchOptions,
+) -> Result<StereoCleanupReport, StereoSearchError> {
+    let candidates = detect_stereo_candidates(editor.working(), options)?;
     let perceived = prepared(editor.working())?;
     let mut unclassified_elements = Vec::new();
     let removed_elements: Vec<_> = editor

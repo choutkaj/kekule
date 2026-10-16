@@ -4,15 +4,18 @@ pub use append::{ModelAppend, ModelAppendReport};
 
 use super::model_state::ModelState;
 use super::{Model, ModelError, PositionError, Positions, StructureError};
-use crate::core::{Atom, BondOrder, Molecule};
 use crate::geometry::{PeriodicCell, Point3};
+use crate::molecule::{Atom, BondOrder, Molecule};
 use crate::properties::{
     OwnerProperties, PropertyColumn, PropertyError, PropertyKey, PropertyValue, RawPropertyTable,
 };
 use crate::topology::{
-    AtomSiteMetadata, EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId, EditChain,
-    EditChainId, EditMolecule, EditResidue, EditResidueId, MoleculeClass, MoleculeInstanceId,
-    ResidueClass, TopologyAtomIndex, TopologyBondIndex, TopologyEditError, TopologyEditor,
+    edit::{
+        EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId, EditChain, EditChainId,
+        EditMolecule, EditResidue, EditResidueId, TopologyEditError, TopologyEditor,
+    },
+    AtomSiteMetadata, MoleculeClass, MoleculeInstanceId, ResidueClass, TopologyAtomIndex,
+    TopologyBondIndex,
 };
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 use std::fmt;
@@ -29,7 +32,7 @@ use std::fmt;
 /// values remain valid.
 ///
 /// ```
-/// use kekule::{core::{Atom, Element, BondOrder}, geometry::Point3,
+/// use kekule::{molecule::{Atom, Element, BondOrder}, geometry::Point3,
 ///     structure::ModelEditor, units::{Quantity, ANGSTROM}};
 /// let mut editor = ModelEditor::new();
 /// let c = editor.add_atom(Atom::new(Element::from_symbol("C").unwrap()),
@@ -58,7 +61,8 @@ impl std::ops::Deref for ModelEditor {
 }
 
 impl Model {
-    pub fn edit(&self) -> ModelEditor {
+    /// Starts a detached draft from a copy of this model.
+    pub fn to_editor(&self) -> ModelEditor {
         self.clone().into_editor()
     }
     /// Moves the structure state into a draft while retaining the shared
@@ -90,7 +94,7 @@ impl ModelEditor {
     pub fn replace_source_instance_stereo(
         &mut self,
         instance: MoleculeInstanceId,
-        elements: &[crate::core::StereoElement],
+        elements: &[crate::stereo::StereoElement],
     ) -> Result<(), ModelEditError> {
         self.structural(|topology| topology.replace_source_instance_stereo(instance, elements))
     }
@@ -569,7 +573,7 @@ impl ModelEditor {
     /// Publishes the model and maps surviving draft atom/bond handles to its layout.
     pub fn finish_with_correspondence(
         self,
-    ) -> Result<(Model, crate::topology::EditCorrespondence), ModelEditError> {
+    ) -> Result<(Model, crate::topology::edit::EditCorrespondence), ModelEditError> {
         let (published, correspondence) = self.topology.into_mapped_publication()?;
         let mut state = self
             .slots

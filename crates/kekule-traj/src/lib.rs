@@ -48,17 +48,17 @@
 //! use kekule::{mmcif, topology::AtomSelection};
 //! use kekule_traj::io::{read_trajectory, write_trajectory};
 //!
-//! let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
-//! let topology = document.interpret()?.into_topology();
-//! let mut trajectory = read_trajectory("trajectory.xyz", topology.clone())?;
+//! let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?, Default::default())?;
+//! let topology = document.interpret(Default::default())?.into_topology();
+//! let mut trajectory = read_trajectory("trajectory.xyz", topology.clone(), Default::default())?;
 //! println!("{} frames, {} atoms", trajectory.len(), topology.atom_count());
 //!
 //! let fit = AtomSelection::all(&topology);
 //! // Requires a nonempty trajectory and a non-collinear fitting selection.
 //! // Coordinates are fitted as stored; repair split molecules first if needed.
-//! trajectory.superpose(0, &fit)?;
+//! trajectory.superpose(0, &fit, Default::default())?;
 //! let sampled = trajectory.select((0..trajectory.len()).step_by(10))?;
-//! write_trajectory("aligned.xyz", &sampled)?;
+//! write_trajectory("aligned.xyz", &sampled, Default::default())?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -92,8 +92,7 @@ pub mod io;
 pub mod periodic;
 
 pub use trajectory::{
-    validate_atom_order, CoordinateFrameReader, FrameBuffer, FrameBufferData,
-    MemoryTrajectoryReader, MemoryTrajectoryWriter, SeekableTrajectoryReader,
+    FrameBuffer, FrameData, MemoryTrajectoryWriter, SeekableTrajectoryReader,
     TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError,
     TrajectoryIoErrorContext, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };

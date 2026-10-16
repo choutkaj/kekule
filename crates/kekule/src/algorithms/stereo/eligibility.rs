@@ -1,5 +1,5 @@
 use super::atom_hydrogen_count;
-use crate::core::*;
+use crate::molecule::*;
 
 /// Local tetrahedral carrier geometry. Bond multiplicity changes electron
 /// counting, not the number of ligand directions (for example a phosphoryl O).

@@ -70,7 +70,7 @@ pub enum AltLocPreference {
 /// {
 ///     selection.overrides.insert(residue.residue, "B".into());
 /// }
-/// block.interpret_with_options(StructureInterpretOptions {
+/// block.interpret(StructureInterpretOptions {
 ///     altloc_policy: AltLocPolicy::Configured(selection),
 ///     ..Default::default()
 /// })

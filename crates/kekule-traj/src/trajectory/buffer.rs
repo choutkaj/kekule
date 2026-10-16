@@ -18,7 +18,7 @@ use super::TrajectoryIoError;
 /// before changing the destination, converts units once, reuses dense-array
 /// allocations, and clears optional fields omitted from this value.
 #[derive(Debug, Clone, Copy)]
-pub struct FrameBufferData<'a> {
+pub struct FrameData<'a> {
     positions: Quantity<&'a [Point3]>,
     cell: Option<PeriodicCell>,
     velocities: Option<Quantity<&'a [Vector3]>>,
@@ -29,7 +29,7 @@ pub struct FrameBufferData<'a> {
     annotations: Option<&'a StructureProperties>,
 }
 
-impl<'a> FrameBufferData<'a> {
+impl<'a> FrameData<'a> {
     /// Starts complete frame data with required dense positions.
     pub const fn new(positions: Quantity<&'a [Point3]>) -> Self {
         Self {
@@ -209,7 +209,7 @@ impl FrameBuffer {
     /// All count, unit, finite-value, and annotation validation completes
     /// before any field changes. Optional fields absent from `data`, including
     /// annotations, are cleared.
-    pub fn replace_from_data(&mut self, data: FrameBufferData<'_>) -> Result<(), StructureError> {
+    pub fn replace_from_data(&mut self, data: FrameData<'_>) -> Result<(), StructureError> {
         self.positions().validate_all(&data.positions)?;
         let time = validated_time(data.time)?;
         if let Some(source) = data.annotations {
@@ -272,7 +272,7 @@ impl FrameBuffer {
         if !self.topology().shares_layout(frame.topology()) {
             return Err(TrajectoryIoError::TopologyMismatch);
         }
-        Ok(self.replace_from_data(FrameBufferData::from_frame_view(frame))?)
+        Ok(self.replace_from_data(FrameData::from_frame_view(frame))?)
     }
 
     fn stage_velocities<T: AsRef<[Vector3]>>(

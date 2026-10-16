@@ -1,5 +1,5 @@
-use kekule::core::{Atom, AtomId, BondOrder, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::molecule::{Atom, AtomId, BondOrder, Element};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyValue};
 use kekule::structure::{Ensemble, Model, ModelEditError, ModelEditor, Positions};
 use kekule::topology::{
@@ -81,8 +81,8 @@ fn annotated(conflict: Option<&str>) -> Model {
         .pop()
         .unwrap();
     molecule.perceive().unwrap();
-    kekule::stereo::assign_cip_descriptors(&mut molecule).unwrap();
-    let mut chemistry = molecule.edit();
+    kekule::stereo::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
+    let mut chemistry = molecule.to_editor();
     chemistry
         .properties_mut()
         .owner_mut()
@@ -411,7 +411,7 @@ fn assert_import(source: &Model, target: &Model, first_instance: usize) {
 fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
     let source = annotated(None);
     let before = format!("{source:?}");
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let first = editor.append_model(&source).unwrap();
     assert_eq!(
         first.report().cleared_topology_properties,
@@ -489,7 +489,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     let receptor_atom = receptor.topology().atom_ids()[0];
     let ligand_atoms = ligand.topology().atom_ids();
     let source_bond = ligand.topology().bond_ids()[0];
-    let mut editor = receptor.edit();
+    let mut editor = receptor.to_editor();
     // Existing deleted slots must not shift imported coordinates or property rows.
     editor
         .delete_atom(
@@ -593,9 +593,9 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
 #[test]
 fn import_handles_reject_foreign_drafts_and_remain_invalid_after_clear_and_recovery() {
     let source = model("CO");
-    let mut editor = source.edit();
+    let mut editor = source.to_editor();
     let imported = editor.append_model(&source).unwrap();
-    let mut foreign = source.edit();
+    let mut foreign = source.to_editor();
     foreign.append_model(&source).unwrap();
     let imported_atom = imported.atom(source.topology().atom_ids()[0]).unwrap();
     assert!(foreign.position(imported_atom).is_err());
@@ -645,7 +645,7 @@ fn all_property_domain_conflicts_roll_back_and_can_be_retried() {
     ] {
         let destination = annotated(None);
         let incompatible = annotated(Some(domain));
-        let mut editor = destination.edit();
+        let mut editor = destination.to_editor();
         editor.append_model(&destination).unwrap();
         let before = format!("{editor:?}");
         let error = editor.append_model(&incompatible).unwrap_err();
@@ -695,7 +695,7 @@ fn coordinates_and_property_units_are_preserved_with_missing_rows() {
             NANOMETER,
         ))
         .unwrap();
-    let mut editor = destination.edit();
+    let mut editor = destination.to_editor();
     editor.append_model(&source).unwrap();
     let result = editor.finish().unwrap();
     let target = &result;
@@ -740,7 +740,7 @@ fn coordinates_and_property_units_are_preserved_with_missing_rows() {
         key("distance"),
         PropertyValue::real(300.0, KELVIN).unwrap(),
     );
-    let mut editor = destination.edit();
+    let mut editor = destination.to_editor();
     let before = format!("{editor:?}");
     assert!(matches!(
         editor.append_model(&source),
@@ -768,7 +768,7 @@ fn periodic_cell_rules_are_explicit_and_transactional() {
     empty.append_model(&source).unwrap();
     assert_eq!(empty.finish().unwrap().cell(), source.cell());
     let destination = model("C");
-    let mut editor = destination.edit();
+    let mut editor = destination.to_editor();
     let before = format!("{editor:?}");
     assert!(matches!(
         editor.append_model(&source),
@@ -873,7 +873,7 @@ fn editing_one_imported_occurrence_preserves_others_and_their_instance_annotatio
 #[test]
 fn edited_source_ids_and_reordered_definition_occurrences_keep_dense_state_associated() {
     let molecule = kekule::smiles::to_molecules("CCO").unwrap().pop().unwrap();
-    let mut edit = molecule.edit();
+    let mut edit = molecule.to_editor();
     edit.delete_atom(AtomId::new(0)).unwrap();
     let sparse = edit.finish().unwrap();
     // Publication renumbers the surviving atoms densely.

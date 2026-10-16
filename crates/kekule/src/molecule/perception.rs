@@ -161,7 +161,7 @@ pub struct AromaticityPerception {
 /// Presence of this section records that CIP derivation completed successfully,
 /// including when no descriptors were assigned.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct StereoPerception {
+pub struct CipPerception {
     pub(super) cip_descriptors: BTreeMap<StereoElementId, StereoDescriptor>,
 }
 
@@ -172,7 +172,7 @@ pub struct Perception {
     pub(super) aromaticity: Option<AromaticityPerception>,
     pub(crate) conjugation: Option<ConjugationPerception>,
     pub(crate) resonance: Option<ResonancePerception>,
-    pub(super) stereo: Option<StereoPerception>,
+    pub(super) stereo: Option<CipPerception>,
 }
 
 impl ValencePerception {
@@ -245,7 +245,7 @@ impl AromaticityPerception {
     }
 }
 
-impl StereoPerception {
+impl CipPerception {
     /// Iterates every installed CIP descriptor assignment.
     pub fn cip_descriptors(
         &self,
@@ -308,7 +308,7 @@ impl Perception {
     }
 
     /// Returns the exact installed stereo-perception section.
-    pub const fn stereo_state(&self) -> Option<&StereoPerception> {
+    pub const fn stereo_state(&self) -> Option<&CipPerception> {
         self.stereo.as_ref()
     }
 
@@ -540,7 +540,7 @@ impl PerceptionBuilder {
                 return Err(PerceptionBuildError::DuplicateCipDescriptor(element));
             }
         }
-        self.state.stereo = Some(StereoPerception {
+        self.state.stereo = Some(CipPerception {
             cip_descriptors: descriptors,
         });
         Ok(self)

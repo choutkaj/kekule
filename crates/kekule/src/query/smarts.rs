@@ -4,7 +4,7 @@ use std::fmt;
 use std::ops::Range;
 use std::rc::Rc;
 
-use crate::core::{BondOrder, Element};
+use crate::molecule::{BondOrder, Element};
 
 use super::{
     AtomExpression, AtomPredicate, BondExpression, BondPredicate, QueryAtomId,
@@ -125,8 +125,9 @@ impl std::error::Error for SmartsParseError {}
 
 /// Parses one SMARTS pattern into a syntax-independent [`QueryGraph`].
 ///
-/// This uses [`SmartsParseOptions::default`]. Parsing does not match a target or
-/// run chemical perception.
+/// `options` bounds the input and the parsed query;
+/// [`SmartsParseOptions::default`] suits ordinary patterns. Parsing does not
+/// match a target or run chemical perception.
 /// `X` counts all connections, including declared and inferred hydrogens, and
 /// defaults to one. `xN` counts incident cyclic bonds; bare `x` means any ring
 /// membership. Matching these requires installed valence and ring perception,
@@ -147,15 +148,7 @@ impl std::error::Error for SmartsParseError {}
 /// groups and the `r` flag, with zero-based query atom indices. Other CX fields
 /// are rejected. Enhanced groups compare correlated configurations during matching.
 /// See the crate's SMARTS capability matrix for the complete dialect contract.
-pub fn parse_smarts(input: &str) -> Result<QueryGraph, SmartsParseError> {
-    parse_smarts_with_options(input, SmartsParseOptions::default())
-}
-
-/// Parses one SMARTS pattern with explicit resource limits.
-pub fn parse_smarts_with_options(
-    input: &str,
-    options: SmartsParseOptions,
-) -> Result<QueryGraph, SmartsParseError> {
+pub fn parse_str(input: &str, options: SmartsParseOptions) -> Result<QueryGraph, SmartsParseError> {
     validate_options(options)?;
     if input.is_empty() {
         return Err(SmartsParseError::new(
@@ -213,7 +206,7 @@ fn install_cx_groups(
     if fields.trim().is_empty() {
         return Ok(query);
     }
-    use crate::core::StereoGroupKind as K;
+    use crate::stereo::StereoGroupKind as K;
     let fail = |message| SmartsParseError::syntax(span.clone(), message);
     let mut groups = BTreeMap::<(u8, usize), (K, Vec<QueryAtomId>)>::new();
     let mut current = None;
@@ -1237,8 +1230,8 @@ impl<'a> BracketParser<'a> {
             }
             b'@' => {
                 let (mut stereo, end) = AtomStereo::parse(self.source, self.cursor, self.base)?;
-                let same = stereo.orientation == crate::core::TetrahedralOrientation::Clockwise;
-                stereo.orientation = crate::core::TetrahedralOrientation::Clockwise;
+                let same = stereo.orientation == crate::stereo::TetrahedralOrientation::Clockwise;
+                stereo.orientation = crate::stereo::TetrahedralOrientation::Clockwise;
                 if let Some(existing) = &self.stereo {
                     if existing.inline_hydrogen != stereo.inline_hydrogen {
                         return Err(self.syntax_here("inconsistent inline hydrogen stereo frames"));

@@ -2,10 +2,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::Molecule;
 use crate::diagnostics::{normalize_line_endings, read_bounded, DiagnosticKind, SourceLocation};
-use crate::structure::Model;
-use crate::topology::Topology;
 
 use super::structure_interpret::{
     interpret_mmcif, interpret_mmcif_block, interpret_mmcif_conformations,
@@ -133,64 +130,20 @@ impl MmcifDocument {
             .find(|block| block.name.eq_ignore_ascii_case(name))
     }
 
-    /// Interprets the exactly one structural block using default policy.
-    pub fn interpret(&self) -> Result<StructureInterpretation, StructureInterpretError> {
-        self.interpret_with_options(StructureInterpretOptions::default())
-    }
-
-    /// Interprets the exactly one structural block using explicit policy.
-    pub fn interpret_with_options(
+    /// Interprets the exactly one structural block as one selected coordinate
+    /// model under the model, alternate-location, and connectivity policy of
+    /// `options`.
+    pub fn interpret(
         &self,
         options: StructureInterpretOptions,
     ) -> Result<StructureInterpretation, StructureInterpretError> {
         interpret_mmcif(self, options)
     }
 
-    /// Interprets the exactly one structural block as connected molecules.
-    pub fn to_molecules(&self) -> Result<Vec<Molecule>, StructureInterpretError> {
-        Ok(self.interpret()?.into_molecules())
-    }
-
-    pub fn to_molecules_with_options(
-        &self,
-        options: StructureInterpretOptions,
-    ) -> Result<Vec<Molecule>, StructureInterpretError> {
-        Ok(self.interpret_with_options(options)?.into_molecules())
-    }
-
-    /// Interprets the exactly one structural block and projects its topology.
-    pub fn to_topology(&self) -> Result<Arc<Topology>, StructureInterpretError> {
-        Ok(self.interpret()?.into_topology())
-    }
-
-    pub fn to_topology_with_options(
-        &self,
-        options: StructureInterpretOptions,
-    ) -> Result<Arc<Topology>, StructureInterpretError> {
-        Ok(self.interpret_with_options(options)?.into_topology())
-    }
-
-    /// Interprets the exactly one structural block as one selected model.
-    pub fn to_model(&self) -> Result<Model, StructureInterpretError> {
-        Ok(self.interpret()?.into_model())
-    }
-
-    pub fn to_model_with_options(
-        &self,
-        options: StructureInterpretOptions,
-    ) -> Result<Model, StructureInterpretError> {
-        Ok(self.interpret_with_options(options)?.into_model())
-    }
-
-    /// Interprets all coordinate models in the exactly one structural block.
+    /// Interprets the coordinate models that `options` selects, by default
+    /// all of them, in the exactly one structural block as an ensemble of
+    /// equally weighted members.
     pub fn interpret_ensemble(
-        &self,
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
-        self.interpret_ensemble_with_options(StructureEnsembleInterpretOptions::default())
-    }
-
-    /// Interprets selected coordinate models in the exactly one structural block.
-    pub fn interpret_ensemble_with_options(
         &self,
         options: StructureEnsembleInterpretOptions,
     ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
@@ -290,61 +243,18 @@ impl MmcifBlock {
         })
     }
 
-    /// Interprets one selected coordinate model using default policy.
-    pub fn interpret(&self) -> Result<StructureInterpretation, StructureInterpretError> {
-        self.interpret_with_options(StructureInterpretOptions::default())
-    }
-
-    /// Interprets one selected coordinate model using explicit policy.
-    pub fn interpret_with_options(
+    /// Interprets one selected coordinate model of this block under the
+    /// policy of `options`.
+    pub fn interpret(
         &self,
         options: StructureInterpretOptions,
     ) -> Result<StructureInterpretation, StructureInterpretError> {
         interpret_mmcif_block(self, options)
     }
 
-    pub fn to_molecules(&self) -> Result<Vec<Molecule>, StructureInterpretError> {
-        Ok(self.interpret()?.into_molecules())
-    }
-
-    pub fn to_molecules_with_options(
-        &self,
-        options: StructureInterpretOptions,
-    ) -> Result<Vec<Molecule>, StructureInterpretError> {
-        Ok(self.interpret_with_options(options)?.into_molecules())
-    }
-
-    pub fn to_topology(&self) -> Result<Arc<Topology>, StructureInterpretError> {
-        Ok(self.interpret()?.into_topology())
-    }
-
-    pub fn to_topology_with_options(
-        &self,
-        options: StructureInterpretOptions,
-    ) -> Result<Arc<Topology>, StructureInterpretError> {
-        Ok(self.interpret_with_options(options)?.into_topology())
-    }
-
-    pub fn to_model(&self) -> Result<Model, StructureInterpretError> {
-        Ok(self.interpret()?.into_model())
-    }
-
-    pub fn to_model_with_options(
-        &self,
-        options: StructureInterpretOptions,
-    ) -> Result<Model, StructureInterpretError> {
-        Ok(self.interpret_with_options(options)?.into_model())
-    }
-
-    /// Interprets all coordinate models in this block using default policy.
+    /// Interprets the coordinate models that `options` selects, by default
+    /// all of them, in this block as an ensemble of equally weighted members.
     pub fn interpret_ensemble(
-        &self,
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
-        self.interpret_ensemble_with_options(StructureEnsembleInterpretOptions::default())
-    }
-
-    /// Interprets selected coordinate models in this block using explicit policy.
-    pub fn interpret_ensemble_with_options(
         &self,
         options: StructureEnsembleInterpretOptions,
     ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {

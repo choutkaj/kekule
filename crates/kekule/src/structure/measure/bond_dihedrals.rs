@@ -5,7 +5,7 @@ use crate::structure::ModelView;
 use crate::topology::{InstanceAtomId, InstanceBondId, Topology};
 use crate::units::Quantity;
 
-use super::{dihedral, MeasurementError};
+use super::{dihedral, ConnectivityCheck, MeasurementError};
 
 /// Failure to prepare or measure a deterministic bond dihedral.
 #[derive(Debug, Clone, PartialEq)]
@@ -72,7 +72,7 @@ impl std::error::Error for BondDihedralError {
 /// # fn example(model: &Model) -> Result<(), Box<dyn std::error::Error>> {
 /// let topology = model.shared_topology();
 /// let definitions = topology.bond_ids().iter()
-///     .map(|&bond| BondDihedral::new(&topology, bond))
+///     .map(|&bond| BondDihedral::new(&topology, bond, Default::default()))
 ///     .collect::<Result<Vec<_>, _>>()?;
 /// for definition in &definitions {
 ///     let angle = definition.measure(model.as_model_view())?;
@@ -89,13 +89,9 @@ pub struct BondDihedral {
 }
 
 impl BondDihedral {
-    /// Prepares references with the default CIP expansion bounds.
-    pub fn new(topology: &Arc<Topology>, bond: InstanceBondId) -> Result<Self, BondDihedralError> {
-        Self::with_options(topology, bond, CipAssignmentOptions::default())
-    }
-
-    /// Prepares references with explicit CIP expansion bounds.
-    pub fn with_options(
+    /// Prepares references, ranking ligands within the CIP expansion bounds of
+    /// `options`.
+    pub fn new(
         topology: &Arc<Topology>,
         bond: InstanceBondId,
         options: CipAssignmentOptions,
@@ -135,7 +131,7 @@ impl BondDihedral {
         let Some([a, b, c, d]) = self.atoms else {
             return Ok(None);
         };
-        match dihedral(view, a, b, c, d) {
+        match dihedral(view, a, b, c, d, ConnectivityCheck::Unrestricted) {
             Ok(angle) => Ok(Some(angle)),
             Err(MeasurementError::DegenerateGeometry) => Ok(None),
             Err(error) => Err(BondDihedralError::Measurement(error)),
@@ -150,7 +146,12 @@ pub fn bond_dihedral(
     view: ModelView<'_>,
     bond: InstanceBondId,
 ) -> Result<Option<Quantity<f64>>, BondDihedralError> {
-    BondDihedral::new(&view.shared_topology(), bond)?.measure(view)
+    BondDihedral::new(
+        &view.shared_topology(),
+        bond,
+        CipAssignmentOptions::default(),
+    )?
+    .measure(view)
 }
 
 /// Lazily measures every bond in topology dense order, retaining bond identities

@@ -3,10 +3,11 @@ use super::config::Feature;
 use crate::{Error, ErrorKind, Result};
 
 use kekule::{
-    core::{AtomId, BondOrder, Molecule},
+    molecule::{AtomId, BondOrder, Molecule},
     perception::rings::RingBasisModel,
-    query::{parse_smarts, QueryGraph},
-    substructure::{PreparedTarget, TaggedQuery},
+    query::QueryGraph,
+    smarts,
+    substructure::{PreparedTarget, TaggedQuery, TupleMode},
 };
 use serde::Deserialize;
 use std::{
@@ -43,7 +44,8 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
             .into_iter()
             .map(|data| {
                 Ok(Normalization {
-                    query: parse_smarts(&data.query).map_err(Error::chemistry)?,
+                    query: smarts::parse_str(&data.query, Default::default())
+                        .map_err(Error::chemistry)?,
                     data,
                 })
             })
@@ -67,7 +69,7 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
                 .find_matches(
                     &PreparedTarget::new(&molecule),
                     crate::assignment::options(molecule.atom_count()),
-                    true,
+                    TupleMode::Distinct,
                 )
                 .map_err(crate::assignment::matching)?;
             let Some(first) = matches.first() else {
@@ -75,7 +77,7 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
                 break;
             };
             let mapping: BTreeMap<_, _> = tags.iter().copied().zip(first.iter().copied()).collect();
-            let mut editor = molecule.edit();
+            let mut editor = molecule.to_editor();
             let mut changed = false;
             for (tag, charge) in &rule.data.charges {
                 let id = mapping[tag];
@@ -430,7 +432,9 @@ pub(super) fn features(
                 Feature::Element { categories } => {
                     let column = categories
                         .iter()
-                        .position(|s| kekule::core::Element::from_symbol(s) == Some(atom.element))
+                        .position(|s| {
+                            kekule::molecule::Element::from_symbol(s) == Some(atom.element)
+                        })
                         .ok_or_else(|| {
                             Error::new(
                                 ErrorKind::UnsupportedMolecule,
@@ -491,10 +495,10 @@ pub(crate) fn adjacency(molecule: &Molecule) -> Result<Vec<Vec<usize>>> {
 
 #[cfg(test)]
 mod tests {
-    fn explicit_hydrogens(smiles: &str) -> kekule::core::Molecule {
+    fn explicit_hydrogens(smiles: &str) -> kekule::molecule::Molecule {
         let mut molecule = kekule::smiles::to_molecules(smiles).unwrap().remove(0);
         molecule.perceive().unwrap();
-        molecule.add_hydrogens().unwrap();
+        molecule.add_hydrogens(Default::default()).unwrap();
         molecule
     }
 

@@ -5,11 +5,11 @@ use crate::{
     ChargeAssignment, ChargeSource, Error, ErrorKind, NaglModel, Result,
 };
 use kekule::{
-    core::{AtomId, Molecule},
+    molecule::{AtomId, Molecule},
     perception::aromaticity::{self, AromaticityModel},
     substructure::{
         PreparedTarget, SubstructureMatchError, SubstructureMatchOptions, TaggedMatchError,
-        TaggedQuery,
+        TaggedQuery, TupleMode,
     },
     topology::{InstanceAtomId, Topology},
     units::{Quantity, ELEMENTARY_CHARGE},
@@ -88,7 +88,7 @@ fn assignments<const N: usize, P>(
     for (i, rule) in rules.iter().enumerate() {
         let query = TaggedQuery::new(&rule.query).map_err(matching)?;
         for tuple in query
-            .find_matches(target, options, true)
+            .find_matches(target, options, TupleMode::Distinct)
             .map_err(matching)?
         {
             let mut atoms: [AtomId; N] = tuple
@@ -120,7 +120,7 @@ struct Assigned {
 impl ForceField {
     fn assign(&self, input: &Molecule) -> Result<Assigned> {
         let mut molecule = explicit(input)?;
-        aromaticity::perceive_aromaticity(&mut molecule, AromaticityModel::Mdl)
+        aromaticity::perceive_aromaticity(&mut molecule, AromaticityModel::Mdl, Default::default())
             .map_err(Error::chemistry)?;
         let target = PreparedTarget::new(&molecule);
         let options = options(molecule.atom_count());
@@ -455,7 +455,7 @@ impl ForceField {
         for rule in &self.library {
             for tuple in TaggedQuery::new(&rule.query)
                 .map_err(matching)?
-                .find_matches(&target, options, true)
+                .find_matches(&target, options, TupleMode::Distinct)
                 .map_err(matching)?
             {
                 for (atom, q) in tuple.into_iter().zip(&rule.parameter.charges) {
@@ -527,7 +527,7 @@ mod tests {
     fn fourteen_scaling_uses_shortest_bond_distance() {
         let mut molecule = smiles::to_molecules("CCCC").unwrap().remove(0);
         molecule.perceive().unwrap();
-        molecule.add_hydrogens().unwrap();
+        molecule.add_hydrogens(Default::default()).unwrap();
         let carbons = molecule
             .atoms()
             .filter(|(_, a)| a.element.atomic_number() == 6)
@@ -624,7 +624,7 @@ mod tests {
             charges: vec![0.0],
         };
         modified.library.push(Rule {
-            query: kekule::query::parse_smarts(&h.source.smirks).unwrap(),
+            query: kekule::smarts::parse_str(&h.source.smirks, Default::default()).unwrap(),
             parameter: h,
         });
         assert_eq!(

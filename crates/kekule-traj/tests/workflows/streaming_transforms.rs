@@ -8,7 +8,7 @@ use kekule::topology::AtomSelection;
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use kekule_traj::analysis::FrameSuperposer;
 use kekule_traj::periodic::{self, MoleculeImager, PeriodicError, TrajectoryUnwrapper};
-use kekule_traj::{FrameBuffer, MemoryTrajectoryReader, TrajectoryReader};
+use kekule_traj::FrameBuffer;
 
 use crate::support;
 use support::linear_carbon_topology;
@@ -69,12 +69,11 @@ fn streaming_and_loaded_whole_image_and_unwrap_preserve_identical_complete_frame
     let mut expected_image = trajectory.clone();
     periodic::image_molecules(&mut expected_image, &anchors).unwrap();
     let mut expected_unwrap = expected_whole.clone();
-    periodic::unwrap(&mut expected_unwrap).unwrap();
+    periodic::unwrap_trajectory(&mut expected_unwrap).unwrap();
     let mut unwrapper = TrajectoryUnwrapper::new(topology.clone());
-    let mut reader = MemoryTrajectoryReader::new(&trajectory);
-    let mut buffer = reader.frame_buffer();
+    let mut buffer = FrameBuffer::new(trajectory.shared_topology());
     for index in 0..trajectory.len() {
-        assert!(reader.read_next(&mut buffer).unwrap());
+        buffer.copy_from(trajectory.get(index).unwrap()).unwrap();
         let mut image = buffer.clone();
         imager.image(index, &mut image, &anchors).unwrap();
         assert_eq!(*image, *expected_image.get(index).unwrap().payload());
@@ -89,7 +88,6 @@ fn streaming_and_loaded_whole_image_and_unwrap_preserve_identical_complete_frame
         assert_eq!(*buffer, *image);
         assert!(Arc::ptr_eq(&buffer.shared_topology(), &topology));
     }
-    assert!(!reader.read_next(&mut buffer).unwrap());
 }
 
 #[test]
@@ -153,7 +151,7 @@ fn unwrapping_checks_available_time_across_missing_times_transactionally() {
         .unwrap();
     let before = format!("{trajectory:?}");
     assert_eq!(
-        periodic::unwrap(&mut trajectory),
+        periodic::unwrap_trajectory(&mut trajectory),
         Err(PeriodicError::NonMonotonicTime { frame: 2 })
     );
     assert_eq!(format!("{trajectory:?}"), before);
@@ -203,7 +201,7 @@ fn ambiguous_crossings_and_changed_axes_do_not_advance_streaming_state() {
     buffer.copy_from(trajectory.get(1).unwrap()).unwrap();
     unwrapper.unwrap(1, &mut buffer).unwrap();
     let mut unwrapped = trajectory.clone();
-    periodic::unwrap(&mut unwrapped).unwrap();
+    periodic::unwrap_trajectory(&mut unwrapped).unwrap();
     assert_eq!(*buffer, *unwrapped.get(1).unwrap().payload());
 }
 
@@ -213,9 +211,11 @@ fn superposition_streams_the_same_transforms_and_metadata_and_reports_source_ind
     let topology = trajectory.shared_topology();
     let selection = AtomSelection::all(&topology);
     let mut expected = trajectory.clone();
-    let reports = expected.superpose(0, &selection).unwrap();
+    let reports = expected
+        .superpose(0, &selection, Default::default())
+        .unwrap();
     let reference = trajectory.get(0).unwrap();
-    let superposer = FrameSuperposer::new(&reference, &selection);
+    let superposer = FrameSuperposer::new(&reference, &selection, Default::default());
     let mut buffer = FrameBuffer::new(topology.clone());
     for (index, frame) in trajectory.iter().enumerate() {
         buffer.copy_from(frame).unwrap();
@@ -274,14 +274,12 @@ fn correspondence_streaming_matches_loaded_superposition_and_keeps_failed_buffer
         ..AlignmentOptions::default()
     };
     let mut loaded = trajectory.clone();
-    loaded
-        .superpose_with_options(&reference, &fit, options)
-        .unwrap();
-    let superposer = FrameSuperposer::with_options(&reference, &fit, options);
-    let mut reader = MemoryTrajectoryReader::new(&trajectory);
-    let mut buffer = reader.frame_buffer();
+    loaded.superpose(&reference, &fit, options).unwrap();
+    let superposer = FrameSuperposer::new(&reference, &fit, options);
+    let mut buffer = FrameBuffer::new(trajectory.shared_topology());
     let mut index = 0;
-    while reader.read_next(&mut buffer).unwrap() {
+    for frame in trajectory.iter() {
+        buffer.copy_from(frame).unwrap();
         let source = (*buffer).clone();
         superposer.superpose(index, &mut buffer).unwrap();
         assert_eq!(*buffer, *loaded.get(index).unwrap().payload());

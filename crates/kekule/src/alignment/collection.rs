@@ -269,17 +269,9 @@ impl Ensemble {
     /// reference. Positions move and cells rotate; all other state is kept.
     /// The fit is transactional: on failure nothing changes. Coordinates are
     /// fitted as stored; no imaging or unwrapping is performed. Clone first to
-    /// keep the original.
+    /// keep the original. `options` selects the fit weights, in pair order, and
+    /// the periodic policy.
     pub fn superpose<'a>(
-        &mut self,
-        reference: impl Into<Reference<'a>>,
-        atoms: impl Into<FitAtoms<'a>>,
-    ) -> Result<SuperpositionReport, AlignmentError> {
-        self.superpose_with_options(reference, atoms, AlignmentOptions::default())
-    }
-
-    /// [`Self::superpose`] with explicit fit weights and periodic policy.
-    pub fn superpose_with_options<'a>(
         &mut self,
         reference: impl Into<Reference<'a>>,
         atoms: impl Into<FitAtoms<'a>>,
@@ -304,17 +296,9 @@ impl Ensemble {
     ///
     /// Never fits or changes the ensemble. Values are in
     /// [`CANONICAL_LENGTH_UNIT`], one per member in order; weight them by the
-    /// member weights for ensemble statistics.
+    /// member weights for ensemble statistics. `options` selects the pair
+    /// weights and the periodic policy.
     pub fn rmsd<'a>(
-        &self,
-        reference: impl Into<Reference<'a>>,
-        atoms: impl Into<FitAtoms<'a>>,
-    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-        self.rmsd_with_options(reference, atoms, AlignmentOptions::default())
-    }
-
-    /// [`Self::rmsd`] with explicit weights and periodic policy.
-    pub fn rmsd_with_options<'a>(
         &self,
         reference: impl Into<Reference<'a>>,
         atoms: impl Into<FitAtoms<'a>>,
@@ -333,18 +317,9 @@ impl Ensemble {
     /// Fits every member on `fit` pairs and measures RMSD over `measurement`
     /// pairs, without changing the ensemble or copying coordinates.
     ///
-    /// For example, fit a protein backbone and measure ligand motion.
+    /// For example, fit a protein backbone and measure ligand motion. `options`
+    /// holds the fit options and the measurement weights.
     pub fn aligned_rmsd<'a>(
-        &self,
-        reference: impl Into<Reference<'a>>,
-        fit: impl Into<FitAtoms<'a>>,
-        measurement: impl Into<FitAtoms<'a>>,
-    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-        self.aligned_rmsd_with_options(reference, fit, measurement, AlignedRmsdOptions::default())
-    }
-
-    /// [`Self::aligned_rmsd`] with separate fit and measurement weights.
-    pub fn aligned_rmsd_with_options<'a>(
         &self,
         reference: impl Into<Reference<'a>>,
         fit: impl Into<FitAtoms<'a>>,
@@ -378,15 +353,6 @@ impl Trajectory {
         &mut self,
         reference: impl Into<Reference<'a>>,
         atoms: impl Into<FitAtoms<'a>>,
-    ) -> Result<SuperpositionReport, AlignmentError> {
-        self.superpose_with_options(reference, atoms, AlignmentOptions::default())
-    }
-
-    /// [`Self::superpose`] with explicit fit weights and periodic policy.
-    pub fn superpose_with_options<'a>(
-        &mut self,
-        reference: impl Into<Reference<'a>>,
-        atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'_>,
     ) -> Result<SuperpositionReport, AlignmentError> {
         let report = {
@@ -407,17 +373,9 @@ impl Trajectory {
     /// Direct RMSD from every frame to `reference`, measured as stored.
     ///
     /// Never fits or changes the trajectory. Values are in
-    /// [`CANONICAL_LENGTH_UNIT`], one per frame in temporal order.
+    /// [`CANONICAL_LENGTH_UNIT`], one per frame in temporal order. `options`
+    /// selects the pair weights and the periodic policy.
     pub fn rmsd<'a>(
-        &self,
-        reference: impl Into<Reference<'a>>,
-        atoms: impl Into<FitAtoms<'a>>,
-    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-        self.rmsd_with_options(reference, atoms, AlignmentOptions::default())
-    }
-
-    /// [`Self::rmsd`] with explicit weights and periodic policy.
-    pub fn rmsd_with_options<'a>(
         &self,
         reference: impl Into<Reference<'a>>,
         atoms: impl Into<FitAtoms<'a>>,
@@ -436,18 +394,9 @@ impl Trajectory {
     /// Fits every frame on `fit` pairs and measures RMSD over `measurement`
     /// pairs, without changing the trajectory or copying coordinates.
     ///
-    /// For example, fit a protein backbone and measure ligand motion.
+    /// For example, fit a protein backbone and measure ligand motion. `options`
+    /// holds the fit options and the measurement weights.
     pub fn aligned_rmsd<'a>(
-        &self,
-        reference: impl Into<Reference<'a>>,
-        fit: impl Into<FitAtoms<'a>>,
-        measurement: impl Into<FitAtoms<'a>>,
-    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-        self.aligned_rmsd_with_options(reference, fit, measurement, AlignedRmsdOptions::default())
-    }
-
-    /// [`Self::aligned_rmsd`] with separate fit and measurement weights.
-    pub fn aligned_rmsd_with_options<'a>(
         &self,
         reference: impl Into<Reference<'a>>,
         fit: impl Into<FitAtoms<'a>>,

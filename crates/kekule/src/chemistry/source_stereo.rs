@@ -5,8 +5,8 @@ use crate::algorithms::{
     coordinates_are_planar, double_bond_geometry_is_supported, double_bond_orientation_from_points,
     tetrahedral_orientation_from_points, validate_stereo, RingMembership, StereoValidationError,
 };
-use crate::core::*;
 use crate::geometry::{Point3, Vector3};
+use crate::molecule::*;
 
 use super::normalization::{
     NormalizationReport, NormalizationWarning, SourceStereoNormalizationError,

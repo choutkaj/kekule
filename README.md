@@ -71,7 +71,7 @@ its rotatable bonds, then write canonical and isomeric SMILES:
 use std::error::Error;
 
 use kekule::{
-    rotatable_bonds::{self, RotatableBondOptions},
+    descriptors::{self, RotatableBondOptions},
     smiles::{self, SmilesWriteOptions},
     stereo,
 };
@@ -93,13 +93,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("isomeric SMILES: {isomeric}");
     
     // Assign and print stereochemistry
-    let stereochemistry = stereo::assign_cip_descriptors(&mut molecule)?;
+    let stereochemistry = stereo::cip::assign_cip_descriptors(&mut molecule, Default::default())?;
     for assignment in &stereochemistry.assigned {
         println!("stereo {}: {:?}", assignment.element, assignment.descriptor);
     }
     
     // Assign and print rotatable bonds
-    let rotatable = rotatable_bonds::detect(&molecule, RotatableBondOptions::STRICT)?;
+    let rotatable = descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT)?;
     for &bond_id in rotatable.bond_ids() {
         let bond = molecule.bond(bond_id)?;
         println!("rotatable bond {bond_id}: {}-{}", bond.a(), bond.b());
@@ -135,9 +135,9 @@ fn print_model(label: &str, model: &Model) {
 
 fn main() -> Result<(), Box<dyn Error>> {
     // SDF is record-oriented. This example deliberately loads one record.
-    let sdf_document = sdf::parse_str(&fs::read_to_string("ligand.sdf")?)?;
+    let sdf_document = sdf::parse_str(&fs::read_to_string("ligand.sdf")?, Default::default())?;
     let sdf_record = sdf_document.records().first().expect("SDF has a record");
-    let sdf_model = sdf_record.to_model()?;
+    let sdf_model = sdf_record.interpret(Default::default())?.into_model();
     assert_eq!(sdf_model.topology().instance_count(), 1);
     print_model("SDF model", &sdf_model);
     sdf::write_to(
@@ -148,8 +148,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // mmCIF is block-oriented. `interpret` requires exactly one atom-site block
     // and selects one coordinate model using the default options.
-    let cif_document = mmcif::parse_str(&fs::read_to_string("cofactor.cif")?)?;
-    let cif_interpretation = mmcif::interpret(&cif_document)?;
+    let cif_document = mmcif::parse_str(&fs::read_to_string("cofactor.cif")?, Default::default())?;
+    let cif_interpretation = cif_document.interpret(Default::default())?;
     let cif_model = cif_interpretation.model();
     assert_eq!(cif_model.topology().instance_count(), 1);
     print_model("mmCIF model", cif_model);
@@ -201,8 +201,8 @@ use kekule::pdb;
 fn main() -> Result<(), Box<dyn Error>> {
     // A PDB file holds one entry. Bonds it does not state come from residue
     // templates, polymer linkage, and its CONECT, LINK, and SSBOND records.
-    let document = pdb::parse_str(&fs::read_to_string("1ake.pdb")?)?;
-    let interpretation = pdb::interpret(&document)?;
+    let document = pdb::parse_str(&fs::read_to_string("1ake.pdb")?, Default::default())?;
+    let interpretation = document.interpret(Default::default())?;
     let report = interpretation.report();
     println!("entry: {}", report.block_name());
     println!(
@@ -231,7 +231,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Entries with several MODEL records, such as NMR ensembles, read as one
     // ensemble of equally weighted members.
-    let ensemble = pdb::interpret_ensemble(&document)?;
+    let ensemble = document.interpret_ensemble(Default::default())?;
     println!("models: {}", ensemble.ensemble().len());
     Ok(())
 }

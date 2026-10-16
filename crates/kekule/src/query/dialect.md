@@ -100,19 +100,18 @@ SMARTS support supplies tagged environments, not OFFXML parsing or force-field
 assignment. SMIRNOFF uses MDL aromaticity and explicit hydrogen vertices:
 
 ```rust
-use kekule::{perception::aromaticity::{self, AromaticityModel},
-             query::parse_smarts, smiles, substructure::*};
+use kekule::{smarts, smiles, perception::aromaticity::{self, AromaticityModel}, substructure::*};
 let mut molecule = smiles::to_molecules("CO")?.pop().unwrap();
 molecule.perceive()?;
-molecule.add_hydrogens()?;
+molecule.add_hydrogens(Default::default())?;
 molecule.perceive()?;
-aromaticity::perceive_aromaticity(&mut molecule, AromaticityModel::Mdl)?;
+aromaticity::perceive_aromaticity(&mut molecule, AromaticityModel::Mdl, Default::default())?;
 let target = PreparedTarget::new(&molecule);
-let query = parse_smarts("[#6:1]-[#8:2]")?;
+let query = smarts::parse_str("[#6:1]-[#8:2]", Default::default())?;
 let tagged = TaggedQuery::new(&query)?;
 let matches = tagged.find_matches(&target, SubstructureMatchOptions {
     max_matches: 100_000, uniquify: false, ..Default::default()
-}, true)?;
+}, TupleMode::Distinct)?;
 assert_eq!(matches.len(), 1);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```

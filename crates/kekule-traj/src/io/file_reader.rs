@@ -190,37 +190,28 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
 /// error is returned without publishing a partial trajectory. Memory usage grows
 /// with the number of frames and atoms; use [`open_trajectory`] to process large
 /// files one frame at a time or inspect file metadata and opening diagnostics.
-/// Use [`read_trajectory_with_options`] to customize format policies or limits.
+///
+/// `options` sets the format policies and limits; frame limits cause an error
+/// rather than truncating the result. These codec limits do not impose a total
+/// resident-memory budget for the loaded trajectory. No random-access index is
+/// built.
 ///
 /// ```no_run
 /// use kekule::mmcif;
 /// use kekule_traj::io::read_trajectory;
 ///
-/// let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?)?;
-/// let topology = document.interpret()?.into_topology();
-/// let trajectory = read_trajectory("trajectory.xtc", topology)?;
+/// let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?, Default::default())?;
+/// let topology = document.interpret(Default::default())?.into_topology();
+/// let trajectory = read_trajectory("trajectory.xtc", topology, Default::default())?;
 /// println!("{} frames, {} atoms", trajectory.len(), trajectory.topology().atom_count());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn read_trajectory(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
-) -> Result<Trajectory, TrajectoryIoError> {
-    read_trajectory_with_options(path, topology, TrajectoryOpenOptions::default())
-}
-
-/// Reads an entire trajectory into memory with explicit format policies and limits.
-///
-/// Uses the same options, validation, unit conversion, and errors as
-/// [`open_trajectory_with_options`]. Frame limits cause an error rather than
-/// truncating the result. These codec limits do not impose a total resident-memory
-/// budget for the loaded trajectory. No random-access index is built.
-pub fn read_trajectory_with_options(
-    path: impl AsRef<Path>,
-    topology: impl Into<Arc<Topology>>,
     options: TrajectoryOpenOptions,
 ) -> Result<Trajectory, TrajectoryIoError> {
-    let mut reader = open_trajectory_with_options(path, topology, options)?;
+    let mut reader = open_trajectory(path, topology, options)?;
     let mut buffer = reader.frame_buffer();
     let mut writer = MemoryTrajectoryWriter::new(reader.shared_topology());
     while reader.read_next(&mut buffer)? {
@@ -234,8 +225,8 @@ pub fn read_trajectory_with_options(
 /// Accepts an owned topology or a shared `Arc<Topology>`. File coordinates must
 /// follow its dense atom order; counts and available format metadata are checked
 /// automatically. Matching counts alone cannot establish atom identity.
-/// Use [`open_trajectory_with_options`] to customize format policies or limits.
-/// For a fully loaded in-memory trajectory, use [`read_trajectory`] instead.
+/// `options` sets the format policies and limits. For a fully loaded in-memory
+/// trajectory, use [`read_trajectory`] instead.
 ///
 /// ```no_run
 /// use kekule::{smiles, topology::Topology};
@@ -243,7 +234,7 @@ pub fn read_trajectory_with_options(
 ///
 /// let molecule = smiles::to_molecules("CC")?.pop().unwrap();
 /// let topology = Topology::from_molecule(molecule)?;
-/// let mut reader = open_trajectory("ethane.xyz", topology)?;
+/// let mut reader = open_trajectory("ethane.xyz", topology, Default::default())?;
 /// let mut frame = reader.frame_buffer();
 /// while reader.read_next(&mut frame)? {
 ///     let model = frame.as_model_view();
@@ -253,18 +244,6 @@ pub fn read_trajectory_with_options(
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn open_trajectory(
-    path: impl AsRef<Path>,
-    topology: impl Into<Arc<Topology>>,
-) -> Result<SequentialFileTrajectoryReader, TrajectoryIoError> {
-    open_trajectory_with_options(path, topology, TrajectoryOpenOptions::default())
-}
-
-/// Opens a sequential trajectory reader with explicit options.
-///
-/// File coordinate index `i` is interpreted as topology dense atom index `i`.
-/// Readers check counts and available metadata, including XYZ element order;
-/// coordinate-only formats cannot establish atom identity from counts alone.
-pub fn open_trajectory_with_options(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
     options: TrajectoryOpenOptions,
@@ -370,23 +349,12 @@ pub fn open_trajectory_with_options(
 
 /// Opens one fully verified indexed path-backed trajectory reader.
 ///
-/// Uses the topology order contract of [`open_trajectory`]. Opening scans and
-/// validates the entire file and stores bounded frame offsets for random access.
-/// Use [`open_indexed_trajectory_with_options`] to customize policies or limits.
+/// Uses the topology order contract of [`open_trajectory`]: file coordinate
+/// index `i` is topology dense atom index `i`, and readers check counts and
+/// available metadata, including XYZ element order. Opening scans and validates
+/// the entire file and stores bounded frame offsets for random access.
+/// `options` sets the format policies and limits.
 pub fn open_indexed_trajectory(
-    path: impl AsRef<Path>,
-    topology: impl Into<Arc<Topology>>,
-) -> Result<IndexedFileTrajectoryReader, TrajectoryIoError> {
-    open_indexed_trajectory_with_options(path, topology, TrajectoryOpenOptions::default())
-}
-
-/// Opens a fully verified indexed trajectory reader with explicit options.
-///
-/// File coordinate index `i` is interpreted as topology dense atom index `i`.
-/// Readers check counts and available metadata, including XYZ element order;
-/// coordinate-only formats cannot establish atom identity from counts alone.
-/// Opening scans and validates the entire file before returning the reader.
-pub fn open_indexed_trajectory_with_options(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
     options: TrajectoryOpenOptions,

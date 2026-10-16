@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use crate::core::Element;
+use crate::molecule::Element;
 use crate::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyPerceptionError};
 
 /// An [`AtomSelection`] with every permutation of its atoms that a symmetry

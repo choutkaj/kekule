@@ -1,7 +1,7 @@
 //! Compatibility with RDKit's nitrogen/phosphorus cleanup on a private copy.
 //! See THIRD_PARTY.md for the reference revision and BSD attribution.
 use crate::{Error, ErrorKind, Result};
-use kekule::core::{BondOrder, Molecule};
+use kekule::molecule::{BondOrder, Molecule};
 
 /// A perceived private copy of an explicit-hydrogen molecule, with
 /// RDKit-compatible valence normalization, ready for assignment.
@@ -81,7 +81,7 @@ pub(crate) fn normalize_valence(input: &Molecule) -> Result<Molecule> {
                         .then_some((next, bond))
                 });
             if let Some((next, bond)) = found {
-                let mut editor = copy.edit();
+                let mut editor = copy.to_editor();
                 editor.atom_mut(id).map_err(Error::chemistry)?.formal_charge = 1;
                 editor
                     .atom_mut(next)
@@ -156,7 +156,7 @@ pub(crate) fn normalize_phosphorus(input: &Molecule) -> Result<Molecule> {
     if edits.is_empty() {
         return Ok(input.clone());
     }
-    let mut editor = input.edit();
+    let mut editor = input.to_editor();
     for (p, o, bond) in edits {
         editor.atom_mut(p).map_err(Error::chemistry)?.formal_charge = 1;
         editor.atom_mut(o).map_err(Error::chemistry)?.formal_charge = -1;
@@ -171,7 +171,7 @@ pub(crate) fn normalize_phosphorus(input: &Molecule) -> Result<Molecule> {
 #[cfg(test)]
 mod tests {
     // Expected graphs are RDKit's sanitized forms, which upstream identifies.
-    fn same_graph(prepared: &kekule::core::Molecule, expected: &str) -> bool {
+    fn same_graph(prepared: &kekule::molecule::Molecule, expected: &str) -> bool {
         let mut expected = kekule::smiles::to_molecules(expected).unwrap().remove(0);
         expected.perceive().unwrap();
         crate::identity::same_graph(prepared, &expected).unwrap()

@@ -2,7 +2,7 @@
 //! of each selected coordinate model.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::core::{BondOrder, Element};
+use crate::molecule::{BondOrder, Element};
 
 use super::atom_site::AtomRow;
 use super::types::{

@@ -1,4 +1,4 @@
-use crate::core::{DoubleBondOrientation, TetrahedralOrientation};
+use crate::stereo::{DoubleBondOrientation, TetrahedralOrientation};
 
 use super::{QueryAtomId, QueryBond, QueryBondId, QueryGraphError};
 
@@ -7,7 +7,7 @@ use super::{QueryAtomId, QueryBond, QueryBondId, QueryGraphError};
 /// Distinct groups are independent; group order has no matching significance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryStereoGroup {
-    pub kind: crate::core::StereoGroupKind,
+    pub kind: crate::stereo::StereoGroupKind,
     pub members: Vec<QueryAtomId>,
 }
 

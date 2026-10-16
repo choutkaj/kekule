@@ -1,4 +1,5 @@
 use crate::query::*;
+use crate::smarts::{self, SmartsParseErrorKind, SmartsParseOptions};
 use crate::substructure::{self, *};
 
 use super::*;
@@ -51,9 +52,12 @@ fn tetrahedral_smarts_matches_local_carrier_order_and_partial_environments() {
         ("O1CCC[C@]1(F)Cl", "F[C@]1(Cl)CCCO1", true),
     ] {
         let target = perceived(target);
-        let query_graph = parse_smarts(query).unwrap();
+        let query_graph = smarts::parse_str(query, Default::default()).unwrap();
         assert_eq!(
-            find_match(&target, &query_graph).unwrap().is_some(),
+            PreparedTarget::new(&target)
+                .first(&query_graph, Default::default())
+                .unwrap()
+                .is_some(),
             expected,
             "{query}"
         );
@@ -86,9 +90,12 @@ fn directional_smarts_matches_selected_carriers_in_either_endpoint_order() {
         ("F/C=C/C=C/Cl", "F/C=C/C=C\\Cl", false),
     ] {
         let target = perceived(target);
-        let query_graph = parse_smarts(query).unwrap();
+        let query_graph = smarts::parse_str(query, Default::default()).unwrap();
         assert_eq!(
-            find_match(&target, &query_graph).unwrap().is_some(),
+            PreparedTarget::new(&target)
+                .first(&query_graph, Default::default())
+                .unwrap()
+                .is_some(),
             expected,
             "{query}"
         );
@@ -97,25 +104,37 @@ fn directional_smarts_matches_selected_carriers_in_either_endpoint_order() {
 
 #[test]
 fn stereo_mapping_filter_precedes_uniqueness_and_match_limit() {
-    let query = parse_smarts("[*@](*)(*)(*)*").unwrap();
+    let query = smarts::parse_str("[*@](*)(*)(*)*", Default::default()).unwrap();
     for input in ["[C@](N)(F)(Cl)Br", "[C@@](N)(F)(Cl)Br"] {
         let target = perceived(input);
-        let all = find_matches_with_options(
-            &target,
-            &query,
-            SubstructureMatchOptions {
-                uniquify: false,
-                ..SubstructureMatchOptions::default()
-            },
-        )
-        .unwrap();
+        let all = PreparedTarget::new(&target)
+            .all(
+                &query,
+                SubstructureMatchOptions {
+                    uniquify: false,
+                    ..SubstructureMatchOptions::default()
+                },
+            )
+            .unwrap();
         assert_eq!(
             all.len(),
             12,
             "half of the 24 carrier permutations satisfy parity"
         );
-        assert_eq!(find_matches(&target, &query).unwrap().len(), 1);
-        assert_eq!(find_match(&target, &query).unwrap().unwrap(), all[0]);
+        assert_eq!(
+            PreparedTarget::new(&target)
+                .all(&query, Default::default())
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            PreparedTarget::new(&target)
+                .first(&query, Default::default())
+                .unwrap()
+                .unwrap(),
+            all[0]
+        );
     }
 }
 
@@ -174,7 +193,10 @@ fn query_stereo_builder_checks_ownership_and_revalidates_later_topology() {
     // Matching represented stereo needs no perception when other predicates do not.
     let query = builder.clone().build().unwrap();
     let target = read_smiles("N[C@H](F)Cl").unwrap();
-    assert!(find_match(&target, &query).unwrap().is_some());
+    assert!(PreparedTarget::new(&target)
+        .first(&query, Default::default())
+        .unwrap()
+        .is_some());
     let extra = builder.add_atom(AtomExpression::always()).unwrap();
     builder
         .add_bond(center, extra, BondExpression::always())
@@ -225,10 +247,12 @@ fn double_bond_query_builder_requires_live_adjacent_carriers() {
         })
         .unwrap();
     let query = builder.build().unwrap();
-    assert!(find_match(&read_smiles("F/C=C/Cl").unwrap(), &query)
+    assert!(PreparedTarget::new(&read_smiles("F/C=C/Cl").unwrap())
+        .first(&query, Default::default())
         .unwrap()
         .is_some());
-    assert!(find_match(&read_smiles("F/C=C\\Cl").unwrap(), &query)
+    assert!(PreparedTarget::new(&read_smiles("F/C=C\\Cl").unwrap())
+        .first(&query, Default::default())
         .unwrap()
         .is_none());
 }
@@ -303,16 +327,16 @@ fn query_expressions_normalize_constants_and_enforce_depth_bounds() {
 
 #[test]
 fn bounded_smarts_builds_branches_rings_components_and_boolean_atoms() {
-    let carbonyl = parse_smarts("[#6](=[O,N])-[#7;+1]").unwrap();
+    let carbonyl = smarts::parse_str("[#6](=[O,N])-[#7;+1]", Default::default()).unwrap();
     assert_eq!((carbonyl.atom_count(), carbonyl.bond_count()), (3, 2));
 
-    let benzene = parse_smarts("c1ccccc1").unwrap();
+    let benzene = smarts::parse_str("c1ccccc1", Default::default()).unwrap();
     assert_eq!((benzene.atom_count(), benzene.bond_count()), (6, 6));
 
-    let salt = parse_smarts("[Na+].[Cl-]").unwrap();
+    let salt = smarts::parse_str("[Na+].[Cl-]", Default::default()).unwrap();
     assert_eq!((salt.atom_count(), salt.bond_count()), (2, 0));
 
-    let selenium = parse_smarts("[se]1cccc1").unwrap();
+    let selenium = smarts::parse_str("[se]1cccc1", Default::default()).unwrap();
     assert_eq!((selenium.atom_count(), selenium.bond_count()), (5, 5));
 }
 
@@ -321,17 +345,20 @@ fn smarts_logical_precedence_matches_daylight_operator_order() {
     let target = perceived("CN");
 
     // High-precedence &: C OR (N AND H2). Both atoms match in methylamine.
-    let high_and = parse_smarts("[C,N&H2]").unwrap();
+    let high_and = smarts::parse_str("[C,N&H2]", Default::default()).unwrap();
     assert_eq!(
-        substructure::find_matches(&target, &high_and)
+        substructure::PreparedTarget::new(&target)
+            .all(&high_and, Default::default())
             .unwrap()
             .len(),
         2
     );
 
     // Low-precedence ;: (C OR N) AND H2. Only nitrogen matches.
-    let low_and = parse_smarts("[C,N;H2]").unwrap();
-    let matches = substructure::find_matches(&target, &low_and).unwrap();
+    let low_and = smarts::parse_str("[C,N;H2]", Default::default()).unwrap();
+    let matches = substructure::PreparedTarget::new(&target)
+        .all(&low_and, Default::default())
+        .unwrap();
     assert_eq!(matches.len(), 1);
     assert_eq!(
         target.atom(matches[0].atoms()[0]).unwrap().element.symbol(),
@@ -348,16 +375,26 @@ fn unbracketed_smarts_elements_do_not_consume_a_following_aromatic_atom() {
         ("Clc1ccccc1", 7),
         ("Brc1ccccc1", 7),
     ] {
-        let query = parse_smarts(input).unwrap();
+        let query = smarts::parse_str(input, Default::default()).unwrap();
         assert_eq!(query.atom_count(), atoms, "{input}");
         assert!(
-            find_match(&perceived(input), &query).unwrap().is_some(),
+            PreparedTarget::new(&perceived(input))
+                .first(&query, Default::default())
+                .unwrap()
+                .is_some(),
             "{input}"
         );
     }
-    assert_eq!(parse_smarts("[Cn]").unwrap().atom_count(), 1);
     assert_eq!(
-        parse_smarts("Ca").unwrap().atom_count(),
+        smarts::parse_str("[Cn]", Default::default())
+            .unwrap()
+            .atom_count(),
+        1
+    );
+    assert_eq!(
+        smarts::parse_str("Ca", Default::default())
+            .unwrap()
+            .atom_count(),
         2,
         "a is an aromatic wildcard outside brackets"
     );
@@ -367,20 +404,24 @@ fn unbracketed_smarts_elements_do_not_consume_a_following_aromatic_atom() {
 fn smarts_hydrogen_primitive_disambiguation_matches_rdkit() {
     let ethanol = perceived("CCO");
     for (smarts, expected) in [("[H,D]", 2), ("[C,H]", 3), ("[!H]", 2)] {
-        let query = parse_smarts(smarts).unwrap();
+        let query = smarts::parse_str(smarts, Default::default()).unwrap();
         assert_eq!(
-            substructure::find_matches(&ethanol, &query).unwrap().len(),
+            substructure::PreparedTarget::new(&ethanol)
+                .all(&query, Default::default())
+                .unwrap()
+                .len(),
             expected,
             "{smarts}"
         );
     }
 
     let mut methane = perceived("C");
-    methane.add_hydrogens().unwrap();
+    methane.add_hydrogens(Default::default()).unwrap();
     perceive(&mut methane).unwrap();
-    let elemental_hydrogen = parse_smarts("[H]").unwrap();
+    let elemental_hydrogen = smarts::parse_str("[H]", Default::default()).unwrap();
     assert_eq!(
-        substructure::find_matches(&methane, &elemental_hydrogen)
+        substructure::PreparedTarget::new(&methane)
+            .all(&elemental_hydrogen, Default::default())
             .unwrap()
             .len(),
         4
@@ -396,7 +437,7 @@ fn bounded_smarts_rejects_unsupported_semantics_instead_of_approximating() {
         ("[^2]", "hybridization"),
         ("(C.C)", "component-level"),
     ] {
-        let error = parse_smarts(input).expect_err(input);
+        let error = smarts::parse_str(input, Default::default()).expect_err(input);
         assert_eq!(error.kind(), SmartsParseErrorKind::Unsupported, "{input}");
         assert!(
             error.message().contains(expected_fragment),
@@ -408,7 +449,7 @@ fn bounded_smarts_rejects_unsupported_semantics_instead_of_approximating() {
 
 #[test]
 fn malformed_smarts_returns_structured_syntax_errors() {
-    let empty = parse_smarts("").unwrap_err();
+    let empty = smarts::parse_str("", Default::default()).unwrap_err();
     assert_eq!(empty.kind(), SmartsParseErrorKind::Empty);
     assert_eq!(empty.span(), 0..0);
 
@@ -427,7 +468,7 @@ fn malformed_smarts_returns_structured_syntax_errors() {
         "F/C(/Cl)(/Br)=C/I",
         "C/1CCCCC/1",
     ] {
-        let error = parse_smarts(input).expect_err(input);
+        let error = smarts::parse_str(input, Default::default()).expect_err(input);
         assert_eq!(
             error.kind(),
             SmartsParseErrorKind::InvalidSyntax,
@@ -446,7 +487,7 @@ fn smarts_parser_is_total_over_deterministic_text_mutations() {
         "F/C(Br)=C(/Cl)I",
     ] {
         for input in deterministic_text_mutations(seed) {
-            if let Err(error) = parse_smarts(&input) {
+            if let Err(error) = smarts::parse_str(&input, Default::default()) {
                 let span = error.span();
                 assert!(span.start <= span.end, "{input:?}: {error}");
                 assert!(span.end <= input.len(), "{input:?}: {error}");
@@ -457,7 +498,7 @@ fn smarts_parser_is_total_over_deterministic_text_mutations() {
 
 #[test]
 fn smarts_limits_cover_input_topology_and_expressions() {
-    let input_error = parse_smarts_with_options(
+    let input_error = smarts::parse_str(
         "CC",
         SmartsParseOptions {
             max_input_bytes: 1,
@@ -467,7 +508,7 @@ fn smarts_limits_cover_input_topology_and_expressions() {
     .unwrap_err();
     assert_eq!(input_error.kind(), SmartsParseErrorKind::ResourceLimit);
 
-    let atom_error = parse_smarts_with_options(
+    let atom_error = smarts::parse_str(
         "CC",
         SmartsParseOptions {
             max_atoms: 1,
@@ -477,7 +518,7 @@ fn smarts_limits_cover_input_topology_and_expressions() {
     .unwrap_err();
     assert_eq!(atom_error.kind(), SmartsParseErrorKind::ResourceLimit);
 
-    let branch_error = parse_smarts_with_options(
+    let branch_error = smarts::parse_str(
         "C(C(C))",
         SmartsParseOptions {
             max_branch_depth: 1,
@@ -487,7 +528,7 @@ fn smarts_limits_cover_input_topology_and_expressions() {
     .unwrap_err();
     assert_eq!(branch_error.kind(), SmartsParseErrorKind::ResourceLimit);
 
-    let expression_error = parse_smarts_with_options(
+    let expression_error = smarts::parse_str(
         "[!C]",
         SmartsParseOptions {
             max_expression_depth: 2,
@@ -510,8 +551,10 @@ fn matcher_handles_elements_bonds_hydrogens_degree_and_negation() {
         ("[!#6]", 1),
         ("[#6]-[#8]", 1),
     ] {
-        let query = parse_smarts(smarts).unwrap();
-        let matches = substructure::find_matches(&ethanol, &query).unwrap();
+        let query = smarts::parse_str(smarts, Default::default()).unwrap();
+        let matches = substructure::PreparedTarget::new(&ethanol)
+            .all(&query, Default::default())
+            .unwrap();
         assert_eq!(matches.len(), expected, "{smarts}: {matches:?}");
     }
 }
@@ -536,8 +579,10 @@ fn total_connectivity_counts_graph_declared_and_inferred_hydrogens() {
         ("[Xe]", "[Xe;X0]", 1),
     ] {
         let molecule = perceived(target);
-        let query = parse_smarts(smarts).unwrap();
-        let matches = find_matches(&molecule, &query).unwrap();
+        let query = smarts::parse_str(smarts, Default::default()).unwrap();
+        let matches = PreparedTarget::new(&molecule)
+            .all(&query, Default::default())
+            .unwrap();
         assert_eq!(matches.len(), expected, "{target} / {smarts}");
     }
 }
@@ -545,7 +590,7 @@ fn total_connectivity_counts_graph_declared_and_inferred_hydrogens() {
 #[test]
 fn connectivity_includes_zero_and_dative_graph_neighbors() {
     for order in [BondOrder::Zero, BondOrder::Dative] {
-        let mut editor = crate::core::MoleculeEditor::new();
+        let mut editor = crate::molecule::MoleculeEditor::new();
         let nitrogen = editor
             .add_atom(Atom::new(Element::from_symbol("N").unwrap()))
             .unwrap();
@@ -556,12 +601,21 @@ fn connectivity_includes_zero_and_dative_graph_neighbors() {
         let mut molecule = editor.try_finish().unwrap();
         perceive(&mut molecule).unwrap();
         for (smarts, expected) in [("[X4]", nitrogen), ("[X]", copper)] {
-            let matches = find_matches(&molecule, &parse_smarts(smarts).unwrap()).unwrap();
+            let matches = PreparedTarget::new(&molecule)
+                .all(
+                    &smarts::parse_str(smarts, Default::default()).unwrap(),
+                    Default::default(),
+                )
+                .unwrap();
             assert_eq!(matches.len(), 1, "{order:?} / {smarts}");
             assert_eq!(matches[0].atoms(), &[expected]);
         }
         assert_eq!(
-            find_matches(&molecule, &parse_smarts("[x0]").unwrap())
+            PreparedTarget::new(&molecule)
+                .all(
+                    &smarts::parse_str("[x0]", Default::default()).unwrap(),
+                    Default::default()
+                )
                 .unwrap()
                 .len(),
             2
@@ -584,12 +638,24 @@ fn connectivity_and_hydrogen_queries_survive_hydrogen_materialization() {
         let queries = ["[!#1;X3]", "[!#1;X4]", "[!#1;X2]", "[!#1;H3]", "[!#1;H1]"];
         let before: Vec<_> = queries
             .iter()
-            .map(|smarts| find_matches(&molecule, &parse_smarts(smarts).unwrap()).unwrap())
+            .map(|smarts| {
+                PreparedTarget::new(&molecule)
+                    .all(
+                        &smarts::parse_str(smarts, Default::default()).unwrap(),
+                        Default::default(),
+                    )
+                    .unwrap()
+            })
             .collect();
-        molecule.add_hydrogens().unwrap();
+        molecule.add_hydrogens(Default::default()).unwrap();
         perceive(&mut molecule).unwrap();
         for (smarts, expected) in queries.into_iter().zip(before) {
-            let actual = find_matches(&molecule, &parse_smarts(smarts).unwrap()).unwrap();
+            let actual = PreparedTarget::new(&molecule)
+                .all(
+                    &smarts::parse_str(smarts, Default::default()).unwrap(),
+                    Default::default(),
+                )
+                .unwrap();
             assert_eq!(actual, expected, "{target} / {smarts}");
         }
     }
@@ -608,18 +674,32 @@ fn ring_bond_count_uses_cycle_membership_without_a_selected_ring_basis() {
         ("C12C3C4C1C5C2C3C45", [0, 0, 0, 8, 0]),
     ] {
         let mut molecule = read_smiles(target).unwrap();
-        crate::perception::rings::perceive_ring_membership(&mut molecule);
+        crate::perception::rings::perceive_rings(
+            &mut molecule,
+            RingPerceptionOptions::membership_only(),
+        )
+        .expect("membership perception cannot fail");
         assert!(molecule.ring_set().is_none());
         for (count, expected) in counts.into_iter().enumerate() {
             let smarts = format!("[x{count}]");
-            let actual = find_matches(&molecule, &parse_smarts(&smarts).unwrap()).unwrap();
+            let actual = PreparedTarget::new(&molecule)
+                .all(
+                    &smarts::parse_str(&smarts, Default::default()).unwrap(),
+                    Default::default(),
+                )
+                .unwrap();
             assert_eq!(actual.len(), expected, "{target} / {smarts}");
         }
         for (smarts, expected) in [
             ("[x]", molecule.atom_count() - counts[0]),
             ("[!x]", counts[0]),
         ] {
-            let actual = find_matches(&molecule, &parse_smarts(smarts).unwrap()).unwrap();
+            let actual = PreparedTarget::new(&molecule)
+                .all(
+                    &smarts::parse_str(smarts, Default::default()).unwrap(),
+                    Default::default(),
+                )
+                .unwrap();
             assert_eq!(actual.len(), expected, "{target} / {smarts}");
         }
     }
@@ -633,43 +713,54 @@ fn connectivity_and_ring_count_overflow_are_errors() {
         "[X99999999999999999999]",
         "[x99999999999999999999]",
     ] {
-        assert!(parse_smarts(smarts).is_err(), "{smarts}");
+        assert!(
+            smarts::parse_str(smarts, Default::default()).is_err(),
+            "{smarts}"
+        );
     }
     for smarts in ["[X0]", "[x0]", "[X255]", "[x255]"] {
-        assert!(parse_smarts(smarts).is_ok(), "{smarts}");
+        assert!(
+            smarts::parse_str(smarts, Default::default()).is_ok(),
+            "{smarts}"
+        );
     }
 }
 
 #[test]
 fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
     let benzene = perceived("c1ccccc1");
-    let query = parse_smarts("c1ccccc1").unwrap();
+    let query = smarts::parse_str("c1ccccc1", Default::default()).unwrap();
     assert_eq!(
-        substructure::find_matches(&benzene, &query).unwrap().len(),
+        substructure::PreparedTarget::new(&benzene)
+            .all(&query, Default::default())
+            .unwrap()
+            .len(),
         1
     );
-    let embeddings = substructure::find_matches_with_options(
-        &benzene,
-        &query,
-        SubstructureMatchOptions {
-            uniquify: false,
-            ..SubstructureMatchOptions::default()
-        },
-    )
-    .unwrap();
+    let embeddings = substructure::PreparedTarget::new(&benzene)
+        .all(
+            &query,
+            SubstructureMatchOptions {
+                uniquify: false,
+                ..SubstructureMatchOptions::default()
+            },
+        )
+        .unwrap();
     assert_eq!(embeddings.len(), 12);
 
     let cyclohexane = perceived("C1CCCCC1");
-    let ring_atoms = parse_smarts("[#6;R]").unwrap();
+    let ring_atoms = smarts::parse_str("[#6;R]", Default::default()).unwrap();
     assert_eq!(
-        substructure::find_matches(&cyclohexane, &ring_atoms)
+        substructure::PreparedTarget::new(&cyclohexane)
+            .all(&ring_atoms, Default::default())
             .unwrap()
             .len(),
         6
     );
-    let ring_bond = parse_smarts("C@C").unwrap();
+    let ring_bond = smarts::parse_str("C@C", Default::default()).unwrap();
     assert_eq!(
-        substructure::find_matches(&cyclohexane, &ring_bond)
+        substructure::PreparedTarget::new(&cyclohexane)
+            .all(&ring_bond, Default::default())
             .unwrap()
             .len(),
         6
@@ -679,15 +770,18 @@ fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
 #[test]
 fn matcher_supports_disconnected_queries_and_non_induced_subgraphs() {
     let connected_target = perceived("OCO");
-    let query = parse_smarts("[#8].[#8]").unwrap();
-    let matches = substructure::find_matches(&connected_target, &query).unwrap();
+    let query = smarts::parse_str("[#8].[#8]", Default::default()).unwrap();
+    let matches = substructure::PreparedTarget::new(&connected_target)
+        .all(&query, Default::default())
+        .unwrap();
     assert_eq!(matches.len(), 1);
     assert_ne!(matches[0].atoms()[0], matches[0].atoms()[1]);
 
     let cyclopropane = perceived("C1CC1");
-    let edge = parse_smarts("C-C").unwrap();
+    let edge = smarts::parse_str("C-C", Default::default()).unwrap();
     assert_eq!(
-        substructure::find_matches(&cyclopropane, &edge)
+        substructure::PreparedTarget::new(&cyclopropane)
+            .all(&edge, Default::default())
             .unwrap()
             .len(),
         3
@@ -707,30 +801,38 @@ fn smarts_bonds_distinguish_aromatic_types_from_localized_orders() {
     ] {
         let target = perceived(source);
         for (smarts, count) in queries.into_iter().zip(expected) {
-            let query = parse_smarts(smarts).unwrap();
-            let matches = find_matches_with_options(
-                &target,
-                &query,
-                SubstructureMatchOptions {
-                    uniquify: false,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+            let query = smarts::parse_str(smarts, Default::default()).unwrap();
+            let matches = PreparedTarget::new(&target)
+                .all(
+                    &query,
+                    SubstructureMatchOptions {
+                        uniquify: false,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
             assert_eq!(matches.len(), count, "{source}: {smarts}");
         }
     }
     let aryne = perceived("C1=CC=CC#C1");
-    assert!(find_matches(&aryne, &parse_smarts("c1ccccc1").unwrap())
+    assert!(PreparedTarget::new(&aryne)
+        .all(
+            &smarts::parse_str("c1ccccc1", Default::default()).unwrap(),
+            Default::default()
+        )
         .unwrap()
         .is_empty());
     let benzene = perceived("c1ccccc1");
     for smarts in ["c1ccccc-1", "c-1ccccc1"] {
-        assert!(find_matches(&benzene, &parse_smarts(smarts).unwrap())
+        assert!(PreparedTarget::new(&benzene)
+            .all(
+                &smarts::parse_str(smarts, Default::default()).unwrap(),
+                Default::default()
+            )
             .unwrap()
             .is_empty());
     }
-    assert!(parse_smarts("C=1CCCCC-1").is_err());
+    assert!(smarts::parse_str("C=1CCCCC-1", Default::default()).is_err());
 }
 
 #[test]
@@ -746,16 +848,29 @@ fn programmatic_bond_predicates_keep_their_represented_meaning() {
     };
     let mut raw = read_smiles("CC").unwrap();
     let order = make_query(BondPredicate::Order(BondOrder::Single));
-    assert_eq!(find_matches(&raw, &order).unwrap().len(), 1);
     assert_eq!(
-        find_matches(&raw, &parse_smarts("*-*").unwrap()),
+        PreparedTarget::new(&raw)
+            .all(&order, Default::default())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        PreparedTarget::new(&raw).all(
+            &smarts::parse_str("*-*", Default::default()).unwrap(),
+            Default::default()
+        ),
         Err(SubstructureMatchError::MissingPerception(
             QueryPerception::Aromaticity
         ))
     );
     perceive(&mut raw).unwrap();
     assert_eq!(
-        find_matches(&raw, &parse_smarts("*-*").unwrap())
+        PreparedTarget::new(&raw)
+            .all(
+                &smarts::parse_str("*-*", Default::default()).unwrap(),
+                Default::default()
+            )
             .unwrap()
             .len(),
         1
@@ -763,26 +878,43 @@ fn programmatic_bond_predicates_keep_their_represented_meaning() {
 
     let aryne = perceived("C1=CC=CC#C1");
     let membership = make_query(BondPredicate::Aromatic(true));
-    assert_eq!(find_matches(&aryne, &membership).unwrap().len(), 6);
     assert_eq!(
-        find_matches(&aryne, &parse_smarts("*:*").unwrap())
+        PreparedTarget::new(&aryne)
+            .all(&membership, Default::default())
+            .unwrap()
+            .len(),
+        6
+    );
+    assert_eq!(
+        PreparedTarget::new(&aryne)
+            .all(
+                &smarts::parse_str("*:*", Default::default()).unwrap(),
+                Default::default()
+            )
             .unwrap()
             .len(),
         5
     );
     let benzene = perceived("c1ccccc1");
-    assert_eq!(find_matches(&benzene, &order).unwrap().len(), 3);
+    assert_eq!(
+        PreparedTarget::new(&benzene)
+            .all(&order, Default::default())
+            .unwrap()
+            .len(),
+        3
+    );
 }
 
 #[test]
 fn matcher_requires_only_the_perception_used_by_the_ir() {
-    let mut raw = crate::core::MoleculeEditor::new();
+    let mut raw = crate::molecule::MoleculeEditor::new();
     let first = raw.add_atom(carbon()).expect("atom identifier capacity");
     let second = raw.add_atom(carbon()).expect("atom identifier capacity");
     raw.add_bond(first, second, BondOrder::Single).unwrap();
     let elemental = manual_element_query("C");
     assert_eq!(
-        substructure::find_matches(raw.working(), &elemental)
+        substructure::PreparedTarget::new(raw.working())
+            .all(&elemental, Default::default())
             .unwrap()
             .len(),
         2
@@ -797,9 +929,9 @@ fn matcher_requires_only_the_perception_used_by_the_ir() {
         ("[x2]", QueryPerception::RingMembership),
         ("[!x0]", QueryPerception::RingMembership),
     ] {
-        let query = parse_smarts(smarts).unwrap();
+        let query = smarts::parse_str(smarts, Default::default()).unwrap();
         assert_eq!(
-            substructure::find_matches(raw.working(), &query),
+            substructure::PreparedTarget::new(raw.working()).all(&query, Default::default()),
             Err(SubstructureMatchError::MissingPerception(perception)),
             "{smarts}"
         );
@@ -809,16 +941,16 @@ fn matcher_requires_only_the_perception_used_by_the_ir() {
 #[test]
 fn matcher_search_and_candidate_limits_are_hard_failures() {
     let target = perceived("CCCC");
-    let query = parse_smarts("[#6]").unwrap();
-    let candidate_error = substructure::find_matches_with_options(
-        &target,
-        &query,
-        SubstructureMatchOptions {
-            max_candidate_pairs: 3,
-            ..SubstructureMatchOptions::default()
-        },
-    )
-    .unwrap_err();
+    let query = smarts::parse_str("[#6]", Default::default()).unwrap();
+    let candidate_error = substructure::PreparedTarget::new(&target)
+        .all(
+            &query,
+            SubstructureMatchOptions {
+                max_candidate_pairs: 3,
+                ..SubstructureMatchOptions::default()
+            },
+        )
+        .unwrap_err();
     assert!(matches!(
         candidate_error,
         SubstructureMatchError::ResourceLimit {
@@ -827,16 +959,16 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
         }
     ));
 
-    let state_error = substructure::find_matches_with_options(
-        &target,
-        &query,
-        SubstructureMatchOptions {
-            max_search_states: 1,
-            max_matches: 4,
-            ..SubstructureMatchOptions::default()
-        },
-    )
-    .unwrap_err();
+    let state_error = substructure::PreparedTarget::new(&target)
+        .all(
+            &query,
+            SubstructureMatchOptions {
+                max_search_states: 1,
+                max_matches: 4,
+                ..SubstructureMatchOptions::default()
+            },
+        )
+        .unwrap_err();
     assert!(matches!(
         state_error,
         SubstructureMatchError::ResourceLimit {
@@ -846,13 +978,12 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
     ));
 
     assert!(matches!(
-        substructure::find_matches_with_options(
-            &target,
+        substructure::PreparedTarget::new(&target).all(
             &query,
             SubstructureMatchOptions {
                 max_query_atoms: MAX_SUBSTRUCTURE_QUERY_ATOMS + 1,
                 ..SubstructureMatchOptions::default()
-            },
+            }
         ),
         Err(SubstructureMatchError::InvalidOptions(_))
     ));

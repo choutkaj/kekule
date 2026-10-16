@@ -1,11 +1,11 @@
 use crate::contract;
 
-use kekule::{core::Molecule, smiles};
+use kekule::{molecule::Molecule, smiles};
 
 fn molecule(input: &str) -> Molecule {
-    let mut result = smiles::parse_str(input)
+    let mut result = smiles::parse_str(input, Default::default())
         .unwrap()
-        .interpret()
+        .interpret(Default::default())
         .unwrap()
         .into_molecule()
         .unwrap();

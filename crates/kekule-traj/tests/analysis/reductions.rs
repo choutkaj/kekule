@@ -8,7 +8,7 @@ use kekule::{
     units::{Quantity, ANGSTROM, NANOMETER, PICOSECOND},
 };
 use kekule_traj::analysis::{self, ContactOccupancyAccumulator, ReductionError, RmsfAccumulator};
-use kekule_traj::{MemoryTrajectoryReader, TrajectoryReader};
+use kekule_traj::FrameBuffer;
 
 use crate::support;
 use support::linear_carbon_topology;
@@ -86,10 +86,10 @@ fn loaded_and_reused_streaming_buffers_agree_with_independent_statistics() {
     let mut online_rmsf = RmsfAccumulator::new(&all).unwrap();
     let mut online_contacts =
         ContactOccupancyAccumulator::new(&top, pairs, Quantity::new(2.0, NANOMETER)).unwrap();
-    let mut reader = MemoryTrajectoryReader::new(&t);
-    let mut buffer = reader.frame_buffer();
+    let mut buffer = FrameBuffer::new(t.shared_topology());
     let mut index = 0;
-    while reader.read_next(&mut buffer).unwrap() {
+    for frame in t.iter() {
+        buffer.copy_from(frame).unwrap();
         online_rmsf.observe(index, &buffer).unwrap();
         online_contacts.observe(index, &buffer).unwrap();
         index += 1;
@@ -185,7 +185,7 @@ fn reducers_reject_empty_or_ambiguous_inputs_and_handle_single_frames() {
         ContactOccupancyAccumulator::new(&top, [(ids[0], ids[1]), (ids[1], ids[0])], cutoff),
         Err(ReductionError::DuplicatePair { pair: 1 })
     ));
-    let invalid = InstanceAtomId::new(ids[0].molecule(), kekule::core::AtomId::new(99));
+    let invalid = InstanceAtomId::new(ids[0].molecule(), kekule::molecule::AtomId::new(99));
     assert!(matches!(
         ContactOccupancyAccumulator::new(&top, [(ids[0], invalid)], cutoff),
         Err(ReductionError::Selection(SelectionError::InvalidAtomId(_)))

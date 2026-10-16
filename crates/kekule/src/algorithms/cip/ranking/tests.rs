@@ -143,8 +143,10 @@ fn auxiliary_ranking_stops_at_a_proven_order_but_never_promotes_a_truncated_tie(
             false,
         ),
     ] {
-        let document = crate::smiles::parse_str(smiles).expect("auxiliary ligand regression");
-        let mut molecule = crate::smiles::interpret(&document)
+        let document = crate::smiles::parse_str(smiles, Default::default())
+            .expect("auxiliary ligand regression");
+        let mut molecule = document
+            .interpret(Default::default())
             .expect("interpret")
             .into_molecules()
             .remove(0);
@@ -204,8 +206,10 @@ fn auxiliary_ranking_stops_at_a_proven_order_but_never_promotes_a_truncated_tie(
 
 #[test]
 fn auxiliary_traversal_visits_each_occurrence_once_from_every_root() {
-    let document = crate::smiles::parse_str("CC1=CCC(C)CC1").expect("cyclic branched ligand");
-    let mut molecule = crate::smiles::interpret(&document)
+    let document = crate::smiles::parse_str("CC1=CCC(C)CC1", Default::default())
+        .expect("cyclic branched ligand");
+    let mut molecule = document
+        .interpret(Default::default())
         .expect("interpret")
         .into_molecules()
         .remove(0);
@@ -251,15 +255,15 @@ fn auxiliary_traversal_visits_each_occurrence_once_from_every_root() {
 #[test]
 fn symmetric_stereo_assertions_do_not_create_cip_centers() {
     let smiles = "C1[C@H]2C[C@H]3C[C@@H]1C[C@@H](C2)C3";
-    let document = crate::smiles::parse_str(smiles).expect("SMILES");
-    let mut molecule = crate::smiles::interpret(&document)
+    let document = crate::smiles::parse_str(smiles, Default::default()).expect("SMILES");
+    let mut molecule = document
+        .interpret(Default::default())
         .expect("interpret")
         .into_molecules()
         .remove(0);
     molecule.perceive().expect("perceive");
     let report =
-        super::assign_cip_descriptors_with_options(&mut molecule, CipAssignmentOptions::default())
-            .expect("CIP");
+        super::assign_cip_descriptors(&mut molecule, CipAssignmentOptions::default()).expect("CIP");
     assert!(
         report.assigned.is_empty(),
         "{smiles}: {:?}",
@@ -270,9 +274,13 @@ fn symmetric_stereo_assertions_do_not_create_cip_centers() {
 #[test]
 fn trogers_base_retains_the_published_bridged_nitrogen_configuration() {
     // Hanson validation suite VS132 specifies 6S,14S (one-based atom numbers).
-    let document =
-        crate::smiles::parse_str("CC=1C=CC=2[N@@]3CC=4C=C(C=CC4[N@](CC2C1)C3)C").expect("SMILES");
-    let mut molecule = crate::smiles::interpret(&document)
+    let document = crate::smiles::parse_str(
+        "CC=1C=CC=2[N@@]3CC=4C=C(C=CC4[N@](CC2C1)C3)C",
+        Default::default(),
+    )
+    .expect("SMILES");
+    let mut molecule = document
+        .interpret(Default::default())
         .expect("interpret")
         .into_molecules()
         .remove(0);
@@ -325,8 +333,7 @@ fn trogers_base_retains_the_published_bridged_nitrogen_configuration() {
         );
     }
     let report =
-        super::assign_cip_descriptors_with_options(&mut molecule, CipAssignmentOptions::default())
-            .expect("CIP");
+        super::assign_cip_descriptors(&mut molecule, CipAssignmentOptions::default()).expect("CIP");
     assert_eq!(
         report
             .assigned
@@ -952,7 +959,7 @@ fn ligand_tree_compares_immediate_sibling_list_before_recursing() {
 
 #[test]
 fn duplicate_nodes_have_no_isotope_priority() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let mut isotope = Atom::new(Element::from_symbol("C").expect("carbon"));
     isotope.isotope = Some(13);
     let atom = mol.add_atom(isotope).expect("atom identifier capacity");
@@ -980,7 +987,7 @@ fn duplicate_nodes_have_no_isotope_priority() {
 
 #[test]
 fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let atoms = (0..6)
         .map(|index| {
             let symbol = if index == 3 { "N" } else { "C" };
@@ -1075,7 +1082,7 @@ fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
 
 #[test]
 fn higher_order_bond_expansion_creates_terminal_duplicate_nodes() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let root = mol
         .add_atom(Atom::new(Element::from_symbol("C").expect("carbon")))
         .expect("atom identifier capacity");
@@ -1225,7 +1232,7 @@ fn axial_auxiliary_labels_are_derived_from_the_local_digraph() {
 
 #[test]
 fn negative_fractional_atoms_create_duplicate_nodes() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let atoms = (0..5)
         .map(|index| {
             let mut atom = Atom::new(Element::from_symbol("C").expect("carbon"));

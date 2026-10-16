@@ -6,12 +6,15 @@ use crate::chemistry::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
     SourceStereoBondMark, SourceStereoBondMarkKind,
 };
-use crate::core::{
-    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
-    MoleculeEditor, StereoCarrier, StereoElement, StereoElementId, StereoElementKind,
-    TetrahedralOrientation, TetrahedralStereo,
-};
 use crate::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
+use crate::molecule::{
+    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
+    MoleculeEditor,
+};
+use crate::stereo::{
+    StereoCarrier, StereoElement, StereoElementId, StereoElementKind, TetrahedralOrientation,
+    TetrahedralStereo,
+};
 use crate::topology::{InstanceAtomId, Topology, TopologyBuildError, TopologyBuilder};
 
 use super::cx::{CxFeatures, CxStereoGroup, SmilesCxField};
@@ -490,7 +493,7 @@ fn interpret_smiles_program_component(
     validate_smiles_source_aromaticity(program, component, source)?;
     let end_offset = source.len();
 
-    let mut editor = crate::core::MoleculeEditor::new();
+    let mut editor = crate::molecule::MoleculeEditor::new();
     let mut source_to_atom = BTreeMap::<usize, AtomId>::new();
     let mut atom_mappings = Vec::new();
     for &index in &component.atoms {
@@ -908,7 +911,8 @@ mod tests {
 
     #[test]
     fn dot_smiles_interprets_as_connected_molecules() {
-        let document = parse_smiles_document("CC(=O)[O-].[Na+]").expect("valid salt");
+        let document =
+            parse_smiles_document("CC(=O)[O-].[Na+]", Default::default()).expect("valid salt");
         let interpretation =
             interpret_smiles_document(&document, SmilesInterpretOptions::default())
                 .expect("interpret salt");
@@ -922,7 +926,8 @@ mod tests {
 
     #[test]
     fn component_mappings_retain_document_offsets() {
-        let document = parse_smiles_document("C.[Na+]").expect("valid components");
+        let document =
+            parse_smiles_document("C.[Na+]", Default::default()).expect("valid components");
         let interpretation =
             interpret_smiles_document(&document, SmilesInterpretOptions::default())
                 .expect("interpret components");
@@ -934,7 +939,7 @@ mod tests {
 
     #[test]
     fn single_component_convenience_rejects_dot_smiles_without_panicking() {
-        let document = parse_smiles_document("C.O").expect("valid components");
+        let document = parse_smiles_document("C.O", Default::default()).expect("valid components");
         let error = interpret_smiles_document(&document, SmilesInterpretOptions::default())
             .expect("interpret components")
             .into_molecule()

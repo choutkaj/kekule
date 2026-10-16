@@ -1,17 +1,18 @@
 use crate::chemistry::*;
-use crate::core::*;
 use crate::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
 use crate::geometry::Point3;
+use crate::molecule::*;
 use crate::perception::{
     aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
     valence as valence_api, valence::*,
 };
-use crate::sdf::{SdfDataField, SdfParseOptions, SdfRecord, SdfRecordInterpretation};
+use crate::sdf::{SdfDataField, SdfParseOptions, SdfRecordInterpretation};
 use crate::smiles::*;
 use crate::structure::{Model, Positions};
 use crate::{
-    canon, molfile, perception as perception_api, sdf, smiles as smiles_api, stereo as stereo_api,
-    stereo::*,
+    descriptors, molfile, perception as perception_api, sdf, smiles as smiles_api,
+    stereo as stereo_api,
+    stereo::{cip::*, cleanup::*, coordinates::*, *},
 };
 
 pub(super) fn carbon() -> Atom {
@@ -25,15 +26,15 @@ pub(super) fn oxygen() -> Atom {
 pub(super) fn read_smiles(
     input: &str,
 ) -> std::result::Result<Molecule, Box<dyn std::error::Error>> {
-    let document = smiles_api::parse_str(input)?;
-    Ok(smiles_api::interpret(&document)?.into_molecule()?)
+    let document = smiles_api::parse_str(input, Default::default())?;
+    Ok(document.interpret(Default::default())?.into_molecule()?)
 }
 
 pub(super) fn read_smiles_components(
     input: &str,
 ) -> std::result::Result<Vec<Molecule>, Box<dyn std::error::Error>> {
-    let document = smiles_api::parse_str(input)?;
-    Ok(smiles_api::interpret(&document)?.into_molecules())
+    let document = smiles_api::parse_str(input, Default::default())?;
+    Ok(document.interpret(Default::default())?.into_molecules())
 }
 
 pub(super) fn read_smiles_component(
@@ -72,8 +73,8 @@ pub(super) fn canonical_smiles_round_trip(molecule: &Molecule) -> (String, Molec
 pub(super) fn read_smiles_with_report(
     input: &str,
 ) -> std::result::Result<(Molecule, SmilesInterpretationReport), Box<dyn std::error::Error>> {
-    let document = smiles_api::parse_str(input)?;
-    Ok(smiles_api::interpret(&document)?.into_parts()?)
+    let document = smiles_api::parse_str(input, Default::default())?;
+    Ok(document.interpret(Default::default())?.into_parts()?)
 }
 
 pub(super) trait CanonicalizeFixture {
@@ -105,8 +106,8 @@ impl CanonicalizeFixture for Molecule {
 pub(super) fn read_molfile(
     input: &str,
 ) -> std::result::Result<Molecule, Box<dyn std::error::Error>> {
-    let document = molfile::parse_str(input)?;
-    let molecules = molfile::interpret(&document)?.into_molecules();
+    let document = molfile::parse_str(input, Default::default())?;
+    let molecules = document.interpret(Default::default())?.into_molecules();
     exactly_one(molecules, "molfile")
 }
 
@@ -119,14 +120,16 @@ pub(super) enum FailureStage {
 
 /// Where a malformed Molfile fails: its stage, diagnostic kind, and line.
 pub(super) fn molfile_failure(input: &str) -> (FailureStage, DiagnosticKind, Option<usize>) {
-    match molfile::parse_str(input) {
+    match molfile::parse_str(input, Default::default()) {
         Err(error) => (
             FailureStage::Parse,
             error.kind(),
             Some(error.location().line()),
         ),
         Ok(document) => {
-            let error = molfile::interpret(&document).expect_err("malformed Molfile must fail");
+            let error = document
+                .interpret(Default::default())
+                .expect_err("malformed Molfile must fail");
             (
                 FailureStage::Interpret,
                 error.kind(),
@@ -140,8 +143,8 @@ pub(super) fn read_molfile_with_report(
     input: &str,
 ) -> std::result::Result<(Molecule, molfile::MolfileInterpretationReport), Box<dyn std::error::Error>>
 {
-    let document = molfile::parse_str(input)?;
-    let (model, mut reports, _) = molfile::interpret(&document)?.into_parts();
+    let document = molfile::parse_str(input, Default::default())?;
+    let (model, mut reports, _) = document.interpret(Default::default())?.into_parts();
     if reports.len() != 1 {
         return Err(format!("expected one molfile component, found {}", reports.len()).into());
     }
@@ -165,11 +168,11 @@ pub(super) fn read_sdf_records_with_options(
     input: &str,
     options: SdfParseOptions,
 ) -> std::result::Result<Vec<SdfRecordInterpretation>, Box<dyn std::error::Error>> {
-    let document = sdf::parse_str_with_options(input, options)?;
+    let document = sdf::parse_str(input, options)?;
     Ok(document
         .records()
         .iter()
-        .map(SdfRecord::interpret)
+        .map(|record| record.interpret(Default::default()))
         .collect::<std::result::Result<_, _>>()?)
 }
 
@@ -278,7 +281,7 @@ pub(super) fn charged_atom(symbol: &str, formal_charge: i8) -> Atom {
 pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, Positions, BondId) {
     // Explicit sp2 endpoints: Br-C(=O)-C(=S)-Cl. This tests the opted-in
     // coordinate axis geometry without inventing aromatic perception flags.
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol
         .add_atom(aromatic_carbon_no_hydrogens())
         .expect("atom identifier capacity");
@@ -342,7 +345,7 @@ pub(super) fn ring_molecule(
     orders: &[BondOrder],
 ) -> (Molecule, Vec<AtomId>, Vec<BondId>) {
     assert_eq!(symbols.len(), orders.len());
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let atoms = symbols
         .iter()
         .map(|symbol| {
@@ -477,8 +480,10 @@ pub(super) fn deterministic_text_mutations(seed: &str) -> Vec<String> {
 }
 
 pub(super) fn mark_all_fresh(mol: &mut Molecule) {
-    let _ = valence_api::perceive_valence(mol, ValenceModel::RdkitLike);
-    let _ = rings_api::perceive_ring_membership(mol);
+    let _ = valence_api::perceive_valence(mol, ValenceModel::RdkitLike, Default::default());
+    rings_api::perceive_rings(mol, RingPerceptionOptions::membership_only())
+        .expect("membership perception cannot fail");
+    let _ = mol.ring_membership().expect("rings installed").clone();
     mol.begin_aromaticity(AromaticityModel::RdkitLike);
 }
 
@@ -490,7 +495,7 @@ pub(super) fn assert_all_stale(mol: &Molecule) {
 }
 
 pub(super) fn tetrahedral_marked_graph() -> (MoleculeEditor, AtomId, Vec<AtomId>, BondId) {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let carriers = ["F", "Cl", "Br", "I"]
         .into_iter()

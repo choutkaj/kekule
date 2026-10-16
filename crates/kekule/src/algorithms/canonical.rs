@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use super::rings::compute_ring_membership;
-use crate::core::{Atom, AtomId, Bond, BondId, BondOrder, Molecule};
+use crate::molecule::{Atom, AtomId, Bond, BondId, BondOrder, Molecule};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalAtomRanking {
@@ -28,7 +28,14 @@ impl CanonicalAtomRanking {
     }
 }
 
-pub(crate) fn canonical_atom_ranking(mol: &Molecule) -> CanonicalAtomRanking {
+/// Computes deterministic canonical equivalence classes without mutation.
+///
+/// Ranking is a graph-derived result and does not reorder or mutate a molecule.
+/// Hydrogen comparison uses declared counts plus installed implicit counts;
+/// equal totals are equivalent regardless of how the counts are stored.
+/// Run valence perception first to include inferred hydrogens. Without it,
+/// only declared hydrogens contribute. Source declarations remain unchanged.
+pub fn canonical_atom_ranking(mol: &Molecule) -> CanonicalAtomRanking {
     let atoms = mol.atom_ids().collect::<Vec<_>>();
     let mut ranks = initial_ranks(mol, &atoms);
 
@@ -235,10 +242,11 @@ fn should_refine_ring_topology(mol: &Molecule, atoms: &[AtomId], ranks: &[u32]) 
         ring_set
     } else {
         let mut staged = mol.clone();
-        let Ok(ring_set) = super::rings::perceive_ring_set(&mut staged) else {
+        let options = super::RingPerceptionOptions::for_molecule(&staged);
+        if super::rings::perceive_rings(&mut staged, options).is_err() {
             return false;
-        };
-        computed_ring_set.insert(ring_set)
+        }
+        computed_ring_set.insert(staged.ring_set().expect("rings installed").clone())
     };
     let mut ring_counts = vec![0usize; mol.graph.atom_slot_count()];
     for ring in ring_set.rings() {
@@ -330,11 +338,11 @@ fn ring_topology_signature(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::Element;
+    use crate::molecule::Element;
 
     #[test]
     fn atom_signature_preserves_large_graph_degree() {
-        let mut mol = crate::core::MoleculeEditor::new();
+        let mut mol = crate::molecule::MoleculeEditor::new();
         let atom = mol
             .add_atom(Atom::new(Element::from_symbol("C").expect("carbon")))
             .expect("atom identifier capacity");
@@ -347,7 +355,7 @@ mod tests {
 
     #[test]
     fn ring_topology_refines_regular_graphs_without_breaking_true_ties() {
-        let mut mol = crate::core::MoleculeEditor::new();
+        let mut mol = crate::molecule::MoleculeEditor::new();
         let atoms = (0..8)
             .map(|_| {
                 mol.add_atom(Atom::new(Element::from_symbol("C").expect("carbon")))

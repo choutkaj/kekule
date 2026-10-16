@@ -1,9 +1,9 @@
 //! Represented molecular identity: what equality compares and what perception
 //! may add without changing it.
 
-use kekule::core::{Molecule, Perception};
 use kekule::smiles;
 use kekule::topology::Topology;
+use kekule::{molecule::Molecule, perception::Perception};
 
 fn one_smiles(input: &str) -> Molecule {
     let mut molecules = smiles::to_molecules(input).expect("SMILES interprets");
@@ -31,7 +31,7 @@ fn represented_equality_ignores_adjacency_history_but_not_bond_chemistry() {
     let molecule = kekule::smiles::to_molecules("CCC").unwrap().pop().unwrap();
     let atoms = molecule.atom_ids().collect::<Vec<_>>();
     let bond = molecule.bond_ids().next().unwrap();
-    let mut editor = molecule.edit();
+    let mut editor = molecule.to_editor();
     editor.set_bond_endpoints(bond, atoms[0], atoms[2]).unwrap();
     assert_ne!(editor.clone().finish().unwrap(), molecule);
     editor.set_bond_endpoints(bond, atoms[0], atoms[1]).unwrap();

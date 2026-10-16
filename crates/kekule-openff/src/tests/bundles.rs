@@ -1,11 +1,10 @@
 //! Bundle loading and validation against the bundled Ash model, so the
 //! loader's rejection paths run without externally exported files.
-#![cfg(feature = "ash")]
 
 use std::io::Read;
 use std::path::PathBuf;
 
-use kekule_openff::{ErrorKind, NaglModel};
+use crate::{ErrorKind, NaglModel};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -63,16 +62,13 @@ fn exported_ash_layout_loads_like_the_bundled_model_and_rejects_corruption() {
     let loaded = NaglModel::load(&scratch.0).unwrap();
     let bundled = NaglModel::ash().unwrap();
     assert_eq!(loaded.identity(), bundled.identity());
-    assert_eq!(
-        kekule_openff::diagnostics::lookup_entry_count(&loaded),
-        kekule_openff::diagnostics::lookup_entry_count(&bundled)
-    );
+    assert_eq!(loaded.lookup_entry_count(), bundled.lookup_entry_count());
     let mut ethanol = kekule::smiles::to_molecules("CCO").unwrap().remove(0);
     ethanol.perceive().unwrap();
-    ethanol.add_hydrogens().unwrap();
+    ethanol.add_hydrogens(Default::default()).unwrap();
     assert_eq!(
-        kekule_openff::diagnostics::infer_charges(&loaded, &ethanol).unwrap(),
-        kekule_openff::diagnostics::infer_charges(&bundled, &ethanol).unwrap()
+        loaded.infer_charges(&ethanol).unwrap(),
+        bundled.infer_charges(&ethanol).unwrap()
     );
 
     let cases = [
@@ -126,14 +122,15 @@ fn exported_ash_layout_loads_like_the_bundled_model_and_rejects_corruption() {
     let entries = changed["lookup_tables"]["am1bcc_charges"]
         .as_array_mut()
         .unwrap();
-    let methane = kekule_openff::diagnostics::lookup_key(&bundled, &{
-        let mut methane = kekule::smiles::to_molecules("C").unwrap().remove(0);
-        methane.perceive().unwrap();
-        methane.add_hydrogens().unwrap();
-        methane
-    })
-    .unwrap()
-    .unwrap();
+    let methane = bundled
+        .lookup_key(&{
+            let mut methane = kekule::smiles::to_molecules("C").unwrap().remove(0);
+            methane.perceive().unwrap();
+            methane.add_hydrogens(Default::default()).unwrap();
+            methane
+        })
+        .unwrap()
+        .unwrap();
     let entry = entries
         .iter_mut()
         .find(|entry| entry["inchi"] == methane)
@@ -143,7 +140,7 @@ fn exported_ash_layout_loads_like_the_bundled_model_and_rejects_corruption() {
     let broken = NaglModel::load(&scratch.0).unwrap();
     let mut molecule = kekule::smiles::to_molecules("C").unwrap().remove(0);
     molecule.perceive().unwrap();
-    molecule.add_hydrogens().unwrap();
+    molecule.add_hydrogens(Default::default()).unwrap();
     let error = broken.assign_charges(&molecule).unwrap_err();
     assert_eq!(error.kind(), ErrorKind::Model);
 

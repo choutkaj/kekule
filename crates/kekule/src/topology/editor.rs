@@ -12,7 +12,7 @@ use super::{
     MoleculeClass, MoleculeDefinitionId, MoleculeInstanceId, ResidueClass, ResidueId, Topology,
     TopologyBuildError, TopologyBuilder,
 };
-use crate::core::{
+use crate::molecule::{
     Atom, AtomId, BondId, BondOrder, Molecule, MoleculeEditor, MoleculeError,
     MoleculePublicationError,
 };
@@ -145,7 +145,7 @@ impl GroupIdentity {
 /// retains the exact input `Arc<Topology>` supplied to [`Self::from_topology`].
 ///
 /// ```
-/// use kekule::{smiles, topology::{Topology, TopologyEditor}};
+/// use kekule::{smiles, topology::{Topology, edit::TopologyEditor}};
 /// let molecule = smiles::to_molecules("CC")?.pop().unwrap();
 /// let topology = Topology::from_molecule(molecule)?;
 /// let source_bond = topology.bond_ids()[0];
@@ -178,7 +178,7 @@ impl Topology {
     /// to transfer ownership, or [`TopologyEditor::from_topology`] with either
     /// an owned value or an `Arc`. Clone the `Arc` when another owner must retain
     /// the original snapshot; molecular data is copied only when edited.
-    pub fn edit(self: &Arc<Self>) -> TopologyEditor {
+    pub fn to_editor(self: &Arc<Self>) -> TopologyEditor {
         TopologyEditor::from_topology(Arc::clone(self))
     }
     /// Transfers an owned topology into a structural draft. Successful consuming
@@ -535,7 +535,7 @@ impl TopologyEditor {
         // properties fail before any handle, hierarchy, or coordinate changes.
         let target = left.group.min(right.group);
         let other = left.group.max(right.group);
-        let mut draft = self.molecule(target).edit();
+        let mut draft = self.molecule(target).to_editor();
         let mapping = draft.append_working(self.molecule(other))?;
         let local_a = if left.group == target {
             left.local
@@ -645,7 +645,7 @@ impl TopologyEditor {
             if bond_group != atom_group {
                 let target = bond_group.min(atom_group);
                 let other = bond_group.max(atom_group);
-                let mut draft = self.molecule(target).edit();
+                let mut draft = self.molecule(target).to_editor();
                 let map = draft.append_working(self.molecule(other))?;
                 self.commit_merge(target, other, draft, &map);
             }
@@ -724,7 +724,7 @@ impl TopologyEditor {
     pub fn replace_source_instance_stereo(
         &mut self,
         instance: MoleculeInstanceId,
-        elements: &[crate::core::StereoElement],
+        elements: &[crate::stereo::StereoElement],
     ) -> Result<(), TopologyEditError> {
         let source = self
             .source
@@ -740,7 +740,7 @@ impl TopologyEditor {
         if stored.changed || stored.atoms.len() != molecule.molecule().atom_count() {
             return Err(TopologyEditError::InvalidSourceInstance(instance));
         }
-        let mut draft = self.molecule(group).edit();
+        let mut draft = self.molecule(group).to_editor();
         let groups = draft.stereo_groups().map(|(id, _)| id).collect::<Vec<_>>();
         for id in groups {
             draft.remove_stereo_group(id)?;
@@ -812,7 +812,7 @@ impl TopologyEditor {
             self.groups[group].as_ref().unwrap().chemistry,
             GroupChemistry::Draft(_)
         ) {
-            let draft = self.molecule(group).edit();
+            let draft = self.molecule(group).to_editor();
             self.groups[group].as_mut().unwrap().chemistry = GroupChemistry::Draft(Box::new(draft));
         }
         match &mut self.groups[group].as_mut().unwrap().chemistry {
@@ -919,7 +919,7 @@ impl TopologyEditor {
         target: usize,
         other: usize,
         draft: MoleculeEditor,
-        map: &crate::core::MoleculeCorrespondence,
+        map: &crate::molecule::MoleculeCorrespondence,
     ) {
         let removed = self.groups[other].take().unwrap();
         let group = self.groups[target].as_mut().unwrap();

@@ -15,8 +15,8 @@ use kekule_traj::io::trr::{
     TrrWriteOptions, TrrWriter, TRR_LAMBDA_PROPERTY,
 };
 use kekule_traj::io::{
-    open_indexed_trajectory_with_options, open_trajectory_with_options, CoordinateEncoding,
-    ScalarPrecision, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
+    open_indexed_trajectory, open_trajectory, CoordinateEncoding, ScalarPrecision,
+    TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 use kekule_traj::{
     FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryFormat,
@@ -936,8 +936,7 @@ fn format_agnostic_trr_metadata_tracks_mixed_precision_sequentially_and_indexed(
         TrajectoryFormatHint::Explicit(kekule_traj::TrajectoryFormat::Trr),
     );
 
-    let mut sequential =
-        open_trajectory_with_options(&path, Arc::clone(&topology), options.clone()).unwrap();
+    let mut sequential = open_trajectory(&path, Arc::clone(&topology), options.clone()).unwrap();
     assert_eq!(
         sequential.metadata().coordinate_encoding(),
         CoordinateEncoding::Lossless {
@@ -960,8 +959,7 @@ fn format_agnostic_trr_metadata_tracks_mixed_precision_sequentially_and_indexed(
         }
     );
 
-    let indexed =
-        open_indexed_trajectory_with_options(&path, Arc::clone(&topology), options).unwrap();
+    let indexed = open_indexed_trajectory(&path, Arc::clone(&topology), options).unwrap();
     assert_eq!(
         indexed.metadata().coordinate_encoding(),
         CoordinateEncoding::Lossless {

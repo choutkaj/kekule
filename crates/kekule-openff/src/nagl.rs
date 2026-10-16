@@ -4,9 +4,10 @@ mod features;
 mod network;
 use crate::{explicit, identity, Error, ErrorKind, Result};
 use kekule::{
-    core::Molecule,
-    query::{parse_smarts, QueryGraph},
-    substructure::find_match,
+    molecule::Molecule,
+    query::QueryGraph,
+    smarts,
+    substructure::PreparedTarget,
     units::{Quantity, ELEMENTARY_CHARGE},
 };
 use std::{collections::BTreeSet, path::Path};
@@ -45,7 +46,7 @@ pub(crate) fn lookup_molecule(input: &Molecule) -> Result<Molecule> {
     if !input.atoms().any(|(_, a)| a.isotope.is_some()) {
         return explicit(input);
     }
-    let mut editor = input.edit();
+    let mut editor = input.to_editor();
     for (id, atom) in input.atoms() {
         if atom.isotope.is_some() {
             editor.atom_mut(id).map_err(Error::chemistry)?.isotope = None;
@@ -143,7 +144,10 @@ impl NaglModel {
             .domain
             .forbidden_patterns
             .iter()
-            .map(|p| parse_smarts(p).map_err(|e| Error::wrap(ErrorKind::Model, e)))
+            .map(|p| {
+                smarts::parse_str(p, Default::default())
+                    .map_err(|e| Error::wrap(ErrorKind::Model, e))
+            })
             .collect::<Result<Vec<_>>>()?;
         let lookup: Vec<_> = bundle.lookup.into_values().collect();
         let max_lookup_atoms = lookup.iter().map(|e| e.charges.len()).max().unwrap_or(0);
@@ -171,9 +175,11 @@ impl NaglModel {
     pub fn identity(&self) -> &ModelIdentity {
         &self.identity
     }
+    #[cfg(test)]
     pub(crate) fn lookup_entry_count(&self) -> usize {
         self.lookup.len()
     }
+    #[cfg(test)]
     pub(crate) fn lookup_key(&self, molecule: &Molecule) -> Result<Option<&str>> {
         let molecule = lookup_molecule(molecule)?;
         if molecule.atom_count() > self.max_lookup_atoms {
@@ -184,6 +190,7 @@ impl NaglModel {
             .select(&molecule)?
             .map(|position| self.lookup[position].inchi.as_str()))
     }
+    #[cfg(test)]
     pub(crate) fn atom_features(&self, molecule: &Molecule) -> Result<Vec<Vec<f32>>> {
         let m = explicit(molecule)?;
         self.check_domain(&m)?;
@@ -252,6 +259,7 @@ impl NaglModel {
         }
         self.infer_prepared(&molecule)
     }
+    #[cfg(test)]
     pub(crate) fn infer_charges(&self, molecule: &Molecule) -> Result<ChargeAssignment> {
         self.infer_prepared(&explicit(molecule)?)
     }
@@ -265,7 +273,8 @@ impl NaglModel {
             }
         }
         for pattern in &self.forbidden {
-            if find_match(molecule, pattern)
+            if PreparedTarget::new(molecule)
+                .first(pattern, Default::default())
                 .map_err(Error::chemistry)?
                 .is_some()
             {
@@ -326,7 +335,7 @@ mod tests {
             .unwrap()
             .remove(0);
         input.perceive().unwrap();
-        input.add_hydrogens().unwrap();
+        input.add_hydrogens(Default::default()).unwrap();
         let before = input.clone();
         let prepared = lookup_molecule(&input).unwrap();
         assert!(prepared.atoms().all(|(_, a)| a.isotope.is_none()));

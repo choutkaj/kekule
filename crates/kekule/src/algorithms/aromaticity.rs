@@ -3,7 +3,7 @@ use std::fmt;
 use std::ops::ControlFlow;
 
 use super::*;
-use crate::core::*;
+use crate::molecule::*;
 
 // RDKit's default model searches combinations of up to six candidate rings.
 // Rings larger than 24 are evaluated individually, and components above 300
@@ -29,9 +29,14 @@ pub enum AromaticityError {
 }
 
 /// Independent bounds for ring perception and aromaticity assignment.
+///
+/// [`Default`] gives fixed bounds. The default perception profile, which
+/// [`Molecule::perceive`] installs, uses [`Self::for_molecule`], whose bounds
+/// grow with the molecule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AromaticityOptions {
-    /// Used only when no ring set is installed.
+    /// Used only when no ring set is installed. Aromaticity always needs a
+    /// ring basis, so the [`scope`](RingPerceptionOptions::scope) is ignored.
     pub ring_options: RingPerceptionOptions,
     /// Bounds graph slots, ring entries, fusion comparisons, and subset search
     /// visits and workspace copies. Applies even to an installed ring set.
@@ -62,7 +67,9 @@ impl AromaticityOptions {
         }
     }
 
-    fn for_molecule(molecule: &Molecule) -> Self {
+    /// The bounds the default perception profile uses for `molecule`:
+    /// [`Self::for_graph`] over its atom and bond storage slots.
+    pub fn for_molecule(molecule: &Molecule) -> Self {
         Self::for_graph(
             molecule.graph.atom_slot_count(),
             molecule.graph.bond_slot_count(),
@@ -127,38 +134,15 @@ impl std::error::Error for AromaticityError {
 /// Perceives aromatic atom and bond membership without changing localized bonds.
 ///
 /// Reuses installed rings and implicit hydrogen counts. Missing rings are
-/// perceived with default limits; missing hydrogen counts use the default
-/// valence calculation without installing valence state. Work bounds grow with
-/// the molecule; see [`AromaticityOptions::for_graph`]. On failure, all
-/// previously installed perception is preserved.
+/// perceived with `options.ring_options`; an installed ring basis is reused,
+/// so those limits do not revalidate it. Missing hydrogen counts use the
+/// default valence calculation without installing valence state.
+/// `options.max_total_work` bounds the aromaticity assignment itself,
+/// including fused-ring search; pass [`AromaticityOptions::for_molecule`] for
+/// the default profile's bounds, which grow with the molecule. The operation
+/// is transactional: on failure, all previously installed perception and
+/// represented chemistry are preserved.
 pub fn perceive_aromaticity(
-    mol: &mut Molecule,
-    model: AromaticityModel,
-) -> std::result::Result<(), AromaticityError> {
-    let options = AromaticityOptions::for_molecule(mol);
-    perceive_aromaticity_with_options(mol, model, options)
-}
-
-/// Perceives aromaticity, using `ring_options` if a ring basis is not installed.
-///
-/// An installed ring basis is reused, so these limits do not revalidate it.
-/// Like [`perceive_aromaticity`], this operation is transactional and leaves
-/// represented atom and bond chemistry unchanged.
-pub fn perceive_aromaticity_with_ring_options(
-    mol: &mut Molecule,
-    model: AromaticityModel,
-    ring_options: RingPerceptionOptions,
-) -> std::result::Result<(), AromaticityError> {
-    let options = AromaticityOptions {
-        ring_options,
-        ..AromaticityOptions::for_molecule(mol)
-    };
-    perceive_aromaticity_with_options(mol, model, options)
-}
-
-/// Perceives aromaticity with explicit work limits, including fused-ring search.
-/// Failure preserves all previously installed perception and represented chemistry.
-pub fn perceive_aromaticity_with_options(
     mol: &mut Molecule,
     model: AromaticityModel,
     options: AromaticityOptions,
@@ -197,8 +181,11 @@ fn perceive_localized_aromaticity(
     work.charge(mol.graph.atom_slot_count())?;
     work.charge(mol.graph.bond_slot_count())?;
     if mol.ring_set().is_none() {
-        perceive_ring_set_with_options(mol, options.ring_options)
-            .map_err(AromaticityError::RingPerception)?;
+        let ring_options = RingPerceptionOptions {
+            scope: RingPerceptionScope::Basis,
+            ..options.ring_options
+        };
+        perceive_rings(mol, ring_options).map_err(AromaticityError::RingPerception)?;
     }
     if model == AromaticityModel::Mdl
         && mol.perception().ring_basis_model() != Some(RingBasisModel::FiguerasSssrLike)
@@ -776,9 +763,10 @@ mod tests {
     #[test]
     fn fused_ten_electron_perimeter_preserves_explicit_aromatic_fusion_single() {
         let source = "On2c1-c(ccc2)ccn1";
-        let document = crate::io::parse_smiles_document(source).expect("parses");
+        let document =
+            crate::io::parse_smiles_document(source, Default::default()).expect("parses");
         let (mut molecule, report) = document
-            .interpret()
+            .interpret(Default::default())
             .expect("interprets")
             .into_parts()
             .expect("one component");
@@ -793,12 +781,16 @@ mod tests {
             molecule.bond(protected_single).unwrap().order,
             BondOrder::Single
         );
-        let valence = perceive_valence(&mut molecule, ValenceModel::RdkitLike);
+        let valence = perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default());
         assert!(valence.is_ok(), "{valence:#?}");
-        perceive_ring_set(&mut molecule).expect("rings");
+        perceive_rings(&mut molecule, RingPerceptionOptions::default()).expect("rings");
 
-        perceive_aromaticity(&mut molecule, AromaticityModel::RdkitLike)
-            .expect("fused aromaticity");
+        perceive_aromaticity(
+            &mut molecule,
+            AromaticityModel::RdkitLike,
+            Default::default(),
+        )
+        .expect("fused aromaticity");
 
         let protected = molecule
             .bond(protected_single)
@@ -822,7 +814,7 @@ mod tests {
         let input = "N2c1c(Nc3c2c6c(OS(=O)(=O)[O-])c7c(cccc7)c(OS(=O)(=O)[O-])c6cc3Cl)c4c(OS(=O)(=O)[O-])c5c(cccc5)c(OS(=O)(=O)[O-])c4cc1Cl";
         let mut molecule = crate::tests::read_smiles(input).expect("dye parses");
         assert!(!molecule.perception().has_aromaticity());
-        let valence = perceive_valence(&mut molecule, ValenceModel::RdkitLike);
+        let valence = perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default());
         assert!(valence.is_ok(), "{valence:#?}");
         let valence_nitrogens = molecule
             .atoms()
@@ -831,7 +823,12 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(valence_nitrogens, vec![Ok(Some(1)), Ok(Some(1))]);
         assert!(!molecule.perception().has_aromaticity());
-        perceive_aromaticity(&mut molecule, AromaticityModel::RdkitLike).expect("aromaticity");
+        perceive_aromaticity(
+            &mut molecule,
+            AromaticityModel::RdkitLike,
+            Default::default(),
+        )
+        .expect("aromaticity");
 
         let nitrogens = molecule
             .atoms()
@@ -860,9 +857,9 @@ mod tests {
             .atom_mut(AtomId::new(5))
             .expect("source-selected radical carbon")
             .radical = AtomRadical::new(1, Some(2));
-        let valence = perceive_valence(&mut molecule, ValenceModel::RdkitLike);
+        let valence = perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default());
         assert!(valence.is_ok(), "{valence:#?}");
-        perceive_ring_set(&mut molecule).expect("ring perception");
+        perceive_rings(&mut molecule, RingPerceptionOptions::default()).expect("ring perception");
         let radical = molecule
             .atoms()
             .find_map(|(id, atom)| atom.radical.is_some().then_some(id))
@@ -877,8 +874,12 @@ mod tests {
             donor,
         ));
 
-        perceive_aromaticity(&mut molecule, AromaticityModel::RdkitLike)
-            .expect("aromaticity perception");
+        perceive_aromaticity(
+            &mut molecule,
+            AromaticityModel::RdkitLike,
+            Default::default(),
+        )
+        .expect("aromaticity perception");
 
         assert_eq!(
             molecule
@@ -977,7 +978,7 @@ mod tests {
     fn zero_electron_carbon_with_exocyclic_multiple_bond_is_vacant() {
         let mut molecule = crate::tests::read_smiles("C1(=O)C=CC=CC=C1").expect("tropone");
         molecule.atom_mut(AtomId::new(0)).unwrap().radical = AtomRadical::new(1, Some(2));
-        perceive_ring_set(&mut molecule).expect("rings");
+        perceive_rings(&mut molecule, RingPerceptionOptions::default()).expect("rings");
         let atom = molecule.atom(AtomId::new(0)).unwrap();
         assert_eq!(
             count_rdkit_like_atom_pi_electrons(&molecule, AtomId::new(0), atom),
@@ -990,7 +991,12 @@ mod tests {
 
         // Matches Kekulize(clearAromaticFlags=True), setting atom zero's
         // radical count to one, then SetAromaticity in RDKit 2026.03.3.
-        perceive_aromaticity(&mut molecule, AromaticityModel::RdkitLike).expect("aromaticity");
+        perceive_aromaticity(
+            &mut molecule,
+            AromaticityModel::RdkitLike,
+            Default::default(),
+        )
+        .expect("aromaticity");
         for atom in molecule.atom_ids() {
             assert_eq!(molecule.atom_is_aromatic(atom), Ok(Some(atom.index() != 1)));
         }

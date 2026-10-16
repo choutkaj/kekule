@@ -2,10 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::algorithms::StereoValidationIssue;
-use crate::core::{
+use crate::molecule::{
     canonicalize_represented_chemistry, Atom, AtomId, BondId, BondOrder, ImplicitHydrogens,
-    Molecule, MoleculeError, StereoElementId,
+    Molecule, MoleculeError,
 };
+use crate::stereo::StereoElementId;
 
 use super::source_stereo::{
     normalize_source_stereo, SourceStereoBondMark, SourceStereoBondMarkKind,
@@ -468,11 +469,13 @@ mod tests {
 
     #[test]
     fn aromatic_localization_limit_is_structured_and_transactional() {
-        let mut molecule = crate::core::MoleculeEditor::new();
+        let mut molecule = crate::molecule::MoleculeEditor::new();
         let atoms = (0..6)
             .map(|_| {
                 molecule
-                    .add_atom(Atom::new(crate::core::Element::from_symbol("C").unwrap()))
+                    .add_atom(Atom::new(
+                        crate::molecule::Element::from_symbol("C").unwrap(),
+                    ))
                     .unwrap()
             })
             .collect::<Vec<_>>();
