@@ -110,12 +110,19 @@ impl fmt::Display for NormalizationError {
             Self::AromaticLocalizationLimit { atom, limit } => {
                 write!(f, "imported aromatic localization at atom {atom}: {limit}")
             }
-            Self::SourceStereo(error) => write!(f, "{error}"),
+            Self::SourceStereo(_) => f.write_str("source stereo cannot be represented canonically"),
         }
     }
 }
 
-impl std::error::Error for NormalizationError {}
+impl std::error::Error for NormalizationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::SourceStereo(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl NormalizationError {
     pub(crate) fn atom_location_hint(&self) -> Option<AtomId> {

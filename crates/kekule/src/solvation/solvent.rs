@@ -197,11 +197,11 @@ impl fmt::Display for SolvationError {
                 f,
                 "cannot place {requested} ions; found {placed} eligible sites"
             ),
-            Self::Unit(e) => e.fmt(f),
-            Self::Geometry(e) => e.fmt(f),
-            Self::Position(e) => e.fmt(f),
-            Self::Build(e) => e.fmt(f),
-            Self::Hierarchy(e) => e.fmt(f),
+            Self::Unit(_) => f.write_str("invalid quantity unit"),
+            Self::Geometry(_) => f.write_str("periodic geometry failed"),
+            Self::Position(_) => f.write_str("invalid positions"),
+            Self::Build(_) => f.write_str("cannot build the solvated model"),
+            Self::Hierarchy(_) => f.write_str("cannot build the solvent hierarchy"),
         }
     }
 }

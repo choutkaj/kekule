@@ -123,22 +123,35 @@ pub struct RemoveHydrogensReport {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum HydrogenTransformError {
+    /// Inferred hydrogen counts are needed but valence perception is not
+    /// current.
     MissingValencePerception,
     /// The transform would add more hydrogens than
     /// [`AddHydrogensOptions::max_added_hydrogens`] allows.
     LimitExceeded(LimitExceeded),
+    /// An atom would carry more hydrogens than its count can encode.
     HydrogenCountOverflow {
+        /// The atom.
         atom: AtomId,
+        /// The required count.
         count: usize,
     },
+    /// A stereo element names an implicit hydrogen inconsistent with its
+    /// atom's hydrogen count.
     InconsistentStereoHydrogen {
+        /// The stereo element.
         element: StereoElementId,
+        /// The atom.
         atom: AtomId,
     },
+    /// An axis cannot materialize an implicit-hydrogen carrier.
     UnsupportedImplicitAxisHydrogen {
+        /// The stereo element.
         element: StereoElementId,
     },
+    /// Editing the molecule failed; see the source.
     Molecule(MoleculeError),
+    /// Publishing the transformed molecule failed; see the source.
     Publication(MoleculePublicationError),
 }
 
@@ -162,13 +175,21 @@ impl fmt::Display for HydrogenTransformError {
                 f,
                 "axis stereo element {element} cannot materialize an implicit hydrogen carrier"
             ),
-            Self::Molecule(error) => write!(f, "{error}"),
-            Self::Publication(error) => write!(f, "{error}"),
+            Self::Molecule(_) => f.write_str("cannot edit the molecule"),
+            Self::Publication(_) => f.write_str("cannot publish the transformed molecule"),
         }
     }
 }
 
-impl std::error::Error for HydrogenTransformError {}
+impl std::error::Error for HydrogenTransformError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Molecule(error) => Some(error),
+            Self::Publication(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<MoleculeError> for HydrogenTransformError {
     fn from(error: MoleculeError) -> Self {

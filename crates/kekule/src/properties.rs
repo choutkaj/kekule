@@ -1509,6 +1509,43 @@ fn assign_value(column: &mut PropertyColumn, index: usize, value: Option<Propert
     }
 }
 
+/// A table of per-item properties: the items each row describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum PropertyDomain {
+    /// Molecule instances of a topology.
+    MoleculeInstances,
+    /// Atoms of a topology.
+    TopologyAtoms,
+    /// Bonds of a topology.
+    TopologyBonds,
+    /// Hierarchy chains.
+    Chains,
+    /// Hierarchy residues.
+    Residues,
+    /// Hierarchy atom sites.
+    AtomSites,
+    /// Atoms of a model's structure.
+    ModelAtoms,
+    /// Bonds of a model's structure.
+    ModelBonds,
+}
+
+impl fmt::Display for PropertyDomain {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::MoleculeInstances => "molecule instance",
+            Self::TopologyAtoms => "topology atom",
+            Self::TopologyBonds => "topology bond",
+            Self::Chains => "chain",
+            Self::Residues => "residue",
+            Self::AtomSites => "atom site",
+            Self::ModelAtoms => "model atom",
+            Self::ModelBonds => "model bond",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PropertyError {
@@ -1557,7 +1594,7 @@ impl fmt::Display for PropertyError {
             Self::NonFiniteValue { index: None } => {
                 formatter.write_str("real property value must be finite")
             }
-            Self::Unit(error) => write!(formatter, "invalid property unit: {error}"),
+            Self::Unit(_) => formatter.write_str("invalid property unit"),
         }
     }
 }

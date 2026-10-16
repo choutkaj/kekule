@@ -214,6 +214,37 @@ All notable changes to Kekule are documented in this file.
     storage, so publication checks it only as a debug assertion.
   - `PerceptionInstallError::InvalidDelocalization` carries a
     `perception::DelocalizationIssue` instead of a `&'static str`.
+  - Other `&'static str` and stringified payloads are typed:
+    `StereoSearchError::InvalidOptions` and
+    `SubstructureMatchError::InvalidOptions` are `InvalidLimit { resource,
+    limit }`; `QueryGraphError::InvalidStereo` carries a
+    `query::QueryStereoIssue`; `ResonanceError::Materialization(String)` is
+    `ContributorOutOfRange { index, count }`, `Molecule(MoleculeError)` or
+    `Publication(MoleculePublicationError)`; the `AppendProperty { domain }`
+    of `TopologyEditError` and `ModelEditError` is a
+    `properties::PropertyDomain`; DSSP backbone atoms are
+    `dssp::DsspBackboneAtom` (`AmbiguousBackboneAtom { atom }`,
+    `DsspSkipReason::MissingBackboneAtoms { missing }`), and the
+    single-valued `quantity` fields of `DegenerateBackboneGeometry`,
+    `NonFiniteGeometry` and `CoordinateOutOfRange` are removed;
+    `ConnectionResolutionReason::ConflictingSelectorValues` carries a
+    `macromolecular::ConflictingSelector`.
+  - Removed variants that could never be constructed:
+    `AromaticityError::UnsupportedElement`,
+    `ValenceIssue::UnsupportedElement` (the valence rules cover every
+    element) and `DsspError::InvalidHierarchy`.
+  - Wrapping errors report their cause only through `source()`: `Display`
+    gives the context alone. This covers `PerceptionError`,
+    `AromaticityError`, `StereoSearchError`, `CoordinateStereoError`,
+    `HydrogenTransformError`, `TaggedMatchError` (now `#[non_exhaustive]`),
+    `ResonanceError`, `SymmetryError`, `AlignmentError`, `ClusteringError`,
+    `SolvationError`, `PeriodicBoxError`, `PeriodicCellError`,
+    `PropertyError`, `PositionError`, `StructureError`, `ModelError`,
+    `ModelBuildError`, `ModelEditError`, `EnsembleError`, `TrajectoryError`,
+    `MeasurementError`, `BondDihedralError`, `GeometryEditError`,
+    `TopologyBuildError`, `TopologyEditError` and `TopologySubsetError`.
+    `HydrogenTransformError`, `TaggedMatchError` and `ResonanceError` gain
+    a `source()`.
 - **Breaking:** Public items live in the module of the domain that owns them,
   and every operation has one home. Behaviour is unchanged; callers update
   paths, names, and signatures as listed.

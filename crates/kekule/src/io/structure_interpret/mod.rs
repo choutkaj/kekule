@@ -37,10 +37,11 @@ pub(crate) use pdb::{
 };
 pub(in crate::io) use types::structure_error;
 pub use types::{
-    AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason, ConnectionResolutionReason,
-    ConnectivityOptions, EntityKind, InstanceProvenance, ModelSelection,
-    StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretIssue,
-    StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
+    AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason, ConflictingSelector,
+    ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
+    ModelSelection, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
+    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+    StructureInterpretationReport,
 };
 
 /// Everything interpretation reads from one source, an mmCIF data block or a

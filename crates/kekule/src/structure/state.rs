@@ -357,10 +357,10 @@ impl fmt::Display for StructureError {
                 formatter.write_str("ensemble weight must be finite and positive")
             }
             Self::CapacityOverflow => formatter.write_str("structure exceeds addressable capacity"),
-            Self::Position(error) => write!(formatter, "invalid positions: {error}"),
-            Self::Property(error) => write!(formatter, "invalid structure property: {error}"),
-            Self::Cell(error) => write!(formatter, "invalid periodic cell: {error}"),
-            Self::Unit(error) => write!(formatter, "invalid quantity unit: {error}"),
+            Self::Position(_) => formatter.write_str("invalid positions"),
+            Self::Property(_) => formatter.write_str("invalid structure property"),
+            Self::Cell(_) => formatter.write_str("invalid periodic cell"),
+            Self::Unit(_) => formatter.write_str("invalid quantity unit"),
         }
     }
 }

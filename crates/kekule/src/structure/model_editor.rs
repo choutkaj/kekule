@@ -673,23 +673,25 @@ pub enum ModelEditError {
     IncompatibleAppendCell,
     /// An imported structure property cannot be combined with its destination table.
     AppendProperty {
-        domain: &'static str,
+        /// The table whose rows could not be appended.
+        domain: crate::properties::PropertyDomain,
+        /// The cause, also the source.
         error: Box<PropertyError>,
     },
 }
 impl fmt::Display for ModelEditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Topology(e) => e.fmt(f),
-            Self::Position(e) => e.fmt(f),
-            Self::Property(e) => e.fmt(f),
-            Self::Structure(e) => e.fmt(f),
-            Self::Model(e) => e.fmt(f),
+            Self::Topology(_) => f.write_str("cannot edit the topology"),
+            Self::Position(_) => f.write_str("invalid positions"),
+            Self::Property(_) => f.write_str("invalid property"),
+            Self::Structure(_) => f.write_str("invalid structure"),
+            Self::Model(_) => f.write_str("invalid model"),
             Self::CapacityOverflow => f.write_str("model editing exceeds coordinate capacity"),
             Self::IncompatibleAppendCell => f.write_str(
                 "appended model has a different periodic cell; set the intended destination cell or explicitly remove the source cell before appending",
             ),
-            Self::AppendProperty { domain, error } => write!(f, "cannot append {domain} properties: {error}"),
+            Self::AppendProperty { domain, .. } => write!(f, "cannot append {domain} properties"),
         }
     }
 }

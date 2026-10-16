@@ -1,4 +1,4 @@
-use crate::diagnostics::LimitExceeded;
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::fmt;
 mod engine;
 mod prepared;
@@ -102,7 +102,14 @@ impl fmt::Display for QueryPerception {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubstructureMatchError {
-    InvalidOptions(&'static str),
+    /// A configured bound is zero, or above its ceiling
+    /// ([`MAX_SUBSTRUCTURE_QUERY_ATOMS`] for query atoms).
+    InvalidLimit {
+        /// The bounded resource.
+        resource: Resource,
+        /// The configured bound.
+        limit: usize,
+    },
     MissingPerception(QueryPerception),
     IncompatiblePerception(QueryPerception),
     /// A configured bound was exceeded; `work` is the work done before it.
@@ -118,7 +125,7 @@ impl SubstructureMatchError {
     pub fn work(&self) -> Option<SubstructureMatchWork> {
         match self {
             Self::LimitExceeded { work, .. } => Some(*work),
-            Self::InvalidOptions(_)
+            Self::InvalidLimit { .. }
             | Self::MissingPerception(_)
             | Self::IncompatiblePerception(_) => None,
         }
@@ -128,7 +135,9 @@ impl SubstructureMatchError {
 impl fmt::Display for SubstructureMatchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidOptions(message) => write!(f, "invalid substructure options: {message}"),
+            Self::InvalidLimit { resource, limit } => {
+                write!(f, "invalid substructure {resource} limit {limit}")
+            }
             Self::IncompatiblePerception(perception) => {
                 write!(f, "substructure query requires compatible {perception}")
             }
@@ -152,28 +161,23 @@ pub enum MatchCompletion {
 
 fn validate_options(options: SubstructureMatchOptions) -> Result<(), SubstructureMatchError> {
     for (name, value) in [
-        ("max_matches must be greater than zero", options.max_matches),
-        (
-            "max_search_states must be greater than zero",
-            options.max_search_states,
-        ),
-        (
-            "max_query_atoms must be greater than zero",
-            options.max_query_atoms,
-        ),
-        (
-            "max_candidate_pairs must be greater than zero",
-            options.max_candidate_pairs,
-        ),
+        (Resource::Matches, options.max_matches),
+        (Resource::SearchStates, options.max_search_states),
+        (Resource::Atoms, options.max_query_atoms),
+        (Resource::CandidatePairs, options.max_candidate_pairs),
     ] {
         if value == 0 {
-            return Err(SubstructureMatchError::InvalidOptions(name));
+            return Err(SubstructureMatchError::InvalidLimit {
+                resource: name,
+                limit: value,
+            });
         }
     }
     if options.max_query_atoms > MAX_SUBSTRUCTURE_QUERY_ATOMS {
-        return Err(SubstructureMatchError::InvalidOptions(
-            "max_query_atoms exceeds the stack-safe matcher ceiling",
-        ));
+        return Err(SubstructureMatchError::InvalidLimit {
+            resource: Resource::Atoms,
+            limit: options.max_query_atoms,
+        });
     }
     Ok(())
 }

@@ -23,7 +23,9 @@ pub enum TopologyEditError {
     Hierarchy(HierarchyError),
     Property(PropertyError),
     AppendProperty {
-        domain: &'static str,
+        /// The table whose rows could not be appended.
+        domain: crate::properties::PropertyDomain,
+        /// The cause, also the source.
         error: Box<PropertyError>,
     },
 }
@@ -56,14 +58,12 @@ impl fmt::Display for TopologyEditError {
             Self::DuplicateAtomPlacement(id) => {
                 write!(f, "atom already has a hierarchy site: {id}")
             }
-            Self::Molecule(e) => write!(f, "cannot edit molecule: {e}"),
-            Self::Publication(e) => write!(f, "cannot publish edited molecule: {e}"),
-            Self::Topology(e) => write!(f, "cannot publish edited topology: {e}"),
-            Self::Hierarchy(e) => write!(f, "cannot edit hierarchy: {e}"),
-            Self::Property(e) => write!(f, "cannot edit properties: {e}"),
-            Self::AppendProperty { domain, error } => {
-                write!(f, "cannot append {domain} properties: {error}")
-            }
+            Self::Molecule(_) => f.write_str("cannot edit molecule"),
+            Self::Publication(_) => f.write_str("cannot publish edited molecule"),
+            Self::Topology(_) => f.write_str("cannot publish edited topology"),
+            Self::Hierarchy(_) => f.write_str("cannot edit hierarchy"),
+            Self::Property(_) => f.write_str("cannot edit properties"),
+            Self::AppendProperty { domain, .. } => write!(f, "cannot append {domain} properties"),
         }
     }
 }

@@ -374,16 +374,12 @@ impl fmt::Display for TopologySubsetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptySelection => formatter.write_str("topology subset selection is empty"),
-            Self::Selection(error) => write!(formatter, "invalid subset selection: {error}"),
-            Self::Molecule(error) => write!(formatter, "cannot construct subset molecule: {error}"),
-            Self::Publication(error) => {
-                write!(formatter, "cannot publish subset molecule: {error}")
-            }
-            Self::Hierarchy(error) => write!(formatter, "cannot filter subset hierarchy: {error}"),
-            Self::TopologyBuild(error) => {
-                write!(formatter, "cannot publish subset topology: {error}")
-            }
-            Self::Property(error) => write!(formatter, "cannot project subset properties: {error}"),
+            Self::Selection(_) => formatter.write_str("invalid subset selection"),
+            Self::Molecule(_) => formatter.write_str("cannot construct subset molecule"),
+            Self::Publication(_) => formatter.write_str("cannot publish subset molecule"),
+            Self::Hierarchy(_) => formatter.write_str("cannot filter subset hierarchy"),
+            Self::TopologyBuild(_) => formatter.write_str("cannot publish subset topology"),
+            Self::Property(_) => formatter.write_str("cannot project subset properties"),
         }
     }
 }

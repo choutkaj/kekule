@@ -919,10 +919,10 @@ impl fmt::Display for EnsembleError {
             Self::InvalidFraction => {
                 formatter.write_str("weight fraction must be greater than 0 and at most 1")
             }
-            Self::Structure(error) => write!(formatter, "invalid ensemble member: {error}"),
-            Self::Subset(error) => write!(formatter, "cannot subset ensemble: {error}"),
-            Self::TopologyBuild(error) => write!(formatter, "cannot build topology: {error}"),
-            Self::Unit(error) => write!(formatter, "invalid quantity unit: {error}"),
+            Self::Structure(_) => formatter.write_str("invalid ensemble member"),
+            Self::Subset(_) => formatter.write_str("cannot subset ensemble"),
+            Self::TopologyBuild(_) => formatter.write_str("cannot build topology"),
+            Self::Unit(_) => formatter.write_str("invalid quantity unit"),
         }
     }
 }

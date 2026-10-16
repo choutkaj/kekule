@@ -64,7 +64,7 @@ impl fmt::Display for GeometryEditError {
             Self::InvalidMovingSelection => {
                 f.write_str("select the last reference and exclude the first reference")
             }
-            Self::Unit(error) => write!(f, "geometry-edit unit: {error}"),
+            Self::Unit(_) => f.write_str("invalid geometry-edit unit"),
             Self::InvalidTarget => {
                 f.write_str("target must be finite, with distance > 0 or angle in [0, pi]")
             }

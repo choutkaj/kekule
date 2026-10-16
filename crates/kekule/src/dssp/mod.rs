@@ -311,11 +311,49 @@ impl DsspStatistics {
     }
 }
 
+/// One of the four backbone atoms DSSP reads from a residue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DsspBackboneAtom {
+    /// The amide nitrogen, `N`.
+    N,
+    /// The alpha carbon, `CA`.
+    Ca,
+    /// The carbonyl carbon, `C`.
+    C,
+    /// The carbonyl oxygen, `O`.
+    O,
+}
+
+impl DsspBackboneAtom {
+    /// The backbone atoms in DSSP's order.
+    pub const ALL: [Self; 4] = [Self::N, Self::Ca, Self::C, Self::O];
+
+    /// The PDB atom name, such as `CA`.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::N => "N",
+            Self::Ca => "CA",
+            Self::C => "C",
+            Self::O => "O",
+        }
+    }
+}
+
+impl fmt::Display for DsspBackboneAtom {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// Reason an otherwise hierarchy-visible residue was not analyzed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DsspSkipReason {
-    MissingBackboneAtoms { missing: Vec<&'static str> },
+    /// The residue lacks these backbone atoms.
+    MissingBackboneAtoms {
+        /// The missing atoms, in DSSP's order.
+        missing: Vec<DsspBackboneAtom>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -416,28 +454,35 @@ impl Default for DsspOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DsspError {
+    /// [`DsspOptions::min_polyproline_stretch`] is neither 2 nor 3.
     InvalidPolyprolineStretch {
+        /// The configured value.
         value: usize,
     },
+    /// A residue has more than one atom with this backbone name.
     AmbiguousBackboneAtom {
+        /// The residue.
         residue: ResidueId,
-        atom_name: &'static str,
+        /// The repeated backbone atom.
+        atom: DsspBackboneAtom,
     },
+    /// The residue's preceding carbonyl bond is degenerate, so its amide
+    /// hydrogen cannot be placed.
     DegenerateBackboneGeometry {
+        /// The residue.
         residue: ResidueId,
-        quantity: &'static str,
     },
+    /// A hydrogen-bond energy involving this donor residue is not finite.
     NonFiniteGeometry {
+        /// The donor residue.
         residue: ResidueId,
-        quantity: &'static str,
     },
+    /// A backbone coordinate of the residue is outside DSSP's numeric range.
     CoordinateOutOfRange {
+        /// The residue.
         residue: ResidueId,
-        quantity: &'static str,
     },
-    InvalidHierarchy {
-        message: String,
-    },
+    /// No residue has a complete N/CA/C/O backbone.
     NoAnalyzableProteinResidues,
     /// The model exceeds a bound of [`DsspLimits`].
     LimitExceeded(LimitExceeded),
@@ -449,20 +494,23 @@ impl fmt::Display for DsspError {
             Self::InvalidPolyprolineStretch { value } => {
                 write!(f, "DSSP polyproline-II stretch must be 2 or 3, got {value}")
             }
-            Self::AmbiguousBackboneAtom { residue, atom_name } => {
-                write!(f, "{residue} has more than one `{atom_name}` backbone atom")
+            Self::AmbiguousBackboneAtom { residue, atom } => {
+                write!(f, "{residue} has more than one `{atom}` backbone atom")
             }
-            Self::DegenerateBackboneGeometry { residue, quantity } => {
-                write!(f, "{residue} has degenerate geometry for {quantity}")
+            Self::DegenerateBackboneGeometry { residue } => {
+                write!(
+                    f,
+                    "{residue} has degenerate geometry for preceding carbonyl bond"
+                )
             }
-            Self::NonFiniteGeometry { residue, quantity } => {
-                write!(f, "{residue} produced non-finite {quantity}")
+            Self::NonFiniteGeometry { residue } => {
+                write!(f, "{residue} produced non-finite hydrogen-bond energy")
             }
-            Self::CoordinateOutOfRange { residue, quantity } => {
-                write!(f, "{residue} has {quantity} outside DSSP's numeric range")
-            }
-            Self::InvalidHierarchy { message } => {
-                write!(f, "invalid topology hierarchy: {message}")
+            Self::CoordinateOutOfRange { residue } => {
+                write!(
+                    f,
+                    "{residue} has backbone coordinate outside DSSP's numeric range"
+                )
             }
             Self::NoAnalyzableProteinResidues => {
                 f.write_str("model contains no residue with a complete N/CA/C/O backbone")

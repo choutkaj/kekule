@@ -339,8 +339,7 @@ fn stereo_projections(
         })?
         .flatten();
     Ok(
-        project_molfile_stereo_bond_marks(molecule, geometry, coordinate_double_bonds.as_ref())
-            .map_err(|message| MOLFILE_WRITE.unsupported(message))?
+        project_molfile_stereo_bond_marks(molecule, geometry, coordinate_double_bonds.as_ref())?
             .into_iter()
             .map(|(bond, projection)| (bond, (projection.from, projection.kind)))
             .collect(),

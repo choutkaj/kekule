@@ -18,7 +18,6 @@ impl Default for ValenceOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValenceIssue {
-    UnsupportedElement(AtomId),
     InvalidFormalCharge {
         atom: AtomId,
         formal_charge: i8,
@@ -180,7 +179,7 @@ fn rdkit_atom_inferred_hydrogen_count(
         .map_or(0, |radical| usize::from(radical.electron_count()));
 
     let original_rule = rdkit_neutral_valence_rule(atom.element.atomic_number())
-        .ok_or(ValenceIssue::UnsupportedElement(atom_id))?;
+        .expect("RDKit valence rules cover atomic numbers 0 to 118");
 
     // RDKit leaves atoms whose periodic-table entry is only `-1` on that
     // unrestricted rule. All other charged atoms use the isoelectronic
@@ -191,7 +190,7 @@ fn rdkit_atom_inferred_hydrogen_count(
         rdkit_effective_atomic_number(atom)
     };
     let effective_rule = rdkit_neutral_valence_rule(effective_atomic_number)
-        .ok_or(ValenceIssue::UnsupportedElement(atom_id))?;
+        .expect("RDKit valence rules cover atomic numbers 0 to 118");
 
     let hypervalent_anion = can_be_rdkit_hypervalent_anion(atom, effective_atomic_number);
     let charge_offset = if hypervalent_anion {

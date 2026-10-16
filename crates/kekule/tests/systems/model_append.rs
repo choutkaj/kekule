@@ -631,6 +631,18 @@ fn import_handles_reject_foreign_drafts_and_remain_invalid_after_clear_and_recov
     );
 }
 
+/// The messages of `error` and its sources, joined by `: `.
+fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
 #[test]
 fn all_property_domain_conflicts_roll_back_and_can_be_retried() {
     for domain in [
@@ -649,8 +661,10 @@ fn all_property_domain_conflicts_roll_back_and_can_be_retried() {
         editor.append_model(&destination).unwrap();
         let before = format!("{editor:?}");
         let error = editor.append_model(&incompatible).unwrap_err();
-        assert!(error.to_string().contains(domain), "{error}");
-        assert!(error.to_string().contains("tag"), "{error}");
+        // The domain is the message; the conflicting key is in the source.
+        let chain = error_chain(&error);
+        assert!(chain.contains(domain), "{chain}");
+        assert!(chain.contains("tag"), "{chain}");
         assert_eq!(format!("{editor:?}"), before, "rollback for {domain}");
         editor.append_model(&destination).unwrap();
         let result = editor.finish().unwrap();
@@ -745,7 +759,7 @@ fn coordinates_and_property_units_are_preserved_with_missing_rows() {
     assert!(matches!(
         editor.append_model(&source),
         Err(ModelEditError::AppendProperty {
-            domain: "model atom",
+            domain: kekule::properties::PropertyDomain::ModelAtoms,
             ..
         })
     ));

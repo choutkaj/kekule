@@ -28,11 +28,20 @@ impl Default for StereoSearchOptions {
     }
 }
 
+/// Why a bounded stereo symmetry search failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StereoSearchError {
-    InvalidOptions(&'static str),
+    /// A configured bound is zero.
+    InvalidLimit {
+        /// The bounded resource.
+        resource: Resource,
+        /// The configured bound.
+        limit: usize,
+    },
+    /// Perceiving the analysed molecule failed; see the source.
     Perception(crate::chemistry::PerceptionError),
+    /// Represented stereo is invalid; see the source.
     InvalidStereo(StereoValidationError),
     /// The search exceeded [`StereoSearchOptions::max_atoms`] or
     /// [`StereoSearchOptions::max_search_states`].
@@ -42,11 +51,11 @@ pub enum StereoSearchError {
 impl fmt::Display for StereoSearchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidOptions(message) => {
-                write!(f, "invalid stereo perception options: {message}")
+            Self::InvalidLimit { resource, limit } => {
+                write!(f, "invalid stereo search {resource} limit {limit}")
             }
-            Self::Perception(error) => error.fmt(f),
-            Self::InvalidStereo(error) => error.fmt(f),
+            Self::Perception(_) => f.write_str("cannot perceive the molecule for stereo search"),
+            Self::InvalidStereo(_) => f.write_str("represented stereo is invalid"),
             Self::LimitExceeded(limit) => write!(f, "stereo search {limit}"),
         }
     }
@@ -108,7 +117,12 @@ pub fn detect_stereo_candidates(
     options: StereoSearchOptions,
 ) -> Result<Vec<StereoCandidate>, StereoSearchError> {
     if options.max_atoms == 0 || options.max_search_states == 0 {
-        return Err(StereoSearchError::InvalidOptions("limits must be positive"));
+        let (resource, limit) = if options.max_atoms == 0 {
+            (Resource::Atoms, options.max_atoms)
+        } else {
+            (Resource::SearchStates, options.max_search_states)
+        };
+        return Err(StereoSearchError::InvalidLimit { resource, limit });
     }
     if mol.atom_count() > options.max_atoms {
         return Err(StereoSearchError::LimitExceeded(LimitExceeded::new(

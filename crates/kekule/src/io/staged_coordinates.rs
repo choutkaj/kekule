@@ -99,13 +99,21 @@ impl fmt::Display for StagedCoordinateError {
             Self::NonFinitePosition { atom } => {
                 write!(formatter, "source position for {atom} is not finite")
             }
-            Self::Unit(error) => error.fmt(formatter),
-            Self::Position(error) => error.fmt(formatter),
+            Self::Unit(_) => formatter.write_str("invalid coordinate unit"),
+            Self::Position(_) => formatter.write_str("invalid position"),
         }
     }
 }
 
-impl std::error::Error for StagedCoordinateError {}
+impl std::error::Error for StagedCoordinateError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unit(error) => Some(error),
+            Self::Position(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<UnitError> for StagedCoordinateError {
     fn from(error: UnitError) -> Self {

@@ -154,10 +154,7 @@ fn dssp_rejects_coordinates_outside_its_spatial_index_range_without_panicking() 
 
     assert!(matches!(
         dssp::assign(&model, DsspOptions::default()),
-        Err(DsspError::CoordinateOutOfRange {
-            quantity: "backbone coordinate",
-            ..
-        })
+        Err(DsspError::CoordinateOutOfRange { .. })
     ));
 }
 

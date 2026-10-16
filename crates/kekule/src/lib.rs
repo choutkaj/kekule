@@ -599,10 +599,11 @@ pub mod macromolecular {
     pub use crate::io::{
         AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
         AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
-        ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
-        ModelSelection, SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretOptions,
-        StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretOptions,
-        StructureInterpretation, StructureInterpretationReport,
+        ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, EntityKind,
+        InstanceProvenance, ModelSelection, SourceResidueId, SourceResiduePosition,
+        StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
+        StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+        StructureInterpretationReport,
     };
 }
 

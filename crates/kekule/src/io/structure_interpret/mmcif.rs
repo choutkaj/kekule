@@ -23,9 +23,10 @@ use super::ensemble::{
     empty_model_selection, interpret_conformations, interpret_ensemble, no_coordinate_models,
 };
 use super::types::{
-    ensemble_error, CellOmissionReason, ConnectionResolutionReason, ConnectivityOptions,
-    StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretIssue,
-    StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
+    ensemble_error, CellOmissionReason, ConflictingSelector, ConnectionResolutionReason,
+    ConnectivityOptions, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
+    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+    StructureInterpretationReport,
 };
 use super::{interpret_source, AltLocResidue, StructureSource};
 
@@ -372,7 +373,7 @@ fn connection_partner(
         (Some(left), Some(right)) if left != right => (
             Some(left.to_owned()),
             Some(ConnectionResolutionReason::ConflictingSelectorValues {
-                selector: "label alternate-location aliases",
+                selector: ConflictingSelector::LabelAlternateLocationAliases,
             }),
         ),
         (Some(value), _) | (_, Some(value)) => (Some(value.to_owned()), None),
@@ -409,7 +410,7 @@ fn connection_partner(
     ) {
         if label != author {
             conflict = Some(ConnectionResolutionReason::ConflictingSelectorValues {
-                selector: "label and author alternate locations",
+                selector: ConflictingSelector::LabelAndAuthorAlternateLocations,
             });
         }
     }

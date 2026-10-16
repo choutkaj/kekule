@@ -993,7 +993,7 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
         SubstructureMatchError::LimitExceeded { limit, .. } if limit.resource() == Resource::SearchStates
     ));
 
-    assert!(matches!(
+    assert_eq!(
         substructure::PreparedTarget::new(&target).all(
             &query,
             SubstructureMatchOptions {
@@ -1001,6 +1001,9 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
                 ..SubstructureMatchOptions::default()
             }
         ),
-        Err(SubstructureMatchError::InvalidOptions(_))
-    ));
+        Err(SubstructureMatchError::InvalidLimit {
+            resource: Resource::Atoms,
+            limit: MAX_SUBSTRUCTURE_QUERY_ATOMS + 1,
+        })
+    );
 }

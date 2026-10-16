@@ -459,9 +459,9 @@ impl fmt::Display for ClusteringError {
             Self::DirectedCorrespondence => formatter.write_str(
                 "member distances require a selection, not a directed atom correspondence",
             ),
-            Self::Alignment(error) => write!(formatter, "cannot fit members: {error}"),
-            Self::Ensemble(error) => error.fmt(formatter),
-            Self::Unit(error) => write!(formatter, "invalid quantity unit: {error}"),
+            Self::Alignment(_) => formatter.write_str("cannot fit members"),
+            Self::Ensemble(_) => formatter.write_str("invalid ensemble"),
+            Self::Unit(_) => formatter.write_str("invalid quantity unit"),
         }
     }
 }

@@ -26,10 +26,10 @@ impl fmt::Display for BondDihedralError {
         match self {
             Self::InvalidBondId(bond) => write!(f, "invalid dihedral bond: {bond}"),
             Self::TopologyMismatch => f.write_str("bond dihedral belongs to a different topology"),
-            Self::Ranking { bond, error } => {
-                write!(f, "dihedral reference ranking for {bond}: {error}")
+            Self::Ranking { bond, .. } => {
+                write!(f, "dihedral reference ranking for {bond} failed")
             }
-            Self::Measurement(error) => write!(f, "bond dihedral: {error}"),
+            Self::Measurement(_) => f.write_str("bond dihedral measurement failed"),
         }
     }
 }

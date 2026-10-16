@@ -72,9 +72,9 @@ pub use structure_documents::{
 pub use structure_interpret::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
     AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
-    ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
-    ModelSelection, SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretOptions,
-    StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretOptions,
-    StructureInterpretation, StructureInterpretationReport,
+    ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, EntityKind,
+    InstanceProvenance, ModelSelection, SourceResidueId, SourceResiduePosition,
+    StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretIssue,
+    StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
 };
 pub use write_error::UnrepresentablePolicy;

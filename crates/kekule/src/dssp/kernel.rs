@@ -417,12 +417,9 @@ fn extract_chain(
         let hierarchy = chain_residue.hierarchy;
         let chain = chain_residue.chain;
         let residue_id = chain_residue.residue;
-        let residue =
-            hierarchy
-                .residue(residue_id)
-                .map_err(|error| DsspError::InvalidHierarchy {
-                    message: error.to_string(),
-                })?;
+        let residue = hierarchy
+            .residue(residue_id)
+            .expect("chain residues come from the model hierarchy");
         let key = residue_id;
         if !matches!(
             residue.class(),
@@ -437,12 +434,9 @@ fn extract_chain(
         let mut seen_backbone = 0;
 
         for &site_id in &residue.atom_sites {
-            let site =
-                hierarchy
-                    .atom_site(site_id)
-                    .map_err(|error| DsspError::InvalidHierarchy {
-                        message: error.to_string(),
-                    })?;
+            let site = hierarchy
+                .atom_site(site_id)
+                .expect("residue atom sites come from the model hierarchy");
             let atom_name = site
                 .metadata
                 .label_atom_id
@@ -456,27 +450,23 @@ fn extract_chain(
             if backbone[backbone_index].is_some() {
                 return Err(DsspError::AmbiguousBackboneAtom {
                     residue: key,
-                    atom_name: BACKBONE_NAMES[backbone_index],
+                    atom: DsspBackboneAtom::ALL[backbone_index],
                 });
             }
             let atom = site.atom;
             backbone[backbone_index] = Some(Vec3::from(
                 model
                     .position(atom)
-                    .map_err(|error| DsspError::InvalidHierarchy {
-                        message: error.to_string(),
-                    })?
+                    .expect("hierarchy atoms have model positions")
                     .value_in(ANGSTROM)
-                    .map_err(|error| DsspError::InvalidHierarchy {
-                        message: error.to_string(),
-                    })?,
+                    .expect("positions are lengths"),
             ));
         }
 
-        let missing = BACKBONE_NAMES
-            .iter()
+        let missing = DsspBackboneAtom::ALL
+            .into_iter()
             .enumerate()
-            .filter_map(|(index, name)| backbone[index].is_none().then_some(*name))
+            .filter_map(|(index, atom)| backbone[index].is_none().then_some(atom))
             .collect::<Vec<_>>();
         if !missing.is_empty() {
             if seen_backbone == 0 && residue.class() != ResidueClass::AminoAcid {
@@ -506,10 +496,7 @@ fn extract_chain(
             .into_iter()
             .any(|point| !point.is_dssp_representable())
         {
-            return Err(DsspError::CoordinateOutOfRange {
-                residue: key,
-                quantity: "backbone coordinate",
-            });
+            return Err(DsspError::CoordinateOutOfRange { residue: key });
         }
         let index = residues.len();
         let continuous = previous.is_some_and(|prior: usize| {
@@ -603,7 +590,6 @@ fn calculate_geometry(
             if hydrogen.is_none() {
                 return Err(DsspError::DegenerateBackboneGeometry {
                     residue: residues[index].key,
-                    quantity: "preceding carbonyl bond",
                 });
             }
             residues[index].h = hydrogen;
@@ -793,7 +779,6 @@ fn calculate_hydrogen_bond(
     if distances.iter().any(|distance| !distance.is_finite()) {
         return Err(DsspError::NonFiniteGeometry {
             residue: residues[donor].key,
-            quantity: "hydrogen-bond energy",
         });
     }
     let mut energy = if distances

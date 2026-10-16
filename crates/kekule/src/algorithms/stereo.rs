@@ -495,12 +495,12 @@ pub enum CoordinateStereoError {
 impl fmt::Display for CoordinateStereoError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Perception(error) => error.fmt(formatter),
+            Self::Perception(_) => formatter.write_str("stereo search failed"),
             Self::PositionCountMismatch { expected, actual } => write!(
                 formatter,
                 "molecule requires {expected} positions, but received {actual}"
             ),
-            Self::InvalidStereo(error) => write!(formatter, "{error}"),
+            Self::InvalidStereo(_) => formatter.write_str("represented stereo is invalid"),
             Self::CouldNotCreateElement(_) => {
                 formatter.write_str("could not materialize coordinate stereo")
             }

@@ -153,42 +153,42 @@ impl TopologyEditor {
                 &(instance_start..instance_start + source.instance_count()).collect::<Vec<_>>(),
             )
             .map_err(|error| TopologyEditError::AppendProperty {
-                domain: "molecule instance",
+                domain: crate::properties::PropertyDomain::MoleculeInstances,
                 error: Box::new(error),
             })?;
         self.properties
             .atoms_mut()
             .copy_rows_from(source.properties().atoms().raw(), &atom_rows)
             .map_err(|error| TopologyEditError::AppendProperty {
-                domain: "topology atom",
+                domain: crate::properties::PropertyDomain::TopologyAtoms,
                 error: Box::new(error),
             })?;
         self.properties
             .bonds_mut()
             .copy_rows_from(source.properties().bonds().raw(), &bond_rows)
             .map_err(|error| TopologyEditError::AppendProperty {
-                domain: "topology bond",
+                domain: crate::properties::PropertyDomain::TopologyBonds,
                 error: Box::new(error),
             })?;
         self.properties
             .chains_mut()
             .copy_rows_from(source.properties().chains().raw(), &chain_rows)
             .map_err(|error| TopologyEditError::AppendProperty {
-                domain: "chain",
+                domain: crate::properties::PropertyDomain::Chains,
                 error: Box::new(error),
             })?;
         self.properties
             .residues_mut()
             .copy_rows_from(source.properties().residues().raw(), &residue_rows)
             .map_err(|error| TopologyEditError::AppendProperty {
-                domain: "residue",
+                domain: crate::properties::PropertyDomain::Residues,
                 error: Box::new(error),
             })?;
         self.properties
             .atom_sites_mut()
             .copy_rows_from(source.properties().atom_sites().raw(), &site_rows)
             .map_err(|error| TopologyEditError::AppendProperty {
-                domain: "atom site",
+                domain: crate::properties::PropertyDomain::AtomSites,
                 error: Box::new(error),
             })?;
         self.changed();

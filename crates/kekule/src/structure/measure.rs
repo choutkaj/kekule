@@ -102,8 +102,8 @@ impl fmt::Display for MeasurementError {
             Self::MissingBond { a, b } => {
                 write!(f, "measurement requires a direct bond between {a} and {b}")
             }
-            Self::Selection(error) => write!(f, "measurement selection: {error}"),
-            Self::Unit(error) => write!(f, "measurement unit: {error}"),
+            Self::Selection(_) => f.write_str("invalid measurement selection"),
+            Self::Unit(_) => f.write_str("invalid measurement unit"),
             Self::InvalidCutoff => f.write_str("distance cutoff must be finite and nonnegative"),
             Self::DegenerateGeometry => {
                 f.write_str("angle or dihedral is undefined for this geometry")

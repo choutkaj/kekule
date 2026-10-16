@@ -392,7 +392,7 @@ pub enum PeriodicCellError {
 impl fmt::Display for PeriodicCellError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unit(error) => write!(formatter, "invalid periodic-cell unit: {error}"),
+            Self::Unit(_) => formatter.write_str("invalid periodic-cell unit"),
             Self::NoPeriodicAxes => formatter.write_str("periodic cell has no periodic axis"),
             Self::NonFiniteVector => formatter.write_str("periodic-cell vectors must be finite"),
             Self::DegenerateVectors => {

@@ -690,8 +690,8 @@ impl fmt::Display for TrajectoryError {
             Self::NonMonotonicTime { frame } => {
                 write!(formatter, "time decreases at frame {frame}")
             }
-            Self::Structure(error) => write!(formatter, "invalid trajectory frame: {error}"),
-            Self::Subset(error) => write!(formatter, "cannot subset trajectory: {error}"),
+            Self::Structure(_) => formatter.write_str("invalid trajectory frame"),
+            Self::Subset(_) => formatter.write_str("cannot subset trajectory"),
         }
     }
 }

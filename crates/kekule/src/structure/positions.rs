@@ -228,7 +228,7 @@ impl fmt::Display for PositionError {
             Self::NonFinitePosition { index } => {
                 write!(formatter, "position at {index} is not finite")
             }
-            Self::Unit(error) => write!(formatter, "invalid position unit: {error}"),
+            Self::Unit(_) => formatter.write_str("invalid position unit"),
         }
     }
 }

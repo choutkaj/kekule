@@ -164,9 +164,7 @@ pub enum SymmetryError {
 impl fmt::Display for SymmetryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Perception(error) => {
-                write!(formatter, "cannot perceive hydrogen counts: {error}")
-            }
+            Self::Perception(_) => formatter.write_str("cannot perceive hydrogen counts"),
             Self::UnknownHydrogenCount { atom } => {
                 write!(formatter, "hydrogen count of atom {atom} is unknown")
             }

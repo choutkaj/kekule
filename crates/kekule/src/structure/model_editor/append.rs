@@ -94,14 +94,14 @@ impl ModelEditor {
             .atoms_raw_mut()
             .copy_rows_from(source.properties().atoms().raw(), &atom_rows)
             .map_err(|error| ModelEditError::AppendProperty {
-                domain: "model atom",
+                domain: crate::properties::PropertyDomain::ModelAtoms,
                 error: Box::new(error),
             })?;
         properties
             .bonds_raw_mut()
             .copy_rows_from(source.properties().bonds().raw(), &bond_rows)
             .map_err(|error| ModelEditError::AppendProperty {
-                domain: "model bond",
+                domain: crate::properties::PropertyDomain::ModelBonds,
                 error: Box::new(error),
             })?;
         properties.owner_mut().clear();

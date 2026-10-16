@@ -547,8 +547,8 @@ impl fmt::Display for ModelError {
         match self {
             Self::InvalidAtomId(atom) => write!(formatter, "invalid topology atom: {atom}"),
             Self::InvalidBondId(bond) => write!(formatter, "invalid topology bond: {bond}"),
-            Self::Structure(error) => write!(formatter, "invalid model structure: {error}"),
-            Self::Subset(error) => write!(formatter, "cannot subset model topology: {error}"),
+            Self::Structure(_) => formatter.write_str("invalid model structure"),
+            Self::Subset(_) => formatter.write_str("cannot subset model topology"),
         }
     }
 }
@@ -847,9 +847,9 @@ impl fmt::Display for ModelBuildError {
             Self::CapacityOverflow => {
                 formatter.write_str("model construction exceeds coordinate capacity")
             }
-            Self::Topology(error) => write!(formatter, "cannot build topology: {error}"),
-            Self::Hierarchy(error) => write!(formatter, "cannot build hierarchy: {error}"),
-            Self::Model(error) => write!(formatter, "cannot build model: {error}"),
+            Self::Topology(_) => formatter.write_str("cannot build topology"),
+            Self::Hierarchy(_) => formatter.write_str("cannot build hierarchy"),
+            Self::Model(_) => formatter.write_str("cannot build model"),
         }
     }
 }

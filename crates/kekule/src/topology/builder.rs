@@ -954,7 +954,7 @@ impl fmt::Display for TopologyBuildError {
             Self::NoMoleculeInstances => {
                 formatter.write_str("topology must contain at least one molecule instance")
             }
-            Self::Property(error) => write!(formatter, "invalid topology properties: {error}"),
+            Self::Property(_) => formatter.write_str("invalid topology properties"),
             Self::InvalidMoleculeDefinitionId(id) => {
                 write!(formatter, "invalid molecule definition: {id}")
             }
@@ -965,9 +965,7 @@ impl fmt::Display for TopologyBuildError {
                     "molecule definition {id} is not referenced by any instance"
                 )
             }
-            Self::InvalidHierarchy(error) => {
-                write!(formatter, "invalid topology hierarchy: {error}")
-            }
+            Self::InvalidHierarchy(_) => formatter.write_str("invalid topology hierarchy"),
             Self::IdentifierCapacityExceeded(kind) => {
                 write!(formatter, "{kind} identifier capacity exceeded")
             }

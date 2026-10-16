@@ -267,6 +267,25 @@ impl BondProvenance {
     }
 }
 
+/// A connection-partner selector whose alias fields disagree.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConflictingSelector {
+    /// The label alternate-location aliases.
+    LabelAlternateLocationAliases,
+    /// The label and author alternate locations.
+    LabelAndAuthorAlternateLocations,
+}
+
+impl fmt::Display for ConflictingSelector {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::LabelAlternateLocationAliases => "label alternate-location aliases",
+            Self::LabelAndAuthorAlternateLocations => "label and author alternate locations",
+        })
+    }
+}
+
 /// Why a connection record's partner could not be resolved uniquely.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -276,7 +295,10 @@ pub enum ConnectionResolutionReason {
     /// No label or author atom-identity selector was supplied.
     MissingSelector,
     /// Alias fields for the same selector supplied conflicting values.
-    ConflictingSelectorValues { selector: &'static str },
+    ConflictingSelectorValues {
+        /// The selector whose fields conflict.
+        selector: ConflictingSelector,
+    },
     /// Label and author selector families matched disjoint atom sets.
     ConflictingLabelAndAuthorSelectors,
     /// An explicitly named alternate location existed before selection but was omitted.

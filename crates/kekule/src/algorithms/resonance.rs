@@ -4,7 +4,8 @@
 //! the BSD 3-Clause license reproduced in LICENSE-RDKit in this crate.
 use crate::diagnostics::LimitExceeded;
 use crate::molecule::{
-    AtomId, BondId, BondOrder, ImplicitHydrogens, Molecule, ResonanceGroup, ResonancePerception,
+    AtomId, BondId, BondOrder, ImplicitHydrogens, Molecule, MoleculeError,
+    MoleculePublicationError, ResonanceGroup, ResonancePerception,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -78,17 +79,34 @@ impl Default for ResonanceOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Why resonance perception or enumeration failed.
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ResonanceError {
+    /// Conjugation is not installed.
     MissingConjugation,
+    /// The atom's implicit hydrogen count is unknown.
     UnknownHydrogens(AtomId),
+    /// A resonance group contains a bond the search does not support.
     UnsupportedBond(BondId),
+    /// The search reached an impossible electron count.
     InvalidElectronCount,
+    /// [`ResonanceOptions::max_structures`] is one; RDKit-compatible
+    /// enumeration needs zero or at least two.
     InvalidStructureLimit,
     /// The enumeration exceeded [`ResonanceOptions::max_total_work`].
     LimitExceeded(LimitExceeded),
-    Materialization(String),
+    /// No contributor has this index.
+    ContributorOutOfRange {
+        /// The requested index.
+        index: usize,
+        /// The number of contributors.
+        count: usize,
+    },
+    /// Editing the contributor molecule failed; see the source.
+    Molecule(MoleculeError),
+    /// Publishing the contributor molecule failed; see the source.
+    Publication(MoleculePublicationError),
 }
 impl fmt::Display for ResonanceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -99,13 +117,24 @@ impl fmt::Display for ResonanceError {
             Self::InvalidElectronCount => f.write_str("invalid electron count in resonance search"),
             Self::InvalidStructureLimit => f.write_str("RDKit-compatible conjugated enumeration requires a structure limit of zero or at least two"),
             Self::LimitExceeded(limit) => write!(f, "resonance {limit}"),
-            Self::Materialization(reason) => {
-                write!(f, "cannot materialize resonance contributor: {reason}")
-            }
+            Self::ContributorOutOfRange { index, count } => write!(
+                f,
+                "resonance contributor {index} is out of range for {count} contributors"
+            ),
+            Self::Molecule(_) => f.write_str("cannot edit the resonance contributor"),
+            Self::Publication(_) => f.write_str("cannot publish the resonance contributor"),
         }
     }
 }
-impl std::error::Error for ResonanceError {}
+impl std::error::Error for ResonanceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Molecule(error) => Some(error),
+            Self::Publication(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// Prepares connected conjugated groups, without enumerating contributors.
 /// Success installs only the group partition; failure leaves all state intact.
@@ -193,9 +222,13 @@ impl ResonanceStructures<'_> {
     /// Materializes one contributor, fixes hydrogen counts and clears derived state.
     /// Bond edits prune invalid represented stereo through the ordinary editor.
     pub fn to_molecule(&self, index: usize) -> Result<Molecule, ResonanceError> {
-        let contributor = self.contributors.get(index).ok_or_else(|| {
-            ResonanceError::Materialization("contributor index out of bounds".into())
-        })?;
+        let contributor =
+            self.contributors
+                .get(index)
+                .ok_or(ResonanceError::ContributorOutOfRange {
+                    index,
+                    count: self.contributors.len(),
+                })?;
         let mut editor = self.source.to_editor();
         for (id, _) in self.source.atoms() {
             let h = self
@@ -203,9 +236,7 @@ impl ResonanceStructures<'_> {
                 .implicit_hydrogens(id)
                 .expect("live atom")
                 .ok_or(ResonanceError::UnknownHydrogens(id))?;
-            let mut atom = editor
-                .atom_mut(id)
-                .map_err(|e| ResonanceError::Materialization(e.to_string()))?;
+            let mut atom = editor.atom_mut(id).map_err(ResonanceError::Molecule)?;
             atom.formal_charge = contributor.charges[&id];
             atom.hydrogens = ImplicitHydrogens::Fixed(
                 u8::try_from(h).map_err(|_| ResonanceError::InvalidElectronCount)?,
@@ -214,11 +245,9 @@ impl ResonanceStructures<'_> {
         for (&id, &order) in &contributor.orders {
             editor
                 .set_bond_order(id, order)
-                .map_err(|e| ResonanceError::Materialization(e.to_string()))?;
+                .map_err(ResonanceError::Molecule)?;
         }
-        editor
-            .finish()
-            .map_err(|e| ResonanceError::Materialization(e.to_string()))
+        editor.finish().map_err(ResonanceError::Publication)
     }
 }
 

@@ -2,6 +2,57 @@ use std::fmt;
 
 use crate::diagnostics::{LimitExceeded, Resource};
 
+/// Why a query stereo constraint or group is invalid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum QueryStereoIssue {
+    /// An atom's carrier frame names a different tetrahedral focus.
+    FrameFocusMismatch,
+    /// Two constraints share one focus.
+    DuplicateFocus,
+    /// A tetrahedral predicate has no carrier frame.
+    MissingCarrierFrame,
+    /// A stereo group has no members.
+    EmptyGroup,
+    /// A stereo group lists a member twice.
+    DuplicateGroupMember,
+    /// A member already belongs to another group.
+    MemberAlreadyGrouped,
+    /// A group member has no tetrahedral carrier frame.
+    GroupMemberWithoutFrame,
+    /// Tetrahedral carriers do not cover every query neighbor, or exceed
+    /// four.
+    IncompleteTetrahedralCarriers,
+    /// A tetrahedral carrier is repeated.
+    DuplicateTetrahedralCarrier,
+    /// Double-bond carriers are not distinct substituents at their
+    /// endpoints.
+    InvalidDoubleBondCarriers,
+}
+
+impl fmt::Display for QueryStereoIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::FrameFocusMismatch => "atom frame must have the same tetrahedral focus",
+            Self::DuplicateFocus => "duplicate query stereo focus",
+            Self::MissingCarrierFrame => "tetrahedral predicate requires a carrier frame",
+            Self::EmptyGroup => "empty query stereo group",
+            Self::DuplicateGroupMember => "duplicate query stereo group member",
+            Self::MemberAlreadyGrouped => "query stereo member already grouped",
+            Self::GroupMemberWithoutFrame => {
+                "query stereo group member requires a tetrahedral carrier frame"
+            }
+            Self::IncompleteTetrahedralCarriers => {
+                "tetrahedral carriers must cover all query neighbors, at most four"
+            }
+            Self::DuplicateTetrahedralCarrier => "tetrahedral carriers must be distinct neighbors",
+            Self::InvalidDoubleBondCarriers => {
+                "double-bond carriers must be distinct substituents at the corresponding endpoints"
+            }
+        })
+    }
+}
+
 /// Maximum nesting depth of recursive SMARTS queries in one query graph.
 pub const MAX_QUERY_RECURSION_DEPTH: usize = 32;
 /// Maximum atoms of one query graph, counting every recursive query.
@@ -303,7 +354,7 @@ impl QueryGraphBuilder {
         self.validate_atom(atom)?;
         if !matches!(&frame, QueryStereoConstraint::Tetrahedral { center, .. } if *center == atom) {
             return Err(QueryGraphError::InvalidStereo(
-                "atom frame must have the same tetrahedral focus",
+                QueryStereoIssue::FrameFocusMismatch,
             ));
         }
         frame.validate(self.atoms.len(), &self.bonds, &self.adjacency)?;
@@ -355,7 +406,7 @@ impl QueryGraphBuilder {
             .any(|existing| existing.focus() == constraint.focus())
         {
             return Err(QueryGraphError::InvalidStereo(
-                "duplicate query stereo focus",
+                QueryStereoIssue::DuplicateFocus,
             ));
         }
         constraint.canonicalize();
@@ -381,7 +432,7 @@ impl QueryGraphBuilder {
                 && atom.stereo_frame.is_none()
             {
                 return Err(QueryGraphError::InvalidStereo(
-                    "tetrahedral predicate requires a carrier frame",
+                    QueryStereoIssue::MissingCarrierFrame,
                 ));
             }
         }
@@ -399,12 +450,12 @@ impl QueryGraphBuilder {
     /// Adds one enhanced stereo relationship. No member may occur in two groups.
     pub fn add_stereo_group(&mut self, mut group: QueryStereoGroup) -> Result<(), QueryGraphError> {
         if group.members.is_empty() {
-            return Err(QueryGraphError::InvalidStereo("empty query stereo group"));
+            return Err(QueryGraphError::InvalidStereo(QueryStereoIssue::EmptyGroup));
         }
         group.members.sort_unstable();
         if group.members.windows(2).any(|p| p[0] == p[1]) {
             return Err(QueryGraphError::InvalidStereo(
-                "duplicate query stereo group member",
+                QueryStereoIssue::DuplicateGroupMember,
             ));
         }
         for &member in &group.members {
@@ -415,7 +466,7 @@ impl QueryGraphBuilder {
                 .any(|g| g.members.contains(&member))
             {
                 return Err(QueryGraphError::InvalidStereo(
-                    "query stereo member already grouped",
+                    QueryStereoIssue::MemberAlreadyGrouped,
                 ));
             }
             let atom = &self.atoms[member.index()];
@@ -426,7 +477,7 @@ impl QueryGraphBuilder {
             let has_constraint = self.stereo.iter().any(|s| matches!(s, QueryStereoConstraint::Tetrahedral { center, .. } if *center == member));
             if !has_frame && !has_constraint {
                 return Err(QueryGraphError::InvalidStereo(
-                    "query stereo group member requires a tetrahedral carrier frame",
+                    QueryStereoIssue::GroupMemberWithoutFrame,
                 ));
             }
         }
@@ -449,7 +500,8 @@ pub enum QueryGraphError {
     EmptyGraph,
     InvalidAtomId(QueryAtomId),
     InvalidBondId(QueryBondId),
-    InvalidStereo(&'static str),
+    /// A stereo constraint or group is invalid.
+    InvalidStereo(QueryStereoIssue),
     SelfBond(QueryAtomId),
     DuplicateBond {
         a: QueryAtomId,
@@ -473,7 +525,7 @@ impl fmt::Display for QueryGraphError {
             Self::EmptyGraph => f.write_str("query graph must contain at least one atom"),
             Self::InvalidAtomId(id) => write!(f, "invalid query atom id: {id}"),
             Self::InvalidBondId(id) => write!(f, "invalid query bond id: {id}"),
-            Self::InvalidStereo(message) => write!(f, "invalid query stereo: {message}"),
+            Self::InvalidStereo(issue) => write!(f, "invalid query stereo: {issue}"),
             Self::SelfBond(id) => write!(f, "cannot create a query bond from {id} to itself"),
             Self::DuplicateBond { a, b } => write!(f, "duplicate query bond between {a} and {b}"),
             Self::LimitExceeded(limit) => write!(f, "query graph {limit}"),

@@ -37,9 +37,9 @@ impl fmt::Display for PeriodicBoxError {
         match self {
             Self::InvalidPadding => f.write_str("padding must be finite and positive"),
             Self::NotFullyPeriodic => f.write_str("box construction requires three periodic axes"),
-            Self::Unit(e) => e.fmt(f),
-            Self::Cell(e) => e.fmt(f),
-            Self::Geometry(e) => e.fmt(f),
+            Self::Unit(_) => f.write_str("invalid box unit"),
+            Self::Cell(_) => f.write_str("invalid periodic cell"),
+            Self::Geometry(_) => f.write_str("periodic geometry failed"),
         }
     }
 }

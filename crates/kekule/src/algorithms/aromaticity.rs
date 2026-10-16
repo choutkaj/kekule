@@ -19,7 +19,6 @@ mod fused_tests;
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AromaticityError {
-    UnsupportedElement(AtomId),
     RingPerception(RingPerceptionError),
     /// MDL requires an identified SSSR-like ring set, not fallback cycles.
     IncompatibleRingBasis,
@@ -119,10 +118,7 @@ impl fmt::Display for AromaticityError {
             Self::IncompatibleRingBasis => {
                 f.write_str("MDL aromaticity requires compatible SSSR ring perception")
             }
-            Self::UnsupportedElement(id) => {
-                write!(f, "unsupported aromaticity element at atom {id}")
-            }
-            Self::RingPerception(error) => write!(f, "{error}"),
+            Self::RingPerception(_) => f.write_str("ring perception failed"),
             Self::LimitExceeded(limit) => write!(f, "aromaticity {limit}"),
         }
     }
