@@ -529,7 +529,8 @@ impl<R: Read + Seek> TrrReader<R> {
         destination.replace_from_data(data).map_err(Into::into)
     }
 
-    pub fn into_indexed(mut self) -> Result<IndexedTrrReader<R>, TrajectoryIoError> {
+    /// Indexes a freshly opened reader, whose next frame is frame 0.
+    fn index_frames(mut self) -> Result<IndexedTrrReader<R>, TrajectoryIoError> {
         let mut offsets = Vec::new();
         loop {
             if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
@@ -665,6 +666,21 @@ pub struct IndexedTrrReader<R> {
 }
 
 impl<R: Read + Seek> IndexedTrrReader<R> {
+    /// Opens a stream whose coordinates follow the supplied topology's dense order
+    /// and indexes it for random access.
+    ///
+    /// The stream's position at construction is frame 0. Every frame from there to
+    /// the end is decoded and verified before the reader is returned, and both
+    /// sequential and indexed reads then address frames from that start. Topology,
+    /// limits, and diagnostic labels follow [`TrrReader::new`].
+    pub fn new(
+        reader: R,
+        topology: impl Into<Arc<Topology>>,
+        options: TrrReadOptions,
+    ) -> Result<Self, TrajectoryIoError> {
+        TrrReader::new(reader, topology, options)?.index_frames()
+    }
+
     pub fn topology(&self) -> &Topology {
         self.inner.topology()
     }

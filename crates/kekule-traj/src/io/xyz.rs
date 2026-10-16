@@ -469,16 +469,8 @@ impl<R: BufRead + Seek> XyzReader<R> {
         Ok(())
     }
 
-    pub fn into_indexed(mut self) -> Result<IndexedXyzReader<R>, TrajectoryIoError> {
-        self.reader.seek(SeekFrom::Start(0)).map_err(|error| {
-            io_context(
-                TrajectoryIoOperation::Index,
-                Some(TrajectoryFormat::Xyz),
-                &self.options.source_label,
-                error,
-            )
-        })?;
-        self.frame_cursor = 0;
+    /// Indexes a freshly opened reader, whose next frame is frame 0.
+    fn index_frames(mut self, stream_start: u64) -> Result<IndexedXyzReader<R>, TrajectoryIoError> {
         let mut offsets = Vec::new();
         loop {
             if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
@@ -543,14 +535,16 @@ impl<R: BufRead + Seek> XyzReader<R> {
                 "XYZ trajectory contains no frame",
             ));
         }
-        self.reader.seek(SeekFrom::Start(0)).map_err(|error| {
-            io_context(
-                TrajectoryIoOperation::Index,
-                Some(TrajectoryFormat::Xyz),
-                &self.options.source_label,
-                error,
-            )
-        })?;
+        self.reader
+            .seek(SeekFrom::Start(stream_start))
+            .map_err(|error| {
+                io_context(
+                    TrajectoryIoOperation::Index,
+                    Some(TrajectoryFormat::Xyz),
+                    &self.options.source_label,
+                    error,
+                )
+            })?;
         self.frame_cursor = 0;
         Ok(IndexedXyzReader {
             reader: self,
@@ -563,6 +557,31 @@ impl<R: BufRead + Seek> XyzReader<R> {
 pub struct IndexedXyzReader<R> {
     reader: XyzReader<R>,
     offsets: Vec<u64>,
+}
+
+impl<R: BufRead + Seek> IndexedXyzReader<R> {
+    /// Opens a stream whose coordinates follow the supplied topology's dense order
+    /// and indexes it for random access.
+    ///
+    /// The stream's position at construction is frame 0. Every frame from there to
+    /// the end is decoded and verified before the reader is returned, and both
+    /// sequential and indexed reads then address frames from that start. Topology,
+    /// limits, and diagnostic labels follow [`XyzReader::new`].
+    pub fn new(
+        mut reader: R,
+        topology: impl Into<Arc<Topology>>,
+        options: XyzReadOptions,
+    ) -> Result<Self, TrajectoryIoError> {
+        let stream_start = reader.stream_position().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Xyz),
+                &options.source_label,
+                error,
+            )
+        })?;
+        XyzReader::new(reader, topology, options)?.index_frames(stream_start)
+    }
 }
 
 impl<R: BufRead + Seek> TrajectoryReader for IndexedXyzReader<R> {

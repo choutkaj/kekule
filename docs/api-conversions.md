@@ -17,10 +17,10 @@ view. Ordinary getters and operations use semantic names. Copyable views may tak
 | `Quantity::to_unit(unit)` | Convert a borrowed, cloneable payload. |
 | `Quantity::into_unit(unit)`, `Quantity::into_value()` | Consume the quantity; the payload need not be cloneable. |
 | `Ensemble`/`Trajectory` `into_parts()`, `into_items()`; `Trajectory::into_ensemble()` | Consume a collection; members or frames move without copying. `into_ensemble` assigns equal weights. |
-| Reader `into_indexed()`, writer `into_trajectory()` | Transfer reader/writer ownership. |
+| Writer `into_trajectory()` | Transfer writer ownership. |
 | `as_model_view()` (`AsModelView`), `Quantity::as_ref()`, `PropertyKey::as_str()` | Return borrowed projections. |
 
-Ownership does not imply cost: indexing a reader scans input, and extracting
+Ownership does not imply cost: opening an indexed reader scans input, and extracting
 molecules from shared topology may clone definitions. Likewise,
 `document.to_model()` retains the document, while
 `document.interpret()?.into_model()` consumes the temporary interpretation.

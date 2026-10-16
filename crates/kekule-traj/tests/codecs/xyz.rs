@@ -7,7 +7,9 @@ use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::units::{Quantity, ANGSTROM, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
-use kekule_traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
+use kekule_traj::io::xyz::{
+    IndexedXyzReader, XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter,
+};
 use kekule_traj::io::{
     create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory_with_options,
     open_trajectory_with_options, FieldAvailability, FormatDetectionEvidence,
@@ -215,7 +217,7 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
 #[test]
 fn indexed_xyz_matches_sequential_and_random_reads_preserve_cursor() {
     let topology = topology();
-    let reader = XyzReader::new(
+    let mut reader = IndexedXyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
         Arc::clone(&topology),
         XyzReadOptions::default()
@@ -223,7 +225,6 @@ fn indexed_xyz_matches_sequential_and_random_reads_preserve_cursor() {
             .with_source_label("indexed.xyz"),
     )
     .unwrap();
-    let mut reader = reader.into_indexed().unwrap();
     assert_eq!(reader.frame_count(), Some(2));
     let mut buffer = FrameBuffer::new(topology);
 
@@ -236,6 +237,47 @@ fn indexed_xyz_matches_sequential_and_random_reads_preserve_cursor() {
         Err(TrajectoryIoError::FrameIndexOutOfRange(2))
     ));
     assert_xs_close(&buffer, &[0.0, 0.3]);
+}
+
+#[test]
+fn indexed_xyz_addresses_frames_from_the_stream_position_it_was_opened_at() {
+    // Nanometre input keeps the decoded coordinates exact.
+    let topology = topology();
+    let bytes = b"2
+first
+C 0.0 1.0 2.0
+H 4.0 5.0 6.0
+2
+second
+C 1.0 2.0 3.0
+H 4.0 5.0 6.0
+2
+third
+C 2.0 3.0 4.0
+H 4.0 5.0 6.0
+";
+    let expected = support::read_all(
+        &mut XyzReader::new(
+            Cursor::new(bytes),
+            Arc::clone(&topology),
+            XyzReadOptions::default().with_length_unit(NANOMETER),
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        expected
+            .iter()
+            .map(|frame| frame.positions().values().value()[0].x)
+            .collect::<Vec<_>>(),
+        [0.0, 1.0, 2.0]
+    );
+    let mut indexed = IndexedXyzReader::new(
+        support::cursor_after_leading_bytes(bytes),
+        topology,
+        XyzReadOptions::default().with_length_unit(NANOMETER),
+    )
+    .unwrap();
+    support::assert_indexes_every_frame_from_its_start(&mut indexed, &expected);
 }
 
 #[test]
@@ -472,15 +514,13 @@ fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
     assert!(reader.read_next(&mut buffer).unwrap());
     assert!(!reader.read_next(&mut buffer).unwrap());
 
-    let indexed = XyzReader::new(
+    let indexed = IndexedXyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
         Arc::clone(&topology),
         XyzReadOptions::default()
             .with_limits(limits)
             .with_source_label("exact-index-limit.xyz"),
     )
-    .unwrap()
-    .into_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
 }
@@ -594,7 +634,7 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
             assert_eq!(result, Err(exceeded.clone()), "{max_scratch_bytes}");
             assert_eq!(support::buffer_snapshot(&destination), untouched);
         }
-        let indexed = XyzReader::new(
+        let indexed = IndexedXyzReader::new(
             Cursor::new(input.clone()),
             Arc::clone(&topology),
             XyzReadOptions::default()
@@ -603,9 +643,7 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
                     ..TrajectoryIoLimits::default()
                 })
                 .with_source_label("scratch.xyz"),
-        )
-        .unwrap()
-        .into_indexed();
+        );
         assert_eq!(indexed.err(), Some(exceeded.clone()), "{max_scratch_bytes}");
     }
     for stream in streams() {
@@ -659,15 +697,13 @@ fn xyz_limits_probe_but_do_not_parse_or_consume_frame_n_plus_one() {
         },
     ] {
         let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
-        let error = XyzReader::new(
+        let error = IndexedXyzReader::new(
             stream,
             Arc::clone(&topology),
             XyzReadOptions::default()
                 .with_limits(limits)
                 .with_source_label("guarded-index.xyz"),
         )
-        .unwrap()
-        .into_indexed()
         .err()
         .unwrap();
         assert_eq!(
