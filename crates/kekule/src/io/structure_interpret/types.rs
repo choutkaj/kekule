@@ -178,8 +178,8 @@ pub enum StructureInterpretIssue {
         atom_name: String,
         heavy_atom_name: String,
     },
-    /// Residues adjacent in sequence whose linking atoms lie beyond bonding
-    /// distance are not bonded.
+    /// Residues adjacent in sequence, or joined by a branched entity's link,
+    /// whose linking atoms lie beyond bonding distance are not bonded.
     ChainBreak {
         residue: SourceResidueId,
         next: SourceResidueId,
