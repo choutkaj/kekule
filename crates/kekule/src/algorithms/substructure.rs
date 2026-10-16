@@ -3,8 +3,11 @@ mod engine;
 mod prepared;
 mod stereo;
 mod topology;
-pub use prepared::*;
-pub use topology::*;
+pub use prepared::{PreparedTarget, TaggedMatchError, TaggedQuery};
+pub use topology::{
+    find_topology_matches, find_topology_matches_with_options, PreparedTopologyTarget,
+    TopologyQueryMatch,
+};
 
 use crate::core::{AtomId, Molecule};
 use crate::query::{QueryAtomId, QueryGraph};

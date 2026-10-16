@@ -19,6 +19,10 @@ readme = "README.md"
 keywords = ["chemistry", "cheminformatics", "bioinformatics", "molecular-modeling"]
 categories = ["science", "data-structures", "parser-implementations"]
 
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
 [profile.dev.package.sha2]
 opt-level = 3
 

@@ -3,8 +3,11 @@
 //! Every format reports failures through the same vocabulary: a structured
 //! [`DiagnosticKind`] that callers can match on, and a [`SourceLocation`] in the
 //! original input. Messages remain human-readable detail, not an API contract.
+//! Writers share [`UnrepresentablePolicy`] for state a format cannot represent.
 
 use std::fmt;
+
+pub use crate::io::UnrepresentablePolicy;
 
 /// A position in the original input text.
 ///

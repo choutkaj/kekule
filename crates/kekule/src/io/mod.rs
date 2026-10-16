@@ -24,26 +24,51 @@ pub use components::{
     Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentError, ComponentLibrary,
     ComponentLinking,
 };
-pub use mmcif_document::*;
-pub use mmcif_write::*;
-pub use molfile_document::{
-    parse_molfile_document, parse_molfile_document_with_options, parse_molfile_reader, MolfileAtom,
-    MolfileAtomParity, MolfileBond, MolfileBondOrder, MolfileBondStereo, MolfileDocument,
-    MolfileHeader, MolfileParseError, MolfileParseOptions, MolfileRadical, MolfileStereoGroup,
-    MolfileStereoGroupKind, MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion,
+pub(crate) use mmcif_document::{parse_mmcif_reader, parse_mmcif_str};
+pub use mmcif_document::{
+    MmcifBlock, MmcifDocument, MmcifEntry, MmcifItem, MmcifLoopTable, MmcifParseError,
+    MmcifParseOptions, MmcifValue,
 };
-pub use molfile_write::*;
-pub use pdb_document::*;
-pub use sdf_document::*;
-pub use sdf_ensemble::*;
-pub use sdf_write::*;
-pub use smiles::{
+pub(crate) use mmcif_write::{write_mmcif, write_mmcif_to};
+pub use mmcif_write::{
+    MmcifBlockSource, MmcifEntityClassifications, MmcifWriteError, MmcifWriteOptions,
+};
+pub(crate) use molfile_document::{
+    parse_molfile_document, parse_molfile_document_with_options, parse_molfile_reader,
+};
+pub use molfile_document::{
+    MolfileAtom, MolfileAtomParity, MolfileBond, MolfileBondOrder, MolfileBondStereo,
+    MolfileDocument, MolfileHeader, MolfileParseError, MolfileParseOptions, MolfileRadical,
+    MolfileStereoGroup, MolfileStereoGroupKind, MolfileUnsupported, MolfileUnsupportedContent,
+    MolfileVersion,
+};
+pub(crate) use molfile_write::{write_molfile, write_molfile_to};
+pub use molfile_write::{MolfileSource, MolfileWriteOptions, MolfileWriteVersion};
+pub(crate) use pdb_document::{parse_pdb_reader, parse_pdb_str};
+pub use pdb_document::{
+    PdbAtom, PdbAtomKind, PdbConect, PdbCryst1, PdbDocument, PdbLink, PdbModel, PdbParseError,
+    PdbParseOptions, PdbPartner, PdbRecord, PdbSsbond, PdbTer,
+};
+pub(crate) use sdf_document::{parse_sdf_document, parse_sdf_reader};
+pub use sdf_document::{
+    SdfDataField, SdfDocument, SdfInterpretError, SdfParseError, SdfParseOptions, SdfRecord,
+    SdfRecordInterpretation, SdfRecordInterpretationReport, SdfRecords,
+};
+pub(crate) use sdf_ensemble::sdf_ensemble;
+pub use sdf_ensemble::SdfEnsembleError;
+pub(crate) use sdf_write::{write_sdf, write_sdf_to};
+pub use sdf_write::{
+    SdfRecordSource, SdfWriteError, SdfWriteOptions, SDF_ENERGY_FIELD, SDF_WEIGHT_FIELD,
+};
+pub(crate) use smiles::{
     parse_smiles_document, parse_smiles_document_with_options, write_canonical_smiles,
-    write_isomeric_smiles, write_smiles, SmilesAtomMapping, SmilesBondMapping,
-    SmilesComponentCountError, SmilesComponentInterpretation, SmilesCxField, SmilesCxFieldKind,
-    SmilesCxStereoGroupKind, SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind,
-    SmilesInterpretError, SmilesInterpretOptions, SmilesInterpretation, SmilesInterpretationReport,
-    SmilesParseError, SmilesParseOptions, SmilesRecords,
+    write_isomeric_smiles, write_smiles,
+};
+pub use smiles::{
+    SmilesAtomMapping, SmilesBondMapping, SmilesComponentCountError, SmilesComponentInterpretation,
+    SmilesCxField, SmilesCxFieldKind, SmilesCxStereoGroupKind, SmilesDocument, SmilesDocumentToken,
+    SmilesDocumentTokenKind, SmilesInterpretError, SmilesInterpretOptions, SmilesInterpretation,
+    SmilesInterpretationReport, SmilesParseError, SmilesParseOptions, SmilesRecords,
 };
 pub use structure_documents::{
     MolfileAtomMapping, MolfileBondMapping, MolfileInterpretError, MolfileInterpretOptions,
@@ -58,4 +83,4 @@ pub use structure_interpret::{
     StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
     StructureInterpretationReport,
 };
-pub use write_error::*;
+pub use write_error::{MoleculeWriteError, MoleculeWriteErrorKind, UnrepresentablePolicy};

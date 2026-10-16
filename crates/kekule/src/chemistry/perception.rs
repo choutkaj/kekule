@@ -45,7 +45,7 @@ impl std::error::Error for PerceptionError {
 /// The fixed profile is RDKit-like valence and implicit hydrogens, followed by
 /// the default deterministic ring set, RDKit-like aromaticity and conjugation. The complete
 /// operation is transactional and never rewrites represented chemistry.
-pub fn perceive_molecule(molecule: &mut Molecule) -> Result<(), PerceptionError> {
+pub(crate) fn perceive_molecule(molecule: &mut Molecule) -> Result<(), PerceptionError> {
     let previous = molecule.perception().clone();
     if let Err(error) = perceive_molecule_in_place(molecule) {
         molecule

@@ -1,9 +1,11 @@
 #![no_main]
 
+use kekule::macromolecular::{
+    ModelSelection, StructureEnsembleInterpretOptions, StructureInterpretOptions,
+};
 use kekule::mmcif::{
     interpret_ensemble, interpret_ensemble_with_options, interpret_with_options,
-    parse_str_with_options, StructureEnsembleInterpretOptions, MmcifEntry, StructureInterpretOptions,
-    ModelSelection, MmcifParseOptions,
+    parse_str_with_options, MmcifEntry, MmcifParseOptions,
 };
 use libfuzzer_sys::fuzz_target;
 

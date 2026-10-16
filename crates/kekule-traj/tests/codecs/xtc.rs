@@ -747,8 +747,7 @@ fn xtc_fuzz_regression_rejects_compressed_bitstream_underflow_without_panic() {
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("fuzz-underflow.xtc"),
     )
-    .err()
-    .expect("fuzz artifact must be rejected during preflight");
+    .expect_err("fuzz artifact must be rejected during preflight");
     assert_eq!(
         codec_kind(&error),
         Some(TrajectoryCodecErrorKind::CorruptCompressedData)

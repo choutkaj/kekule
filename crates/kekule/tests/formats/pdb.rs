@@ -1,11 +1,11 @@
 use kekule::core::BondOrder;
 use kekule::diagnostics::{DiagnosticKind, SourceLocation};
-use kekule::pdb::{
-    self, AltLocPolicy, AltLocResidue, BondEvidence, CellOmissionReason,
-    ConnectionResolutionReason, EntityKind, ModelSelection, PdbAtomKind, PdbParseOptions,
-    SourceResidueId, SourceResiduePosition, StructureInterpretIssue, StructureInterpretOptions,
-    StructureInterpretation,
+use kekule::macromolecular::{
+    AltLocPolicy, AltLocResidue, BondEvidence, CellOmissionReason, ConnectionResolutionReason,
+    EntityKind, ModelSelection, SourceResidueId, SourceResiduePosition, StructureInterpretIssue,
+    StructureInterpretOptions, StructureInterpretation,
 };
+use kekule::pdb::{self, PdbAtomKind, PdbParseOptions};
 
 /// One `ATOM` or `HETATM` record in the 80 fixed columns of the PDB format.
 #[derive(Clone, Copy)]
@@ -1536,7 +1536,7 @@ fn inferred_components(result: &StructureInterpretation) -> Vec<String> {
 #[test]
 fn force_field_libraries_interpret_their_residue_names() {
     use kekule::components::ComponentLibrary;
-    use kekule::pdb::ConnectivityOptions;
+    use kekule::macromolecular::ConnectivityOptions;
     use std::sync::Arc;
 
     // Positions are the ideal coordinates of the dictionary's HIS, ASP, and
@@ -1717,7 +1717,7 @@ fn force_field_libraries_interpret_their_residue_names() {
 #[test]
 fn force_field_termini_carry_their_charges() {
     use kekule::components::ComponentLibrary;
-    use kekule::pdb::ConnectivityOptions;
+    use kekule::macromolecular::ConnectivityOptions;
     use std::sync::Arc;
 
     // Ideal coordinates of the dictionary's PRO and DA entries; the third

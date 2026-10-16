@@ -296,11 +296,13 @@ impl fmt::Display for SmilesParseError {
 
 impl std::error::Error for SmilesParseError {}
 
-pub fn parse_smiles_document(input: &str) -> std::result::Result<SmilesDocument, SmilesParseError> {
+pub(crate) fn parse_smiles_document(
+    input: &str,
+) -> std::result::Result<SmilesDocument, SmilesParseError> {
     parse_smiles_document_with_options(input, SmilesParseOptions::default())
 }
 
-pub fn parse_smiles_document_with_options(
+pub(crate) fn parse_smiles_document_with_options(
     input: &str,
     options: SmilesParseOptions,
 ) -> std::result::Result<SmilesDocument, SmilesParseError> {

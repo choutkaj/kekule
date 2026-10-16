@@ -3,7 +3,8 @@ use super::config::Feature;
 use crate::{Error, ErrorKind, Result};
 
 use kekule::{
-    core::{AtomId, BondOrder, Molecule, RingBasisModel},
+    core::{AtomId, BondOrder, Molecule},
+    perception::rings::RingBasisModel,
     query::{parse_smarts, QueryGraph},
     substructure::{PreparedTarget, TaggedQuery},
 };

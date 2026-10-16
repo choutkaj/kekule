@@ -16,7 +16,7 @@ const MAX_AROMATIC_LOCALIZATION_MATCHING_STATES: usize = 100_000;
 /// Failure to publish Kekule's canonical represented chemistry.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NormalizationError {
+pub(crate) enum NormalizationError {
     /// Source-aromatic bonds cannot be localized under the fixed rules.
     InvalidAromaticRepresentation(AtomId),
     /// Imported aromatic localization exhausted its deterministic search budget.
@@ -31,7 +31,7 @@ pub enum NormalizationError {
 
 /// Successful sidecar output from representation normalization.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct NormalizationReport {
+pub(crate) struct NormalizationReport {
     /// Canonical stereo elements created from source bond marks.
     pub created_stereo_elements: Vec<StereoElementId>,
     /// Nonfatal source-representation diagnostics.
@@ -40,7 +40,7 @@ pub struct NormalizationReport {
 
 /// Nonfatal source-representation diagnostic emitted during normalization.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NormalizationWarning {
+pub(crate) enum NormalizationWarning {
     /// Wedge marks have missing/degenerate geometry or conflicting orientations.
     /// No configuration is invented; even a single mark can be ambiguous.
     AmbiguousTetrahedralWedgeMarks { center: AtomId, mark_count: usize },
@@ -51,7 +51,7 @@ pub enum NormalizationWarning {
 
 /// One concrete source-stereo normalization issue.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SourceStereoNormalizationIssue {
+pub(crate) enum SourceStereoNormalizationIssue {
     MissingSourceBondMark {
         bond: BondId,
     },
@@ -81,7 +81,7 @@ pub enum SourceStereoNormalizationIssue {
 
 /// Collected failure to canonicalize source-declared stereochemistry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SourceStereoNormalizationError {
+pub(crate) struct SourceStereoNormalizationError {
     pub issues: Vec<SourceStereoNormalizationIssue>,
 }
 

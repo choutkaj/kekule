@@ -487,7 +487,7 @@ impl<'a> MmcifValue<'a> {
 }
 
 /// Reads and parses CIF/mmCIF text, enforcing the byte limit while reading.
-pub fn parse_mmcif_reader(
+pub(crate) fn parse_mmcif_reader(
     reader: impl std::io::Read,
     options: MmcifParseOptions,
 ) -> Result<MmcifDocument, MmcifParseError> {
@@ -496,7 +496,7 @@ pub fn parse_mmcif_reader(
     parse_mmcif_str(&input, options)
 }
 
-pub fn parse_mmcif_str(
+pub(crate) fn parse_mmcif_str(
     input: &str,
     options: MmcifParseOptions,
 ) -> Result<MmcifDocument, MmcifParseError> {

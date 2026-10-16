@@ -337,7 +337,7 @@ impl SmilesInterpretation {
 /// source and fragment separators. Ring closures may join dot-separated
 /// fragments. Interpretation turns each connected component into one [`Molecule`] with component-local atom and
 /// bond identifiers while retaining mappings to the original source offsets.
-pub fn interpret_smiles_document(
+pub(crate) fn interpret_smiles_document(
     document: &SmilesDocument,
     options: SmilesInterpretOptions,
 ) -> Result<SmilesInterpretation, SmilesInterpretError> {

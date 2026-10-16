@@ -11,7 +11,7 @@ use kekule::core::{
 use kekule::{sdf, smiles, stereo};
 
 /// Absolute path of a file under `tests/fixtures`.
-pub fn fixture(relative: &str) -> PathBuf {
+pub(crate) fn fixture(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(relative)
@@ -19,14 +19,14 @@ pub fn fixture(relative: &str) -> PathBuf {
 
 /// Absolute path of a file under `tests/fixtures/corpus`, the externally
 /// supplied invariant-suite inputs.
-pub fn corpus(relative: &str) -> PathBuf {
+pub(crate) fn corpus(relative: &str) -> PathBuf {
     fixture("corpus").join(relative)
 }
 
 /// Interprets one connected molecule from SMILES or from the first record of
 /// an SDF file, written as `sdf:<path>` relative to `directory`. Perception is
 /// not run.
-pub fn read_molecule(input: &str, directory: &Path) -> Molecule {
+pub(crate) fn read_molecule(input: &str, directory: &Path) -> Molecule {
     let mut molecules = match input.strip_prefix("sdf:") {
         Some(file) => {
             let text = std::fs::read_to_string(directory.join(file))
@@ -44,7 +44,7 @@ pub fn read_molecule(input: &str, directory: &Path) -> Molecule {
 }
 
 /// One row of `fixtures/perception/aromaticity.tsv`.
-pub struct AromaticityCase {
+pub(crate) struct AromaticityCase {
     pub label: String,
     pub input: String,
     pub aromatic_atoms: Vec<usize>,
@@ -52,12 +52,12 @@ pub struct AromaticityCase {
 }
 
 impl AromaticityCase {
-    pub fn molecule(&self) -> Molecule {
+    pub(crate) fn molecule(&self) -> Molecule {
         read_molecule(&self.input, &fixture("perception"))
     }
 }
 
-pub fn aromaticity_cases() -> Vec<AromaticityCase> {
+pub(crate) fn aromaticity_cases() -> Vec<AromaticityCase> {
     let path = fixture("perception/aromaticity.tsv");
     std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{}: {error}", path.display()))
@@ -109,7 +109,7 @@ fn index_pairs(field: &str) -> Vec<(usize, usize)> {
 /// also leave deleted draft slots behind so sparse storage cannot leak into
 /// numbering-dependent results. Returns the copy and, for every source atom
 /// index, the corresponding atom of the copy. Perception is not copied.
-pub fn renumbered(molecule: &Molecule, seed: u64) -> (Molecule, Vec<AtomId>) {
+pub(crate) fn renumbered(molecule: &Molecule, seed: u64) -> (Molecule, Vec<AtomId>) {
     let mut order = molecule.atom_ids().collect::<Vec<_>>();
     let mut state = seed;
     for index in (1..order.len()).rev() {
@@ -187,18 +187,18 @@ pub fn renumbered(molecule: &Molecule, seed: u64) -> (Molecule, Vec<AtomId>) {
 /// Where a stereo descriptor applies: a center atom, or the endpoints of a
 /// stereogenic double bond or axis as sorted atom indices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum StereoFocus {
+pub(crate) enum StereoFocus {
     Atom(usize),
     Bond(usize, usize),
 }
 
 impl StereoFocus {
-    pub fn mapped(self, mapping: &[AtomId]) -> Self {
+    pub(crate) fn mapped(self, mapping: &[AtomId]) -> Self {
         self.try_map(|atom| Some(mapping[atom].index())).unwrap()
     }
 
     /// Maps every focus atom index, or returns `None` if one has no image.
-    pub fn try_map(self, atom: impl Fn(usize) -> Option<usize>) -> Option<Self> {
+    pub(crate) fn try_map(self, atom: impl Fn(usize) -> Option<usize>) -> Option<Self> {
         Some(match self {
             Self::Atom(center) => Self::Atom(atom(center)?),
             Self::Bond(left, right) => Self::bond(atom(left)?, atom(right)?),
@@ -211,12 +211,14 @@ impl StereoFocus {
 }
 
 /// Assigns CIP descriptors to a perceived molecule and keys them by focus.
-pub fn cip_labels(molecule: &mut Molecule) -> BTreeMap<StereoFocus, String> {
+pub(crate) fn cip_labels(molecule: &mut Molecule) -> BTreeMap<StereoFocus, String> {
     try_cip_labels(molecule).unwrap_or_else(|error| panic!("CIP assignment failed: {error}"))
 }
 
 /// Like [`cip_labels`], but reports a failed assignment instead of panicking.
-pub fn try_cip_labels(molecule: &mut Molecule) -> Result<BTreeMap<StereoFocus, String>, String> {
+pub(crate) fn try_cip_labels(
+    molecule: &mut Molecule,
+) -> Result<BTreeMap<StereoFocus, String>, String> {
     let report = stereo::assign_cip_descriptors(molecule).map_err(|error| format!("{error:?}"))?;
     Ok(report
         .assigned

@@ -21,10 +21,10 @@ use crate::properties::{
     TopologyProperties,
 };
 pub(crate) use append::AppendMapping;
-pub use error::*;
+pub use error::{TopologyEditError, TopologyFinishError};
 use hierarchy::EditHierarchy;
 pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
-pub use identity::*;
+pub use identity::{EditAtomId, EditAtomSiteId, EditBondId, EditChainId, EditResidueId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;

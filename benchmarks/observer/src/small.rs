@@ -8,11 +8,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use kekule::core::{
-    AromaticityModel, AxisOrientation, BondOrder, DoubleBondOrientation, StereoCarrier,
-    StereoDescriptor, StereoElementId, StereoElementKind, StereoGroupKind, TetrahedralOrientation,
+    AxisOrientation, BondOrder, DoubleBondOrientation, StereoCarrier, StereoDescriptor,
+    StereoElementId, StereoElementKind, StereoGroupKind, TetrahedralOrientation,
 };
 use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
-use kekule::perception::{aromaticity, resonance, rings};
+use kekule::perception::aromaticity::{self, AromaticityModel};
+use kekule::perception::{resonance, rings};
 use kekule::rotatable_bonds::{self, RotatableBondOptions};
 use kekule::stereo::{self, StereoCandidate};
 use kekule::substructure::{PreparedTopologyTarget, SubstructureMatchOptions};
@@ -26,7 +27,12 @@ use crate::{Facts, Failure};
 /// Matches per query and target, the same bound the reference observer uses.
 const MAX_MATCHES: usize = 100_000;
 
-pub fn observe(task: &str, format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
+pub(crate) fn observe(
+    task: &str,
+    format: &str,
+    text: &str,
+    options: &Value,
+) -> Result<Facts, Failure> {
     if task == "write" {
         return write(format, text, options);
     }
@@ -674,7 +680,7 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                 sdf::write(
                     &[record],
                     sdf::SdfWriteOptions {
-                        version: sdf::MolfileWriteVersion::V2000,
+                        version: molfile::MolfileWriteVersion::V2000,
                         ..Default::default()
                     },
                 )

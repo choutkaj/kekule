@@ -1727,7 +1727,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
     }
 
     use crate::components::ComponentLibrary;
-    use crate::mmcif::{
+    use crate::macromolecular::{
         BondEvidence, ConnectivityOptions, SourceResidueId, SourceResiduePosition,
         StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
     };

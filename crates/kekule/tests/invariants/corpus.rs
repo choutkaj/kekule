@@ -13,7 +13,7 @@ use kekule::{molfile, sdf, smiles};
 use crate::support::{aromaticity_cases, corpus, fixture};
 
 /// One connected molecule, interpreted but not perceived.
-pub struct Sample {
+pub(crate) struct Sample {
     pub label: String,
     pub molecule: Molecule,
     /// The source model when the molecule came from a single-component
@@ -22,7 +22,7 @@ pub struct Sample {
 }
 
 impl Sample {
-    pub fn perceived(&self) -> Molecule {
+    pub(crate) fn perceived(&self) -> Molecule {
         let mut molecule = self.molecule.clone();
         molecule
             .perceive()
@@ -32,7 +32,7 @@ impl Sample {
 
     /// SMILES cannot encode atropisomeric axes yet; writers must reject a
     /// specified one. An explicitly unknown axis is written unmarked.
-    pub fn has_axis_stereo(&self) -> bool {
+    pub(crate) fn has_axis_stereo(&self) -> bool {
         self.molecule.stereo_elements().any(|(_, element)| {
             matches!(element.kind, StereoElementKind::Axis(_)) && element.is_specified()
         })
@@ -42,7 +42,7 @@ impl Sample {
 /// Source records that are not molecules Kekule can represent, with the
 /// reason. Each must keep failing interpretation; if one starts to succeed,
 /// move it into the corpus.
-pub const EXPECTED_REJECTIONS: &[(&str, &str)] = &[
+pub(crate) const EXPECTED_REJECTIONS: &[(&str, &str)] = &[
     (
         "rdkit-structures/data/chebi_15469.v3k.mol",
         "R-group query atom",
@@ -62,7 +62,7 @@ pub const EXPECTED_REJECTIONS: &[(&str, &str)] = &[
 ];
 
 /// A corpus sample that exposes a known, unfixed defect in one invariant.
-pub struct KnownDefect {
+pub(crate) struct KnownDefect {
     pub invariant: &'static str,
     pub sample: &'static str,
     /// Text that identifies the expected failure message. Only matching
@@ -73,12 +73,12 @@ pub struct KnownDefect {
 
 /// Each entry must keep failing exactly as described; when a fix makes it
 /// pass, the invariant reports the entry so it can be deleted.
-pub const KNOWN_DEFECTS: &[KnownDefect] = &[];
+pub(crate) const KNOWN_DEFECTS: &[KnownDefect] = &[];
 
 /// Fails on every (sample label, message) failure that does not match a known
 /// defect of `invariant`, and on every known defect of `invariant` that no
 /// longer produces its expected failure.
-pub fn assert_invariant(invariant: &str, failures: Vec<(String, String)>) {
+pub(crate) fn assert_invariant(invariant: &str, failures: Vec<(String, String)>) {
     let known = KNOWN_DEFECTS
         .iter()
         .filter(|defect| defect.invariant == invariant)
@@ -105,7 +105,7 @@ pub fn assert_invariant(invariant: &str, failures: Vec<(String, String)>) {
     assert!(report.is_empty(), "{}", report.join("\n"));
 }
 
-pub fn molecules() -> Vec<Sample> {
+pub(crate) fn molecules() -> Vec<Sample> {
     let mut samples = Vec::new();
     // SDF regression records are read below with their source models.
     for case in aromaticity_cases()
@@ -178,7 +178,7 @@ pub fn molecules() -> Vec<Sample> {
 }
 
 /// Multi-component regression records, interpreted component by component.
-pub fn regression_mixtures() -> Vec<(String, Vec<Molecule>)> {
+pub(crate) fn regression_mixtures() -> Vec<(String, Vec<Molecule>)> {
     let path = fixture("perception/regressions.smi");
     std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{}: {error}", path.display()))
@@ -194,7 +194,7 @@ pub fn regression_mixtures() -> Vec<(String, Vec<Molecule>)> {
 }
 
 /// Reads a single-record Molfile or the first SDF record as a model.
-pub fn read_model(path: &Path) -> Result<Model, String> {
+pub(crate) fn read_model(path: &Path) -> Result<Model, String> {
     let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
     if path.extension().is_some_and(|extension| extension == "sdf") {
         let document = sdf::parse_str(&text).map_err(|error| error.to_string())?;

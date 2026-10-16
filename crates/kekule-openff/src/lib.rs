@@ -60,7 +60,11 @@ pub use assignment::ChargeMethod;
 pub use error::{Error, ErrorKind};
 pub use nagl::{ChargeAssignment, ChargeSource, ModelIdentity, NaglModel};
 pub use offxml::ForceField;
-pub use parameters::*;
+pub use parameters::{
+    AngleParameter, BondParameter, ConstraintParameter, ElectrostaticsMethod, Interaction,
+    MoleculeLabels, NonbondedSettings, PairException, ParameterIdentity, ParameterizedTopology,
+    TorsionParameter, TorsionTerm, VdwMethod, VdwParameter,
+};
 
 pub(crate) use error::Result;
 pub(crate) use preparation::explicit;

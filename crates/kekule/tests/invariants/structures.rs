@@ -1,14 +1,13 @@
 //! Macromolecular structures survive mmCIF output with their analyses intact.
 
 use kekule::dssp::{self, DsspOptions};
-use kekule::mmcif::{
-    self, MmcifBlockSource, MmcifWriteOptions, ModelSelection, StructureInterpretOptions,
-};
+use kekule::macromolecular::{self, ModelSelection, StructureInterpretOptions};
+use kekule::mmcif::{self, MmcifBlockSource, MmcifWriteOptions};
 use kekule::structure::Model;
 
 use crate::support::fixture;
 
-fn interpret(text: &str) -> (Model, mmcif::StructureInterpretationReport) {
+fn interpret(text: &str) -> (Model, macromolecular::StructureInterpretationReport) {
     mmcif::interpret_with_options(
         &mmcif::parse_str(text).unwrap(),
         StructureInterpretOptions {

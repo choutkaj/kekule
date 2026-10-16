@@ -91,4 +91,9 @@ pub mod analysis;
 pub mod io;
 pub mod periodic;
 
-pub use trajectory::*;
+pub use trajectory::{
+    validate_atom_order, CoordinateFrameReader, FrameBuffer, FrameBufferData,
+    MemoryTrajectoryReader, MemoryTrajectoryWriter, SeekableTrajectoryReader,
+    TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError,
+    TrajectoryIoErrorContext, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+};

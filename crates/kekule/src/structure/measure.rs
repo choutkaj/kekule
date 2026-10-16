@@ -59,7 +59,7 @@ use crate::units::{Quantity, UnitError, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_U
 use super::ModelView;
 
 mod bond_dihedrals;
-pub use bond_dihedrals::*;
+pub use bond_dihedrals::{bond_dihedral, bond_dihedrals, BondDihedral, BondDihedralError};
 
 /// Optional topology validation for Cartesian measurements.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

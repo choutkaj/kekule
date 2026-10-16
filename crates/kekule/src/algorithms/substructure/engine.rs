@@ -31,7 +31,7 @@ pub(super) struct TargetData<'a> {
 }
 
 impl<'a> TargetData<'a> {
-    pub fn new(molecules: impl IntoIterator<Item = &'a Molecule>) -> Self {
+    pub(crate) fn new(molecules: impl IntoIterator<Item = &'a Molecule>) -> Self {
         let mut atoms = Vec::new();
         let mut facts_cache = BTreeMap::new();
         for (occurrence, molecule) in molecules.into_iter().enumerate() {

@@ -1,5 +1,6 @@
 //! Strict common-profile CHARMM/NAMD/OpenMM DCD trajectory I/O.
 
+use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
@@ -248,6 +249,17 @@ pub struct DcdReader<R> {
     positions: Vec<Point3>,
     record: Vec<u8>,
     frame_cursor: u64,
+}
+
+impl<R> fmt::Debug for DcdReader<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DcdReader")
+            .field("atom_count", &self.topology.atom_count())
+            .field("options", &self.options)
+            .field("frame_cursor", &self.frame_cursor)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -954,6 +966,16 @@ pub struct IndexedDcdReader<R> {
     offsets: Vec<u64>,
 }
 
+impl<R> fmt::Debug for IndexedDcdReader<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IndexedDcdReader")
+            .field("reader", &self.inner)
+            .field("frame_count", &self.offsets.len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl<R: Read + Seek> IndexedDcdReader<R> {
     /// Opens a stream whose coordinates follow the supplied topology's dense order
     /// and indexes it for random access.
@@ -1074,6 +1096,20 @@ pub struct DcdWriter<W> {
     partial: bool,
     finalized: bool,
     axis: Vec<f32>,
+}
+
+impl<W> fmt::Debug for DcdWriter<W> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DcdWriter")
+            .field("atom_count", &self.topology.atom_count())
+            .field("options", &self.options)
+            .field("source_label", &self.source_label)
+            .field("frame_count", &self.frame_count)
+            .field("partial", &self.partial)
+            .field("finalized", &self.finalized)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<W: Write + Seek> DcdWriter<W> {

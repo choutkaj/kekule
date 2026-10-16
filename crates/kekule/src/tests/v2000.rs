@@ -548,7 +548,7 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
     let written = sdf::write(
         &[record],
         sdf::SdfWriteOptions {
-            version: sdf::MolfileWriteVersion::V2000,
+            version: molfile::MolfileWriteVersion::V2000,
             ..Default::default()
         },
     )
@@ -581,7 +581,7 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
         let error = sdf::write(
             &[record],
             sdf::SdfWriteOptions {
-                version: sdf::MolfileWriteVersion::V2000,
+                version: molfile::MolfileWriteVersion::V2000,
                 ..Default::default()
             },
         )
@@ -870,7 +870,7 @@ $$$$
     let sdf = sdf::write(
         &records,
         sdf::SdfWriteOptions {
-            version: sdf::MolfileWriteVersion::V2000,
+            version: molfile::MolfileWriteVersion::V2000,
             ..Default::default()
         },
     )
@@ -994,7 +994,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
     let sdf_text = sdf::write(
         &records,
         sdf::SdfWriteOptions {
-            version: sdf::MolfileWriteVersion::V2000,
+            version: molfile::MolfileWriteVersion::V2000,
             ..Default::default()
         },
     )

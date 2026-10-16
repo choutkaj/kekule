@@ -16,7 +16,10 @@ use kekule::structure::{AsModelView, ModelView};
 use crate::FrameBuffer;
 
 mod reductions;
-pub use reductions::*;
+pub use reductions::{
+    contact_occupancy, rmsf, ContactOccupancyAccumulator, ContactOccupancyResult, ReductionError,
+    RmsfAccumulator, RmsfResult,
+};
 
 /// A borrowed reference and fitting pairs for superposing streamed frames.
 ///

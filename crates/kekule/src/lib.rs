@@ -160,12 +160,13 @@ pub mod smiles {
     use std::sync::Arc;
 
     use crate::core::Molecule;
+    use crate::io::MoleculeWriteError;
     pub use crate::io::{
-        MoleculeWriteError, MoleculeWriteErrorKind, SmilesAtomMapping, SmilesBondMapping,
-        SmilesComponentCountError, SmilesComponentInterpretation, SmilesCxField, SmilesCxFieldKind,
-        SmilesCxStereoGroupKind, SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind,
-        SmilesInterpretError, SmilesInterpretOptions, SmilesInterpretation,
-        SmilesInterpretationReport, SmilesParseError, SmilesParseOptions, SmilesRecords,
+        SmilesAtomMapping, SmilesBondMapping, SmilesComponentCountError,
+        SmilesComponentInterpretation, SmilesCxField, SmilesCxFieldKind, SmilesCxStereoGroupKind,
+        SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind, SmilesInterpretError,
+        SmilesInterpretOptions, SmilesInterpretation, SmilesInterpretationReport, SmilesParseError,
+        SmilesParseOptions, SmilesRecords,
     };
     use crate::topology::{Topology, TopologyBuildError};
 
@@ -209,7 +210,9 @@ pub mod smiles {
         ///
         /// Canonical output of a molecule with a ring requires installed
         /// aromaticity perception, such as [`Molecule::perceive`] installs, and
-        /// fails with [`MoleculeWriteErrorKind::MissingPerception`] without it.
+        /// fails with
+        /// [`MoleculeWriteErrorKind::MissingPerception`](crate::molfile::MoleculeWriteErrorKind::MissingPerception)
+        /// without it.
         /// Perceived
         /// aromatic atoms and bonds are written aromatic, so every Kekule form
         /// of a molecule gives one string under the installed aromaticity
@@ -223,7 +226,9 @@ pub mod smiles {
         /// Serialization additionally bounds the input to 2,000,000 combined
         /// atom/bond slots and a complexity score `2*n*(n+2*m)` of at most
         /// 50,000,000 for `n` live atoms and `m` live bonds. Exceeding a bound
-        /// returns [`MoleculeWriteErrorKind::ResourceLimit`] without a partial result.
+        /// returns
+        /// [`MoleculeWriteErrorKind::ResourceLimit`](crate::molfile::MoleculeWriteErrorKind::ResourceLimit)
+        /// without a partial result.
         Canonical,
     }
 
@@ -484,7 +489,7 @@ pub mod molfile {
         MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning,
         MolfileParseError, MolfileParseOptions, MolfileRadical, MolfileSource, MolfileStereoGroup,
         MolfileStereoGroupKind, MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion,
-        MolfileWriteOptions, MolfileWriteVersion, UnrepresentablePolicy,
+        MolfileWriteOptions, MolfileWriteVersion,
     };
 
     /// Parses one V2000 or V3000 Molfile into its typed connection table
@@ -577,10 +582,9 @@ pub mod molfile {
 /// merged into one model or reinterpreted as an ensemble.
 pub mod sdf {
     pub use crate::io::{
-        MoleculeWriteError, MolfileInterpretOptions, MolfileWriteVersion, SdfDataField,
-        SdfDocument, SdfEnsembleError, SdfInterpretError, SdfParseError, SdfParseOptions,
-        SdfRecord, SdfRecordInterpretation, SdfRecordInterpretationReport, SdfRecordSource,
-        SdfRecords, SdfWriteError, SdfWriteOptions, UnrepresentablePolicy,
+        SdfDataField, SdfDocument, SdfEnsembleError, SdfInterpretError, SdfParseError,
+        SdfParseOptions, SdfRecord, SdfRecordInterpretation, SdfRecordInterpretationReport,
+        SdfRecordSource, SdfRecords, SdfWriteError, SdfWriteOptions,
         SDF_ENERGY_FIELD as ENERGY_FIELD, SDF_WEIGHT_FIELD as WEIGHT_FIELD,
     };
 
@@ -691,8 +695,8 @@ pub mod components {
 ///
 /// Macromolecular formats interpret atom sites, alternate locations, coordinate
 /// models, and connectivity through one pipeline. Its options, reports, issues,
-/// and source provenance live here; each format namespace, [`mmcif`] and
-/// [`pdb`], re-exports them.
+/// and source provenance live here, and only here; the format modules [`mmcif`]
+/// and [`pdb`] take and return them.
 pub mod macromolecular {
     pub use crate::io::{
         AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
@@ -720,16 +724,14 @@ pub mod macromolecular {
 /// files in the same order address the same atoms after a round trip.
 pub mod mmcif {
     pub use crate::io::{
-        AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
-        AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
-        ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
         MmcifBlock, MmcifBlockSource, MmcifDocument, MmcifEntityClassifications, MmcifEntry,
         MmcifItem, MmcifLoopTable, MmcifParseError, MmcifParseOptions, MmcifValue, MmcifWriteError,
-        MmcifWriteOptions, ModelSelection, SourceResidueId, SourceResiduePosition,
+        MmcifWriteOptions,
+    };
+    use crate::macromolecular::{
         StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
-        StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretIssue,
-        StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
-        UnrepresentablePolicy,
+        StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretOptions,
+        StructureInterpretation,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular meaning.
@@ -825,7 +827,8 @@ pub mod mmcif {
     /// ```no_run
     /// use kekule::mmcif::{self, MmcifBlockSource, MmcifWriteOptions};
     /// # fn example(model: &kekule::structure::Model, other: &kekule::structure::Model,
-    /// #     interpretation: &mmcif::StructureInterpretation) -> Result<(), mmcif::MmcifWriteError> {
+    /// #     interpretation: &kekule::macromolecular::StructureInterpretation)
+    /// #     -> Result<(), mmcif::MmcifWriteError> {
     /// let one = mmcif::write([model], MmcifWriteOptions::default())?;
     /// let two = mmcif::write([model, other], MmcifWriteOptions::default())?;
     /// let faithful = mmcif::write([interpretation], MmcifWriteOptions::default())?;
@@ -878,14 +881,13 @@ pub mod mmcif {
 /// Interpretation keeps coordinate records in source order as dense atom order.
 pub mod pdb {
     pub use crate::io::{
-        AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
-        AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
-        ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
-        ModelSelection, PdbAtom, PdbAtomKind, PdbConect, PdbCryst1, PdbDocument, PdbLink, PdbModel,
-        PdbParseError, PdbParseOptions, PdbPartner, PdbRecord, PdbSsbond, PdbTer, SourceResidueId,
-        SourceResiduePosition, StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
-        StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretIssue,
-        StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
+        PdbAtom, PdbAtomKind, PdbConect, PdbCryst1, PdbDocument, PdbLink, PdbModel, PdbParseError,
+        PdbParseOptions, PdbPartner, PdbRecord, PdbSsbond, PdbTer,
+    };
+    use crate::macromolecular::{
+        StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
+        StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretOptions,
+        StructureInterpretation,
     };
 
     /// Parses a PDB entry into typed records without assigning molecular meaning.
@@ -975,12 +977,12 @@ pub mod perception {
             enumerate_resonance, perceive_resonance, ResonanceContributor, ResonanceError,
             ResonanceFlags, ResonanceOptions, ResonanceStructures,
         };
-        pub use crate::core::{ResonanceGroup, ResonancePerception};
+        pub use crate::core::delocalization::{ResonanceGroup, ResonancePerception};
     }
     /// Bond conjugation, including aromatic bonds, without contributor enumeration.
     pub mod conjugation {
         pub use crate::algorithms::{perceive_conjugation, ConjugationError};
-        pub use crate::core::{ConjugationModel, ConjugationPerception};
+        pub use crate::core::delocalization::{ConjugationModel, ConjugationPerception};
     }
     pub use crate::chemistry::PerceptionError;
 
@@ -996,7 +998,7 @@ pub mod perception {
             perceive_valence, perceive_valence_with_options, represented_valence, ValenceError,
             ValenceIssue, ValenceOptions,
         };
-        pub use crate::core::ValenceModel;
+        pub use crate::core::perception::{ValenceModel, ValencePerception};
     }
 
     /// Ring membership and deterministic ring-basis perception.
@@ -1008,7 +1010,9 @@ pub mod perception {
             perceive_ring_membership, perceive_ring_set, perceive_ring_set_with_options,
             RingPerceptionError, RingPerceptionOptions,
         };
-        pub use crate::core::{Ring, RingBasisModel, RingBasisState, RingMembership, RingSet};
+        pub use crate::core::perception::{
+            Ring, RingBasisModel, RingBasisState, RingMembership, RingPerception, RingSet,
+        };
     }
 
     /// Aromaticity perception over canonical localized bond orders.
@@ -1020,7 +1024,7 @@ pub mod perception {
             perceive_aromaticity, perceive_aromaticity_with_options,
             perceive_aromaticity_with_ring_options, AromaticityError, AromaticityOptions,
         };
-        pub use crate::core::AromaticityModel;
+        pub use crate::core::perception::{AromaticityModel, AromaticityPerception};
     }
 }
 
@@ -1071,8 +1075,8 @@ pub mod canon {
 /// state.
 pub mod rotatable_bonds {
     pub use crate::algorithms::{RotatableBondOptions, RotatableBondSet};
-    pub use crate::chemistry::PerceptionError;
 
+    use crate::chemistry::PerceptionError;
     use crate::core::Molecule;
 
     /// Detects rotatable bonds using the supplied options.
@@ -1116,13 +1120,41 @@ pub mod hydrogens {
 
 /// Common foundational types for small examples and interactive use.
 ///
-/// The prelude is intentionally small. Format APIs, structure types, and
-/// algorithms remain available through their focused modules.
+/// The prelude is intentionally small: the molecule, its editor and parts, the
+/// topology and model that hold it, and [`Quantity`](crate::units::Quantity).
+/// It is the only module that repeats items exported elsewhere. Format APIs,
+/// identifiers, and algorithms remain available through their focused modules.
+///
+/// ```
+/// use kekule::prelude::*;
+/// use kekule::{geometry::Point3, units::ANGSTROM};
+///
+/// let mut editor = MoleculeEditor::new();
+/// let carbon = editor.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
+/// let mut oxygen = Atom::new(Element::from_symbol("O").unwrap());
+/// oxygen.hydrogens = ImplicitHydrogens::Fixed(1);
+/// let oxygen = editor.add_atom(oxygen)?;
+/// editor.add_bond(carbon, oxygen, BondOrder::Single)?;
+/// let molecule: Molecule = editor.finish()?;
+/// let (_, bond): (_, &Bond) = molecule.bonds().next().unwrap();
+/// assert_eq!(bond.order, BondOrder::Single);
+///
+/// let topology = Topology::from_molecule(molecule.clone())?;
+/// let positions = Positions::new(Quantity::new(
+///     vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.43, 0.0, 0.0)],
+///     ANGSTROM,
+/// ))?;
+/// let model = Model::from_molecule(molecule, &positions)?;
+/// assert_eq!(model.atom_count(), topology.atom_count());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub mod prelude {
     pub use crate::core::{
-        Atom, AtomId, Bond, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
+        Atom, Bond, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeEditor,
     };
-    pub use crate::topology::Hierarchy;
+    pub use crate::structure::{Model, Positions};
+    pub use crate::topology::Topology;
+    pub use crate::units::Quantity;
 }
 
 #[cfg(test)]

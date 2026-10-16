@@ -366,7 +366,7 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
     let written = sdf::write(
         &[interpretations[1].clone()],
         sdf::SdfWriteOptions {
-            version: sdf::MolfileWriteVersion::V2000,
+            version: molfile::MolfileWriteVersion::V2000,
             ..Default::default()
         },
     )

@@ -569,7 +569,7 @@ impl PdbDocument {
     }
 }
 
-pub fn parse_pdb_reader(
+pub(crate) fn parse_pdb_reader(
     reader: impl std::io::Read,
     options: PdbParseOptions,
 ) -> Result<PdbDocument, PdbParseError> {
@@ -578,7 +578,10 @@ pub fn parse_pdb_reader(
     parse_pdb_str(&input, options)
 }
 
-pub fn parse_pdb_str(input: &str, options: PdbParseOptions) -> Result<PdbDocument, PdbParseError> {
+pub(crate) fn parse_pdb_str(
+    input: &str,
+    options: PdbParseOptions,
+) -> Result<PdbDocument, PdbParseError> {
     if input.len() > options.max_input_bytes {
         return Err(PdbParseError::new(
             DiagnosticKind::Limit,

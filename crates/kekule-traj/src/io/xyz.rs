@@ -1,5 +1,6 @@
 //! Strict bounded multi-frame XYZ trajectory I/O.
 
+use std::fmt;
 use std::io::{self, BufRead, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
@@ -110,6 +111,17 @@ pub struct XyzReader<R> {
     frame_cursor: u64,
     line: Vec<u8>,
     positions: Vec<Point3>,
+}
+
+impl<R> fmt::Debug for XyzReader<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("XyzReader")
+            .field("atom_count", &self.topology.atom_count())
+            .field("options", &self.options)
+            .field("frame_cursor", &self.frame_cursor)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<R: BufRead> XyzReader<R> {
@@ -559,6 +571,16 @@ pub struct IndexedXyzReader<R> {
     offsets: Vec<u64>,
 }
 
+impl<R> fmt::Debug for IndexedXyzReader<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IndexedXyzReader")
+            .field("reader", &self.reader)
+            .field("frame_count", &self.offsets.len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl<R: BufRead + Seek> IndexedXyzReader<R> {
     /// Opens a stream whose coordinates follow the supplied topology's dense order
     /// and indexes it for random access.
@@ -671,6 +693,19 @@ pub struct XyzWriter<W> {
     /// fails, so a stream that may end in a partial frame is never extended
     /// or reported as finished.
     partial: bool,
+}
+
+impl<W> fmt::Debug for XyzWriter<W> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("XyzWriter")
+            .field("atom_count", &self.topology.atom_count())
+            .field("options", &self.options)
+            .field("source_label", &self.source_label)
+            .field("frame_count", &self.frame_count)
+            .field("partial", &self.partial)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<W: Write> XyzWriter<W> {

@@ -439,7 +439,7 @@ impl<'a> From<&'a StructureEnsembleInterpretation> for MmcifBlockSource<'a> {
 }
 
 /// Writes data blocks to a string. See [`write_mmcif_to`].
-pub fn write_mmcif<'a, B: Into<MmcifBlockSource<'a>>>(
+pub(crate) fn write_mmcif<'a, B: Into<MmcifBlockSource<'a>>>(
     blocks: impl IntoIterator<Item = B>,
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
@@ -453,7 +453,7 @@ pub fn write_mmcif<'a, B: Into<MmcifBlockSource<'a>>>(
 /// A single block is named [`MmcifWriteOptions::block_name`]; several blocks
 /// are named `{block_name}_1`, `{block_name}_2`, and so on. Rows follow
 /// dense atom order.
-pub fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
+pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
     writer: &mut impl Write,
     blocks: impl IntoIterator<Item = B>,
     options: MmcifWriteOptions,

@@ -11,4 +11,7 @@ description = "The OpenFF Ash NAGL charge model (openff-gnn-am1bcc-1.0.0) as dat
 readme = "README.md"
 include = ["src/**", "data/**", "README.md", "LICENSE-*", "ATTRIBUTION.md"]
 
+[lints]
+workspace = true
+
 [dependencies]

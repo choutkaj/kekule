@@ -47,7 +47,12 @@ pub use builder::{
     TopologyIdKind,
 };
 use dense_order::DenseOrder;
-pub use editor::*;
+pub(crate) use editor::AppendMapping;
+pub use editor::{
+    EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId, EditChain, EditChainId,
+    EditCorrespondence, EditMolecule, EditResidue, EditResidueId, TopologyEditError,
+    TopologyEditor, TopologyFinishError,
+};
 pub use entity_views::{AtomView, BondView};
 pub use hierarchy::{
     AtomSite, AtomSiteId, AtomSiteMetadata, Chain, ChainId, Hierarchy, HierarchyError,

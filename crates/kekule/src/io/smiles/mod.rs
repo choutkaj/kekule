@@ -5,17 +5,18 @@ mod interpret;
 mod parse;
 mod write;
 
-pub use canonical::write_canonical_smiles;
+pub(crate) use canonical::write_canonical_smiles;
 pub use cx::{SmilesCxField, SmilesCxFieldKind, SmilesCxStereoGroupKind};
 pub use interpret::{
     SmilesAtomMapping, SmilesBondMapping, SmilesComponentCountError, SmilesComponentInterpretation,
     SmilesInterpretError, SmilesInterpretOptions, SmilesInterpretation, SmilesInterpretationReport,
 };
+pub(crate) use parse::{parse_smiles_document, parse_smiles_document_with_options};
 pub use parse::{
-    parse_smiles_document, parse_smiles_document_with_options, SmilesDocument, SmilesDocumentToken,
-    SmilesDocumentTokenKind, SmilesParseError, SmilesParseOptions, SmilesRecords,
+    SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind, SmilesParseError,
+    SmilesParseOptions, SmilesRecords,
 };
-pub use write::{write_isomeric_smiles, write_smiles};
+pub(crate) use write::{write_isomeric_smiles, write_smiles};
 
 pub(crate) fn write_topology(
     topology: &crate::topology::Topology,

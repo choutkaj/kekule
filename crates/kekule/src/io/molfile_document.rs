@@ -511,11 +511,11 @@ impl<'a> MolfileLines<'a> {
     }
 }
 
-pub fn parse_molfile_document(input: &str) -> Result<MolfileDocument, MolfileParseError> {
+pub(crate) fn parse_molfile_document(input: &str) -> Result<MolfileDocument, MolfileParseError> {
     parse_molfile_document_with_options(input, MolfileParseOptions::default())
 }
 
-pub fn parse_molfile_document_with_options(
+pub(crate) fn parse_molfile_document_with_options(
     input: &str,
     options: MolfileParseOptions,
 ) -> Result<MolfileDocument, MolfileParseError> {
@@ -546,7 +546,7 @@ pub fn parse_molfile_document_with_options(
 }
 
 /// Reads and parses one Molfile, enforcing the byte limit while reading.
-pub fn parse_molfile_reader(
+pub(crate) fn parse_molfile_reader(
     reader: impl std::io::Read,
     options: MolfileParseOptions,
 ) -> Result<MolfileDocument, MolfileParseError> {

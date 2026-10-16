@@ -14,7 +14,7 @@ pub(super) struct Emission {
 }
 
 impl Emission {
-    pub fn new(mol: &Molecule, text: String, order: &[AtomId]) -> Self {
+    pub(crate) fn new(mol: &Molecule, text: String, order: &[AtomId]) -> Self {
         let indices: BTreeMap<_, _> = order.iter().enumerate().map(|(i, &a)| (a, i)).collect();
         let centers: BTreeMap<_, _> = mol
             .stereo_elements()
@@ -70,7 +70,7 @@ impl Emission {
         }
     }
 
-    pub fn join(parts: Vec<Self>) -> Self {
+    pub(crate) fn join(parts: Vec<Self>) -> Self {
         let mut result = Self::default();
         for mut part in parts {
             if !result.text.is_empty() {
@@ -96,7 +96,7 @@ impl Emission {
         result
     }
 
-    pub fn render(&self) -> Result<String, MoleculeWriteError> {
+    pub(crate) fn render(&self) -> Result<String, MoleculeWriteError> {
         let mut absolute = BTreeSet::new();
         let mut and = Vec::new();
         let mut or = Vec::new();

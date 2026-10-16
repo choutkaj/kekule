@@ -1,3 +1,4 @@
+use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
@@ -28,6 +29,16 @@ pub struct SequentialFileTrajectoryReader {
     inner: SequentialReaderInner,
     metadata: FileTrajectoryMetadata,
     open_report: TrajectoryOpenReport,
+}
+
+impl fmt::Debug for SequentialFileTrajectoryReader {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SequentialFileTrajectoryReader")
+            .field("metadata", &self.metadata)
+            .field("open_report", &self.open_report)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SequentialFileTrajectoryReader {
@@ -91,6 +102,16 @@ pub struct IndexedFileTrajectoryReader {
     inner: IndexedReaderInner,
     metadata: FileTrajectoryMetadata,
     open_report: TrajectoryOpenReport,
+}
+
+impl fmt::Debug for IndexedFileTrajectoryReader {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IndexedFileTrajectoryReader")
+            .field("metadata", &self.metadata)
+            .field("open_report", &self.open_report)
+            .finish_non_exhaustive()
+    }
 }
 
 impl IndexedFileTrajectoryReader {

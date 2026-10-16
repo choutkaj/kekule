@@ -1,3 +1,4 @@
+use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
@@ -170,6 +171,19 @@ pub struct FileTrajectoryWriter {
     overwrite: OverwritePolicy,
     failed: bool,
     published: bool,
+}
+
+impl fmt::Debug for FileTrajectoryWriter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FileTrajectoryWriter")
+            .field("format", &self.format)
+            .field("destination", &self.destination)
+            .field("overwrite", &self.overwrite)
+            .field("failed", &self.failed)
+            .field("published", &self.published)
+            .finish_non_exhaustive()
+    }
 }
 
 impl FileTrajectoryWriter {

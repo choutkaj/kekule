@@ -394,7 +394,7 @@ impl SdfRecordInterpretationReport {
     }
 }
 
-pub fn parse_sdf_document(
+pub(crate) fn parse_sdf_document(
     input: &str,
     options: SdfParseOptions,
 ) -> Result<SdfDocument, SdfParseError> {
@@ -411,7 +411,7 @@ pub fn parse_sdf_document(
 }
 
 /// Reads and parses a complete SDF input, enforcing the byte limit while reading.
-pub fn parse_sdf_reader(
+pub(crate) fn parse_sdf_reader(
     reader: impl Read,
     options: SdfParseOptions,
 ) -> Result<SdfDocument, SdfParseError> {

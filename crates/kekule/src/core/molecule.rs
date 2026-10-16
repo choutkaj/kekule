@@ -46,6 +46,16 @@ pub struct AtomMut<'a> {
     id: AtomId,
 }
 
+impl fmt::Debug for AtomMut<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AtomMut")
+            .field("id", &self.id)
+            .field("atom", &**self)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Deref for AtomMut<'_> {
     type Target = Atom;
 
@@ -70,6 +80,16 @@ pub struct BondMut<'a> {
     molecule: &'a mut Molecule,
     id: BondId,
     pruned_stereo: Option<&'a mut Vec<StereoElementId>>,
+}
+
+impl fmt::Debug for BondMut<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BondMut")
+            .field("id", &self.id)
+            .field("bond", &**self)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Deref for BondMut<'_> {
@@ -1241,7 +1261,7 @@ impl Bond {
     }
 }
 
-pub type Result<T> = std::result::Result<T, MoleculeError>;
+pub(crate) type Result<T> = std::result::Result<T, MoleculeError>;
 
 /// Fixed-width identifier spaces owned by [`Molecule`].
 #[non_exhaustive]
