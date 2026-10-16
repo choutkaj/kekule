@@ -578,8 +578,9 @@ universal save trait or implicit trajectory-to-structure export.
   caller chooses to omit them. mmCIF writes a cell periodic along all three
   axes in the standard crystallographic frame as `_cell` in space group P 1,
   and reads `_cell` as the model's cell only in P 1 (or with no space group),
-  where the coordinates are a whole unit cell; PDB's 1 Å placeholder cube is
-  no cell. Canonical classification informs entity
+  where the coordinates are a whole unit cell; PDB reads `CRYST1` by the same
+  rule. PDB's 1 Å placeholder cube is no cell, and stated cell parameters that
+  are not the model's cell are reported as omitted. Canonical classification informs entity
   kinds; hierarchy alone does not establish polymer status or contextual roles.
   Expert overrides and source provenance handle finer format distinctions.
 

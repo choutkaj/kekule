@@ -4,6 +4,8 @@
 use crate::geometry::{PeriodicCell, PeriodicCellError, Vector3};
 use crate::units::{Quantity, ANGSTROM};
 
+use super::CellOmissionReason;
+
 /// `_cell` lengths in angstroms and angles in degrees, in the order a, b, c,
 /// alpha, beta, gamma.
 pub(crate) type CellParameters = [f64; 6];
@@ -46,6 +48,42 @@ pub(crate) fn cell_from_parameters(
         ),
         [true; 3],
     )
+}
+
+/// The cell PDB records for structures without a crystal lattice, such as
+/// NMR and EM models.
+const PLACEHOLDER: CellParameters = [1.0, 1.0, 1.0, 90.0, 90.0, 90.0];
+
+/// The model's periodic cell from stated cell parameters and the space groups
+/// the source names, or why they are not one.
+///
+/// The coordinates are a whole unit cell only in space group P 1 or when no
+/// space group is declared. Under another space group they are an asymmetric
+/// unit, whose translates alone are not the crystal. PDB's 1 Å placeholder
+/// cube is no cell, and neither are incomplete parameters. mmCIF `_cell` and
+/// PDB `CRYST1` follow this one rule.
+pub(crate) fn stated_cell(
+    parameters: [Option<f64>; 6],
+    space_groups: &[&str],
+) -> Result<Result<PeriodicCell, CellOmissionReason>, PeriodicCellError> {
+    let [Some(a), Some(b), Some(c), Some(alpha), Some(beta), Some(gamma)] = parameters else {
+        return Ok(Err(CellOmissionReason::Incomplete));
+    };
+    if let Some(name) = space_groups.iter().find(|name| {
+        !name
+            .split_whitespace()
+            .collect::<String>()
+            .eq_ignore_ascii_case("P1")
+    }) {
+        return Ok(Err(CellOmissionReason::SpaceGroup {
+            name: (*name).to_owned(),
+        }));
+    }
+    let parameters = [a, b, c, alpha, beta, gamma];
+    if parameters == PLACEHOLDER {
+        return Ok(Err(CellOmissionReason::Placeholder));
+    }
+    cell_from_parameters(parameters).map(Ok)
 }
 
 /// Why a cell has no `_cell` parameters.
@@ -95,6 +133,69 @@ pub(crate) fn cell_parameters(cell: &PeriodicCell) -> Result<CellParameters, Cel
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_whole_p1_unit_cells_are_stated_cells() {
+        let box_ = [
+            Some(20.0),
+            Some(30.0),
+            Some(40.0),
+            Some(90.0),
+            Some(90.0),
+            Some(90.0),
+        ];
+        let placeholder = PLACEHOLDER.map(Some);
+        let mut incomplete = box_;
+        incomplete[2] = None;
+        let space_group = |name: &str| CellOmissionReason::SpaceGroup {
+            name: name.to_owned(),
+        };
+        for (parameters, space_groups, expected) in [
+            (box_, &[][..], Ok(())),
+            (box_, &["P 1"][..], Ok(())),
+            (box_, &["p1", "P 1"][..], Ok(())),
+            (
+                box_,
+                &["P 1", "P 21 21 21"][..],
+                Err(space_group("P 21 21 21")),
+            ),
+            (box_, &["C 1 2 1"][..], Err(space_group("C 1 2 1"))),
+            (
+                placeholder,
+                &["P 1"][..],
+                Err(CellOmissionReason::Placeholder),
+            ),
+            (placeholder, &[][..], Err(CellOmissionReason::Placeholder)),
+            (
+                incomplete,
+                &["P 1"][..],
+                Err(CellOmissionReason::Incomplete),
+            ),
+        ] {
+            let actual = stated_cell(parameters, space_groups)
+                .unwrap()
+                // Lengths pass through the canonical nanometre unit.
+                .map(|cell| {
+                    cell_parameters(&cell)
+                        .unwrap()
+                        .map(|value| (value * 1e9).round() / 1e9)
+                });
+            assert_eq!(
+                actual,
+                expected.map(|()| [20.0, 30.0, 40.0, 90.0, 90.0, 90.0]),
+                "{space_groups:?}"
+            );
+        }
+        let flat = [
+            Some(20.0),
+            Some(30.0),
+            Some(0.0),
+            Some(90.0),
+            Some(90.0),
+            Some(90.0),
+        ];
+        assert!(stated_cell(flat, &[]).is_err());
+    }
 
     #[test]
     fn cell_parameters_round_trip_through_the_standard_frame() {

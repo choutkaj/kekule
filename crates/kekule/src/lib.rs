@@ -696,7 +696,7 @@ pub mod components {
 pub mod macromolecular {
     pub use crate::io::{
         AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
-        AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance,
+        AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
         ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
         ModelSelection, SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretError,
         StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
@@ -721,7 +721,7 @@ pub mod macromolecular {
 pub mod mmcif {
     pub use crate::io::{
         AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
-        AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance,
+        AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
         ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
         MmcifBlock, MmcifBlockSource, MmcifDocument, MmcifEntityClassifications, MmcifEntry,
         MmcifItem, MmcifLoopTable, MmcifParseError, MmcifParseOptions, MmcifValue, MmcifWriteError,
@@ -856,8 +856,9 @@ pub mod mmcif {
 /// PDB-format parsing and interpretation.
 ///
 /// A PDB file holds one entry, whose coordinate models share one
-/// interpretation scope. Parsing types the coordinate, chain-termination,
-/// model, and connection records and keeps every other record verbatim;
+/// interpretation scope. Parsing types the unit-cell, coordinate,
+/// chain-termination, model, and connection records and keeps every other
+/// record verbatim;
 /// interpretation runs the pipeline [`mmcif`] uses and returns the same
 /// [`macromolecular`] reports.
 ///
@@ -871,15 +872,16 @@ pub mod mmcif {
 /// distance inference, a partner listed two or three times has a double or
 /// triple bond, and a bond between a metal and a non-metal is dative. Atoms
 /// without an element symbol take the one their name's alignment implies,
-/// and the report lists them.
+/// and the report lists them. A `CRYST1` cell is the model's periodic cell
+/// under the rule mmCIF `_cell` follows; otherwise the report says why not.
 ///
 /// Interpretation keeps coordinate records in source order as dense atom order.
 pub mod pdb {
     pub use crate::io::{
         AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
-        AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance,
+        AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
         ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
-        ModelSelection, PdbAtom, PdbAtomKind, PdbConect, PdbDocument, PdbLink, PdbModel,
+        ModelSelection, PdbAtom, PdbAtomKind, PdbConect, PdbCryst1, PdbDocument, PdbLink, PdbModel,
         PdbParseError, PdbParseOptions, PdbPartner, PdbRecord, PdbSsbond, PdbTer, SourceResidueId,
         SourceResiduePosition, StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
         StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretIssue,

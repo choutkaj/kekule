@@ -1,9 +1,9 @@
 //! PDB-format coordinate entries as typed records.
 //!
-//! A PDB file holds one entry. Its coordinate (`ATOM`, `HETATM`), chain
-//! termination (`TER`), model (`MODEL`, `ENDMDL`), and connection (`CONECT`,
-//! `LINK`, `SSBOND`) records are typed by their fixed columns; every other
-//! record is kept verbatim. Numbers wider than their columns follow the
+//! A PDB file holds one entry. Its unit-cell (`CRYST1`), coordinate (`ATOM`,
+//! `HETATM`), chain termination (`TER`), model (`MODEL`, `ENDMDL`), and
+//! connection (`CONECT`, `LINK`, `SSBOND`) records are typed by their fixed
+//! columns; every other record is kept verbatim. Numbers wider than their columns follow the
 //! hybrid-36 convention.
 use std::collections::BTreeSet;
 use std::fmt;
@@ -374,6 +374,43 @@ impl PdbSsbond {
     }
 }
 
+/// A `CRYST1` record: the unit cell and space group of a crystal structure.
+/// Entries without a crystal lattice record a 1 Å cube in space group P 1.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PdbCryst1 {
+    lengths: [Option<f64>; 3],
+    angles: [Option<f64>; 3],
+    space_group: Option<String>,
+    z: Option<u32>,
+    location: SourceLocation,
+}
+
+impl PdbCryst1 {
+    /// The cell edges a, b, and c in ångström.
+    pub const fn lengths(&self) -> [Option<f64>; 3] {
+        self.lengths
+    }
+
+    /// The cell angles alpha, beta, and gamma in degrees.
+    pub const fn angles(&self) -> [Option<f64>; 3] {
+        self.angles
+    }
+
+    /// The Hermann-Mauguin space-group symbol, such as `P 21 21 21`.
+    pub fn space_group(&self) -> Option<&str> {
+        self.space_group.as_deref()
+    }
+
+    /// The number of polymer chains in the unit cell.
+    pub const fn z(&self) -> Option<u32> {
+        self.z
+    }
+
+    pub const fn location(&self) -> SourceLocation {
+        self.location
+    }
+}
+
 /// A record kept verbatim, such as `HEADER`, `REMARK`, or `SEQRES`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PdbRecord {
@@ -402,6 +439,7 @@ impl PdbRecord {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PdbDocument {
     id_code: Option<String>,
+    cryst1: Option<PdbCryst1>,
     models: Vec<PdbModel>,
     atoms: Vec<PdbAtom>,
     ter_records: Vec<PdbTer>,
@@ -415,6 +453,11 @@ impl PdbDocument {
     /// The entry's ID code, from columns 63-66 of its `HEADER` record.
     pub fn id_code(&self) -> Option<&str> {
         self.id_code.as_deref()
+    }
+
+    /// The entry's `CRYST1` record, if any.
+    pub fn cryst1(&self) -> Option<&PdbCryst1> {
+        self.cryst1.as_ref()
     }
 
     /// `MODEL` records in source order; empty for a single-model entry.
@@ -568,6 +611,7 @@ impl Parser {
     fn document(&mut self) -> &mut PdbDocument {
         self.document.get_or_insert_with(|| PdbDocument {
             id_code: None,
+            cryst1: None,
             models: Vec::new(),
             atoms: Vec::new(),
             ter_records: Vec::new(),
@@ -607,7 +651,15 @@ impl Parser {
         let name = line[..end].trim_end();
         let typed = matches!(
             name,
-            "ATOM" | "HETATM" | "TER" | "MODEL" | "ENDMDL" | "CONECT" | "LINK" | "SSBOND"
+            "CRYST1"
+                | "ATOM"
+                | "HETATM"
+                | "TER"
+                | "MODEL"
+                | "ENDMDL"
+                | "CONECT"
+                | "LINK"
+                | "SSBOND"
         );
         if typed && !line.is_ascii() {
             return Err(PdbParseError::new(
@@ -618,6 +670,18 @@ impl Parser {
         }
         let fields = Fields { line, number };
         match name {
+            "CRYST1" => {
+                let record = fields.cryst1()?;
+                let document = self.document();
+                if document.cryst1.is_some() {
+                    return Err(PdbParseError::new(
+                        DiagnosticKind::Inconsistent,
+                        at_line,
+                        "duplicate CRYST1 record",
+                    ));
+                }
+                document.cryst1 = Some(record);
+            }
             "ATOM" | "HETATM" => {
                 if self.model.is_none() && !self.model_serials.is_empty() {
                     return Err(PdbParseError::new(
@@ -855,6 +919,27 @@ impl<'a> Fields<'a> {
         };
         let magnitude = i8::try_from(digits).expect("one digit");
         Ok(Some(if sign == b'-' { -magnitude } else { magnitude }))
+    }
+
+    fn cryst1(&self) -> Result<PdbCryst1, PdbParseError> {
+        Ok(PdbCryst1 {
+            lengths: [
+                self.real(7, 15, "cell length a")?,
+                self.real(16, 24, "cell length b")?,
+                self.real(25, 33, "cell length c")?,
+            ],
+            angles: [
+                self.real(34, 40, "cell angle alpha")?,
+                self.real(41, 47, "cell angle beta")?,
+                self.real(48, 54, "cell angle gamma")?,
+            ],
+            space_group: self.optional_text(56, 66),
+            z: self
+                .integer(67, 70, "Z value")?
+                .map(|value| u32::try_from(value).map_err(|_| self.error(67, "invalid Z value")))
+                .transpose()?,
+            location: SourceLocation::at_line(self.number),
+        })
     }
 
     fn ter(&self, preceding_atoms: usize, model: Option<u32>) -> Result<PdbTer, PdbParseError> {
