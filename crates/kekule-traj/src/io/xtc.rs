@@ -1,5 +1,6 @@
 //! Bounded GROMACS XTC trajectories with a checked reader and writer.
 
+use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
@@ -665,6 +666,17 @@ pub struct XtcReader<R> {
     frame_cursor: u64,
 }
 
+impl<R> fmt::Debug for XtcReader<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("XtcReader")
+            .field("atom_count", &self.topology.atom_count())
+            .field("options", &self.options)
+            .field("frame_cursor", &self.frame_cursor)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<R: Read + Seek> XtcReader<R> {
     /// Opens a stream whose coordinates follow the supplied topology's dense order.
     ///
@@ -987,6 +999,16 @@ pub struct IndexedXtcReader<R> {
     offsets: Vec<u64>,
 }
 
+impl<R> fmt::Debug for IndexedXtcReader<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IndexedXtcReader")
+            .field("reader", &self.inner)
+            .field("frame_count", &self.offsets.len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl<R: Read + Seek> IndexedXtcReader<R> {
     /// Opens a stream whose coordinates follow the supplied topology's dense order
     /// and indexes it for random access.
@@ -1124,6 +1146,19 @@ pub struct XtcWriter<W> {
     stream: Vec<u8>,
     /// Complete encoded frame, written to the stream in one call.
     bytes: Vec<u8>,
+}
+
+impl<W> fmt::Debug for XtcWriter<W> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("XtcWriter")
+            .field("atom_count", &self.topology.atom_count())
+            .field("options", &self.options)
+            .field("source_label", &self.source_label)
+            .field("frame_count", &self.frame_count)
+            .field("partial", &self.partial)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<W: Write> XtcWriter<W> {

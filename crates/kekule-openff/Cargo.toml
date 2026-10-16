@@ -10,6 +10,9 @@ categories.workspace = true
 description = "SMIRNOFF parameter assignment and native NAGL inference for Kekule."
 readme = "README.md"
 
+[lints]
+workspace = true
+
 [features]
 default = ["ash"]
 # Bundles the Ash charge model required by the Rosemary preset (about 10 MB).

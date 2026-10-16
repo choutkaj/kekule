@@ -13,7 +13,12 @@ use serde_json::{json, Value};
 
 use crate::{Facts, Failure};
 
-pub fn observe(task: &str, format: &str, text: &str, _options: &Value) -> Result<Facts, Failure> {
+pub(crate) fn observe(
+    task: &str,
+    format: &str,
+    text: &str,
+    _options: &Value,
+) -> Result<Facts, Failure> {
     if format != "mmcif" {
         return Err(Failure::new(
             "request",

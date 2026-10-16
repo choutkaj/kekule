@@ -1,3 +1,4 @@
+use std::fmt;
 use std::sync::Arc;
 
 use kekule::geometry::Point3;
@@ -16,6 +17,15 @@ use crate::FrameBuffer;
 pub struct MoleculeImager {
     topology: Arc<Topology>,
     plan: MoleculePlan,
+}
+
+impl fmt::Debug for MoleculeImager {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MoleculeImager")
+            .field("atom_count", &self.topology.atom_count())
+            .finish_non_exhaustive()
+    }
 }
 
 impl MoleculeImager {
@@ -99,6 +109,19 @@ impl MoleculeImager {
 pub struct TrajectoryUnwrapper {
     topology: Arc<Topology>,
     previous: Option<PreviousFrame>,
+}
+
+impl fmt::Debug for TrajectoryUnwrapper {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TrajectoryUnwrapper")
+            .field("atom_count", &self.topology.atom_count())
+            .field(
+                "previous_frame",
+                &self.previous.as_ref().map(|previous| previous.index),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 struct PreviousFrame {

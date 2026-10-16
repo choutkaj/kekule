@@ -1,5 +1,6 @@
 //! Pure-Rust GROMACS TRR/XDR trajectory I/O.
 
+use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
@@ -177,6 +178,17 @@ pub struct TrrReader<R> {
     properties: OwnerProperties,
     frame_cursor: u64,
     precision_mixed: bool,
+}
+
+impl<R> fmt::Debug for TrrReader<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TrrReader")
+            .field("atom_count", &self.topology.atom_count())
+            .field("options", &self.options)
+            .field("frame_cursor", &self.frame_cursor)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -665,6 +677,16 @@ pub struct IndexedTrrReader<R> {
     offsets: Vec<u64>,
 }
 
+impl<R> fmt::Debug for IndexedTrrReader<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IndexedTrrReader")
+            .field("reader", &self.inner)
+            .field("frame_count", &self.offsets.len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl<R: Read + Seek> IndexedTrrReader<R> {
     /// Opens a stream whose coordinates follow the supplied topology's dense order
     /// and indexes it for random access.
@@ -801,6 +823,19 @@ pub struct TrrWriter<W> {
     /// or reported as finished.
     partial: bool,
     raw: Vec<u8>,
+}
+
+impl<W> fmt::Debug for TrrWriter<W> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TrrWriter")
+            .field("atom_count", &self.topology.atom_count())
+            .field("options", &self.options)
+            .field("source_label", &self.source_label)
+            .field("frame_count", &self.frame_count)
+            .field("partial", &self.partial)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<W: Write> TrrWriter<W> {

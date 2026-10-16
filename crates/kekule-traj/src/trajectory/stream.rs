@@ -1,3 +1,4 @@
+use std::fmt;
 use std::sync::Arc;
 
 use kekule::geometry::Point3;
@@ -66,6 +67,16 @@ pub struct MemoryTrajectoryReader<'a> {
     cursor: usize,
 }
 
+impl fmt::Debug for MemoryTrajectoryReader<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MemoryTrajectoryReader")
+            .field("frame_count", &self.trajectory.len())
+            .field("cursor", &self.cursor)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<'a> MemoryTrajectoryReader<'a> {
     pub fn new(trajectory: &'a Trajectory) -> Self {
         Self {
@@ -123,6 +134,15 @@ pub struct MemoryTrajectoryWriter {
     trajectory: Trajectory,
 }
 
+impl fmt::Debug for MemoryTrajectoryWriter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MemoryTrajectoryWriter")
+            .field("frame_count", &self.trajectory.len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl MemoryTrajectoryWriter {
     pub fn new(topology: Arc<Topology>) -> Self {
         Self {
@@ -175,6 +195,17 @@ pub struct CoordinateFrameReader {
     topology: Arc<Topology>,
     frames: Vec<Vec<Point3>>,
     cursor: usize,
+}
+
+impl fmt::Debug for CoordinateFrameReader {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CoordinateFrameReader")
+            .field("atom_count", &self.topology.atom_count())
+            .field("frame_count", &self.frames.len())
+            .field("cursor", &self.cursor)
+            .finish_non_exhaustive()
+    }
 }
 
 impl CoordinateFrameReader {

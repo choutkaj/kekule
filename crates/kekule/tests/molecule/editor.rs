@@ -763,3 +763,21 @@ fn editor_ids_are_stable_while_drafting_and_compact_on_publication() {
     assert_eq!(ids.atom(tombstone), None);
     assert_eq!(ids.atom(last), Some(AtomId::new(1)));
 }
+
+#[test]
+fn mutable_atom_and_bond_guards_debug_as_their_id_and_current_value() {
+    let mut editor = MoleculeEditor::new();
+    let carbon = editor.add_atom(atom("C")).unwrap();
+    let oxygen = editor.add_atom(atom("O")).unwrap();
+    let bond = editor.add_bond(carbon, oxygen, BondOrder::Single).unwrap();
+    let expected_atom = atom("C");
+    assert_eq!(
+        format!("{:?}", editor.atom_mut(carbon).unwrap()),
+        format!("AtomMut {{ id: {carbon:?}, atom: {expected_atom:?}, .. }}")
+    );
+    let expected_bond = editor.bond(bond).unwrap().clone();
+    assert_eq!(
+        format!("{:?}", editor.bond_mut(bond).unwrap()),
+        format!("BondMut {{ id: {bond:?}, bond: {expected_bond:?}, .. }}")
+    );
+}

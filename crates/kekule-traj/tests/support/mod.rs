@@ -16,7 +16,7 @@ use kekule_traj::{
 
 /// Reject another topology context without changing its buffer or consuming input.
 /// Call before reading and checking the first expected frame in the caller.
-pub fn assert_rejects_unrelated_buffer(reader: &mut impl TrajectoryReader) {
+pub(crate) fn assert_rejects_unrelated_buffer(reader: &mut impl TrajectoryReader) {
     let mut wrong = FrameBuffer::new(linear_carbon_topology(reader.topology().atom_count()));
     wrong.frame_mut().set_step(Some(99));
     let before = buffer_snapshot(&wrong);
@@ -31,7 +31,7 @@ pub fn assert_rejects_unrelated_buffer(reader: &mut impl TrajectoryReader) {
     ));
 }
 
-pub fn topology(symbols: &[&str], bonds: &[(usize, usize)]) -> Arc<Topology> {
+pub(crate) fn topology(symbols: &[&str], bonds: &[(usize, usize)]) -> Arc<Topology> {
     let mut graph = kekule::core::MoleculeEditor::new();
     let atoms = symbols
         .iter()
@@ -54,7 +54,7 @@ pub fn topology(symbols: &[&str], bonds: &[(usize, usize)]) -> Arc<Topology> {
     Arc::new(builder.build().unwrap())
 }
 
-pub fn linear_carbon_topology(atom_count: usize) -> Arc<Topology> {
+pub(crate) fn linear_carbon_topology(atom_count: usize) -> Arc<Topology> {
     let symbols = vec!["C"; atom_count];
     let bonds = (1..atom_count)
         .map(|index| (index - 1, index))
@@ -62,7 +62,7 @@ pub fn linear_carbon_topology(atom_count: usize) -> Arc<Topology> {
     topology(&symbols, &bonds)
 }
 
-pub fn codec_kind(error: &TrajectoryIoError) -> Option<TrajectoryCodecErrorKind> {
+pub(crate) fn codec_kind(error: &TrajectoryIoError) -> Option<TrajectoryCodecErrorKind> {
     match error {
         TrajectoryIoError::Codec(context) => Some(context.kind()),
         _ => None,
@@ -70,7 +70,7 @@ pub fn codec_kind(error: &TrajectoryIoError) -> Option<TrajectoryCodecErrorKind>
 }
 
 /// The exact codec error a reader or writer reports, for whole-value assertions.
-pub fn codec_error(
+pub(crate) fn codec_error(
     kind: TrajectoryCodecErrorKind,
     operation: TrajectoryIoOperation,
     format: TrajectoryFormat,
@@ -87,7 +87,7 @@ pub fn codec_error(
     context.into()
 }
 
-pub fn x_coordinates(buffer: &FrameBuffer) -> Vec<f64> {
+pub(crate) fn x_coordinates(buffer: &FrameBuffer) -> Vec<f64> {
     buffer
         .positions()
         .values()
@@ -97,15 +97,15 @@ pub fn x_coordinates(buffer: &FrameBuffer) -> Vec<f64> {
         .collect()
 }
 
-pub fn buffer_snapshot(buffer: &FrameBuffer) -> String {
+pub(crate) fn buffer_snapshot(buffer: &FrameBuffer) -> String {
     format!("{buffer:#?}")
 }
 
 /// Bytes ahead of a trajectory, so a reader opens partway into its stream.
-pub const LEADING_BYTES: &[u8] = b"bytes before the trajectory";
+pub(crate) const LEADING_BYTES: &[u8] = b"bytes before the trajectory";
 
 /// A stream holding [`LEADING_BYTES`] then `trajectory`, positioned at its first frame.
-pub fn cursor_after_leading_bytes(trajectory: &[u8]) -> Cursor<Vec<u8>> {
+pub(crate) fn cursor_after_leading_bytes(trajectory: &[u8]) -> Cursor<Vec<u8>> {
     let mut bytes = LEADING_BYTES.to_vec();
     bytes.extend_from_slice(trajectory);
     let mut cursor = Cursor::new(bytes);
@@ -116,7 +116,7 @@ pub fn cursor_after_leading_bytes(trajectory: &[u8]) -> Cursor<Vec<u8>> {
 /// Assert that an indexed reader holds exactly `expected`, maps index `i` to
 /// frame `i` before and after a sequential read, and resumes sequential reads
 /// where they stopped after random reads.
-pub fn assert_indexes_every_frame_from_its_start(
+pub(crate) fn assert_indexes_every_frame_from_its_start(
     reader: &mut impl SeekableTrajectoryReader,
     expected: &[TrajectoryFrame],
 ) {
@@ -136,7 +136,7 @@ pub fn assert_indexes_every_frame_from_its_start(
 }
 
 /// Every frame a sequential reader decodes, in order.
-pub fn read_all(reader: &mut impl TrajectoryReader) -> Vec<TrajectoryFrame> {
+pub(crate) fn read_all(reader: &mut impl TrajectoryReader) -> Vec<TrajectoryFrame> {
     let mut destination = FrameBuffer::new(reader.shared_topology());
     let mut frames = Vec::new();
     while reader.read_next(&mut destination).unwrap() {
@@ -147,14 +147,14 @@ pub fn read_all(reader: &mut impl TrajectoryReader) -> Vec<TrajectoryFrame> {
 
 /// A seekable test stream whose backing bytes can change between reader calls.
 #[derive(Clone)]
-pub struct SharedCursor(Rc<RefCell<Cursor<Vec<u8>>>>);
+pub(crate) struct SharedCursor(Rc<RefCell<Cursor<Vec<u8>>>>);
 
 impl SharedCursor {
-    pub fn new(bytes: Vec<u8>) -> Self {
+    pub(crate) fn new(bytes: Vec<u8>) -> Self {
         Self(Rc::new(RefCell::new(Cursor::new(bytes))))
     }
 
-    pub fn overwrite(&self, offset: usize, bytes: &[u8]) {
+    pub(crate) fn overwrite(&self, offset: usize, bytes: &[u8]) {
         self.0.borrow_mut().get_mut()[offset..offset + bytes.len()].copy_from_slice(bytes);
     }
 }
@@ -172,27 +172,27 @@ impl Seek for SharedCursor {
 }
 
 #[derive(Clone)]
-pub struct RestoreSeekControl {
+pub(crate) struct RestoreSeekControl {
     position: Arc<AtomicU64>,
     target: Arc<AtomicU64>,
     armed: Arc<AtomicBool>,
 }
 
 impl RestoreSeekControl {
-    pub fn arm_at_current_position(&self) {
+    pub(crate) fn arm_at_current_position(&self) {
         self.target
             .store(self.position.load(Ordering::SeqCst), Ordering::SeqCst);
         self.armed.store(true, Ordering::SeqCst);
     }
 }
 
-pub struct RestoreSeekFailure {
+pub(crate) struct RestoreSeekFailure {
     inner: Cursor<Vec<u8>>,
     control: RestoreSeekControl,
 }
 
 impl RestoreSeekFailure {
-    pub fn new(bytes: Vec<u8>) -> (Self, RestoreSeekControl) {
+    pub(crate) fn new(bytes: Vec<u8>) -> (Self, RestoreSeekControl) {
         let control = RestoreSeekControl {
             position: Arc::new(AtomicU64::new(0)),
             target: Arc::new(AtomicU64::new(u64::MAX)),
@@ -239,29 +239,29 @@ impl Seek for RestoreSeekFailure {
 }
 
 #[derive(Clone)]
-pub struct GuardControl {
+pub(crate) struct GuardControl {
     violation: Arc<AtomicBool>,
     probed_bytes: Arc<AtomicU64>,
 }
 
 impl GuardControl {
-    pub fn violated(&self) -> bool {
+    pub(crate) fn violated(&self) -> bool {
         self.violation.load(Ordering::SeqCst)
     }
 
-    pub fn probed_bytes(&self) -> u64 {
+    pub(crate) fn probed_bytes(&self) -> u64 {
         self.probed_bytes.load(Ordering::SeqCst)
     }
 }
 
-pub struct GuardedCursor {
+pub(crate) struct GuardedCursor {
     inner: Cursor<Vec<u8>>,
     guard_offset: u64,
     control: GuardControl,
 }
 
 impl GuardedCursor {
-    pub fn new(bytes: Vec<u8>, guard_offset: u64) -> (Self, GuardControl) {
+    pub(crate) fn new(bytes: Vec<u8>, guard_offset: u64) -> (Self, GuardControl) {
         let control = GuardControl {
             violation: Arc::new(AtomicBool::new(false)),
             probed_bytes: Arc::new(AtomicU64::new(0)),
@@ -312,23 +312,23 @@ impl Seek for GuardedCursor {
 }
 
 #[derive(Clone)]
-pub struct NoBackwardSeekControl {
+pub(crate) struct NoBackwardSeekControl {
     armed: Arc<AtomicBool>,
 }
 
 impl NoBackwardSeekControl {
-    pub fn arm(&self) {
+    pub(crate) fn arm(&self) {
         self.armed.store(true, Ordering::SeqCst);
     }
 }
 
-pub struct NoBackwardSeekCursor {
+pub(crate) struct NoBackwardSeekCursor {
     inner: Cursor<Vec<u8>>,
     control: NoBackwardSeekControl,
 }
 
 impl NoBackwardSeekCursor {
-    pub fn new(bytes: Vec<u8>) -> (Self, NoBackwardSeekControl) {
+    pub(crate) fn new(bytes: Vec<u8>) -> (Self, NoBackwardSeekControl) {
         let control = NoBackwardSeekControl {
             armed: Arc::new(AtomicBool::new(false)),
         };
@@ -363,22 +363,22 @@ impl Seek for NoBackwardSeekCursor {
 
 /// A seekable sink that accepts `budget` bytes in total and then fails every
 /// write, so a writer can be cut off partway through a frame.
-pub struct ByteBudgetSink {
+pub(crate) struct ByteBudgetSink {
     inner: Cursor<Vec<u8>>,
     remaining: usize,
 }
 
 impl ByteBudgetSink {
-    pub const INJECTED_FAILURE: &'static str = "injected write failure";
+    pub(crate) const INJECTED_FAILURE: &'static str = "injected write failure";
 
-    pub fn new(budget: usize) -> Self {
+    pub(crate) fn new(budget: usize) -> Self {
         Self {
             inner: Cursor::new(Vec::new()),
             remaining: budget,
         }
     }
 
-    pub fn bytes(&self) -> &[u8] {
+    pub(crate) fn bytes(&self) -> &[u8] {
         self.inner.get_ref()
     }
 }

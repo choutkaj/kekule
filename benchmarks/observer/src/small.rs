@@ -27,7 +27,12 @@ use crate::{Facts, Failure};
 /// Matches per query and target, the same bound the reference observer uses.
 const MAX_MATCHES: usize = 100_000;
 
-pub fn observe(task: &str, format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
+pub(crate) fn observe(
+    task: &str,
+    format: &str,
+    text: &str,
+    options: &Value,
+) -> Result<Facts, Failure> {
     if task == "write" {
         return write(format, text, options);
     }

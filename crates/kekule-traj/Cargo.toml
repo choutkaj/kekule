@@ -11,6 +11,9 @@ categories.workspace = true
 description = "Trajectory storage, streaming, workflows, and pure-Rust file codecs for Kekule."
 publish = true
 
+[lints]
+workspace = true
+
 [dependencies]
 kekule = { version = "0.3.0", path = "../kekule" }
 

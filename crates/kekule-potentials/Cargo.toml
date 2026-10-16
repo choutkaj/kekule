@@ -11,6 +11,9 @@ categories.workspace = true
 description = "Energy, gradient, and geometry-optimization machinery for topology-bound Kekule models."
 publish = true
 
+[lints]
+workspace = true
+
 [features]
 default = ["openff"]
 openff = ["dep:kekule-openff"]

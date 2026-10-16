@@ -6,6 +6,11 @@ All notable changes to Kekule are documented in this file.
 
 ### Added
 
+- The `kekule-traj` readers, writers, and stream adapters (`XyzReader`,
+  `IndexedDcdReader`, `FileTrajectoryWriter`, `MoleculeImager`,
+  `TrajectoryUnwrapper`, and the others) and `kekule::core::AtomMut` and
+  `BondMut` implement `Debug`. Readers and writers show their options,
+  progress, and atom count, never their stream or decode buffers.
 - `XtcWriteOptions::with_cell_policy` mirrors the reader's `XtcCellPolicy`:
   `ZeroMatrixAsAbsent` writes the all-zero box GROMACS uses for
   non-periodic systems, so XTC files without a cell round-trip. The default
@@ -172,8 +177,8 @@ All notable changes to Kekule are documented in this file.
   content. `InvalidMetadata` is removed: SDF titles and data fields have always
   been rejected as `SdfWriteError::InvalidTitle` and `InvalidDataField`.
 - **Breaking:** The interpretation types shared by macromolecular formats have
-  format-neutral names and a namespace of their own, `kekule::macromolecular`;
-  `kekule::mmcif` still re-exports them. `MmcifInterpretOptions`,
+  format-neutral names and a namespace of their own, `kekule::macromolecular`,
+  which is their only public path. `MmcifInterpretOptions`,
   `MmcifInterpretation`, `MmcifInterpretationReport`, `MmcifInterpretIssue`,
   and `MmcifInterpretError` are now `StructureInterpretOptions`,
   `StructureInterpretation`, `StructureInterpretationReport`,

@@ -48,7 +48,7 @@ fn composition(molecule: &Molecule) -> BTreeMap<AtomIdentity, usize> {
     result
 }
 
-pub fn assert_output(source: &Molecule, written: &str, canonical: Option<&str>) {
+pub(crate) fn assert_output(source: &Molecule, written: &str, canonical: Option<&str>) {
     let document = smiles::parse_str(written).expect("successful writer output must parse");
     let mut restored = document
         .interpret()
@@ -73,7 +73,7 @@ pub fn assert_output(source: &Molecule, written: &str, canonical: Option<&str>) 
     }
 }
 
-pub fn check_molecule(source: &Molecule) -> usize {
+pub(crate) fn check_molecule(source: &Molecule) -> usize {
     let canonical = smiles::write(source, smiles::SmilesWriteOptions::canonical());
     let mut checked = 0;
     // Unsupported content and resource exhaustion are valid writer outcomes.

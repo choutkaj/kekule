@@ -10,7 +10,8 @@ use kekule::structure::{
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use kekule_traj::{
-    MemoryTrajectoryReader, SeekableTrajectoryReader, TrajectoryIoError, TrajectoryReader,
+    MemoryTrajectoryReader, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryIoError,
+    TrajectoryReader,
 };
 
 use crate::support;
@@ -142,4 +143,21 @@ fn errors_retain_nested_causes() {
     let collection_error = TrajectoryIoError::from(TrajectoryError::NonMonotonicTime { frame: 1 });
     assert!(matches!(collection_error, TrajectoryIoError::Trajectory(_)));
     assert!(collection_error.source().unwrap().is::<TrajectoryError>());
+}
+
+#[test]
+fn memory_streams_debug_their_progress_without_their_frames() {
+    let trajectory = annotated();
+    let mut reader = MemoryTrajectoryReader::new(&trajectory);
+    let mut destination = reader.frame_buffer();
+    assert!(reader.read_next(&mut destination).unwrap());
+    assert_eq!(
+        format!("{reader:?}"),
+        "MemoryTrajectoryReader { frame_count: 4, cursor: 1, .. }"
+    );
+    let writer = MemoryTrajectoryWriter::new(trajectory.shared_topology());
+    assert_eq!(
+        format!("{writer:?}"),
+        "MemoryTrajectoryWriter { frame_count: 0, .. }"
+    );
 }

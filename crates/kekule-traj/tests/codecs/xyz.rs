@@ -772,3 +772,51 @@ fn independently_generated_ase_fixture_matches_expected_frames() {
 fn assert_path_is_inside_temp(path: &Path) {
     assert!(path.starts_with(std::env::temp_dir()));
 }
+
+#[test]
+fn xyz_streams_debug_their_options_and_progress_without_their_stream() {
+    let topology = topology();
+    let options = XyzReadOptions::default().with_source_label("memory.xyz");
+    let mut reader = XyzReader::new(
+        Cursor::new(TWO_FRAMES.as_bytes()),
+        Arc::clone(&topology),
+        options.clone(),
+    )
+    .unwrap();
+    let mut buffer = FrameBuffer::new(Arc::clone(&topology));
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert_eq!(
+        format!("{reader:?}"),
+        format!("XyzReader {{ atom_count: 2, options: {options:?}, frame_cursor: 1, .. }}")
+    );
+
+    let indexed = IndexedXyzReader::new(
+        Cursor::new(TWO_FRAMES.as_bytes()),
+        Arc::clone(&topology),
+        options.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        format!("{indexed:?}"),
+        format!(
+            "IndexedXyzReader {{ reader: XyzReader {{ atom_count: 2, options: {options:?}, \
+             frame_cursor: 0, .. }}, frame_count: 2, .. }}"
+        )
+    );
+
+    let write_options = XyzWriteOptions::default();
+    let writer = XyzWriter::new(
+        Vec::new(),
+        Arc::clone(&topology),
+        write_options.clone(),
+        "out.xyz",
+    )
+    .unwrap();
+    assert_eq!(
+        format!("{writer:?}"),
+        format!(
+            "XyzWriter {{ atom_count: 2, options: {write_options:?}, source_label: \"out.xyz\", \
+             frame_count: 0, partial: false, .. }}"
+        )
+    );
+}

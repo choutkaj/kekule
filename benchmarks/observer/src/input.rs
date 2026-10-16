@@ -9,7 +9,7 @@ use kekule::{molfile, sdf, smiles};
 use crate::Failure;
 
 /// One connected molecule and the source position of each of its atoms.
-pub struct Component {
+pub(crate) struct Component {
     pub molecule: Molecule,
     /// Source atom index, by `AtomId::index()`.
     pub source: Vec<usize>,
@@ -18,13 +18,13 @@ pub struct Component {
 }
 
 impl Component {
-    pub fn atom(&self, atom: kekule::core::AtomId) -> usize {
+    pub(crate) fn atom(&self, atom: kekule::core::AtomId) -> usize {
         self.source[atom.index()]
     }
 }
 
 /// Every component of one input record, in topology instance order.
-pub fn read(format: &str, text: &str) -> Result<Vec<Component>, Failure> {
+pub(crate) fn read(format: &str, text: &str) -> Result<Vec<Component>, Failure> {
     match format {
         "smiles" => read_smiles(text),
         "mol" => {
