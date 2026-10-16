@@ -1498,7 +1498,7 @@ fn all_smiles_writers_require_perception_for_bracketed_inferred_hydrogens() {
         };
         assert_eq!(
             error.kind(),
-            smiles_api::MoleculeWriteErrorKind::MissingPerception,
+            molfile::MoleculeWriteErrorKind::MissingPerception,
             "{writer}: {error}"
         );
     }

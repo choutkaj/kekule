@@ -1,7 +1,8 @@
 use kekule::dssp::{
     self, DsspChainBreak, DsspError, DsspLimits, DsspOptions, DsspResource, DsspSecondaryStructure,
 };
-use kekule::mmcif::{self, ModelSelection, StructureInterpretOptions};
+use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
+use kekule::mmcif;
 use kekule::topology::ResidueId;
 
 const CRAMBIN_MMCIF: &str = include_str!("../fixtures/mmcif/1CRN.cif");

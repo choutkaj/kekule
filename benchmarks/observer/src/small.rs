@@ -675,7 +675,7 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                 sdf::write(
                     &[record],
                     sdf::SdfWriteOptions {
-                        version: sdf::MolfileWriteVersion::V2000,
+                        version: molfile::MolfileWriteVersion::V2000,
                         ..Default::default()
                     },
                 )

@@ -64,7 +64,7 @@ fn bracket_metadata_export_preserves_the_perceived_hydrogen_count() {
             let error = smiles::write(&original, options).unwrap_err();
             assert_eq!(
                 error.kind(),
-                smiles::MoleculeWriteErrorKind::MissingPerception
+                molfile::MoleculeWriteErrorKind::MissingPerception
             );
         }
         if map.is_some() || charge != 0 {
@@ -72,7 +72,7 @@ fn bracket_metadata_export_preserves_the_perceived_hydrogen_count() {
                 smiles::write(&original, smiles::SmilesWriteOptions::canonical()).unwrap_err();
             assert_eq!(
                 error.kind(),
-                smiles::MoleculeWriteErrorKind::MissingPerception
+                molfile::MoleculeWriteErrorKind::MissingPerception
             );
         }
         original.perceive().unwrap();
@@ -99,7 +99,7 @@ fn canonical_hydrogen_collapse_requires_a_known_parent_count() {
     let error = smiles::write(&inferred, smiles::SmilesWriteOptions::canonical()).unwrap_err();
     assert_eq!(
         error.kind(),
-        smiles::MoleculeWriteErrorKind::MissingPerception
+        molfile::MoleculeWriteErrorKind::MissingPerception
     );
     assert_eq!(
         error.message(),

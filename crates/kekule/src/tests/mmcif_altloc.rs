@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::macromolecular::*;
 use crate::mmcif::*;
 
 fn document(rows: &str) -> MmcifDocument {

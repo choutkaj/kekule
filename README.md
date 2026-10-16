@@ -195,7 +195,8 @@ as an ensemble:
 ```rust
 use std::{error::Error, fs};
 
-use kekule::pdb::{self, BondEvidence, StructureInterpretIssue};
+use kekule::macromolecular::{BondEvidence, StructureInterpretIssue};
+use kekule::pdb;
 
 fn main() -> Result<(), Box<dyn Error>> {
     // A PDB file holds one entry. Bonds it does not state come from residue

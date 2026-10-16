@@ -122,6 +122,24 @@ All notable changes to Kekule are documented in this file.
     `BondOrder`, `Element`, `ImplicitHydrogens`, `Topology`, `Model`,
     `Positions`, and `Quantity`. `AtomId`, `BondId`, and `Hierarchy` left it;
     import them from `kekule::core` and `kekule::topology`.
+  - The 25 interpretation types shared by mmCIF and PDB are exported only
+    from `kekule::macromolecular`, no longer from `kekule::mmcif` and
+    `kekule::pdb`: `AltLocDecision`, `AltLocPolicy`, `AltLocPreference`,
+    `AltLocResidue`, `AltLocSelection`, `AltLocSelectionReason`,
+    `AtomProvenance`, `BondEvidence`, `BondProvenance`, `CellOmissionReason`,
+    `ConnectionResolutionReason`, `ConnectivityOptions`, `EntityKind`,
+    `InstanceProvenance`, `ModelSelection`, `SourceResidueId`,
+    `SourceResiduePosition`, `StructureInterpretOptions`,
+    `StructureInterpretation`, `StructureInterpretationReport`,
+    `StructureInterpretIssue`, `StructureInterpretError`,
+    `StructureEnsembleInterpretOptions`, `StructureEnsembleInterpretation`,
+    and `StructureEnsembleInterpretError`.
+  - `UnrepresentablePolicy` is exported only from `kekule::diagnostics`, no
+    longer from `kekule::mmcif`, `kekule::molfile`, and `kekule::sdf`.
+  - `MoleculeWriteError` and `MoleculeWriteErrorKind` are exported only from
+    `kekule::molfile`, no longer from `kekule::smiles`, and
+    `MoleculeWriteError`, `MolfileInterpretOptions`, and `MolfileWriteVersion`
+    no longer from `kekule::sdf`.
 - **Breaking:** `kekule-traj` indexed readers are opened directly with
   `IndexedXyzReader::new`, `IndexedDcdReader::new`, `IndexedTrrReader::new`,
   and `IndexedXtcReader::new`, which take the same arguments as the

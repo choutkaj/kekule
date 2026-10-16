@@ -9,7 +9,7 @@ use crate::io::MoleculeWriteError;
 use super::emit::Emission;
 use super::parse::SmilesDirectionToken;
 
-pub fn write_smiles(molecule: &Molecule) -> std::result::Result<String, MoleculeWriteError> {
+pub(crate) fn write_smiles(molecule: &Molecule) -> std::result::Result<String, MoleculeWriteError> {
     write_source_order_emission(
         molecule,
         StereoWriteMode::Reject,
@@ -18,7 +18,7 @@ pub fn write_smiles(molecule: &Molecule) -> std::result::Result<String, Molecule
     .render()
 }
 
-pub fn write_isomeric_smiles(
+pub(crate) fn write_isomeric_smiles(
     molecule: &Molecule,
 ) -> std::result::Result<String, MoleculeWriteError> {
     write_source_order_emission(

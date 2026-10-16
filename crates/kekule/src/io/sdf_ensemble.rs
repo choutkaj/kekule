@@ -54,7 +54,7 @@ impl std::error::Error for SdfEnsembleError {
 /// member takes its relative weight from the record's [`SDF_WEIGHT_FIELD`]
 /// (1.0 when absent) and its energy from [`SDF_ENERGY_FIELD`] in kJ/mol (none
 /// when absent), the fields the SDF writer emits for ensemble members.
-pub fn sdf_ensemble<'a>(
+pub(crate) fn sdf_ensemble<'a>(
     records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
 ) -> Result<Ensemble, SdfEnsembleError> {
     let records = records.into_iter().collect::<Vec<_>>();

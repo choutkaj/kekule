@@ -5,9 +5,8 @@ use std::sync::Arc;
 
 use kekule::core::BondOrder;
 use kekule::dssp::{self, DsspHydrogenBond, DsspOptions};
-use kekule::mmcif::{
-    self, MmcifDocument, MmcifEntry, MmcifValue, ModelSelection, StructureInterpretOptions,
-};
+use kekule::macromolecular::{self, ModelSelection, StructureInterpretOptions};
+use kekule::mmcif::{self, MmcifDocument, MmcifEntry, MmcifValue};
 use kekule::topology::{AtomSelection, InstanceAtomId, ResidueClass, ResidueId};
 use kekule::units::{ANGSTROM, SQUARE_ANGSTROM};
 use serde_json::{json, Value};
@@ -87,7 +86,9 @@ fn syntax(document: &MmcifDocument) -> Result<Facts, Failure> {
     Ok(facts)
 }
 
-fn first_model(document: &MmcifDocument) -> Result<mmcif::StructureInterpretation, Failure> {
+fn first_model(
+    document: &MmcifDocument,
+) -> Result<macromolecular::StructureInterpretation, Failure> {
     mmcif::interpret_with_options(
         document,
         StructureInterpretOptions {
@@ -99,7 +100,9 @@ fn first_model(document: &MmcifDocument) -> Result<mmcif::StructureInterpretatio
 }
 
 /// Site identity for every atom an interpretation kept.
-fn site_ids(interpretation: &mmcif::StructureInterpretation) -> BTreeMap<InstanceAtomId, String> {
+fn site_ids(
+    interpretation: &macromolecular::StructureInterpretation,
+) -> BTreeMap<InstanceAtomId, String> {
     interpretation
         .report()
         .instances()

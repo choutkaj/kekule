@@ -1,8 +1,10 @@
 use std::sync::Arc;
 use std::{io, io::Write};
 
+use kekule::diagnostics::UnrepresentablePolicy;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::mmcif::{self, EntityKind, MmcifEntityClassifications, MmcifWriteOptions};
+use kekule::macromolecular::EntityKind;
+use kekule::mmcif::{self, MmcifEntityClassifications, MmcifWriteOptions};
 use kekule::molfile::{self, MoleculeWriteErrorKind, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
@@ -679,7 +681,7 @@ fn mmcif_rejects_ensemble_weights_and_energies_it_cannot_carry() {
     let omitted = mmcif::write(
         [&weighted_ensemble()],
         MmcifWriteOptions {
-            ensemble_metadata: mmcif::UnrepresentablePolicy::Omit,
+            ensemble_metadata: UnrepresentablePolicy::Omit,
             ..MmcifWriteOptions::default()
         },
     )
@@ -732,7 +734,7 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
             (MoleculeWriteErrorKind::UnsupportedRepresentation, message)
         );
         let omitted = MolfileWriteOptions {
-            cell: molfile::UnrepresentablePolicy::Omit,
+            cell: UnrepresentablePolicy::Omit,
             ..options
         };
         assert_eq!(
@@ -743,7 +745,7 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
     let error = sdf::write([&boxed], SdfWriteOptions::default()).unwrap_err();
     assert_eq!(error.to_string(), message);
     let omitted = SdfWriteOptions {
-        cell: sdf::UnrepresentablePolicy::Omit,
+        cell: UnrepresentablePolicy::Omit,
         ..Default::default()
     };
     assert_eq!(
@@ -788,7 +790,7 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
         "mmCIF cannot represent the periodic cell: an mmCIF cell is periodic along all three axes"
     );
     let omit = MmcifWriteOptions {
-        cell: mmcif::UnrepresentablePolicy::Omit,
+        cell: UnrepresentablePolicy::Omit,
         ..MmcifWriteOptions::default()
     };
     assert_eq!(cell_of(&mmcif::write([&slab], omit.clone()).unwrap()), None);

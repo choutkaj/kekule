@@ -1,6 +1,7 @@
 //! SMILES output is a faithful, numbering-independent serialization.
 
-use kekule::smiles::{self, MoleculeWriteErrorKind, SmilesWriteOptions};
+use kekule::molfile::MoleculeWriteErrorKind;
+use kekule::smiles::{self, SmilesWriteOptions};
 use kekule::topology::Topology;
 
 use crate::contract;

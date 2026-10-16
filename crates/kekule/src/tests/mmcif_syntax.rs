@@ -1,4 +1,5 @@
 //! Focused regressions for the CIF source-syntax boundary.
+use crate::macromolecular;
 use crate::mmcif::{self, MmcifParseOptions};
 
 // Test-only re-encoding of focused source fixtures. No chemistry is generated.
@@ -186,7 +187,7 @@ fn mmcif_category_ambiguity_is_rejected_without_normalizing_the_document() {
         .contains("more than one data block"));
     assert!(matches!(
         doc.interpret_ensemble(),
-        Err(mmcif::StructureEnsembleInterpretError::MultipleAtomSiteBlocks)
+        Err(macromolecular::StructureEnsembleInterpretError::MultipleAtomSiteBlocks)
     ));
 }
 
@@ -420,7 +421,7 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
     );
     let error = mmcif::parse_str(SINGLE_SITE)
         .unwrap()
-        .interpret_ensemble_with_options(mmcif::StructureEnsembleInterpretOptions {
+        .interpret_ensemble_with_options(macromolecular::StructureEnsembleInterpretOptions {
             model_ids: Some(vec!["9".into()]),
             ..Default::default()
         })

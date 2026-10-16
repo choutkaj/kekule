@@ -1,9 +1,11 @@
 #![no_main]
 
+use kekule::macromolecular::{
+    ModelSelection, StructureEnsembleInterpretOptions, StructureInterpretOptions,
+};
 use kekule::pdb::{
     interpret_ensemble, interpret_ensemble_with_options, interpret_with_options,
-    parse_str_with_options, ModelSelection, PdbParseOptions, StructureEnsembleInterpretOptions,
-    StructureInterpretOptions,
+    parse_str_with_options, PdbParseOptions,
 };
 use libfuzzer_sys::fuzz_target;
 

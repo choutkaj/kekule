@@ -1,5 +1,6 @@
 use kekule::diagnostics::SourceLocation;
-use kekule::mmcif::{self, CellOmissionReason, StructureInterpretIssue};
+use kekule::macromolecular::{CellOmissionReason, StructureInterpretIssue};
+use kekule::mmcif;
 
 const MINIMAL_MMCIF: &str = r#"
 data_demo
@@ -145,9 +146,9 @@ duplicate covale A C1 A C2 {order}
 
 #[test]
 fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std::error::Error>> {
+    use kekule::macromolecular::{self, EntityKind, StructureInterpretOptions};
     use kekule::mmcif::{
-        self, EntityKind, MmcifBlock, MmcifEntityClassifications, MmcifWriteError,
-        MmcifWriteOptions, StructureInterpretOptions,
+        self, MmcifBlock, MmcifEntityClassifications, MmcifWriteError, MmcifWriteOptions,
     };
 
     let document = mmcif::parse_str(MINIMAL_MMCIF)?;
@@ -219,7 +220,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         mmcif::interpret_ensemble(&document)?.reports(),
         mmcif::interpret_ensemble_with_options(
             &document,
-            mmcif::StructureEnsembleInterpretOptions::default()
+            macromolecular::StructureEnsembleInterpretOptions::default()
         )?
         .reports()
     );
@@ -307,7 +308,8 @@ fn duplicate_agreeing_authoritative_bond_evidence_is_idempotent() {
 
 #[test]
 fn duplicate_conflicting_authoritative_bond_evidence_is_rejected() {
-    use kekule::mmcif::{self, StructureInterpretError};
+    use kekule::macromolecular::StructureInterpretError;
+    use kekule::mmcif;
 
     let document = mmcif::parse_str(&with_struct_conn("doub"))
         .expect("duplicate conflicting connectivity parses");
@@ -392,7 +394,7 @@ fn without_component_bonds(text: &str) -> String {
 
 #[test]
 fn mmcif_connectivity_matches_an_independent_reference() {
-    use kekule::mmcif::{SourceResidueId, SourceResiduePosition, StructureInterpretIssue};
+    use kekule::macromolecular::{SourceResidueId, SourceResiduePosition, StructureInterpretIssue};
 
     // Atom, bond, and molecule counts from Biotite 1.2.0
     // (`pdbx.get_structure(include_bonds=True, altloc="occupancy")`), which

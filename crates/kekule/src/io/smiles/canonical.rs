@@ -21,7 +21,7 @@ use labeling::CanonicalOrder;
 const MAX_INPUT_COMPLEXITY: usize = 50_000_000;
 const MAX_GRAPH_SLOTS: usize = 2_000_000;
 
-pub fn write_canonical_smiles(
+pub(crate) fn write_canonical_smiles(
     molecule: &Molecule,
 ) -> std::result::Result<String, MoleculeWriteError> {
     write_canonical_smiles_with_limits(molecule, MAX_INPUT_COMPLEXITY, MAX_GRAPH_SLOTS)

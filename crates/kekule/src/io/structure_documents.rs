@@ -501,7 +501,7 @@ fn publish_molfile_components(
 /// perception is temporary and is not installed on the published molecules.
 /// Unsupported valence retains the graph with a diagnostic instead of imposing
 /// strict perception on document import. Resource failures remain errors.
-pub fn interpret_molfile_document(
+pub(crate) fn interpret_molfile_document(
     document: &MolfileDocument,
     options: MolfileInterpretOptions,
 ) -> Result<MolfileInterpretation, MolfileInterpretError> {

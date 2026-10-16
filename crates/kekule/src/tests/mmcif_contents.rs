@@ -1,10 +1,12 @@
 use super::{deterministic_text_mutations, test_positions};
 use crate::core::{Atom, AtomId, BondOrder, Element};
 use crate::geometry::Point3;
+use crate::macromolecular::{
+    self, AltLocPolicy, EntityKind, InstanceProvenance, ModelSelection, StructureInterpretOptions,
+    StructureInterpretationReport,
+};
 use crate::mmcif::{
-    self, AltLocPolicy, EntityKind, InstanceProvenance, MmcifEntityClassifications,
-    MmcifParseOptions, MmcifWriteError, MmcifWriteOptions, ModelSelection,
-    StructureInterpretOptions, StructureInterpretationReport,
+    self, MmcifEntityClassifications, MmcifParseOptions, MmcifWriteError, MmcifWriteOptions,
 };
 use crate::properties::{PropertyColumn, PropertyKey};
 use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
@@ -370,7 +372,7 @@ fn connection_input(atom_sites: &str, tags: &str, values: &str) -> String {
 }
 
 fn connection_atom(
-    interpretation: &mmcif::StructureInterpretation,
+    interpretation: &macromolecular::StructureInterpretation,
     atom_name: &str,
     label_sequence_id: Option<i32>,
     insertion_code: Option<&str>,
@@ -394,7 +396,7 @@ fn connection_atom(
 }
 
 fn assert_declared_bond(
-    interpretation: &mmcif::StructureInterpretation,
+    interpretation: &macromolecular::StructureInterpretation,
     left: crate::topology::InstanceAtomId,
     right: crate::topology::InstanceAtomId,
     order: BondOrder,
@@ -453,9 +455,9 @@ fn deterministic_mmcif_parser_and_interpreters_fuzz_smoke_are_panic_free() {
                 let _ = mmcif::interpret_ensemble(&document);
                 let _ = mmcif::interpret_ensemble_with_options(
                     &document,
-                    mmcif::StructureEnsembleInterpretOptions {
+                    macromolecular::StructureEnsembleInterpretOptions {
                         model_ids: Some(Vec::new()),
-                        ..mmcif::StructureEnsembleInterpretOptions::default()
+                        ..macromolecular::StructureEnsembleInterpretOptions::default()
                     },
                 );
             })
@@ -528,7 +530,7 @@ fn block_interpreters_reject_a_block_without_atom_site_data() {
     assert!(model_error.message().contains("no atom-site category"));
     assert!(matches!(
         block.interpret_ensemble(),
-        Err(mmcif::StructureEnsembleInterpretError::NoCoordinateModels)
+        Err(macromolecular::StructureEnsembleInterpretError::NoCoordinateModels)
     ));
 }
 
@@ -750,7 +752,7 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
     assert_eq!(model.topology().bonds().count(), 1);
     assert_eq!(
         first_provenance.bonds()[0].evidence(),
-        &mmcif::BondEvidence::Template {
+        &macromolecular::BondEvidence::Template {
             component_id: "GLY".to_owned(),
             variant: None,
         }
@@ -1159,16 +1161,16 @@ fn ensemble_interpretation_rejects_empty_explicit_model_selection_without_panick
     let result = std::panic::catch_unwind(|| {
         mmcif::interpret_ensemble_with_options(
             &document,
-            mmcif::StructureEnsembleInterpretOptions {
+            macromolecular::StructureEnsembleInterpretOptions {
                 model_ids: Some(Vec::new()),
-                ..mmcif::StructureEnsembleInterpretOptions::default()
+                ..macromolecular::StructureEnsembleInterpretOptions::default()
             },
         )
     });
     assert!(matches!(
         result,
         Ok(Err(
-            mmcif::StructureEnsembleInterpretError::EmptyModelSelection
+            macromolecular::StructureEnsembleInterpretError::EmptyModelSelection
         ))
     ));
 }
@@ -1182,7 +1184,7 @@ fn document_interpreters_reject_multiple_atom_site_blocks() {
         .contains("atom-site data in more than one data block"));
     assert!(matches!(
         mmcif::interpret_ensemble(&document),
-        Err(mmcif::StructureEnsembleInterpretError::MultipleAtomSiteBlocks)
+        Err(macromolecular::StructureEnsembleInterpretError::MultipleAtomSiteBlocks)
     ));
 }
 
@@ -1197,7 +1199,9 @@ fn ensemble_block_interpretation_matches_exactly_one_document_helper() {
         .interpret_ensemble()
         .expect("default block method interprets");
     let method_explicit = document.blocks()[0]
-        .interpret_ensemble_with_options(mmcif::StructureEnsembleInterpretOptions::default())
+        .interpret_ensemble_with_options(
+            macromolecular::StructureEnsembleInterpretOptions::default(),
+        )
         .expect("explicit block method interprets");
     let document_method = document
         .interpret_ensemble()
@@ -1276,9 +1280,9 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
     for model_ids in [vec!["2", "1"], vec!["2"]] {
         let interpreted = mmcif::interpret_ensemble_with_options(
             &document,
-            mmcif::StructureEnsembleInterpretOptions {
+            macromolecular::StructureEnsembleInterpretOptions {
                 model_ids: Some(model_ids.iter().map(|id| (*id).to_owned()).collect()),
-                ..mmcif::StructureEnsembleInterpretOptions::default()
+                ..macromolecular::StructureEnsembleInterpretOptions::default()
             },
         )
         .unwrap();
@@ -1325,18 +1329,18 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
 fn ensemble_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
     let changed = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 N C1");
     assert!(matches!(mmcif::interpret_ensemble(&parse(&changed)),
-        Err(mmcif::StructureEnsembleInterpretError::InconsistentTopology { model_id }) if model_id == "2"));
+        Err(macromolecular::StructureEnsembleInterpretError::InconsistentTopology { model_id }) if model_id == "2"));
     let invalid = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 Xx C1");
     let error = mmcif::interpret_ensemble_with_options(
         &parse(&invalid),
-        mmcif::StructureEnsembleInterpretOptions {
+        macromolecular::StructureEnsembleInterpretOptions {
             model_ids: Some(vec!["1".into()]),
-            ..mmcif::StructureEnsembleInterpretOptions::default()
+            ..macromolecular::StructureEnsembleInterpretOptions::default()
         },
     )
     .unwrap_err();
     assert!(
-        matches!(error, mmcif::StructureEnsembleInterpretError::Model { model_id, error } if model_id == "1" && error.message().contains("unknown atom-site element"))
+        matches!(error, macromolecular::StructureEnsembleInterpretError::Model { model_id, error } if model_id == "1" && error.message().contains("unknown atom-site element"))
     );
 }
 
@@ -1345,7 +1349,7 @@ fn multimodel_interpretation_rejects_inconsistent_atom_sets() {
     let inconsistent = MULTI_MODEL.replace("HETATM 4 O O1 LIG A 1 6.2 0.0 0.0 0.90 21.0 2\n", "");
     assert!(matches!(
         mmcif::interpret_ensemble(&parse(&inconsistent)),
-        Err(mmcif::StructureEnsembleInterpretError::InconsistentAtomSet { model_id })
+        Err(macromolecular::StructureEnsembleInterpretError::InconsistentAtomSet { model_id })
             if model_id == "2"
     ));
 }
@@ -1424,7 +1428,7 @@ HETATM 4 C C1 LIG A XA 1 10.0 0.0 0.0 2
 "#;
     assert!(matches!(
         mmcif::interpret_ensemble(&parse(reordered)),
-        Err(mmcif::StructureEnsembleInterpretError::InconsistentDenseAtomOrder { model_id })
+        Err(macromolecular::StructureEnsembleInterpretError::InconsistentDenseAtomOrder { model_id })
             if model_id == "2"
     ));
 }
@@ -1437,7 +1441,7 @@ fn ensemble_identity_detects_true_repeated_atom_set_mismatch() {
     );
     assert!(matches!(
         mmcif::interpret_ensemble(&parse(&mismatched)),
-        Err(mmcif::StructureEnsembleInterpretError::InconsistentAtomSet { model_id })
+        Err(macromolecular::StructureEnsembleInterpretError::InconsistentAtomSet { model_id })
             if model_id == "2"
     ));
 }
@@ -1532,7 +1536,7 @@ fn alternate_location_policy_is_explicit_and_reported() {
     assert!((result.model().positions().values().value()[0].x - 0.5).abs() < 1.0e-15);
     assert!(result.report().issues.iter().any(|issue| matches!(
         issue,
-        mmcif::StructureInterpretIssue::AlternateLocationOmitted { alt_id: Some(id), .. } if id == "A"
+        macromolecular::StructureInterpretIssue::AlternateLocationOmitted { alt_id: Some(id), .. } if id == "A"
     )));
     assert!(mmcif::interpret_with_options(
         &document,
@@ -1680,13 +1684,13 @@ _struct_conn.ptnr2_label_atom_id"#,
     assert_eq!(result.report().applied_connections(), 0);
     assert!(result.report().issues().iter().any(|issue| matches!(
         issue,
-        mmcif::StructureInterpretIssue::ConnectionUnresolved {
+        macromolecular::StructureInterpretIssue::ConnectionUnresolved {
             connection_id: Some(id),
             connection_type,
             partner: 1,
             source_line: Some(_),
             reason:
-                mmcif::ConnectionResolutionReason::ConflictingLabelAndAuthorSelectors,
+                macromolecular::ConnectionResolutionReason::ConflictingLabelAndAuthorSelectors,
         } if id == "conflict" && connection_type == "covale"
     )));
 }
@@ -1707,13 +1711,13 @@ _struct_conn.ptnr2_label_atom_id"#,
     assert_eq!(result.report().applied_connections(), 0);
     assert!(result.report().issues().iter().any(|issue| matches!(
         issue,
-        mmcif::StructureInterpretIssue::ConnectionAmbiguous {
+        macromolecular::StructureInterpretIssue::ConnectionAmbiguous {
             connection_id: Some(id),
             connection_type,
             partner: 1,
             source_line: Some(_),
             candidates: 2,
-            reason: mmcif::ConnectionResolutionReason::MultipleMatchingAtoms,
+            reason: macromolecular::ConnectionResolutionReason::MultipleMatchingAtoms,
         } if id == "ambiguous" && connection_type == "covale"
     )));
 }
@@ -1734,10 +1738,10 @@ _struct_conn.ptnr2_label_atom_id"#,
     assert_eq!(result.report().applied_connections(), 0);
     assert!(result.report().issues().iter().any(|issue| matches!(
         issue,
-        mmcif::StructureInterpretIssue::ConnectionUnresolved {
+        macromolecular::StructureInterpretIssue::ConnectionUnresolved {
             connection_id: Some(id),
             partner: 1,
-            reason: mmcif::ConnectionResolutionReason::NoMatchingAtom,
+            reason: macromolecular::ConnectionResolutionReason::NoMatchingAtom,
             ..
         } if id == "missing"
     )));
@@ -1768,11 +1772,11 @@ _struct_conn.ptnr2_label_atom_id"#,
     assert_eq!(result.report().applied_connections(), 0);
     assert!(result.report().issues().iter().any(|issue| matches!(
         issue,
-        mmcif::StructureInterpretIssue::ConnectionUnresolved {
+        macromolecular::StructureInterpretIssue::ConnectionUnresolved {
             connection_id: Some(id),
             partner: 1,
             reason:
-                mmcif::ConnectionResolutionReason::AlternateLocationOmitted {
+                macromolecular::ConnectionResolutionReason::AlternateLocationOmitted {
                     alternate_location
                 },
             ..
@@ -1930,12 +1934,12 @@ symmetry-link disulf A N 1 1_555 A N 1 15_545
     assert_eq!(result.report().applied_connections, 0);
     assert!(result.report().issues.iter().any(|issue| matches!(
         issue,
-        mmcif::StructureInterpretIssue::ConnectionUnresolved {
+        macromolecular::StructureInterpretIssue::ConnectionUnresolved {
             connection_id: Some(id),
             connection_type,
             partner: 2,
             source_line: Some(_),
-            reason: mmcif::ConnectionResolutionReason::UnsupportedSymmetry {
+            reason: macromolecular::ConnectionResolutionReason::UnsupportedSymmetry {
                 symmetry
             },
         } if id == "symmetry-link" && connection_type == "disulf" && symmetry == "15_545"

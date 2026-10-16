@@ -679,7 +679,7 @@ mod tests {
         .expect("search is incomplete");
         assert_eq!(
             error.kind(),
-            crate::smiles::MoleculeWriteErrorKind::ResourceLimit
+            crate::io::MoleculeWriteErrorKind::ResourceLimit
         );
         assert!(error.message().contains("search states"));
         let error = CanonicalOrder::with_limits(
@@ -692,7 +692,7 @@ mod tests {
         .expect("refinement is incomplete");
         assert_eq!(
             error.kind(),
-            crate::smiles::MoleculeWriteErrorKind::ResourceLimit
+            crate::io::MoleculeWriteErrorKind::ResourceLimit
         );
         assert!(error.message().contains("refinement work"));
     }

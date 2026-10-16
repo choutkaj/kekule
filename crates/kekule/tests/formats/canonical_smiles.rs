@@ -1,5 +1,6 @@
 use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
-use kekule::smiles::{self, MoleculeWriteErrorKind};
+use kekule::molfile::MoleculeWriteErrorKind;
+use kekule::smiles;
 
 use crate::support::renumbered;
 

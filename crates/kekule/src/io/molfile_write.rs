@@ -66,7 +66,7 @@ impl<'a> From<&'a Model> for MolfileSource<'a> {
 /// Writes one CTAB. V2000 rounds coordinates to four decimal places in
 /// angstroms; V3000 keeps round-trip decimal text. Stereo is projected
 /// against the coordinates emitted by the chosen version.
-pub fn write_molfile<'a>(
+pub(crate) fn write_molfile<'a>(
     source: impl Into<MolfileSource<'a>>,
     options: MolfileWriteOptions,
 ) -> Result<String, MoleculeWriteError> {
@@ -81,7 +81,7 @@ pub fn write_molfile<'a>(
     }
 }
 
-pub fn write_molfile_to<'a>(
+pub(crate) fn write_molfile_to<'a>(
     writer: &mut impl Write,
     source: impl Into<MolfileSource<'a>>,
     options: MolfileWriteOptions,

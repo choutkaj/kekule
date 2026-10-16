@@ -1,8 +1,7 @@
 #![no_main]
 
-use kekule::sdf::{
-    parse_str, records_with_options, write, MolfileWriteVersion, SdfParseOptions, SdfWriteOptions,
-};
+use kekule::molfile::MolfileWriteVersion;
+use kekule::sdf::{parse_str, records_with_options, write, SdfParseOptions, SdfWriteOptions};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

@@ -140,7 +140,7 @@ impl<'a> From<&'a SdfRecordInterpretation> for SdfRecordSource<'a> {
 }
 
 /// Writes records to a string. See [`write_sdf_to`].
-pub fn write_sdf<'a, R: Into<SdfRecordSource<'a>>>(
+pub(crate) fn write_sdf<'a, R: Into<SdfRecordSource<'a>>>(
     records: impl IntoIterator<Item = R>,
     options: SdfWriteOptions,
 ) -> Result<String, SdfWriteError> {
@@ -151,7 +151,7 @@ pub fn write_sdf<'a, R: Into<SdfRecordSource<'a>>>(
 
 /// Writes independent records in input order. An ensemble or trajectory
 /// writes one record per item (`sdf::write(&ensemble, options)`).
-pub fn write_sdf_to<'a, R: Into<SdfRecordSource<'a>>>(
+pub(crate) fn write_sdf_to<'a, R: Into<SdfRecordSource<'a>>>(
     writer: &mut impl Write,
     records: impl IntoIterator<Item = R>,
     options: SdfWriteOptions,
