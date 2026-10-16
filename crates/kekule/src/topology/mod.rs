@@ -43,7 +43,7 @@ use crate::molecule::{AtomId, BondId, Molecule};
 use crate::properties::{
     PropertyKey, PropertyValue, PropertyValueRef, TopologyProperties, TopologyPropertiesMut,
 };
-pub use builder::{TopologyBuildError, TopologyBuilder, TopologyHierarchyError, TopologyIdKind};
+pub use builder::{TopologyBuildError, TopologyBuilder, TopologyIdKind};
 use dense_order::DenseOrder;
 pub(crate) use editor::AppendMapping;
 pub use entity_views::{AtomView, BondView};
@@ -51,7 +51,6 @@ pub use hierarchy::{
     AtomSite, AtomSiteId, AtomSiteMetadata, Chain, ChainId, Hierarchy, HierarchyError,
     HierarchyIdKind, Residue, ResidueId,
 };
-pub use lookup::HierarchyLookupError;
 pub use perception::TopologyPerceptionError;
 pub use selection::{AtomSelection, BondSelection, BondSelectionMode, SelectionError};
 pub use transform::{TopologySubset, TopologySubsetCorrespondence, TopologySubsetError};

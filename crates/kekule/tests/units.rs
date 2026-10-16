@@ -1,5 +1,5 @@
 use kekule::geometry::Point3;
-use kekule::structure::{PositionError, Positions};
+use kekule::structure::{DenseArrayError, Positions};
 use kekule::units::{
     Dimension, Quantity, Unit, UnitError, ANGSTROM, DIMENSIONLESS, METER, NANOMETER,
 };
@@ -108,7 +108,7 @@ fn conversions_reject_zero_and_infinite_intermediate_factors() {
     let too_large = unit(Dimension::LENGTH, 1e300);
     assert!(matches!(
         Positions::new(Quantity::new(vec![Point3::new(1.0, 0.0, 0.0)], too_large)),
-        Err(PositionError::Unit(
+        Err(DenseArrayError::Unit(
             UnitError::UnrepresentableConversion { .. }
         ))
     ));
@@ -116,7 +116,7 @@ fn conversions_reject_zero_and_infinite_intermediate_factors() {
     let before = positions.clone();
     assert!(matches!(
         positions.set_position_at(0, Quantity::new(Point3::new(1.0, 0.0, 0.0), too_large)),
-        Err(PositionError::Unit(
+        Err(DenseArrayError::Unit(
             UnitError::UnrepresentableConversion { .. }
         ))
     ));

@@ -6,7 +6,7 @@ use kekule::{
     smiles,
     structure::measure,
     topology::{
-        AtomSelection, AtomSiteMetadata, HierarchyLookupError, InstanceAtomId, ResidueClass,
+        AtomSelection, AtomSiteMetadata, HierarchyError, InstanceAtomId, ResidueClass,
         SelectionError, Topology, TopologyBuilder,
     },
     units::{Quantity, ANGSTROM},
@@ -140,11 +140,11 @@ fn lookup_respects_identifier_namespace_scope_insertion_and_ambiguity() {
     let chain = top.chain_by_label("L").unwrap();
     assert!(matches!(
         top.chain_by_author("A"),
-        Err(HierarchyLookupError::Ambiguous { matches: 2, .. })
+        Err(HierarchyError::Ambiguous { matches: 2, .. })
     ));
     assert!(matches!(
         top.chain_by_author("L"),
-        Err(HierarchyLookupError::NotFound { .. })
+        Err(HierarchyError::NotFound { .. })
     ));
     let first = chain.residue_by_author("7", None).unwrap();
     let second = chain.residue_by_author("7", Some("B")).unwrap();
@@ -156,7 +156,7 @@ fn lookup_respects_identifier_namespace_scope_insertion_and_ambiguity() {
     );
     assert!(matches!(
         chain.residue_by_author("7", Some("C")),
-        Err(HierarchyLookupError::NotFound { .. })
+        Err(HierarchyError::NotFound { .. })
     ));
     assert_eq!(
         first.atom_site_by_label("CA").unwrap().atom().id(),
@@ -168,11 +168,11 @@ fn lookup_respects_identifier_namespace_scope_insertion_and_ambiguity() {
     );
     assert!(matches!(
         first.atom_site_by_author("CA"),
-        Err(HierarchyLookupError::NotFound { .. })
+        Err(HierarchyError::NotFound { .. })
     ));
     assert!(matches!(
         second.atom_site_by_label("CA"),
-        Err(HierarchyLookupError::Ambiguous { matches: 2, .. })
+        Err(HierarchyError::Ambiguous { matches: 2, .. })
     ));
     let ca = AtomSelection::for_label_atom_names(&top, ["CA", "missing"]).unwrap();
     assert_eq!(
@@ -205,15 +205,15 @@ fn duplicate_residue_addresses_and_label_chains_are_not_silently_resolved() {
     let top = builder.build().unwrap();
     assert!(matches!(
         top.chain_by_label("L"),
-        Err(HierarchyLookupError::Ambiguous { .. })
+        Err(HierarchyError::Ambiguous { .. })
     ));
     assert!(matches!(
         top.chain(chain).unwrap().residue_by_label(1),
-        Err(HierarchyLookupError::Ambiguous { .. })
+        Err(HierarchyError::Ambiguous { .. })
     ));
     assert!(matches!(
         top.residue_by_author("A", "7", None),
-        Err(HierarchyLookupError::Ambiguous { .. })
+        Err(HierarchyError::Ambiguous { .. })
     ));
 }
 

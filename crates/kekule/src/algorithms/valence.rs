@@ -17,6 +17,7 @@ impl Default for ValenceOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ValenceIssue {
     InvalidFormalCharge {
         atom: AtomId,

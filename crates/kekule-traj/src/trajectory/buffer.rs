@@ -214,10 +214,12 @@ impl FrameBuffer {
         let time = validated_time(data.time)?;
         if let Some(source) = data.annotations {
             if source.atoms().len() != self.atom_count() {
-                return Err(StructureError::AtomCountMismatch {
-                    expected: self.atom_count(),
-                    actual: source.atoms().len(),
-                });
+                return Err(StructureError::Array(
+                    kekule::structure::DenseArrayError::CountMismatch {
+                        expected: self.atom_count(),
+                        actual: source.atoms().len(),
+                    },
+                ));
             }
             if source.bonds().len() != self.properties().bonds().len() {
                 return Err(StructureError::BondCountMismatch {
@@ -288,7 +290,7 @@ impl FrameBuffer {
             Ok(()) => Ok(storage),
             Err(error) => {
                 self.spare_velocities = Some(storage);
-                Err(error)
+                Err(error.into())
             }
         }
     }
@@ -306,7 +308,7 @@ impl FrameBuffer {
             Ok(()) => Ok(storage),
             Err(error) => {
                 self.spare_forces = Some(storage);
-                Err(error)
+                Err(error.into())
             }
         }
     }

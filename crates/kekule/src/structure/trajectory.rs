@@ -1,3 +1,4 @@
+use crate::structure::DenseArrayError;
 use std::fmt;
 use std::sync::Arc;
 
@@ -150,10 +151,10 @@ impl Trajectory {
         }
         for values in &positions {
             if values.len() != self.topology.atom_count() {
-                return Err(StructureError::AtomCountMismatch {
+                return Err(StructureError::Array(DenseArrayError::CountMismatch {
                     expected: self.topology.atom_count(),
                     actual: values.len(),
-                }
+                })
                 .into());
             }
         }
@@ -436,10 +437,10 @@ impl TrajectoryFrame {
 
     fn check_len(&self, actual: usize) -> Result<(), StructureError> {
         if actual != self.positions.len() {
-            return Err(StructureError::AtomCountMismatch {
+            return Err(StructureError::Array(DenseArrayError::CountMismatch {
                 expected: self.positions.len(),
                 actual,
-            });
+            }));
         }
         Ok(())
     }

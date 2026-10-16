@@ -1,6 +1,6 @@
 use kekule::geometry::Point3;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use kekule::structure::{PositionError, Positions, TrajectoryFrame};
+use kekule::structure::{DenseArrayError, Positions, TrajectoryFrame};
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{Quantity, ANGSTROM, DIMENSIONLESS};
 
@@ -42,6 +42,6 @@ fn dense_position_projection_is_checked() {
     let positions = Positions::zeros(2);
     assert!(matches!(
         positions.select_indices(&[2]),
-        Err(PositionError::InvalidIndex { index: 2 })
+        Err(DenseArrayError::IndexOutOfRange { index: 2, len: 2 })
     ));
 }

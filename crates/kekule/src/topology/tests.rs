@@ -1,4 +1,4 @@
-use super::builder::{checked_future_len, checked_id};
+use super::builder::{checked_future_len, checked_id, TopologyHierarchyError};
 use super::*;
 use std::sync::Arc;
 
@@ -761,11 +761,7 @@ fn hierarchy_publication_rejects_each_inconsistent_listing() {
     for (case, corrupt, expected) in cases {
         let mut builder = staged();
         corrupt(builder.hierarchy_mut());
-        assert_eq!(
-            builder.build().unwrap_err(),
-            TopologyBuildError::InvalidHierarchy(expected),
-            "{case}"
-        );
+        assert_eq!(builder.hierarchy_consistency(), Err(expected), "{case}");
     }
 }
 

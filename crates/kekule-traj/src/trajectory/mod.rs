@@ -396,8 +396,8 @@ impl From<StructureError> for TrajectoryIoError {
     }
 }
 
-impl From<kekule::structure::PositionError> for TrajectoryIoError {
-    fn from(error: kekule::structure::PositionError) -> Self {
+impl From<kekule::structure::DenseArrayError> for TrajectoryIoError {
+    fn from(error: kekule::structure::DenseArrayError) -> Self {
         Self::Structure(Box::new(error.into()))
     }
 }

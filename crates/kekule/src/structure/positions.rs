@@ -20,13 +20,16 @@ impl Positions {
     pub(super) fn set_canonical_batch(
         &mut self,
         values: &[(usize, Point3)],
-    ) -> Result<(), PositionError> {
+    ) -> Result<(), DenseArrayError> {
         for &(index, point) in values {
             if index >= self.values.len() {
-                return Err(PositionError::InvalidIndex { index });
+                return Err(DenseArrayError::IndexOutOfRange {
+                    index,
+                    len: self.values.len(),
+                });
             }
             if !point.is_finite() {
-                return Err(PositionError::NonFinitePosition { index });
+                return Err(DenseArrayError::NonFinite { index });
             }
         }
         for &(index, point) in values {
@@ -52,7 +55,7 @@ impl Positions {
     ///
     /// Use [`Self::from_vec`] to transfer an owned vector without allocating a
     /// second coordinate array.
-    pub fn new<T>(positions: Quantity<T>) -> Result<Self, PositionError>
+    pub fn new<T>(positions: Quantity<T>) -> Result<Self, DenseArrayError>
     where
         T: AsRef<[Point3]>,
     {
@@ -67,7 +70,7 @@ impl Positions {
             .map(|(index, point)| {
                 let point = Point3::new(point.x * factor, point.y * factor, point.z * factor);
                 if !point.is_finite() {
-                    return Err(PositionError::NonFinitePosition { index });
+                    return Err(DenseArrayError::NonFinite { index });
                 }
                 Ok(point)
             })
@@ -79,7 +82,7 @@ impl Positions {
     ///
     /// The vector's allocation and capacity are retained. An incompatible unit
     /// or non-finite converted coordinate returns an error.
-    pub fn from_vec(positions: Quantity<Vec<Point3>>) -> Result<Self, PositionError> {
+    pub fn from_vec(positions: Quantity<Vec<Point3>>) -> Result<Self, DenseArrayError> {
         let factor = positions
             .unit()
             .conversion_factor_to(CANONICAL_LENGTH_UNIT)?;
@@ -87,7 +90,7 @@ impl Positions {
         for (index, point) in values.iter_mut().enumerate() {
             *point = Point3::new(point.x * factor, point.y * factor, point.z * factor);
             if !point.is_finite() {
-                return Err(PositionError::NonFinitePosition { index });
+                return Err(DenseArrayError::NonFinite { index });
             }
         }
         Ok(Self { values })
@@ -118,47 +121,54 @@ impl Positions {
     }
 
     /// Copies a deterministic dense projection in the requested index order.
-    pub fn select_indices(&self, indices: &[usize]) -> Result<Self, PositionError> {
+    pub fn select_indices(&self, indices: &[usize]) -> Result<Self, DenseArrayError> {
         let values = indices
             .iter()
             .map(|index| {
                 self.values
                     .get(*index)
                     .copied()
-                    .ok_or(PositionError::InvalidIndex { index: *index })
+                    .ok_or(DenseArrayError::IndexOutOfRange {
+                        index: *index,
+                        len: self.values.len(),
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self { values })
     }
 
-    pub fn position_at(&self, index: usize) -> Result<Quantity<Point3>, PositionError> {
+    pub fn position_at(&self, index: usize) -> Result<Quantity<Point3>, DenseArrayError> {
         self.values
             .get(index)
             .copied()
             .map(|point| Quantity::new(point, CANONICAL_LENGTH_UNIT))
-            .ok_or(PositionError::InvalidIndex { index })
+            .ok_or(DenseArrayError::IndexOutOfRange {
+                index,
+                len: self.values.len(),
+            })
     }
 
     pub fn set_position_at(
         &mut self,
         index: usize,
         position: Quantity<Point3>,
-    ) -> Result<(), PositionError> {
+    ) -> Result<(), DenseArrayError> {
         let point = position.into_unit(CANONICAL_LENGTH_UNIT)?.into_value();
         if !point.is_finite() {
-            return Err(PositionError::NonFinitePosition { index });
+            return Err(DenseArrayError::NonFinite { index });
         }
+        let len = self.values.len();
         let destination = self
             .values
             .get_mut(index)
-            .ok_or(PositionError::InvalidIndex { index })?;
+            .ok_or(DenseArrayError::IndexOutOfRange { index, len })?;
         *destination = point;
         Ok(())
     }
 
     /// Replaces all positions transactionally while reusing the current
     /// allocation when the capacity permits.
-    pub fn set_all<T>(&mut self, positions: Quantity<T>) -> Result<(), PositionError>
+    pub fn set_all<T>(&mut self, positions: Quantity<T>) -> Result<(), DenseArrayError>
     where
         T: AsRef<[Point3]>,
     {
@@ -171,14 +181,14 @@ impl Positions {
     }
 
     /// Validates a complete replacement without changing this array.
-    pub fn validate_all<T>(&self, positions: &Quantity<T>) -> Result<(), PositionError>
+    pub fn validate_all<T>(&self, positions: &Quantity<T>) -> Result<(), DenseArrayError>
     where
         T: AsRef<[Point3]>,
     {
         self.validate_replacement(positions).map(drop)
     }
 
-    fn validate_replacement<T>(&self, positions: &Quantity<T>) -> Result<f64, PositionError>
+    fn validate_replacement<T>(&self, positions: &Quantity<T>) -> Result<f64, DenseArrayError>
     where
         T: AsRef<[Point3]>,
     {
@@ -187,7 +197,7 @@ impl Positions {
             .conversion_factor_to(CANONICAL_LENGTH_UNIT)?;
         let source = positions.value().as_ref();
         if source.len() != self.len() {
-            return Err(PositionError::PositionCountMismatch {
+            return Err(DenseArrayError::CountMismatch {
                 expected: self.len(),
                 actual: source.len(),
             });
@@ -195,7 +205,7 @@ impl Positions {
         for (index, point) in source.iter().copied().enumerate() {
             let converted = Point3::new(point.x * factor, point.y * factor, point.z * factor);
             if !converted.is_finite() {
-                return Err(PositionError::NonFinitePosition { index });
+                return Err(DenseArrayError::NonFinite { index });
             }
         }
         Ok(factor)
@@ -208,32 +218,52 @@ impl Positions {
     }
 }
 
+/// Invalid dense per-atom state: positions, velocities, forces and per-atom
+/// scalars. Every `index` is a dense row, the atom's position in the
+/// topology's dense atom order.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum PositionError {
-    InvalidIndex { index: usize },
-    PositionCountMismatch { expected: usize, actual: usize },
-    NonFinitePosition { index: usize },
+pub enum DenseArrayError {
+    /// The dense row index is outside an array of `len` rows.
+    IndexOutOfRange {
+        /// The requested row.
+        index: usize,
+        /// The number of rows.
+        len: usize,
+    },
+    /// The array has the wrong number of rows.
+    CountMismatch {
+        /// The required number of rows.
+        expected: usize,
+        /// The supplied number of rows.
+        actual: usize,
+    },
+    /// The value at dense row `index` is not finite.
+    NonFinite {
+        /// The row.
+        index: usize,
+    },
+    /// The values have a unit of the wrong dimension; see the source.
     Unit(UnitError),
 }
 
-impl fmt::Display for PositionError {
+impl fmt::Display for DenseArrayError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidIndex { index } => write!(formatter, "invalid position index {index}"),
-            Self::PositionCountMismatch { expected, actual } => write!(
-                formatter,
-                "positions require {expected} coordinates, but received {actual}"
-            ),
-            Self::NonFinitePosition { index } => {
-                write!(formatter, "position at {index} is not finite")
+            Self::IndexOutOfRange { index, len } => {
+                write!(formatter, "row {index} is outside an array of {len} rows")
             }
-            Self::Unit(_) => formatter.write_str("invalid position unit"),
+            Self::CountMismatch { expected, actual } => write!(
+                formatter,
+                "array requires {expected} rows, but received {actual}"
+            ),
+            Self::NonFinite { index } => write!(formatter, "value at row {index} is not finite"),
+            Self::Unit(_) => formatter.write_str("invalid unit"),
         }
     }
 }
 
-impl std::error::Error for PositionError {
+impl std::error::Error for DenseArrayError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Unit(error) => Some(error),
@@ -242,7 +272,7 @@ impl std::error::Error for PositionError {
     }
 }
 
-impl From<UnitError> for PositionError {
+impl From<UnitError> for DenseArrayError {
     fn from(error: UnitError) -> Self {
         Self::Unit(error)
     }

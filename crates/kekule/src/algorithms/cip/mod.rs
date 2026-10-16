@@ -134,6 +134,7 @@ pub enum CipSkippedReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CipAssignmentIssue {
     InvalidStereo {
         issue: StereoValidationIssue,

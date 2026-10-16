@@ -159,10 +159,12 @@ fn structures_reject_mismatched_property_rows_transactionally() {
     let original = model.properties().clone();
     assert_eq!(
         model.set_properties(bound.clone()),
-        Err(StructureError::AtomCountMismatch {
-            expected: 1,
-            actual: 2
-        })
+        Err(StructureError::Array(
+            kekule::structure::DenseArrayError::CountMismatch {
+                expected: 1,
+                actual: 2
+            }
+        ))
     );
     assert_eq!(model.properties(), &original);
 

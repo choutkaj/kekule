@@ -19,7 +19,7 @@ use super::state::{
     is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
     validate_binding,
 };
-use super::{PositionError, Positions, StructureError};
+use super::{DenseArrayError, Positions, StructureError};
 
 /// One concrete structure of one topology.
 ///
@@ -263,15 +263,14 @@ impl Model {
     ) -> Result<(), ModelError> {
         let staged = values
             .into_iter()
-            .enumerate()
-            .map(|(order, (atom, position))| {
+            .map(|(atom, position)| {
                 let index = atom_index(&self.topology, atom)?.index();
                 let point = position
                     .into_unit(crate::units::CANONICAL_LENGTH_UNIT)
-                    .map_err(PositionError::from)?
+                    .map_err(DenseArrayError::from)?
                     .into_value();
                 if !point.is_finite() {
-                    return Err(PositionError::NonFinitePosition { index: order }.into());
+                    return Err(DenseArrayError::NonFinite { index }.into());
                 }
                 Ok((index, point))
             })
@@ -533,12 +532,15 @@ impl<'a> ModelAtomView<'a> {
     }
 }
 
+/// Why a model operation was rejected.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ModelError {
+    /// The atom is not part of the model's topology.
     InvalidAtomId(InstanceAtomId),
-    InvalidBondId(InstanceBondId),
+    /// Structure state is invalid; see the source.
     Structure(StructureError),
+    /// Subsetting the topology failed; see the source.
     Subset(TopologySubsetError),
 }
 
@@ -546,7 +548,6 @@ impl fmt::Display for ModelError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidAtomId(atom) => write!(formatter, "invalid topology atom: {atom}"),
-            Self::InvalidBondId(bond) => write!(formatter, "invalid topology bond: {bond}"),
             Self::Structure(_) => formatter.write_str("invalid model structure"),
             Self::Subset(_) => formatter.write_str("cannot subset model topology"),
         }
@@ -569,8 +570,8 @@ impl From<StructureError> for ModelError {
     }
 }
 
-impl From<PositionError> for ModelError {
-    fn from(error: PositionError) -> Self {
+impl From<DenseArrayError> for ModelError {
+    fn from(error: DenseArrayError) -> Self {
         Self::Structure(error.into())
     }
 }
@@ -679,15 +680,14 @@ impl ModelBuilder {
     ) -> Result<(), ModelBuildError> {
         let staged = values
             .into_iter()
-            .enumerate()
-            .map(|(order, (atom, position))| {
+            .map(|(atom, position)| {
                 let index = self.checked_atom_index(atom)?.index();
                 let point = position
                     .into_unit(crate::units::CANONICAL_LENGTH_UNIT)
-                    .map_err(PositionError::from)?
+                    .map_err(DenseArrayError::from)?
                     .into_value();
                 if !point.is_finite() {
-                    return Err(PositionError::NonFinitePosition { index: order }.into());
+                    return Err(DenseArrayError::NonFinite { index }.into());
                 }
                 Ok((index, point))
             })
@@ -865,8 +865,8 @@ impl std::error::Error for ModelBuildError {
     }
 }
 
-impl From<PositionError> for ModelBuildError {
-    fn from(error: PositionError) -> Self {
+impl From<DenseArrayError> for ModelBuildError {
+    fn from(error: DenseArrayError) -> Self {
         ModelError::from(error).into()
     }
 }

@@ -16,13 +16,16 @@ use crate::topology::TopologySubset;
 use crate::topology::{Topology, TopologyAtomIndex};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 
-use super::{PositionError, Positions};
+use super::{DenseArrayError, Positions};
 
 /// The row of one dense atom index in an owner with `len` atoms.
 pub(crate) fn atom_row(len: usize, atom: TopologyAtomIndex) -> Result<usize, StructureError> {
     let index = atom.index();
     if index >= len {
-        return Err(StructureError::InvalidAtomIndex { index, len });
+        return Err(StructureError::Array(DenseArrayError::IndexOutOfRange {
+            index,
+            len,
+        }));
     }
     Ok(index)
 }
@@ -36,10 +39,10 @@ pub(crate) fn validate_binding(
     topology: &Topology,
 ) -> Result<(), StructureError> {
     if atoms != topology.atom_count() {
-        return Err(StructureError::AtomCountMismatch {
+        return Err(StructureError::Array(DenseArrayError::CountMismatch {
             expected: topology.atom_count(),
             actual: atoms,
-        });
+        }));
     }
     properties
         .validate_bond_rows(topology.bond_count())
@@ -65,10 +68,10 @@ pub(crate) fn check_property_rows(
     replacement: &StructureProperties,
 ) -> Result<(), StructureError> {
     if replacement.atoms().len() != atoms {
-        return Err(StructureError::AtomCountMismatch {
+        return Err(StructureError::Array(DenseArrayError::CountMismatch {
             expected: atoms,
             actual: replacement.atoms().len(),
-        });
+        }));
     }
     if replacement.bonds().len() != current.bonds().len() {
         return Err(StructureError::BondCountMismatch {
@@ -293,28 +296,12 @@ pub(crate) use site_mutators;
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum StructureError {
-    /// Dense atom state has the wrong number of rows.
-    AtomCountMismatch {
-        expected: usize,
-        actual: usize,
-    },
+    /// Dense per-atom state is invalid.
+    Array(DenseArrayError),
     /// Bound bond property rows have the wrong length.
     BondCountMismatch {
         expected: usize,
         actual: usize,
-    },
-    /// A dense atom index is outside the structure.
-    InvalidAtomIndex {
-        index: usize,
-        len: usize,
-    },
-    /// A scalar atom value is not finite.
-    NonFiniteValue {
-        index: usize,
-    },
-    /// A dense vector value is not finite.
-    NonFiniteVector {
-        index: usize,
     },
     /// A frame time is not finite.
     NonFiniteTime,
@@ -324,7 +311,6 @@ pub enum StructureError {
     InvalidWeight,
     /// The payload exceeds addressable capacity.
     CapacityOverflow,
-    Position(PositionError),
     Property(Box<PropertyError>),
     Cell(Box<PeriodicCellError>),
     Unit(Box<UnitError>),
@@ -333,31 +319,17 @@ pub enum StructureError {
 impl fmt::Display for StructureError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AtomCountMismatch { expected, actual } => write!(
-                formatter,
-                "structure requires {expected} atom rows, but received {actual}"
-            ),
+            Self::Array(_) => formatter.write_str("invalid per-atom state"),
             Self::BondCountMismatch { expected, actual } => write!(
                 formatter,
                 "structure requires {expected} bond property rows, but has {actual}"
             ),
-            Self::InvalidAtomIndex { index, len } => write!(
-                formatter,
-                "atom index {index} is outside a structure of {len} atoms"
-            ),
-            Self::NonFiniteValue { index } => {
-                write!(formatter, "atom value at index {index} must be finite")
-            }
-            Self::NonFiniteVector { index } => {
-                write!(formatter, "vector at index {index} must be finite")
-            }
             Self::NonFiniteTime => formatter.write_str("frame time must be finite"),
             Self::NonFiniteEnergy => formatter.write_str("ensemble member energy must be finite"),
             Self::InvalidWeight => {
                 formatter.write_str("ensemble weight must be finite and positive")
             }
             Self::CapacityOverflow => formatter.write_str("structure exceeds addressable capacity"),
-            Self::Position(_) => formatter.write_str("invalid positions"),
             Self::Property(_) => formatter.write_str("invalid structure property"),
             Self::Cell(_) => formatter.write_str("invalid periodic cell"),
             Self::Unit(_) => formatter.write_str("invalid quantity unit"),
@@ -368,7 +340,7 @@ impl fmt::Display for StructureError {
 impl std::error::Error for StructureError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Position(error) => Some(error),
+            Self::Array(error) => Some(error),
             Self::Property(error) => Some(error.as_ref()),
             Self::Cell(error) => Some(error.as_ref()),
             Self::Unit(error) => Some(error.as_ref()),
@@ -377,9 +349,9 @@ impl std::error::Error for StructureError {
     }
 }
 
-impl From<PositionError> for StructureError {
-    fn from(error: PositionError) -> Self {
-        Self::Position(error)
+impl From<DenseArrayError> for StructureError {
+    fn from(error: DenseArrayError) -> Self {
+        Self::Array(error)
     }
 }
 

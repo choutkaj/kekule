@@ -61,7 +61,7 @@ use std::collections::VecDeque;
 use std::fmt;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::structure::{PositionError, Positions, Trajectory, TrajectoryError};
+use kekule::structure::{DenseArrayError, Positions, Trajectory, TrajectoryError};
 use kekule::topology::{AtomSelection, InstanceBondId, Topology, TopologyAtomIndex};
 use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
@@ -116,7 +116,7 @@ pub enum PeriodicError {
     },
     Position {
         frame: usize,
-        source: Box<PositionError>,
+        source: Box<DenseArrayError>,
     },
     /// Valid positions could not be published into the destination.
     Publication(Box<TrajectoryError>),

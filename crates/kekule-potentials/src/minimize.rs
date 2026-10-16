@@ -20,7 +20,7 @@ use std::fmt;
 use std::ops::ControlFlow;
 
 use kekule::geometry::{Point3, Vector3};
-use kekule::structure::{Model, ModelView, PositionError, Positions, StructureError};
+use kekule::structure::{DenseArrayError, Model, ModelView, Positions, StructureError};
 use kekule::units::{
     Quantity, UnitError, CANONICAL_GRADIENT_UNIT, CANONICAL_LENGTH_UNIT,
     KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
@@ -557,7 +557,7 @@ pub enum MinimizationError {
     /// [`Minimization::to_model`] received a view of a different topology.
     IncompatibleTopology,
     Structure(StructureError),
-    Position(PositionError),
+    Position(DenseArrayError),
     Unit(UnitError),
 }
 
@@ -607,8 +607,8 @@ impl From<StructureError> for MinimizationError {
     }
 }
 
-impl From<PositionError> for MinimizationError {
-    fn from(error: PositionError) -> Self {
+impl From<DenseArrayError> for MinimizationError {
+    fn from(error: DenseArrayError) -> Self {
         Self::Position(error)
     }
 }

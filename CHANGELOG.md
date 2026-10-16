@@ -245,6 +245,25 @@ All notable changes to Kekule are documented in this file.
     `TopologyBuildError`, `TopologyEditError` and `TopologySubsetError`.
     `HydrogenTransformError`, `TaggedMatchError` and `ResonanceError` gain
     a `source()`.
+  - One error per functional area. `HierarchyLookupError` folds into
+    `topology::HierarchyError` (`NotFound`, `Ambiguous`).
+    `TopologyHierarchyError` and `TopologyBuildError::InvalidHierarchy` are
+    removed: the one case the public API can reach, an atom site on an atom
+    the topology lacks, is `TopologyBuildError::MissingHierarchyAtom { site,
+    atom }`, and the other ten storage inconsistencies are debug assertions.
+    `PositionError` becomes `structure::DenseArrayError`
+    (`IndexOutOfRange { index, len }`, `CountMismatch`, `NonFinite { index }`,
+    `Unit`), which positions, velocities, forces and per-atom scalars share;
+    every `index` is the dense row. `Velocities` and `Forces` constructors
+    return it instead of `StructureError`, and `StructureError`'s
+    `AtomCountMismatch`, `InvalidAtomIndex`, `NonFiniteValue`,
+    `NonFiniteVector` and `Position` become `StructureError::Array`. A
+    non-finite position given to the model editor is
+    `ModelEditError::NonFinitePosition { atom }` instead of a fabricated
+    row 0, and `Model::set_atom_positions` reports the dense row instead of
+    the input position. `ModelError::InvalidBondId`, never constructed, is
+    removed. `CipAssignmentIssue` and `ValenceIssue` are
+    `#[non_exhaustive]`.
 - **Breaking:** Public items live in the module of the domain that owns them,
   and every operation has one home. Behaviour is unchanged; callers update
   paths, names, and signatures as listed.

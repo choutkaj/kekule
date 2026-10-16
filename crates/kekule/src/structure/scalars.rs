@@ -1,3 +1,4 @@
+use crate::structure::DenseArrayError;
 use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, SQUARE_NANOMETER};
 
@@ -60,16 +61,16 @@ impl AtomScalars {
     ) -> Result<(), StructureError> {
         if let Some(values) = &values {
             if values.len() != len {
-                return Err(StructureError::AtomCountMismatch {
+                return Err(StructureError::Array(DenseArrayError::CountMismatch {
                     expected: len,
                     actual: values.len(),
-                });
+                }));
             }
             if let Some(index) = values
                 .iter()
                 .position(|value| value.is_some_and(|value| !value.is_finite()))
             {
-                return Err(StructureError::NonFiniteValue { index });
+                return Err(StructureError::Array(DenseArrayError::NonFinite { index }));
             }
         }
         self.0 = values.filter(|values| values.iter().any(Option::is_some));
@@ -114,7 +115,9 @@ impl AtomScalars {
         value: Option<f64>,
     ) -> Result<(), StructureError> {
         if value.is_some_and(|value| !value.is_finite()) {
-            return Err(StructureError::NonFiniteValue { index: row });
+            return Err(StructureError::Array(DenseArrayError::NonFinite {
+                index: row,
+            }));
         }
         match (&mut self.0, value) {
             (Some(values), value) => values[row] = value,

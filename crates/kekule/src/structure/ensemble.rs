@@ -1,3 +1,4 @@
+use crate::structure::DenseArrayError;
 use std::fmt;
 use std::sync::Arc;
 
@@ -222,10 +223,10 @@ impl Ensemble {
         }
         for values in &positions {
             if values.len() != self.topology.atom_count() {
-                return Err(StructureError::AtomCountMismatch {
+                return Err(StructureError::Array(DenseArrayError::CountMismatch {
                     expected: self.topology.atom_count(),
                     actual: values.len(),
-                }
+                })
                 .into());
             }
         }

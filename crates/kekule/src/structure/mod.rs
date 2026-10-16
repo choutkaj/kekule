@@ -78,7 +78,7 @@ pub use model::{
     ModelView,
 };
 pub use model_editor::{ModelAppend, ModelAppendReport, ModelEditError, ModelEditor};
-pub use positions::{PositionError, Positions};
+pub use positions::{DenseArrayError, Positions};
 pub use state::StructureError;
 pub use trajectory::{
     Trajectory, TrajectoryError, TrajectoryFrame, TrajectoryFrameMut, TrajectoryFrameView,

@@ -2266,7 +2266,7 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hiera
     assert!(matches!(
         builder.build(),
         Err(ModelBuildError::Topology(
-            TopologyBuildError::InvalidHierarchy(_)
+            TopologyBuildError::MissingHierarchyAtom { .. }
         ))
     ));
     let _ = atom;

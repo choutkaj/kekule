@@ -117,12 +117,10 @@ fn model_builder_rejects_excess_replacement_positions_before_mutation() {
     let before = builder.clone();
     assert_eq!(
         builder.set_positions(Quantity::new(vec![Point3::origin(); 2], NANOMETER)),
-        Err(StructureError::Position(
-            PositionError::PositionCountMismatch {
-                expected: 1,
-                actual: 2
-            }
-        ))
+        Err(StructureError::Array(DenseArrayError::CountMismatch {
+            expected: 1,
+            actual: 2
+        }))
     );
     assert_eq!(builder, before);
     assert_eq!(builder.build().unwrap().positions(), &single_position(1.0));
@@ -133,10 +131,10 @@ fn structures_reject_rows_of_other_dimensions() {
     let (model, _, _) = model_fixture();
     assert_eq!(
         Model::new(model.shared_topology(), single_position(1.0)).unwrap_err(),
-        ModelError::Structure(StructureError::AtomCountMismatch {
+        ModelError::Structure(StructureError::Array(DenseArrayError::CountMismatch {
             expected: 2,
             actual: 1
-        })
+        }))
     );
     // A member bound to a topology with one bond cannot bind to one with no
     // bonds: populated bond rows never resize silently.
@@ -185,12 +183,12 @@ fn collection_position_replacement_checks_counts_per_collection_transactionally(
     );
     assert_eq!(
         ensemble.replace_positions([Positions::zeros(2), Positions::zeros(3)]),
-        Err(EnsembleError::Structure(
-            StructureError::AtomCountMismatch {
+        Err(EnsembleError::Structure(StructureError::Array(
+            DenseArrayError::CountMismatch {
                 expected: 2,
                 actual: 3
             }
-        ))
+        )))
     );
     assert!(ensemble
         .iter()
@@ -378,10 +376,11 @@ fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
         .unwrap();
 
     let replacement = EnsembleMember::new(Positions::zeros(1), 1.0).unwrap();
-    let expected = EnsembleError::Structure(StructureError::AtomCountMismatch {
-        expected: 2,
-        actual: 1,
-    });
+    let expected =
+        EnsembleError::Structure(StructureError::Array(DenseArrayError::CountMismatch {
+            expected: 2,
+            actual: 1,
+        }));
     assert_eq!(
         ensemble.replace(0, replacement.clone()),
         Err(expected.clone())
@@ -498,20 +497,18 @@ fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
             .clone();
         assert_eq!(
             member.set_properties(wrong_atoms),
-            Err(StructureError::AtomCountMismatch {
+            Err(StructureError::Array(DenseArrayError::CountMismatch {
                 expected: 2,
                 actual: 1
-            })
+            }))
         );
         assert_eq!(member.properties(), &properties);
         assert_eq!(
             member.set_positions(Quantity::new(vec![Point3::origin(); 3], NANOMETER)),
-            Err(StructureError::Position(
-                PositionError::PositionCountMismatch {
-                    expected: 2,
-                    actual: 3
-                }
-            ))
+            Err(StructureError::Array(DenseArrayError::CountMismatch {
+                expected: 2,
+                actual: 3
+            }))
         );
         assert_eq!(member.positions().len(), 2);
     }
@@ -581,7 +578,9 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
     let before = model.clone();
     assert_eq!(
         model.set_occupancy(ATOM0, Some(f64::NAN)),
-        Err(StructureError::NonFiniteValue { index: 0 })
+        Err(StructureError::Array(DenseArrayError::NonFinite {
+            index: 0
+        }))
     );
     assert!(matches!(
         model.set_b_factor(ATOM0, Some(Quantity::new(1.0, KELVIN))),
@@ -589,14 +588,17 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
     ));
     assert_eq!(
         model.set_occupancy(TopologyAtomIndex::new(2), Some(1.0)),
-        Err(StructureError::InvalidAtomIndex { index: 2, len: 2 })
+        Err(StructureError::Array(DenseArrayError::IndexOutOfRange {
+            index: 2,
+            len: 2
+        }))
     );
     assert_eq!(
         model.set_occupancies(Some(vec![Some(1.0)])),
-        Err(StructureError::AtomCountMismatch {
+        Err(StructureError::Array(DenseArrayError::CountMismatch {
             expected: 2,
             actual: 1
-        })
+        }))
     );
     assert_eq!(model, before);
 
@@ -717,10 +719,10 @@ fn trajectories_reinterpret_as_ensembles_without_copying_positions() {
     frame.set_velocities(Some(Velocities::zeros(2))).unwrap();
     assert_eq!(
         frame.set_forces(Some(Forces::zeros(3))),
-        Err(StructureError::AtomCountMismatch {
+        Err(StructureError::Array(DenseArrayError::CountMismatch {
             expected: 2,
             actual: 3
-        })
+        }))
     );
     let trajectory = Trajectory::from_items(model.shared_topology(), [frame]).unwrap();
     let pointer = trajectory
@@ -773,7 +775,10 @@ fn occupancies_and_b_factors_follow_models_and_members_but_never_frames() {
     assert_eq!(view.b_factor(ATOM0), Ok(None));
     assert_eq!(
         view.occupancy(TopologyAtomIndex::new(2)),
-        Err(StructureError::InvalidAtomIndex { index: 2, len: 2 })
+        Err(StructureError::Array(DenseArrayError::IndexOutOfRange {
+            index: 2,
+            len: 2
+        }))
     );
     assert_eq!(view.to_model().occupancies(), None);
 

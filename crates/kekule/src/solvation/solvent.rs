@@ -4,7 +4,7 @@ mod packing;
 pub use boxes::{add_periodic_box, BoxShape, PeriodicBoxError, PeriodicBoxOptions};
 
 use crate::diagnostics::{LimitExceeded, Resource};
-use crate::structure::{Model, ModelBuildError, PositionError};
+use crate::structure::{DenseArrayError, Model, ModelBuildError};
 use crate::{
     geometry::{PeriodicGeometryError, Point3},
     properties::PropertyKey,
@@ -167,7 +167,7 @@ pub enum SolvationError {
     },
     Unit(UnitError),
     Geometry(PeriodicGeometryError),
-    Position(PositionError),
+    Position(DenseArrayError),
     Build(ModelBuildError),
     Hierarchy(HierarchyError),
 }
@@ -228,7 +228,7 @@ macro_rules! from_error {
 }
 from_error!(UnitError, Unit);
 from_error!(PeriodicGeometryError, Geometry);
-from_error!(PositionError, Position);
+from_error!(DenseArrayError, Position);
 from_error!(ModelBuildError, Build);
 from_error!(HierarchyError, Hierarchy);
 

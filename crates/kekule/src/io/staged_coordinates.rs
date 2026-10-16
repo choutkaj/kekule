@@ -3,7 +3,7 @@ use std::fmt;
 use crate::chemistry::AtomPositionSource;
 use crate::geometry::Point3;
 use crate::molecule::{AtomId, Molecule};
-use crate::structure::{PositionError, Positions};
+use crate::structure::{DenseArrayError, Positions};
 use crate::units::{Quantity, Unit, UnitError, ANGSTROM};
 
 /// Sparse atom-local coordinates used only while a format graph is staged.
@@ -86,7 +86,7 @@ pub(crate) enum StagedCoordinateError {
     MissingPosition { atom: AtomId },
     NonFinitePosition { atom: AtomId },
     Unit(UnitError),
-    Position(PositionError),
+    Position(DenseArrayError),
 }
 
 impl fmt::Display for StagedCoordinateError {
@@ -121,8 +121,8 @@ impl From<UnitError> for StagedCoordinateError {
     }
 }
 
-impl From<PositionError> for StagedCoordinateError {
-    fn from(error: PositionError) -> Self {
+impl From<DenseArrayError> for StagedCoordinateError {
+    fn from(error: DenseArrayError) -> Self {
         Self::Position(error)
     }
 }
