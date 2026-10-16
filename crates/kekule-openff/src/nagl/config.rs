@@ -22,7 +22,7 @@ pub(super) enum Feature {
     Ring { ring_size: usize },
 }
 impl Feature {
-    pub fn width(&self) -> usize {
+    pub(crate) fn width(&self) -> usize {
         match self {
             Self::Element { categories } => categories.len(),
             Self::Connectivity { categories } => categories.len(),
@@ -62,7 +62,7 @@ pub(super) enum Activation {
     Identity,
 }
 impl Activation {
-    pub fn apply(self, x: f32) -> f32 {
+    pub(crate) fn apply(self, x: f32) -> f32 {
         match self {
             Self::Relu => {
                 if x < 0.0 {
@@ -122,7 +122,7 @@ pub(super) struct Config {
     pub readouts: BTreeMap<String, Readout>,
 }
 impl Config {
-    pub fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.version != "0.1"
             || !self.bond_features.is_empty()
             || self.convolution.architecture != "SAGEConv"

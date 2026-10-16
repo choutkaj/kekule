@@ -39,7 +39,7 @@ pub(super) struct Network {
     readout: Vec<(Linear, Activation)>,
 }
 impl Network {
-    pub fn load(
+    pub(crate) fn load(
         config: &Config,
         mut tensors: BTreeMap<String, Tensor>,
         raw: &[u8],
@@ -153,7 +153,7 @@ impl Network {
         Ok(Self { layers, readout })
     }
 
-    pub fn charges(
+    pub(crate) fn charges(
         &self,
         mut x: Array2<f32>,
         neighbors: &[Vec<usize>],

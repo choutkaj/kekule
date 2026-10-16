@@ -140,6 +140,8 @@ All notable changes to Kekule are documented in this file.
     `kekule::molfile`, no longer from `kekule::smiles`, and
     `MoleculeWriteError`, `MolfileInterpretOptions`, and `MolfileWriteVersion`
     no longer from `kekule::sdf`.
+  - `kekule-traj` and `kekule-openff` list their exports explicitly; none of
+    their public paths changes.
 - **Breaking:** `kekule-traj` indexed readers are opened directly with
   `IndexedXyzReader::new`, `IndexedDcdReader::new`, `IndexedTrrReader::new`,
   and `IndexedXtcReader::new`, which take the same arguments as the
