@@ -5,8 +5,8 @@
 //!
 //! Kekule keeps chemical identity, system organization, and geometry separate:
 //!
-//! - [`core::Molecule`] is one non-empty connected molecular graph. It owns
-//!   represented chemistry, derived [`core::Perception`], and
+//! - [`molecule::Molecule`] is one non-empty connected molecular graph. It owns
+//!   represented chemistry, derived [`perception::Perception`], and
 //!   geometry-independent properties.
 //! - [`topology::Topology`] is one coordinate-free system containing one or
 //!   more explicit molecule instances plus an optional biological hierarchy.
@@ -18,7 +18,7 @@
 //!
 //! A disconnected salt, solvent box, or protein-ligand complex is therefore a
 //! [`topology::Topology`] containing several connected molecules, not one
-//! disconnected [`core::Molecule`].
+//! disconnected [`molecule::Molecule`].
 //!
 //! # Typical workflow
 //!
@@ -63,7 +63,7 @@
 //!
 //! | Task | Interface | Publication |
 //! | --- | --- | --- |
-//! | Construct or edit one connected molecule | [`core::MoleculeEditor`] | `finish()` |
+//! | Construct or edit one connected molecule | [`molecule::MoleculeEditor`] | `finish()` |
 //! | Assemble complete molecules and reusable instances | [`topology::TopologyBuilder`] | `build()` |
 //! | Assemble a system with explicit geometry | [`structure::ModelBuilder`] | `build()` |
 //! | Edit system atoms, bonds, components, and hierarchy | [`topology::TopologyEditor`] | `finish()` |
@@ -122,12 +122,12 @@ mod algorithms;
 pub mod alignment;
 mod chemistry;
 pub mod clustering;
-pub mod core;
 pub mod descriptors;
 pub mod diagnostics;
 pub mod dssp;
 pub mod geometry;
 mod io;
+pub mod molecule;
 pub mod properties;
 pub mod query;
 pub mod structure;
@@ -159,7 +159,6 @@ pub mod smiles {
     use std::fmt;
     use std::sync::Arc;
 
-    use crate::core::Molecule;
     use crate::io::MoleculeWriteError;
     pub use crate::io::{
         SmilesAtomMapping, SmilesBondMapping, SmilesComponentCountError,
@@ -168,6 +167,7 @@ pub mod smiles {
         SmilesInterpretOptions, SmilesInterpretation, SmilesInterpretationReport, SmilesParseError,
         SmilesParseOptions, SmilesRecords,
     };
+    use crate::molecule::Molecule;
     use crate::topology::{Topology, TopologyBuildError};
 
     /// SMILES output policy of [`write()`].
@@ -966,7 +966,7 @@ pub mod pdb {
 
 /// Derived valence, rings, aromaticity, conjugation and explicit resonance work.
 ///
-/// [`crate::core::Molecule::perceive`] installs Kekule's default transactional perception
+/// [`crate::molecule::Molecule::perceive`] installs Kekule's default transactional perception
 /// profile. The nested modules expose the individual expert algorithms.
 /// Perception does not alter represented graph chemistry and is invalidated by
 /// relevant graph edits.
@@ -977,14 +977,18 @@ pub mod perception {
             enumerate_resonance, perceive_resonance, ResonanceContributor, ResonanceError,
             ResonanceFlags, ResonanceOptions, ResonanceStructures,
         };
-        pub use crate::core::delocalization::{ResonanceGroup, ResonancePerception};
+        pub use crate::molecule::delocalization::{ResonanceGroup, ResonancePerception};
     }
     /// Bond conjugation, including aromatic bonds, without contributor enumeration.
     pub mod conjugation {
         pub use crate::algorithms::{perceive_conjugation, ConjugationError};
-        pub use crate::core::delocalization::{ConjugationModel, ConjugationPerception};
+        pub use crate::molecule::delocalization::{ConjugationModel, ConjugationPerception};
     }
     pub use crate::chemistry::PerceptionError;
+    pub use crate::molecule::perception::{
+        Perception, PerceptionBuildError, PerceptionBuilder, PerceptionComponent,
+        PerceptionInstallError,
+    };
 
     /// Expert valence perception for canonical represented chemistry.
     ///
@@ -998,7 +1002,7 @@ pub mod perception {
             perceive_valence, perceive_valence_with_options, represented_valence, ValenceError,
             ValenceIssue, ValenceOptions,
         };
-        pub use crate::core::perception::{ValenceModel, ValencePerception};
+        pub use crate::molecule::perception::{ValenceModel, ValencePerception};
     }
 
     /// Ring membership and deterministic ring-basis perception.
@@ -1010,8 +1014,9 @@ pub mod perception {
             perceive_ring_membership, perceive_ring_set, perceive_ring_set_with_options,
             RingPerceptionError, RingPerceptionOptions,
         };
-        pub use crate::core::perception::{
-            Ring, RingBasisModel, RingBasisState, RingMembership, RingPerception, RingSet,
+        pub use crate::molecule::perception::{
+            MalformedRingReason, Ring, RingBasisModel, RingBasisState, RingMembership,
+            RingPerception, RingSet,
         };
     }
 
@@ -1024,29 +1029,68 @@ pub mod perception {
             perceive_aromaticity, perceive_aromaticity_with_options,
             perceive_aromaticity_with_ring_options, AromaticityError, AromaticityOptions,
         };
-        pub use crate::core::perception::{AromaticityModel, AromaticityPerception};
+        pub use crate::molecule::perception::{AromaticityModel, AromaticityPerception};
     }
 }
 
-/// Focused stereochemistry validation, inference, transforms, and CIP assignment.
+/// Represented stereochemistry, its validation, and stereo algorithms.
 ///
-/// Coordinate inference and candidate detection are read-only. Coordinate
-/// materialization is an explicitly named representation transform, while CIP
-/// descriptors remain opt-in derived state. CIP assignment requires known
-/// implicit hydrogen counts: run valence perception first, or it reports
-/// `CipAssignmentIssue::UnknownHydrogenCount` instead of ranking with none.
+/// The root holds the stereo elements and groups a [`Molecule`](crate::molecule::Molecule)
+/// represents, their validation, and the shared symmetry-search bounds.
+/// Expert algorithms live in submodules: [`cip`](crate::stereo::cip) assigns
+/// opt-in CIP descriptors, [`coordinates`](crate::stereo::coordinates) infers
+/// and materializes stereo from coordinates, and
+/// [`cleanup`](crate::stereo::cleanup) detects stereogenic candidates and removes
+/// ineligible assertions. Coordinate inference and candidate detection are
+/// read-only; coordinate materialization is an explicitly named representation
+/// transform.
 pub mod stereo {
     pub use crate::algorithms::{
-        assign_cip_descriptors, assign_cip_descriptors_with_options, cleanup_stereo,
-        detect_stereo_candidates, detect_stereo_candidates_with_options, infer_coordinate_stereo,
-        infer_coordinate_stereo_with_options, materialize_coordinate_stereo,
-        materialize_coordinate_stereo_with_options, validate_stereo, CipAssignment,
-        CipAssignmentError, CipAssignmentIssue, CipAssignmentOptions, CipAssignmentReport,
-        CipRankingError, CipSkipped, CipSkippedReason, CoordinateStereoError,
-        CoordinateStereoMaterializationReport, CoordinateStereoOptions, CoordinateStereoResult,
-        StereoCandidate, StereoCleanupReport, StereoPerceptionError, StereoPerceptionOptions,
-        StereoValidationError, StereoValidationIssue,
+        validate_stereo, StereoSearchError, StereoSearchOptions, StereoValidationError,
+        StereoValidationIssue,
     };
+    pub use crate::molecule::ids::{StereoElementId, StereoGroupId};
+    pub use crate::molecule::stereo::{
+        AxisOrientation, AxisStereo, DoubleBondOrientation, DoubleBondStereo, StereoCarrier,
+        StereoDescriptor, StereoElement, StereoElementKind, StereoGroup, StereoGroupKind,
+        TetrahedralOrientation, TetrahedralStereo,
+    };
+
+    /// CIP descriptor assignment and its installed perception state.
+    ///
+    /// CIP descriptors remain opt-in derived state. Assignment requires known
+    /// implicit hydrogen counts: run valence perception first, or it reports
+    /// [`CipAssignmentIssue::UnknownHydrogenCount`](crate::stereo::cip::CipAssignmentIssue::UnknownHydrogenCount)
+    /// instead of ranking with
+    /// none.
+    pub mod cip {
+        pub use crate::algorithms::{
+            assign_cip_descriptors, assign_cip_descriptors_with_options, CipAssignment,
+            CipAssignmentError, CipAssignmentIssue, CipAssignmentOptions, CipAssignmentReport,
+            CipRankingError, CipSkipped, CipSkippedReason,
+        };
+        pub use crate::molecule::perception::CipPerception;
+    }
+
+    /// Read-only stereo inference from coordinates and its explicit
+    /// materialization into represented stereo.
+    pub mod coordinates {
+        pub use crate::algorithms::{
+            infer_coordinate_stereo, infer_coordinate_stereo_with_options,
+            materialize_coordinate_stereo, materialize_coordinate_stereo_with_options,
+            CoordinateStereoError, CoordinateStereoMaterializationReport, CoordinateStereoOptions,
+            CoordinateStereoResult,
+        };
+    }
+
+    /// Stereogenic candidate detection and chemical cleanup of represented
+    /// stereo assertions.
+    pub mod cleanup {
+        pub use crate::algorithms::{
+            cleanup_stereo, detect_stereo_candidates, detect_stereo_candidates_with_options,
+            StereoCandidate, StereoCleanupReport,
+        };
+    }
 }
 
 /// Canonical atom ranking for represented molecular graphs.
@@ -1055,7 +1099,7 @@ pub mod stereo {
 pub mod canon {
     pub use crate::algorithms::CanonicalAtomRanking;
 
-    use crate::core::Molecule;
+    use crate::molecule::Molecule;
 
     /// Computes deterministic canonical equivalence classes without mutation.
     ///
@@ -1077,7 +1121,7 @@ pub mod rotatable_bonds {
     pub use crate::algorithms::{RotatableBondOptions, RotatableBondSet};
 
     use crate::chemistry::PerceptionError;
-    use crate::core::Molecule;
+    use crate::molecule::Molecule;
 
     /// Detects rotatable bonds using the supplied options.
     ///
@@ -1149,7 +1193,7 @@ pub mod hydrogens {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub mod prelude {
-    pub use crate::core::{
+    pub use crate::molecule::{
         Atom, Bond, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeEditor,
     };
     pub use crate::structure::{Model, Positions};

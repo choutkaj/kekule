@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::core::{
+use crate::molecule::{
     Atom, AtomId, BondId, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeCorrespondence,
-    MoleculeEditor, MoleculeError, MoleculePublicationError, StereoCarrier, StereoElementId,
-    StereoElementKind,
+    MoleculeEditor, MoleculeError, MoleculePublicationError,
 };
+use crate::stereo::{StereoCarrier, StereoElementId, StereoElementKind};
 
 use super::rdkit_inferred_hydrogen_count;
 

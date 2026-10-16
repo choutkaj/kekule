@@ -93,7 +93,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("isomeric SMILES: {isomeric}");
     
     // Assign and print stereochemistry
-    let stereochemistry = stereo::assign_cip_descriptors(&mut molecule)?;
+    let stereochemistry = stereo::cip::assign_cip_descriptors(&mut molecule)?;
     for assignment in &stereochemistry.assigned {
         println!("stereo {}: {:?}", assignment.element, assignment.descriptor);
     }

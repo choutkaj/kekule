@@ -16,14 +16,14 @@ fn detected_with_options(smiles: &str, options: RotatableBondOptions) -> Vec<Bon
 
 #[test]
 fn rdkit_strict_handles_empty_single_and_linear_molecules() {
-    let empty = crate::core::MoleculeEditor::new();
+    let empty = crate::molecule::MoleculeEditor::new();
     assert!(
         rotatable_bonds::detect(empty.working(), RotatableBondOptions::STRICT)
             .unwrap()
             .is_empty()
     );
 
-    let mut builder = crate::core::MoleculeEditor::new();
+    let mut builder = crate::molecule::MoleculeEditor::new();
     builder.add_atom(carbon()).expect("single carbon");
     let single = builder.finish().expect("single atom is connected");
     assert!(
@@ -181,7 +181,7 @@ fn unsupported_focus_bond_orders_are_never_rotatable() {
         BondOrder::Quadruple,
         BondOrder::Dative,
     ] {
-        let mut builder = crate::core::MoleculeEditor::new();
+        let mut builder = crate::molecule::MoleculeEditor::new();
         let atoms = (0..4)
             .map(|index| {
                 // Sulfur accommodates the high represented valence when the
@@ -285,7 +285,7 @@ fn resonance_detection_is_independent_of_installed_perception() {
             .inferred_hydrogens()
             .map(|(id, count)| (id, if id == AtomId::new(0) { 0 } else { count }))
             .collect::<Vec<_>>();
-        let neutral = crate::core::Perception::builder()
+        let neutral = crate::perception::Perception::builder()
             .with_valence(None, assignments)
             .unwrap()
             .build();

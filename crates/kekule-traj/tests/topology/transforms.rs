@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kekule::core::{Atom, Element, MoleculeEditor};
+use kekule::molecule::{Atom, Element, MoleculeEditor};
 use kekule::topology::transform::{remove_instances, retain_instances, TopologyTransformError};
 use kekule::topology::{MoleculeInstanceId, Topology, TopologyBuilder};
 

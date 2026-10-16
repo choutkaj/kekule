@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::Element;
+use crate::molecule::Element;
 use crate::substructure::{QueryMatch, TopologyQueryMatch};
 
 use super::{

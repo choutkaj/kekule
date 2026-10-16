@@ -4,8 +4,8 @@ pub use append::{ModelAppend, ModelAppendReport};
 
 use super::model_state::ModelState;
 use super::{Model, ModelError, PositionError, Positions, StructureError};
-use crate::core::{Atom, BondOrder, Molecule};
 use crate::geometry::{PeriodicCell, Point3};
+use crate::molecule::{Atom, BondOrder, Molecule};
 use crate::properties::{
     OwnerProperties, PropertyColumn, PropertyError, PropertyKey, PropertyValue, RawPropertyTable,
 };
@@ -29,7 +29,7 @@ use std::fmt;
 /// values remain valid.
 ///
 /// ```
-/// use kekule::{core::{Atom, Element, BondOrder}, geometry::Point3,
+/// use kekule::{molecule::{Atom, Element, BondOrder}, geometry::Point3,
 ///     structure::ModelEditor, units::{Quantity, ANGSTROM}};
 /// let mut editor = ModelEditor::new();
 /// let c = editor.add_atom(Atom::new(Element::from_symbol("C").unwrap()),
@@ -90,7 +90,7 @@ impl ModelEditor {
     pub fn replace_source_instance_stereo(
         &mut self,
         instance: MoleculeInstanceId,
-        elements: &[crate::core::StereoElement],
+        elements: &[crate::stereo::StereoElement],
     ) -> Result<(), ModelEditError> {
         self.structural(|topology| topology.replace_source_instance_stereo(instance, elements))
     }

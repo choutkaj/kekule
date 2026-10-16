@@ -1,5 +1,4 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
-use crate::core::BondOrder;
 use crate::geometry::PeriodicCell;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::structure_interpret::{
@@ -7,6 +6,7 @@ use crate::io::structure_interpret::{
     StructureInterpretationReport,
 };
 use crate::io::UnrepresentablePolicy;
+use crate::molecule::BondOrder;
 use crate::structure::{AsModelView, Ensemble, Model, ModelView};
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId};
 use std::collections::BTreeMap;

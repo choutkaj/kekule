@@ -1,9 +1,9 @@
 //! V2000 CTAB rendering of a prepared record.
 use crate::algorithms::explicit_valence;
 use crate::chemistry::SourceStereoBondMarkKind;
-use crate::core::{Atom, AtomId, AtomRadical, BondOrder, ImplicitHydrogens, Molecule};
 use crate::io::v2000::{V2000_MAX_ATOMS, V2000_MAX_BONDS};
 use crate::io::MoleculeWriteError;
+use crate::molecule::{Atom, AtomId, AtomRadical, BondOrder, ImplicitHydrogens, Molecule};
 
 use super::MolfileRecord;
 

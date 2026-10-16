@@ -1,8 +1,8 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::Molecule;
 use crate::geometry::{PeriodicCell, RigidTransform};
+use crate::molecule::Molecule;
 use crate::properties::{OwnerProperties, StructureProperties, TopologyPropertiesMut};
 use crate::topology::transform::TopologySubsetError;
 use crate::topology::{

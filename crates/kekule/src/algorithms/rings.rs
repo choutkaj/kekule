@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt;
 
-use crate::core::*;
+use crate::molecule::*;
 
 pub(crate) fn compute_ring_membership(mol: &Molecule) -> RingMembership {
     let mut graph = vec![Vec::<(AtomId, BondId)>::new(); mol.graph.atom_slot_count()];

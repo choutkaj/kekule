@@ -1,8 +1,9 @@
 //! V3000 CTAB rendering of a prepared record.
 use crate::algorithms::explicit_valence;
 use crate::chemistry::SourceStereoBondMarkKind;
-use crate::core::{AtomRadical, BondOrder, ImplicitHydrogens, StereoGroupKind};
 use crate::io::MoleculeWriteError;
+use crate::molecule::{AtomRadical, BondOrder, ImplicitHydrogens};
+use crate::stereo::StereoGroupKind;
 
 use super::MolfileRecord;
 

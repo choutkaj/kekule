@@ -545,7 +545,7 @@ fn total_connectivity_counts_graph_declared_and_inferred_hydrogens() {
 #[test]
 fn connectivity_includes_zero_and_dative_graph_neighbors() {
     for order in [BondOrder::Zero, BondOrder::Dative] {
-        let mut editor = crate::core::MoleculeEditor::new();
+        let mut editor = crate::molecule::MoleculeEditor::new();
         let nitrogen = editor
             .add_atom(Atom::new(Element::from_symbol("N").unwrap()))
             .unwrap();
@@ -776,7 +776,7 @@ fn programmatic_bond_predicates_keep_their_represented_meaning() {
 
 #[test]
 fn matcher_requires_only_the_perception_used_by_the_ir() {
-    let mut raw = crate::core::MoleculeEditor::new();
+    let mut raw = crate::molecule::MoleculeEditor::new();
     let first = raw.add_atom(carbon()).expect("atom identifier capacity");
     let second = raw.add_atom(carbon()).expect("atom identifier capacity");
     raw.add_bond(first, second, BondOrder::Single).unwrap();

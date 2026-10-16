@@ -9,8 +9,8 @@ use crate::{
     TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation,
     TrajectoryReader, TrajectoryWriter,
 };
-use kekule::core::Element;
 use kekule::geometry::Point3;
+use kekule::molecule::Element;
 use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};

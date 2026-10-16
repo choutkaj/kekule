@@ -3,7 +3,7 @@
 // BSD 3-Clause; see LICENSE-RDKit in the crate root.
 use super::aromaticity::{count_rdkit_like_atom_pi_electrons, rdkit_outer_electrons};
 use super::valence::{explicit_valence, rdkit_default_valence};
-use crate::core::*;
+use crate::molecule::*;
 use std::collections::BTreeSet;
 use std::fmt;
 

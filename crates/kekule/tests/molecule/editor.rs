@@ -1,5 +1,10 @@
-use kekule::core::*;
+use kekule::molecule::*;
+use kekule::perception::Perception;
 use kekule::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
+use kekule::stereo::{
+    AxisOrientation, AxisStereo, StereoCarrier, StereoElement, StereoElementKind, StereoGroup,
+    StereoGroupId, StereoGroupKind, TetrahedralStereo,
+};
 use kekule::units::{ANGSTROM, KELVIN, NANOMETER};
 
 fn atom(symbol: &str) -> Atom {
@@ -711,7 +716,7 @@ fn publication_compacts_every_id_space_and_carries_annotations() {
 fn editor_enforces_molecule_publication_invariants() {
     assert!(matches!(
         MoleculeEditor::new().finish(),
-        Err(kekule::core::MoleculePublicationError::EmptyGraph)
+        Err(kekule::molecule::MoleculePublicationError::EmptyGraph)
     ));
 
     let mut single_atom = MoleculeEditor::new();
@@ -729,7 +734,7 @@ fn editor_enforces_molecule_publication_invariants() {
         .unwrap();
     assert!(matches!(
         disconnected.finish(),
-        Err(kekule::core::MoleculePublicationError::DisconnectedGraph(_))
+        Err(kekule::molecule::MoleculePublicationError::DisconnectedGraph(_))
     ));
 }
 

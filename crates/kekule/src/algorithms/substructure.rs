@@ -9,7 +9,7 @@ pub use topology::{
     TopologyQueryMatch,
 };
 
-use crate::core::{AtomId, Molecule};
+use crate::molecule::{AtomId, Molecule};
 use crate::query::{QueryAtomId, QueryGraph};
 
 /// Absolute query-size ceiling for the recursive bounded matcher.

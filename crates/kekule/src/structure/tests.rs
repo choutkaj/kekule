@@ -1,6 +1,6 @@
 use super::*;
-use crate::core::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
 use crate::topology::{TopologyAtomIndex, TopologyBondIndex, TopologyBuilder};
 use crate::units::{
@@ -830,7 +830,7 @@ fn model_atom_views_join_topology_identity_with_structure_state() {
     );
     assert!(model.atom_at(TopologyAtomIndex::new(2)).is_none());
     let missing =
-        crate::topology::InstanceAtomId::new(carbon.molecule(), crate::core::AtomId::new(9));
+        crate::topology::InstanceAtomId::new(carbon.molecule(), crate::molecule::AtomId::new(9));
     assert!(model.atom(missing).is_none());
     let view = model.as_model_view();
     assert_eq!(view.atom(carbon).unwrap().position(), atom.position());

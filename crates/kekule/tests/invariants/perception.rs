@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use kekule::core::{AtomId, Perception};
 use kekule::smiles::{self, SmilesWriteOptions};
+use kekule::{molecule::AtomId, perception::Perception};
 
 use crate::corpus::{assert_invariant, molecules};
 use crate::support::{cip_labels, try_cip_labels};

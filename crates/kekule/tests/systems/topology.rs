@@ -2,7 +2,7 @@
 
 use std::error::Error;
 
-use kekule::core::{Atom, Element, Molecule, MoleculeEditor, MoleculePublicationError};
+use kekule::molecule::{Atom, Element, Molecule, MoleculeEditor, MoleculePublicationError};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::topology::transform::{TopologySubsetError, TopologyTransformError};
 use kekule::topology::{SelectionError, Topology, TopologyBuildError, TopologyEditor};

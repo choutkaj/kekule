@@ -1,5 +1,5 @@
 use kekule::{
-    core::AtomId,
+    molecule::AtomId,
     topology::{InstanceAtomId, Topology},
     units::Quantity,
 };

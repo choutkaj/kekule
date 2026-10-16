@@ -1,10 +1,8 @@
 //! Shared connected-component publication for subsets and structural editors.
 use super::TopologyBuilder;
-use crate::core::{
-    AtomId, BondId, MoleculeEditor, MoleculeError, MoleculePublicationError, StereoCarrier,
-    StereoElement, StereoElementKind, StereoGroup,
-};
+use crate::molecule::{AtomId, BondId, MoleculeEditor, MoleculeError, MoleculePublicationError};
 use crate::properties::PropertyError;
+use crate::stereo::{StereoCarrier, StereoElement, StereoElementKind, StereoGroup};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,7 +40,7 @@ pub(super) struct ComponentDefinition {
 }
 
 pub(super) fn build_component_definitions(
-    source_molecule: &crate::core::Molecule,
+    source_molecule: &crate::molecule::Molecule,
     selected_local: &BTreeSet<AtomId>,
     class: Option<(super::MoleculeClass, bool)>,
     builder: &mut TopologyBuilder,
@@ -112,7 +110,8 @@ pub(super) fn build_component_definitions(
                     .push(target_element);
             }
         }
-        if members_by_component.len() > 1 && group.kind != crate::core::StereoGroupKind::Absolute {
+        if members_by_component.len() > 1 && group.kind != crate::stereo::StereoGroupKind::Absolute
+        {
             return Err(MoleculeError::InvalidStereoReference(
                 "splitting this molecule would separate a correlated stereo group across components",
             ).into());

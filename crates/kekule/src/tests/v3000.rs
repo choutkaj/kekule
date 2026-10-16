@@ -201,7 +201,7 @@ fn v3000_atom_cfg_preserves_parity_unknown_and_atom_block_order() {
                 cfg == 3
             );
             perceive(&mut molecule).unwrap();
-            let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+            let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
             if cfg == 3 {
                 assert!(assigned.assigned.is_empty());
             } else {
@@ -237,7 +237,7 @@ fn v3000_atom_cfg_preserves_parity_unknown_and_atom_block_order() {
                 let mut reread = read_molfile(&output).unwrap();
                 perceive(&mut reread).unwrap();
                 assert_eq!(
-                    stereo_api::assign_cip_descriptors(&mut reread)
+                    stereo_api::cip::assign_cip_descriptors(&mut reread)
                         .unwrap()
                         .assigned,
                     assigned.assigned
@@ -275,7 +275,7 @@ fn v3000_atom_cfg_yields_to_contradicting_3d_coordinates() {
         let (mut molecule, report) = read_molfile_with_report(&source(cfg)).unwrap();
         assert_eq!(report.warnings(), warnings, "CFG={cfg}");
         perceive(&mut molecule).unwrap();
-        let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+        let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
         assert_eq!(
             assigned
                 .assigned
@@ -367,7 +367,7 @@ fn v3000_atom_cfg_numbers_explicit_hydrogen_last_regardless_of_atom_row() {
         let mut molecule = read_molfile(&reordered).unwrap();
         perceive(&mut molecule).unwrap();
         assert_eq!(
-            stereo_api::assign_cip_descriptors(&mut molecule)
+            stereo_api::cip::assign_cip_descriptors(&mut molecule)
                 .unwrap()
                 .assigned[0]
                 .descriptor,
@@ -415,7 +415,7 @@ fn molfile_model_preserves_drawn_e_z_and_rejects_inconsistent_or_degenerate_outp
             assert!(!reread.perception().has_valence());
             perceive(&mut reread).unwrap();
             assert_eq!(
-                stereo_api::assign_cip_descriptors(&mut reread)
+                stereo_api::cip::assign_cip_descriptors(&mut reread)
                     .unwrap()
                     .assigned[0]
                     .descriptor,
@@ -617,7 +617,7 @@ fn molfile_model_does_not_promote_unasserted_alkene_geometry_to_specified_stereo
             .1
             .is_explicitly_unknown());
         perceive(&mut reread).unwrap();
-        assert!(stereo_api::assign_cip_descriptors(&mut reread)
+        assert!(stereo_api::cip::assign_cip_descriptors(&mut reread)
             .unwrap()
             .assigned
             .is_empty());
@@ -741,7 +741,7 @@ fn molfile_model_e_z_preserves_explicit_carrier_pairs_and_explicit_hydrogen() {
     for smiles in ["F/C(Cl)=C(Br)/I", "[H]/C(F)=C(Cl)/Br"] {
         let mut molecule = read_smiles(smiles).unwrap();
         perceive(&mut molecule).unwrap();
-        let expected = stereo_api::assign_cip_descriptors(&mut molecule)
+        let expected = stereo_api::cip::assign_cip_descriptors(&mut molecule)
             .unwrap()
             .assigned;
         let model = Model::from_molecule(
@@ -777,7 +777,7 @@ fn molfile_model_e_z_preserves_explicit_carrier_pairs_and_explicit_hydrogen() {
             let mut reread = read_molfile(&output).unwrap();
             perceive(&mut reread).unwrap();
             assert_eq!(
-                stereo_api::assign_cip_descriptors(&mut reread)
+                stereo_api::cip::assign_cip_descriptors(&mut reread)
                     .unwrap()
                     .assigned,
                 expected
@@ -1290,7 +1290,7 @@ M  END
 
 #[test]
 fn mol_v3000_writer_round_trips_supported_metadata() {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     molecule
         .properties_mut()
         .owner_mut()
@@ -1447,7 +1447,7 @@ fn v3000_explicit_zero_radical_matches_the_default() {
 
 #[test]
 fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let a = molecule
         .add_atom(carbon())
         .expect("atom identifier capacity");
@@ -1473,7 +1473,7 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
     .message()
     .contains("cannot encode"));
 
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let a = molecule
         .add_atom(carbon())
         .expect("atom identifier capacity");

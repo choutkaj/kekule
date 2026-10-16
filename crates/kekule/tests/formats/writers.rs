@@ -12,7 +12,7 @@ use kekule::structure::{Ensemble, Model, Positions};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE, NANOMETER};
 
-fn molecule(source: &str) -> kekule::core::Molecule {
+fn molecule(source: &str) -> kekule::molecule::Molecule {
     let mut molecules = smiles::to_molecules(source).expect("SMILES interprets");
     assert_eq!(molecules.len(), 1);
     molecules.pop().unwrap()
@@ -989,7 +989,7 @@ fn mmcif_model_is_one_block_with_coordinate_model_one_and_automatic_classificati
 
 #[test]
 fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() {
-    use kekule::core::{Atom, Element, MoleculeEditor};
+    use kekule::molecule::{Atom, Element, MoleculeEditor};
     use kekule::topology::{AtomSiteMetadata, InstanceAtomId};
 
     let water = molecule("O");

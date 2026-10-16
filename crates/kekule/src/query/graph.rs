@@ -262,7 +262,7 @@ impl QueryGraphBuilder {
     }
 
     pub fn add_atom(&mut self, expression: AtomExpression) -> Result<QueryAtomId, QueryGraphError> {
-        let raw = crate::core::checked_raw_id(self.atoms.len()).map_err(|_| {
+        let raw = crate::molecule::checked_raw_id(self.atoms.len()).map_err(|_| {
             QueryGraphError::ResourceLimit {
                 resource: "atoms",
                 limit: u32::MAX as usize,
@@ -324,7 +324,7 @@ impl QueryGraphBuilder {
         {
             return Err(QueryGraphError::DuplicateBond { a, b });
         }
-        let raw = crate::core::checked_raw_id(self.bonds.len()).map_err(|_| {
+        let raw = crate::molecule::checked_raw_id(self.bonds.len()).map_err(|_| {
             QueryGraphError::ResourceLimit {
                 resource: "bonds",
                 limit: u32::MAX as usize,

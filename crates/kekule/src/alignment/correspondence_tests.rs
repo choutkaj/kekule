@@ -1,5 +1,5 @@
 use super::*;
-use crate::core::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
+use crate::molecule::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
 use crate::structure::{Model, Positions};
 use crate::topology::{InstanceAtomId, Topology};
 use crate::units::{ANGSTROM, NANOMETER};

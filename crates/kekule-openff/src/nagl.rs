@@ -4,7 +4,7 @@ mod features;
 mod network;
 use crate::{explicit, identity, Error, ErrorKind, Result};
 use kekule::{
-    core::Molecule,
+    molecule::Molecule,
     query::{parse_smarts, QueryGraph},
     substructure::find_match,
     units::{Quantity, ELEMENTARY_CHARGE},

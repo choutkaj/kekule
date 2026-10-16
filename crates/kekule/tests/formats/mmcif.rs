@@ -180,7 +180,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     assert_eq!(interpreted.molecules().count(), 1);
     assert!(interpreted
         .molecules()
-        .all(|molecule| molecule.perception() == &kekule::core::Perception::default()));
+        .all(|molecule| molecule.perception() == &kekule::perception::Perception::default()));
     assert!(interpreted
         .topology()
         .same_layout(interpreted.model().topology()));

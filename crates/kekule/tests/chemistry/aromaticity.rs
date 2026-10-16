@@ -1,11 +1,14 @@
-use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor, Perception};
 use kekule::perception::aromaticity::{
     perceive_aromaticity, perceive_aromaticity_with_options, AromaticityError, AromaticityModel,
     AromaticityOptions,
 };
 use kekule::perception::rings::RingPerceptionOptions;
 use kekule::smiles;
-use kekule::stereo::assign_cip_descriptors;
+use kekule::stereo::cip::assign_cip_descriptors;
+use kekule::{
+    molecule::{Atom, BondOrder, Element, Molecule, MoleculeEditor},
+    perception::Perception,
+};
 
 use crate::support::aromaticity_cases;
 

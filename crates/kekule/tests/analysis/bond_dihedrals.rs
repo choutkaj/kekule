@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use kekule::{
-    core::{
-        Atom, AtomId, BondId, BondOrder, Element, MoleculeEditor, StereoDescriptor,
-        StereoElementKind,
-    },
     geometry::{PeriodicCell, Point3, Vector3},
+    molecule::{Atom, AtomId, BondId, BondOrder, Element, MoleculeEditor},
     smiles,
-    stereo::{assign_cip_descriptors, CipAssignmentOptions, CipRankingError},
+    stereo::{
+        cip::{assign_cip_descriptors, CipAssignmentOptions, CipRankingError},
+        StereoDescriptor, StereoElementKind,
+    },
     structure::{
         measure::{self, BondDihedral, BondDihedralError, MeasurementError},
         Ensemble, EnsembleMember, Model, Positions,

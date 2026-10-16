@@ -1,6 +1,7 @@
 use super::*;
-use crate::core::{BondId, DoubleBondOrientation, RingBasisModel, StereoElementKind};
+use crate::molecule::{BondId, RingBasisModel};
 use crate::query::{AtomPredicate, BondPredicate, QueryBond, QueryStereoConstraint};
+use crate::stereo::{DoubleBondOrientation, StereoElementKind};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -486,7 +487,7 @@ impl Context<'_, '_> {
         for double in query.bond_ids() {
             let bond = query.bond(double).expect("query bond");
             if !bond.expression().contains_predicate(|p| {
-                matches!(p, BondPredicate::Order(crate::core::BondOrder::Double))
+                matches!(p, BondPredicate::Order(crate::molecule::BondOrder::Double))
             }) {
                 continue;
             }

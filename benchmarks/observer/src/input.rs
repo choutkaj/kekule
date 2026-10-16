@@ -1,6 +1,6 @@
 //! Reads one small-molecule input into connected components keyed by source.
 
-use kekule::core::Molecule;
+use kekule::molecule::Molecule;
 use kekule::structure::{Model, Positions};
 use kekule::topology::InstanceAtomId;
 use kekule::units::{Quantity, ANGSTROM};
@@ -18,7 +18,7 @@ pub(crate) struct Component {
 }
 
 impl Component {
-    pub(crate) fn atom(&self, atom: kekule::core::AtomId) -> usize {
+    pub(crate) fn atom(&self, atom: kekule::molecule::AtomId) -> usize {
         self.source[atom.index()]
     }
 }

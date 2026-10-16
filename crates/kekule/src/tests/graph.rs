@@ -3,7 +3,7 @@ use crate::properties::{PropertyKey, PropertyValue};
 
 #[test]
 fn empty_molecule_has_no_atoms_or_bonds() {
-    let mol = crate::core::MoleculeEditor::new();
+    let mol = crate::molecule::MoleculeEditor::new();
 
     assert_eq!(mol.atom_count(), 0);
     assert_eq!(mol.bond_count(), 0);
@@ -14,7 +14,7 @@ fn empty_molecule_has_no_atoms_or_bonds() {
 
 #[test]
 fn formal_charge_sums_only_live_atom_payloads() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let positive = mol
         .add_atom(charged_atom("N", 3))
         .expect("atom identifier capacity");
@@ -37,7 +37,7 @@ fn formal_charge_sums_only_live_atom_payloads() {
 
 #[test]
 fn atom_insertion_assigns_stable_typed_ids() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
 
@@ -57,7 +57,7 @@ fn atom_insertion_assigns_stable_typed_ids() {
 
 #[test]
 fn bond_insertion_assigns_stable_typed_ids() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let bond = mol
@@ -75,7 +75,7 @@ fn bond_insertion_assigns_stable_typed_ids() {
 
 #[test]
 fn invalid_atom_ids_are_rejected() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let atom = mol.add_atom(carbon()).expect("atom identifier capacity");
 
     assert_eq!(
@@ -97,7 +97,7 @@ fn invalid_atom_ids_are_rejected() {
 
 #[test]
 fn invalid_bond_ids_are_rejected() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let bond = mol
@@ -123,7 +123,7 @@ fn invalid_bond_ids_are_rejected() {
 
 #[test]
 fn self_bonds_are_rejected() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let atom = mol.add_atom(carbon()).expect("atom identifier capacity");
 
     let err = mol
@@ -134,7 +134,7 @@ fn self_bonds_are_rejected() {
 
 #[test]
 fn duplicate_bond_is_rejected() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     mol.add_bond(a, b, BondOrder::Single)
@@ -153,7 +153,7 @@ fn duplicate_bond_is_rejected() {
 
 #[test]
 fn neighbor_iteration_reports_live_adjacent_atoms() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(oxygen()).expect("atom identifier capacity");
@@ -181,7 +181,7 @@ fn neighbor_iteration_reports_live_adjacent_atoms() {
 
 #[test]
 fn incident_bond_iteration_reports_live_bonds() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(oxygen()).expect("atom identifier capacity");
@@ -217,7 +217,7 @@ fn incident_bond_iteration_reports_live_bonds() {
 
 #[test]
 fn bond_between_finds_live_undirected_bonds() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let c = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -232,7 +232,7 @@ fn bond_between_finds_live_undirected_bonds() {
 
 #[test]
 fn bond_deletion_preserves_remaining_ids_and_counts() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(oxygen()).expect("atom identifier capacity");
@@ -263,7 +263,7 @@ fn bond_deletion_preserves_remaining_ids_and_counts() {
 
 #[test]
 fn atom_deletion_removes_incident_bonds_and_preserves_remaining_ids() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(oxygen()).expect("atom identifier capacity");
@@ -301,7 +301,7 @@ fn atom_deletion_removes_incident_bonds_and_preserves_remaining_ids() {
 
 #[test]
 fn adding_after_deletion_allocates_new_ids() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let first_bond = mol
@@ -323,7 +323,7 @@ fn adding_after_deletion_allocates_new_ids() {
 
 #[test]
 fn every_topology_mutation_invalidates_fresh_perception() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     mark_all_fresh(mol.working_mut());
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     assert_all_stale(mol.working());
@@ -349,7 +349,7 @@ fn every_topology_mutation_invalidates_fresh_perception() {
 
 #[test]
 fn absent_perception_remains_absent_after_topology_mutation() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
 
     mol.add_atom(carbon()).expect("atom identifier capacity");
 
@@ -361,7 +361,7 @@ fn absent_perception_remains_absent_after_topology_mutation() {
 
 #[test]
 fn properties_can_be_mutated_without_topology_changes() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let bond = mol
@@ -408,7 +408,7 @@ fn properties_can_be_mutated_without_topology_changes() {
 
 #[test]
 fn atom_and_bond_properties_follow_stable_ids_across_tombstones() {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let first = molecule.add_atom(carbon()).unwrap();
     let removed = molecule.add_atom(carbon()).unwrap();
     let last = molecule.add_atom(oxygen()).unwrap();

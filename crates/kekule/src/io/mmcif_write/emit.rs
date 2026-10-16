@@ -1,8 +1,8 @@
 //! Emit prepared rows with format-specific quoting and numeric formatting.
 use super::prepare::{AtomRow, PreparedModel};
 use super::{MmcifWriteError, MmcifWriteOptions};
-use crate::core::BondOrder;
 use crate::io::mmcif_cell::CellParameters;
+use crate::molecule::BondOrder;
 use std::collections::BTreeMap;
 use std::io::Write;
 

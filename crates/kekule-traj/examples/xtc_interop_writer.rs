@@ -4,8 +4,8 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kekule::core::{Atom, BondOrder, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::topology::TopologyBuilder;
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use kekule_traj::io::xtc::XtcWriteOptions;
@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .nth(1)
         .map(PathBuf::from)
         .ok_or("usage: xtc_interop_writer OUTPUT.xtc")?;
-    let mut molecule = kekule::core::MoleculeEditor::new();
+    let mut molecule = kekule::molecule::MoleculeEditor::new();
     let mut previous = None;
     for _ in 0..12 {
         let atom = molecule.add_atom(Atom::new(

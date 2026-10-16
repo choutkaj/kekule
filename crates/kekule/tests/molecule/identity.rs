@@ -1,9 +1,9 @@
 //! Represented molecular identity: what equality compares and what perception
 //! may add without changing it.
 
-use kekule::core::{Molecule, Perception};
 use kekule::smiles;
 use kekule::topology::Topology;
+use kekule::{molecule::Molecule, perception::Perception};
 
 fn one_smiles(input: &str) -> Molecule {
     let mut molecules = smiles::to_molecules(input).expect("SMILES interprets");

@@ -37,7 +37,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use crate::core::{AtomId, Element, Molecule};
+use crate::molecule::{AtomId, Element, Molecule};
 use crate::units::{Quantity, DALTON};
 
 use data::{exact_isotope_mass, most_abundant_isotope, standard_atomic_weight};
@@ -365,7 +365,7 @@ fn molecular_mass(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Atom, AtomRadical, BondOrder, ImplicitHydrogens};
+    use crate::molecule::{Atom, AtomRadical, BondOrder, ImplicitHydrogens};
 
     fn element(symbol: &str) -> Element {
         Element::from_symbol(symbol).expect("test element")
@@ -404,11 +404,11 @@ mod tests {
     fn stored_only_counts_fixed_hydrogens_and_omits_inferred_ones() {
         let mut fixed = Atom::new(element("C"));
         fixed.hydrogens = ImplicitHydrogens::Fixed(3);
-        let mut graph = crate::core::MoleculeEditor::new();
+        let mut graph = crate::molecule::MoleculeEditor::new();
         let fixed = graph.add_atom(fixed).expect("fixed carbon");
         let inferred = graph.add_atom(Atom::new(element("C"))).expect("carbon");
         graph
-            .add_bond(fixed, inferred, crate::core::BondOrder::Single)
+            .add_bond(fixed, inferred, crate::molecule::BondOrder::Single)
             .expect("bond");
         let mut molecule = graph.finish().expect("ethane");
 
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn hill_order_isotope_order_and_accessors_are_stable() {
-        let mut graph = crate::core::MoleculeEditor::new();
+        let mut graph = crate::molecule::MoleculeEditor::new();
         let mut carbon_13_atom = Atom::new(element("C"));
         carbon_13_atom.isotope = Some(13);
         let mut carbon_12_atom = carbon_13_atom.clone();
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn radicals_need_no_mass_correction_beyond_charge() {
-        let mut graph = crate::core::MoleculeEditor::new();
+        let mut graph = crate::molecule::MoleculeEditor::new();
         let mut carbon = Atom::new(element("C"));
         carbon.radical = AtomRadical::new(1, Some(2));
         graph.add_atom(carbon).expect("atom identifier capacity");
@@ -613,7 +613,7 @@ mod tests {
         assert_eq!(average, monoisotopic);
         assert!((average - 98.906_249_681).abs() < 1.0e-12);
 
-        let mut graph = crate::core::MoleculeEditor::new();
+        let mut graph = crate::molecule::MoleculeEditor::new();
         let mut impossible = Atom::new(element("C"));
         impossible.isotope = Some(999);
         graph
@@ -630,7 +630,7 @@ mod tests {
 
     #[test]
     fn empty_molecule_has_empty_formula_and_zero_masses() {
-        let molecule = crate::core::MoleculeEditor::new();
+        let molecule = crate::molecule::MoleculeEditor::new();
         let formula = molecular_formula(molecule.working(), HydrogenCountPolicy::StoredOnly)
             .expect("formula");
         assert!(formula.is_empty());

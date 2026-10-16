@@ -2,7 +2,7 @@
 //!
 //! Property scope follows the object that owns it, and each scope has its own
 //! type: definition-invariant annotations are [`MoleculeProperties`] of a
-//! [`crate::core::Molecule`], system annotations are [`TopologyProperties`] of a
+//! [`crate::molecule::Molecule`], system annotations are [`TopologyProperties`] of a
 //! [`crate::topology::Topology`], and coordinate-dependent annotations are
 //! [`StructureProperties`] of a [`crate::structure::Model`], ensemble member,
 //! or trajectory frame. Each scope holds [`OwnerProperties`] plus one
@@ -22,7 +22,7 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::str::FromStr;
 
-use crate::core::{AtomId, BondId};
+use crate::molecule::{AtomId, BondId};
 use crate::topology::{
     AtomSiteId, ChainId, MoleculeInstanceId, ResidueId, TopologyAtomIndex, TopologyBondIndex,
 };
@@ -382,8 +382,8 @@ macro_rules! property_rows {
 }
 
 property_rows!(
-    crate::core::AtomId,
-    crate::core::BondId,
+    crate::molecule::AtomId,
+    crate::molecule::BondId,
     crate::topology::MoleculeInstanceId,
     crate::topology::TopologyAtomIndex,
     crate::topology::TopologyBondIndex,
@@ -514,8 +514,8 @@ pub struct PropertyTableMut<'a, R> {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum LiveRows<'a> {
     All,
-    Atoms(&'a [Option<crate::core::Atom>]),
-    Bonds(&'a [Option<crate::core::Bond>]),
+    Atoms(&'a [Option<crate::molecule::Atom>]),
+    Bonds(&'a [Option<crate::molecule::Bond>]),
 }
 
 impl LiveRows<'_> {
@@ -1036,7 +1036,7 @@ impl OwnerProperties {
 /// per atom and bond slot, addressed by [`AtomId`] and [`BondId`].
 ///
 /// Published molecules have dense IDs, so every row is live. In a
-/// [`crate::core::MoleculeEditor`] draft, rows of removed atoms and bonds stay
+/// [`crate::molecule::MoleculeEditor`] draft, rows of removed atoms and bonds stay
 /// allocated and missing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MoleculeProperties {
@@ -1103,8 +1103,8 @@ impl<'a> MoleculePropertiesMut<'a> {
     /// Rows of removed draft atoms and bonds reject values.
     pub(crate) fn new(
         properties: &'a mut MoleculeProperties,
-        atoms: &'a [Option<crate::core::Atom>],
-        bonds: &'a [Option<crate::core::Bond>],
+        atoms: &'a [Option<crate::molecule::Atom>],
+        bonds: &'a [Option<crate::molecule::Bond>],
     ) -> Self {
         Self {
             properties,
@@ -1580,7 +1580,7 @@ impl From<UnitError> for PropertyError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::AtomId;
+    use crate::molecule::AtomId;
     use crate::units::{ANGSTROM, DIMENSIONLESS, KELVIN, NANOMETER};
 
     fn key(value: &str) -> PropertyKey {

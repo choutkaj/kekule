@@ -185,7 +185,7 @@ fn reducers_reject_empty_or_ambiguous_inputs_and_handle_single_frames() {
         ContactOccupancyAccumulator::new(&top, [(ids[0], ids[1]), (ids[1], ids[0])], cutoff),
         Err(ReductionError::DuplicatePair { pair: 1 })
     ));
-    let invalid = InstanceAtomId::new(ids[0].molecule(), kekule::core::AtomId::new(99));
+    let invalid = InstanceAtomId::new(ids[0].molecule(), kekule::molecule::AtomId::new(99));
     assert!(matches!(
         ContactOccupancyAccumulator::new(&top, [(ids[0], invalid)], cutoff),
         Err(ReductionError::Selection(SelectionError::InvalidAtomId(_)))

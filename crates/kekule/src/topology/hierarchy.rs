@@ -355,7 +355,7 @@ fn checked_hierarchy_id<T>(
     kind: HierarchyIdKind,
     construct: impl FnOnce(u32) -> T,
 ) -> std::result::Result<T, HierarchyError> {
-    crate::core::checked_raw_id(length)
+    crate::molecule::checked_raw_id(length)
         .map(construct)
         .map_err(|_| HierarchyError::IdentifierCapacityExceeded(kind))
 }

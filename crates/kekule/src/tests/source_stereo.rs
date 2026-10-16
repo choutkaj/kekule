@@ -47,7 +47,7 @@ fn equivalent_smiles_direction_tokens_publish_equivalent_canonical_stereo() {
 #[test]
 fn alternate_directional_source_carriers_publish_identical_double_bond_stereo() {
     let source_graph = || {
-        let mut molecule = crate::core::MoleculeEditor::new();
+        let mut molecule = crate::molecule::MoleculeEditor::new();
         let left = molecule
             .add_atom(carbon())
             .expect("atom identifier capacity");
@@ -277,7 +277,7 @@ fn canonical_tetrahedral_stereo_is_identical_across_smiles_molfile_and_manual_so
         assert_eq!(actual, &expected);
     }
 
-    let mut manual = crate::core::MoleculeEditor::new();
+    let mut manual = crate::molecule::MoleculeEditor::new();
     let fluorine = manual
         .add_atom(element_atom("F"))
         .expect("atom identifier capacity");
@@ -416,7 +416,7 @@ fn alternate_tetrahedral_wedge_carriers_publish_identical_canonical_stereo() {
 
 #[test]
 fn source_stereo_rejects_an_origin_outside_the_marked_bond() {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let a = molecule
         .add_atom(carbon())
         .expect("atom identifier capacity");
@@ -509,7 +509,7 @@ fn a_wedge_without_coordinates_does_not_define_atom_order_parity() {
 
 #[test]
 fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_element() {
-    let mut marked = crate::core::MoleculeEditor::new();
+    let mut marked = crate::molecule::MoleculeEditor::new();
     let a = marked.add_atom(carbon()).expect("atom identifier capacity");
     let b = marked.add_atom(carbon()).expect("atom identifier capacity");
     let bond = marked.add_bond(a, b, BondOrder::Single).expect("bond");
@@ -520,8 +520,9 @@ fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_eleme
     }];
 
     let positions = crate::structure::Positions::zeros(marked.atom_count());
-    let coordinate_result = stereo_api::infer_coordinate_stereo(marked.working(), &positions)
-        .expect("coordinate inference is independent of detached source marks");
+    let coordinate_result =
+        stereo_api::coordinates::infer_coordinate_stereo(marked.working(), &positions)
+            .expect("coordinate inference is independent of detached source marks");
     assert!(coordinate_result.elements.is_empty());
     let marked_before = marked.clone();
 
@@ -539,7 +540,7 @@ fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_eleme
     assert!(marked.stereo_elements().next().is_none());
     assert_eq!(marked, marked_before);
 
-    let mut unsupported = crate::core::MoleculeEditor::new();
+    let mut unsupported = crate::molecule::MoleculeEditor::new();
     let c = unsupported
         .add_atom(carbon())
         .expect("atom identifier capacity");
@@ -564,7 +565,7 @@ fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_eleme
         })
     ));
 
-    let mut unknown = crate::core::MoleculeEditor::new();
+    let mut unknown = crate::molecule::MoleculeEditor::new();
     let left = unknown
         .add_atom(carbon())
         .expect("atom identifier capacity");
@@ -603,7 +604,7 @@ fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_eleme
             if stereo.bond == unknown_bond && stereo.orientation.is_none()
     ));
 
-    let mut absent = crate::core::MoleculeEditor::new();
+    let mut absent = crate::molecule::MoleculeEditor::new();
     let x = absent.add_atom(carbon()).expect("atom identifier capacity");
     let y = absent.add_atom(carbon()).expect("atom identifier capacity");
     absent.add_bond(x, y, BondOrder::Single).expect("bond");
@@ -623,8 +624,8 @@ fn failed_source_stereo_canonicalization_reports_the_unpaired_mark() {
         from: molecule.bond(marked_bond).expect("marked bond").a(),
         kind: SourceStereoBondMarkKind::DirectionalUp,
     }];
-    let cip =
-        stereo_api::assign_cip_descriptors(&mut molecule).expect("CIP assignment should succeed");
+    let cip = stereo_api::cip::assign_cip_descriptors(&mut molecule)
+        .expect("CIP assignment should succeed");
     assert_eq!(cip.assigned.len(), 1);
     stereo_api::validate_stereo(&molecule).expect("stored-state validation should succeed");
     let error = molecule
@@ -778,7 +779,7 @@ fn interpretation_materializes_omitted_hydrogen_alongside_atrop_stereo() {
     );
     assert!(molecule.stereo_elements().any(|(_, element)| matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(8))));
     perceive(&mut molecule).unwrap();
-    let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+    let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
     assert_eq!(
         assigned
             .assigned
@@ -804,7 +805,7 @@ fn interpretation_preserves_one_ring_endpoint_atrop_and_omitted_hydrogen() {
         );
         assert!(molecule.stereo_elements().any(|(_, element)| matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(33))));
         perceive(&mut molecule).unwrap();
-        let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+        let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
         assert_eq!(
             assigned
                 .assigned
@@ -950,7 +951,7 @@ fn molfile_unmarked_3d_tetrahedra_use_shared_geometry_without_installing_percept
                     );
                 }
                 perceive(&mut molecule).unwrap();
-                let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+                let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
                 assert_eq!(assigned.assigned.len(), 1);
                 let descriptor = assigned.assigned[0].descriptor;
                 // Independently checked with RDKit 2026.03.3 from these CTAB
@@ -985,7 +986,7 @@ fn molfile_3d_tetrahedral_inference_is_scale_rotation_and_translation_invariant(
             let source = coordinate_tetrahedron(true, &points, 0);
             let (mut molecule, _) = read_molfile_with_report(&source).unwrap();
             perceive(&mut molecule).unwrap();
-            let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+            let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
             assert_eq!(assigned.assigned.len(), 1);
             assert_eq!(assigned.assigned[0].descriptor, StereoDescriptor::R);
         }
@@ -1263,7 +1264,8 @@ fn molfile_valid_wedge_geometry_is_scale_and_reflection_consistent() {
                     let (mut molecule, report) = read_molfile_with_report(&source).unwrap();
                     assert!(report.warnings().is_empty(), "{source}");
                     perceive(&mut molecule).unwrap();
-                    let assignment = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+                    let assignment =
+                        stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
                     let expected = if mirror > 0.0 {
                         original
                     } else if original == StereoDescriptor::R {
@@ -1307,7 +1309,7 @@ fn crowded_wedge_drawing_respects_carrier_permutations() {
             let source = wedge_drawing(&permuted, 1.0, 1.0, v3000);
             let mut molecule = read_molfile(&source).unwrap();
             perceive(&mut molecule).unwrap();
-            let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+            let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
             assert_eq!(assigned.assigned.len(), 1);
             assert_eq!(assigned.assigned[0].descriptor, expected, "{source}");
         }
@@ -1323,7 +1325,7 @@ fn molfile_wedges_use_drawing_geometry_for_hydrogen_and_lone_pair_carriers() {
             let source = wedged_tetrahedron(symbol, charge_code, mirror);
             let mut molecule = read_molfile(&source).expect("wedged center interprets");
             perceive(&mut molecule).expect("valence perceives");
-            let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+            let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
             assert_eq!(assigned.assigned.len(), 1, "{symbol} {charge_code}");
             assert_eq!(assigned.assigned[0].descriptor, expected, "{source}");
         }
@@ -1356,7 +1358,7 @@ fn molfile_wedges_decode_and_write_stereogenic_nitrogen_lone_pairs() {
         source.push_str("  1  2  1  0\n  3  2  1  1\n  3  4  1  0\n  4  5  1  0\n  5  6  1  6\n  5  3  1  0\nM  END\n");
         let mut molecule = read_molfile(&source).expect("wedged aziridine interprets");
         perceive(&mut molecule).unwrap();
-        let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+        let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
         let mut descriptors = assigned
             .assigned
             .iter()
@@ -1651,7 +1653,7 @@ M  V30 7 1 7 8\nM  V30 8 2 8 9\nM  V30 9 1 9 4\nM  V30 END BOND\nM  V30 END CTAB
                     && stereo.carriers.contains(&StereoCarrier::ImplicitLonePair))
             );
             perceive(&mut molecule).unwrap();
-            let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+            let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
             assert_eq!(assigned.assigned.len(), 1);
             descriptors.push(assigned.assigned[0].descriptor);
             let interpretation = molfile::parse_str(&source).unwrap().interpret().unwrap();
@@ -1675,7 +1677,7 @@ M  V30 7 1 7 8\nM  V30 8 2 8 9\nM  V30 9 1 9 4\nM  V30 END BOND\nM  V30 END CTAB
             ] {
                 let mut reread = read_molfile(&output).unwrap();
                 perceive(&mut reread).unwrap();
-                let assigned = stereo_api::assign_cip_descriptors(&mut reread).unwrap();
+                let assigned = stereo_api::cip::assign_cip_descriptors(&mut reread).unwrap();
                 assert_eq!(assigned.assigned.len(), 1);
                 assert_eq!(
                     assigned.assigned[0].descriptor,
@@ -1701,7 +1703,7 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
     for (left, right, expected) in [(1, 6, StereoDescriptor::M), (6, 1, StereoDescriptor::P)] {
         let mut molecule = read_molfile(&marked(left, right)).unwrap();
         perceive(&mut molecule).unwrap();
-        let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+        let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
         assert_eq!(assigned.assigned.len(), 1);
         assert_eq!(assigned.assigned[0].descriptor, expected);
     }
@@ -1788,7 +1790,7 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
         assert!(matches!(&elements[0].kind, StereoElementKind::Axis(stereo)
             if stereo.axis == BondId::new(3) && stereo.orientation.is_none()));
         perceive(&mut molecule).unwrap();
-        assert!(stereo_api::assign_cip_descriptors(&mut molecule)
+        assert!(stereo_api::cip::assign_cip_descriptors(&mut molecule)
             .unwrap()
             .assigned
             .is_empty());

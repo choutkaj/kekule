@@ -1,6 +1,6 @@
 use kekule::{
-    core::{Element, VanDerWaalsRadiusSource},
     geometry::{PeriodicCell, PeriodicGeometry, PeriodicGeometryError, Point3, Vector3},
+    molecule::{Element, VanDerWaalsRadiusSource},
     properties::{PropertyKey, PropertyValue},
     structure::{
         BoxShape, Model, NegativeIon, PeriodicBoxError, PeriodicBoxOptions, Positions, PositiveIon,

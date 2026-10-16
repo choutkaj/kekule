@@ -29,7 +29,7 @@ fn ring_set_reports_symmetric_cycles_for_fused_rings() {
 
 #[test]
 fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let mut previous = molecule
         .add_atom(carbon())
         .expect("atom identifier capacity");
@@ -116,7 +116,7 @@ fn ring_input_and_work_limits_return_actionable_errors() {
 
 #[test]
 fn symmetric_cage_returns_named_candidate_limit_error() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = (0..4)
         .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
         .collect::<Vec<_>>();
@@ -151,7 +151,7 @@ fn symmetric_cage_returns_named_candidate_limit_error() {
 
 #[test]
 fn theta_graph_with_acyclic_tail_is_deterministic() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     for _ in 0..3 {
@@ -181,7 +181,7 @@ fn theta_graph_with_acyclic_tail_is_deterministic() {
 
 #[test]
 fn decorated_theta_graph_does_not_overenumerate_equal_path_cycles() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let atoms = (0..9)
         .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
         .collect::<Vec<_>>();
@@ -252,7 +252,7 @@ fn cycle_size_limit_returns_structured_error() {
 
 #[test]
 fn focused_ring_resource_errors_are_transactional() {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let atoms = (0..3)
         .map(|_| {
             molecule

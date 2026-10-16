@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn stereo_validation_reports_invalid_local_elements_without_mutating() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let b = mol
@@ -70,7 +70,7 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
 
 #[test]
 fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
-    let mut tetrahedral = crate::core::MoleculeEditor::new();
+    let mut tetrahedral = crate::molecule::MoleculeEditor::new();
     let center = tetrahedral
         .add_atom(carbon())
         .expect("atom identifier capacity");
@@ -115,7 +115,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
     stereo_api::validate_stereo(tetrahedral.working())
         .expect("implicit lone-pair availability is chemically interpretive");
 
-    let mut double_bond = crate::core::MoleculeEditor::new();
+    let mut double_bond = crate::molecule::MoleculeEditor::new();
     let left = double_bond
         .add_atom(carbon())
         .expect("atom identifier capacity");
@@ -148,7 +148,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         }]
     );
 
-    let mut axis = crate::core::MoleculeEditor::new();
+    let mut axis = crate::molecule::MoleculeEditor::new();
     let axis_left = axis.add_atom(carbon()).expect("atom identifier capacity");
     let axis_right = axis.add_atom(carbon()).expect("atom identifier capacity");
     let axis_bond = axis
@@ -191,7 +191,7 @@ fn stereo_candidates_use_normalized_and_perceived_hydrogen_state_without_cip_ass
     perceive(&mut molecule).expect("molecule should perceive");
 
     stereo_api::validate_stereo(&molecule).expect("stored stereo should be valid");
-    let candidates = stereo_api::detect_stereo_candidates(&molecule).unwrap();
+    let candidates = stereo_api::cleanup::detect_stereo_candidates(&molecule).unwrap();
 
     assert!(candidates.iter().any(|candidate| matches!(
         candidate,
@@ -219,7 +219,7 @@ fn stereo_candidates_exclude_repeated_hydrogen_ligands_but_preserve_isotopes() {
         let mut molecule = read_smiles(input).unwrap();
         perceive(&mut molecule).unwrap();
         assert_eq!(
-            stereo_api::detect_stereo_candidates(&molecule)
+            stereo_api::cleanup::detect_stereo_candidates(&molecule)
                 .unwrap()
                 .len(),
             expected,
@@ -244,7 +244,7 @@ fn stereo_candidates_include_pyramidal_pnictogens_and_tetracoordinate_multiple_b
     ] {
         let mut molecule = read_smiles(input).unwrap();
         perceive(&mut molecule).unwrap();
-        let candidates = stereo_api::detect_stereo_candidates(&molecule).unwrap();
+        let candidates = stereo_api::cleanup::detect_stereo_candidates(&molecule).unwrap();
         let carriers = candidates.iter().find_map(|candidate| match candidate {
             StereoCandidate::Tetrahedral { center, carriers } if *center == AtomId::new(0) => {
                 Some(carriers)
@@ -288,7 +288,7 @@ fn terminal_ligand_equivalence_is_hydrogen_representation_invariant() {
         perceive(&mut molecule).unwrap();
         let before = molecule.clone();
         assert_eq!(
-            stereo_api::detect_stereo_candidates(&molecule)
+            stereo_api::cleanup::detect_stereo_candidates(&molecule)
                 .unwrap()
                 .len(),
             expected,
@@ -298,7 +298,7 @@ fn terminal_ligand_equivalence_is_hydrogen_representation_invariant() {
         molecule.add_hydrogens().unwrap();
         perceive(&mut molecule).unwrap();
         assert_eq!(
-            stereo_api::detect_stereo_candidates(&molecule)
+            stereo_api::cleanup::detect_stereo_candidates(&molecule)
                 .unwrap()
                 .len(),
             expected,
@@ -318,7 +318,7 @@ fn ring_double_bond_eligibility_depends_on_size_not_carbon_endpoints() {
     ] {
         let mut molecule = read_smiles(input).unwrap();
         perceive(&mut molecule).unwrap();
-        let doubles = stereo_api::detect_stereo_candidates(&molecule)
+        let doubles = stereo_api::cleanup::detect_stereo_candidates(&molecule)
             .unwrap()
             .into_iter()
             .filter(|candidate| matches!(candidate, StereoCandidate::DoubleBond { .. }))
@@ -337,7 +337,7 @@ fn ring_double_bond_eligibility_depends_on_size_not_carbon_endpoints() {
 fn perception_installation_rejects_a_descriptor_for_the_wrong_stereo_geometry() {
     let (axis, positions, _) = coordinate_axis_graph(true);
     let mut editor = axis.into_editor();
-    stereo_api::materialize_coordinate_stereo_with_options(
+    stereo_api::coordinates::materialize_coordinate_stereo_with_options(
         &mut editor,
         &positions,
         CoordinateStereoOptions {
@@ -387,7 +387,7 @@ fn perception_installation_rejects_a_descriptor_for_the_wrong_stereo_geometry() 
 
 #[test]
 fn stereo_validation_accepts_structural_axis_elements() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let left_carrier = mol

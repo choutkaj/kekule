@@ -6,12 +6,15 @@ use crate::chemistry::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
     SourceStereoBondMark, SourceStereoBondMarkKind,
 };
-use crate::core::{
-    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
-    MoleculeEditor, StereoCarrier, StereoElement, StereoElementId, StereoElementKind,
-    TetrahedralOrientation, TetrahedralStereo,
-};
 use crate::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
+use crate::molecule::{
+    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
+    MoleculeEditor,
+};
+use crate::stereo::{
+    StereoCarrier, StereoElement, StereoElementId, StereoElementKind, TetrahedralOrientation,
+    TetrahedralStereo,
+};
 use crate::topology::{InstanceAtomId, Topology, TopologyBuildError, TopologyBuilder};
 
 use super::cx::{CxFeatures, CxStereoGroup, SmilesCxField};
@@ -490,7 +493,7 @@ fn interpret_smiles_program_component(
     validate_smiles_source_aromaticity(program, component, source)?;
     let end_offset = source.len();
 
-    let mut editor = crate::core::MoleculeEditor::new();
+    let mut editor = crate::molecule::MoleculeEditor::new();
     let mut source_to_atom = BTreeMap::<usize, AtomId>::new();
     let mut atom_mappings = Vec::new();
     for &index in &component.atoms {

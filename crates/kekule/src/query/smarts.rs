@@ -4,7 +4,7 @@ use std::fmt;
 use std::ops::Range;
 use std::rc::Rc;
 
-use crate::core::{BondOrder, Element};
+use crate::molecule::{BondOrder, Element};
 
 use super::{
     AtomExpression, AtomPredicate, BondExpression, BondPredicate, QueryAtomId,
@@ -213,7 +213,7 @@ fn install_cx_groups(
     if fields.trim().is_empty() {
         return Ok(query);
     }
-    use crate::core::StereoGroupKind as K;
+    use crate::stereo::StereoGroupKind as K;
     let fail = |message| SmartsParseError::syntax(span.clone(), message);
     let mut groups = BTreeMap::<(u8, usize), (K, Vec<QueryAtomId>)>::new();
     let mut current = None;
@@ -1237,8 +1237,8 @@ impl<'a> BracketParser<'a> {
             }
             b'@' => {
                 let (mut stereo, end) = AtomStereo::parse(self.source, self.cursor, self.base)?;
-                let same = stereo.orientation == crate::core::TetrahedralOrientation::Clockwise;
-                stereo.orientation = crate::core::TetrahedralOrientation::Clockwise;
+                let same = stereo.orientation == crate::stereo::TetrahedralOrientation::Clockwise;
+                stereo.orientation = crate::stereo::TetrahedralOrientation::Clockwise;
                 if let Some(existing) = &self.stereo {
                     if existing.inline_hydrogen != stereo.inline_hydrogen {
                         return Err(self.syntax_here("inconsistent inline hydrogen stereo frames"));

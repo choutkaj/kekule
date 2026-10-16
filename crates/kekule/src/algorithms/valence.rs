@@ -1,4 +1,4 @@
-use crate::core::*;
+use crate::molecule::*;
 use std::collections::BTreeMap;
 use std::fmt;
 

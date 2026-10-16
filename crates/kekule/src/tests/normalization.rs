@@ -2,7 +2,7 @@ use super::*;
 use crate::properties::{PropertyKey, PropertyValue};
 
 fn oxo_halide(oxo_count: usize) -> (MoleculeEditor, AtomId, Vec<AtomId>, Vec<BondId>) {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let chlorine = molecule
         .add_atom(element_atom("Cl"))
         .expect("atom identifier capacity");
@@ -201,7 +201,7 @@ fn publication_canonicalization_clears_preinstalled_perception() {
 
 #[test]
 fn ambiguous_directional_source_marks_return_a_structured_publication_error() {
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let left = graph.add_atom(carbon()).expect("left endpoint");
     let right = graph.add_atom(carbon()).expect("right endpoint");
     let left_a = graph.add_atom(carbon()).expect("left carrier");

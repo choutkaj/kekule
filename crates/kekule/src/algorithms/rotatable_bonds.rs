@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::chemistry::PerceptionError;
-use crate::core::{
+use crate::molecule::{
     AromaticityModel, AtomId, Bond, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
     RingBasisModel, ValenceModel,
 };
@@ -168,7 +168,7 @@ struct AtomProfile {
 fn rotatable_bond(
     bond_id: BondId,
     bond: &Bond,
-    ring_membership: &crate::core::RingMembership,
+    ring_membership: &crate::molecule::RingMembership,
     profiles: &BTreeMap<AtomId, AtomProfile>,
     options: RotatableBondOptions,
 ) -> bool {
@@ -213,7 +213,7 @@ fn endpoint_is_resonance_restricted(
 
 fn atom_profiles(
     molecule: &Molecule,
-    ring_membership: &crate::core::RingMembership,
+    ring_membership: &crate::molecule::RingMembership,
     options: RotatableBondOptions,
 ) -> BTreeMap<AtomId, AtomProfile> {
     let mut profiles = molecule
@@ -359,7 +359,7 @@ fn is_methyl_like(
 
 fn resonance_restricted_atoms(
     molecule: &Molecule,
-    ring_membership: &crate::core::RingMembership,
+    ring_membership: &crate::molecule::RingMembership,
     profiles: &BTreeMap<AtomId, AtomProfile>,
     include_ring_bonds: bool,
 ) -> BTreeSet<AtomId> {

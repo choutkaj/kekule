@@ -952,7 +952,7 @@ fn ligand_tree_compares_immediate_sibling_list_before_recursing() {
 
 #[test]
 fn duplicate_nodes_have_no_isotope_priority() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let mut isotope = Atom::new(Element::from_symbol("C").expect("carbon"));
     isotope.isotope = Some(13);
     let atom = mol.add_atom(isotope).expect("atom identifier capacity");
@@ -980,7 +980,7 @@ fn duplicate_nodes_have_no_isotope_priority() {
 
 #[test]
 fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let atoms = (0..6)
         .map(|index| {
             let symbol = if index == 3 { "N" } else { "C" };
@@ -1075,7 +1075,7 @@ fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
 
 #[test]
 fn higher_order_bond_expansion_creates_terminal_duplicate_nodes() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let root = mol
         .add_atom(Atom::new(Element::from_symbol("C").expect("carbon")))
         .expect("atom identifier capacity");
@@ -1225,7 +1225,7 @@ fn axial_auxiliary_labels_are_derived_from_the_local_digraph() {
 
 #[test]
 fn negative_fractional_atoms_create_duplicate_nodes() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let atoms = (0..5)
         .map(|index| {
             let mut atom = Atom::new(Element::from_symbol("C").expect("carbon"));

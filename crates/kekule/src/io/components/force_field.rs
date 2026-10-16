@@ -10,7 +10,7 @@
 //! libraries.
 
 use super::{Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentLibrary};
-use crate::core::Element;
+use crate::molecule::Element;
 
 /// Amino acids AMBER defines N- and C-terminal residues for, as `NALA` and
 /// `CALA`.

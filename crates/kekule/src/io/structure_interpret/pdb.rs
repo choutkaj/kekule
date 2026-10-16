@@ -9,8 +9,8 @@
 //! polymer adjacency.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::core::{BondOrder, Element};
 use crate::diagnostics::DiagnosticKind;
+use crate::molecule::{BondOrder, Element};
 
 use super::super::element_symbol::parse_structure_element_symbol;
 use super::super::mmcif_cell::stated_cell;

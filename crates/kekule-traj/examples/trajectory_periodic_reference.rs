@@ -6,7 +6,7 @@
 
 use kekule::structure::Trajectory;
 use kekule::{
-    core::{Atom, BondOrder, Element, MoleculeEditor},
+    molecule::{Atom, BondOrder, Element, MoleculeEditor},
     topology::{AtomSelection, Topology},
     units::NANOMETER,
 };

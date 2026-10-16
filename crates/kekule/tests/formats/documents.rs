@@ -1,6 +1,9 @@
-use kekule::core::{Element, Molecule, Perception};
 use kekule::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
 use kekule::geometry::Point3;
+use kekule::{
+    molecule::{Element, Molecule},
+    perception::Perception,
+};
 use kekule::{molfile, sdf, smiles};
 
 const DISCONNECTED_MOLFILE: &str = "salt-like\nkekule\n\n  2  0  0  0  0  0            999 V2000\n    1.2500    2.5000    3.7500 Na  0  3  0  0  0  0  0  0  0  0  0  0\n   -4.0000    5.5000   -6.2500 Cl  0  5  0  0  0  0  0  0  0  0  0  0\nM  END\n";
@@ -454,7 +457,7 @@ fn smiles_default_options_and_topology_projection_are_consistent() {
     assert_eq!(interpretation.molecules().count(), 2);
     assert!(interpretation
         .molecules()
-        .all(|molecule| molecule.perception() == &kekule::core::Perception::default()));
+        .all(|molecule| molecule.perception() == &kekule::perception::Perception::default()));
 
     let topology = interpretation.into_topology().expect("topology builds");
     assert_eq!(topology.instance_count(), 2);

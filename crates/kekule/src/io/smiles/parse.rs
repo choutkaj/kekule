@@ -129,7 +129,7 @@ impl SmilesDocument {
     /// general chemical perception runs implicitly.
     pub fn to_molecules(
         &self,
-    ) -> Result<Vec<crate::core::Molecule>, super::interpret::SmilesInterpretError> {
+    ) -> Result<Vec<crate::molecule::Molecule>, super::interpret::SmilesInterpretError> {
         Ok(self.interpret()?.into_molecules())
     }
 }

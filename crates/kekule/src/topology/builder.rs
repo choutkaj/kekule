@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::Molecule;
+use crate::molecule::Molecule;
 use crate::properties::{PropertyError, TopologyProperties, TopologyPropertiesMut};
 
 use super::dense_order::{DenseOrder, OrderError};
@@ -121,9 +121,9 @@ impl TopologyBuilder {
     /// let water = builder.add_molecule(smiles::to_molecules("O")?.remove(0))?;
     /// let methanol = builder.add_molecule(smiles::to_molecules("CO")?.remove(0))?;
     /// let [carbon, oxygen] = [0, 1].map(|raw| {
-    ///     InstanceAtomId::new(methanol, kekule::core::AtomId::new(raw))
+    ///     InstanceAtomId::new(methanol, kekule::molecule::AtomId::new(raw))
     /// });
-    /// let water = InstanceAtomId::new(water, kekule::core::AtomId::new(0));
+    /// let water = InstanceAtomId::new(water, kekule::molecule::AtomId::new(0));
     /// // Interleave the instances, as a source file's atom rows may.
     /// builder.set_atom_order([carbon, water, oxygen])?;
     /// let topology = builder.build()?;
@@ -677,7 +677,7 @@ pub(super) fn checked_id<T: FromRawId>(
     length: usize,
     kind: TopologyIdKind,
 ) -> Result<T, TopologyBuildError> {
-    let raw = crate::core::checked_raw_id(length)
+    let raw = crate::molecule::checked_raw_id(length)
         .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(kind))?;
     Ok(T::from_raw(raw))
 }
@@ -687,7 +687,7 @@ pub(super) fn checked_future_len(
     additional: usize,
     kind: TopologyIdKind,
 ) -> Result<(), TopologyBuildError> {
-    crate::core::checked_fixed_id_collection_len(current, additional)
+    crate::molecule::checked_fixed_id_collection_len(current, additional)
         .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(kind))
 }
 

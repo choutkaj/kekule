@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::core::{BondOrder, Molecule};
+use crate::molecule::{BondOrder, Molecule};
 
 use super::{
     Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinition, MoleculeDefinitionId,
@@ -142,7 +142,7 @@ fn topology_atom<'a>(
     atom: InstanceAtomId,
     definitions: &'a [MoleculeDefinition],
     instances: &[MoleculeInstance],
-) -> Option<&'a crate::core::Atom> {
+) -> Option<&'a crate::molecule::Atom> {
     let instance = instances.get(atom.molecule().index())?;
     definitions
         .get(instance.definition().index())?
@@ -261,7 +261,7 @@ fn is_explicit_water(molecule: &Molecule) -> bool {
     is_explicit_water_atoms(&atoms)
 }
 
-fn is_explicit_water_atoms(atoms: &[&crate::core::Atom]) -> bool {
+fn is_explicit_water_atoms(atoms: &[&crate::molecule::Atom]) -> bool {
     let oxygen_count = atoms
         .iter()
         .filter(|atom| atom.element.atomic_number() == 8)

@@ -1,5 +1,5 @@
-use kekule::core::{Atom, Element, ImplicitHydrogens, Molecule, MoleculeEditor};
 use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
+use kekule::molecule::{Atom, Element, ImplicitHydrogens, Molecule, MoleculeEditor};
 use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles;

@@ -9,9 +9,9 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::Molecule;
 use crate::diagnostics::{read_bounded, DiagnosticKind, SourceLocation};
 use crate::geometry::Point3;
+use crate::molecule::Molecule;
 use crate::structure::Model;
 use crate::topology::Topology;
 

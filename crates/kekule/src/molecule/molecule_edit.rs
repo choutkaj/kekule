@@ -275,14 +275,14 @@ impl Molecule {
 ///
 /// An unfinished editor cannot be passed to algorithms requiring a published molecule:
 /// ```compile_fail
-/// use kekule::core::{Molecule, MoleculeEditor};
+/// use kekule::molecule::{Molecule, MoleculeEditor};
 /// fn published(editor: &MoleculeEditor) -> &Molecule { editor }
 /// ```
 ///
 /// # Example
 ///
 /// ```
-/// use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
+/// use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 ///
 /// let mut editor = MoleculeEditor::new();
 /// let carbon = editor.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
@@ -448,7 +448,7 @@ impl MoleculeEditor {
     /// Change connectivity with [`Self::set_bond_endpoints`] or [`Self::replace_bond`].
     ///
     /// ```compile_fail
-    /// use kekule::core::{AtomId, Bond, BondId, BondOrder, MoleculeEditor};
+    /// use kekule::molecule::{AtomId, Bond, BondId, BondOrder, MoleculeEditor};
     /// fn bypass(editor: &mut MoleculeEditor, id: BondId) {
     ///     *editor.bond_mut(id).unwrap() = Bond::new(AtomId::new(0), AtomId::new(99), BondOrder::Single);
     /// }
@@ -543,7 +543,7 @@ impl MoleculeEditor {
     /// perception on the resulting [`Molecule::install_perception`].
     ///
     /// ```compile_fail
-    /// use kekule::core::{MoleculeEditor, Perception};
+    /// use kekule::{molecule::MoleculeEditor, perception::Perception};
     /// let mut editor = MoleculeEditor::new();
     /// editor.install_perception(Perception::default()).unwrap();
     /// ```
@@ -555,7 +555,7 @@ impl MoleculeEditor {
     /// published ID. Without deletions the correspondence is the identity.
     ///
     /// ```
-    /// use kekule::core::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
+    /// use kekule::molecule::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
     ///
     /// let carbon = || Atom::new(Element::from_symbol("C").unwrap());
     /// let mut editor = MoleculeEditor::new();
@@ -589,7 +589,7 @@ impl MoleculeEditor {
     /// rewriting them silently.
     ///
     /// ```
-    /// use kekule::core::{Atom, BondOrder, Element, MoleculeEditor, MoleculePublicationError};
+    /// use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor, MoleculePublicationError};
     /// let mut editor = MoleculeEditor::new();
     /// let chlorine = editor.add_atom(Atom::new(Element::from_symbol("Cl").unwrap()))?;
     /// for order in [BondOrder::Single, BondOrder::Double, BondOrder::Double, BondOrder::Double] {
@@ -872,9 +872,9 @@ fn oxo_bonds_to_oxygen(molecule: &Molecule, atom_id: AtomId) -> Vec<(AtomId, Bon
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{
-        DoubleBondOrientation, DoubleBondStereo, Element, StereoCarrier, StereoElement,
-        StereoElementKind,
+    use crate::molecule::Element;
+    use crate::stereo::{
+        DoubleBondOrientation, DoubleBondStereo, StereoCarrier, StereoElement, StereoElementKind,
     };
 
     fn carbon() -> Atom {
@@ -946,7 +946,7 @@ mod tests {
 
     #[test]
     fn builder_rejects_disconnected_final_graph() {
-        let mut builder = crate::core::MoleculeEditor::new();
+        let mut builder = crate::molecule::MoleculeEditor::new();
         builder.add_atom(carbon()).expect("first atom");
         builder.add_atom(carbon()).expect("second atom");
         assert_eq!(
@@ -959,7 +959,7 @@ mod tests {
 
     #[test]
     fn builder_accepts_connected_graph() {
-        let mut builder = crate::core::MoleculeEditor::new();
+        let mut builder = crate::molecule::MoleculeEditor::new();
         let a = builder.add_atom(carbon()).expect("first atom");
         let b = builder.add_atom(carbon()).expect("second atom");
         builder
@@ -1054,7 +1054,7 @@ mod tests {
 
     #[test]
     fn explicit_normalization_publishes_canonical_hypervalent_representation() {
-        let mut builder = crate::core::MoleculeEditor::new();
+        let mut builder = crate::molecule::MoleculeEditor::new();
         let chlorine = builder.add_atom(atom("Cl")).expect("chlorine");
         let oxo = builder.add_atom(atom("O")).expect("oxo oxygen");
         let hydroxyl = builder.add_atom(atom("O")).expect("hydroxyl oxygen");
@@ -1094,7 +1094,7 @@ mod tests {
 
     #[test]
     fn failed_editor_commit_leaves_original_unchanged() {
-        let mut builder = crate::core::MoleculeEditor::new();
+        let mut builder = crate::molecule::MoleculeEditor::new();
         let a = builder.add_atom(carbon()).expect("first atom");
         let b = builder.add_atom(carbon()).expect("second atom");
         let bond = builder
@@ -1116,7 +1116,7 @@ mod tests {
 
     #[test]
     fn editor_can_pass_through_temporarily_disconnected_state() {
-        let mut builder = crate::core::MoleculeEditor::new();
+        let mut builder = crate::molecule::MoleculeEditor::new();
         let a = builder.add_atom(carbon()).expect("first atom");
         let b = builder.add_atom(carbon()).expect("second atom");
         let c = builder.add_atom(carbon()).expect("third atom");
@@ -1139,7 +1139,7 @@ mod tests {
 
     #[test]
     fn editor_rejects_unnormalized_oxohalogen_edits_until_normalized() {
-        let mut builder = crate::core::MoleculeEditor::new();
+        let mut builder = crate::molecule::MoleculeEditor::new();
         let chlorine = builder.add_atom(atom("Cl")).expect("chlorine");
         let hydroxyl = builder.add_atom(atom("O")).expect("hydroxyl oxygen");
         builder
@@ -1167,7 +1167,7 @@ mod tests {
 
     #[test]
     fn explicit_normalization_covers_direct_bond_order_changes() {
-        let mut builder = crate::core::MoleculeEditor::new();
+        let mut builder = crate::molecule::MoleculeEditor::new();
         let chlorine = builder.add_atom(atom("Cl")).unwrap();
         let anchor = builder.add_atom(atom("O")).unwrap();
         let oxo = builder.add_atom(atom("O")).unwrap();
@@ -1192,7 +1192,7 @@ mod tests {
 
     #[test]
     fn editor_recanonicalizes_stereo_references_after_topology_changes() {
-        let mut builder = crate::core::MoleculeEditor::new();
+        let mut builder = crate::molecule::MoleculeEditor::new();
         let left = builder.add_atom(carbon()).unwrap();
         let right = builder.add_atom(carbon()).unwrap();
         let hydrogen = builder.add_atom(atom("H")).unwrap();
@@ -1236,7 +1236,7 @@ mod tests {
 
     #[test]
     fn editor_publication_leaves_out_of_model_oxohalogens_for_valence_validation() {
-        let mut builder = crate::core::MoleculeEditor::new();
+        let mut builder = crate::molecule::MoleculeEditor::new();
         let chlorine = builder.add_atom(atom("Cl")).unwrap();
         let anchor = builder.add_atom(atom("O")).unwrap();
         builder

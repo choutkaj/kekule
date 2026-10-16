@@ -29,17 +29,14 @@ fn compressed<T: Ord + Clone>(values: &[T]) -> Vec<usize> {
 }
 
 impl AnalysisGraph {
-    fn new(
-        mol: &Molecule,
-        options: StereoPerceptionOptions,
-    ) -> Result<Self, StereoPerceptionError> {
+    fn new(mol: &Molecule, options: StereoSearchOptions) -> Result<Self, StereoSearchError> {
         let size = mol.atom_count()
             + mol
                 .atom_ids()
                 .map(|id| usize::from(atom_hydrogen_count(mol, id)))
                 .sum::<usize>();
         if size > options.max_atoms {
-            return Err(StereoPerceptionError::ResourceLimit {
+            return Err(StereoSearchError::ResourceLimit {
                 resource: "analysis atoms",
                 observed: size,
                 limit: options.max_atoms,
@@ -303,8 +300,8 @@ impl Site {
 pub(super) fn filter(
     mol: &Molecule,
     candidates: Vec<StereoCandidate>,
-    options: StereoPerceptionOptions,
-) -> Result<Vec<StereoCandidate>, StereoPerceptionError> {
+    options: StereoSearchOptions,
+) -> Result<Vec<StereoCandidate>, StereoSearchError> {
     let graph = AnalysisGraph::new(mol, options)?;
     let mut sites: Vec<_> = candidates
         .iter()
@@ -549,7 +546,7 @@ impl<'a> Search<'a> {
         })
     }
 
-    fn reverses(mut self, work: &mut usize, limit: usize) -> Result<bool, StereoPerceptionError> {
+    fn reverses(mut self, work: &mut usize, limit: usize) -> Result<bool, StereoSearchError> {
         if !self.stereo_matches() {
             return Ok(false);
         }
@@ -572,7 +569,7 @@ impl<'a> Search<'a> {
                 }
                 *work += 1;
                 if *work > limit {
-                    return Err(StereoPerceptionError::ResourceLimit {
+                    return Err(StereoSearchError::ResourceLimit {
                         resource: "search states",
                         observed: *work,
                         limit,

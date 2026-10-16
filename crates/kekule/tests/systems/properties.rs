@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kekule::core::Molecule;
+use kekule::molecule::Molecule;
 use kekule::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
 use kekule::structure::{
     Ensemble, EnsembleMember, EnsembleMemberView, Model, Positions, StructureError, Trajectory,

@@ -1,5 +1,5 @@
 //! Public-API tests against independently generated OpenFF observations.
-use kekule::{core::Molecule, smiles};
+use kekule::{molecule::Molecule, smiles};
 use kekule_openff::{ChargeSource, ForceField, NaglModel, ParameterizedTopology};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

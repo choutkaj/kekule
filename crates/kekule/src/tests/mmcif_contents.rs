@@ -1,5 +1,4 @@
 use super::{deterministic_text_mutations, test_positions};
-use crate::core::{Atom, AtomId, BondOrder, Element};
 use crate::geometry::Point3;
 use crate::macromolecular::{
     self, AltLocPolicy, EntityKind, InstanceProvenance, ModelSelection, StructureInterpretOptions,
@@ -8,6 +7,7 @@ use crate::macromolecular::{
 use crate::mmcif::{
     self, MmcifEntityClassifications, MmcifParseOptions, MmcifWriteError, MmcifWriteOptions,
 };
+use crate::molecule::{Atom, AtomId, BondOrder, Element};
 use crate::properties::{PropertyColumn, PropertyKey};
 use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
 use crate::topology::AtomSiteMetadata;
@@ -2212,7 +2212,7 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hiera
         .molecule();
     assert_eq!(molecule.bonds().next().unwrap().1.order, BondOrder::Dative);
 
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let atom = graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .expect("atom identifier capacity");
@@ -2284,7 +2284,7 @@ fn mmcif_writer_preserves_supported_bond_orders() {
 #[test]
 fn mmcif_writer_rejects_ambiguous_atom_identity() {
     let carbon = Element::from_symbol("C").unwrap();
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let left = graph
         .add_atom(Atom::new(carbon))
         .expect("atom identifier capacity");
@@ -2619,7 +2619,7 @@ fn report_with_entity_kinds(model: &Model, kinds: &[EntityKind]) -> StructureInt
 }
 
 fn small_single_atom_model(element: &str) -> Model {
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     graph
         .add_atom(Atom::new(Element::from_symbol(element).unwrap()))
         .unwrap();
@@ -2631,7 +2631,7 @@ fn small_single_atom_model(element: &str) -> Model {
 }
 
 fn hierarchical_single_atom_model(component: &str, atom_name: &str, element: &str) -> Model {
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let atom = graph
         .add_atom(Atom::new(Element::from_symbol(element).unwrap()))
         .unwrap();
@@ -2665,7 +2665,7 @@ fn hierarchical_single_atom_model(component: &str, atom_name: &str, element: &st
 }
 
 fn carbohydrate_model(components: &[&str], bonds: &[(usize, usize)]) -> Model {
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let atoms = components
         .iter()
         .map(|_| {
@@ -2712,7 +2712,7 @@ fn carbohydrate_model(components: &[&str], bonds: &[(usize, usize)]) -> Model {
 }
 
 fn small_model_with_bond(order: BondOrder) -> Model {
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let left = graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .expect("atom identifier capacity");

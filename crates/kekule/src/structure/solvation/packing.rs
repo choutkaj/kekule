@@ -1,11 +1,11 @@
 use super::neighbors::Neighbors;
 use super::*;
 use crate::{
-    core::{
+    geometry::{PeriodicCell, PeriodicGeometry, Vector3},
+    molecule::{
         Atom, AtomId, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeEditor,
         VanDerWaalsRadiusSource,
     },
-    geometry::{PeriodicCell, PeriodicGeometry, Vector3},
     structure::{ModelBuilder, Positions},
     topology::{AtomSiteMetadata, ChainId, MoleculeClass, MoleculeDefinitionId, ResidueClass},
 };

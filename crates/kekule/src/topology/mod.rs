@@ -38,7 +38,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::core::{AtomId, BondId, Molecule};
+use crate::molecule::{AtomId, BondId, Molecule};
 use crate::properties::{
     PropertyKey, PropertyValue, PropertyValueRef, TopologyProperties, TopologyPropertiesMut,
 };
@@ -586,7 +586,7 @@ impl<'a> MoleculeInstanceView<'a> {
 /// Attach positions through [`crate::structure::Model`] or another structure
 /// type.
 ///
-/// Local [`crate::core::AtomId`] and [`crate::core::BondId`] values identify
+/// Local [`crate::molecule::AtomId`] and [`crate::molecule::BondId`] values identify
 /// entities inside one definition. At system scope they are qualified with a
 /// [`MoleculeInstanceId`] as [`InstanceAtomId`] and [`InstanceBondId`]. This
 /// distinction matters whenever a definition is reused.

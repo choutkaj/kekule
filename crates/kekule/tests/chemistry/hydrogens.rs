@@ -1,9 +1,10 @@
-use kekule::core::{
-    AtomId, BondOrder, ImplicitHydrogens, Molecule, Perception, PerceptionInstallError,
-};
 use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
 use kekule::hydrogens::HydrogenTransformError;
 use kekule::topology::{InstanceAtomId, TopologyBuilder};
+use kekule::{
+    molecule::{AtomId, BondOrder, ImplicitHydrogens, Molecule},
+    perception::{Perception, PerceptionInstallError},
+};
 use kekule::{smiles, stereo};
 
 fn parse(source: &str) -> Molecule {
@@ -43,7 +44,7 @@ fn counts_describe_representation_independently_of_how_implicit_h_were_specified
         assert_eq!(molecule.total_hydrogens(c).unwrap(), Some(4), "{source}");
         let formula = molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived).unwrap();
         assert_eq!(
-            formula.count(kekule::core::Element::from_symbol("H").unwrap()),
+            formula.count(kekule::molecule::Element::from_symbol("H").unwrap()),
             4
         );
     }
@@ -184,7 +185,7 @@ fn stereo_and_smiles_round_trips_use_complete_implicit_counts() {
         let mut molecule = parse(source);
         molecule.perceive().unwrap();
         let formula = molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived).unwrap();
-        let cip = stereo::assign_cip_descriptors(&mut molecule)
+        let cip = stereo::cip::assign_cip_descriptors(&mut molecule)
             .unwrap()
             .assigned;
         molecule.add_hydrogens().unwrap();
@@ -192,7 +193,7 @@ fn stereo_and_smiles_round_trips_use_complete_implicit_counts() {
         molecule.remove_hydrogens().unwrap();
         molecule.perceive().unwrap();
         assert_eq!(
-            stereo::assign_cip_descriptors(&mut molecule)
+            stereo::cip::assign_cip_descriptors(&mut molecule)
                 .unwrap()
                 .assigned,
             cip

@@ -1,14 +1,14 @@
 //! Model construction, identity, and position-update regressions.
 
-use crate::core::{Atom, AtomId, BondId, BondOrder, Element, Molecule};
 use crate::geometry::Point3;
+use crate::molecule::{Atom, AtomId, BondId, BondOrder, Element, Molecule};
 use crate::structure::{Model, ModelBuildError, PositionError, Positions, StructureError};
 use crate::topology::AtomSiteMetadata;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, TopologyBuildError};
 use crate::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT, NANOMETER};
 
 fn two_atom_small(distance: f64) -> (Molecule, Positions, AtomId, AtomId, BondId) {
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let carbon = Element::from_symbol("C").unwrap();
     let a = graph
         .add_atom(Atom::new(carbon))
@@ -41,7 +41,7 @@ fn two_atom_small(distance: f64) -> (Molecule, Positions, AtomId, AtomId, BondId
 }
 
 fn one_atom_macro() -> (Molecule, Positions, AtomId) {
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let atom = graph
         .add_atom(Atom::new(Element::from_symbol("N").unwrap()))
         .expect("atom identifier capacity");
@@ -77,7 +77,7 @@ fn model_uses_compact_local_ids_and_dense_round_trips() {
 
 #[test]
 fn positions_convert_source_units_before_model_construction() {
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let atom = graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .expect("atom identifier capacity");

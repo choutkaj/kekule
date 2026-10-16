@@ -1,7 +1,6 @@
 use std::error::Error;
 use std::sync::{Arc, Weak};
 
-use kekule::core::{Atom, BondOrder, Element, ImplicitHydrogens, MoleculeEditor, Perception};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Ensemble, EnsembleMember, Model, Positions};
@@ -10,6 +9,10 @@ use kekule::topology::{
     ResidueClass, SelectionError, Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuilder,
 };
 use kekule::units::{Quantity, NANOMETER};
+use kekule::{
+    molecule::{Atom, BondOrder, Element, ImplicitHydrogens, MoleculeEditor},
+    perception::Perception,
+};
 use kekule::{perception, smiles, stereo};
 
 fn key() -> PropertyKey {
@@ -37,7 +40,7 @@ fn failing_topology() -> Arc<Topology> {
         .unwrap()
         .remove(0);
     good.perceive().unwrap();
-    stereo::assign_cip_descriptors(&mut good).unwrap();
+    stereo::cip::assign_cip_descriptors(&mut good).unwrap();
     perception::resonance::perceive_resonance(&mut good).unwrap();
     assert!(good.perception().has_cip_descriptors());
     assert!(good.perception().has_resonance());
@@ -247,7 +250,7 @@ fn reperception_replaces_even_a_uniquely_owned_snapshot_and_clears_cip() {
         .unwrap()
         .remove(0);
     molecule.perceive().unwrap();
-    stereo::assign_cip_descriptors(&mut molecule).unwrap();
+    stereo::cip::assign_cip_descriptors(&mut molecule).unwrap();
     assert!(molecule.perception().has_stereo());
     let mut model =
         Model::from_molecule(molecule.clone(), &Positions::zeros(molecule.atom_count())).unwrap();

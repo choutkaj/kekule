@@ -1,7 +1,7 @@
 //! The supported NAGL configuration, shared by bundle validation and execution.
 use crate::{Error, ErrorKind, Result};
 
-use kekule::core::Element;
+use kekule::molecule::Element;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 

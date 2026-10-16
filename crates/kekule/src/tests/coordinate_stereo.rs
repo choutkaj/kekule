@@ -15,7 +15,7 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo(
     mark_all_fresh(mol.working_mut());
     let before = mol.clone();
 
-    let inferred = stereo_api::infer_coordinate_stereo(mol.working(), &positions)
+    let inferred = stereo_api::coordinates::infer_coordinate_stereo(mol.working(), &positions)
         .expect("3D tetrahedral stereo should be inferred");
     assert_eq!(mol, before);
     assert_eq!(inferred.elements.len(), 1);
@@ -36,7 +36,7 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo(
         other => panic!("expected tetrahedral stereo, found {other:?}"),
     }
 
-    let report = stereo_api::materialize_coordinate_stereo(&mut mol, &positions)
+    let report = stereo_api::coordinates::materialize_coordinate_stereo(&mut mol, &positions)
         .expect("3D tetrahedral stereo should materialize");
     assert_eq!(report.created_elements.len(), 1);
     let element = mol
@@ -47,7 +47,7 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo(
 
 #[test]
 fn coordinate_stereo_resolves_tombstoned_atom_ids_to_dense_positions() {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let tombstone = molecule
         .add_atom(carbon())
         .expect("atom identifier capacity");
@@ -76,7 +76,7 @@ fn coordinate_stereo_resolves_tombstoned_atom_ids_to_dense_positions() {
         Point3::new(0.0, 0.0, 1.0),
         Point3::new(0.0, 0.0, -1.0),
     ]);
-    let inferred = stereo_api::infer_coordinate_stereo(molecule.working(), &positions)
+    let inferred = stereo_api::coordinates::infer_coordinate_stereo(molecule.working(), &positions)
         .expect("dense positions should resolve through non-contiguous atom IDs");
 
     assert_eq!(inferred.elements.len(), 1);
@@ -95,7 +95,7 @@ fn coordinate_stereo_resolves_tombstoned_atom_ids_to_dense_positions() {
 
 #[test]
 fn coordinate_stereo_inference_is_read_only_and_materializes_double_bond_stereo() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let left_carrier = mol
@@ -117,7 +117,7 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_double_bond_stereo(
     ]);
     let before = mol.clone();
 
-    let inferred = stereo_api::infer_coordinate_stereo(mol.working(), &positions)
+    let inferred = stereo_api::coordinates::infer_coordinate_stereo(mol.working(), &positions)
         .expect("2D double-bond stereo should be inferred");
     assert_eq!(mol, before);
     assert_eq!(inferred.elements.len(), 1);
@@ -134,7 +134,7 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_double_bond_stereo(
         other => panic!("expected double-bond stereo, found {other:?}"),
     }
 
-    let report = stereo_api::materialize_coordinate_stereo(&mut mol, &positions)
+    let report = stereo_api::coordinates::materialize_coordinate_stereo(&mut mol, &positions)
         .expect("2D double-bond stereo should materialize");
     assert_eq!(report.created_elements.len(), 1);
     let element = mol
@@ -148,10 +148,10 @@ fn coordinate_stereo_inference_assigns_axis_only_when_requested() {
     let (mol, positions, axis) = coordinate_axis_graph(true);
     let before = mol.clone();
 
-    let default = stereo_api::infer_coordinate_stereo(&mol, &positions)
+    let default = stereo_api::coordinates::infer_coordinate_stereo(&mol, &positions)
         .expect("default coordinate-stereo inference should succeed");
     assert!(default.elements.is_empty());
-    let inferred = stereo_api::infer_coordinate_stereo_with_options(
+    let inferred = stereo_api::coordinates::infer_coordinate_stereo_with_options(
         &mol,
         &positions,
         CoordinateStereoOptions {
@@ -183,7 +183,7 @@ fn coordinate_stereo_inference_assigns_axis_only_when_requested() {
 fn coordinate_stereo_inference_skips_axis_without_3d_handedness() {
     let (mol, positions, _axis) = coordinate_axis_graph(false);
 
-    let result = stereo_api::infer_coordinate_stereo_with_options(
+    let result = stereo_api::coordinates::infer_coordinate_stereo_with_options(
         &mol,
         &positions,
         CoordinateStereoOptions {
@@ -215,10 +215,10 @@ fn coordinate_stereo_does_not_duplicate_existing_represented_stereo() {
     )))
     .expect("represented source stereo");
 
-    let inferred = stereo_api::infer_coordinate_stereo(mol.working(), &positions)
+    let inferred = stereo_api::coordinates::infer_coordinate_stereo(mol.working(), &positions)
         .expect("represented stereo should make coordinate inference a no-op");
     assert!(inferred.elements.is_empty());
-    let report = stereo_api::materialize_coordinate_stereo(&mut mol, &positions)
+    let report = stereo_api::coordinates::materialize_coordinate_stereo(&mut mol, &positions)
         .expect("represented stereo should make materialization a no-op");
     assert!(report.created_elements.is_empty());
     assert_eq!(mol.stereo_elements().count(), 1);
@@ -242,7 +242,7 @@ fn coordinate_stereo_materialization_is_transactional_on_invalid_representation(
     let before = mol.clone();
 
     let positions = crate::structure::Positions::zeros(mol.atom_count());
-    let error = stereo_api::materialize_coordinate_stereo(&mut mol, &positions)
+    let error = stereo_api::coordinates::materialize_coordinate_stereo(&mut mol, &positions)
         .expect_err("invalid represented stereo must reject materialization");
 
     assert!(matches!(error, CoordinateStereoError::InvalidStereo(_)));
@@ -263,9 +263,11 @@ fn coordinate_stereo_infers_three_explicit_ligands_and_preserves_handedness() {
                 Point3::new(0.0, scale, 0.0),
                 Point3::new(0.0, 0.0, sign * scale),
             ];
-            let inferred =
-                stereo_api::infer_coordinate_stereo(&implicit, &test_positions(points.clone()))
-                    .unwrap();
+            let inferred = stereo_api::coordinates::infer_coordinate_stereo(
+                &implicit,
+                &test_positions(points.clone()),
+            )
+            .unwrap();
             assert_eq!(inferred.elements.len(), 1);
             let StereoElementKind::Tetrahedral(stereo) = &inferred.elements[0].kind else {
                 unreachable!()
@@ -280,9 +282,11 @@ fn coordinate_stereo_infers_three_explicit_ligands_and_preserves_handedness() {
 
             let mut explicit_points = points;
             explicit_points.push(Point3::new(-scale, -scale, -sign * scale));
-            let expanded =
-                stereo_api::infer_coordinate_stereo(&explicit, &test_positions(explicit_points))
-                    .unwrap();
+            let expanded = stereo_api::coordinates::infer_coordinate_stereo(
+                &explicit,
+                &test_positions(explicit_points),
+            )
+            .unwrap();
             assert_eq!(expanded.elements.len(), 1);
             let StereoElementKind::Tetrahedral(stereo) = &expanded.elements[0].kind else {
                 unreachable!()
@@ -296,17 +300,19 @@ fn coordinate_stereo_infers_three_explicit_ligands_and_preserves_handedness() {
         Point3::new(0.0, 1.0, 0.0),
         Point3::new(-1.0, -1.0, 0.0),
     ]);
-    assert!(stereo_api::infer_coordinate_stereo(&implicit, &flat)
-        .unwrap()
-        .elements
-        .is_empty());
+    assert!(
+        stereo_api::coordinates::infer_coordinate_stereo(&implicit, &flat)
+            .unwrap()
+            .elements
+            .is_empty()
+    );
 }
 
 #[test]
 fn coordinate_stereo_skips_overcoordinated_double_bond_endpoints() {
     let mut molecule = read_smiles("CP(C)(C)=NC").unwrap();
     perceive(&mut molecule).unwrap();
-    assert!(stereo_api::detect_stereo_candidates(&molecule)
+    assert!(stereo_api::cleanup::detect_stereo_candidates(&molecule)
         .unwrap()
         .is_empty());
     let positions = test_positions(vec![
@@ -318,7 +324,7 @@ fn coordinate_stereo_skips_overcoordinated_double_bond_endpoints() {
         Point3::new(1.0, -1.0, 0.0),
     ]);
     let mut editor = molecule.edit();
-    stereo_api::materialize_coordinate_stereo(&mut editor, &positions).unwrap();
+    stereo_api::coordinates::materialize_coordinate_stereo(&mut editor, &positions).unwrap();
     assert_eq!(editor.finish().unwrap().stereo_elements().count(), 0);
 }
 
@@ -335,9 +341,11 @@ fn coordinate_stereo_infers_fully_substituted_alkene_at_any_coordinate_scale() {
             (1.0, 1.0),
         ]
         .map(|(x, y)| Point3::new(x * scale, y * scale, 0.0));
-        let result =
-            stereo_api::infer_coordinate_stereo(&molecule, &test_positions(points.to_vec()))
-                .unwrap();
+        let result = stereo_api::coordinates::infer_coordinate_stereo(
+            &molecule,
+            &test_positions(points.to_vec()),
+        )
+        .unwrap();
         assert_eq!(result.elements.len(), 1);
         let StereoElementKind::DoubleBond(stereo) = &result.elements[0].kind else {
             unreachable!()
@@ -362,7 +370,8 @@ fn coordinate_stereo_infers_a_tetrahedral_sulfoxide_lone_pair() {
             (3..molecule.atom_count()).map(|index| Point3::new(0.0, 0.0, (index - 2) as f64)),
         );
         let result =
-            stereo_api::infer_coordinate_stereo(&molecule, &test_positions(points)).unwrap();
+            stereo_api::coordinates::infer_coordinate_stereo(&molecule, &test_positions(points))
+                .unwrap();
         let stereo = result
             .elements
             .iter()
@@ -389,7 +398,7 @@ fn coordinate_axis_inference_respects_pyramidal_lone_pair_endpoints() {
                 Point3::new(t, (t * 1.7).sin(), (t * 2.3).cos())
             })
             .collect();
-        let result = stereo_api::infer_coordinate_stereo_with_options(
+        let result = stereo_api::coordinates::infer_coordinate_stereo_with_options(
             &molecule,
             &test_positions(points),
             CoordinateStereoOptions {
@@ -422,7 +431,7 @@ fn coordinate_axis_inference_does_not_treat_saturated_rings_as_sp2() {
             Point3::new(t, (t * 1.7).sin(), (t * 2.3).cos())
         })
         .collect();
-    let result = stereo_api::infer_coordinate_stereo_with_options(
+    let result = stereo_api::coordinates::infer_coordinate_stereo_with_options(
         &molecule,
         &test_positions(points),
         CoordinateStereoOptions {
@@ -448,7 +457,7 @@ fn coordinate_axis_handedness_is_scale_and_rotation_invariant() {
                 Point3::new(point.y * scale, point.z * scale, point.x * scale)
             })
             .collect();
-        let result = stereo_api::infer_coordinate_stereo_with_options(
+        let result = stereo_api::coordinates::infer_coordinate_stereo_with_options(
             &molecule,
             &test_positions(points),
             CoordinateStereoOptions {
@@ -508,7 +517,7 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
         Point3::new(0.0, 0.0, 1.0),
         Point3::new(0.0, 0.0, -1.0),
     ]);
-    let mut double_bond = crate::core::MoleculeEditor::new();
+    let mut double_bond = crate::molecule::MoleculeEditor::new();
     let left = double_bond.add_atom(carbon()).unwrap();
     let right = double_bond.add_atom(carbon()).unwrap();
     let fluorine = double_bond.add_atom(element_atom("F")).unwrap();
@@ -529,9 +538,9 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
         Point3::new(1.0, -1.0, 0.0),
     ]);
     let (axis, axis_positions, _) = coordinate_axis_graph(true);
-    let axis_options = stereo_api::CoordinateStereoOptions {
+    let axis_options = stereo_api::coordinates::CoordinateStereoOptions {
         infer_axes: true,
-        ..stereo_api::CoordinateStereoOptions::default()
+        ..stereo_api::coordinates::CoordinateStereoOptions::default()
     };
 
     for (label, mut molecule, positions, options) in [
@@ -539,17 +548,17 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
             "tetrahedral",
             tetrahedral,
             tetrahedral_positions,
-            stereo_api::CoordinateStereoOptions::default(),
+            stereo_api::coordinates::CoordinateStereoOptions::default(),
         ),
         (
             "double bond",
             double_bond,
             double_bond_positions,
-            stereo_api::CoordinateStereoOptions::default(),
+            stereo_api::coordinates::CoordinateStereoOptions::default(),
         ),
         ("axis", axis.into_editor(), axis_positions, axis_options),
     ] {
-        let report = stereo_api::materialize_coordinate_stereo_with_options(
+        let report = stereo_api::coordinates::materialize_coordinate_stereo_with_options(
             &mut molecule,
             &positions,
             options,
@@ -560,8 +569,8 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
             panic!("{label}: expected one materialized element, got {report:?}");
         };
         let asserted = molecule.stereo_element(id).unwrap().kind.clone();
-        let infer = |molecule: &crate::core::MoleculeEditor| {
-            stereo_api::infer_coordinate_stereo_with_options(
+        let infer = |molecule: &crate::molecule::MoleculeEditor| {
+            stereo_api::coordinates::infer_coordinate_stereo_with_options(
                 molecule.working(),
                 &positions,
                 options,
@@ -570,7 +579,7 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
         };
         assert_eq!(
             infer(&molecule),
-            stereo_api::CoordinateStereoResult::default(),
+            stereo_api::coordinates::CoordinateStereoResult::default(),
             "{label}: an asserted focus is not re-inferred"
         );
 
@@ -579,7 +588,7 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
             .unwrap();
         assert_eq!(
             infer(&molecule),
-            stereo_api::CoordinateStereoResult {
+            stereo_api::coordinates::CoordinateStereoResult {
                 elements: Vec::new(),
                 disagreements: vec![id],
             },
@@ -591,7 +600,7 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
             .unwrap();
         assert_eq!(
             infer(&molecule),
-            stereo_api::CoordinateStereoResult::default(),
+            stereo_api::coordinates::CoordinateStereoResult::default(),
             "{label}: an unknown configuration never contradicts"
         );
     }
@@ -600,7 +609,7 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
 #[test]
 fn coordinate_stereo_compares_implicit_hydrogen_carriers_and_ignores_flat_centers() {
     // F/C=C/Cl drawn trans: relative to the left implicit hydrogen, Cl is cis.
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let mut hydrogen_bearing = carbon();
     hydrogen_bearing.hydrogens = ImplicitHydrogens::Fixed(1);
     let left = molecule.add_atom(hydrogen_bearing.clone()).unwrap();
@@ -632,8 +641,8 @@ fn coordinate_stereo_compares_implicit_hydrogen_carriers_and_ignores_flat_center
             },
         )))
         .unwrap();
-    let disagreements = |molecule: &crate::core::MoleculeEditor| {
-        stereo_api::infer_coordinate_stereo(molecule.working(), &trans)
+    let disagreements = |molecule: &crate::molecule::MoleculeEditor| {
+        stereo_api::coordinates::infer_coordinate_stereo(molecule.working(), &trans)
             .unwrap()
             .disagreements
     };
@@ -673,7 +682,7 @@ fn coordinate_stereo_compares_implicit_hydrogen_carriers_and_ignores_flat_center
         flat.replace_stereo_element(id, StereoElement::new(kind))
             .unwrap();
         assert_eq!(
-            stereo_api::infer_coordinate_stereo(flat.working(), &drawing)
+            stereo_api::coordinates::infer_coordinate_stereo(flat.working(), &drawing)
                 .unwrap()
                 .disagreements,
             []

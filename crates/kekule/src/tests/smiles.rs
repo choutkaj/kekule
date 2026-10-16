@@ -1,7 +1,7 @@
 use super::*;
 
 fn assigned_descriptors(molecule: &mut Molecule) -> Vec<StereoDescriptor> {
-    stereo_api::assign_cip_descriptors(molecule)
+    stereo_api::cip::assign_cip_descriptors(molecule)
         .unwrap()
         .assigned
         .into_iter()
@@ -143,14 +143,14 @@ fn phosphine_smiles_preserve_bracket_hydrogen_and_lone_pair() {
         assert!(stereo.carriers.contains(&StereoCarrier::ImplicitHydrogen));
         assert!(stereo.carriers.contains(&StereoCarrier::ImplicitLonePair));
         perceive(&mut molecule).unwrap();
-        let assigned = stereo_api::assign_cip_descriptors(&mut molecule).unwrap();
+        let assigned = stereo_api::cip::assign_cip_descriptors(&mut molecule).unwrap();
         assert_eq!(assigned.assigned[0].descriptor, expected, "{source}");
 
         let written = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::isomeric())
             .expect("phosphine writes");
         let mut reparsed = read_smiles(&written).expect("phosphine output interprets");
         perceive(&mut reparsed).unwrap();
-        let assigned = stereo_api::assign_cip_descriptors(&mut reparsed).unwrap();
+        let assigned = stereo_api::cip::assign_cip_descriptors(&mut reparsed).unwrap();
         assert_eq!(assigned.assigned[0].descriptor, expected, "{written}");
     }
 }
@@ -1344,7 +1344,7 @@ fn canonical_smiles_brackets_atoms_whose_hydrogens_are_not_inferred() {
 
 #[test]
 fn smiles_writer_rejects_lossy_bonds_and_stereo() {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let a = molecule
         .add_atom(carbon())
         .expect("atom identifier capacity");
@@ -1472,7 +1472,7 @@ fn all_smiles_writers_require_perception_for_bracketed_inferred_hydrogens() {
     // The isotope forces a bracket, which must spell out the inferred count.
     let mut atom = carbon();
     atom.isotope = Some(13);
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     graph.add_atom(atom).expect("carbon");
     let molecule = graph.finish().expect("single atom molecule");
 
@@ -1879,16 +1879,16 @@ fn isomeric_smiles_preserves_pubchem_fused_quaternary_center() {
     let mut molecule = read_smiles("C[C@]12CCCC(C1CCC3=CC(=C(C=C23)C(=O)OC)C(=O)OC)(C)C")
         .expect("fused quaternary center should parse");
     perceive(&mut molecule).expect("fused quaternary center should perceive");
-    let report =
-        stereo_api::assign_cip_descriptors(&mut molecule).expect("CIP assignment should succeed");
+    let report = stereo_api::cip::assign_cip_descriptors(&mut molecule)
+        .expect("CIP assignment should succeed");
     assert_eq!(report.assigned[0].descriptor, StereoDescriptor::S);
 
     let written = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::isomeric())
         .expect("fused quaternary center should write");
     let mut reparsed = read_smiles(&written).expect("isomeric fused center output should parse");
     perceive(&mut reparsed).expect("isomeric fused center output should perceive");
-    let report =
-        stereo_api::assign_cip_descriptors(&mut reparsed).expect("CIP reassignment should succeed");
+    let report = stereo_api::cip::assign_cip_descriptors(&mut reparsed)
+        .expect("CIP reassignment should succeed");
 
     assert_eq!(report.assigned[0].descriptor, StereoDescriptor::S);
 }
@@ -1909,7 +1909,7 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
             DoubleBondOrientation::Opposite,
         ),
     ] {
-        let mut molecule = crate::core::MoleculeEditor::new();
+        let mut molecule = crate::molecule::MoleculeEditor::new();
         let left = molecule
             .add_atom(carbon())
             .expect("atom identifier capacity");
@@ -1972,7 +1972,7 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
 
 #[test]
 fn smiles_writer_reuses_ring_labels_after_closure() {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let atoms = (0..16)
         .map(|_| {
             molecule

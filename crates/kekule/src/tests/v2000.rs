@@ -777,7 +777,7 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
         assert!(read_molfile(&input).is_err());
     }
 
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let a = molecule
         .add_atom(carbon())
         .expect("atom identifier capacity");
@@ -920,7 +920,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         );
     }
 
-    let mut graph_builder = crate::core::MoleculeEditor::new();
+    let mut graph_builder = crate::molecule::MoleculeEditor::new();
     let mut atom_ids = Vec::new();
     for index in 0..9u32 {
         let mut atom = carbon();

@@ -1,5 +1,6 @@
-use crate::core::{AtomId, Molecule, StereoCarrier, StereoElementKind};
+use crate::molecule::{AtomId, Molecule};
 use crate::query::{QueryGraph, QueryStereoConstraint};
+use crate::stereo::{StereoCarrier, StereoElementKind};
 
 /// Test inclusion of the query's correlated configuration choices in the target's.
 /// Each target group supplies one shared inversion variable. Distinct query
@@ -7,7 +8,7 @@ use crate::query::{QueryGraph, QueryStereoConstraint};
 #[derive(Default)]
 pub(super) struct GroupMatches {
     target_variables:
-        std::collections::BTreeMap<(usize, crate::core::StereoGroupId), (Option<usize>, bool)>,
+        std::collections::BTreeMap<(usize, crate::stereo::StereoGroupId), (Option<usize>, bool)>,
 }
 
 impl GroupMatches {
@@ -20,7 +21,7 @@ impl GroupMatches {
         query_center: crate::query::QueryAtomId,
         inverted: Option<bool>,
     ) -> bool {
-        use crate::core::StereoGroupKind as K;
+        use crate::stereo::StereoGroupKind as K;
         let Some(element) = target.stereo_elements().find_map(|(_, e)| match &e.kind {
             StereoElementKind::Tetrahedral(s) if s.center == center && s.orientation.is_some() => {
                 Some(e)

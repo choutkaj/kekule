@@ -3,7 +3,7 @@ use super::config::Feature;
 use crate::{Error, ErrorKind, Result};
 
 use kekule::{
-    core::{AtomId, BondOrder, Molecule},
+    molecule::{AtomId, BondOrder, Molecule},
     perception::rings::RingBasisModel,
     query::{parse_smarts, QueryGraph},
     substructure::{PreparedTarget, TaggedQuery},
@@ -430,7 +430,9 @@ pub(super) fn features(
                 Feature::Element { categories } => {
                     let column = categories
                         .iter()
-                        .position(|s| kekule::core::Element::from_symbol(s) == Some(atom.element))
+                        .position(|s| {
+                            kekule::molecule::Element::from_symbol(s) == Some(atom.element)
+                        })
                         .ok_or_else(|| {
                             Error::new(
                                 ErrorKind::UnsupportedMolecule,
@@ -491,7 +493,7 @@ pub(crate) fn adjacency(molecule: &Molecule) -> Result<Vec<Vec<usize>>> {
 
 #[cfg(test)]
 mod tests {
-    fn explicit_hydrogens(smiles: &str) -> kekule::core::Molecule {
+    fn explicit_hydrogens(smiles: &str) -> kekule::molecule::Molecule {
         let mut molecule = kekule::smiles::to_molecules(smiles).unwrap().remove(0);
         molecule.perceive().unwrap();
         molecule.add_hydrogens().unwrap();

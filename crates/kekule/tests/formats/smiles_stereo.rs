@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 
-use kekule::core::{
-    DoubleBondOrientation, Molecule, MoleculeEditor, MoleculeError, StereoCarrier,
-    StereoDescriptor, StereoElement, StereoElementKind,
+use kekule::{
+    molecule::{Molecule, MoleculeEditor, MoleculeError},
+    stereo::{
+        DoubleBondOrientation, StereoCarrier, StereoDescriptor, StereoElement, StereoElementKind,
+    },
 };
 use kekule::{smiles, stereo};
 
@@ -110,7 +112,7 @@ fn mapped_polyene(source: &Molecule, reverse: bool) -> Molecule {
 
 fn mapped_cip(molecule: &mut Molecule) -> BTreeMap<(u32, u32), StereoDescriptor> {
     molecule.perceive().unwrap();
-    stereo::assign_cip_descriptors(molecule).unwrap();
+    stereo::cip::assign_cip_descriptors(molecule).unwrap();
     molecule
         .stereo_elements()
         .map(|(id, element)| {
@@ -183,7 +185,7 @@ fn conjugated_stereo_round_trips_with_implicit_hydrogen_carriers() {
 fn contradictory_double_bond_assertions_are_rejected_before_export() {
     let mut original = molecule("F/C=C/F");
     original.perceive().unwrap();
-    stereo::assign_cip_descriptors(&mut original).unwrap();
+    stereo::cip::assign_cip_descriptors(&mut original).unwrap();
     let (id, element) = original.stereo_elements().next().unwrap();
     let expected = original.cip_descriptor(id).unwrap();
     let expected_export = smiles::write(&original, smiles::SmilesWriteOptions::isomeric()).unwrap();
@@ -210,7 +212,7 @@ fn contradictory_double_bond_assertions_are_rejected_before_export() {
     assert_eq!(written, expected_export);
     let mut restored = molecule(&written);
     restored.perceive().unwrap();
-    stereo::assign_cip_descriptors(&mut restored).unwrap();
+    stereo::cip::assign_cip_descriptors(&mut restored).unwrap();
     let restored_id = restored.stereo_element_ids().next().unwrap();
     assert_eq!(restored.cip_descriptor(restored_id).unwrap(), expected);
 }

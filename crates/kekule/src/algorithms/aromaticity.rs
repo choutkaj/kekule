@@ -3,7 +3,7 @@ use std::fmt;
 use std::ops::ControlFlow;
 
 use super::*;
-use crate::core::*;
+use crate::molecule::*;
 
 // RDKit's default model searches combinations of up to six candidate rings.
 // Rings larger than 24 are evaluated individually, and components above 300

@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use kekule::core::{Atom, BondOrder, Element};
+use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::structure::TrajectoryFrame;
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule_traj::{
@@ -32,7 +32,7 @@ pub(crate) fn assert_rejects_unrelated_buffer(reader: &mut impl TrajectoryReader
 }
 
 pub(crate) fn topology(symbols: &[&str], bonds: &[(usize, usize)]) -> Arc<Topology> {
-    let mut graph = kekule::core::MoleculeEditor::new();
+    let mut graph = kekule::molecule::MoleculeEditor::new();
     let atoms = symbols
         .iter()
         .map(|symbol| {

@@ -12,7 +12,7 @@ use super::{
     MoleculeClass, MoleculeDefinitionId, MoleculeInstanceId, ResidueClass, ResidueId, Topology,
     TopologyBuildError, TopologyBuilder,
 };
-use crate::core::{
+use crate::molecule::{
     Atom, AtomId, BondId, BondOrder, Molecule, MoleculeEditor, MoleculeError,
     MoleculePublicationError,
 };
@@ -724,7 +724,7 @@ impl TopologyEditor {
     pub fn replace_source_instance_stereo(
         &mut self,
         instance: MoleculeInstanceId,
-        elements: &[crate::core::StereoElement],
+        elements: &[crate::stereo::StereoElement],
     ) -> Result<(), TopologyEditError> {
         let source = self
             .source
@@ -919,7 +919,7 @@ impl TopologyEditor {
         target: usize,
         other: usize,
         draft: MoleculeEditor,
-        map: &crate::core::MoleculeCorrespondence,
+        map: &crate::molecule::MoleculeCorrespondence,
     ) {
         let removed = self.groups[other].take().unwrap();
         let group = self.groups[target].as_mut().unwrap();

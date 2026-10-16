@@ -300,7 +300,7 @@ fn connectivity_checks_reject_invalid_ids_before_missing_bonds() {
     let model = model(right_angle(), NANOMETER);
     let [a, b, c, _] = <[InstanceAtomId; 4]>::try_from(model.topology().atom_ids()).unwrap();
     for invalid in [
-        InstanceAtomId::new(a.molecule(), kekule::core::AtomId::new(99)),
+        InstanceAtomId::new(a.molecule(), kekule::molecule::AtomId::new(99)),
         InstanceAtomId::new(kekule::topology::MoleculeInstanceId::new(99), a.atom()),
     ] {
         let error = Err(MeasurementError::InvalidAtomId(invalid));
@@ -473,7 +473,7 @@ fn undefined_geometry_and_numerical_overflow_reject_without_nan_results() {
         measure::dihedral(line.as_model_view(), a[0], a[1], a[2], a[3]),
         Err(MeasurementError::DegenerateGeometry)
     );
-    let invalid = InstanceAtomId::new(a[0].molecule(), kekule::core::AtomId::new(99));
+    let invalid = InstanceAtomId::new(a[0].molecule(), kekule::molecule::AtomId::new(99));
     assert!(matches!(
         measure::distance(line.as_model_view(), invalid, a[0]),
         Err(MeasurementError::InvalidAtomId(_))

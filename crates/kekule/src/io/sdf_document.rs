@@ -2,8 +2,8 @@ use std::fmt;
 use std::io::{BufReader, Read};
 use std::sync::Arc;
 
-use crate::core::Molecule;
 use crate::diagnostics::{read_bounded, DiagnosticKind, SourceLocation};
+use crate::molecule::Molecule;
 use crate::structure::Model;
 use crate::topology::Topology;
 

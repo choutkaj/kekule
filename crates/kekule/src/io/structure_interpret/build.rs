@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::chemistry::canonicalize_molecule_for_publication;
-use crate::core::{Atom, AtomId, Element, Molecule, MoleculeEditor};
 use crate::geometry::Point3;
+use crate::molecule::{Atom, AtomId, Element, Molecule, MoleculeEditor};
 use crate::structure::Positions;
 use crate::topology::{AtomSiteMetadata, Hierarchy};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
@@ -266,7 +266,7 @@ impl BuiltMolecule {
         let mut published = Vec::with_capacity(components.len());
         for component in components {
             let selected = component.iter().copied().collect::<BTreeSet<_>>();
-            let mut editor = crate::core::MoleculeEditor::new();
+            let mut editor = crate::molecule::MoleculeEditor::new();
             let mut atom_map = BTreeMap::new();
             for source_atom in component.iter().copied() {
                 let atom = self
@@ -356,7 +356,7 @@ pub(super) fn build_molecule(
     group: MoleculeGroup,
     connections: &[&DeclaredConnection],
 ) -> Result<BuiltMolecule, StructureInterpretError> {
-    let mut editor = crate::core::MoleculeEditor::new();
+    let mut editor = crate::molecule::MoleculeEditor::new();
     let mut atoms = BTreeMap::new();
     let mut representative = Vec::<(String, AtomRow)>::new();
     let mut seen_atoms = BTreeMap::<String, usize>::new();

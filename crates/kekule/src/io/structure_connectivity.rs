@@ -11,8 +11,8 @@ use crate::components::{
     Component, ComponentBond as TemplateBond, ComponentBondOrder as TemplateOrder,
     ComponentLibrary, ComponentLinking,
 };
-use crate::core::{AtomId, BondOrder, Element, Molecule, MoleculeEditor};
 use crate::geometry::Point3;
+use crate::molecule::{AtomId, BondOrder, Element, Molecule, MoleculeEditor};
 
 use super::mmcif_category::MmcifCategory;
 use super::structure_interpret as raw;
@@ -407,7 +407,7 @@ fn is_carbon(element: Element) -> bool {
 struct Resolver<'r, 'g> {
     catalog: &'r ConnectivityCatalog,
     graph: &'g mut Molecule,
-    source_aromatic_bonds: &'g mut BTreeSet<crate::core::BondId>,
+    source_aromatic_bonds: &'g mut BTreeSet<crate::molecule::BondId>,
     evidence: &'g mut BondEvidenceMap,
     issues: &'g mut Vec<raw::StructureInterpretIssue>,
     model_id: &'r str,
@@ -1244,7 +1244,7 @@ fn add_bond_if_missing(
     left: AtomId,
     right: AtomId,
     source_order: SourceBondOrder,
-    source_aromatic_bonds: &mut BTreeSet<crate::core::BondId>,
+    source_aromatic_bonds: &mut BTreeSet<crate::molecule::BondId>,
 ) -> Result<(), raw::StructureInterpretError> {
     let existing = graph.bond_between(left, right).map_err(interpret_error)?;
     let Some(existing) = existing else {

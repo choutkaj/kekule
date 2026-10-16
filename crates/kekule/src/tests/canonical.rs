@@ -24,7 +24,7 @@ fn canonical_ranking_groups_symmetric_atoms() {
 
 #[test]
 fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
-    let mut first = crate::core::MoleculeEditor::new();
+    let mut first = crate::molecule::MoleculeEditor::new();
     let first_terminal_a = first.add_atom(carbon()).expect("atom identifier capacity");
     let first_center = first.add_atom(carbon()).expect("atom identifier capacity");
     let first_terminal_b = first.add_atom(carbon()).expect("atom identifier capacity");
@@ -36,7 +36,7 @@ fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
         .expect("bond should be valid");
     perceive(first.working_mut()).expect("propane perceives");
 
-    let mut second = crate::core::MoleculeEditor::new();
+    let mut second = crate::molecule::MoleculeEditor::new();
     let second_center = second.add_atom(carbon()).expect("atom identifier capacity");
     let second_terminal_a = second.add_atom(carbon()).expect("atom identifier capacity");
     let second_terminal_b = second.add_atom(carbon()).expect("atom identifier capacity");
@@ -80,7 +80,7 @@ fn canonical_ranking_uses_isotope_hydrogens_and_atom_maps() {
 
 #[test]
 fn canonical_ranking_uses_current_hydrogen_counts_without_changing_declarations() {
-    let mut builder = crate::core::MoleculeEditor::new();
+    let mut builder = crate::molecule::MoleculeEditor::new();
     let mut fixed = carbon();
     fixed.hydrogens = ImplicitHydrogens::Fixed(3);
     let fixed = builder.add_atom(fixed).expect("fixed carbon");

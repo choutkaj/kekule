@@ -3,7 +3,7 @@
 use std::io::{BufReader, Cursor};
 use std::sync::{Arc, OnceLock};
 
-use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
+use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule_traj::io::xyz::{XyzReadOptions, XyzReader};
 use kekule_traj::io::TrajectoryIoLimits;

@@ -1,4 +1,9 @@
-use kekule::{core::*, smiles, topology::Topology};
+use kekule::{
+    molecule::*,
+    smiles,
+    stereo::{StereoCarrier, StereoElement, StereoElementKind, StereoGroup, StereoGroupKind},
+    topology::Topology,
+};
 
 fn molecule(text: &str) -> Molecule {
     let mut mol = smiles::parse_str(text)
@@ -225,7 +230,8 @@ fn group_aware_symmetry_cleanup_compares_whole_relationships() {
     ] {
         let source = molecule(&format!("[C@]([C@H](F)Cl)([C@@H](F)Cl)(Br)I |{fields}|"));
         let mut edit = source.edit();
-        let report = kekule::stereo::cleanup_stereo(&mut edit, Default::default()).unwrap();
+        let report =
+            kekule::stereo::cleanup::cleanup_stereo(&mut edit, Default::default()).unwrap();
         assert_eq!(report.removed_elements.len(), 3 - count, "{fields}");
         let cleaned = edit.finish().unwrap();
         assert_eq!(cleaned.stereo_elements().count(), count);

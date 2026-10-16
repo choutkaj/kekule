@@ -1,8 +1,9 @@
 use kekule::{
-    core::*,
+    molecule::*,
     perception::{
         aromaticity::{self, AromaticityModel},
         rings::{RingBasisModel, RingBasisState},
+        Perception,
     },
     query::*,
     smiles,

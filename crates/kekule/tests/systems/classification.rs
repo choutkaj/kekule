@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kekule::core::{Atom, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeEditor};
+use kekule::molecule::{Atom, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeEditor};
 use kekule::structure::{Model, Positions};
 use kekule::topology::{
     AtomSelection, AtomSiteMetadata, InstanceAtomId, MoleculeClass, ResidueClass, Topology,
@@ -14,9 +14,9 @@ fn atom(symbol: &str) -> Atom {
 fn linear_residue_topology(
     residue_names: &[&str],
     atom_names: (&str, &str),
-) -> (Topology, Vec<[kekule::core::AtomId; 2]>) {
+) -> (Topology, Vec<[kekule::molecule::AtomId; 2]>) {
     let mut editor = MoleculeEditor::new();
-    let mut residue_atoms: Vec<[kekule::core::AtomId; 2]> = Vec::new();
+    let mut residue_atoms: Vec<[kekule::molecule::AtomId; 2]> = Vec::new();
     for _ in residue_names {
         let first = editor.add_atom(atom("C")).unwrap();
         let second = editor.add_atom(atom("N")).unwrap();

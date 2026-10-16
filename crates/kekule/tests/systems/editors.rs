@@ -1,5 +1,5 @@
-use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::geometry::Point3;
+use kekule::molecule::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Model, ModelEditor, Positions};
 use kekule::topology::{
@@ -18,7 +18,7 @@ fn atom(symbol: &str) -> Atom {
 /// perception.
 fn bare_atom(atomic_number: u8) -> Atom {
     let mut atom = Atom::new(Element::from_atomic_number(atomic_number).unwrap());
-    atom.hydrogens = kekule::core::ImplicitHydrogens::Fixed(0);
+    atom.hydrogens = kekule::molecule::ImplicitHydrogens::Fixed(0);
     atom
 }
 fn key(name: &str) -> PropertyKey {

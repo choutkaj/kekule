@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::chemistry::AtomPositionSource;
-use crate::core::{AtomId, Molecule};
 use crate::geometry::Point3;
+use crate::molecule::{AtomId, Molecule};
 use crate::structure::{PositionError, Positions};
 use crate::units::{Quantity, Unit, UnitError, ANGSTROM};
 

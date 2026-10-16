@@ -5,7 +5,7 @@
 //! deuterium and tritium `D` and `T`. One reader and one writer keep the three
 //! formats in agreement.
 
-use crate::core::Element;
+use crate::molecule::Element;
 
 const HYDROGEN: u8 = 1;
 

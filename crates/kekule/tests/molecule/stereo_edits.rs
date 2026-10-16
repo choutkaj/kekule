@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
-use kekule::core::{
-    Atom, AtomId, AxisStereo, Bond, BondId, BondOrder, Element, Molecule, MoleculeError,
-    StereoCarrier, StereoElement, StereoElementId, StereoElementKind, StereoGroup, StereoGroupKind,
-};
 use kekule::topology::{InstanceBondId, Topology};
+use kekule::{
+    molecule::{Atom, AtomId, Bond, BondId, BondOrder, Element, Molecule, MoleculeError},
+    stereo::{
+        AxisStereo, StereoCarrier, StereoElement, StereoElementId, StereoElementKind, StereoGroup,
+        StereoGroupKind,
+    },
+};
 
 fn molecule(text: &str) -> Molecule {
     kekule::smiles::to_molecules(text).unwrap().pop().unwrap()
@@ -232,7 +235,7 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
         // Deleting the bond leaves the fixed-H carbon under-coordinated without
         // asserting a radical. Explicitly cap that site for the export check.
         ungrouped.atom_mut(stereo.center).unwrap().hydrogens =
-            kekule::core::ImplicitHydrogens::Fixed(1);
+            kekule::molecule::ImplicitHydrogens::Fixed(1);
         let text = kekule::smiles::write(
             &ungrouped.finish().unwrap(),
             kekule::smiles::SmilesWriteOptions::isomeric(),
@@ -255,7 +258,7 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
         ungrouped.remove_stereo_group(group).unwrap();
     }
     ungrouped.atom_mut(stereo.center).unwrap().hydrogens =
-        kekule::core::ImplicitHydrogens::Fixed(1);
+        kekule::molecule::ImplicitHydrogens::Fixed(1);
     kekule::smiles::write(
         &ungrouped.finish().unwrap(),
         kekule::smiles::SmilesWriteOptions::isomeric(),

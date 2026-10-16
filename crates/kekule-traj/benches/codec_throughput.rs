@@ -6,8 +6,8 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use kekule::core::{Atom, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::molecule::{Atom, Element};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use kekule_traj::io::dcd::{
@@ -294,13 +294,13 @@ where
 }
 
 fn topology(atom_count: usize) -> Result<Arc<Topology>, Box<dyn Error>> {
-    let mut molecule = kekule::core::MoleculeEditor::new();
+    let mut molecule = kekule::molecule::MoleculeEditor::new();
     let carbon = Element::from_symbol("C").expect("carbon is a built-in element");
     let mut previous = None;
     for _ in 0..atom_count {
         let atom = molecule.add_atom(Atom::new(carbon))?;
         if let Some(parent) = previous {
-            molecule.add_bond(parent, atom, kekule::core::BondOrder::Single)?;
+            molecule.add_bond(parent, atom, kekule::molecule::BondOrder::Single)?;
         }
         previous = Some(atom);
     }

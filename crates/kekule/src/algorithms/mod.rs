@@ -10,7 +10,7 @@ mod stereo;
 mod substructure;
 mod valence;
 
-pub(crate) use crate::core::RingMembership;
+pub(crate) use crate::molecule::RingMembership;
 pub(crate) use aromaticity::perceive_aromaticity_in_place;
 pub use aromaticity::{
     perceive_aromaticity, perceive_aromaticity_with_options,
@@ -56,7 +56,7 @@ pub use stereo::{
     infer_coordinate_stereo, infer_coordinate_stereo_with_options, materialize_coordinate_stereo,
     materialize_coordinate_stereo_with_options, validate_stereo, CoordinateStereoError,
     CoordinateStereoMaterializationReport, CoordinateStereoOptions, CoordinateStereoResult,
-    StereoCandidate, StereoCleanupReport, StereoPerceptionError, StereoPerceptionOptions,
+    StereoCandidate, StereoCleanupReport, StereoSearchError, StereoSearchOptions,
     StereoValidationError, StereoValidationIssue,
 };
 pub use substructure::{

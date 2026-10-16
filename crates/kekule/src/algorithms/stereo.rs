@@ -1,6 +1,6 @@
 use crate::chemistry::AtomPositionSource;
-use crate::core::*;
 use crate::geometry::{Point3, Vector3};
+use crate::molecule::*;
 use crate::structure::Positions;
 use std::fmt;
 
@@ -15,8 +15,8 @@ use eligibility::{
 };
 use perception::prepared;
 pub use perception::{
-    cleanup_stereo, detect_stereo_candidates_with_options, StereoCleanupReport,
-    StereoPerceptionError, StereoPerceptionOptions,
+    cleanup_stereo, detect_stereo_candidates_with_options, StereoCleanupReport, StereoSearchError,
+    StereoSearchOptions,
 };
 
 struct MoleculePositions<'a> {
@@ -60,7 +60,7 @@ pub struct CoordinateStereoOptions {
     /// tetrahedral and double-bond stereo.
     pub infer_axes: bool,
     /// Bounds for chemical candidate perception before coordinate inference.
-    pub perception: StereoPerceptionOptions,
+    pub perception: StereoSearchOptions,
 }
 
 /// Coordinate-derived stereo for the foci the molecule leaves unasserted, and
@@ -217,7 +217,7 @@ impl std::error::Error for StereoValidationError {}
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoordinateStereoError {
-    Perception(StereoPerceptionError),
+    Perception(StereoSearchError),
     PositionCountMismatch { expected: usize, actual: usize },
     InvalidStereo(StereoValidationError),
     CouldNotCreateElement(MoleculeError),
@@ -275,8 +275,8 @@ pub fn validate_stereo(mol: &Molecule) -> std::result::Result<(), StereoValidati
 /// installs perception on the source molecule.
 pub fn detect_stereo_candidates(
     mol: &Molecule,
-) -> std::result::Result<Vec<StereoCandidate>, StereoPerceptionError> {
-    detect_stereo_candidates_with_options(mol, StereoPerceptionOptions::default())
+) -> std::result::Result<Vec<StereoCandidate>, StereoSearchError> {
+    detect_stereo_candidates_with_options(mol, StereoSearchOptions::default())
 }
 
 /// Infers coordinate-derived stereo without changing the molecule.
@@ -710,7 +710,7 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
 /// candidate set, this does not depend on the molecule's stereo elements.
 pub(crate) fn locally_eligible_double_bonds(
     mol: &Molecule,
-) -> std::result::Result<std::collections::BTreeSet<BondId>, StereoPerceptionError> {
+) -> std::result::Result<std::collections::BTreeSet<BondId>, StereoSearchError> {
     let perceived = prepared(mol)?;
     Ok(double_bond_candidates(&perceived)
         .into_iter()

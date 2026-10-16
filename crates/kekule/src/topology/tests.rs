@@ -2,7 +2,7 @@ use super::builder::{checked_future_len, checked_id};
 use super::*;
 use std::sync::Arc;
 
-use crate::core::{Atom, BondOrder, Element};
+use crate::molecule::{Atom, BondOrder, Element};
 use crate::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use crate::query;
 use crate::substructure;
@@ -29,7 +29,7 @@ fn hierarchy_errors_have_diagnostic_display_messages() {
 /// Publishes a draft whose deleted atom and bond slots precede live entities,
 /// returning the published (dense) IDs of the surviving atoms and bond.
 fn edited_molecule() -> (Molecule, AtomId, AtomId, BondId) {
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let carbon = graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .expect("atom identifier capacity");
@@ -190,7 +190,7 @@ fn canonical_molecule_constructors_preserve_order_without_interning_or_perceptio
     assert!(single.hierarchy().is_empty());
     assert_eq!(
         single.molecules().next().unwrap().molecule().perception(),
-        &crate::core::Perception::default()
+        &crate::perception::Perception::default()
     );
 
     let molecules = vec![carbon.clone(), carbon_oxygen.clone(), carbon];
@@ -207,9 +207,10 @@ fn canonical_molecule_constructors_preserve_order_without_interning_or_perceptio
         vec![1, 2, 1]
     );
     assert!(several.hierarchy().is_empty());
-    assert!(several.molecules().all(
-        |occurrence| occurrence.molecule().perception() == &crate::core::Perception::default()
-    ));
+    assert!(several
+        .molecules()
+        .all(|occurrence| occurrence.molecule().perception()
+            == &crate::perception::Perception::default()));
 
     assert!(matches!(
         Topology::from_molecules([] as [_; 0]),
@@ -876,7 +877,7 @@ fn selections_distinguish_instances_elements_and_queries() {
 
 #[test]
 fn topology_global_hierarchy_crosses_molecule_boundaries() {
-    let mut macro_builder = crate::core::MoleculeEditor::new();
+    let mut macro_builder = crate::molecule::MoleculeEditor::new();
     let atom = macro_builder
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .expect("atom identifier capacity");
@@ -1018,7 +1019,7 @@ fn topology_global_hierarchy_crosses_molecule_boundaries() {
 
 #[test]
 fn sparse_subset_retains_only_selected_component_storage() {
-    let mut editor = crate::core::MoleculeEditor::new();
+    let mut editor = crate::molecule::MoleculeEditor::new();
     let atoms = (0..256)
         .map(|_| {
             editor
@@ -1196,10 +1197,11 @@ fn compact_subset_projects_properties_bonds_and_model_positions() {
 
 #[test]
 fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_carriers() {
-    use crate::core::{
-        AxisOrientation, AxisStereo, DoubleBondOrientation, DoubleBondStereo, MoleculeEditor,
-        StereoCarrier, StereoElement, StereoElementId, StereoElementKind, StereoGroup,
-        StereoGroupId, StereoGroupKind, TetrahedralOrientation, TetrahedralStereo,
+    use crate::molecule::MoleculeEditor;
+    use crate::stereo::{
+        AxisOrientation, AxisStereo, DoubleBondOrientation, DoubleBondStereo, StereoCarrier,
+        StereoElement, StereoElementId, StereoElementKind, StereoGroup, StereoGroupId,
+        StereoGroupKind, TetrahedralOrientation, TetrahedralStereo,
     };
 
     let mut editor = MoleculeEditor::new();
@@ -1350,7 +1352,7 @@ fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_ca
 
 #[test]
 fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
-    let mut editor = crate::core::MoleculeEditor::new();
+    let mut editor = crate::molecule::MoleculeEditor::new();
     let first = editor
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .unwrap();
@@ -1527,7 +1529,7 @@ fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
 
 #[test]
 fn retaining_one_whole_instance_projects_exactly_one_instance_property_row() {
-    let mut editor = crate::core::MoleculeEditor::new();
+    let mut editor = crate::molecule::MoleculeEditor::new();
     editor
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .unwrap();

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use kekule::{
-    core::BondOrder,
+    molecule::BondOrder,
     query::parse_smarts,
     smiles,
     substructure::{find_topology_matches_with_options, SubstructureMatchOptions},

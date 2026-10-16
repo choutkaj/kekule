@@ -8,8 +8,8 @@ use kekule::alignment::{
     AtomCorrespondence, AtomCorrespondenceError, CorrespondenceSide, PeriodicPolicy, Reference,
     SymmetricSelection, Weighting,
 };
-use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::geometry::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
+use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
     Ensemble, EnsembleMember, Forces, Model, Positions, Trajectory, TrajectoryFrame, Velocities,

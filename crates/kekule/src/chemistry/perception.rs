@@ -5,8 +5,8 @@ use crate::algorithms::{
     RingPerceptionError, ValenceError,
 };
 use crate::algorithms::{perceive_conjugation, ConjugationError};
-use crate::core::ConjugationModel;
-use crate::core::{AromaticityModel, Molecule, ValenceModel};
+use crate::molecule::ConjugationModel;
+use crate::molecule::{AromaticityModel, Molecule, ValenceModel};
 
 /// Failure from the default discrete chemical perception profile.
 #[non_exhaustive]

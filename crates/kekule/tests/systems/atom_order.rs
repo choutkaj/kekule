@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use kekule::core::{Atom, AtomId, BondOrder, Element};
 use kekule::geometry::Point3;
+use kekule::molecule::{Atom, AtomId, BondOrder, Element};
 use kekule::properties::{PropertyColumn, PropertyKey};
 use kekule::smiles;
 use kekule::structure::{Model, ModelBuilder, Positions};
@@ -13,7 +13,7 @@ use kekule::topology::{
 };
 use kekule::units::{Quantity, ANGSTROM};
 
-fn molecule(source: &str) -> kekule::core::Molecule {
+fn molecule(source: &str) -> kekule::molecule::Molecule {
     smiles::to_molecules(source).unwrap().remove(0)
 }
 

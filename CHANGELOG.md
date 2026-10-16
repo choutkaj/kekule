@@ -105,6 +105,35 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** Public items live in the module of the domain that owns them,
+  and every operation has one home. Behaviour is unchanged; callers update
+  paths, names, and signatures as listed.
+  - `kekule::core` is renamed `kekule::molecule`.
+  - Represented stereo moves from `kekule::core` to `kekule::stereo`:
+    `StereoElement`, `StereoElementId`, `StereoElementKind`,
+    `TetrahedralStereo`, `DoubleBondStereo`, `AxisStereo`, `StereoCarrier`,
+    `StereoGroup`, `StereoGroupId`, `StereoGroupKind`, `StereoDescriptor`,
+    `TetrahedralOrientation`, `DoubleBondOrientation`, and
+    `AxisOrientation`. `validate_stereo`, `StereoValidationError`, and
+    `StereoValidationIssue` stay in `kekule::stereo`.
+  - `kekule::stereo` splits its algorithms into submodules.
+    `stereo::cip` holds `assign_cip_descriptors`, `CipAssignment`,
+    `CipAssignmentError`, `CipAssignmentIssue`, `CipAssignmentOptions`,
+    `CipAssignmentReport`, `CipRankingError`, `CipSkipped`, and
+    `CipSkippedReason`. `stereo::coordinates` holds
+    `infer_coordinate_stereo`, `materialize_coordinate_stereo`,
+    `CoordinateStereoError`, `CoordinateStereoMaterializationReport`,
+    `CoordinateStereoOptions`, and `CoordinateStereoResult`.
+    `stereo::cleanup` holds `detect_stereo_candidates`, `cleanup_stereo`,
+    `StereoCandidate`, and `StereoCleanupReport`.
+  - `kekule::core::StereoPerception`, the installed CIP state, is
+    `kekule::stereo::cip::CipPerception`. `stereo::StereoPerceptionOptions`
+    and `stereo::StereoPerceptionError` are `stereo::StereoSearchOptions` and
+    `stereo::StereoSearchError`.
+  - `Perception`, `PerceptionBuilder`, `PerceptionBuildError`,
+    `PerceptionComponent`, and `PerceptionInstallError` move from
+    `kekule::core` to `kekule::perception`, and `MalformedRingReason` to
+    `kekule::perception::rings`.
 - **Breaking:** Every public module is an explicit list of re-exports, and
   every public item has exactly one public path; only `prelude` repeats items.
   No item is renamed and no behaviour changes, so callers only update imports.

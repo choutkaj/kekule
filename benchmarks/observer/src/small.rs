@@ -7,18 +7,21 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use kekule::core::{
-    AxisOrientation, BondOrder, DoubleBondOrientation, StereoCarrier, StereoDescriptor,
-    StereoElementId, StereoElementKind, StereoGroupKind, TetrahedralOrientation,
-};
 use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
 use kekule::perception::aromaticity::{self, AromaticityModel};
 use kekule::perception::{resonance, rings};
 use kekule::rotatable_bonds::{self, RotatableBondOptions};
-use kekule::stereo::{self, StereoCandidate};
+use kekule::stereo::{self, cleanup::StereoCandidate};
 use kekule::substructure::{PreparedTopologyTarget, SubstructureMatchOptions};
 use kekule::topology::Topology;
 use kekule::{canon, molfile, query, sdf, smiles};
+use kekule::{
+    molecule::BondOrder,
+    stereo::{
+        AxisOrientation, DoubleBondOrientation, StereoCarrier, StereoDescriptor, StereoElementId,
+        StereoElementKind, StereoGroupKind, TetrahedralOrientation,
+    },
+};
 use serde_json::{json, Value};
 
 use crate::input::{self, Component};
@@ -74,12 +77,12 @@ fn prepare(component: &mut Component) -> Result<(), Failure> {
         .perceive()
         .map_err(|e| Failure::new("perception", e))?;
     let mut editor = molecule.edit();
-    stereo::cleanup_stereo(&mut editor, Default::default())
+    stereo::cleanup::cleanup_stereo(&mut editor, Default::default())
         .map_err(|e| Failure::new("stereo", e))?;
     if let Some(positions) = &component.positions {
-        stereo::materialize_coordinate_stereo(&mut editor, positions)
+        stereo::coordinates::materialize_coordinate_stereo(&mut editor, positions)
             .map_err(|e| Failure::new("stereo", e))?;
-        stereo::cleanup_stereo(&mut editor, Default::default())
+        stereo::cleanup::cleanup_stereo(&mut editor, Default::default())
             .map_err(|e| Failure::new("stereo", e))?;
     }
     *molecule = editor.finish().map_err(|e| Failure::new("stereo", e))?;
@@ -89,7 +92,7 @@ fn prepare(component: &mut Component) -> Result<(), Failure> {
 }
 
 /// Bond endpoints as source indices; dative bonds keep their direction.
-fn ends(component: &Component, bond: &kekule::core::Bond) -> [usize; 2] {
+fn ends(component: &Component, bond: &kekule::molecule::Bond) -> [usize; 2] {
     let mut ends = [component.atom(bond.a()), component.atom(bond.b())];
     if bond.order != BondOrder::Dative {
         ends.sort_unstable();
@@ -177,8 +180,8 @@ fn permutation_parity(values: &[i64]) -> u8 {
 /// double-bond and atropisomer reference carriers.
 fn reference_carrier(
     component: &Component,
-    center: kekule::core::AtomId,
-    other: kekule::core::AtomId,
+    center: kekule::molecule::AtomId,
+    other: kekule::molecule::AtomId,
 ) -> Result<i64, Failure> {
     Ok(component
         .molecule
@@ -447,8 +450,8 @@ fn resonance_facts(components: &mut [Component], facts: &mut Facts) -> Result<()
 fn candidates(components: &[Component], facts: &mut Facts) -> Result<(), Failure> {
     for component in components {
         let molecule = &component.molecule;
-        for candidate in
-            stereo::detect_stereo_candidates(molecule).map_err(|e| Failure::new("stereo", e))?
+        for candidate in stereo::cleanup::detect_stereo_candidates(molecule)
+            .map_err(|e| Failure::new("stereo", e))?
         {
             match candidate {
                 StereoCandidate::Tetrahedral { center, .. } => {
@@ -499,7 +502,7 @@ fn descriptor(descriptor: StereoDescriptor) -> &'static str {
 /// and atropisomeric axes alike, as RDKit labels both on the bond.
 fn cip(components: &mut [Component], facts: &mut Facts) -> Result<(), Failure> {
     for component in components.iter_mut() {
-        stereo::assign_cip_descriptors(&mut component.molecule)
+        stereo::cip::assign_cip_descriptors(&mut component.molecule)
             .map_err(|e| Failure::new("cip", e))?;
         let component = &*component;
         let molecule = &component.molecule;

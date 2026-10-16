@@ -56,7 +56,7 @@ fn hydrogen_collapse_preserves_a_double_bond_with_only_hydrogen_references() {
 #[test]
 fn hydrogen_collapse_keeps_all_tetrahedral_centers_complete_during_remapping() {
     let mut molecule = perceived_smiles("F[C@H](Cl)[C@H](F)Cl");
-    let expected = stereo_api::assign_cip_descriptors(&mut molecule)
+    let expected = stereo_api::cip::assign_cip_descriptors(&mut molecule)
         .unwrap()
         .assigned;
     molecule.add_hydrogens().unwrap();
@@ -82,7 +82,7 @@ fn hydrogen_collapse_keeps_all_tetrahedral_centers_complete_during_remapping() {
     }
     perceive(&mut molecule).unwrap();
     assert_eq!(
-        stereo_api::assign_cip_descriptors(&mut molecule)
+        stereo_api::cip::assign_cip_descriptors(&mut molecule)
             .unwrap()
             .assigned,
         expected
@@ -445,7 +445,7 @@ fn hydrogen_materialization_and_collapse_preserve_tetrahedral_stereo_carriers() 
 
 #[test]
 fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let first_carbon = graph.add_atom(carbon()).expect("atom identifier capacity");
 
     let mut isotope = element_atom("H");
@@ -510,7 +510,7 @@ fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
 
 #[test]
 fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let mut parent = carbon();
     parent.hydrogens = ImplicitHydrogens::Fixed(u8::MAX);
     let parent = graph.add_atom(parent).expect("atom identifier capacity");
@@ -541,7 +541,7 @@ fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
 
 #[test]
 fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let left = graph.add_atom(carbon()).expect("atom identifier capacity");
     let right = graph.add_atom(carbon()).expect("atom identifier capacity");
     let double_bond = graph
@@ -670,7 +670,7 @@ fn hydrogen_collapse_retains_a_double_bond_reference_beside_another_hydrogen() {
             }],
         });
         assert_eq!(
-            stereo_api::assign_cip_descriptors(&mut molecule),
+            stereo_api::cip::assign_cip_descriptors(&mut molecule),
             nonstereogenic
         );
 
@@ -704,7 +704,7 @@ fn hydrogen_collapse_retains_a_double_bond_reference_beside_another_hydrogen() {
             Ok(Some(1))
         );
         assert_eq!(
-            stereo_api::assign_cip_descriptors(&mut molecule),
+            stereo_api::cip::assign_cip_descriptors(&mut molecule),
             nonstereogenic
         );
         assert_eq!(molecule.add_hydrogens().unwrap().added.len(), 2);

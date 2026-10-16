@@ -15,8 +15,8 @@ fn fully_perceived_aromatic_stereo_fixture() -> Molecule {
     let mut molecule =
         read_smiles("c1ccccc1[C@H](F)Cl").expect("aromatic stereo fixture should parse");
     perceive(&mut molecule).expect("default perception should succeed");
-    let report =
-        stereo_api::assign_cip_descriptors(&mut molecule).expect("CIP assignment should succeed");
+    let report = stereo_api::cip::assign_cip_descriptors(&mut molecule)
+        .expect("CIP assignment should succeed");
     assert!(!report.assigned.is_empty());
     assert!(molecule.perception().has_valence());
     assert!(molecule.perception().has_rings());
@@ -27,12 +27,12 @@ fn fully_perceived_aromatic_stereo_fixture() -> Molecule {
 
 #[test]
 fn ring_membership_empty_and_linear_molecules_have_no_rings() {
-    let mut empty = crate::core::MoleculeEditor::new();
+    let mut empty = crate::molecule::MoleculeEditor::new();
     let empty_membership = rings_api::perceive_ring_membership(empty.working_mut());
     assert!(empty_membership.ring_atom_ids().next().is_none());
     assert!(empty_membership.ring_bond_ids().next().is_none());
 
-    let mut chain = crate::core::MoleculeEditor::new();
+    let mut chain = crate::molecule::MoleculeEditor::new();
     let a = chain.add_atom(carbon()).expect("atom identifier capacity");
     let b = chain.add_atom(carbon()).expect("atom identifier capacity");
     let c = chain.add_atom(carbon()).expect("atom identifier capacity");
@@ -117,7 +117,7 @@ fn implicit_hydrogen_update_preserves_rings_and_rebuilds_downstream_sections() {
         .expect("aromaticity should rebuild from retained valence and rings");
     assert!(molecule.perception().has_aromaticity());
     assert!(!molecule.perception().has_stereo());
-    stereo_api::assign_cip_descriptors(&mut molecule)
+    stereo_api::cip::assign_cip_descriptors(&mut molecule)
         .expect("CIP should rebuild after aromaticity");
     assert!(molecule.perception().has_stereo());
     assert!(molecule.perception().has_cip_descriptors());
@@ -126,7 +126,7 @@ fn implicit_hydrogen_update_preserves_rings_and_rebuilds_downstream_sections() {
 
 #[test]
 fn ring_membership_marks_triangle_atoms_and_bonds() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -145,7 +145,7 @@ fn ring_membership_marks_triangle_atoms_and_bonds() {
 
 #[test]
 fn ring_membership_excludes_tail_from_ring() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -168,7 +168,7 @@ fn ring_membership_excludes_tail_from_ring() {
 
 #[test]
 fn ring_membership_handles_fused_rings_with_an_acyclic_tail() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -203,7 +203,7 @@ fn ring_membership_handles_fused_rings_with_an_acyclic_tail() {
 
 #[test]
 fn ring_membership_ignores_deleted_bonds_and_becomes_stale_after_mutation() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -309,7 +309,7 @@ fn molecule_perception_queries_read_the_installed_state_directly() {
     let mut molecule =
         read_smiles("F[C@](Cl)(Br)c1cc[nH]c1").expect("stereo aromatic fixture should parse");
     perceive(&mut molecule).expect("fixture should perceive");
-    stereo_api::assign_cip_descriptors(&mut molecule).expect("CIP assignment");
+    stereo_api::cip::assign_cip_descriptors(&mut molecule).expect("CIP assignment");
 
     let graph = molecule;
     for atom in graph.atom_ids() {
@@ -353,7 +353,7 @@ fn default_perception_accepts_aromatic_source_localized_by_interpretation() {
 fn default_perception_rolls_back_when_ring_perception_fails_after_valence() {
     const ATOM_COUNT: usize = 4_097;
 
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let atoms = (0..ATOM_COUNT)
         .map(|_| {
             molecule
@@ -455,7 +455,7 @@ fn perceive_does_not_infer_or_materialize_coordinate_stereo() {
 
     assert!(molecule.stereo_elements().next().is_none());
     assert_eq!(
-        stereo_api::infer_coordinate_stereo(&molecule, &positions)
+        stereo_api::coordinates::infer_coordinate_stereo(&molecule, &positions)
             .expect("separate coordinate inference")
             .elements
             .len(),
@@ -465,7 +465,7 @@ fn perceive_does_not_infer_or_materialize_coordinate_stereo() {
 
 #[test]
 fn perceive_rolls_back_failure_without_rewriting_canonical_representation() {
-    let mut graph = crate::core::MoleculeEditor::new();
+    let mut graph = crate::molecule::MoleculeEditor::new();
     let chlorine = graph
         .add_atom(element_atom("Cl"))
         .expect("atom identifier capacity");
@@ -860,7 +860,7 @@ fn aromaticity_requires_every_atom_to_be_candidate_before_huckel_count() {
 
 #[test]
 fn aromaticity_marks_azulene_fused_perimeter_but_not_shared_bond() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let atoms = (0..10)
         .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
         .collect::<Vec<_>>();
@@ -908,7 +908,7 @@ fn aromaticity_marks_azulene_fused_perimeter_but_not_shared_bond() {
 
 #[test]
 fn aromaticity_keeps_aromatic_heteroring_bond_shared_with_saturated_ring() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let c0 = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c1 = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c2 = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -1020,7 +1020,7 @@ fn aromaticity_rejects_neutral_saturated_carbon_in_conjugated_ring() {
 
 #[test]
 fn aromaticity_uses_ring_membership_not_acyclic_double_bonds() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(carbon()).expect("atom identifier capacity");

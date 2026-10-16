@@ -1072,15 +1072,15 @@ fn matrix_is_finite(matrix: Matrix) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Atom, BondOrder, Element};
     use crate::geometry::PeriodicCell;
+    use crate::molecule::{Atom, BondOrder, Element};
     use crate::structure::{Model, Positions};
     use crate::topology::{AtomSelection, Topology, TopologyBuilder};
     use crate::units::{Quantity, NANOMETER};
     use std::sync::Arc;
 
     fn topology(atom_count: usize) -> Arc<Topology> {
-        let mut graph = crate::core::MoleculeEditor::new();
+        let mut graph = crate::molecule::MoleculeEditor::new();
         let mut previous = None;
         for _ in 0..atom_count {
             let atom = graph

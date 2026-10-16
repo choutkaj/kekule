@@ -83,7 +83,7 @@ fn normalization_preserves_unknown_double_bond_stereo() {
 
 #[test]
 fn default_perception_does_not_assign_coordinate_only_stereo() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let left_carrier = mol
@@ -115,14 +115,15 @@ fn default_perception_does_not_assign_coordinate_only_stereo() {
 
     assert_eq!(molecule.stereo_elements().count(), 0);
 
-    let inferred = stereo_api::infer_coordinate_stereo(&molecule, &positions)
+    let inferred = stereo_api::coordinates::infer_coordinate_stereo(&molecule, &positions)
         .expect("direct coordinate inference should succeed");
     assert_eq!(inferred.elements.len(), 1);
     assert_eq!(molecule.stereo_elements().count(), 0);
 
     let mut editor = molecule.edit();
-    let materialized = stereo_api::materialize_coordinate_stereo(&mut editor, &positions)
-        .expect("explicit coordinate materialization should succeed");
+    let materialized =
+        stereo_api::coordinates::materialize_coordinate_stereo(&mut editor, &positions)
+            .expect("explicit coordinate materialization should succeed");
     assert_eq!(materialized.created_elements.len(), 1);
     let molecule = editor.finish().expect("materialized molecule publishes");
     assert_eq!(molecule.stereo_elements().count(), 1);
@@ -130,7 +131,7 @@ fn default_perception_does_not_assign_coordinate_only_stereo() {
 
 #[test]
 fn failed_source_stereo_normalization_is_transactional() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let bond = mol.add_bond(a, b, BondOrder::Single).expect("bond");
@@ -160,7 +161,7 @@ fn failed_source_stereo_normalization_is_transactional() {
 
 #[test]
 fn normalization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let mut marked_bonds = Vec::new();
     for symbol in ["F", "Cl", "Br", "I"] {
@@ -203,7 +204,7 @@ fn normalization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
 
 #[test]
 fn failed_default_valence_perception_is_transactional() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let carbon = mol.add_atom(carbon()).expect("atom identifier capacity");
     for _ in 0..5 {
         let hydrogen = mol
@@ -271,7 +272,7 @@ fn successful_default_perception_is_idempotent() {
 
 #[test]
 fn normalization_cleanup_invalidates_preexisting_perception() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let chlorine = mol
         .add_atom(Atom::new(Element::from_symbol("Cl").expect("chlorine")))
         .expect("atom identifier capacity");
@@ -307,7 +308,7 @@ fn normalization_cleanup_invalidates_preexisting_perception() {
 
 #[test]
 fn valence_reports_excess_common_valence() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let c = mol
         .add_atom(Atom::new(Element::from_symbol("C").expect("C")))
         .expect("atom identifier capacity");
@@ -334,7 +335,7 @@ fn valence_reports_excess_common_valence() {
 
 #[test]
 fn failed_strict_valence_perception_preserves_complete_previous_perception_state() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let carbon = mol
         .add_atom(element_atom("C"))
         .expect("atom identifier capacity");
@@ -380,7 +381,7 @@ fn failed_strict_valence_perception_preserves_complete_previous_perception_state
 
 #[test]
 fn valence_charge_adjustment_clamps_to_the_rdkit_periodic_table() {
-    let mut molecule = crate::core::MoleculeEditor::new();
+    let mut molecule = crate::molecule::MoleculeEditor::new();
     let carbon = molecule
         .add_atom(charged_atom("C", 7))
         .expect("atom identifier capacity");
@@ -401,7 +402,7 @@ fn valence_charge_adjustment_clamps_to_the_rdkit_periodic_table() {
 
 #[test]
 fn valence_counts_high_degree_atoms_without_narrowing_or_panicking() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let carbon = mol
         .add_atom(element_atom("C"))
         .expect("atom identifier capacity");
@@ -443,7 +444,7 @@ fn valence_uses_rdkit_periodic_table_rules_for_electropositive_atoms() {
         ("Fr", 1),
         ("Ra", 2),
     ] {
-        let mut mol = crate::core::MoleculeEditor::new();
+        let mut mol = crate::molecule::MoleculeEditor::new();
         let atom_id = mol
             .add_atom(element_atom(symbol))
             .expect("atom identifier capacity");
@@ -467,7 +468,7 @@ fn valence_keeps_rdkit_hypervalent_anion_limits() {
         ("As", -2, 3, 4),
         ("Se", -1, 5, 6),
     ] {
-        let mut accepted_mol = crate::core::MoleculeEditor::new();
+        let mut accepted_mol = crate::molecule::MoleculeEditor::new();
         let accepted_center = accepted_mol
             .add_atom(charged_atom(symbol, charge))
             .expect("atom identifier capacity");
@@ -486,7 +487,7 @@ fn valence_keeps_rdkit_hypervalent_anion_limits() {
             "{symbol}{charge:+} valence {accepted}"
         );
 
-        let mut rejected_mol = crate::core::MoleculeEditor::new();
+        let mut rejected_mol = crate::molecule::MoleculeEditor::new();
         let rejected_center = rejected_mol
             .add_atom(charged_atom(symbol, charge))
             .expect("atom identifier capacity");
@@ -513,7 +514,7 @@ fn valence_keeps_rdkit_hypervalent_anion_limits() {
 
 #[test]
 fn valence_accepts_rdkit_phosphorus_minus_one_and_hydride_compatibility_cases() {
-    let mut hexafluorophosphate = crate::core::MoleculeEditor::new();
+    let mut hexafluorophosphate = crate::molecule::MoleculeEditor::new();
     let phosphorus = hexafluorophosphate
         .add_atom(charged_atom("P", -1))
         .expect("atom identifier capacity");
@@ -531,7 +532,7 @@ fn valence_accepts_rdkit_phosphorus_minus_one_and_hydride_compatibility_cases() 
     )
     .is_ok());
 
-    let mut bridged_hydride = crate::core::MoleculeEditor::new();
+    let mut bridged_hydride = crate::molecule::MoleculeEditor::new();
     let mut hydride = charged_atom("H", -1);
     hydride.hydrogens = ImplicitHydrogens::Fixed(0);
     let hydrogen = bridged_hydride
@@ -571,7 +572,7 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
         ("S", -2, 0),
         ("Se", -2, 0),
     ] {
-        let mut mol = crate::core::MoleculeEditor::new();
+        let mut mol = crate::molecule::MoleculeEditor::new();
         let atom_id = mol
             .add_atom(charged_atom(symbol, charge))
             .expect("atom identifier capacity");
@@ -587,7 +588,7 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
     }
 
     for symbol in ["Ac", "Cf"] {
-        let mut mol = crate::core::MoleculeEditor::new();
+        let mut mol = crate::molecule::MoleculeEditor::new();
         let atom_id = mol
             .add_atom(element_atom(symbol))
             .expect("atom identifier capacity");
@@ -605,7 +606,7 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
         );
     }
 
-    let mut mercury_cyanide = crate::core::MoleculeEditor::new();
+    let mut mercury_cyanide = crate::molecule::MoleculeEditor::new();
     let mercury = mercury_cyanide
         .add_atom(charged_atom("Hg", -2))
         .expect("atom identifier capacity");
@@ -631,7 +632,7 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
         Some(0)
     );
 
-    let mut covalent_aluminum = crate::core::MoleculeEditor::new();
+    let mut covalent_aluminum = crate::molecule::MoleculeEditor::new();
     let aluminum = covalent_aluminum
         .add_atom(element_atom("Al"))
         .expect("atom identifier capacity");
@@ -656,7 +657,7 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
         Some(0)
     );
 
-    let mut neutral_magnesium = crate::core::MoleculeEditor::new();
+    let mut neutral_magnesium = crate::molecule::MoleculeEditor::new();
     let magnesium = neutral_magnesium
         .add_atom(element_atom("Mg"))
         .expect("atom identifier capacity");

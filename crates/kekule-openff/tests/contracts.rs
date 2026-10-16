@@ -1,4 +1,4 @@
-use kekule::{core::Molecule, smiles};
+use kekule::{molecule::Molecule, smiles};
 use kekule_openff::ForceField;
 
 fn molecule(s: &str) -> Molecule {

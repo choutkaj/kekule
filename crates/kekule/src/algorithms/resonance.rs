@@ -2,7 +2,7 @@
 //!
 //! The search follows RDKit 2026.03.3 (Paolo Tosco, 2015), distributed under
 //! the BSD 3-Clause license reproduced in LICENSE-RDKit in this crate.
-use crate::core::{
+use crate::molecule::{
     AtomId, BondId, BondOrder, ImplicitHydrogens, Molecule, ResonanceGroup, ResonancePerception,
 };
 use std::collections::{BTreeMap, BTreeSet};

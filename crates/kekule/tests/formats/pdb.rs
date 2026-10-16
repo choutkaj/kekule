@@ -1,10 +1,10 @@
-use kekule::core::BondOrder;
 use kekule::diagnostics::{DiagnosticKind, SourceLocation};
 use kekule::macromolecular::{
     AltLocPolicy, AltLocResidue, BondEvidence, CellOmissionReason, ConnectionResolutionReason,
     EntityKind, ModelSelection, SourceResidueId, SourceResiduePosition, StructureInterpretIssue,
     StructureInterpretOptions, StructureInterpretation,
 };
+use kekule::molecule::BondOrder;
 use kekule::pdb::{self, PdbAtomKind, PdbParseOptions};
 
 /// One `ATOM` or `HETATM` record in the 80 fixed columns of the PDB format.

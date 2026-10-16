@@ -1,5 +1,5 @@
-use kekule::core::{Atom, AtomId, BondOrder, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::molecule::{Atom, AtomId, BondOrder, Element};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyValue};
 use kekule::structure::{Ensemble, Model, ModelEditError, ModelEditor, Positions};
 use kekule::topology::{
@@ -81,7 +81,7 @@ fn annotated(conflict: Option<&str>) -> Model {
         .pop()
         .unwrap();
     molecule.perceive().unwrap();
-    kekule::stereo::assign_cip_descriptors(&mut molecule).unwrap();
+    kekule::stereo::cip::assign_cip_descriptors(&mut molecule).unwrap();
     let mut chemistry = molecule.edit();
     chemistry
         .properties_mut()

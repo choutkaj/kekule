@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use crate::chemistry::{
     project_molfile_stereo_bond_marks, AtomPositionSource, SourceStereoBondMarkKind,
 };
-use crate::core::{Atom, AtomId, BondId, BondOrder, Molecule, StereoElementKind, StereoGroupKind};
 use crate::geometry::Point3;
+use crate::molecule::{Atom, AtomId, BondId, BondOrder, Molecule};
+use crate::stereo::{StereoElementKind, StereoGroupKind};
 use crate::structure::ModelView;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::ANGSTROM;

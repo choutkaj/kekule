@@ -173,7 +173,7 @@ fn xyz_signature(prefix: &[u8]) -> bool {
     ) else {
         return false;
     };
-    kekule::core::Element::from_symbol(symbol).is_some()
+    kekule::molecule::Element::from_symbol(symbol).is_some()
         && [x, y, z]
             .into_iter()
             .all(|value| value.parse::<f64>().is_ok_and(f64::is_finite))

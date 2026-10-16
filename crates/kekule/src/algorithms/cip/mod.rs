@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::algorithms::StereoValidationIssue;
-use crate::core::*;
+use crate::molecule::*;
 
 mod ranking;
 

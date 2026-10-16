@@ -1,9 +1,9 @@
 //! Reads an mmCIF data block into the source-neutral interpretation input.
 use std::collections::BTreeMap;
 
-use crate::core::BondOrder;
 use crate::diagnostics::DiagnosticKind;
 use crate::geometry::PeriodicCell;
+use crate::molecule::BondOrder;
 
 use super::super::mmcif_category::MmcifCategory;
 use super::super::mmcif_cell::stated_cell;

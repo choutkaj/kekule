@@ -1,7 +1,7 @@
 use crate::chemistry::*;
-use crate::core::*;
 use crate::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
 use crate::geometry::Point3;
+use crate::molecule::*;
 use crate::perception::{
     aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
     valence as valence_api, valence::*,
@@ -11,7 +11,7 @@ use crate::smiles::*;
 use crate::structure::{Model, Positions};
 use crate::{
     canon, molfile, perception as perception_api, sdf, smiles as smiles_api, stereo as stereo_api,
-    stereo::*,
+    stereo::{cip::*, cleanup::*, coordinates::*, *},
 };
 
 pub(super) fn carbon() -> Atom {
@@ -278,7 +278,7 @@ pub(super) fn charged_atom(symbol: &str, formal_charge: i8) -> Atom {
 pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, Positions, BondId) {
     // Explicit sp2 endpoints: Br-C(=O)-C(=S)-Cl. This tests the opted-in
     // coordinate axis geometry without inventing aromatic perception flags.
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol
         .add_atom(aromatic_carbon_no_hydrogens())
         .expect("atom identifier capacity");
@@ -342,7 +342,7 @@ pub(super) fn ring_molecule(
     orders: &[BondOrder],
 ) -> (Molecule, Vec<AtomId>, Vec<BondId>) {
     assert_eq!(symbols.len(), orders.len());
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let atoms = symbols
         .iter()
         .map(|symbol| {
@@ -490,7 +490,7 @@ pub(super) fn assert_all_stale(mol: &Molecule) {
 }
 
 pub(super) fn tetrahedral_marked_graph() -> (MoleculeEditor, AtomId, Vec<AtomId>, BondId) {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let carriers = ["F", "Cl", "Br", "I"]
         .into_iter()

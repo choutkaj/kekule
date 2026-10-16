@@ -1,6 +1,6 @@
 //! Inspection hooks for validating a model against a reference
 //! implementation. Parameterization does not need them.
-use kekule::core::Molecule;
+use kekule::molecule::Molecule;
 
 use crate::{ChargeAssignment, NaglModel, Result};
 

@@ -1,4 +1,4 @@
-use crate::core::*;
+use crate::molecule::*;
 
 /// Conservative local trigonal geometry for the three explicit ligands needed
 /// by the supported atropisomer model. This reads localized bonds, charge and

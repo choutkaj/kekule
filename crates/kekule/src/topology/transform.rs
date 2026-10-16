@@ -13,7 +13,7 @@ use super::{
     SelectionError, Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuildError,
     TopologyBuilder,
 };
-use crate::core::{AtomId, BondId, MoleculeError, MoleculePublicationError};
+use crate::molecule::{AtomId, BondId, MoleculeError, MoleculePublicationError};
 use crate::properties::PropertyError;
 
 /// Retains complete molecule instances in source topology order.
@@ -25,7 +25,7 @@ use crate::properties::PropertyError;
 /// # Examples
 ///
 /// ```
-/// use kekule::core::{Atom, Element, MoleculeEditor};
+/// use kekule::molecule::{Atom, Element, MoleculeEditor};
 /// use kekule::topology::{transform, TopologyBuilder};
 /// use std::sync::Arc;
 ///

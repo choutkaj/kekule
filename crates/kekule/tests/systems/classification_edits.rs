@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
+use kekule::molecule::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::topology::{
     transform, AtomSelection, AtomSiteMetadata, EditAtomId, Hierarchy, InstanceAtomId,

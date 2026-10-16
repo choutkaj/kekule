@@ -1,7 +1,7 @@
 //! Shared by deterministic regressions and the SMILES fuzz target.
 use std::collections::BTreeMap;
 
-use kekule::{core::Molecule, smiles};
+use kekule::{molecule::Molecule, smiles};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct AtomIdentity {

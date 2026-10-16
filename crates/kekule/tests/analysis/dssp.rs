@@ -214,8 +214,8 @@ fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
 
 #[test]
 fn dssp_instance_membership_handles_many_reused_solvent_instances() {
-    use kekule::core::AtomId;
     use kekule::geometry::Point3;
+    use kekule::molecule::AtomId;
     use kekule::structure::Positions;
     use kekule::topology::{AtomSiteMetadata, InstanceAtomId};
     use kekule::units::{Quantity, ANGSTROM};
@@ -259,8 +259,8 @@ fn dssp_instance_membership_handles_many_reused_solvent_instances() {
 
 #[test]
 fn dssp_numbering_fallback_is_independent_of_unlabeled_solvent_in_the_chain() {
-    use kekule::core::AtomId;
     use kekule::geometry::Point3;
+    use kekule::molecule::AtomId;
     use kekule::structure::{Model, Positions};
     use kekule::topology::{AtomSiteMetadata, InstanceAtomId, TopologyBuilder};
     use kekule::units::{Quantity, ANGSTROM};

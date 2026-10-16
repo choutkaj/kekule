@@ -6,8 +6,8 @@
 
 use std::path::Path;
 
-use kekule::core::{Molecule, StereoElementKind};
 use kekule::structure::Model;
+use kekule::{molecule::Molecule, stereo::StereoElementKind};
 use kekule::{molfile, sdf, smiles};
 
 use crate::support::{aromaticity_cases, corpus, fixture};

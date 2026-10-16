@@ -3,8 +3,8 @@ use super::super::element_symbol::structure_element_symbol;
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
 use super::one_based_serial;
 use super::MmcifWriteError;
-use crate::core::{Atom, AtomId, BondOrder, ImplicitHydrogens};
 use crate::geometry::Point3;
+use crate::molecule::{Atom, AtomId, BondOrder, ImplicitHydrogens};
 use crate::structure::ModelView;
 use crate::topology::{
     Hierarchy, InstanceAtomId, InstanceBondId, MoleculeDefinition, MoleculeInstance, ResidueId,
@@ -342,7 +342,7 @@ fn normalized_group_pdb(
 }
 
 /// The Chemical Component Dictionary names of water atoms: `O`, `H1`, `H2`.
-fn water_atom_name(molecule: &crate::core::Molecule, atom: AtomId) -> String {
+fn water_atom_name(molecule: &crate::molecule::Molecule, atom: AtomId) -> String {
     let hydrogen = molecule
         .atoms()
         .filter(|(_, candidate)| candidate.element.atomic_number() == 1)

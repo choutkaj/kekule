@@ -1,7 +1,7 @@
 //! Molfile CTAB writing: prepare one record, then render it as V2000 or V3000.
 use std::io::Write;
 
-use crate::core::Molecule;
+use crate::molecule::Molecule;
 use crate::structure::{AsModelView, Model, ModelView};
 
 use super::{MoleculeWriteError, MoleculeWriteErrorKind, MolfileVersion, UnrepresentablePolicy};

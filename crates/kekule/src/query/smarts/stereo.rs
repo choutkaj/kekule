@@ -1,6 +1,6 @@
 use super::{default_bond_expression, BondExpression, SmartsParseError};
-use crate::core::TetrahedralOrientation;
 use crate::query::{QueryAtomId, QueryBondId, QueryGraphBuilder, QueryStereoConstraint};
+use crate::stereo::TetrahedralOrientation;
 use std::ops::Range;
 
 pub(super) struct BondSyntax {

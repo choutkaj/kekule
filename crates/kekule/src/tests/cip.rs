@@ -1,7 +1,7 @@
 use super::*;
 
 fn assign_cip(mol: &mut Molecule) -> CipAssignmentReport {
-    stereo_api::assign_cip_descriptors(mol).expect("CIP assignment should succeed")
+    stereo_api::cip::assign_cip_descriptors(mol).expect("CIP assignment should succeed")
 }
 
 /// Installs inferred hydrogen counts, which CIP ranking requires to be known.
@@ -36,7 +36,7 @@ fn assert_cip_not_stereogenic(mol: &mut Molecule, element: StereoElementId) {
 
 #[test]
 fn successful_cip_with_no_assignments_installs_empty_stereo_section() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     mol.add_atom(carbon()).expect("single carbon");
     perceive_hydrogens(mol.working_mut());
     assert!(!mol.perception().has_stereo());
@@ -178,7 +178,7 @@ fn cip_assigns_axis_descriptors_from_ranked_anchors() {
 
 #[test]
 fn cip_skips_axis_with_equivalent_endpoint_ligands_as_nonstereogenic() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let left_high = mol
@@ -212,15 +212,16 @@ fn cip_skips_axis_with_equivalent_endpoint_ligands_as_nonstereogenic() {
 fn cip_assigns_axis_descriptor_after_coordinate_stereo_materialization() {
     let (molecule, positions, _axis) = coordinate_axis_graph(true);
     let mut mol = molecule.edit();
-    let materialization_report = stereo_api::materialize_coordinate_stereo_with_options(
-        &mut mol,
-        &positions,
-        CoordinateStereoOptions {
-            infer_axes: true,
-            ..Default::default()
-        },
-    )
-    .expect("coordinate axis materialization");
+    let materialization_report =
+        stereo_api::coordinates::materialize_coordinate_stereo_with_options(
+            &mut mol,
+            &positions,
+            CoordinateStereoOptions {
+                infer_axes: true,
+                ..Default::default()
+            },
+        )
+        .expect("coordinate axis materialization");
     assert_eq!(materialization_report.created_elements.len(), 1);
 
     let mut mol = mol.finish().expect("materialized molecule publishes");
@@ -296,7 +297,7 @@ fn cip_default_depth_resolves_a_remote_constitutional_difference() {
     let mut molecule = read_smiles(&smiles).expect("long acyclic ligands");
     perceive(&mut molecule).expect("perceive");
     let previous = molecule.perception().clone();
-    let error = stereo_api::assign_cip_descriptors_with_options(
+    let error = stereo_api::cip::assign_cip_descriptors_with_options(
         &mut molecule,
         CipAssignmentOptions {
             max_depth: 32,
@@ -330,7 +331,7 @@ fn cip_stops_at_the_first_distinguishing_shell_within_the_node_budget() {
         perceive(&mut molecule).expect("perceive");
         let expected = assign_cip(&mut molecule);
         assert_eq!(expected.assigned.len(), 1);
-        let actual = stereo_api::assign_cip_descriptors_with_options(
+        let actual = stereo_api::cip::assign_cip_descriptors_with_options(
             &mut molecule,
             CipAssignmentOptions {
                 max_depth: 32,
@@ -340,7 +341,7 @@ fn cip_stops_at_the_first_distinguishing_shell_within_the_node_budget() {
         .expect("ten ligand nodes suffice to reach the distinguishing oxygen");
         assert_eq!(actual, expected);
         let previous = molecule.perception().clone();
-        let error = stereo_api::assign_cip_descriptors_with_options(
+        let error = stereo_api::cip::assign_cip_descriptors_with_options(
             &mut molecule,
             CipAssignmentOptions {
                 max_depth: 32,
@@ -366,7 +367,7 @@ fn cip_depth_limit_cannot_promote_isotope_rule_or_claim_nonstereogenicity() {
         perceive(&mut molecule).expect("perceive");
         assign_cip(&mut molecule);
         let previous = molecule.perception().clone();
-        let error = stereo_api::assign_cip_descriptors_with_options(
+        let error = stereo_api::cip::assign_cip_descriptors_with_options(
             &mut molecule,
             CipAssignmentOptions {
                 max_depth: 0,
@@ -527,7 +528,7 @@ fn axis_stereo_graph(
     right_reference: AxisReference,
     orientation: AxisOrientation,
 ) -> (Molecule, StereoElementId) {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let left_high = mol
@@ -669,7 +670,7 @@ fn cip_skips_small_ring_double_bond_stereo_but_assigns_cyclooctene() {
 
 #[test]
 fn cip_labels_explicitly_asserted_small_ring_double_bond() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let atoms = (0..6)
         .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
         .collect::<Vec<_>>();
@@ -770,7 +771,7 @@ fn cip_labels_asserted_ring_bonds_independently_of_candidate_perception() {
 
 #[test]
 fn cip_skips_double_bond_with_equivalent_endpoint_ligands_as_nonstereogenic() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let double_bond = mol
@@ -912,7 +913,7 @@ fn cip_uses_rule3_embedded_e_z_descriptors_to_order_ligands() {
 fn pseudoasymmetric_double_bond_graph(
     orientation: DoubleBondOrientation,
 ) -> (Molecule, StereoElementId) {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let double_bond = mol
@@ -950,7 +951,7 @@ fn pseudoasymmetric_double_bond_graph(
 }
 
 fn pseudoasymmetric_axis_graph(orientation: AxisOrientation) -> (Molecule, StereoElementId) {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
@@ -1042,7 +1043,7 @@ fn add_enantiomorphic_tetrahedral_carriers(mol: &mut Molecule, parent: AtomId) -
 
 #[test]
 fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let chlorine = mol
         .add_atom(element_atom("Cl"))
@@ -1422,7 +1423,7 @@ fn cip_matches_rdkit_for_enamine_absolute_center_in_coupled_bicycle() {
 
 #[test]
 fn cip_applies_recursive_rule1a_before_isotope_priority() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let bromine = mol
         .add_atom(element_atom("Br"))
@@ -1605,7 +1606,7 @@ fn cip_skips_endocyclic_hetero_double_bond_stereo() {
 
 #[test]
 fn cip_skips_equivalent_ligands_as_nonstereogenic() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let fluorine = mol
         .add_atom(element_atom("F"))
@@ -1641,7 +1642,7 @@ fn cip_skips_equivalent_ligands_as_nonstereogenic() {
 #[test]
 fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
     let chain_length = CipAssignmentOptions::default().max_depth / 2 + 2;
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let fluorine = mol
         .add_atom(element_atom("F"))
@@ -1688,7 +1689,7 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
 #[test]
 fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() {
     let chain_length = CipAssignmentOptions::default().max_depth / 2 + 2;
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let double_bond = mol
@@ -1735,7 +1736,7 @@ fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() 
 #[test]
 fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
     let chain_length = CipAssignmentOptions::default().max_depth / 2 + 2;
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
@@ -1784,7 +1785,7 @@ fn add_carbon_chain(mol: &mut Molecule, start: AtomId, length: usize) {
 
 #[test]
 fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let nitrogen = mol
         .add_atom(element_atom("N"))
@@ -1840,7 +1841,7 @@ fn cip_requires_known_implicit_hydrogen_counts() {
         let element = StereoElementId::new(0);
         if !unknown.is_empty() {
             assert_eq!(
-                stereo_api::assign_cip_descriptors(&mut molecule),
+                stereo_api::cip::assign_cip_descriptors(&mut molecule),
                 Err(CipAssignmentError {
                     issues: unknown
                         .iter()
@@ -1867,7 +1868,7 @@ fn failed_cip_resource_limit_restores_previous_stereo_section() {
     let before = installed_cip_descriptors(&molecule);
     let before_state = molecule.perception().stereo_state().cloned();
 
-    let error = stereo_api::assign_cip_descriptors_with_options(
+    let error = stereo_api::cip::assign_cip_descriptors_with_options(
         &mut molecule,
         CipAssignmentOptions {
             max_nodes: 1,
@@ -1899,7 +1900,7 @@ fn failed_cip_resource_limit_restores_previous_stereo_section() {
     molecule
         .install_perception(present_empty.clone())
         .expect("present-empty baseline");
-    stereo_api::assign_cip_descriptors_with_options(
+    stereo_api::cip::assign_cip_descriptors_with_options(
         &mut molecule,
         CipAssignmentOptions {
             max_nodes: 1,
@@ -1923,7 +1924,7 @@ fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
     first_only
         .remove_stereo_element(StereoElementId::new(1))
         .expect("second stereo element exists");
-    let report = stereo_api::assign_cip_descriptors_with_options(&mut first_only, options)
+    let report = stereo_api::cip::assign_cip_descriptors_with_options(&mut first_only, options)
         .expect("the first center is assignable within the resource limit");
     assert_eq!(
         report.assigned,
@@ -1935,7 +1936,7 @@ fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
 
     let mut molecule = read_smiles(FIXTURE).expect("fixture parses");
     perceive(&mut molecule).expect("fixture perceives");
-    let error = stereo_api::assign_cip_descriptors_with_options(&mut molecule, options)
+    let error = stereo_api::cip::assign_cip_descriptors_with_options(&mut molecule, options)
         .expect_err("the later center should exceed the resource limit");
     assert_eq!(
         error.issues,
@@ -1953,7 +1954,7 @@ fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
 
 #[test]
 fn failed_cip_validation_preserves_previous_stereo_section() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let adjacent = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let nonadjacent = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -1990,7 +1991,7 @@ fn failed_cip_validation_preserves_previous_stereo_section() {
         .install_cip_descriptor(element, StereoDescriptor::R);
     let before = installed_cip_descriptors(mol.working());
 
-    let error = stereo_api::assign_cip_descriptors(mol.working_mut())
+    let error = stereo_api::cip::assign_cip_descriptors(mol.working_mut())
         .expect_err("invalid stored stereo should reject CIP assignment");
 
     assert!(error
@@ -2010,7 +2011,7 @@ fn failed_cip_validation_preserves_previous_stereo_section() {
     mol.working_mut()
         .install_perception(present_empty.clone())
         .expect("valid empty stereo section");
-    stereo_api::assign_cip_descriptors(mol.working_mut())
+    stereo_api::cip::assign_cip_descriptors(mol.working_mut())
         .expect_err("invalid stored stereo should still reject CIP assignment");
     assert_eq!(mol.perception(), &present_empty);
     assert!(mol.perception().has_stereo());
@@ -2018,7 +2019,7 @@ fn failed_cip_validation_preserves_previous_stereo_section() {
 
 #[test]
 fn successful_cip_reassignment_replaces_the_complete_descriptor_set() {
-    let mut mol = crate::core::MoleculeEditor::new();
+    let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let carriers = ["F", "Cl", "Br", "I"]
         .into_iter()

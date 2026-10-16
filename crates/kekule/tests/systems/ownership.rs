@@ -1,9 +1,9 @@
 use std::cell::Cell;
 use std::error::Error;
 
-use kekule::core::MoleculeEditor;
 use kekule::geometry::Point3;
 use kekule::geometry::{PeriodicCell, Vector3};
+use kekule::molecule::MoleculeEditor;
 use kekule::properties::{
     PropertyColumn, PropertyError, PropertyKey, PropertyValue, PropertyValueRef,
 };

@@ -1,4 +1,4 @@
-use kekule::core::{Atom, Element, MoleculeEditor};
+use kekule::molecule::{Atom, Element, MoleculeEditor};
 use kekule::topology::{
     AtomSite, AtomSiteId, AtomSiteMetadata, AtomSiteView, Chain, ChainId, ChainView, Hierarchy,
     HierarchyError, HierarchyIdKind, InstanceAtomId, MoleculeClass, Residue, ResidueId,

@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use kekule::{
-    core::Element,
-    mmcif, smiles,
+    mmcif,
+    molecule::Element,
+    smiles,
     structure::measure,
     topology::{
         AtomSelection, AtomSiteMetadata, HierarchyLookupError, InstanceAtomId, ResidueClass,

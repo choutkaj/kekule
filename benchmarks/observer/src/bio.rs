@@ -3,10 +3,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use kekule::core::BondOrder;
 use kekule::dssp::{self, DsspHydrogenBond, DsspOptions};
 use kekule::macromolecular::{self, ModelSelection, StructureInterpretOptions};
 use kekule::mmcif::{self, MmcifDocument, MmcifEntry, MmcifValue};
+use kekule::molecule::BondOrder;
 use kekule::topology::{AtomSelection, InstanceAtomId, ResidueClass, ResidueId};
 use kekule::units::{ANGSTROM, SQUARE_ANGSTROM};
 use serde_json::{json, Value};

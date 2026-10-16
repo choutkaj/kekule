@@ -29,7 +29,7 @@
 //! A whole-residue pocket around one source-identified ligand:
 //! ```
 //! use kekule::{
-//!     core::Element,
+//!     molecule::Element,
 //!     structure::{measure, Model},
 //!     topology::AtomSelection,
 //!     units::{Quantity, ANGSTROM},

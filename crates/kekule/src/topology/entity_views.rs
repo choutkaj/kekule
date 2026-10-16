@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::core::{Atom, Bond};
+use crate::molecule::{Atom, Bond};
 use crate::properties::{PropertyKey, PropertyValue, PropertyValueRef};
 
 use super::{
@@ -112,7 +112,7 @@ impl<'a> AtomView<'a> {
             .expect("published topology atoms are live")
     }
 
-    /// Implicit hydrogens; see [`crate::core::Molecule::implicit_hydrogens`].
+    /// Implicit hydrogens; see [`crate::molecule::Molecule::implicit_hydrogens`].
     pub fn implicit_hydrogens(self) -> Option<usize> {
         self.molecule()
             .molecule()
@@ -120,7 +120,7 @@ impl<'a> AtomView<'a> {
             .expect("published topology atoms are live")
     }
 
-    /// Explicit plus implicit hydrogens; see [`crate::core::Molecule::total_hydrogens`].
+    /// Explicit plus implicit hydrogens; see [`crate::molecule::Molecule::total_hydrogens`].
     pub fn total_hydrogens(self) -> Option<usize> {
         self.molecule()
             .molecule()
