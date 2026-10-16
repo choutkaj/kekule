@@ -175,9 +175,11 @@ impl NaglModel {
     pub fn identity(&self) -> &ModelIdentity {
         &self.identity
     }
+    #[cfg(test)]
     pub(crate) fn lookup_entry_count(&self) -> usize {
         self.lookup.len()
     }
+    #[cfg(test)]
     pub(crate) fn lookup_key(&self, molecule: &Molecule) -> Result<Option<&str>> {
         let molecule = lookup_molecule(molecule)?;
         if molecule.atom_count() > self.max_lookup_atoms {
@@ -188,6 +190,7 @@ impl NaglModel {
             .select(&molecule)?
             .map(|position| self.lookup[position].inchi.as_str()))
     }
+    #[cfg(test)]
     pub(crate) fn atom_features(&self, molecule: &Molecule) -> Result<Vec<Vec<f32>>> {
         let m = explicit(molecule)?;
         self.check_domain(&m)?;
@@ -256,6 +259,7 @@ impl NaglModel {
         }
         self.infer_prepared(&molecule)
     }
+    #[cfg(test)]
     pub(crate) fn infer_charges(&self, molecule: &Molecule) -> Result<ChargeAssignment> {
         self.infer_prepared(&explicit(molecule)?)
     }

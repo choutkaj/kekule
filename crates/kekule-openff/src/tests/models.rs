@@ -1,14 +1,15 @@
-//! Public-API tests against independently generated OpenFF observations.
+//! Tests against independently generated OpenFF observations, including the
+//! model internals they compare (lookup keys, features, and network charges).
+use crate::{ChargeSource, ForceField, NaglModel, ParameterizedTopology};
 use kekule::{molecule::Molecule, smiles};
-use kekule_openff::{ChargeSource, ForceField, NaglModel, ParameterizedTopology};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::PathBuf};
 
-const ROSEMARY: &str = include_str!("../data/rosemary.offxml");
+const ROSEMARY: &str = include_str!("../../data/rosemary.offxml");
 fn reference() -> Value {
     serde_json::from_reader(flate2::read::GzDecoder::new(
-        &include_bytes!("fixtures/models.json.gz")[..],
+        &include_bytes!("../../tests/fixtures/models.json.gz")[..],
     ))
     .unwrap()
 }
@@ -218,7 +219,7 @@ fn both_models_reproduce_complete_openff_parameterization() {
         let ff = ForceField::from_file(directory.join("force-field.offxml")).unwrap();
         assert_eq!(ff.charge_model(), Some(model.identity()));
         assert_eq!(
-            kekule_openff::diagnostics::lookup_entry_count(&model),
+            model.lookup_entry_count(),
             reference["lookup_entries"].as_u64().unwrap() as usize
         );
         for r in reference["records"].as_array().unwrap() {
@@ -251,15 +252,12 @@ fn both_models_reproduce_complete_openff_parameterization() {
             }
             if r["inference"]["status"] == "ok" {
                 charges(
-                    kekule_openff::diagnostics::infer_charges(&model, &molecule)
-                        .unwrap()
-                        .charges
-                        .value(),
+                    model.infer_charges(&molecule).unwrap().charges.value(),
                     &r["inference"]["charges"],
                     &molecule,
                     1e-6,
                 );
-                let f = kekule_openff::diagnostics::atom_features(&model, &molecule).unwrap();
+                let f = model.atom_features(&molecule).unwrap();
                 for (i, (_, atom)) in molecule.atoms().enumerate() {
                     let expected = r["inference"]["features"][atom.atom_map.unwrap() as usize - 1]
                         .as_array()
@@ -270,8 +268,8 @@ fn both_models_reproduce_complete_openff_parameterization() {
                     }
                 }
             } else {
-                assert!(kekule_openff::diagnostics::infer_charges(&model, &molecule).is_err());
-                assert!(kekule_openff::diagnostics::atom_features(&model, &molecule).is_err());
+                assert!(model.infer_charges(&molecule).is_err());
+                assert!(model.atom_features(&molecule).is_err());
             }
             if r["assignment"]["status"] == "ok" {
                 charges(
@@ -297,7 +295,7 @@ fn both_models_reproduce_complete_openff_parameterization() {
                     .parameterize_molecule(molecule.clone(), &model)
                     .unwrap_err()
                     .kind()
-                    == kekule_openff::ErrorKind::ModelMismatch
+                    == crate::ErrorKind::ModelMismatch
             );
         }
     }
@@ -396,7 +394,7 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
                 .parameterize_molecule(molecule.clone(), &model)
                 .unwrap_err()
                 .kind()
-                == kekule_openff::ErrorKind::ModelMismatch
+                == crate::ErrorKind::ModelMismatch
         );
     }
     assert_eq!(
@@ -458,9 +456,7 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
         .unwrap()
         .remove(0);
     let ash_model = NaglModel::load(bundles().join("openff-gnn-am1bcc-1.0.0")).unwrap();
-    let key = kekule_openff::diagnostics::lookup_key(&ash_model, &methane)
-        .unwrap()
-        .unwrap();
+    let key = ash_model.lookup_key(&methane).unwrap().unwrap();
     let mut entry = ash["lookup_tables"]["am1bcc_charges"]
         .as_array()
         .unwrap()
@@ -481,7 +477,7 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
         ff.parameterize_molecule(methane.clone(), &broken_lookup)
             .unwrap_err()
             .kind()
-            == kekule_openff::ErrorKind::Model
+            == crate::ErrorKind::Model
     );
     // Match the checksum so truncated float32 storage reaches the decoder.
     let truncated = [0u8; 3];
@@ -493,14 +489,14 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
     .unwrap();
     std::fs::write(scratch.0.join("weights.bin"), truncated).unwrap();
     let error = NaglModel::load(&scratch.0).unwrap_err();
-    assert_eq!(error.kind(), kekule_openff::ErrorKind::Model);
+    assert_eq!(error.kind(), crate::ErrorKind::Model);
     assert!(error
         .to_string()
         .contains("weights must be little-endian float32"));
     assert_eq!(error.path(), Some(scratch.0.as_path()));
     std::fs::remove_file(scratch.0.join("weights.bin")).unwrap();
     let missing = NaglModel::load(&scratch.0).unwrap_err();
-    assert_eq!(missing.kind(), kekule_openff::ErrorKind::Io);
+    assert_eq!(missing.kind(), crate::ErrorKind::Io);
     assert_eq!(
         missing.path(),
         Some(scratch.0.join("weights.bin").as_path())
@@ -516,6 +512,6 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
         .set_len(64 * 1024 * 1024 + 1)
         .unwrap();
     let error = NaglModel::load(&scratch.0).unwrap_err();
-    assert_eq!(error.kind(), kekule_openff::ErrorKind::Model);
+    assert_eq!(error.kind(), crate::ErrorKind::Model);
     assert!(error.to_string().contains("size limit"));
 }

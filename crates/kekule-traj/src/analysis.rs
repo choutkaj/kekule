@@ -34,7 +34,7 @@ pub use reductions::{
 /// reader.read_next(&mut buffer)?;
 /// let reference = buffer.frame_view().to_model();
 /// let atoms = AtomSelection::all(&reference.shared_topology());
-/// let superposer = FrameSuperposer::new(&reference, &atoms);
+/// let superposer = FrameSuperposer::new(&reference, &atoms, Default::default());
 /// let mut index = 1;
 /// while reader.read_next(&mut buffer)? {
 ///     let fit = superposer.superpose(index, &mut buffer)?;
@@ -53,13 +53,9 @@ pub struct FrameSuperposer<'a> {
 
 impl<'a> FrameSuperposer<'a> {
     /// Fits onto `reference` through a selection (shared layout) or an
-    /// [`kekule::alignment::AtomCorrespondence`] (independent reference).
-    pub fn new(reference: &'a (impl AsModelView + ?Sized), atoms: impl Into<FitAtoms<'a>>) -> Self {
-        Self::with_options(reference, atoms, AlignmentOptions::default())
-    }
-
-    /// [`Self::new`] with explicit fit weights and periodic policy.
-    pub fn with_options(
+    /// [`kekule::alignment::AtomCorrespondence`] (independent reference), with
+    /// the fit weights and periodic policy of `options`.
+    pub fn new(
         reference: &'a (impl AsModelView + ?Sized),
         atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'a>,

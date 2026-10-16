@@ -236,6 +236,21 @@ All notable changes to Kekule are documented in this file.
     use `doc.interpret(options)?.into_molecules()` (or `into_topology`,
     `into_model`). `smiles::to_molecules` and `smiles::to_topology` remain
     the one-call SMILES shortcuts.
+  - `kekule-traj`: `io::read_trajectory`, `open_trajectory`,
+    `open_indexed_trajectory`, and `write_trajectory` take their options, and
+    their `*_with_options` twins are removed. `TrajectoryWriteOptions`
+    implements `Default`, which takes the format from the destination
+    extension as plain `write_trajectory` did; `create_trajectory_writer`
+    accepts it too. `analysis::FrameSuperposer::new(reference, atoms, options)`
+    replaces `new` and `with_options`. `periodic::unwrap` is
+    `periodic::unwrap_trajectory`, and `FrameBufferData` is `FrameData`.
+  - `kekule-traj`: the test helpers `CoordinateFrameReader` and
+    `validate_atom_order` are removed, and `MemoryTrajectoryReader` is no
+    longer public; fill a `FrameBuffer` from an in-memory frame with
+    `FrameBuffer::copy_from`.
+  - `kekule-openff`: the `diagnostics` module is removed from the public API.
+    The tests that compared lookup keys, input features, and network charges
+    with reference data run inside the crate.
 - **Breaking:** Every public module is an explicit list of re-exports, and
   every public item has exactly one public path; only `prelude` repeats items.
   No item is renamed and no behaviour changes, so callers only update imports.

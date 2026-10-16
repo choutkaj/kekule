@@ -56,7 +56,7 @@ fn imaged(trajectory: &Trajectory, anchors: &AtomSelection) -> Result<Trajectory
 
 fn unwrapped(trajectory: &Trajectory) -> Result<Trajectory, PeriodicError> {
     let mut copy = trajectory.clone();
-    periodic::unwrap(&mut copy)?;
+    periodic::unwrap_trajectory(&mut copy)?;
     Ok(copy)
 }
 
@@ -369,7 +369,7 @@ fn unwrapping_tracks_multiple_crossings_and_preserves_the_first_frame() {
     }
     assert!(Arc::ptr_eq(&topology, &unwrapped.shared_topology()));
     assert_eq!(format!("{trajectory:?}"), before);
-    periodic::unwrap(&mut trajectory).unwrap();
+    periodic::unwrap_trajectory(&mut trajectory).unwrap();
     assert_eq!(format!("{trajectory:?}"), format!("{unwrapped:?}"));
 }
 
@@ -428,7 +428,7 @@ fn periodic_failures_are_transactional_and_include_frame_context() {
     .unwrap();
     let before = format!("{missing:?}");
     assert!(matches!(
-        periodic::unwrap(&mut missing),
+        periodic::unwrap_trajectory(&mut missing),
         Err(PeriodicError::MissingCell { frame: 1 })
     ));
     assert!(matches!(
@@ -451,7 +451,7 @@ fn periodic_failures_are_transactional_and_include_frame_context() {
     .unwrap();
     let before = format!("{ambiguous:?}");
     assert!(matches!(
-        periodic::unwrap(&mut ambiguous),
+        periodic::unwrap_trajectory(&mut ambiguous),
         Err(PeriodicError::AmbiguousDisplacement {
             frame: 1,
             axis: 0,

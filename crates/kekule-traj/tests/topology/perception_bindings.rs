@@ -62,8 +62,9 @@ fn selections_buffers_and_accumulators_survive_trajectory_perception() {
         "kekule-perception-bindings-{}.xyz",
         std::process::id()
     )));
-    write_trajectory(&path.0, &trajectory).unwrap();
-    let mut reader = open_trajectory(&path.0, trajectory.shared_topology()).unwrap();
+    write_trajectory(&path.0, &trajectory, Default::default()).unwrap();
+    let mut reader =
+        open_trajectory(&path.0, trajectory.shared_topology(), Default::default()).unwrap();
     let mut frames = 0;
     while reader.read_next(&mut buffer).unwrap() {
         frames += 1;

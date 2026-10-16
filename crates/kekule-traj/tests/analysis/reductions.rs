@@ -8,7 +8,7 @@ use kekule::{
     units::{Quantity, ANGSTROM, NANOMETER, PICOSECOND},
 };
 use kekule_traj::analysis::{self, ContactOccupancyAccumulator, ReductionError, RmsfAccumulator};
-use kekule_traj::{MemoryTrajectoryReader, TrajectoryReader};
+use kekule_traj::FrameBuffer;
 
 use crate::support;
 use support::linear_carbon_topology;
@@ -86,10 +86,10 @@ fn loaded_and_reused_streaming_buffers_agree_with_independent_statistics() {
     let mut online_rmsf = RmsfAccumulator::new(&all).unwrap();
     let mut online_contacts =
         ContactOccupancyAccumulator::new(&top, pairs, Quantity::new(2.0, NANOMETER)).unwrap();
-    let mut reader = MemoryTrajectoryReader::new(&t);
-    let mut buffer = reader.frame_buffer();
+    let mut buffer = FrameBuffer::new(t.shared_topology());
     let mut index = 0;
-    while reader.read_next(&mut buffer).unwrap() {
+    for frame in t.iter() {
+        buffer.copy_from(frame).unwrap();
         online_rmsf.observe(index, &buffer).unwrap();
         online_contacts.observe(index, &buffer).unwrap();
         index += 1;

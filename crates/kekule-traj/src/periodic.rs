@@ -19,12 +19,12 @@
 //!
 //! let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?, Default::default())?;
 //! let topology = document.interpret(Default::default())?.into_topology();
-//! let mut trajectory = read_trajectory("trajectory.xtc", topology.clone())?;
+//! let mut trajectory = read_trajectory("trajectory.xtc", topology.clone(), Default::default())?;
 //! periodic::make_molecules_whole(&mut trajectory)?;
 //!
 //! // A continuous path through time, retaining the initial molecular images.
 //! let mut continuous = trajectory.clone();
-//! periodic::unwrap(&mut continuous)?;
+//! periodic::unwrap_trajectory(&mut continuous)?;
 //!
 //! // A separate per-frame view with molecules centered around selected anchors.
 //! let anchors = AtomSelection::all(&topology); // Or select the solute's atoms.
@@ -43,7 +43,7 @@
 //! };
 //! let topology = mmcif::parse_str(&std::fs::read_to_string("system.cif")?, Default::default())?
 //!     .interpret(Default::default())?.into_topology();
-//! let mut reader = open_trajectory("trajectory.xtc", topology.clone())?;
+//! let mut reader = open_trajectory("trajectory.xtc", topology.clone(), Default::default())?;
 //! let mut frame = reader.frame_buffer();
 //! let imager = MoleculeImager::new(topology.clone());
 //! let mut unwrapper = TrajectoryUnwrapper::new(topology);
@@ -195,7 +195,7 @@ pub fn image_molecules(
 /// [`make_molecules_whole`] first when necessary. Apply before frame-dependent
 /// alignment. This convention is not a universal prescription for diffusion
 /// analysis under a fluctuating simulation cell.
-pub fn unwrap(trajectory: &mut Trajectory) -> Result<(), PeriodicError> {
+pub fn unwrap_trajectory(trajectory: &mut Trajectory) -> Result<(), PeriodicError> {
     let mut unwrapper = TrajectoryUnwrapper::new(trajectory.shared_topology());
     let positions = trajectory
         .iter()

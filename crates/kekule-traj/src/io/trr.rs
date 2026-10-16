@@ -5,7 +5,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::{
-    FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
+    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
     TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation,
     TrajectoryReader, TrajectoryWriter,
 };
@@ -525,7 +525,7 @@ impl<R: Read + Seek> TrrReader<R> {
         decoded: &TrrDecodedFrame,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
-        let mut data = FrameBufferData::new(Quantity::new(positions, NANOMETER))
+        let mut data = FrameData::new(Quantity::new(positions, NANOMETER))
             .with_time(Quantity::new(decoded.header.time, PICOSECOND))
             .with_step(decoded.header.step)
             .with_owner_properties(properties);

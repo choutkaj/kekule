@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let document = mmcif::parse_str(&fs::read_to_string(topology_path)?, Default::default())?;
     let topology = document.interpret(Default::default())?.into_topology();
-    let mut trajectory = read_trajectory(trajectory_path, topology.clone())?;
+    let mut trajectory = read_trajectory(trajectory_path, topology.clone(), Default::default())?;
 
     println!("Frames: {}", trajectory.len());
     println!("Atoms: {}", topology.atom_count());
@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         periodic::make_molecules_whole(&mut trajectory)?;
     }
     if unwrap {
-        periodic::unwrap(&mut trajectory)?;
+        periodic::unwrap_trajectory(&mut trajectory)?;
     }
     if stride != 1 {
         trajectory = trajectory.select((0..trajectory.len()).step_by(stride))?;
@@ -97,7 +97,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
     if let Some(path) = output {
-        write_trajectory(path, &trajectory)?;
+        write_trajectory(path, &trajectory, Default::default())?;
     }
     Ok(())
 }

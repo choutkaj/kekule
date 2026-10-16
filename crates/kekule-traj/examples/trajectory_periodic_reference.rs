@@ -141,7 +141,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Path::new(&args[2]),
     )?;
     let topology = topology(Path::new(&args[0]))?;
-    let source = read_trajectory(Path::new(&args[1]), topology.clone())?;
+    let source = read_trajectory(Path::new(&args[1]), topology.clone(), Default::default())?;
     if source.is_empty()
         || topology.atom_count() == 0
         || provenance["frames"] != json!(source.len())
@@ -155,7 +155,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut imaged = source.clone();
     periodic::image_molecules(&mut imaged, &anchors)?;
     let mut unwrapped = source.clone();
-    periodic::unwrap(&mut unwrapped)?;
+    periodic::unwrap_trajectory(&mut unwrapped)?;
     let imager = MoleculeImager::new(topology.clone());
     let mut unwrapper = TrajectoryUnwrapper::new(topology.clone());
     let mut buffer = FrameBuffer::new(topology.clone());

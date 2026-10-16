@@ -11,14 +11,13 @@ use kekule_traj::io::xyz::{
     IndexedXyzReader, XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter,
 };
 use kekule_traj::io::{
-    create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory_with_options,
-    open_trajectory_with_options, FieldAvailability, FormatDetectionEvidence,
-    RandomAccessCapability, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
-    TrajectoryWriteOptions,
+    create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory, open_trajectory,
+    FieldAvailability, FormatDetectionEvidence, RandomAccessCapability, TrajectoryFormatHint,
+    TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule_traj::{
-    FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
-    TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryFormat,
+    TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
@@ -181,7 +180,7 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
         .unwrap();
         let mut destination = FrameBuffer::new(Arc::clone(&topology));
         destination
-            .replace_from_data(FrameBufferData::new(Quantity::new(
+            .replace_from_data(FrameData::new(Quantity::new(
                 &[Point3::new(9.0, 0.0, 0.0), Point3::new(8.0, 0.0, 0.0)],
                 ANGSTROM,
             )))
@@ -286,7 +285,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     let points = [Point3::new(1.25, 2.5, 3.75), Point3::new(4.0, 5.0, 6.0)];
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     buffer
-        .replace_from_data(FrameBufferData::new(Quantity::new(&points, ANGSTROM)))
+        .replace_from_data(FrameData::new(Quantity::new(&points, ANGSTROM)))
         .unwrap();
 
     let mut writer = XyzWriter::new(
@@ -355,7 +354,7 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
     let topology = topology();
     let path = temporary_path(None);
     std::fs::write(&path, TWO_FRAMES).unwrap();
-    let mut sequential = open_trajectory_with_options(
+    let mut sequential = open_trajectory(
         &path,
         Arc::clone(&topology),
         TrajectoryOpenOptions::default(),
@@ -379,7 +378,7 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
         .read_next(&mut FrameBuffer::new(Arc::clone(&topology)))
         .unwrap());
 
-    let indexed = open_indexed_trajectory_with_options(
+    let indexed = open_indexed_trajectory(
         &path,
         Arc::clone(&topology),
         TrajectoryOpenOptions::default(),
@@ -396,7 +395,7 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
     std::fs::write(&mismatch, TWO_FRAMES).unwrap();
     assert_eq!(
         codec_kind(
-            &open_trajectory_with_options(
+            &open_trajectory(
                 &mismatch,
                 Arc::clone(&topology),
                 TrajectoryOpenOptions::default()
@@ -406,7 +405,7 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
         ),
         Some(TrajectoryCodecErrorKind::FormatMismatch)
     );
-    open_trajectory_with_options(
+    open_trajectory(
         &mismatch,
         Arc::clone(&topology),
         TrajectoryOpenOptions::default()
@@ -418,7 +417,7 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
     let points = [Point3::new(1.0, 2.0, 3.0), Point3::new(4.0, 5.0, 6.0)];
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     buffer
-        .replace_from_data(FrameBufferData::new(Quantity::new(&points, ANGSTROM)))
+        .replace_from_data(FrameData::new(Quantity::new(&points, ANGSTROM)))
         .unwrap();
     let mut writer = create_trajectory_writer(
         &output,
@@ -430,7 +429,7 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
     assert!(!output.exists());
     writer.finish().unwrap();
     assert!(output.exists());
-    open_trajectory_with_options(
+    open_trajectory(
         &output,
         Arc::clone(&topology),
         TrajectoryOpenOptions::default(),
@@ -721,7 +720,7 @@ fn compressed_wrappers_and_insufficient_signatures_are_not_extension_dispatched(
     for (bytes, extension) in [(&b"\x1f\x8bgarbage"[..], "xyz"), (&b"not xyz"[..], "xyz")] {
         let path = temporary_path(Some(extension));
         std::fs::write(&path, bytes).unwrap();
-        let error = open_trajectory_with_options(
+        let error = open_trajectory(
             &path,
             Arc::clone(&topology),
             TrajectoryOpenOptions::default(),

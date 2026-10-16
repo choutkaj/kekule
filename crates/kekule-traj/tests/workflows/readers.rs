@@ -5,13 +5,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use kekule::topology::Topology;
 use kekule_traj::io::{
-    open_indexed_trajectory, open_indexed_trajectory_with_options, open_trajectory,
-    open_trajectory_with_options, FieldAvailability, RandomAccessCapability, TrajectoryFormatHint,
-    TrajectoryIoLimits, TrajectoryOpenOptions,
+    open_indexed_trajectory, open_trajectory, FieldAvailability, RandomAccessCapability,
+    TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 use kekule_traj::{
-    validate_atom_order, CoordinateFrameReader, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
-    TrajectoryFormat, TrajectoryIoError, TrajectoryReader,
+    SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError,
+    TrajectoryReader,
 };
 
 use crate::support;
@@ -25,7 +24,7 @@ fn topology() -> Arc<Topology> {
 fn trajectory_payload_and_buffer_reject_mismatched_annotation_rows() {
     use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
     use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
-    use kekule_traj::{FrameBuffer, FrameBufferData};
+    use kekule_traj::{FrameBuffer, FrameData};
 
     let topology = topology();
     let key = PropertyKey::new("tag").unwrap();
@@ -45,7 +44,7 @@ fn trajectory_payload_and_buffer_reject_mismatched_annotation_rows() {
     let mut buffer = FrameBuffer::new(topology);
     assert!(buffer.frame_mut().set_properties(foreign).is_err());
     assert!(buffer
-        .replace_from_data(FrameBufferData::from_frame_view(
+        .replace_from_data(FrameData::from_frame_view(
             Trajectory::from_items(kekule::smiles::to_topology("CC").unwrap(), [larger])
                 .unwrap()
                 .get(0)
@@ -58,7 +57,7 @@ fn trajectory_payload_and_buffer_reject_mismatched_annotation_rows() {
     let mut owner = kekule::properties::OwnerProperties::new();
     owner.insert(key.clone(), PropertyValue::Int(3)).unwrap();
     buffer
-        .replace_from_data(FrameBufferData::new(positions.values()).with_owner_properties(&owner))
+        .replace_from_data(FrameData::new(positions.values()).with_owner_properties(&owner))
         .unwrap();
     assert_eq!(buffer.properties().owner(), &owner);
 }
@@ -82,8 +81,7 @@ fn format_agnostic_public_api_opens_sequential_and_indexed_readers() {
     let options = TrajectoryOpenOptions::default()
         .with_format_hint(TrajectoryFormatHint::Explicit(TrajectoryFormat::Xyz));
 
-    let mut sequential =
-        open_trajectory_with_options(&path, Arc::clone(&topology), options.clone()).unwrap();
+    let mut sequential = open_trajectory(&path, Arc::clone(&topology), options.clone()).unwrap();
     let report = sequential.open_report();
     assert_eq!(report.selected_format(), TrajectoryFormat::Xyz);
     assert_eq!(
@@ -99,8 +97,7 @@ fn format_agnostic_public_api_opens_sequential_and_indexed_readers() {
     assert!(sequential.read_next(&mut destination).unwrap());
     assert!(!sequential.read_next(&mut destination).unwrap());
 
-    let mut indexed =
-        open_indexed_trajectory_with_options(&path, Arc::clone(&topology), options).unwrap();
+    let mut indexed = open_indexed_trajectory(&path, Arc::clone(&topology), options).unwrap();
     assert_eq!(indexed.frame_count(), Some(1));
     assert_eq!(
         indexed.metadata().random_access(),
@@ -110,7 +107,8 @@ fn format_agnostic_public_api_opens_sequential_and_indexed_readers() {
     assert!((destination.positions().values().value()[0].x - 0.1).abs() < 1.0e-15);
 
     let owned_topology = Arc::try_unwrap(build_topology(&["C"], &[])).unwrap();
-    let mut default_sequential = open_trajectory(&path, owned_topology).unwrap();
+    let mut default_sequential =
+        open_trajectory(&path, owned_topology, Default::default()).unwrap();
     assert_eq!(
         default_sequential.open_report().selected_format(),
         TrajectoryFormat::Xyz
@@ -133,7 +131,8 @@ fn format_agnostic_public_api_opens_sequential_and_indexed_readers() {
     );
     assert!(!default_sequential.read_next(&mut owned_buffer).unwrap());
 
-    let mut default_indexed = open_indexed_trajectory(&path, Arc::clone(&topology)).unwrap();
+    let mut default_indexed =
+        open_indexed_trajectory(&path, Arc::clone(&topology), Default::default()).unwrap();
     assert_eq!(default_indexed.frame_count(), Some(1));
     assert_eq!(
         default_indexed.open_report().selected_format(),
@@ -158,10 +157,10 @@ fn path_options_enforce_global_limits_and_path_diagnostics() {
         })
         .with_xyz_options(XyzReadOptions::default().with_source_label("custom stream"));
     let errors = [
-        open_trajectory_with_options(&path, Arc::clone(&topology), options.clone())
+        open_trajectory(&path, Arc::clone(&topology), options.clone())
             .err()
             .unwrap(),
-        open_indexed_trajectory_with_options(&path, topology, options)
+        open_indexed_trajectory(&path, topology, options)
             .err()
             .unwrap(),
     ];
@@ -176,42 +175,4 @@ fn path_options_enforce_global_limits_and_path_diagnostics() {
         assert_eq!(context.source_label(), Some(path.to_str().unwrap()));
     }
     fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn optional_atom_order_validation_checks_the_entire_sequence() {
-    let topology = build_topology(&["C", "H"], &[(0, 1)]);
-    let ids = topology.atom_ids();
-    validate_atom_order(&topology, ids).unwrap();
-    for order in [
-        vec![ids[1], ids[0]],
-        vec![ids[0]],
-        vec![ids[0], ids[0]],
-        vec![],
-    ] {
-        assert!(matches!(
-            validate_atom_order(&topology, &order),
-            Err(TrajectoryIoError::AtomOrderMismatch)
-        ));
-    }
-}
-
-#[test]
-fn coordinate_reader_accepts_owned_topology_and_makes_compatible_buffer() {
-    use kekule::geometry::Point3;
-    use kekule::units::{Quantity, ANGSTROM};
-
-    let mut reader = CoordinateFrameReader::new(
-        Arc::try_unwrap(topology()).unwrap(),
-        [Quantity::new(vec![Point3::new(1.0, 2.0, 3.0)], ANGSTROM)],
-    )
-    .unwrap();
-    let mut buffer = reader.frame_buffer();
-    assert!(Arc::ptr_eq(
-        &reader.shared_topology(),
-        &buffer.shared_topology()
-    ));
-    assert!(reader.read_next(&mut buffer).unwrap());
-    assert!((buffer.positions().values().value()[0].x - 0.1).abs() < 1.0e-15);
-    assert!(!reader.read_next(&mut buffer).unwrap());
 }

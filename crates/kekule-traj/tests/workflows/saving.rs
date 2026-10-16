@@ -10,12 +10,12 @@ use kekule::structure::{Forces, Trajectory, TrajectoryFrame, TrajectoryFrameView
 use kekule_traj::io::dcd::DcdWriteOptions;
 use kekule_traj::io::trr::{TrrScalarPrecision, TrrWriteOptions};
 use kekule_traj::io::{
-    read_trajectory, read_trajectory_with_options, write_trajectory, write_trajectory_with_options,
-    OverwritePolicy, TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryWriteOptions,
+    create_trajectory_writer, read_trajectory, write_trajectory, OverwritePolicy,
+    TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule_traj::{
     TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError,
-    TrajectoryIoErrorContext, TrajectoryIoOperation,
+    TrajectoryIoErrorContext, TrajectoryIoOperation, TrajectoryWriter,
 };
 
 use crate::support;
@@ -155,13 +155,14 @@ fn saving_round_trips_all_codecs_using_defaults_or_explicit_native_options() {
             ),
         ),
     ] {
-        let trajectory = read_trajectory(fixture(source), topology.clone()).unwrap();
+        let trajectory =
+            read_trajectory(fixture(source), topology.clone(), Default::default()).unwrap();
         let path = directory.file(&format!("output.{extension}"));
         match options {
-            Some(options) => write_trajectory_with_options(&path, &trajectory, options).unwrap(),
-            None => write_trajectory(&path, &trajectory).unwrap(),
+            Some(options) => write_trajectory(&path, &trajectory, options).unwrap(),
+            None => write_trajectory(&path, &trajectory, Default::default()).unwrap(),
         }
-        let read = read_trajectory(&path, topology).unwrap();
+        let read = read_trajectory(&path, topology, Default::default()).unwrap();
         assert_eq!(read.len(), trajectory.len());
         for (actual, expected) in read.iter().zip(trajectory.iter()) {
             same_frame(actual, expected, 1.0e-6);
@@ -180,26 +181,48 @@ fn explicit_format_overrides_extension_and_precision_is_preserved() {
     let trajectory = read_trajectory(
         fixture("mdanalysis-2.9.0-three-atoms.trr"),
         topology.clone(),
+        Default::default(),
     )
     .unwrap();
     let path = directory.file("trajectory.data");
+    let unknown: TrajectoryIoError = TrajectoryCodecErrorContext::new(
+        TrajectoryCodecErrorKind::UnknownFormat,
+        TrajectoryIoOperation::Open,
+        None,
+    )
+    .with_source_label(label(&path))
+    .with_detail(
+        "destination extension does not identify a supported format; supply explicit write options",
+    )
+    .into();
     assert_eq!(
-        write_trajectory(&path, &trajectory),
-        Err(TrajectoryCodecErrorContext::new(
-            TrajectoryCodecErrorKind::UnknownFormat,
-            TrajectoryIoOperation::Open,
-            None,
-        )
-        .with_source_label(label(&path))
-        .with_detail(
-            "destination extension does not identify a supported format; supply explicit write options"
-        )
-        .into())
+        write_trajectory(&path, &trajectory, Default::default()),
+        Err(unknown.clone())
     );
+    // Default options take the path writer's format from the extension too.
+    assert_eq!(
+        create_trajectory_writer(&path, topology.clone(), TrajectoryWriteOptions::default())
+            .unwrap_err(),
+        unknown
+    );
+    let saved = directory.file("saved.trr");
+    write_trajectory(&saved, &trajectory, Default::default()).unwrap();
+    let streamed = directory.file("streamed.trr");
+    let mut writer = create_trajectory_writer(
+        &streamed,
+        topology.clone(),
+        TrajectoryWriteOptions::default(),
+    )
+    .unwrap();
+    for frame in &trajectory {
+        writer.write_frame(frame).unwrap();
+    }
+    writer.finish().unwrap();
+    assert_eq!(fs::read(&streamed).unwrap(), fs::read(&saved).unwrap());
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr)
         .with_trr_options(TrrWriteOptions::default().with_precision(TrrScalarPrecision::Float64));
-    write_trajectory_with_options(&path, &trajectory, options).unwrap();
-    let read = read_trajectory_with_options(
+    write_trajectory(&path, &trajectory, options).unwrap();
+    let read = read_trajectory(
         path,
         topology,
         TrajectoryOpenOptions::default()
@@ -290,7 +313,10 @@ fn rejected_saves_leave_no_destination_or_temporary_file() {
             TrajectoryIoError::UnsupportedField("collection properties"),
         ),
     ] {
-        assert_eq!(write_trajectory(&path, trajectory), Err(expected));
+        assert_eq!(
+            write_trajectory(&path, trajectory, Default::default()),
+            Err(expected)
+        );
         assert_eq!(directory.names(), Vec::<String>::new());
     }
 }
@@ -362,12 +388,12 @@ fn forbid_policy_never_replaces_an_existing_destination() {
 
     let directory = Directory::new();
     let path = directory.file("out.xyz");
-    write_trajectory(&path, &single_frame(0.0)).unwrap();
+    write_trajectory(&path, &single_frame(0.0), Default::default()).unwrap();
     let original = fs::read(&path).unwrap();
 
     // An existing destination is refused before any frame is written.
     assert_eq!(
-        write_trajectory(&path, &single_frame(5.0)),
+        write_trajectory(&path, &single_frame(5.0), Default::default()),
         Err(TrajectoryIoErrorContext::new(
             TrajectoryIoOperation::Open,
             io::ErrorKind::AlreadyExists,
@@ -417,16 +443,16 @@ fn forbid_policy_never_replaces_an_existing_destination() {
 fn replace_policy_atomically_replaces_an_existing_destination() {
     let directory = Directory::new();
     let path = directory.file("out.xyz");
-    write_trajectory(&path, &single_frame(0.0)).unwrap();
+    write_trajectory(&path, &single_frame(0.0), Default::default()).unwrap();
     let replacement = single_frame(5.0);
-    write_trajectory_with_options(
+    write_trajectory(
         &path,
         &replacement,
         TrajectoryWriteOptions::new(TrajectoryFormat::Xyz)
             .with_overwrite_policy(OverwritePolicy::Replace),
     )
     .unwrap();
-    let read = read_trajectory(&path, replacement.shared_topology()).unwrap();
+    let read = read_trajectory(&path, replacement.shared_topology(), Default::default()).unwrap();
     assert_eq!(read.len(), 1);
     // XYZ keeps six decimals of these exactly representable coordinates.
     same_frame(read.get(0).unwrap(), replacement.get(0).unwrap(), 0.0);
@@ -446,7 +472,12 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     use kekule_traj::{TrajectoryReader, TrajectoryWriter};
     let directory = Directory::new();
     let topology = topology(&["O", "H", "H"], &[(0, 1), (0, 2)]);
-    let mut source = read_trajectory(fixture("ase-3.26.0-water.xyz"), topology.clone()).unwrap();
+    let mut source = read_trajectory(
+        fixture("ase-3.26.0-water.xyz"),
+        topology.clone(),
+        Default::default(),
+    )
+    .unwrap();
     let cell = PeriodicCell::orthorhombic(
         Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
         [true; 3],
@@ -489,17 +520,17 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     let input = directory.file("prepared.trr");
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr)
         .with_trr_options(TrrWriteOptions::default().with_precision(TrrScalarPrecision::Float64));
-    write_trajectory_with_options(&input, &selected, options.clone()).unwrap();
-    let loaded = read_trajectory(&input, topology.clone()).unwrap();
+    write_trajectory(&input, &selected, options.clone()).unwrap();
+    let loaded = read_trajectory(&input, topology.clone(), Default::default()).unwrap();
     let atoms = AtomSelection::all(&topology);
     let mut expected = loaded;
     periodic::make_molecules_whole(&mut expected).unwrap();
-    periodic::unwrap(&mut expected).unwrap();
+    periodic::unwrap_trajectory(&mut expected).unwrap();
     expected.superpose(0, &atoms, Default::default()).unwrap();
     let loaded_output = directory.file("loaded.trr");
-    write_trajectory_with_options(&loaded_output, &expected, options.clone()).unwrap();
+    write_trajectory(&loaded_output, &expected, options.clone()).unwrap();
 
-    let mut reader = open_trajectory(&input, topology.clone()).unwrap();
+    let mut reader = open_trajectory(&input, topology.clone(), Default::default()).unwrap();
     let mut frame = reader.frame_buffer();
     let imager = MoleculeImager::new(topology.clone());
     let mut unwrapper = TrajectoryUnwrapper::new(topology.clone());
@@ -507,7 +538,7 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     imager.make_whole(0, &mut frame).unwrap();
     unwrapper.unwrap(0, &mut frame).unwrap();
     let reference = frame.frame_view().to_model();
-    let fitter = FrameSuperposer::new(&reference, &atoms);
+    let fitter = FrameSuperposer::new(&reference, &atoms, Default::default());
     let streamed_output = directory.file("streamed.trr");
     let mut writer = create_trajectory_writer(&streamed_output, topology.clone(), options).unwrap();
     let mut index = 0;
@@ -524,7 +555,7 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     writer.finish().unwrap();
     assert_eq!(index, selected.len());
     for path in [loaded_output, streamed_output] {
-        let reread = read_trajectory(path, topology.clone()).unwrap();
+        let reread = read_trajectory(path, topology.clone(), Default::default()).unwrap();
         assert_eq!(reread.len(), expected.len());
         for (actual, expected) in reread.iter().zip(expected.iter()) {
             same_frame(actual, expected, 1.0e-12);

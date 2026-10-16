@@ -48,7 +48,6 @@ assert_eq!(parameters.charges().value().len(), atoms);
 #![warn(rustdoc::broken_intra_doc_links)]
 
 mod assignment;
-pub mod diagnostics;
 mod error;
 mod identity;
 mod nagl;
@@ -85,3 +84,6 @@ fn reference_records() -> Vec<serde_json::Value> {
     let report: serde_json::Value = serde_json::from_reader(input).unwrap();
     report["records"].as_array().unwrap().clone()
 }
+
+#[cfg(test)]
+mod tests;

@@ -259,9 +259,9 @@ are not checked into Git. Supporting their configuration does not establish
 scientific accuracy for arbitrary user-trained weights.
 
 No InChI implementation is linked; the crate is pure Rust and needs no C
-toolchain. `diagnostics::lookup_key` reports the stored key of the selected
-entry. There is no identifier size limit; molecules larger than the largest
-lookup entry are never looked up.
+toolchain. The crate's own tests check the stored key of the selected entry.
+There is no identifier size limit; molecules larger than the largest lookup
+entry are never looked up.
 
 ## Boundaries and validation
 
