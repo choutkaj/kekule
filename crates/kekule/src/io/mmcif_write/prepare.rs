@@ -95,6 +95,7 @@ pub(super) fn prepare_model(
             .atom_index(row.atom)
             .expect("prepared atom-site row references a topology atom")
     });
+    number_unsequenced_polymers(&mut atoms, &entities, &asyms, hierarchy);
 
     let atom_indexes = atoms
         .iter()
@@ -186,12 +187,6 @@ fn collect_macro_rows(
         let assignment = assignments
             .get(&qualified)
             .ok_or(MmcifWriteError::MissingAtomSite(qualified))?;
-        if assignment.asym_id != chain.label_id {
-            return Err(MmcifWriteError::InconsistentAtomSite {
-                atom: qualified,
-                field: "entity/asymmetry assignment",
-            });
-        }
         if site
             .metadata
             .label_asym_id
@@ -230,7 +225,7 @@ fn collect_macro_rows(
             atom: qualified,
             residue: Some(site.residue()),
             entity_id: assignment.entity_id.clone(),
-            asym_id: chain.label_id.clone(),
+            asym_id: assignment.asym_id.clone(),
             group_pdb,
             type_symbol: type_symbol(atom).to_owned(),
             label_atom_id: label_atom_id.clone(),
@@ -407,6 +402,61 @@ fn validate_connection_selector(
         return Err(MmcifWriteError::AmbiguousConnectionSelector(atom));
     }
     Ok(())
+}
+
+/// mmCIF sequences every polymer residue by `label_seq_id`. Sources that
+/// number residues by author alone, as PDB does, leave a polymer asym without
+/// one; its residues are numbered from 1 in chain order. Unobserved residues
+/// are unknown, so the numbers count observed residues only.
+fn number_unsequenced_polymers(
+    rows: &mut [AtomRow],
+    entities: &[EntityRow],
+    asyms: &[AsymRow],
+    hierarchy: &Hierarchy,
+) {
+    let polymers = entities
+        .iter()
+        .filter(|entity| entity.kind == AssignedEntityKind::Polymer)
+        .map(|entity| entity.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let chain_position = |residue: ResidueId| {
+        let chain = hierarchy
+            .residue(residue)
+            .expect("atom-site rows reference live residues")
+            .chain();
+        hierarchy
+            .chain(chain)
+            .expect("published residues reference live chains")
+            .residues()
+            .iter()
+            .position(|candidate| *candidate == residue)
+            .expect("a chain lists its residues")
+    };
+    for asym in asyms
+        .iter()
+        .filter(|asym| polymers.contains(asym.entity_id.as_str()))
+    {
+        let in_asym = |row: &&mut AtomRow| row.asym_id == asym.id;
+        if rows
+            .iter_mut()
+            .filter(in_asym)
+            .any(|row| row.label_seq_id.is_some())
+        {
+            continue;
+        }
+        let mut residues = rows
+            .iter_mut()
+            .filter(in_asym)
+            .filter_map(|row| row.residue)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        residues.sort_by_key(|residue| chain_position(*residue));
+        let numbers = residues.into_iter().zip(1..).collect::<BTreeMap<_, i32>>();
+        for row in rows.iter_mut().filter(in_asym) {
+            row.label_seq_id = row.residue.map(|residue| numbers[&residue]);
+        }
+    }
 }
 
 fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), MmcifWriteError> {
