@@ -280,7 +280,7 @@ impl FileTrajectoryMetadata {
                 RandomAccessCapability::SequentialOnly
             },
             variant: Some(format!(
-                "{:?} checked reader / audited molly 0.6.1 writer; first payload {} bytes",
+                "{:?}; first payload {} bytes",
                 info.magic(),
                 info.compressed_bytes()
             )),

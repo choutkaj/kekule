@@ -418,6 +418,54 @@ fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
 }
 
 #[test]
+fn xtc_round_trips_frames_whose_packed_integers_exceed_64_bits() {
+    // At 2^14 per nm, spans of 660 nm give axis sizes near 2^23.4, so a
+    // packed coordinate needs 71 bits; atoms 155 nm apart start the delta
+    // size at magic index 65, so run deltas need 65 bits or more. Powers of
+    // two keep scaling and decoding exact.
+    let topology = topology(12);
+    let positions = (0..12)
+        .map(|atom| {
+            let atom = f64::from(atom);
+            Point3::new(60.0 * atom, 45.0 * atom + 7.0, 600.0 - 50.0 * atom)
+        })
+        .collect::<Vec<_>>();
+    let mut frame = source_frame(&topology, 0.0, 3);
+    frame
+        .frame_mut()
+        .set_positions(Quantity::new(positions.clone(), NANOMETER))
+        .unwrap();
+    for magic in [XtcMagic::Xtc1995, XtcMagic::Xtc2023] {
+        let options = XtcWriteOptions::default()
+            .with_magic(magic)
+            .with_precision(16384.0)
+            .unwrap();
+        let mut writer = XtcWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            options,
+            "wide.xtc",
+        )
+        .unwrap();
+        writer.write_frame(frame.frame_view()).unwrap();
+        let mut reader = XtcReader::new(
+            Cursor::new(writer.finish().unwrap().into_inner()),
+            Arc::clone(&topology),
+            XtcReadOptions::default(),
+        )
+        .unwrap();
+        let mut destination = reader.frame_buffer();
+        assert!(reader.read_next(&mut destination).unwrap());
+        assert_eq!(
+            *destination.positions().values().value(),
+            &positions[..],
+            "{magic:?}"
+        );
+        assert!(!reader.read_next(&mut destination).unwrap());
+    }
+}
+
+#[test]
 fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
     let (topology, bytes) = encoded(12, XtcMagic::Xtc1995);
     let limits = TrajectoryIoLimits {
@@ -935,6 +983,78 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
             "XTC cannot preserve bond properties",
         ))
     );
+}
+
+#[test]
+fn xtc_writer_bounds_scaled_coordinates_and_axis_spans_like_gromacs() {
+    // At 10^6 per nm, 1500 nm scales to 1.5e9, which fits i32, but the span
+    // from -1500 to 1500 nm (3e9) does not. GROMACS bounds both by
+    // i32::MAX - 2; an unchecked span wrapped into a corrupt frame.
+    const SPAN: &str =
+        "XTC coordinate span along an axis exceeds the selected precision's integer range";
+    const MAGNITUDE: &str = "XTC coordinate exceeds the selected precision's integer range";
+    let topology = topology(10);
+    let options = XtcWriteOptions::default().with_precision(1.0e6).unwrap();
+    let frame_with_x = |first: f64, rest: f64| {
+        let mut frame = source_frame(&topology, 0.0, 0);
+        let positions = (0..topology.atom_count())
+            .map(|atom| Point3::new(if atom == 0 { first } else { rest }, 0.0, 0.0))
+            .collect::<Vec<_>>();
+        frame
+            .frame_mut()
+            .set_positions(Quantity::new(positions, NANOMETER))
+            .unwrap();
+        frame
+    };
+    for (first, rest, rejection) in [
+        (-1500.0, 1500.0, Some(SPAN)),
+        (0.0, 2200.0, Some(MAGNITUDE)),
+        (-2147.0, -2147.0, None),
+        (-1000.0, 1000.0, None),
+    ] {
+        let mut writer = XtcWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            options,
+            "span.xtc",
+        )
+        .unwrap();
+        let frame = frame_with_x(first, rest);
+        let Some(detail) = rejection else {
+            writer.write_frame(frame.frame_view()).unwrap();
+            let mut reader = XtcReader::new(
+                Cursor::new(writer.finish().unwrap().into_inner()),
+                Arc::clone(&topology),
+                XtcReadOptions::default(),
+            )
+            .unwrap();
+            let mut destination = reader.frame_buffer();
+            assert!(reader.read_next(&mut destination).unwrap());
+            let mut expected = vec![rest; topology.atom_count()];
+            expected[0] = first;
+            assert_eq!(x_values(&destination), expected, "{first} {rest}");
+            assert!(!reader.read_next(&mut destination).unwrap());
+            continue;
+        };
+        assert_eq!(
+            writer.write_frame(frame.frame_view()),
+            Err(codec_error(
+                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoOperation::WriteFrame,
+                TrajectoryFormat::Xtc,
+                "span.xtc",
+                None,
+                detail,
+            )),
+            "{first} {rest}"
+        );
+        assert_eq!(writer.writer().get_ref(), &Vec::<u8>::new());
+        // The rejected frame left no partial bytes, so the stream continues.
+        writer
+            .write_frame(frame_with_x(-1.0, 1.0).frame_view())
+            .unwrap();
+        writer.finish().unwrap();
+    }
 }
 
 #[test]

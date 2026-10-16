@@ -20,7 +20,7 @@
 //! | XYZ | strict constant-count multi-frame element/x/y/z text; configured length unit (angstrom by default) | deterministic strict text; optional frame state is rejected |
 //! | DCD | common 32-bit-record `CORD` files in either byte order, common unit cells, fixed-atom reconstruction, and strict `NSET` | canonical all-atom `CORD` in either byte order with optional unit cells |
 //! | TRR | GROMACS XDR frames with f32 or f64 position, box, velocity, and force blocks | one explicit f32 or f64 precision with per-frame optional blocks |
-//! | XTC | GROMACS magic 1995/2023, signed nonnegative i32 counts/steps, small uncompressed and ordinary compressed coordinates | magic 1995/2023 through the private audited encoder adapter at explicit lossy precision |
+//! | XTC | GROMACS magic 1995/2023, signed nonnegative i32 counts/steps, small uncompressed and ordinary compressed coordinates | magic 1995/2023 at explicit lossy precision, bounding scaled coordinates and per-axis spans as GROMACS does |
 //!
 //! Readers accept an owned topology or a shared `Arc<Topology>`. File coordinate
 //! index `i` means topology dense atom index `i`. Counts and available metadata

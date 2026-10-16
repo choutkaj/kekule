@@ -331,10 +331,7 @@ pub fn open_trajectory_with_options(
             (
                 SequentialReaderInner::Xtc(reader),
                 metadata,
-                vec![
-                    "XTC decoding uses a bounded checked reader; molly is confined to writing"
-                        .into(),
-                ],
+                vec!["XTC decoding uses a bounded checked reader".into()],
             )
         }
     };

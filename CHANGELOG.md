@@ -110,6 +110,9 @@ All notable changes to Kekule are documented in this file.
   count, and XYZ indexed from byte 0 of the stream instead of the position
   the reader was opened at. Each indexed reader now takes its opening
   position as frame 0.
+- `kekule-traj` no longer depends on `molly`. The XTC `variant` in
+  trajectory metadata no longer names the writer and reads, for example,
+  `Xtc1995; first payload 92 bytes`.
 - **Breaking:** `CoordinateStereoResult` and
   `CoordinateStereoMaterializationReport` gain `disagreements`, the asserted
   stereo elements whose configuration the coordinates contradict. Inference
@@ -360,6 +363,19 @@ All notable changes to Kekule are documented in this file.
   canonical classification, a metal, saccharide, or water residue bonded to a
   polymer is no longer written as a polymer residue; explicit classifications
   hold as given.
+- The XTC writer encodes compressed coordinates itself, following GROMACS
+  `xdr3dfcoord`, instead of through molly 0.6.1. molly packed integers wider
+  than 64 bits with their axes reversed, so frames with wide spans at high
+  precision could not be read back, such as a 660 nm span at 2^14 per nm or
+  a 400 nm box at 10^4 per nm. Ordinary frames are written byte for byte as
+  before.
+- The XTC writer no longer writes a corrupt frame when the coordinates on one
+  axis span more than the selected precision can encode, which it did
+  silently in release builds. It now rejects such a frame with
+  `TrajectoryCodecErrorKind::InvalidFrame` before writing anything, as
+  GROMACS does, bounding the scaled coordinates and each axis's span by
+  `i32::MAX - 2`. At a precision of 10^6 per nm, a frame from -1500 to
+  1500 nm is rejected.
 - Isomeric and canonical SMILES write explicitly unknown stereo unmarked,
   as RDKit does, instead of refusing the molecule. SMILES has no notation for
   an unknown configuration, so an amidine C=N read with a Molfile "either"

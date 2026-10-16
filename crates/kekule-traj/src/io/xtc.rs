@@ -1,7 +1,6 @@
-//! Bounded GROMACS XTC trajectories with a checked reader and `molly` writer.
+//! Bounded GROMACS XTC trajectories with a checked reader and writer.
 
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 use crate::{
@@ -31,6 +30,14 @@ const XTC_MAGIC_INTS: [i32; 73] = [
     3329021, 4194304, 5284491, 6658042, 8388607, 10568983, 13316085, 16777216,
 ];
 const XTC_FIRST_SMALL_INDEX: usize = 9;
+/// Largest scaled coordinate magnitude, and bound on each axis's span, that
+/// GROMACS writes (its `MAXABS`). Wider spans overflow the encoder's sizes.
+const XTC_MAX_SCALED: i64 = i32::MAX as i64 - 2;
+/// Most atoms a 1995-magic frame holds before its signed 32-bit compressed
+/// byte count can overflow (GROMACS `xtc_1995_max_natoms`).
+const XTC_1995_MAX_ATOMS: usize = 298_261_617;
+
+mod encode;
 
 /// Supported XTC magic and compressed-byte-count profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,10 +55,10 @@ impl XtcMagic {
         }
     }
 
-    fn to_molly(self) -> molly::Magic {
+    const fn number(self) -> i32 {
         match self {
-            Self::Xtc1995 => molly::Magic::Xtc1995,
-            Self::Xtc2023 => molly::Magic::Xtc2023,
+            Self::Xtc1995 => 1995,
+            Self::Xtc2023 => 2023,
         }
     }
 }
@@ -1098,47 +1105,9 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
     }
 }
 
-struct MollyWriterAdapter<W> {
-    inner: molly::XTCWriter<W>,
-    frame: molly::Frame,
-}
-
-impl<W: Write> MollyWriterAdapter<W> {
-    fn new(writer: W, options: XtcWriteOptions) -> Self {
-        Self {
-            inner: molly::XTCWriter::new_with_magic(writer, options.magic.to_molly()),
-            frame: molly::Frame {
-                precision: options.precision,
-                ..molly::Frame::default()
-            },
-        }
-    }
-
-    fn write(&mut self, source_label: &str, frame_index: u64) -> Result<(), TrajectoryIoError> {
-        match catch_unwind(AssertUnwindSafe(|| self.inner.write_frame(&self.frame))) {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => Err(io_context(
-                TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xtc),
-                source_label,
-                error,
-            )),
-            Err(_) => Err(TrajectoryCodecErrorContext::new(
-                TrajectoryCodecErrorKind::CorruptCompressedData,
-                TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xtc),
-            )
-            .with_source_label(source_label)
-            .with_frame(frame_index)
-            .with_detail("molly panicked while encoding prevalidated XTC data")
-            .into()),
-        }
-    }
-}
-
 /// Strict XTC writer using explicit lossy precision.
 pub struct XtcWriter<W> {
-    adapter: MollyWriterAdapter<W>,
+    writer: W,
     topology: Arc<Topology>,
     options: XtcWriteOptions,
     source_label: String,
@@ -1147,6 +1116,14 @@ pub struct XtcWriter<W> {
     /// fails, so a stream that may end in a partial frame is never extended
     /// or reported as finished.
     partial: bool,
+    /// Nanometre coordinates of the frame being written.
+    positions: Vec<f32>,
+    /// Scaled integer coordinates of a compressed frame.
+    scaled: Vec<[i32; 3]>,
+    /// Compressed bit stream of a frame.
+    stream: Vec<u8>,
+    /// Complete encoded frame, written to the stream in one call.
+    bytes: Vec<u8>,
 }
 
 impl<W: Write> XtcWriter<W> {
@@ -1165,22 +1142,24 @@ impl<W: Write> XtcWriter<W> {
                 "XTC writer atom count must fit a positive signed 32-bit XDR integer",
             ));
         }
-        if options.magic == XtcMagic::Xtc1995 && topology.atom_count() > molly::XTC_1995_MAX_NATOMS
-        {
+        if options.magic == XtcMagic::Xtc1995 && topology.atom_count() > XTC_1995_MAX_ATOMS {
             return Err(resource_error(
                 &source_label,
                 None,
-                "XTC 1995 atom count exceeds the audited molly limit",
+                "XTC 1995 atom count exceeds the GROMACS limit for its byte count",
             ));
         }
-        let adapter = MollyWriterAdapter::new(writer, options);
         Ok(Self {
-            adapter,
+            writer,
             topology,
             options,
             source_label,
             frame_count: 0,
             partial: false,
+            positions: Vec::new(),
+            scaled: Vec::new(),
+            stream: Vec::new(),
+            bytes: Vec::new(),
         })
     }
 
@@ -1189,11 +1168,11 @@ impl<W: Write> XtcWriter<W> {
     }
 
     pub fn writer(&self) -> &W {
-        &self.adapter.inner.file
+        &self.writer
     }
 
     pub fn flush(&mut self) -> std::io::Result<()> {
-        self.adapter.inner.file.flush()
+        self.writer.flush()
     }
 
     pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryIoError> {
@@ -1209,7 +1188,7 @@ impl<W: Write> XtcWriter<W> {
     /// Flushes and returns the completed nonempty XTC stream.
     pub fn finish(mut self) -> Result<W, TrajectoryIoError> {
         self.validate_finish()?;
-        self.adapter.inner.file.flush().map_err(|error| {
+        self.writer.flush().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Finish,
                 Some(TrajectoryFormat::Xtc),
@@ -1217,7 +1196,7 @@ impl<W: Write> XtcWriter<W> {
                 error,
             )
         })?;
-        Ok(self.adapter.inner.file)
+        Ok(self.writer)
     }
 }
 
@@ -1273,7 +1252,6 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 "XTC step exceeds nonnegative signed 32-bit XDR capacity",
             )
         })?;
-        self.adapter.frame.step = step as u32;
         let time = frame.time().ok_or_else(|| {
             codec_context(
                 TrajectoryCodecErrorKind::InconsistentMetadata,
@@ -1292,9 +1270,10 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 format!("XTC time unit is incompatible: {error}"),
             )
         })?;
-        self.adapter.frame.time = finite_f32(time, &self.source_label, "time")?;
+        let time = finite_f32(time, &self.source_label, "time")?;
+        let mut boxvec = [0.0_f32; 9];
         match (frame.cell().copied(), self.options.cell_policy) {
-            (None, XtcCellPolicy::ZeroMatrixAsAbsent) => self.adapter.frame.boxvec = [0.0; 9],
+            (None, XtcCellPolicy::ZeroMatrixAsAbsent) => {}
             (None, XtcCellPolicy::RequirePeriodic) => {
                 return Err(codec_context(
                     TrajectoryCodecErrorKind::InconsistentMetadata,
@@ -1323,7 +1302,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                     format!("XTC cell unit is incompatible: {error}"),
                 )
             })?;
-            for (target, value) in self.adapter.frame.boxvec.iter_mut().zip(
+            for (target, value) in boxvec.iter_mut().zip(
                 vectors
                     .into_iter()
                     .flat_map(|vector| [vector.x, vector.y, vector.z]),
@@ -1333,7 +1312,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             // Scalar finiteness alone cannot ensure the narrowed matrix still spans
             // three dimensions. Validate the representation the reader will receive.
             decode_cell(
-                self.adapter.frame.boxvec.map(f64::from),
+                boxvec.map(f64::from),
                 XtcCellPolicy::RequirePeriodic,
                 &self.source_label,
                 self.frame_count,
@@ -1365,40 +1344,44 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                     format!("XTC position unit is incompatible: {error}"),
                 )
             })?;
-        self.adapter.frame.positions.clear();
-        self.adapter
-            .frame
-            .positions
-            .try_reserve(
-                positions
-                    .value()
-                    .len()
-                    .checked_mul(3)
-                    .ok_or_else(|| {
-                        resource_error(
-                            &self.source_label,
-                            Some(self.frame_count),
-                            "XTC writer coordinate count overflows",
-                        )
-                    })?
-                    .saturating_sub(self.adapter.frame.positions.len()),
+        let atom_count = positions.value().len();
+        // Compressed frames store coordinates as integers relative to each
+        // axis's minimum, so both the scaled values and their per-axis spans
+        // must stay within GROMACS's range.
+        let compressed = self.topology.atom_count() > 9;
+        let reserve_error = |_| {
+            resource_error(
+                &self.source_label,
+                Some(self.frame_count),
+                "could not reserve XTC writer coordinate scratch",
             )
-            .map_err(|_| {
+        };
+        self.positions.clear();
+        self.scaled.clear();
+        self.positions
+            .try_reserve(atom_count.checked_mul(3).ok_or_else(|| {
                 resource_error(
                     &self.source_label,
                     Some(self.frame_count),
-                    "could not reserve XTC writer coordinate scratch",
+                    "XTC writer coordinate count overflows",
                 )
-            })?;
+            })?)
+            .map_err(reserve_error)?;
+        if compressed {
+            self.scaled.try_reserve(atom_count).map_err(reserve_error)?;
+        }
+        let mut minimum = [i64::MAX; 3];
+        let mut maximum = [i64::MIN; 3];
         for point in *positions.value() {
-            for value in [point.x * factor, point.y * factor, point.z * factor] {
+            for (axis, value) in [point.x * factor, point.y * factor, point.z * factor]
+                .into_iter()
+                .enumerate()
+            {
                 let value = finite_f32(value, &self.source_label, "position")?;
-                if self.topology.atom_count() > 9 {
-                    let scaled = f64::from(value) * f64::from(self.options.precision);
-                    if !scaled.is_finite()
-                        || scaled.round() < f64::from(i32::MIN)
-                        || scaled.round() > f64::from(i32::MAX)
-                    {
+                if compressed {
+                    // GROMACS scales in f32 and rounds half away from zero.
+                    let scaled = (value * self.options.precision).round();
+                    if !scaled.is_finite() || f64::from(scaled).abs() > XTC_MAX_SCALED as f64 {
                         return Err(codec_context(
                             TrajectoryCodecErrorKind::InvalidFrame,
                             TrajectoryIoOperation::WriteFrame,
@@ -1407,15 +1390,68 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                             "XTC coordinate exceeds the selected precision's integer range",
                         ));
                     }
+                    let scaled = scaled as i32;
+                    minimum[axis] = minimum[axis].min(i64::from(scaled));
+                    maximum[axis] = maximum[axis].max(i64::from(scaled));
+                    if axis == 0 {
+                        self.scaled.push([scaled, 0, 0]);
+                    } else if let Some(last) = self.scaled.last_mut() {
+                        last[axis] = scaled;
+                    }
                 }
-                self.adapter.frame.positions.push(value);
+                self.positions.push(value);
             }
         }
-        self.adapter.frame.precision = self.options.precision;
-        // The encoder writes the frame piecewise, so a failure or panic inside
-        // it can leave a partial frame behind.
+        if compressed && (0..3).any(|axis| maximum[axis] - minimum[axis] >= XTC_MAX_SCALED) {
+            return Err(codec_context(
+                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Xtc),
+                &self.source_label,
+                "XTC coordinate span along an axis exceeds the selected precision's integer range",
+            ));
+        }
+        let atom_count = i32::try_from(atom_count).map_err(|_| {
+            resource_error(
+                &self.source_label,
+                Some(self.frame_count),
+                "XTC writer atom count exceeds a signed 32-bit XDR integer",
+            )
+        })?;
+        self.bytes.clear();
+        for value in [self.options.magic.number(), atom_count, step] {
+            self.bytes.extend_from_slice(&value.to_be_bytes());
+        }
+        for value in std::iter::once(time).chain(boxvec) {
+            self.bytes.extend_from_slice(&value.to_be_bytes());
+        }
+        self.bytes.extend_from_slice(&atom_count.to_be_bytes());
+        if compressed {
+            self.bytes
+                .extend_from_slice(&self.options.precision.to_be_bytes());
+            encode::encode_coordinates(
+                &mut self.scaled,
+                self.options.magic,
+                &mut self.stream,
+                &mut self.bytes,
+            )
+            .map_err(|detail| resource_error(&self.source_label, Some(self.frame_count), detail))?;
+        } else {
+            for value in &self.positions {
+                self.bytes.extend_from_slice(&value.to_be_bytes());
+            }
+        }
+        // One call writes the whole frame, but a failing writer may still
+        // have taken part of it.
         self.partial = true;
-        self.adapter.write(&self.source_label, self.frame_count)?;
+        self.writer.write_all(&self.bytes).map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Xtc),
+                &self.source_label,
+                error,
+            )
+        })?;
         self.partial = false;
         self.frame_count = self
             .frame_count

@@ -13,7 +13,6 @@ publish = true
 
 [dependencies]
 kekule = { version = "0.3.0", path = "../kekule" }
-molly = "=0.6.1"
 
 [dev-dependencies]
 sha2 = "0.11"
