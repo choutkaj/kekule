@@ -9,7 +9,6 @@ view. Ordinary getters and operations use semantic names. Copyable views may tak
 | --- | --- |
 | `Molecule::into_editor()`, editor error recovery | Transfer ownership into a mutable draft. |
 | Interpretation `into_molecule()`, `into_molecules()`, `into_model()`, `into_parts()` | Consume the interpretation and extract canonical results. |
-| Document/record/block `to_*` methods | Retain source syntax, interpret it, and produce a canonical result. |
 | `smiles::to_molecules(&str)`, `smiles::to_topology(&str)` | Interpret borrowed input. |
 | Collection item view `to_model()`, `payload().clone()` | Materialize an owned model or payload while retaining the collection. |
 | `Model::to_builder()` | Clone into staging. |
@@ -22,8 +21,8 @@ view. Ordinary getters and operations use semantic names. Copyable views may tak
 
 Ownership does not imply cost: opening an indexed reader scans input, and extracting
 molecules from shared topology may clone definitions. Likewise,
-`document.to_model()` retains the document, while
-`document.interpret(Default::default())?.into_model()` consumes the temporary interpretation.
+`document.interpret(options)?.into_model()` retains the document and consumes only
+the temporary interpretation.
 `model.to_editor()` creates a detached draft; `model.into_editor()` moves the model
 into its draft.
 
